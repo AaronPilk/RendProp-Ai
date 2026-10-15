@@ -1596,6 +1596,43 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
                           provenanceID: dto.provenance?.id, sourceBound: dto.sourceBound, sourceAssetID: dto.sourceAssetId)
     }
 
+    @MainActor func aiVideoOperation(operationID: UUID, listingServerID: UUID) async throws -> AIVideoJob? {
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let workspace = WorkspaceContext.selectedOrgID, consent = AIConsent.shared.revocationRevision
+        let current = {
+            guard owner != nil, AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == workspace, AIConsent.shared.isGranted,
+                  AIConsent.shared.revocationRevision == consent else { throw CloudSyncError.identityChanged }
+        }
+        try current()
+        var request = makeRequest(url: url(["ai-video", "operation"], query: [
+            URLQueryItem(name: "operation_id", value: operationID.uuidString),
+            URLQueryItem(name: "listing_id", value: listingServerID.uuidString)]))
+        if let workspace { request.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
+        let data = try await execute(request, session: aiSession, beforeSend: current)
+        try current()
+        let dto: AIVideoOperationDTO = try decode(data)
+        guard let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              raw.keys.contains("selected_library_org_id"), dto.operationId == operationID.uuidString,
+              dto.listingId.flatMap(UUID.init(uuidString:)) == listingServerID,
+              dto.orgId.flatMap(UUID.init(uuidString:)) != nil,
+              (workspace == nil ? raw["selected_library_org_id"] is NSNull
+                  : dto.selectedLibraryOrgId.flatMap(UUID.init(uuidString:)) == workspace) else { throw APIError.decoding }
+        if dto.status == "pending" {
+            guard !raw.keys.contains("request_id"), !raw.keys.contains("status_url"), !raw.keys.contains("response_url") else { throw APIError.decoding }
+            return nil
+        }
+        guard dto.status == "accepted", dto.kind == "reel", let id = dto.requestId, !id.isEmpty,
+              let status = dto.statusUrl, let response = dto.responseUrl,
+              [status, response].allSatisfy({ value in
+                  guard let url = URL(string: value) else { return false }
+                  return url.scheme == "https" && url.host != nil && url.user == nil && url.password == nil
+              }) else { throw APIError.decoding }
+        return AIVideoJob(requestId: id, statusUrl: status, responseUrl: response, kind: "reel",
+            disclosure: dto.disclosure, provenanceID: dto.provenance?.id,
+            sourceBound: dto.sourceBound, sourceAssetID: dto.sourceAssetId)
+    }
+
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {
         // status_url/response_url are full fal URLs — percent-encode them FULLY
         // (URLComponents.percentEncodedQuery) so nothing inside them (:, /, or
@@ -2602,6 +2639,22 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
         let grounded: Bool?
         let synthetic: Bool?
         /// The exact public disclosure sentence for this generation (W2-B3).
+        let disclosure: String?
+        let provenance: ProvenanceEnvelopeDTO?
+        let sourceBound: Bool?
+        let sourceAssetId: String?
+    }
+
+    private struct AIVideoOperationDTO: Decodable {
+        let status: String?
+        let operationId: String?
+        let listingId: String?
+        let selectedLibraryOrgId: String?
+        let orgId: String?
+        let requestId: String?
+        let statusUrl: String?
+        let responseUrl: String?
+        let kind: String?
         let disclosure: String?
         let provenance: ProvenanceEnvelopeDTO?
         let sourceBound: Bool?

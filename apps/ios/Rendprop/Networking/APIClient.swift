@@ -1149,6 +1149,9 @@ protocol APIClient: Sendable {
     /// download the video promptly on `.completed`.
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus
 
+    /// Read-only recovery of this exact saved standalone animation operation.
+    func aiVideoOperation(operationID: UUID, listingServerID: UUID) async throws -> AIVideoJob?
+
     func reflectionQuote(listingID: UUID) async throws -> ReflectionQuote
     func removeReflections(assetID: String, listingID: UUID, batchID: UUID,
                            idempotencyKey: UUID) async throws -> AIVideoJob
@@ -1308,6 +1311,9 @@ protocol APIClient: Sendable {
 
 // MARK: - Convenience overloads (protocol requirements can't carry defaults)
 extension APIClient {
+    func aiVideoOperation(operationID: UUID, listingServerID: UUID) async throws -> AIVideoJob? {
+        throw APIError.server(status: 503, code: "unsupported", message: "This connection cannot recover the saved video request. No new generation was started.")
+    }
     func publishListingVideo(listingID: UUID, assetID: String, record: ListingVideoRecord, operationID: UUID,
                              posterAssetID: String?, republish: Bool) async throws -> PublishedTour {
         throw APIError.server(status: 503, code: "unsupported", message: "Listing video publication isn't available on this connection. Your video is saved on this phone.")

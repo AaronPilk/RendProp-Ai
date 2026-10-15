@@ -4974,7 +4974,8 @@ struct PhotoStudioView: View {
     @State private var aiFailure: AIFailure?
     @State private var animatedClip: AnimatedClip?   // finished photo→reel clip
     @State private var customEditPhoto: EnhancedPhoto?   // photo awaiting a custom-prompt AI edit
-    @State private var animateTask: Task<Void, Never>?   // photo→clip poll; cancelled when the studio is left
+    @State private var animateTask: Task<Void, Never>?   // polling stops on leaving; its exact paid receipt remains
+    @State private var savedAnimations: [PhotoAnimationRecovery.Summary] = []
     @State private var wandPhoto: EnhancedPhoto?         // photo under the visible wand button
     @State private var showWandDialog = false            // wand → change-this-photo chooser
     @State private var stagePhoto: EnhancedPhoto?        // photo awaiting a staging style
@@ -5097,13 +5098,13 @@ struct PhotoStudioView: View {
             libraryImportCancellation?.cancel()
             // Initial anonymous connection is expected when the first AI tap
             // reconnects. A change from an established owner closes old media.
-            if photoOwner != nil, photoOwner != newOwner { animateTask?.cancel(); compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss() }
+            if photoOwner != nil, photoOwner != newOwner { animateTask?.cancel(); animatedClip = nil; savedAnimations = []; compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss() }
             photoOwner = newOwner
         }
         .onChange(of: auth.syncSessionRevision) { _ in libraryImportCancellation?.cancel() }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
             libraryImportCancellation?.cancel()
-            animateTask?.cancel(); compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss()
+            animateTask?.cancel(); animatedClip = nil; savedAnimations = []; compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss()
         }
         .onDisappear {
             if !isPresentingOverlay { animateTask?.cancel() }
@@ -5190,6 +5191,7 @@ struct PhotoStudioView: View {
                 shareAllButton
             }
 
+            pendingAnimationCard
             clipsCard
         }
     }
@@ -5304,6 +5306,7 @@ struct PhotoStudioView: View {
             }
 
             studioEditSection
+            pendingAnimationCard
 
             if isProcessing && batchRun == nil {
                 studioSpinnerRow
@@ -5921,14 +5924,11 @@ struct PhotoStudioView: View {
     private func animateWithSession(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
         localProcessing = true
-        processingText = "Making your video — about a minute…"
+        processingText = "Checking your saved video request…"
         Haptics.selection()
-        let api = model.api          // snapshot on the main actor
-        let targetDir = dir
-        let source = p.enhancedURL
-        let photoID = p.id
-        let listingLocalID = listing.id
-        let isSample = listing.isSample
+        let api = model.api
+        let targetDir = dir, source = p.enhancedURL, photoID = p.id
+        let listingLocalID = listing.id, isSample = listing.isSample
         let animationOwner = auth.userID, animationRevision = auth.syncSessionRevision
         let animationLibrary = WorkspaceContext.selectedOrgID
         let animationConsentRevision = AIConsent.shared.revocationRevision
@@ -5939,147 +5939,116 @@ struct PhotoStudioView: View {
                   auth.userID == animationOwner, auth.syncSessionRevision == animationRevision,
                   WorkspaceContext.selectedOrgID == animationLibrary,
                   let current = model.listings.first(where: { $0.id == listingLocalID }),
-                  current.cloudUnavailable != true else { throw CancellationError() }
+                  model.isInSelectedWorkspace(current), current.cloudUnavailable != true else { throw CancellationError() }
         }
-        let tapKey = UUID().uuidString
-        // Snapshot on the main actor: `space` reads the listing, and the drift
-        // rubric is scoped by trade (a gym's "equipment appeared" is not a
-        // home's).
         let spaceRawForDrift = space.rawValue
         busyPhotoIDs.insert(photoID)
         animateTask = Task {
-            defer { busyPhotoIDs.remove(photoID) }
+            defer {
+                busyPhotoIDs.remove(photoID)
+                localProcessing = false
+                refreshSavedAnimations()
+            }
             do {
                 try requireCurrent()
-                guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 1280, quality: 0.85) else {
+                guard let animationOwner, !animationOwner.isEmpty else { throw PhotoAnimationRecovery.Failure.unavailable }
+                let sourceSHA = PhotoAnimationRecovery.digest(try Data(contentsOf: source, options: .mappedIfSafe))
+                guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 1280, quality: 0.85),
+                      let jpeg = Data(base64Encoded: b64), !jpeg.isEmpty else {
                     throw AIImagePrep.error("Couldn't read that photo.")
                 }
                 try requireCurrent()
-                // Generated motion is altered media too (Wisconsin Act 69 covers
-                // generated video from 1 Jan 2027) — anchor it so it is
-                // disclosed and audited like every other AI asset.
+                // Generated motion retains this exact source version and account.
                 var serverListingID: UUID? = nil
-                if !isSample {
-                    serverListingID = await model.serverListingIDForCompliance(listingLocalID)
+                if !isSample { serverListingID = await model.serverListingIDForCompliance(listingLocalID) }
+                try requireCurrent()
+                guard isSample || serverListingID != nil else {
+                    throw AIImagePrep.error("Reconnect this home's listing before making a video. No generation was started.")
                 }
-                try requireCurrent()
-                let job = try await api.aiVideoReelClip(
-                    imageBase64: b64, mime: "image/jpeg",
-                    prompt: nil, seconds: 5,
-                    listingServerID: serverListingID, label: "Animated photo",
-                    idempotencyKey: tapKey)
-                try requireCurrent()
-
-                let deadline = Date().addingTimeInterval(10 * 60)
-                var remoteURL: URL?
-                while remoteURL == nil {
-                    guard Date() < deadline else {
-                        throw AIImagePrep.error("The clip took too long. Please try again.")
-                    }
-                    try await Task.sleep(nanoseconds: 6_000_000_000)
-                    try requireCurrent()
-                    guard Date() < deadline else { throw AIImagePrep.error("The clip took too long. Please try again.") }
-                    let status = try await api.aiVideoStatus(job)
-                    try requireCurrent()
-                    guard Date() < deadline else { throw AIImagePrep.error("The clip took too long. Please try again.") }
-                    switch status {
-                    case .processing:
-                        break   // keep waiting; the grid shows the in-flight label
-                    case .completed(let videoURL):
-                        remoteURL = videoURL
-                    case .failed(let message):
-                        throw AIImagePrep.error(message)
-                    }
+                guard PhotoAnimationRecovery.digest(try Data(contentsOf: source, options: .mappedIfSafe)) == sourceSHA else {
+                    throw PhotoAnimationRecovery.Failure.unavailable
                 }
-                guard let remoteURL else {
-                    throw AIImagePrep.error("The AI didn't return a clip. Try again.")
-                }
-
-                try requireCurrent()
-                let (downloaded, resp) = try await URLSession.shared.download(from: remoteURL)
-                defer { try? FileManager.default.removeItem(at: downloaded) }
-                try requireCurrent()
-                if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                    try? FileManager.default.removeItem(at: downloaded)
-                    throw AIImagePrep.error("Couldn't download the finished clip (HTTP \(http.statusCode)). Try again.")
-                }
-                // `.tmp` → `.mp4` before AVFoundation reads it (see ReelStudioView.clipPath).
-                let tmp = ReelStudioView.clipPath(forDownloaded: downloaded)
-                defer { try? FileManager.default.removeItem(at: tmp) }
-
-                // ── THE QUALITY GATE ────────────────────────────────────────
-                // Judge the clip before the agent ever sees it. `POST
-                // /ai-video/drift` compares the first, middle and last frames
-                // against the source still on five axes and answers whether it
-                // may be published; until this call existed the route had no
-                // callers at all and every clip was reported `unchecked,
-                // publishable: false` while the app used it anyway.
-                //
-                // FAIL CLOSED: a throw, an unknown status or `.unavailable`
-                // all hold, because "we could not tell whether the AI changed
-                // the house" is not "the AI did not change the house". The
-                // downloaded temp file is dropped on the floor rather than
-                // saved — a clip on disk that must not be published is a trap
-                // the agent finds a week later, next to their listing.
-                await MainActor.run { processingText = "Checking it against your photo…" }
-                let verdict: DriftVerdict
-                let frames = await ClipFrames.extract(from: tmp)
-                try requireCurrent()
-                if frames.isEmpty {
-                    // A clip this phone cannot read is held locally; nothing is
-                    // sent for an empty judgement.
-                    verdict = DriftVerdict(status: .unavailable, publishable: false, action: "hold",
-                                           message: "Couldn't read the finished clip on this phone, so it is being held rather than published. Your photo is untouched. Try again.",
-                                           reason: "no_frames")
-                } else {
-                    do {
+                let context = PhotoAnimationRecovery.Context(actor: animationOwner, library: animationLibrary,
+                    listing: listingLocalID, serverListing: serverListingID, photoVersion: photoID,
+                    sourceFile: source.lastPathComponent, sourceSHA256: sourceSHA, spaceType: spaceRawForDrift)
+                let dest = try await PhotoAnimationRecovery.run(context: context, directory: targetDir,
+                    prepare: { jpeg }, requireCurrent: requireCurrent,
+                    submit: { bytes, operationID in
+                        processingText = "Making your video…"
+                        return try await api.aiVideoReelClip(imageBase64: bytes.base64EncodedString(), mime: "image/jpeg",
+                            prompt: nil, seconds: 5, listingServerID: serverListingID,
+                            label: "Animated photo", idempotencyKey: operationID)
+                    }, poll: { job in
+                        processingText = "Checking your saved video…"
+                        return try await api.aiVideoStatus(job)
+                    }, download: { url in
+                        let (file, response) = try await URLSession.shared.download(from: url)
+                        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                            try? FileManager.default.removeItem(at: file)
+                            throw AIImagePrep.error("The saved video could not be downloaded. Check this same request again; no new generation will be started.")
+                        }
+                        return file
+                    }, judge: { job, bytes, clip, markDispatched in
+                        processingText = "Checking it against your photo…"
+                        let frames = await ClipFrames.extract(from: clip)
                         try requireCurrent()
-                        verdict = try await api.aiVideoDrift(DriftCheckRequest(
-                            requestID: job.requestId,
-                            kind: "reel",
-                            sourceBase64: b64,
-                            frames: frames,
-                            seconds: 5,
-                            spaceType: spaceRawForDrift,
-                            listingServerID: serverListingID,
-                            provenanceID: job.provenanceID))
-                    } catch {
-                        try requireCurrent()
-                        verdict = DriftVerdict(status: .unavailable, publishable: false,
-                                               action: "hold", message: "", reason: nil)
-                    }
-                }
+                        guard frames.count == 3 else {
+                            return DriftVerdict(status: .unavailable, publishable: false, action: "hold",
+                                message: "The saved video could not be decoded for quality review.", reason: "no_frames")
+                        }
+                        try markDispatched() // Durable marker only at the paid QC seam, after local frame extraction.
+                        return try await api.aiVideoDrift(DriftCheckRequest(requestID: job.requestId, kind: "reel",
+                            sourceBase64: bytes.base64EncodedString(), frames: frames, seconds: 5,
+                            spaceType: spaceRawForDrift, listingServerID: serverListingID, provenanceID: job.provenanceID))
+                    }, lookup: { operationID, listingID in
+                        try await api.aiVideoOperation(operationID: operationID, listingServerID: listingID)
+                    }, validateSource: {
+                        guard PhotoAnimationRecovery.digest(try Data(contentsOf: source, options: .mappedIfSafe)) == sourceSHA else {
+                            throw PhotoAnimationRecovery.Failure.unavailable
+                        }
+                    })
                 try requireCurrent()
-                guard verdict.mayUse else {
-                    try? FileManager.default.removeItem(at: tmp)
-                    Analytics.track("ai_clip_rejected",
-                                    ["kind": "animate", "status": verdict.status.rawValue])
-                    throw AIImagePrep.error(verdict.refusal)
+                guard PhotoAnimationRecovery.digest(try Data(contentsOf: source, options: .mappedIfSafe)) == sourceSHA else {
+                    throw PhotoAnimationRecovery.Failure.unavailable
                 }
-
-                let dest = targetDir.appendingPathComponent(
-                    "clip-\(photoID)-\(UUID().uuidString.prefix(4)).mp4")
-                try? FileManager.default.removeItem(at: dest)
-                try FileManager.default.moveItem(at: tmp, to: dest)
-
-                try await MainActor.run {
-                    try requireCurrent()
-                    localProcessing = false
-                    clips = SavedClip.loadAll(listingID: listingLocalID)   // the new clip joins the list
-                    animatedClip = AnimatedClip(url: dest)
-                    Haptics.success()
-                }
+                clips = SavedClip.loadAll(listingID: listingLocalID)
+                animatedClip = AnimatedClip(url: dest)
+                Haptics.success()
             } catch is CancellationError {
-                // The studio was left mid-animate — stop polling quietly, and
-                // never leave the spinner up (F-A-12).
-                await MainActor.run { localProcessing = false }
+                // Leaving stops this phone's work, never erases its paid receipt.
             } catch {
-                await MainActor.run {
-                    localProcessing = false
-                    guard (try? requireCurrent()) != nil else { return }
-                    aiFailure = AIFailure(error, title: "Couldn't animate the photo")
-                }
+                guard (try? requireCurrent()) != nil else { return }
+                aiFailure = AIFailure(error, title: "Saved photo video")
             }
+        }
+    }
+
+    private func refreshSavedAnimations() {
+        guard let owner = auth.userID else { savedAnimations = []; return }
+        savedAnimations = PhotoAnimationRecovery.pending(directory: dir, actor: owner,
+            library: WorkspaceContext.selectedOrgID, listing: listing.id)
+    }
+
+    @ViewBuilder private var pendingAnimationCard: some View {
+        if !savedAnimations.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Saved photo videos").font(.rpHeadline).foregroundStyle(Theme.ink)
+                Text("Check the same saved request. This does not start another generation.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                ForEach(savedAnimations, id: \.operationID) { saved in
+                    SecondaryButton(title: "Check saved video", systemImage: "arrow.clockwise",
+                                    isDisabled: isProcessing, isCompact: true) {
+                        let candidates = photos + photos.flatMap(\.history)
+                        guard let photo = candidates.first(where: {
+                            $0.id == saved.context.photoVersion && $0.enhancedURL.lastPathComponent == saved.context.sourceFile
+                        }) else {
+                            aiFailure = AIFailure(PhotoAnimationRecovery.Failure.unavailable, title: "Saved photo video")
+                            return
+                        }
+                        animate(photo)
+                    }.accessibilityIdentifier("photos.savedAnimation.\(saved.operationID.uuidString)")
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
         }
     }
 
@@ -6786,6 +6755,7 @@ struct PhotoStudioView: View {
     private func loadExisting() {
         photos = EnhancedPhoto.loadAll(listingID: listing.id)
         clips = SavedClip.loadAll(listingID: listing.id)
+        refreshSavedAnimations()
         // Resolve each family's metadata independently. A missing selected
         // image still stops gallery upload, but doesn't erase other badges.
         do {
@@ -9733,6 +9703,273 @@ struct PendingReelClips: Codable {
     static func clear(for id: UUID) {
         UserDefaults.standard.removeObject(forKey: key(id))
         try? FileManager.default.removeItem(at: directory(for: id))
+    }
+}
+
+/// Standalone Animate has its own journal: it must never adopt a Make Video
+/// receipt. A lost submission or quality reply remains uncertain, not a new tap.
+enum PhotoAnimationRecovery {
+    struct Context: Codable, Equatable, Sendable {
+        let actor: String
+        let library: UUID?
+        let listing: UUID
+        let serverListing: UUID?
+        let photoVersion: String
+        let sourceFile: String
+        let sourceSHA256: String
+        let spaceType: String
+    }
+    struct RefusedOperation: Codable, Sendable {
+        let operationID: UUID
+        let status: Int
+    }
+    struct Entry: Codable, Sendable {
+        let schema: Int
+        let context: Context
+        let operationID: UUID
+        let sourceJPEG: Data
+        let jpegSHA256: String
+        var dispatched = false
+        var job: AIVideoJob?
+        var clipSHA256: String?
+        var qualityDispatched = false
+        var qualityPassed: Bool?
+        var message: String?
+        var completed = false
+        var refusedBeforeAcceptance: Bool? = nil
+        var refusedStatus: Int? = nil
+        var refusedOperations: [RefusedOperation]? = nil
+    }
+    struct Summary: Sendable {
+        let context: Context
+        let operationID: UUID
+        let dispatched: Bool
+        let job: AIVideoJob?
+    }
+    enum Failure: Error, LocalizedError {
+        case unavailable, submissionUnknown, qualityUnknown, waiting, failed(String)
+        var errorDescription: String? {
+            switch self {
+            case .unavailable:
+                return "The saved video request could not be verified. Your photo and request have been kept. Contact support before starting another video."
+            case .submissionUnknown:
+                return "The video submission is saved, but its reply was not received. No new generation will be started. Contact support to recover this saved request."
+            case .qualityUnknown:
+                return "This video's quality check is saved but could not be confirmed. It is held safely; checking again will not purchase another generation or quality check."
+            case .waiting:
+                return "This video is still saved. Return to this photo and check its video again; no new generation will be started."
+            case .failed(let message): return message
+            }
+        }
+    }
+    static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+    private static func key(_ context: Context) -> String {
+        // The source hash is checked inside the record, not used to evade an
+        // uncertain operation by changing the same version's bytes.
+        digest(try! JSONEncoder().encode([context.actor, context.library?.uuidString ?? "local",
+                                          context.listing.uuidString, context.photoVersion]))
+    }
+    private static func folder(_ directory: URL) -> URL {
+        directory.appendingPathComponent(".photo-animation-requests", isDirectory: true)
+    }
+    static func file(_ context: Context, directory: URL) -> URL {
+        folder(directory).appendingPathComponent(key(context) + ".json")
+    }
+    static func load(_ context: Context, directory: URL) throws -> Entry? {
+        let url = file(context, directory: directory)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true,
+              let size = values.fileSize, (1...13_000_000).contains(size) else { throw Failure.unavailable }
+        let entry = try JSONDecoder().decode(Entry.self, from: Data(contentsOf: url))
+        guard entry.schema == 1, entry.context == context,
+              !context.actor.isEmpty, !context.photoVersion.isEmpty,
+              context.sourceFile == URL(fileURLWithPath: context.sourceFile).lastPathComponent,
+              context.sourceSHA256.count == 64, (1...9_000_000).contains(entry.sourceJPEG.count),
+              digest(entry.sourceJPEG) == entry.jpegSHA256,
+              entry.job == nil || valid(entry.job!),
+              !entry.completed || (entry.qualityPassed == true && entry.clipSHA256 != nil) else { throw Failure.unavailable }
+        return entry
+    }
+    private static func valid(_ job: AIVideoJob) -> Bool {
+        job.kind == "reel" && !job.requestId.isEmpty && job.requestId.utf8.count <= 200
+            && [job.statusUrl, job.responseUrl].allSatisfy {
+                guard let url = URL(string: $0) else { return false }
+                return url.scheme == "https" && url.host != nil && url.user == nil && url.password == nil
+            }
+    }
+    private static func save(_ entry: Entry, directory: URL) throws {
+        let target = file(entry.context, directory: directory)
+        let data = try JSONEncoder().encode(entry)
+        guard data.count <= 13_000_000 else { throw Failure.unavailable }
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        try data.write(to: target, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        #if os(iOS)
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: target.path)
+        #endif
+        var excluded = target.deletingLastPathComponent()
+        var values = URLResourceValues(); values.isExcludedFromBackup = true
+        try excluded.setResourceValues(values)
+        guard try Data(contentsOf: target) == data else { throw Failure.unavailable }
+    }
+    static func pending(directory: URL, actor: String, library: UUID?, listing: UUID) -> [Summary] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder(directory), includingPropertiesForKeys: nil)) ?? []
+        return files.compactMap { url in
+            guard url.pathExtension == "json", let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey]),
+                  values.isSymbolicLink != true, let size = values.fileSize, (1...13_000_000).contains(size),
+                  let bytes = try? Data(contentsOf: url), let entry = try? JSONDecoder().decode(Entry.self, from: bytes),
+                  entry.context.actor == actor, entry.context.library == library, entry.context.listing == listing,
+                  !entry.completed, url.resolvingSymlinksInPath().path == file(entry.context, directory: directory).resolvingSymlinksInPath().path,
+                  let verified = try? load(entry.context, directory: directory) else { return nil }
+            return Summary(context: verified.context, operationID: verified.operationID, dispatched: verified.dispatched, job: verified.job)
+        }.sorted { $0.operationID.uuidString < $1.operationID.uuidString }
+    }
+    private static func isDefinitiveRefusal(_ error: Error) -> Bool {
+        guard let api = error as? APIError, let status = api.status else { return false }
+        return (400...499).contains(status) && status != 408 && status != 409
+    }
+    @MainActor private static var active: Set<String> = []
+
+    /// Every provider boundary is injected so the production persistence and
+    /// race decisions execute in focused tests without making paid requests.
+    @MainActor static func run(context: Context, directory: URL,
+        prepare: () async throws -> Data,
+        requireCurrent: @escaping () throws -> Void,
+        submit: (Data, String) async throws -> AIVideoJob,
+        poll: (AIVideoJob) async throws -> AIVideoStatus,
+        download: (URL) async throws -> URL,
+        judge: (AIVideoJob, Data, URL, () throws -> Void) async throws -> DriftVerdict,
+        lookup: ((UUID, UUID) async throws -> AIVideoJob?)? = nil,
+        validateSource: () throws -> Void = {},
+        now: () -> Date = Date.init,
+        pause: () async throws -> Void = { try await Task.sleep(nanoseconds: 6_000_000_000) }) async throws -> URL {
+        try requireCurrent()
+        let identity = file(context, directory: directory).path
+        guard active.insert(identity).inserted else { throw Failure.waiting }
+        defer { active.remove(identity) }
+        var entry: Entry
+        let saved = try load(context, directory: directory)
+        if let saved { entry = saved }
+        else {
+            let jpeg = try await prepare()
+            try requireCurrent()
+            guard (1...9_000_000).contains(jpeg.count) else { throw Failure.unavailable }
+            entry = Entry(schema: 1, context: context, operationID: UUID(), sourceJPEG: jpeg, jpegSHA256: digest(jpeg))
+            try save(entry, directory: directory) // Exact input and operation BEFORE paid dispatch.
+        }
+        if entry.refusedBeforeAcceptance == true {
+            guard !entry.dispatched, entry.job == nil, !entry.qualityDispatched,
+                  let status = entry.refusedStatus, (400...499).contains(status), status != 408, status != 409 else { throw Failure.unavailable }
+            var history = entry.refusedOperations ?? []
+            history.append(RefusedOperation(operationID: entry.operationID, status: status))
+            let next = Entry(schema: 1, context: context, operationID: UUID(), sourceJPEG: entry.sourceJPEG, jpegSHA256: entry.jpegSHA256)
+            entry = next; entry.refusedOperations = history
+            try save(entry, directory: directory) // Only this new explicit user check retires the refused key.
+        }
+        let candidate = directory.appendingPathComponent(".animation-\(entry.operationID.uuidString).mp4")
+        let finished = directory.appendingPathComponent("clip-\(entry.operationID.uuidString).mp4")
+        if entry.completed {
+            guard let expected = entry.clipSHA256, let bytes = try? Data(contentsOf: finished), digest(bytes) == expected else { throw Failure.unavailable }
+            try requireCurrent(); return finished
+        }
+        if let message = entry.message { throw Failure.failed(message) }
+        if saved != nil, entry.dispatched, entry.job == nil, let listing = context.serverListing, let lookup {
+            try requireCurrent()
+            if let recovered = try await lookup(entry.operationID, listing) {
+                guard valid(recovered), entry.job == nil || entry.job!.requestId == recovered.requestId,
+                      entry.job?.provenanceID == nil || entry.job?.provenanceID == recovered.provenanceID else { throw Failure.unavailable }
+                entry.job = recovered; try save(entry, directory: directory)
+            }
+            try requireCurrent()
+        }
+        if entry.job == nil {
+            guard !entry.dispatched else { throw Failure.submissionUnknown }
+            try requireCurrent()
+            entry.dispatched = true; try save(entry, directory: directory)
+            let job: AIVideoJob
+            do { job = try await submit(entry.sourceJPEG, entry.operationID.uuidString) }
+            catch is CancellationError { throw CancellationError() }
+            catch {
+                if Self.isDefinitiveRefusal(error), let api = error as? APIError {
+                    entry.dispatched = false; entry.refusedBeforeAcceptance = true; entry.refusedStatus = api.status
+                    try save(entry, directory: directory)
+                    throw error // No automatic retry and no server financial-state mutation.
+                }
+                throw Failure.submissionUnknown
+            }
+            guard valid(job) else { throw Failure.submissionUnknown }
+            entry.job = job
+            try save(entry, directory: directory) // Retain202 even if actor/cancellation changed while awaiting it.
+        }
+        try requireCurrent()
+        guard let job = entry.job else { throw Failure.submissionUnknown }
+        var clip: URL?
+        if let expected = entry.clipSHA256 {
+            for url in [candidate, finished] where FileManager.default.fileExists(atPath: url.path) {
+                guard digest(try Data(contentsOf: url)) == expected else { throw Failure.unavailable }
+                clip = url; break
+            }
+        }
+        if clip == nil {
+            let deadline = now().addingTimeInterval(10 * 60)
+            while clip == nil {
+                try requireCurrent()
+                guard now() < deadline else { throw Failure.waiting }
+                let status = try await poll(job)
+                try requireCurrent()
+                switch status {
+                case .processing:
+                    try await pause()
+                case .failed:
+                    entry.message = "The service could not finish this saved video. Your photo and paid request are retained; no new generation was started."
+                    try save(entry, directory: directory); throw Failure.failed(entry.message!)
+                case .completed(let url):
+                    let temporary = try await download(url)
+                    defer { try? FileManager.default.removeItem(at: temporary) }
+                    try requireCurrent()
+                    let bytes = try Data(contentsOf: temporary, options: .mappedIfSafe)
+                    guard !bytes.isEmpty, bytes.count <= 256 * 1024 * 1024 else { throw Failure.unavailable }
+                    let downloadedSHA = digest(bytes)
+                    guard entry.clipSHA256 == nil || entry.clipSHA256 == downloadedSHA else { throw Failure.unavailable }
+                    try bytes.write(to: candidate, options: .atomic)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: candidate.path)
+                    #if os(iOS)
+                    try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: candidate.path)
+                    #endif
+                    entry.clipSHA256 = downloadedSHA; try save(entry, directory: directory)
+                    clip = candidate
+                }
+            }
+        }
+        guard let clip else { throw Failure.waiting }
+        if entry.qualityPassed == nil {
+            guard !entry.qualityDispatched else { throw Failure.qualityUnknown }
+            try requireCurrent()
+            let verdict = try await judge(job, entry.sourceJPEG, clip, {
+                try requireCurrent()
+                entry.qualityDispatched = true; try save(entry, directory: directory)
+            })
+            guard entry.qualityDispatched || !verdict.mayUse else { throw Failure.unavailable }
+            entry.qualityPassed = verdict.mayUse
+            if !verdict.mayUse {
+                entry.message = "This saved video is held by its quality review. Your photo is unchanged. No new generation or quality check will be started."
+            }
+            try save(entry, directory: directory) // Exact verdict is durable before a context-dependent UI update.
+        }
+        try requireCurrent()
+        guard entry.qualityPassed == true else { throw Failure.failed(entry.message ?? Failure.qualityUnknown.localizedDescription) }
+        try validateSource()
+        if clip != finished {
+            guard !FileManager.default.fileExists(atPath: finished.path) else { throw Failure.unavailable }
+            try FileManager.default.moveItem(at: clip, to: finished)
+        }
+        guard digest(try Data(contentsOf: finished)) == entry.clipSHA256 else { throw Failure.unavailable }
+        entry.completed = true; try save(entry, directory: directory)
+        try requireCurrent(); return finished
     }
 }
 
