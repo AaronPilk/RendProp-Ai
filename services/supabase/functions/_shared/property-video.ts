@@ -1,6 +1,6 @@
 import { assert,HttpError,throwRpc } from './http.ts';
 import { driftLineageKey } from './drift.ts';
-import { probeMP4Video } from '../ai-video/mp4video.ts';
+import { probeComposedMP4Video,probeMP4Video } from '../ai-video/mp4video.ts';
 const UUID=/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 type Rpc=(name:string,args:Record<string,unknown>)=>PromiseLike<{data:unknown;error:{message:string}|null}>;
 type Head={exists:boolean;bytes:number|null;etag:string|null;contentType:string|null};
@@ -55,9 +55,18 @@ export async function attestPropertyVideo(actor:string,listing:string,asset:stri
  try{
   const c=await owned(actor,listing,asset,'video',deps),signal=AbortSignal.timeout(20000);
   assert(c.bucket==='renders'&&c.content_type.split(';')[0].trim().toLowerCase()==='video/mp4',400,'Choose the saved H.264 property video.');
+  // Only a registered, ready server master may use the compositor's exact
+  // CFR30 presentation-window verifier. A filename or client claim is not
+  // authority. This existing read-only RPC repeats source/QC/withdrawal checks;
+  // p_bytes=0 performs no delivery-budget debit. Native uploads stay strict.
+  const registered=await deps.rpc('background_video_delivery',{p_actor:actor,p_org:c.org_id,p_listing:listing,p_key:c.storage_key,p_bytes:0});
+  if(registered.error)throwRpc(registered.error.message);
+  const master=registered.data as Record<string,unknown>|null;
+  if(master!==null)assert(master&&master.kind==='registered_background_video'&&master.asset_id===asset&&master.bytes===c.bytes
+   &&typeof c.sha256==='string'&&/^[a-f0-9]{64}$/.test(c.sha256)&&master.sha256===c.sha256,409,'The registered property video receipt changed.');
   assert(same(await deps.head(c.bucket,c.storage_key,signal),c),409,'The finalized video changed. Upload it again.');
   const signed=await deps.sign(c.bucket,c.storage_key,300);
-  const info=await probeMP4Video(signed,async(url,init)=>{
+  const info=await (master?probeComposedMP4Video:probeMP4Video)(signed,async(url,init)=>{
    assert(url===signed&&init.method==='GET'&&init.redirect==='error',503,'Unexpected property video read.');
    const h=new Headers(init.headers);h.set('If-Match',c.etag);
    const response=await deps.fetch(url,{...init,headers:h,signal:AbortSignal.any([signal,...(init.signal?[init.signal]:[])])});
