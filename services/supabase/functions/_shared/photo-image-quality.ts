@@ -26,3 +26,15 @@ export function ownerPhotoPro4KInputAllowance(input:unknown):number|null {
  const extra=value.extra&&typeof value.extra==="object"&&!Array.isArray(value.extra)?value.extra as Record<string,unknown>:{};
  return extra.owner_photo_pro_4k===true?photo4KInputAllowance(input):null;
 }
+
+export const NORMAL_PHOTO_PRO4K_PROFILE="gemini-pro-4k-preservation-v1" as const;
+/** Distinct from the temporary owner-comparison marker. Constructed only after
+ * normal server policy + isolated eligible route selection, never from a DTO. */
+export function normalPhotoPro4KInputAllowance(input:unknown):number|null {
+ const value=input&&typeof input==="object"&&!Array.isArray(input)?input as Record<string,unknown>:{};
+ const extra=value.extra&&typeof value.extra==="object"&&!Array.isArray(value.extra)?value.extra as Record<string,unknown>:{};
+ return ["photo.stage","photo.declutter"].includes(String(value.task))&&extra.photo_preservation_profile===NORMAL_PHOTO_PRO4K_PROFILE?photo4KInputAllowance(input):null;
+}
+export function photoPro4KInputAllowance(input:unknown):number|null {
+ return ownerPhotoPro4KInputAllowance(input)??normalPhotoPro4KInputAllowance(input);
+}

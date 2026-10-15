@@ -19,7 +19,7 @@
 import type { RouteStep } from "../router.ts";
 import { PHOTO_OUTPUT_MAX_WIRE_BYTES } from "../photo-output-policy.ts";
 import { paramsOf } from "../router.ts";
-import { photo2KInputAllowance, photo4KInputAllowance, ownerPhotoPro4KInputAllowance } from "../photo-image-quality.ts";
+import { photo2KInputAllowance, photo4KInputAllowance, photoPro4KInputAllowance } from "../photo-image-quality.ts";
 import type { DoneState, ErrorClass, GenerateInput, JobRef, JobState, ProviderAdapter } from "./types.ts";
 import {
   BUDGETS,
@@ -158,8 +158,8 @@ async function submitGeminiImage(step:RouteStep,input:GenerateInput,budget?:Phot
       throw new ProviderError(PROVIDER, "validation", "The 2K comparison input bound was not verified.");
     if (imageSize === "4K" && photo4KInputAllowance(input) === null)
       throw new ProviderError(PROVIDER, "validation", "The 4K photo input bound was not verified.");
-    if (step.model === "gemini-3-pro-image" && (imageSize !== "4K" || ownerPhotoPro4KInputAllowance(input) === null))
-      throw new ProviderError(PROVIDER,"validation","The Pro4K comparison requires its scoped server-prepared input.");
+    if (step.model === "gemini-3-pro-image" && (imageSize !== "4K" || photoPro4KInputAllowance(input) === null))
+      throw new ProviderError(PROVIDER,"validation","The Pro4K edit requires its verified server-prepared input.");
     const verified4K=imageSize==="4K"&&photo4KInputAllowance(input)!==null;
     const timeoutMs=verified4K?Math.min(GEMINI_PHOTO_4K_SUBMIT_MS,budget?Math.max(1,budget.deadline-Date.now()):GEMINI_PHOTO_4K_SUBMIT_MS):BUDGETS.submitMs;
     let data:Record<string,unknown>;

@@ -95,6 +95,7 @@ import { fundingContext, fundedAttempt, mediaAttemptQuote, SavedFundingResponse,
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
 import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput, ownerQaPhotoPro4KStep, prepareOwnerQaPhotoPro4KInput } from "./owner-photo-qa.ts";
 import { preparePhoto4KInput, photo4KChain, assertPhoto4KGeometry, assertPhotoPro4KGeometry } from "./photo-quality.ts";
+import {normalPhotoQualityProfile,normalPhotoQualityRoutes,prepareNormalPhotoPro4KInput,priceNormalPhotoQualityRoute,type NormalPhotoQualityProfile} from "./normal-photo-quality.ts";
 import { priceMaskedPhotoChain, isMaskedFillStep } from "./masked-photo-pricing.ts";
 import { supportsStagingReference,submitPreparedGeminiPhoto4K } from "../_shared/providers/gemini.ts";
 import {
@@ -857,8 +858,11 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     const maskMime = String(body.mask_mime ?? "image/png").split(";")[0].trim().toLowerCase();
     const routerOn = await routerEnabled();
     let steps: RouteStep[];
+    let normalQualityProfile:NormalPhotoQualityProfile|null=null;
     try {
-      steps = await resolveChain(
+      normalQualityProfile=await normalPhotoQualityProfile(task,maskB64!==null);
+      const routeContext={plan,needs:needsForPhotoEdit(edit,maskB64!==null),carries_customer_media:true};
+      steps = normalQualityProfile?await normalPhotoQualityRoutes(normalQualityProfile,routeContext):await resolveChain(
         task,
         {
           plan,
@@ -918,8 +922,12 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       chain = [ownerPhotoStep];
     }
     const normalPhoto4K = !ownerPhotoStep && !maskB64;
+    const normalPhotoPro4K=normalPhoto4K&&normalQualityProfile!==null;
     if (normalPhoto4K) {
-      try { genInput = preparePhoto4KInput(genInput); chain = photo4KChain(chain, genInput); }
+      try {
+        if(normalPhotoPro4K){genInput=prepareNormalPhotoPro4KInput(genInput,normalQualityProfile!);chain=priceNormalPhotoQualityRoute(chain,genInput);}
+        else{genInput = preparePhoto4KInput(genInput); chain = photo4KChain(chain, genInput);}
+      }
       catch(error) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw error; }
     }
     const timedPhoto4K=normalPhoto4K||!!ownerPhotoPro4KStep;
@@ -961,9 +969,21 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
             throw new HttpError(403,"The temporary photo comparison authorization ended. No new edit was sent.","forbidden");
         }
         const adapter = adapterFor(step.provider);
-        const ref = await fundedAttempt(funding, `${task}:${chain.indexOf(step)}`, step, genInput, mediaAttemptQuote(step, genInput), () => timedPhoto4K
-          ? submitPreparedGeminiPhoto4K(step,genInput,{deadline:requestDeadline-PHOTO_MAIN_PERSIST_RESERVE_MS,signal:req.signal})
-          : adapter.submit(step, genInput));
+        const ref = await fundedAttempt(funding, `${task}:${chain.indexOf(step)}`, step, genInput, mediaAttemptQuote(step, genInput), async() => {
+          if(normalPhotoPro4K){
+            // A fresh reservation is not permission to run a profile/route that
+            // was withdrawn while source preparation or admission was waiting.
+            try{
+              const freshProfile=await normalPhotoQualityProfile(task,false);
+              assert(freshProfile&&freshProfile.profile===normalQualityProfile!.profile,503,"The photo quality profile changed.");
+              const fresh=await normalPhotoQualityRoutes(freshProfile,{plan,needs:needsForPhotoEdit(edit,false),carries_customer_media:true});
+              assert(fresh.some(row=>row.route_id===step.route_id&&row.model===step.model),503,"The eligible photo quality route changed.");
+            }catch{throw new ProviderError(step.provider,"validation","Preservation-quality authorization ended before dispatch. No alternative model was sent.",0,true);}
+          }
+          return timedPhoto4K
+            ? await submitPreparedGeminiPhoto4K(step,genInput,{deadline:requestDeadline-PHOTO_MAIN_PERSIST_RESERVE_MS,signal:req.signal})
+            : await adapter.submit(step, genInput);
+        });
         const done = await awaitJob(adapter, ref, BUDGETS.totalImageMs);
         // One download, reused for both the inline answer and the R2 copy.
         const local = await inlineImageResult(step.provider, done);
@@ -999,7 +1019,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       feature: "photo_edit",
       step,
       images: 1,
-      meta: { edit, space_type: space, ...((ownerPhotoStep || normalPhoto4K) ? {image_size:timedPhoto4K?"4K":"2K",owner_quality_comparison:!!ownerPhotoStep,cost_basis:ownerPhotoPro4KStep?"complete_input_4096_text_2000_pro_image_bound":normalPhoto4K?"complete_input_4096_text_2520_image_bound":"complete_input_4096_text_1680_image_bound",input_token_allowance:genInput.extra?.photo_input_allowance ?? 8192} : {}), ...(maskB64&&isMaskedFillStep(step)?{cost_basis:"source_megapixels_rounded_up_5_cents_bound",priced_megapixels:step.unit_cents/5}:{}), request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
+      meta: { edit, space_type: space, ...((ownerPhotoStep || normalPhoto4K) ? {image_size:timedPhoto4K?"4K":"2K",owner_quality_comparison:!!ownerPhotoStep,cost_basis:ownerPhotoPro4KStep||normalPhotoPro4K?"complete_input_4096_text_2000_pro_image_bound":normalPhoto4K?"complete_input_4096_text_2520_image_bound":"complete_input_4096_text_1680_image_bound",input_token_allowance:genInput.extra?.photo_input_allowance ?? 8192,...(normalPhotoPro4K?{quality_profile:normalQualityProfile!.profile}:{} )} : {}), ...(maskB64&&isMaskedFillStep(step)?{cost_basis:"source_megapixels_rounded_up_5_cents_bound",priced_megapixels:step.unit_cents/5}:{}), request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
         ...(referenceB64 ? { input_images: 2, staging_furniture_reference: true,
           ...(timedPhoto4K ? {} : {cost_basis: "route_output_image_estimate_input_tokens_unmodeled"}) } : {}) },
     });
@@ -1014,7 +1034,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       phase="evidence_persistence";
       quality=await retainPhotoCandidate(adminClient(),quality,decoded,{stage:`${task}:${chain.indexOf(step)}`,provider:step.provider,model:step.model});
       phase="photo_output_geometry";
-      if(ownerPhotoPro4KStep)assertPhotoPro4KGeometry(decoded);
+      if(ownerPhotoPro4KStep||normalPhotoPro4K)assertPhotoPro4KGeometry(decoded);
       else if(ownerPhotoStep)assertOwnerQaPhotoOutput(outB64,outMime);
       else if(normalPhoto4K)assertPhoto4KGeometry(decoded);
     }catch(error){

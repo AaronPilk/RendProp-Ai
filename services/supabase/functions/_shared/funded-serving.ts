@@ -9,7 +9,7 @@ import { anthropicMaxTokens } from "./providers/anthropic.ts";
 import { openaiChatConfig } from "./providers/openai.ts";
 import { geminiImageGenerationConfig } from "./providers/gemini.ts";
 import type { GenerateInput } from "./providers/types.ts";
-import { photo2KInputAllowance, photo4KInputAllowance, ownerPhotoPro4KInputAllowance } from "./photo-image-quality.ts";
+import { photo2KInputAllowance, photo4KInputAllowance, photoPro4KInputAllowance, normalPhotoPro4KInputAllowance } from "./photo-image-quality.ts";
 
 export class FundingAdmissionError extends HttpError { readonly funding_admission = true; }
 export class SavedFundingResponse extends HttpError {
@@ -142,7 +142,7 @@ export async function boundedPhotoChain(context: FundingContext, steps: RouteSte
  if(await servingMode()==="ceiling")return steps;
  if(await unlimitedSponsored(context))return steps;
  if(input.extra?.photo_quality_4k===true){
-  if(steps.length!==1||steps[0].task!==input.task||steps[0].provider!=="gemini"||!(steps[0].model==="gemini-3.1-flash-image"||(steps[0].model==="gemini-3-pro-image"&&ownerPhotoPro4KInputAllowance(input)!==null))||input.mask_url||!photo4KInputAllowance(input)||!mediaAttemptQuote(steps[0],input))
+  if(steps.length!==1||steps[0].task!==input.task||steps[0].provider!=="gemini"||!(steps[0].model==="gemini-3.1-flash-image"||(steps[0].model==="gemini-3-pro-image"&&photoPro4KInputAllowance(input)!==null))||input.mask_url||!photo4KInputAllowance(input)||!mediaAttemptQuote(steps[0],input))
    throw new FundingAdmissionError(503,"This photo tool has no complete bounded 4K serving route. No edit was sent.","upstream");
   return steps;
  }
@@ -266,8 +266,8 @@ export function ceilingVerifiedQuote(step:Pick<RouteStep,"provider"|"model">,inp
  const model=step.model.replace(/^fal-ai\//,"");
  const bound=(cents:number)=>({cents:Math.ceil(cents*10000)/10000,version:"documented-bound-20261008"});
  if(step.provider==="gemini"&&model==="gemini-3-pro-image"){
-  const allowance=ownerPhotoPro4KInputAllowance(input);
-  return data.mask_url||paramsOf(step as RouteStep)?.image_size!=="4K"||allowance===null?null:geminiPro4KGenerationQuote(geminiImageGenerationConfig(model,"4K"),allowance);
+  const allowance=photoPro4KInputAllowance(input);
+  return data.mask_url||paramsOf(step as RouteStep)?.image_size!=="4K"||allowance===null?null:pro4KInputQuote(geminiImageGenerationConfig(model,"4K"),allowance,input);
  }
  if(step.provider==="gemini"&&model==="gemini-3.1-flash-image"){
   const size=paramsOf(step as RouteStep)?.image_size;
@@ -437,10 +437,15 @@ export function geminiPro4KGenerationQuote(config:Record<string,unknown>,inputAl
  return {cents:(inputAllowance*2+Number(config.maxOutputTokens)*12+2000*120)/10000,version:"owner-photo-pro-4k-standard-20261015"};
 }
 
+function pro4KInputQuote(config:Record<string,unknown>,allowance:number,input:unknown):AttemptQuote|null{
+ const quote=geminiPro4KGenerationQuote(config,allowance);
+ return quote&&normalPhotoPro4KInputAllowance(input)!==null?{...quote,version:"photo-preservation-pro4k-standard-20261015"}:quote;
+}
+
 export function mediaAttemptQuote(step:RouteStep,input:GenerateInput):AttemptQuote|null {
  if(step.provider==="gemini"&&step.model==="gemini-3-pro-image"){
-  const allowance=ownerPhotoPro4KInputAllowance(input);
-  return input.mask_url||paramsOf(step)?.image_size!=="4K"||allowance===null?null:geminiPro4KGenerationQuote(geminiImageGenerationConfig(step.model,"4K"),allowance);
+  const allowance=photoPro4KInputAllowance(input);
+  return input.mask_url||paramsOf(step)?.image_size!=="4K"||allowance===null?null:pro4KInputQuote(geminiImageGenerationConfig(step.model,"4K"),allowance,input);
  }
  if(step.provider==="gemini"&&step.model==="gemini-3.1-flash-image")
   {

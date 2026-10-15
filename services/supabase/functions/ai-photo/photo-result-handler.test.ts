@@ -67,6 +67,14 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
  import {PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from ${url("./photo-qc-wait.ts")};
  import {preparePhoto4KInput,photo4KChain,assertPhoto4KGeometry,assertPhotoPro4KGeometry} from ${url("./photo-quality.ts")};
+ import {normalPhotoQualityProfile as actualNormalProfile,normalPhotoQualityRoutes as actualNormalRoutes,prepareNormalPhotoPro4KInput,priceNormalPhotoQualityRoute} from ${url("./normal-photo-quality.ts")};
+ import {orderSteps} from ${url("../_shared/router.ts")};
+ const normalPhotoQualityProfile=(task,masked)=>actualNormalProfile(task,masked,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>{state.normalLookups=(state.normalLookups??0)+1;return{data:{value:state.normalWithdraw&&state.normalLookups>1?{enabled:false}:state.normalProfile??null},error:null};}})})})});
+ const normalPhotoQualityRoutes=(profile,context)=>actualNormalRoutes(profile,context,async(task,ctx)=>{
+  state.normalResolves=(state.normalResolves??0)+1;
+  const rows=state.normalRows??[{route_id:"normal-quality-route",task,position:1,provider:"gemini",model:"gemini-3-pro-image",unit:"image",unit_cents:30.5536,capabilities:["prompt-edit","fidelity","4K"],max_latency_s:120,min_plan:"free",same_model_as:null,privacy_tier:"retained_30d",enabled:true,retire_after:null,params:{image_size:"4K"}}];
+  return orderSteps(rows.filter(row=>row.enabled===true),ctx,new Map());
+ });
  import {priceMaskedPhotoChain,isMaskedFillStep} from ${url("./masked-photo-pricing.ts")};
  import {ownerQaPhotoStep as actualOwnerQaPhotoStep,prepareOwnerQaPhotoInput,assertOwnerQaPhotoOutput,ownerQaPhotoPro4KStep as actualOwnerQaPhotoPro4KStep,prepareOwnerQaPhotoPro4KInput} from ${url("./owner-photo-qa.ts")};
  const ownerQaPhotoStep=(args)=>actualOwnerQaPhotoStep(args,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{value:{enabled:false}},error:null})})})})});
@@ -97,7 +105,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const guardHelper=async()=>{state.charges++;return{orgId:state.org};},refundHelperCharge=async()=>{},improvePrompt=async()=>{state.helperDispatch++;return state.helperText;};
  const step={route_id:"fixture-route",provider:"gemini",model:MODEL,task:"photo.twilight",unit:"output_image",unit_cents:1,capabilities:[],max_latency_s:60,min_plan:"free",privacy_tier:"retained_30d",enabled:true};
  const routerEnabled=async()=>state.router,resolveChain=async(task)=>state.routes??[{...step,task}],legacyPhotoStep=(task)=>({...step,task}),needsForPhotoEdit=()=>[];
- const guardEdit=async()=>{state.charges++;return{orgId:state.org,plan:"pro",monthlyKey:"monthly",burstKey:"burst"};},refundEditCharge=async()=>{state.refunds++;};
+ const guardEdit=async()=>{state.charges++;return{orgId:state.org,plan:state.plan??"pro",monthlyKey:"monthly",burstKey:"burst"};},refundEditCharge=async()=>{state.refunds++;};
  const adapterFor=()=>({submit:async(_step,input)=>{state.submits++;state.prompts.push(input.prompt);state.inputs.push(structuredClone(input));state.afterSubmit?.();if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/jpeg",result_url:"data:image/jpeg;base64,"+state.output};};
  const submitPreparedGeminiPhoto4K=(step,input,budget)=>{state.providerDeadline=budget.deadline;state.providerSignal=budget.signal;return adapterFor().submit(step,input);};
  const recordRoutedAiCost=async(_db,args)=>{state.costs.push(structuredClone(args));},recordProvenance=async()=>({id:"synthetic-provenance",recorded:true,disclosure:"Synthetic disclosure"});
@@ -676,4 +684,37 @@ Deno.test("actual owner Pro4K rejects Flash-only extreme output after recording 
  const f=await fixture(false,null,true);try{f.state.proGrant=proGrantForHandler();f.state.output=outputJPEG(2048,8192);
   const response=await f.run(f.request({edit:"stage",style:"contemporary"}));assert(response.status!==200);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.quality.evidence.state,"hold");assertEquals(f.state.quality.evidence.failure.phase,"photo_output_geometry");
  }finally{f.close();}
+});
+Deno.test("ordinary nonadmin Starter Stage/Declutter use isolated Pro4K without sponsor or owner grant and preserve replay",async()=>{
+ for(const edit of["stage","declutter"]){const f=await fixture(false,null,true);try{
+  f.state.plan="starter";f.state.qa=false;f.state.proAdmin=false;f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1"};f.state.output=outputJPEG(3584,4800);
+  const request=()=>f.request({edit,...(edit==="stage"?{style:"contemporary"}:{})});
+  const response=await f.run(request());assertEquals(response.status,409);assertEquals((await response.json()).code,"photo_quality_pending");
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.costs[0].step.task,"photo."+edit);assertEquals(f.state.costs[0].step.route_id,"normal-quality-route");assertEquals(f.state.costs[0].step.model,"gemini-3-pro-image");
+  assertEquals(f.state.costs[0].meta.owner_quality_comparison,false);assertEquals(f.state.costs[0].meta.quality_profile,"gemini-pro-4k-preservation-v1");assertEquals(f.state.costs[0].meta.cost_basis,"complete_input_4096_text_2000_pro_image_bound");
+  assertEquals(f.state.inputs[0].extra.owner_photo_pro_4k,undefined);assertEquals(f.state.inputs[0].extra.photo_preservation_profile,"gemini-pro-4k-preservation-v1");
+  assertEquals(f.state.holdArguments[0].p_tariff_version,"photo-preservation-pro4k-standard-20261015");assertEquals(f.state.quality.evidence.generation_model,"gemini-3-pro-image");
+  f.state.normalProfile={enabled:false};assertEquals((await f.run(request())).status,409);assertEquals(f.state.submits,1,"A pending old operation cannot switch model or regenerate after policy changes");
+ }finally{f.close();}}
+});
+Deno.test("ordinary disabled profile leaves normal Flash path; enabled missing or withdrawn Pro never sends cheap fallback",async()=>{
+ for(const kind of["off","missing","withdrawn"]){const f=await fixture(false,null,true);try{
+  f.state.normalProfile={enabled:kind!=="off",profile:"gemini-pro-4k-preservation-v1"};if(kind==="missing")f.state.normalRows=[];if(kind==="withdrawn")f.state.normalWithdraw=true;
+  const response=await f.run(f.request({edit:"stage",style:"modern"}));assert(response.status!==200);
+  assertEquals(f.state.submits,kind==="off"?1:0);assertEquals(f.state.costs.length,kind==="off"?1:0);
+  if(kind==="off")assertEquals(f.state.costs[0].step.model,"gemini-3.1-flash-image");
+  else assertEquals(f.state.refunds,1,"Pre-dispatch refusal returns the feature meter; it does not buy a fallback");
+ }finally{f.close();}}
+});
+Deno.test("ordinary Pro geometry guard retains paid Flash-only extreme privately and refuses delivery",async()=>{
+ const f=await fixture(false,null,true);try{f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1"};f.state.output=outputJPEG(2048,8192);
+  assertEquals((await f.run(f.request({edit:"stage",style:"modern"}))).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.quality.evidence.failure.phase,"photo_output_geometry");assertEquals(f.state.quality.evidence.state,"hold");
+ }finally{f.close();}
+});
+Deno.test("customer body cannot select Pro, forge profile authority or change unrelated photo edits",async()=>{
+ for(const edit of["stage","twilight"]){const f=await fixture(false,null,true);try{
+  f.state.normalProfile={enabled:edit==="twilight",profile:"gemini-pro-4k-preservation-v1"};
+  await f.run(f.request({edit,...(edit==="stage"?{style:"modern"}:{}),model:"gemini-3-pro-image",quality_profile:"gemini-pro-4k-preservation-v1",extra:{owner_photo_pro_4k:true,photo_preservation_profile:"gemini-pro-4k-preservation-v1"}}));
+  assertEquals(f.state.submits,1);assertEquals(f.state.costs[0].step.model,"gemini-3.1-flash-image");assertEquals(f.state.inputs[0].extra.photo_preservation_profile,undefined);assertEquals(f.state.inputs[0].extra.owner_photo_pro_4k,undefined);
+ }finally{f.close();}}
 });
