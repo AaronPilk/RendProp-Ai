@@ -1,6 +1,6 @@
 # Rendprop owner context — October 14, 2026
 
-## Active checkpoint — 2026-10-15 08:25 UTC
+## Active checkpoint — 2026-10-15 08:40 UTC
 
 - Normal1.0.5(82) is VALID/APP_STORE_ELIGIBLE/IN_BETA_TESTING, build45479fdb…,
   existing internal group. Exact205native inputs/170tracked+1generatedSwift,
@@ -11,9 +11,12 @@
 - Runtime sourcef1a9765 includes prospective structured judge d4408b3, furniture boundary
   clarification6cb53b8, ordinary video profile e9628c2, opt-in per-task Pro photo
   policy8cce236+d95f4e3, and REMOVEONLY Declutter generation prompt8679e4b.
-  Fundingf1a9765 and three real PG CI gates2c27895 are committed. Root is
-  preparing the final branch push and one source-pinned CI dispatch; no new
-  native source/archive changes are required for these backend-only fixes.
+  Runtime changes through e175d657 were pushed. CI38705752445 proved new
+  profile/funding/privateCPU/tour-host runtime gates green; three stale test
+  fixtures failed. Test-only correctionsd1a3df2/dcd5a3f/3e3c632 preserve all
+  original safety oracles. Fresh/replay270invariants+9faults, exact legacy
+  fallback repair controls and5drift tests/8mutants PASS. Root is pushing this
+  batch before a corrected-source CI. No native source/archive changes.
 - OriginalCI38693470447 on04b31ca finished naturally:15jobs success, sole preserved
   tour-host baseline red. All native/actualUIKit/paid-recovery/dependent native
   gates PASS; backend2340pass/0fail/1ignored. Test-only classifier5ab17a5 keeps
@@ -66,12 +69,19 @@
   do not raise that generic cap or pretend an unsafe trial expansion was done.
   OrdinaryFree QA hasphotos5/5consumed/reels0/190.95c budget; cannot prove
   ordinary positive admission. No sponsorship/Authimpersonation/quota reset.
-- Fresh global normal-profile video admitted202 on the actual owner account,
-  no temporary supplier selector: jobbb7ea8c3-b2df-4ac6-9438-51ed63822ec5 /
-  operationecc0e3c4-0a31-4d7d-ab6e-191d8b3e4f49,2sources/Social9:16.
-  Saved profilefal-kling3-4k-v1/deadline24h verified; generating at08:24UTC.
-  This is hosted normal routing evidence, NOT ordinary paid-account billing,
- 20-photo throughput, Listing16:9, phone acceptance or finished output yet.
+- Fresh NORMAL-profile jobbb7ea8c3-b2df-4ac6-9438-51ed63822ec5 READY08:31:11Z,
+  7m28.25s after202; operationecc0e3c4-0a31-4d7d-ab6e-191d8b3e4f49. Actual
+  owner account/no temporary model selector, both paid routeIDs exactnormalrow
+  b04b57c1…/FALKlingV3native4K/210c. Both first-passQC accepted,0retries/fallback;
+  source2492x3324/24fps/5.042s, final1080x1920/30fps/10s/13,631,875B
+  SHA1a5e86f88dc2c9d2f75a4b827501f143f058a437bacab1598e1b1b7bdb9359b9.
+ 3exactownerGETs/hash/fullAVdecode PASS; root sampled source/master frames show
+  no black/blur panels. Balcony QC notes minor motion softness; full phone play
+  still required. Private completion created0publications/renders/compositions;
+  scopedpush sent once50.55s later. Generation420c+QC2.6c catalogsubtotal.
+ 14closedchecks PASS; receipt `_bridge/build82-normal-profile-canary/FINAL-NORMAL-PROFILE-RECEIPT.json`.
+  This proves hosted NORMAL routing/background completion, NOT ordinary paid
+  account billing,20-photo throughput, Listing16:9 or physical acceptance.
 - Targeted phone plan preserves prior evidence:189of203 common native inputs
   match phone81;205archive82inputs still exact. Home/Leads/appearance/tabs and
   review-layout fragments carry prior physical observations with source hashes.
@@ -83,8 +93,17 @@
   two slots/controller/bindings/secrets unchanged.118.73s branded Willow1.2x
   intro has30scenes/29realphoneUI+private savedvideo excerpt, no blank/fullAV
   issues in offline checks; full physical phone playback/listening remains open.
+- Router operator contract: ai_router OFF selects existing legacy routing;
+  it is not a global AI-off switch. Photo Pro uses its explicit policy/task and
+  enabled eligible legacy-seat gates under either router state, as deliberately
+  tested. Stop photo Pro via its policy/row. New FAL task has no legacy seat and
+  requires routerON. No runtime was changed merely to make these unlike roles
+  identical. Legacy routes still byte-unchanged.
+- Fresh Apple GET08:28Z confirms public74 READY_FOR_SALE;82 VALID/AppStoreeligible;
+ 1.0.5 draftc15af3a3… PREPARE_FOR_SUBMISSION/buildnull/AFTER_APPROVAL. Website
+  consumable6822852888 remains MISSING_METADATA. No submission/release performed.
 - Remaining release gates:82actualUI/import>15/ZIP/camera/intro/audio/push;
-  normal-profile completion and ordinary purchase proof; real masking/representative
+  ordinary purchase proof and real masking/representative
  20+photo Listing16:9 video and explicit review/publication/playablehero;
   ordinary paid account/Sandbox purchases/recovery/refund/genuine $25offer
   screenshot (SKU stillMISSING_METADATA/Sandboxtrue/Productionfalse);
