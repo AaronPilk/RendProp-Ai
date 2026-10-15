@@ -16,18 +16,21 @@ try {
     sources:[{url:'https://media.example.test/owned?sign=one',bytes:12,sha256:'a'.repeat(64),position:0,motion_kind:'ai'}],
     output:{asset_id:job,poster_asset_id:lease},presentation:{transition:'cut',shot_caption_style:'off',spoken_captions:false,shot_labels:[null]},expires_at:new Date(Date.now()+3600000).toISOString()};
   let receipt={job_id:job,lease_token:lease,manifest_sha256:task.manifest_sha256,asset_id:job,poster_asset_id:lease,width:1920,height:1080,duration_s:5,bytes:12,sha256:'b'.repeat(64),poster_bytes:4,poster_sha256:'c'.repeat(64)};
+  let observation=null,cpuTouches=0;
   let data=null,alarm=null,status='prepared',finishCount=0,failCount=0,tickCount=0,outputs=0,uploadCount=0,heartbeatStatus=200,failureStatus=200,terminalAfterFailure=false;
   const events=[];let apiFault=null,cpuHTTPFault=null;
   const sql={exec(query,...args){
+    if(query.startsWith('SELECT observation'))return{toArray:()=>observation?[{observation}]:[]};
+    if(query.startsWith('INSERT INTO diagnostic')){observation=args[0];return{toArray:()=>[]};}
     if(query.startsWith('SELECT'))return{toArray:()=>data?[{state:data}]:[]};
     if(query.startsWith('INSERT')){data=args[0];events.push('persist');}
     if(query.startsWith('DELETE')){data=null;events.push('clear');}
     return{toArray:()=>[]};
   }};
-  const container={running:false,images:{cpu:'verified-image@sha256:test'},async setInactivityTimeout(ms){assert.ok(ms>0);if(apiFault==='inactivity')throw new TypeError('PRIVATE-inactivity-url');},
-    start(options){if(apiFault==='start')throw new TypeError('PRIVATE-start-token');assert.equal(options.enableInternet,false);assert.equal(options.instance,'standard-3');assert.ok(!('EDGE_SERVICE_ROLE_KEY' in options.env));this.running=true;events.push('boot');},
-    async destroy(){this.running=false;events.push('sleep');},async interceptOutboundHttps(host,binding){if(apiFault==='egress')throw new TypeError('PRIVATE-egress-url');assert.equal(host,'*');this.bound=binding;},
-    getTcpPort(port){assert.equal(port,8080);return{fetch:async(url,init)=>{
+  const container={running:false,images:{cpu:'verified-image@sha256:test'},async setInactivityTimeout(ms){cpuTouches++;assert.ok(ms>0);if(apiFault==='inactivity')throw new TypeError('PRIVATE-inactivity-url');},
+    start(options){cpuTouches++;if(apiFault==='start')throw new TypeError('PRIVATE-start-token');assert.equal(options.enableInternet,false);assert.equal(options.instance,'standard-3');assert.ok(!('EDGE_SERVICE_ROLE_KEY' in options.env));this.running=true;events.push('boot');},
+    async destroy(){cpuTouches++;this.running=false;events.push('sleep');},async interceptOutboundHttps(host,binding){cpuTouches++;if(apiFault==='egress')throw new TypeError('PRIVATE-egress-url');assert.equal(host,'*');this.bound=binding;},
+    getTcpPort(port){cpuTouches++;assert.equal(port,8080);return{fetch:async(url,init)=>{
       const route=new URL(url).pathname;if(cpuHTTPFault===route)return new Response('PRIVATE-CPU-body',{status:403});
       if(route==='/ready')return Response.json({ready:true});
       if(route==='/execute')return Response.json({task_id:'e'.repeat(64)},{status:202});
@@ -83,6 +86,26 @@ try {
     assert.equal((await worker.fetch(new Request('https://controller.test/wake',{method:'POST',headers:{Authorization:'Bearer trigger-test'}}),disabled,{waitUntil(){throw Error('disabled dispatch');}})).status,503);
     assert.equal((await worker.fetch(new Request('https://controller.test/wake',{method:'POST'}),env,{waitUntil(){throw Error('unauthorized dispatch');}})).status,403);
     assert.equal((await worker.fetch(new Request('https://controller.test/anything'),env,{})).status,404);
+    // Inspection uses the existing trigger key and only the two fixed atoms.
+    const noActions={waitUntil(){throw Error('diagnostic dispatched work');}};
+    const requested=[];let inspections=0;
+    const inspectEnv={...disabled,CPU:{getByName(slot){requested.push(slot);return{
+      async diagnostic(){inspections++;return slot==='slot-0'?{phase:'execute',error_name:'Other',reason:'http_refusal',http_status:403,timestamp:123}:null;},
+      async wake(){throw Error('diagnostic woke work');}
+    };}}};
+    for(const authorization of [undefined,'Bearer wrong-trigger']){
+      const headers=authorization?{Authorization:authorization}:{};
+      assert.equal((await worker.fetch(new Request('https://controller.test/diagnostic?slot=PRIVATE',{headers}),inspectEnv,noActions)).status,403);
+    }
+    assert.equal(inspections,0);assert.deepEqual(requested,[],'unauthorized inspection cannot address DOs');
+    const readOnlyBefore={tickCount,finishCount,failCount,cpuTouches,alarm,data};
+    const inspected=await worker.fetch(new Request('https://controller.test/diagnostic?slot=PRIVATE',{headers:{Authorization:'Bearer trigger-test'}}),inspectEnv,noActions);
+    assert.equal(inspected.status,200);assert.equal(inspected.headers.get('Cache-Control'),'no-store');
+    assert.deepEqual(await inspected.json(),{slots:[{slot:'slot-0',observation:{phase:'execute',error_name:'Other',reason:'http_refusal',http_status:403,timestamp:123}},{slot:'slot-1',observation:null}]});
+    assert.deepEqual(requested,['slot-0','slot-1']);assert.equal(inspections,2);
+    assert.deepEqual({tickCount,finishCount,failCount,cpuTouches,alarm,data},readOnlyBefore,'inspection has no queue/tick/callback/CPU/alarm side effects');
+    for(const [method,route] of [['POST','/diagnostic'],['GET','/diagnostic/slot-0'],['GET','/wake']])assert.equal((await worker.fetch(new Request('https://controller.test'+route,{method,headers:{Authorization:'Bearer trigger-test'}}),inspectEnv,noActions)).status,404);
+
     // Exercise the actual scheduled entry and its caught bridge, not merely a
     // formatter. Hostile exception/body strings must never enter a log.
     const originalAuthority=globalThis.fetch;
@@ -128,11 +151,25 @@ try {
         cpu=new PropertyVideoCPU(ctx,env);await cpu.wake(job,'slot-0');await cpu.alarm();
         assert.deepEqual(diagnostics,[['property_video_cpu_refused',{phase,category:'cpu_api',error_name:'TypeError',reason:'other'}]]);
         assert.equal(data,null,'finite failure callback retains authority rather than faking ready');
+        const snapshot=await cpu.diagnostic();
+        assert.deepEqual({...snapshot,timestamp:0},{phase,error_name:'TypeError',reason:'other',timestamp:0});
+        assert.ok(Number.isSafeInteger(snapshot.timestamp)&&snapshot.timestamp>0);
+        assert.ok(!JSON.stringify(snapshot).includes('PRIVATE-'));
+        const before={tickCount,finishCount,failCount,cpuTouches,alarm,data};
+        cpu=new PropertyVideoCPU(ctx,env);assert.deepEqual(await cpu.diagnostic(),snapshot,'last failure survives stop and instance recreation');
+        assert.deepEqual({tickCount,finishCount,failCount,cpuTouches,alarm,data},before,'constructing/reading diagnostics never touches an existing CPU');
+
       }
       apiFault=null;diagnostics.length=0;data=null;container.running=false;cpuHTTPFault='/execute';
       cpu=new PropertyVideoCPU(ctx,env);await cpu.wake(job,'slot-0');await cpu.alarm();
       assert.deepEqual(diagnostics,[['property_video_cpu_refused',{phase:'execute',category:'cpu_http',status:403}]]);
       assert.ok(!JSON.stringify(diagnostics).includes('PRIVATE-'),'CPU details never log raw body, URL or token');
+      const httpObservation=await cpu.diagnostic();
+      assert.deepEqual({...httpObservation,timestamp:0},{phase:'execute',error_name:'Other',reason:'http_refusal',http_status:403,timestamp:0});
+      for(const invalid of ['invalid-json',JSON.stringify({...httpObservation,token:'PRIVATE-TOKEN'}),JSON.stringify({...httpObservation,phase:'PRIVATE-URL'}),JSON.stringify({...httpObservation,error_name:'PRIVATE-ERROR'}),JSON.stringify({...httpObservation,reason:'PRIVATE-BODY'}),JSON.stringify({...httpObservation,http_status:999}),JSON.stringify({...httpObservation,timestamp:-1})]){
+        observation=invalid;assert.equal(await cpu.diagnostic(),null,'corrupt/non-closed metadata is never exposed');
+      }
+
       cpuHTTPFault=null;
     } finally {console.warn=warn;}
 

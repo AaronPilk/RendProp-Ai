@@ -21,6 +21,11 @@ try {
   let response=await runtime.dispatchFetch('https://private-renderer.test/health');
   assert.equal(response.status,200);assert.deepEqual(await response.json(),{service:'property-video-render',enabled:false,provider_dispatch:false});
   response=await runtime.dispatchFetch('https://private-renderer.test/wake',{method:'POST'});assert.equal(response.status,403);
+  response=await runtime.dispatchFetch('https://private-renderer.test/diagnostic');assert.equal(response.status,403);
+  response=await runtime.dispatchFetch('https://private-renderer.test/diagnostic?slot=untrusted',{headers:{Authorization:'Bearer isolated-test'}});
+  assert.equal(response.status,200);assert.equal(response.headers.get('Cache-Control'),'no-store');
+  assert.deepEqual(await response.json(),{slots:[{slot:'slot-0',observation:null},{slot:'slot-1',observation:null}]},'actual SQLite diagnostic works while disabled, without a CPU');
+
   response=await runtime.dispatchFetch('https://private-renderer.test/wake',{method:'POST',headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,503);
   for(const route of ['/execute','/status','/upload','/queue','/finish']){
     response=await runtime.dispatchFetch('https://private-renderer.test'+route,{method:'POST'});assert.equal(response.status,404);
@@ -41,6 +46,10 @@ try {
     return status===200?Response.json({enabled:false,jobs:[]}):new Response('PRIVATE-BODY',{status,headers:{Location:'https://private-redirect.invalid/never'}});
   }}}}]});
   const bounded=async(promise,label)=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(label+'; '+logs.join(' '))),2000);})]);}finally{clearTimeout(timer);}};
+
+  response=await runtime.dispatchFetch('https://private-renderer.test/diagnostic',{headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{slots:[{slot:'slot-0',observation:null},{slot:'slot-1',observation:null}]});
+  assert.equal(hits.length,0,'enabled authenticated diagnostic makes no authority queue/tick/media requests');
   let reached=new Promise(resolve=>{resolveHit=resolve;});
   response=await runtime.dispatchFetch('https://private-renderer.test/wake',{method:'POST',headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,202);
   await bounded(reached,'actual enabled bridge failed before its one authority request');assert.equal(hits.length,1);

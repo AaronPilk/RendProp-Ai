@@ -41,6 +41,20 @@ function cpuDiagnostic(error:unknown):Record<string,string|number> {
   return error instanceof CPUFailure?{phase:error.phase,category:error.category,...(error.status===undefined?{}:{status:error.status}),...(error.transport?{error_name:error.transport.name,reason:error.transport.reason}:{})}:dispatchDiagnostic(error);
 }
 function cpuAPIFailure(phase:CPUPhase,error:unknown):CPUFailure {return new CPUFailure(phase,'cpu_api',undefined,transportFailure(error).transport);}
+const DIAGNOSTIC_PHASES=new Set(['start','inactivity','egress','ready','ready_timeout','execute','status','upload','bridge','controller']);
+const DIAGNOSTIC_REASONS=new Set(['redirect','invalid_header','dns','timeout','unsupported_api','other','http_refusal','configuration','response','not_running','task_failed','task_missing']);
+type ClosedDiagnostic={phase:string;error_name:TransportName;reason:string;http_status?:number;timestamp:number};
+function checkedDiagnostic(value:unknown):ClosedDiagnostic|null {
+  if(!value||typeof value!=='object'||Array.isArray(value))return null;
+  const v=value as Record<string,unknown>;
+  if(Object.keys(v).some(k=>!['phase','error_name','reason','http_status','timestamp'].includes(k))||!DIAGNOSTIC_PHASES.has(String(v.phase))||!['TypeError','TimeoutError','AbortError','Other'].includes(String(v.error_name))||!DIAGNOSTIC_REASONS.has(String(v.reason))||!Number.isSafeInteger(v.timestamp)||Number(v.timestamp)<0||!(v.http_status===undefined||Number.isInteger(v.http_status)&&Number(v.http_status)>=100&&Number(v.http_status)<=599))return null;
+  return v as ClosedDiagnostic;
+}
+function closedDiagnostic(error:unknown):ClosedDiagnostic {
+  const d=cpuDiagnostic(error),category=String(d.category);
+  const reason=typeof d.reason==='string'?d.reason:category.endsWith('_http')?'http_refusal':category.endsWith('_configuration')?'configuration':category.endsWith('_response')?'response':category==='cpu_not_running'?'not_running':category==='cpu_task_failed'?'task_failed':category==='cpu_task_missing'?'task_missing':'other';
+  return checkedDiagnostic({phase:typeof d.phase==='string'?d.phase:category.startsWith('bridge_')?'bridge':'controller',error_name:typeof d.error_name==='string'?d.error_name:'Other',reason,...(typeof d.status==='number'?{http_status:d.status}:{}),timestamp:Date.now()})!;
+}
 
 async function bridge(env:Env,path:string,body?:unknown):Promise<Record<string,unknown>> {
   let base:URL;try {base=new URL(env.EDGE_WORKER_URL);}catch {throw new BridgeFailure('bridge_configuration');}
@@ -64,7 +78,12 @@ export class PropertyVideoCPU extends DurableObject<Env> {
   constructor(ctx:DurableObjectState,env:Env) {
     super(ctx,env);
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS slot (id INTEGER PRIMARY KEY CHECK(id=1), state TEXT NOT NULL)');
-    if (ctx.container?.running) ctx.waitUntil(ctx.container.setInactivityTimeout(60_000));
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS diagnostic (id INTEGER PRIMARY KEY CHECK(id=1), observation TEXT NOT NULL)');
+  }
+  /** Fixed-slot private inspection does not wake work, change leases or touch a CPU. */
+  async diagnostic():Promise<ClosedDiagnostic|null> {
+    const row=this.ctx.storage.sql.exec<{observation:string}>('SELECT observation FROM diagnostic WHERE id=1').toArray()[0];
+    if(!row)return null;try{return checkedDiagnostic(JSON.parse(row.observation));}catch{return null;}
   }
   private read():SlotState|null {const row=this.ctx.storage.sql.exec<{state:string}>('SELECT state FROM slot WHERE id=1').toArray()[0];return row?JSON.parse(row.state):null;}
   private save(state:SlotState):void {this.ctx.storage.sql.exec('INSERT INTO slot (id,state) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state',JSON.stringify(state));}
@@ -123,6 +142,9 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     if (!state) return;
     if (this.env.ENABLED!=='true') {await this.stop();return;}
     try {
+      // Refresh an already-running process only when executing its work alarm,
+      // never as a side effect of a read-only diagnostic RPC/constructor.
+      if(this.ctx.container?.running)try{await this.ctx.container.setInactivityTimeout(60_000);}catch(error){throw cpuAPIFailure('inactivity',error);}
       if (state.pendingCallback) {
         // The receipt is durable and uploads/extraction are done. An authority
         // outage must not leave an idle CPU billed while callback retries sleep.
@@ -185,6 +207,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(Date.now()+POLL_MS);
     } catch (error) {
       console.warn('property_video_cpu_refused',cpuDiagnostic(error));
+      this.ctx.storage.sql.exec('INSERT INTO diagnostic (id,observation) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET observation=excluded.observation',JSON.stringify(closedDiagnostic(error)));
       if (error instanceof AuthorityRefusal&&[403,404,409].includes(error.status)) {await this.stop();return;}
       // Only CPU phases can be retried. Never invent a paid supplier retry here.
       state=this.read();
@@ -220,8 +243,10 @@ export default {
   async fetch(request:Request,env:Env,ctx:ExecutionContext):Promise<Response> {
     const url=new URL(request.url);
     if (request.method==='GET'&&url.pathname==='/health') return json({service:'property-video-render',enabled:env.ENABLED==='true',provider_dispatch:false});
-    if (request.method!=='POST'||url.pathname!=='/wake') return json({error:'not_found'},404);
+    const inspect=request.method==='GET'&&url.pathname==='/diagnostic';
+    if (!inspect&&(request.method!=='POST'||url.pathname!=='/wake')) return json({error:'not_found'},404);
     if (!env.RENDER_TRIGGER_KEY||request.headers.get('Authorization')!==`Bearer ${env.RENDER_TRIGGER_KEY}`) return json({error:'private_controller_only'},403);
+    if(inspect)return json({slots:await Promise.all((['slot-0','slot-1'] as const).map(async slot=>({slot,observation:await env.CPU.getByName(slot).diagnostic()})))});
     if (env.ENABLED!=='true') return json({error:'renderer_disabled'},503);
     ctx.waitUntil(dispatch(env).catch(error=>console.warn('property_video_dispatch_refused',dispatchDiagnostic(error))));
     return json({accepted:true},202);
