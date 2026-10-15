@@ -281,7 +281,13 @@ select pg_temp.ok((select cpu_recoveries=1 from property_video_job_sources where
 select pg_temp.refuse($q$select property_video_job_failure((select(c#>>'{job,id}')::uuid from cpu_case),(select(c#>>'{source,lease_token}')::uuid from cpu_case),(select(c#>>'{source,attempt_id}')::uuid from cpu_case),'cpu_extract_failed',false)$q$,'RP409:','staleCPUcallback cannot change resumedattempt');
 select pg_temp.exhaust_cpu((select c from retry_cpu));select property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from cpu_case),0);
 select pg_temp.exhaust_cpu(property_video_job_claim((select(c#>>'{job,id}')::uuid from cpu_case),'slot-0'));
-select pg_temp.refuse($q$select property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from cpu_case),0)$q$,'RP409:','CPUrecovery remains finite after two explicit cycles');
+do $$begin for i in 3..5 loop
+ perform property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from cpu_case),0);
+ perform pg_temp.exhaust_cpu(property_video_job_claim((select(c#>>'{job,id}')::uuid from cpu_case),'slot-0'));
+end loop;end$$;
+select pg_temp.ok((select cpu_recoveries=5 and jsonb_array_length(cpu_recovery_history)=5 from property_video_job_sources where job_id=(select(c#>>'{job,id}')::uuid from cpu_case)and position=0),'five explicit CPUcycles retain complete finite history');
+select pg_temp.ok((select row(s.attempt_id,s.request_key,s.receipt,s.clip,s.generation_provenance_id)is not distinct from row(p.attempt_id,p.request_key,p.receipt,p.clip,p.generation_provenance_id)from property_video_job_sources s cross join preserved_cpu p where s.job_id=(select(c#>>'{job,id}')::uuid from cpu_case)and s.position=0),'fifthCPUrecovery still preserves original paidclip identity');
+select pg_temp.refuse($q$select property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from cpu_case),0)$q$,'RP409:','CPUrecovery remains finite after five explicit cycles');
 select pg_temp.ok((select count(*)=1 from app_video_cost_reservations where idempotency_key=(select request_key from preserved_cpu)),'allCPU retries retain one original paid generation reservation');
 -- Missing, unknown or nonstructural QC cannot become a source substitution.
 create temporary table unknown_case as select pg_temp.cpu_job(2)c;
