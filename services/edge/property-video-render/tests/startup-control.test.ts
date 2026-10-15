@@ -11,6 +11,8 @@ socket.gaierror: [Errno -3] PRIVATE-URL https://private.invalid/cap
 `);
 assert.deepEqual(trace,{traceback:[{file:'http_adapter.py',line:142,function:'<module>'},{file:'server.py',line:136,function:'server_bind'}],error_name:'gaierror',errno:-3});
 assert.ok(!JSON.stringify(trace).includes('PRIVATE'));assert.ok(!JSON.stringify(trace).includes('https:'));
+const many=sanitizedStartupTrace(Array.from({length:30},()=> '  File \"/app/renderer.py\", line 1, in render').join('\n'));assert.equal(many.traceback?.length,16);
+assert.deepEqual(sanitizedStartupTrace('  File \"https://private.invalid/renderer.py\", line 1, in render'),{traceback:[]});
 assert.equal(sanitizedStartupTrace("RuntimeError: can't start new thread PRIVATE").known_message,'cannot_start_thread');
 const original=globalThis.fetch;globalThis.fetch=async()=>{throw Error('No external transport in synthetic control');};
 try{
