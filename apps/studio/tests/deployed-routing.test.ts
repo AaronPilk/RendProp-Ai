@@ -10,7 +10,7 @@ async function runVerifier(fault: string | null = null) {
   const folder = await mkdtemp(join(tmpdir(), "rendprop-served-routing-test-"));
   const entry = "<!doctype html><title>Isolated Studio build</title>";
   const files: Record<string, string> = { "index.html": entry, "robots.txt": "User-agent: *\nDisallow: /\n", "rendprop-mark.svg": "<svg/>" };
-  for (let i = 0; i < (fault === "extra-asset" ? 29 : 28); i++) files[`assets/isolated-${i}.js`] = `export const asset=${i};`;
+  for (let i = 0; i < (fault === "extra-asset" ? 33 : 32); i++) files[`assets/isolated-${i}.js`] = `export const asset=${i};`;
   await mkdir(join(folder, "assets"));
   for (const [file, bytes] of Object.entries(files)) await writeFile(join(folder, file), bytes);
   const headers = { "x-robots-tag": "noindex, nofollow", "cache-control": "no-store, no-transform", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": "script-src 'self'; frame-ancestors 'none'" };
@@ -24,7 +24,7 @@ async function runVerifier(fault: string | null = null) {
       assert.equal(init?.method ?? "GET", "GET"); assert.equal(init?.headers, undefined);
       assert.equal(init?.redirect, "manual"); assert.equal(init?.cache, "no-store");
       requests.push({ path: url.pathname + url.search, redirect: init?.redirect });
-      assert(requests.length <= 35);
+      assert(requests.length <= 39);
       if (url.pathname === "/auth/callback") {
         if (fault === "callback200") return new Response(entry, { headers });
         const location = fault === "foreign-redirect" ? "https://example.invalid/" : fault === "wrong-route" ? "/workspace" : fault === "lost-query" ? "/" : "/" + url.search;
@@ -46,20 +46,20 @@ async function runVerifier(fault: string | null = null) {
   return { output, error, requests };
 }
 
-test("actual served verifier proves only the exact callback canonicalization and 35 bounded GETs", async () => {
+test("actual served verifier proves only the exact callback canonicalization and 39 bounded GETs", async () => {
   const result = await runVerifier();
   assert.equal(result.error, undefined);
-  assert.equal(result.output?.status, "passed"); assert.equal(result.output?.GETRequests, 35);
+  assert.equal(result.output?.status, "passed"); assert.equal(result.output?.GETRequests, 39);
   assert.equal(result.output?.spaFallback, false); assert.equal(result.output?.oauthCallbackCanonicalRedirect307, true);
   assert.equal(result.output?.oauthCallbackQueryPreserved, true); assert.equal(result.output?.unknownRoutes404, true);
-  assert.equal(result.requests.length, 35);
+  assert.equal(result.requests.length, 39);
   assert.deepEqual(result.requests.slice(-4).map(row => row.path), ["/auth/callback?rendprop_route_probe=1", "/?rendprop_route_probe=1", "/workspace", "/assets/__rendprop_verify_missing__.js"]);
 });
 test("actual served verifier refuses foreign, broad, changed-byte and missing-route fallback proofs", async () => {
   for (const fault of ["callback200", "foreign-redirect", "wrong-route", "lost-query", "redirect-body", "root-mismatch", "/workspace", "/assets/__rendprop_verify_missing__.js", "extra-asset"]) {
     const result = await runVerifier(fault);
     assert(result.error, `Verifier must reject ${fault}`); assert.equal(result.output, undefined);
-    assert(result.requests.length <= 35);
+    assert(result.requests.length <= 39);
     if (fault === "extra-asset") assert.equal(result.requests.length, 0);
   }
 });

@@ -9,12 +9,12 @@ const origin='https://studio.rendprop.com';
 const root=path.resolve(import.meta.dirname,'../dist');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const files=['index.html','robots.txt','rendprop-mark.svg',...(await readdir(path.join(root,'assets'))).map(name=>`assets/${name}`)];
-assert.equal(files.length,31,'Expected exact entry, robots, mark and 28 build assets');
+assert.equal(files.length,35,'Expected exact entry, robots, mark and 32 reviewed build assets');
 let requests=0;
 const deadline=Date.now()+120_000;
 async function request(pathname){
   assert.ok(Date.now()<deadline,'Whole readback deadline');
-  assert.ok(++requests<=35,'Exact readback request budget');
+  assert.ok(++requests<=39,'Exact readback request budget');
   assert.ok(pathname.startsWith('/')&&!pathname.startsWith('//'),'Same-origin paths only');
   return fetch(origin+pathname,{redirect:'manual',cache:'no-store',signal:AbortSignal.timeout(Math.min(15_000,deadline-Date.now()))});
 }
@@ -68,6 +68,6 @@ for(const pathname of ['/workspace','/assets/__rendprop_verify_missing__.js']){
   assert.equal(response.status,404,`${pathname} must retain the configured missing-route policy`);
   missing.push({path:pathname,status:response.status});
 }
-assert.equal(requests,35);
+assert.equal(requests,39);
 assert.ok(Date.now()<deadline,'Readback must finish before the whole deadline');
 console.log(JSON.stringify({gate:'studio-deployed-application-bytes-exact-routing',origin,readAt:new Date().toISOString(),status:'passed',files:results,spaFallback:false,oauthCallbackConfiguredRewrite:true,oauthCallbackCanonicalRedirect307:true,oauthCallbackQueryPreserved:true,unknownRoutes404:true,missing,GETRequests:requests,accountLoginVerified:false,robotsCrawlBlockingVerified:false,warnings},null,2));
