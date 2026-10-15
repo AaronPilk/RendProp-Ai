@@ -4,6 +4,18 @@ The authoritative acceptance list is
 `docs/handoff/OWNER-REQUEST-CHECKLIST-20261014.md`. Earlier execution snapshots
 are historical; retain their receipts without treating them as current status.
 
+- Functionality and logical UX/testing take priority over provisional prices or
+  margins.75% is not an acceptance gate. Final pricing is audited after functional
+  acceptance, before App Store submission. Preserve security, abuse/rate limits
+  and actual provider-credit requirements; do not disguise those as margin caps.
+- The owner-only financial media-budget bypass is applied as migration
+  20261015170710 after root review and actual PostgreSQL controls. It uses
+  existing DB-verified product-admin owner
+  authority and records requests/bytes as unpriced infrastructure usage, without
+  creating funding/reserve/cost receipts. Ordinary budget rules stay unchanged;
+  absent supported-user media provisioning remains an explicit launch blocker.
+  Real published-preview verification is pending; no image-loading success is
+  inferred merely from this configuration/schema change.
 - Normal **1.0.5 (83)** is VALID / APP_STORE_ELIGIBLE / IN_BETA_TESTING in the
   existing internal group. Native source **d643afee** is pushed; the 109-input
   gate and 209 archive inputs are bound. Attempt 3 passed the signed Release SDK,

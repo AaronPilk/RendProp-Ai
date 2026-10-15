@@ -8,6 +8,11 @@ Updated October 15 around 12:55 p.m. Eastern. Earlier detailed ledger is retaine
 
 ## Current truth
 
+- Functionality and logical UX/testing come first. Provisional prices and margin
+  targets must not block the owner's authorized functional tests. Complete the
+  final pricing audit after acceptance and before App Store submission;75% is
+  not an acceptance gate. Keep security, abuse and rate limits intact, and
+  distinguish a financial cap from genuinely exhausted supplier credits.
 - Public: **1.0.4 (74)** remains live. Normal **1.0.5 (83)** is VALID,
   APP_STORE_ELIGIBLE and available in the existing internal TestFlight group.
   Its native source is **d643afee**. Actual phone 82 observations are retained;
@@ -147,6 +152,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 | O07 | Necessary permission/privacy experience, truthful billing/trial statements | Existing implemented paths retained; no new blanket permission prompt assumed necessary | Final actual device permission/notification/account checks and disclosure consistency |
 | O08 | Clean old files; organize Mac/1TB external drive without breaking active work | Prior 6.2GB/3,469-file move and cache cleanup retained. Later 67 inactive bridge folders moved externally with all hashes verified and compatibility symlinks; 8.54GiB free before successful 83 archive | Preserve current Mac files/source/keys and release evidence. Full Mac backup is UNVERIFIED; the verified archive move is not a full backup |
 | O09 | Retain all app API-cost records and distinguish usage from added credits | Keep consumed/priced/unknown costs separate from funding. Owner confirmed adding $25 FAL credit at 16:55:42Z after reporting insufficient provider credit | Reconcile against actual provider records when available; do not invent a transaction ID, invoice or consumed cost from a top-up |
+| O10 | Functional testing first; final prices/margins audited after acceptance | Owner-only media financial-budget bypass and request/byte metering applied as migration20261015170710; original ordinary rules unchanged; real published-preview check pending | Missing ordinary media provisioning remains a launch blocker. Audit final prices after functional acceptance, before submission; no fake reserve or unlimited-all-users grant |
 
 ## Final sequence — not yet complete
 
