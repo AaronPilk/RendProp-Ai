@@ -1,27 +1,31 @@
 # Rendprop owner context — October 14, 2026
 
-## Active checkpoint — 2026-10-15 08:40 UTC
+## Active checkpoint — 2026-10-15 08:54 UTC
 
-- Normal1.0.5(82) is VALID/APP_STORE_ELIGIBLE/IN_BETA_TESTING, build45479fdb…,
-  existing internal group. Exact205native inputs/170tracked+1generatedSwift,
-  noLAB/DEBUG,118.73s Willow intro. Phone still81 because Mirroring reports
-  Maclocked despite latestunlockreply; fresh unlock request is pending.
-  Public1.0.4(74) unchanged.1.0.5 draftc15af3a3… is unattached/AFTER_APPROVAL,
-  NOT submitted. Upload is not phone acceptance or App Store submission.
+- Normal 1.0.5 (82) is VALID / APP_STORE_ELIGIBLE / IN_BETA_TESTING, build
+  45479fdb…, in the existing internal group. Its 205 native inputs, 170 tracked
+  plus one generated Swift file, no-LAB/DEBUG build and 118.73s Willow intro
+  remain bound to the delivered archive. The phone was last verified on 81;
+  normal 82 has not been physically accepted. At 08:48 UTC, macOS still reported
+  lock=true, so the manual unlock request remains pending.
+  Public 1.0.4 (74) is unchanged. The 1.0.5 draft c15af3a3… is unattached,
+  AFTER_APPROVAL and not submitted. Upload is not phone acceptance or submission.
 - Runtime sourcef1a9765 includes prospective structured judge d4408b3, furniture boundary
   clarification6cb53b8, ordinary video profile e9628c2, opt-in per-task Pro photo
   policy8cce236+d95f4e3, and REMOVEONLY Declutter generation prompt8679e4b.
-  Runtime changes through e175d657 were pushed. CI38705752445 proved new
-  profile/funding/privateCPU/tour-host runtime gates green; three stale test
-  fixtures failed. Test-only correctionsd1a3df2/dcd5a3f/3e3c632 preserve all
-  original safety oracles. Fresh/replay270invariants+9faults, exact legacy
-  fallback repair controls and5drift tests/8mutants PASS. Root is pushing this
-  batch before a corrected-source CI. No native source/archive changes.
+  HEAD 2fe6d669 is pushed. CI 38705752445 proved the new profile/funding,
+  private CPU and tour-host runtime gates green; three stale test fixtures failed.
+  Test-only corrections d1a3df2 / dcd5a3f / 3e3c632 preserve the safety oracles:
+  fresh/replay 270 invariants plus nine faults, exact legacy fallback controls,
+  and five drift tests/eight mutants passed. Corrected CI 38707737574 is running
+  on 2fe6d669; migration, Studio and Edge jobs are green. Edge reports 2,386
+  tests passed, zero failures and one ignored test. No terminal CI result yet.
+  No native source/archive changes or App Store submission were made.
 - OriginalCI38693470447 on04b31ca finished naturally:15jobs success, sole preserved
   tour-host baseline red. All native/actualUIKit/paid-recovery/dependent native
   gates PASS; backend2340pass/0fail/1ignored. Test-only classifier5ab17a5 keeps
-  production RMS/pitch/duration/frame oracles unchanged; final changed-source CI
-  must verify it. No cancellation or unchanged-source rerun-to-green.
+  production RMS/pitch/duration/frame oracles unchanged. That historical result
+  remains retained; corrected CI 38707737574 is not yet terminal.
 - Live strict ai-photo-v2v6/25db7306… all54bytes verified independently; private
   photo-quality-worker7/3b8b7054… all31exact. Structured JSON/parse diagnostics
   and rubric are prospective; parser/scores/thresholds and oldHOLDs unchanged.
@@ -54,10 +58,11 @@
 - Ordinary Pro4K Stage/Declutter policy and its two isolated rows are ACTIVATED.
   Existing legacy route aggregatebc5d181a… unchanged.135base+
  11per-task+76prompt-focused tests and peer reviews passed; actual narrowPG
-  seed/replay/RLS/compiledcontrols passed. Ordinary routes are NOT activated yet.
+  seed/replay/RLS/compiled controls passed. Both ordinary photo tasks are active;
+  temporary owner selectors are not required for those routes.
 - Real budget issue found:20FAL4Kshots complete conservativequote4403.9552c;
- 20Declutter+20Stage max-tier quote1787.712c =>6191.6672c total. Existing75%-
-  shaped plan COGS and50%-Apple-net atomic envelope block this workflow.
+ 20Declutter+20Stage max-tier quote1787.712c =>6191.6672c total. The previous
+  75%-shaped plan COGS and 50%-Apple-net atomic envelope blocked this workflow.
   Reviewed bounded subsidy policy f1a9765 is now LIVE and ACTIVATED:
   paidStarter/Solo6500c, Pro12000c, Team30000c per verified Production Apple
   service month. BothCOGS/atomicwallet and actual Apple-period spend agree;
@@ -102,12 +107,15 @@
 - Fresh Apple GET08:28Z confirms public74 READY_FOR_SALE;82 VALID/AppStoreeligible;
  1.0.5 draftc15af3a3… PREPARE_FOR_SUBMISSION/buildnull/AFTER_APPROVAL. Website
   consumable6822852888 remains MISSING_METADATA. No submission/release performed.
-- Remaining release gates:82actualUI/import>15/ZIP/camera/intro/audio/push;
-  ordinary purchase proof and real masking/representative
- 20+photo Listing16:9 video and explicit review/publication/playablehero;
-  ordinary paid account/Sandbox purchases/recovery/refund/genuine $25offer
-  screenshot (SKU stillMISSING_METADATA/Sandboxtrue/Productionfalse);
-  final changed-sourceCI/GitHubpush/AppStoresubmission. Do not mark all complete.
+- Remaining acceptance follows the checklist's delta-only phone sequence:
+  82 intro and photo recovery, import/camera/masking, a representative
+  20+ photo Listing 16:9
+  job with audio/push/private review, explicit publication/playable hero and ZIP,
+  plus ordinary paid admission and Sandbox purchase/recovery/refund. The genuine
+  $25 offer screenshot is still missing; the SKU remains MISSING_METADATA,
+  Sandbox enabled / Production disabled. Await the corrected CI's terminal result,
+  then the owner's accepted normal candidate can be attached/submitted with
+  automatic distribution after approval. No submission has occurred.
 
 This consolidates the owner's recent messages and retained decisions. New messages
 steer the same work; they do not erase earlier open requests. Later explicit
@@ -313,9 +321,11 @@ Actual phone81 accepted readable Original/Latest/Decluttered/Staged glass tabs,
 saved Contemporary/Modern history, Original-only editing, uncropped photo review,
 reachable required checks/footer, Homephoto-first/GetStartedaddress form,
 ManageDetails/toolbox ordering, Leads grouping and temporaryLight/Dark restored to
-System. No large-text, freshordinarybilling, premium purchase, whole-listing export
-or updated82 realphone acceptance is claimed. The Mac is currently locked;
-Mirroring's manual unlock request remains pending. Keep using the actual phone.
+System. No large-text, fresh ordinary billing, premium purchase, whole-listing
+export or actual 82 phone acceptance is claimed. macOS lock=true was confirmed
+at 08:48 UTC; Mirroring's manual unlock request remains pending. Use the actual
+phone for the remaining sequence in `OWNER-REQUEST-CHECKLIST-20261014.md`; do not
+repeat the unchanged Home/Leads/light-dark matrix merely for a build number.
 
 ## Latest owner onboarding requirement, October14 evening
 
