@@ -30,7 +30,7 @@ try:
  for database in ['quality_actual','quality_bad_flag','quality_bad_route']:run('clone-'+database,[tool('createdb'),*conn,'-T','quality_base',database])
  def psql(db):return[tool('psql'),'-X','--no-password',*conn,'-d',db,'-v','ON_ERROR_STOP=1','-Atq']
  check="""do $$begin
- if(select value from app_config where key='photo_preservation_quality')is distinct from'{"enabled":false,"profile":"gemini-pro-4k-preservation-v1"}'::jsonb then raise exception'closed_policy_not_off';end if;
+ if(select value from app_config where key='photo_preservation_quality')is distinct from'{"enabled":false,"profile":"gemini-pro-4k-preservation-v1","tasks":[]}'::jsonb then raise exception'closed_policy_not_off';end if;
  if(select count(*)from ai_routes where task in('photo.quality_stage','photo.quality_declutter')and provider='gemini'and model='gemini-3-pro-image'and unit_cents=30.5536 and enabled=false and note='legacy'and params='{"image_size":"4K"}'::jsonb and min_plan='free'and privacy_tier='retained_30d'and capabilities@>array['prompt-edit','fidelity','4K'])<>2 then raise exception'closed_routes_not_off';end if;
  if(select digest from closed_legacy_snapshot)is distinct from(select md5(coalesce(string_agg(to_jsonb(r)::text,','order by id),''))from ai_routes r where task in('photo.stage','photo.declutter','photo.sky','photo.twilight','photo.lawn','photo.custom'))then raise exception'legacy_routes_changed';end if;
  end$$;select 'ordinary-photo-profile-default-off-legacy-unchanged';"""
@@ -38,7 +38,7 @@ try:
  run('nonadmin-cannot-enable-policy',psql('quality_actual'),"set role authenticated;update app_config set value='{}'where key='photo_preservation_quality';",refuses='permission denied')
  run('nonadmin-cannot-enable-routes',psql('quality_actual'),"set role authenticated;update ai_routes set enabled=true where task='photo.quality_stage';",refuses='permission denied')
  visible=run('nonadmin-policy-not-readable',psql('quality_actual'),"set role authenticated;select count(*)from app_config where key='photo_preservation_quality';");assert visible.strip()=='0'
- run('local-operator-settings',psql('quality_actual'),"update app_config set value=jsonb_build_object('enabled',true,'profile','gemini-pro-4k-preservation-v1','changed_by','closed-test-owner')where key='photo_preservation_quality';update ai_routes set enabled=true,min_plan='pro'where task in('photo.quality_stage','photo.quality_declutter');")
+ run('local-operator-settings',psql('quality_actual'),"update app_config set value=jsonb_build_object('enabled',true,'profile','gemini-pro-4k-preservation-v1','tasks',jsonb_build_array('photo.stage'),'changed_by','closed-test-owner')where key='photo_preservation_quality';update ai_routes set enabled=true,min_plan='pro'where task in('photo.quality_stage','photo.quality_declutter');")
  run('replay-own-seed',psql('quality_actual')+['-f',MIG])
  run('assert-replay-preserves-operator',psql('quality_actual'),"do $$begin if(select value->>'changed_by'from app_config where key='photo_preservation_quality')<>'closed-test-owner'or(select count(*)from ai_routes where task in('photo.quality_stage','photo.quality_declutter')and enabled and min_plan='pro')<>2 then raise exception'replay_changed_operator';end if;end$$;")
  source=MIG.read_text()

@@ -687,7 +687,7 @@ Deno.test("actual owner Pro4K rejects Flash-only extreme output after recording 
 });
 Deno.test("ordinary nonadmin Starter Stage/Declutter use isolated Pro4K without sponsor or owner grant and preserve replay",async()=>{
  for(const edit of["stage","declutter"]){const f=await fixture(false,null,true);try{
-  f.state.plan="starter";f.state.qa=false;f.state.proAdmin=false;f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1"};f.state.output=outputJPEG(3584,4800);
+  f.state.plan="starter";f.state.qa=false;f.state.proAdmin=false;f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage","photo.declutter"]};f.state.output=outputJPEG(3584,4800);
   const request=()=>f.request({edit,...(edit==="stage"?{style:"contemporary"}:{})});
   const response=await f.run(request());assertEquals(response.status,409);assertEquals((await response.json()).code,"photo_quality_pending");
   assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.costs[0].step.task,"photo."+edit);assertEquals(f.state.costs[0].step.route_id,"normal-quality-route");assertEquals(f.state.costs[0].step.model,"gemini-3-pro-image");
@@ -699,7 +699,7 @@ Deno.test("ordinary nonadmin Starter Stage/Declutter use isolated Pro4K without 
 });
 Deno.test("ordinary disabled profile leaves normal Flash path; enabled missing or withdrawn Pro never sends cheap fallback",async()=>{
  for(const kind of["off","missing","withdrawn"]){const f=await fixture(false,null,true);try{
-  f.state.normalProfile={enabled:kind!=="off",profile:"gemini-pro-4k-preservation-v1"};if(kind==="missing")f.state.normalRows=[];if(kind==="withdrawn")f.state.normalWithdraw=true;
+  f.state.normalProfile={enabled:kind!=="off",profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage","photo.declutter"]};if(kind==="missing")f.state.normalRows=[];if(kind==="withdrawn")f.state.normalWithdraw=true;
   const response=await f.run(f.request({edit:"stage",style:"modern"}));assert(response.status!==200);
   assertEquals(f.state.submits,kind==="off"?1:0);assertEquals(f.state.costs.length,kind==="off"?1:0);
   if(kind==="off")assertEquals(f.state.costs[0].step.model,"gemini-3.1-flash-image");
@@ -707,14 +707,20 @@ Deno.test("ordinary disabled profile leaves normal Flash path; enabled missing o
  }finally{f.close();}}
 });
 Deno.test("ordinary Pro geometry guard retains paid Flash-only extreme privately and refuses delivery",async()=>{
- const f=await fixture(false,null,true);try{f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1"};f.state.output=outputJPEG(2048,8192);
+ const f=await fixture(false,null,true);try{f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage","photo.declutter"]};f.state.output=outputJPEG(2048,8192);
   assertEquals((await f.run(f.request({edit:"stage",style:"modern"}))).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.quality.evidence.failure.phase,"photo_output_geometry");assertEquals(f.state.quality.evidence.state,"hold");
  }finally{f.close();}
 });
 Deno.test("customer body cannot select Pro, forge profile authority or change unrelated photo edits",async()=>{
  for(const edit of["stage","twilight"]){const f=await fixture(false,null,true);try{
-  f.state.normalProfile={enabled:edit==="twilight",profile:"gemini-pro-4k-preservation-v1"};
+  f.state.normalProfile={enabled:edit==="twilight",profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage","photo.declutter"]};
   await f.run(f.request({edit,...(edit==="stage"?{style:"modern"}:{}),model:"gemini-3-pro-image",quality_profile:"gemini-pro-4k-preservation-v1",extra:{owner_photo_pro_4k:true,photo_preservation_profile:"gemini-pro-4k-preservation-v1"}}));
   assertEquals(f.state.submits,1);assertEquals(f.state.costs[0].step.model,"gemini-3.1-flash-image");assertEquals(f.state.inputs[0].extra.photo_preservation_profile,undefined);assertEquals(f.state.inputs[0].extra.owner_photo_pro_4k,undefined);
+ }finally{f.close();}}
+});
+Deno.test("ordinary Stage-only policy does not activate Declutter Pro",async()=>{
+ for(const edit of["stage","declutter"]){const f=await fixture(false,null,true);try{
+  f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage"]};f.state.output=outputJPEG(3584,4800);
+  await f.run(f.request({edit,...(edit==="stage"?{style:"modern"}:{})}));assertEquals(f.state.submits,1);assertEquals(f.state.costs[0].step.model,edit==="stage"?"gemini-3-pro-image":"gemini-3.1-flash-image");
  }finally{f.close();}}
 });

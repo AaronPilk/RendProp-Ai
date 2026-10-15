@@ -19,6 +19,8 @@ export async function normalPhotoQualityProfile(task:string,masked:boolean,db=ad
  const value=result.data?.value;
  if(value===null||value===undefined||value.enabled===false)return null;
  if(!value||typeof value!=="object"||Array.isArray(value)||value.enabled!==true||value.profile!==NORMAL_PHOTO_PRO4K_PROFILE)throw unavailable();
+ if(!Array.isArray(value.tasks)||value.tasks.length<1||value.tasks.length>2||new Set(value.tasks).size!==value.tasks.length||!value.tasks.every((t:unknown)=>typeof t==="string"&&Object.hasOwn(TASKS,t)))throw unavailable();
+ if(!value.tasks.includes(task))return null;
  return{profile:NORMAL_PHOTO_PRO4K_PROFILE,task:task as keyof typeof TASKS,routeTask:TASKS[task as keyof typeof TASKS]};
 }
 export async function normalPhotoQualityRoutes(profile:NormalPhotoQualityProfile,context:RouteContext,resolve=resolveRoute):Promise<RouteStep[]>{

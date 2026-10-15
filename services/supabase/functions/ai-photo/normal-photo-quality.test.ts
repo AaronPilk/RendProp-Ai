@@ -18,7 +18,7 @@ const{mediaAttemptQuote,ceilingVerifiedQuote,boundedPhotoChain,resetServingModeC
 const{geminiAdapter,submitPreparedGeminiPhoto4K}=gemini;
 const{resetRouterCache}=router;
 const{HttpError}=http;
-const config={enabled:true,profile:NORMAL_PHOTO_PRO4K_PROFILE};
+const config={enabled:true,profile:NORMAL_PHOTO_PRO4K_PROFILE,tasks:["photo.stage","photo.declutter"]};
 const profile={profile:NORMAL_PHOTO_PRO4K_PROFILE,task:"photo.stage",routeTask:"photo.quality_stage"}as const;
 const row={id:"c43f188c-faf0-46c8-a646-ea71b8481201",task:profile.routeTask,position:1,provider:"gemini",model:"gemini-3-pro-image",unit:"image",unit_cents:30.5536,capabilities:["prompt-edit","fidelity","4K"],max_latency_s:120,min_plan:"free",same_model_as:null,privacy_tier:"retained_30d",enabled:true,retire_after:null,note:"legacy",params:{image_size:"4K"}};
 function db(value:unknown=config,error=false){const reads:string[]=[];return{reads,client:{from(table:string){assertEquals(table,"app_config","Ordinary users need no profile/admin/sponsor read");return{select(){return this;},eq(key:string,v:unknown){assertEquals([key,v],["key",NORMAL_PHOTO_QUALITY_KEY]);return this;},maybeSingle:async()=>{reads.push(table);return{data:value===null?null:{value},error:error?{message:"unavailable"}:null};}};}}as any};}
@@ -29,8 +29,9 @@ test("ordinary preservation policy is independently OFF and restricted to unmask
  for(const value of[null,{enabled:false,profile:NORMAL_PHOTO_PRO4K_PROFILE}])assertEquals(await normalPhotoQualityProfile("photo.stage",false,db(value).client),null);
  for(const task of["photo.stage","photo.declutter"]){const f=db();assertEquals((await normalPhotoQualityProfile(task,false,f.client))?.task,task);assertEquals(f.reads,["app_config"]);}
  for(const task of["photo.sky","photo.twilight","photo.lawn","photo.custom","video.reel_clip"]){const f=db();assertEquals(await normalPhotoQualityProfile(task,false,f.client),null);assertEquals(f.reads,[]);}
+ const stageOnly=db({...config,tasks:["photo.stage"]});assert(await normalPhotoQualityProfile("photo.stage",false,stageOnly.client));assertEquals(await normalPhotoQualityProfile("photo.declutter",false,stageOnly.client),null);
  const masked=db();assertEquals(await normalPhotoQualityProfile("photo.declutter",true,masked.client),null);assertEquals(masked.reads,[]);
- for(const value of[{},[],true,{...config,enabled:"true"},{...config,profile:"owner-qa"}])await assertRejects(()=>normalPhotoQualityProfile("photo.stage",false,db(value).client),HttpError);
+ for(const value of[{...config,tasks:[]},{...config,tasks:["photo.stage","photo.sky"]},{...config,tasks:["photo.stage","photo.stage"]},{...config,tasks:null},{},[],true,{...config,enabled:"true"},{...config,profile:"owner-qa"}])await assertRejects(()=>normalPhotoQualityProfile("photo.stage",false,db(value).client),HttpError);
  await assertRejects(()=>normalPhotoQualityProfile("photo.stage",false,db(config,true).client),HttpError);
 });
 test("actual ordinary resolver keeps plan/privacy/capability/retirement and active legacy-row checks under both router flags",async()=>{

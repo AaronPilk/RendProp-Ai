@@ -2,8 +2,10 @@
 -- rows, old clients, prices/credits/funding and existing paid work are unchanged.
 begin;
 insert into public.app_config(key,value)
-values('photo_preservation_quality','{"enabled":false,"profile":"gemini-pro-4k-preservation-v1"}'::jsonb)
+values('photo_preservation_quality','{"enabled":false,"profile":"gemini-pro-4k-preservation-v1","tasks":[]}'::jsonb)
 on conflict(key)do nothing;
+-- Activation selects only reviewed tasks, e.g. tasks:["photo.stage"].
+-- Declutter need not be activated with Stage.
 -- Disabled independently of the policy flag. Activation requires both explicit
 -- policy approval and enabled eligible isolated rows; no Flash fallback.
 insert into public.ai_routes(id,task,position,provider,model,unit,unit_cents,capabilities,max_latency_s,min_plan,same_model_as,privacy_tier,enabled,note,params)
