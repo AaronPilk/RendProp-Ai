@@ -4865,6 +4865,7 @@ struct PhotoStudioView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let listing: Listing
     let entry: Entry
 
@@ -5118,9 +5119,15 @@ struct PhotoStudioView: View {
     // per-photo shortcut and has always been one. Everything that costs money
     // and needs a decision lives on the other screen.
 
+    private var photosImportLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 10))
+            : AnyLayout(HStackLayout(spacing: 10))
+    }
+
     private var photosBody: some View {
         VStack(spacing: Theme.spacing) {
-            HStack(spacing: 10) {
+            photosImportLayout {
                 addButton("Add photos", "photo.stack", filled: true) { showLibrary = true }
                 addButton("Take a photo", "camera", filled: false) {
                     showCaptureGuide = true
