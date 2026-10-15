@@ -227,7 +227,7 @@ import { asHttpError, type ChainResult, resolveChain, runChain } from "../_share
 import { BUDGETS, fetchBounded, ProviderError } from "../_shared/providers/common.ts";
 import { type ContentBlock, anthropicMessages, imageBlock } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
-import { falCompletedFailure, falLegacyReceipt, falLegacyReceiptMatchesModel } from "../_shared/providers/fal.ts";
+import { falResultErrorReason, falResultReadIssue, falCompletedFailure, falLegacyReceipt, falLegacyReceiptMatchesModel } from "../_shared/providers/fal.ts";
 import { persistResult, persistedUrl, putBytes, presignGet } from "../_shared/providers/common.ts";
 import { R2_BUCKET_RENDERS,R2_BUCKET_UPLOADS,headObject } from "../_shared/r2.ts";
 import { verifyPropertyVideoInput } from '../_shared/property-video.ts';
@@ -1993,12 +1993,14 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         const rRes = await fetchBounded("fal", responseUrl, { headers: falHeaders() }, BUDGETS.pollMs);
         const result = await rRes.json().catch(() => ({} as Record<string, unknown>));
         if (!rRes.ok) {
-          console.error("ai-video fal completed result failed", { provider_status: rRes.status, error_class: "upstream" });
+          console.error("ai-video fal completed result failed", { provider_status: rRes.status, error_class: "upstream", result_reason: falResultErrorReason(result) });
+          const deliveryIssue = falResultReadIssue(rRes.status, result);
+          if (deliveryIssue) return json({ status: "processing", provider: "fal", delivery_issue: deliveryIssue, retry_existing_job: true });
           if (rRes.status === 408 || rRes.status === 429 || rRes.status >= 500) {
             throw new HttpError(502, "The clip finished, but its file could not be retrieved yet. Retry the saved request shortly.", "upstream",
               { provider: "fal", provider_status: rRes.status, error_class: "upstream", failure_phase: "result", retry_existing_job: true });
           }
-          return json({ status: "failed", error: "The video service could not return this generation.", error_class: "upstream", provider_status: rRes.status });
+          return json({ status: "failed", error: "The video service could not return this generation.", error_class: falResultErrorReason(result) === "content_policy" ? "nsfw" : "upstream", provider_status: rRes.status });
         }
         const resultFailure = falCompletedFailure(result);
         if (resultFailure) return json({ status: "failed", error: resultFailure.message, error_class: resultFailure.error_class, provider: "fal" });
@@ -2206,7 +2208,7 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
       console.error(`ai-video routed job failed (${job.p}/${job.m}):`, state.message);
       return json({ status: "failed", error: state.message, error_class: state.error_class, provider: job.p });
     }
-    return json({ status: "processing", provider: job.p, model: job.m, queue_position: null, logs_tail: [] });
+    return json({ status: "processing", provider: job.p, model: job.m, queue_position: null, logs_tail: [], ...(state.delivery_issue ? { delivery_issue: state.delivery_issue, retry_existing_job: true } : {}) });
   }
 
   // COMPLETED → one immutable journaled object, including concurrent polls and

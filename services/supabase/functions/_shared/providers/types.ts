@@ -41,8 +41,12 @@ export interface JobRef {
   submitted_at: string;
 }
 
+export interface ProviderDeliveryIssue {
+  phase: "result_read"; provider: "fal"; provider_state: "completed"; provider_status: 403;
+  reason: "balance_exhausted" | "account_locked" | "auth" | "permission" | "unknown";
+}
 export type JobState =
-  | { status: "queued" | "running" }
+  | { status: "queued" | "running"; delivery_issue?: ProviderDeliveryIssue }
   | {
     status: "done";
     result_url: string;

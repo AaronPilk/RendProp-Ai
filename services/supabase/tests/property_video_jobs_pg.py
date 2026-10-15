@@ -35,7 +35,7 @@ try:
  PSQL=[TOOLS['psql'],'-X','--no-password',*conn,'-d','property_sites','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
  for migration in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
- for newest in sorted(set((SQL/'migrations').glob('20261014*property_video*.sql'))|set((SQL/'migrations').glob('20261014*registered_background_video_delivery.sql'))|set((SQL/'migrations').glob('20261015*property_video_structural_fallback_cpu_recovery.sql'))|set((SQL/'migrations').glob('20261015*property_video_cpu_retained_recovery_capacity.sql'))|set((SQL/'migrations').glob('20261015*property_video_one_quality_retry.sql'))|set((SQL/'migrations').glob('20261015*property_video_parallel_admission_fair_poll.sql'))):run('replay-'+newest.stem,[*PSQL,'-q','-1','-f',newest])
+ for newest in sorted(set((SQL/'migrations').glob('20261014*property_video*.sql'))|set((SQL/'migrations').glob('20261014*registered_background_video_delivery.sql'))|set((SQL/'migrations').glob('20261015*property_video_structural_fallback_cpu_recovery.sql'))|set((SQL/'migrations').glob('20261015*property_video_cpu_retained_recovery_capacity.sql'))|set((SQL/'migrations').glob('20261015*property_video_one_quality_retry.sql'))|set((SQL/'migrations').glob('20261015*property_video_parallel_admission_fair_poll.sql'))|set((SQL/'migrations').glob('20261015*property_video_derived_quality_retry.sql'))|set((SQL/'migrations').glob('20261015*property_video_retained_result_delivery_recovery.sql'))):run('replay-'+newest.stem,[*PSQL,'-q','-1','-f',newest])
  unit=run('actual-jobs-rpc-roles',[*PSQL,'-Atq','-f',SQL/'tests/property_video_jobs.sql']);rows=[json.loads(s)for s in unit.splitlines()if s.startswith('{')and 'assertions'in s];assert len(rows)==1 and rows[0]['passed'];receipt['unit']=rows[0]
  # Compiled actual SQL mutations retain independent failure/category oracles.
  for control,signature,needle,replacement,expected in [
@@ -46,6 +46,7 @@ try:
   ('retry-null-history-grant','public.property_video_quality_history_guard()',"public.property_video_quality_retry_evidence(old.job_id,old.attempt_id)is null or",'', 'directtable absentgrant cannot append paidretryhistory'),
   ('retry-terminal-journal','public.property_video_quality_retry_evidence(uuid,uuid)',"if c.reservation_id is null then return null;end if;",'', 'missingterminaljournal cannot authorize paid retry'),
   ('no-paid-regeneration','public.property_video_job_resume(uuid,uuid,numeric)',"set state='processing',cpu_recoveries=cpu_recoveries+1","set state='pending',cpu_recoveries=cpu_recoveries+1", 'recovery nextaction is extraction of same paidclip, not provider dispatch')]:
+  if control=='no-paid-regeneration':signature='public.property_video_job_resume_before_delivery_20261015(uuid,uuid,numeric)'
   original=run('read-'+control,[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%signature]);assert original.count(needle)==1,(control,'source anchor')
   run('compile-'+control,[*PSQL,'-Atq'],original.replace(needle,replacement,1))
   mutant=subprocess.run([*PSQL,'-Atq','-f',SQL/'tests/property_video_jobs.sql'],env=ENV,cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)

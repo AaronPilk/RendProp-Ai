@@ -16,7 +16,7 @@
 // vendor's CDN forever" and "it doesn't".
 
 import type { RouteStep } from "../router.ts";
-import type { DoneState, ErrorClass, GenerateInput, JobRef, JobState, ProviderAdapter } from "./types.ts";
+import type { DoneState, ErrorClass, GenerateInput, JobRef, JobState, ProviderAdapter, ProviderDeliveryIssue } from "./types.ts";
 import {
   BUDGETS,
   ProviderError,
@@ -255,6 +255,27 @@ function classifyFal(status: number, body: unknown): ErrorClass {
   return classifyStatus(status);
 }
 
+/** A completed request whose result GET is denied is not proof that generation
+ * failed. Keep its exact accepted receipt; never turn this into another POST.
+ * Only closed classifications leave this function; no body/URL is retained. */
+export function falResultErrorReason(body: unknown): "balance_exhausted" | "account_locked" | "auth" | "permission" | "content_policy" | "unknown" {
+  // Diagnostic categorization only. It never authorizes generation or changes
+  // the safety decision. Prefer documented structured type/code; bounded known
+  // messages support older endpoints. Unknown replies stay explicitly unknown.
+  const text = snippet(body, 400).toLowerCase().replace(/[_-]/g, " ");
+  if (/nsfw|safety|content policy/.test(text)) return "content_policy";
+  if (/user balance exhausted|insufficient (?:balance|credits)|balance (?:exhausted|depleted)|out of credits/.test(text)) return "balance_exhausted";
+  if (/user is locked|account (?:locked|disabled)|user disabled/.test(text)) return "account_locked";
+  if (/invalid (?:api )?key|unauthorized|authentication/.test(text)) return "auth";
+  if (/permission|not authorized|access denied|forbidden/.test(text)) return "permission";
+  return "unknown";
+}
+export function falResultReadIssue(status: number, body: unknown): ProviderDeliveryIssue | null {
+  const reason = falResultErrorReason(body);
+  if (status !== 403 || reason === "content_policy") return null;
+  return { phase: "result_read", provider: "fal", provider_state: "completed", provider_status: 403, reason };
+}
+
 /** fal's terminal failure is COMPLETED plus error/error_type, not a new take. */
 export function falCompletedFailure(data: Record<string, unknown>): Extract<JobState, { status: "failed" }> | null {
   const hasError = data.error != null && data.error !== false && data.error !== "";
@@ -389,13 +410,15 @@ export const falAdapter: ProviderAdapter = {
         PROVIDER,
       );
       let result: Record<string, unknown>;
+      const delivery: { issue: ProviderDeliveryIssue | null } = { issue: null };
       try {
         result = await fetchJson<Record<string, unknown>>(
-          PROVIDER, responseUrl, { method: "GET", headers: falHeaders() }, BUDGETS.pollMs, classifyFal,
+          PROVIDER, responseUrl, { method: "GET", headers: falHeaders() }, BUDGETS.pollMs, (status, body) => { delivery.issue = falResultReadIssue(status, body); return classifyFal(status, body); },
         );
       } catch (error) {
         if (!(error instanceof ProviderError) || !error.status) throw error;
-        console.error("fal completed result failed", { provider_status: error.status, error_class: error.error_class });
+        console.error("fal completed result failed", { provider_status: error.status, error_class: error.error_class, result_reason: delivery.issue?.reason ?? (error.error_class === "nsfw" ? "content_policy" : "unknown") });
+        if (delivery.issue) return { status: "running", delivery_issue: delivery.issue };
         // The generation already completed. A temporary result GET failure is
         // recoverable by polling this receipt; it must not invite another POST.
         if (error.status === 408 || error.status === 429 || error.status >= 500) throw error;

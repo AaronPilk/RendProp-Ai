@@ -6,7 +6,7 @@ import {
 import type { RouteStep } from "../router.ts";
 import { HttpError } from "../http.ts";
 import { runChain } from "./chain.ts";
-import { falAdapter } from "./fal.ts";
+import { falAdapter, falResultReadIssue, falResultErrorReason } from "./fal.ts";
 import { ProviderError } from "./common.ts";
 import {
   submitReservedVideo,
@@ -375,4 +375,23 @@ Deno.test("unsupported fal input is rejected before any HTTP call", async () => 
     calls++;
     return Response.json(null);
   });
+});
+
+Deno.test("completed result403 retains exact paid request and safe closed reason; later GET can deliver without POST", async () => {
+  let reads=0,posts=0;
+  await mocked(async()=>{
+    const ref={provider:"fal",model:step.model,id:receipt.request_id,poll_url:receipt.status_url,submitted_at:new Date().toISOString()};
+    const unavailable=await falAdapter.poll(ref);
+    assertEquals(unavailable,{status:"running",delivery_issue:{phase:"result_read",provider:"fal",provider_state:"completed",provider_status:403,reason:"balance_exhausted"}});
+    const delivered=await falAdapter.poll(ref);assertEquals(delivered.status,"done");assertEquals(posts,0);assertEquals(reads,2);
+  },(url,init)=>{if(init?.method==="POST")posts++;if(url.includes("/status"))return Response.json({status:"COMPLETED",response_url:receipt.response_url});reads++;return reads===1?Response.json({detail:"USER_BALANCE_EXHAUSTED "+marker},{status:403}):Response.json({video:{url:"https://v3.fal.media/synthetic.mp4"}});});
+});
+Deno.test("result diagnostic whitelist never leaks body or turns content refusal into a retry",()=>{
+  for(const [body,reason]of[[{error_type:"USER_BALANCE_EXHAUSTED"},"balance_exhausted"],[{detail:"USER_IS_LOCKED"},"account_locked"],[{detail:"invalid API key"},"auth"],[{detail:"Permission denied"},"permission"],[{detail:marker},"unknown"],[{detail:[{type:"content_policy_violation"}]},"content_policy"]]as const){
+    assertEquals(falResultErrorReason(body),reason);const issue=falResultReadIssue(403,body);if(reason==="content_policy")assertEquals(issue,null);else assertEquals(issue?.reason,reason);assert(!JSON.stringify(issue).includes(marker));
+  }
+  for(const status of[400,401,402,404,408,422,429,500])assertEquals(falResultReadIssue(status,{detail:"USER_BALANCE_EXHAUSTED"}),null);
+});
+Deno.test("actual result403 content policy remains terminal and never submits another generation",async()=>{
+ await mocked(async()=>{const out=await falAdapter.poll({provider:"fal",model:step.model,id:receipt.request_id,poll_url:receipt.status_url,submitted_at:new Date().toISOString()});assertEquals(out.status,"failed");if(out.status==="failed")assertEquals(out.error_class,"nsfw");},(url,init)=>{assertEquals(init?.method,"GET");return url.includes("/status")?Response.json({status:"COMPLETED",response_url:receipt.response_url}):Response.json({detail:[{type:"content_policy_violation",msg:marker}]},{status:403});});
 });

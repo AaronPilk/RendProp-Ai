@@ -28,11 +28,15 @@ export async function poll(ctx:any){
   assert(s.receipt?.status_url,503,'Saved video receipt is unavailable.');
   const link=new URL(s.receipt.status_url);assert(link.searchParams.has('job'),403,'Use the server-owned signed provider receipt.');
   phase='provider_status';const out=await callAI(ctx,'GET','status?'+link.searchParams.toString());
+  const issue=out.value.delivery_issue;
+  if(out.status===200&&out.value.status==='processing'&&issue?.phase==='result_read'&&issue.provider==='fal'&&issue.provider_state==='completed'&&issue.provider_status===403&&['balance_exhausted','account_locked','auth','permission','unknown'].includes(issue.reason)){
+   await rpc('property_video_job_result_read_failure',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id,p_reason:issue.reason});return;
+  }
   if(out.status!==200||out.value.status==='processing'){
    if(out.status!==200)console.warn(JSON.stringify(propertyVideoPollDiagnostic('status_response',new HttpError(out.status,'Provider status is unavailable.'))));
    await rpc('property_video_job_poll_release',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});return;
   }
-  if(out.value.status==='failed'){await fail(ctx,'provider_generation_failed');return;}
+  if(out.value.status==='failed'){await fail(ctx,out.value.error_class==='nsfw'?'provider_safety_refused':'provider_terminal_failed');return;}
   phase='status_response';assert(out.value.status==='completed'&&out.value.persisted===true&&typeof out.value.asset_key==='string',503,'Completed private media could not be retained.');
   phase='private_output';const saved=await adminClient().from('private_ai_outputs').select('storage_key,bytes').eq('org_id',j.org_id).eq('user_id',j.actor_id).eq('listing_id',j.listing_id).eq('bucket','renders').eq('storage_key',out.value.asset_key).maybeSingle();
   assert(!saved.error&&saved.data,503,'The generated clip is not owned by this property.');

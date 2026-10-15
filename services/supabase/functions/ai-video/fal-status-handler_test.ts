@@ -45,7 +45,7 @@ async function fixture(skipTerminalCheck = false, enforceReceipt = false, skipRe
       new URL("../_shared/providers/common.ts", import.meta.url).href,
     )
   };
-  import {falCompletedFailure,falLegacyReceipt,falLegacyReceiptMatchesModel} from ${
+  import {falResultErrorReason,falResultReadIssue,falCompletedFailure,falLegacyReceipt,falLegacyReceiptMatchesModel} from ${
     JSON.stringify(new URL("../_shared/providers/fal.ts", import.meta.url).href)
   };
   const decodeJobToken=()=>null,routedContentOrg=()=>null,extractJobToken=()=>null, falHeaders=()=>({Authorization:"Key synthetic-test-placeholder"});
@@ -377,4 +377,22 @@ async function assertRoutedJournalDenial(skipRefusal=false){
 Deno.test("actual routed status binds signed admission scope and fails closed before PUT on journal refusal",async()=>{await assertRoutedJournalDenial();});
 Deno.test("compiled ignored journal refusal fails the same saved-job no-write boundary",async()=>{
   await assertRejects(()=>assertRoutedJournalDenial(true),Error,"journal refusal must retain the saved job without an object write");
+});
+
+Deno.test("legacy completed403 reports only closed result delivery facts, preserves request, and keeps safety terminal",async()=>{
+ const r=await run({status:"COMPLETED"},403,{detail:"USER_IS_LOCKED "+privateMarker});assertEquals(r.status,200);assertEquals(r.body.status,"processing");assertEquals(r.body.retry_existing_job,true);assertEquals(r.body.delivery_issue.reason,"account_locked");assertEquals(r.calls.length,2);assertEquals((r.logs[0][1] as Record<string,unknown>).result_reason,"account_locked");
+ const safety=await run({status:"COMPLETED"},403,{detail:[{type:"content_policy_violation",msg:privateMarker}]});assertEquals(safety.body.status,"failed");assertEquals(safety.body.error_class,"nsfw");assertEquals(safety.body.delivery_issue,undefined);
+});
+Deno.test("actual routed status forwards completed result denial without output persistence or supplier submission",async()=>{
+ const source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
+ const module=await import(encode(`
+ import {json,HttpError}from ${JSON.stringify(new URL("../_shared/http.ts",import.meta.url).href)};
+ import {createRoutedOutput}from ${JSON.stringify(new URL("./routed-output.ts",import.meta.url).href)};
+ const asHttpError=e=>e;export const counts={polls:0};
+ const adminClient=()=>({from:()=>{const q={select:()=>q,eq:()=>q,is:()=>q,in:()=>q,limit:async()=>({data:[],error:null})};return q;}});
+ const adapterFor=()=>({poll:async()=>{counts.polls++;return{status:'running',delivery_issue:{phase:'result_read',provider:'fal',provider_state:'completed',provider_status:403,reason:'unknown'}};}});
+ const persistResult=()=>{throw Error('No output or new paid submission');};
+ async ${functionBody(source,"routedStatus")}
+ export const run=()=>routedStatus('scope',{p:'fal',m:'same-model',i:'same-request',u:'same-receipt',t:'now'});
+ `));const response=await module.run(),body=await response.json();assertEquals(response.status,200);assertEquals(body.status,"processing");assertEquals(body.delivery_issue.reason,"unknown");assertEquals(body.retry_existing_job,true);assertEquals(module.counts.polls,1);
 });

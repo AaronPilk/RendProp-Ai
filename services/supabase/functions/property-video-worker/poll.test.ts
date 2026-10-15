@@ -45,3 +45,9 @@ Deno.test('non200status is observable but never interpreted as permission to reg
 Deno.test('closed poll telemetry ignores arbitrary error names URLs bodies and customer IDs',()=>{
  const error=new Error('SECRET https://private.invalid?credential=do-not-log');error.name='PRIVATE-CUSTOMER-AND-TOKEN';assertEquals(propertyVideoPollDiagnostic('clip_bytes',error),{event:'property_video_poll_failure',phase:'clip_bytes',error_name:'Other',http_status:null});
 });
+
+Deno.test('completed403 result-read recovery retains exact attempt and never requests another paid generation',async()=>{
+ for(const reason of['balance_exhausted','account_locked','auth','permission','unknown']){reset();state.response={status:200,value:{status:'processing',delivery_issue:{phase:'result_read',provider:'fal',provider_state:'completed',provider_status:403,reason}}};await run();assertEquals(state.methods,['GET']);assertEquals(state.fail,[]);assertEquals(state.rpcs,[{name:'property_video_job_result_read_failure',args:{p_job:'owned-job',p_lease:'lease',p_attempt:'attempt',p_reason:reason}}]);assert(!state.events.includes('private_ai_outputs'));}
+ for(const issue of[{phase:'result_read',provider:'fal',provider_state:'completed',provider_status:403,reason:'content_policy'},{phase:'result_read',provider:'fal',provider_state:'unknown',provider_status:403,reason:'unknown'}]){reset();state.response={status:200,value:{status:'processing',delivery_issue:issue}};await run();assertEquals(state.rpcs.map((r:any)=>r.name),['property_video_job_poll_release']);}
+ for(const [error_class,code]of[['nsfw','provider_safety_refused'],['upstream','provider_terminal_failed']]){reset();state.response={status:200,value:{status:'failed',error_class}};await run();assertEquals(state.fail,[{code,ambiguous:false}]);assertEquals(state.rpcs,[]);assertEquals(state.methods,['GET']);}
+});
