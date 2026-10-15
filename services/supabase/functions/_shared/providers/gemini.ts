@@ -19,7 +19,7 @@
 import type { RouteStep } from "../router.ts";
 import { PHOTO_OUTPUT_MAX_WIRE_BYTES } from "../photo-output-policy.ts";
 import { paramsOf } from "../router.ts";
-import { photo2KInputAllowance, photo4KInputAllowance } from "../photo-image-quality.ts";
+import { photo2KInputAllowance, photo4KInputAllowance, ownerPhotoPro4KInputAllowance } from "../photo-image-quality.ts";
 import type { DoneState, ErrorClass, GenerateInput, JobRef, JobState, ProviderAdapter } from "./types.ts";
 import {
   BUDGETS,
@@ -68,11 +68,11 @@ export function needsImageSizePin(model: string): boolean {
 
 /** Explicitly supported image-edit models; an unknown route fails closed. */
 export function supportsStagingReference(model: string): boolean {
-  return ["gemini-2.5-flash-image", "gemini-3.1-flash-image", "gemini-3-pro-image-preview"].includes(model.trim());
+  return ["gemini-2.5-flash-image", "gemini-3.1-flash-image", "gemini-3-pro-image-preview", "gemini-3-pro-image"].includes(model.trim());
 }
 
 export function geminiImageGenerationConfig(model: string, imageSize: "1K" | "2K" | "4K" = "1K"): Record<string, unknown> {
-  if (imageSize !== "1K" && (!["2K","4K"].includes(imageSize) || model !== "gemini-3.1-flash-image"))
+  if (imageSize !== "1K" && !((model === "gemini-3.1-flash-image" && ["2K","4K"].includes(imageSize)) || (model === "gemini-3-pro-image" && imageSize === "4K")))
     throw new ProviderError(PROVIDER, "validation", "This image model does not support the requested comparison resolution.");
   const generationConfig: Record<string, unknown> = { responseModalities: ["IMAGE"], candidateCount: 1, maxOutputTokens: GEMINI_IMAGE_MAX_OUTPUT_TOKENS };
   // Resolution is explicit; only the verified server route admits higher sizes.
@@ -158,6 +158,8 @@ async function submitGeminiImage(step:RouteStep,input:GenerateInput,budget?:Phot
       throw new ProviderError(PROVIDER, "validation", "The 2K comparison input bound was not verified.");
     if (imageSize === "4K" && photo4KInputAllowance(input) === null)
       throw new ProviderError(PROVIDER, "validation", "The 4K photo input bound was not verified.");
+    if (step.model === "gemini-3-pro-image" && (imageSize !== "4K" || ownerPhotoPro4KInputAllowance(input) === null))
+      throw new ProviderError(PROVIDER,"validation","The Pro4K comparison requires its scoped server-prepared input.");
     const verified4K=imageSize==="4K"&&photo4KInputAllowance(input)!==null;
     const timeoutMs=verified4K?Math.min(GEMINI_PHOTO_4K_SUBMIT_MS,budget?Math.max(1,budget.deadline-Date.now()):GEMINI_PHOTO_4K_SUBMIT_MS):BUDGETS.submitMs;
     let data:Record<string,unknown>;

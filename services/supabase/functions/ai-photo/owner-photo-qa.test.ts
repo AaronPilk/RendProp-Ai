@@ -116,7 +116,7 @@ Deno.test("actual funded2K dispatch holds11.7184 cents before one POST and refus
 const encoded=(text:string)=>"data:application/typescript;base64,"+btoa(String.fromCharCode(...new TextEncoder().encode(text)));
 const imports=(text:string,base=import.meta.url)=>text.replace(/from "(\.\.?\/[^\"]+)"/g,(_all,path)=>`from ${JSON.stringify(new URL(path,base).href)}`);
 Deno.test("compiled owner2K guard removals are detected independently",async()=>{
- const source=await Deno.readTextFile(new URL("./owner-photo-qa.ts",import.meta.url));
+ const source=(await Deno.readTextFile(new URL("./owner-photo-qa.ts",import.meta.url))).split("// Separate from the historical Flash2K selector.")[0];
  const changes:[string,string,()=>Promise<void>][]=[
   ['profile.data?.is_admin!==true','false',async()=>{const mutant=await import(encoded(imports(source.replace('profile.data?.is_admin!==true','false'))));assertEquals(await mutant.ownerQaPhotoStep(args,db({admin:false}).client,NOW),null,"fresh admin gate");}],
   ['grant.consent!==OWNER_PHOTO_QA_CONSENT','false',async()=>{const mutant=await import(encoded(imports(source.replace('grant.consent!==OWNER_PHOTO_QA_CONSENT','false'))));assertEquals(await mutant.ownerQaPhotoStep(args,db({value:{...grant,consent:"wrong"}}).client,NOW),null,"explicit consent gate");}],
@@ -144,7 +144,7 @@ Deno.test("compiled2K price under-reservations and lost payload resolution are d
 
 Deno.test("production owner2K route is single-step after normal admission and reauthorizes before priced dispatch",async()=>{
  const source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
- const override=source.indexOf("const ownerPhotoStep = await ownerQaPhotoStep(");assert(override>source.indexOf("await guardEdit("));
+ const override=source.indexOf("const ownerPhotoStep = ownerPhotoPro4KStep ?? await ownerQaPhotoStep(");assert(override>source.indexOf("await guardEdit("));
  const beforeBounded=source.slice(override,source.indexOf("chain = await boundedPhotoChain",override));assert(beforeBounded.includes("chain = [ownerPhotoStep]"));assert(beforeBounded.includes("prepareOwnerQaPhotoInput(genInput)"));
  const dispatch=source.indexOf("const ref = await fundedAttempt(",override),fresh=source.indexOf("const currentOrg = await requireEditorRole(",override);
  assert(fresh>override&&fresh<dispatch);assert(source.slice(fresh,dispatch).includes("currentOrg !== orgId"));assert(source.slice(fresh,dispatch).includes("await ownerQaPhotoStep("));

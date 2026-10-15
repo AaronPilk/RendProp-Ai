@@ -93,8 +93,8 @@ import { routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
 import { fundingContext, fundedAttempt, mediaAttemptQuote, SavedFundingResponse, completeFundingOperation, abortFundingOperationBeforeDispatch, boundedPhotoChain, assertPhotoHelperSponsorship, inputHash, type FundingContext } from "../_shared/funded-serving.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
-import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput } from "./owner-photo-qa.ts";
-import { preparePhoto4KInput, photo4KChain, assertPhoto4KGeometry } from "./photo-quality.ts";
+import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput, ownerQaPhotoPro4KStep, prepareOwnerQaPhotoPro4KInput } from "./owner-photo-qa.ts";
+import { preparePhoto4KInput, photo4KChain, assertPhoto4KGeometry, assertPhotoPro4KGeometry } from "./photo-quality.ts";
 import { priceMaskedPhotoChain, isMaskedFillStep } from "./masked-photo-pricing.ts";
 import { supportsStagingReference,submitPreparedGeminiPhoto4K } from "../_shared/providers/gemini.ts";
 import {
@@ -906,11 +906,15 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       genInput.extra = { ...genInput.extra, staging_reference_b64: referenceB64, staging_reference_mime: referenceMime };
     }
 
-    const ownerPhotoStep = await ownerQaPhotoStep({actorId:user.id,orgId,listingId:body.listing_id,task});
+    const ownerPhotoPro4KStep = await ownerQaPhotoPro4KStep({actorId:user.id,orgId,listingId:body.listing_id,task});
+    const ownerPhotoStep = ownerPhotoPro4KStep ?? await ownerQaPhotoStep({actorId:user.id,orgId,listingId:body.listing_id,task});
     if (ownerPhotoStep) {
-      try { genInput = prepareOwnerQaPhotoInput(genInput); }
+      try {
+        genInput = ownerPhotoPro4KStep ? prepareOwnerQaPhotoPro4KInput(genInput) : prepareOwnerQaPhotoInput(genInput);
+        if(ownerPhotoPro4KStep){const quote=mediaAttemptQuote(ownerPhotoStep,genInput);assert(quote,503,"The Pro4K comparison could not be priced. No edit was sent.");ownerPhotoStep.unit_cents=quote.cents;}
+      }
       catch(error) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw error; }
-      // Explicit comparison is one full Flash2K step, never a quiet 1K fallback.
+      // An explicit comparison is one priced model/size, never a quiet fallback.
       chain = [ownerPhotoStep];
     }
     const normalPhoto4K = !ownerPhotoStep && !maskB64;
@@ -918,6 +922,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       try { genInput = preparePhoto4KInput(genInput); chain = photo4KChain(chain, genInput); }
       catch(error) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw error; }
     }
+    const timedPhoto4K=normalPhoto4K||!!ownerPhotoPro4KStep;
     // Masked Fill keeps its legacy resolution, but its per-megapixel quote
     // and the successful ledger entry must use the same complete source bound.
     try {
@@ -951,11 +956,12 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       attempt = await runChain(task, chain, async (step) => {
         if (ownerPhotoStep) {
           const currentOrg = await requireEditorRole(user, req, "AI photo edits", body.listing_id);
-          if (currentOrg !== orgId || !(await ownerQaPhotoStep({actorId:user.id,orgId,listingId:body.listing_id,task})))
-            throw new HttpError(403,"The temporary 2K comparison authorization ended. No new edit was sent.","forbidden");
+          const freshComparison=ownerPhotoPro4KStep?await ownerQaPhotoPro4KStep({actorId:user.id,orgId,listingId:body.listing_id,task}):await ownerQaPhotoStep({actorId:user.id,orgId,listingId:body.listing_id,task});
+          if (currentOrg !== orgId || !freshComparison || freshComparison.model!==step.model)
+            throw new HttpError(403,"The temporary photo comparison authorization ended. No new edit was sent.","forbidden");
         }
         const adapter = adapterFor(step.provider);
-        const ref = await fundedAttempt(funding, `${task}:${chain.indexOf(step)}`, step, genInput, mediaAttemptQuote(step, genInput), () => normalPhoto4K
+        const ref = await fundedAttempt(funding, `${task}:${chain.indexOf(step)}`, step, genInput, mediaAttemptQuote(step, genInput), () => timedPhoto4K
           ? submitPreparedGeminiPhoto4K(step,genInput,{deadline:requestDeadline-PHOTO_MAIN_PERSIST_RESERVE_MS,signal:req.signal})
           : adapter.submit(step, genInput));
         const done = await awaitJob(adapter, ref, BUDGETS.totalImageMs);
@@ -993,9 +999,9 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       feature: "photo_edit",
       step,
       images: 1,
-      meta: { edit, space_type: space, ...((ownerPhotoStep || normalPhoto4K) ? {image_size:normalPhoto4K?"4K":"2K",owner_quality_comparison:!!ownerPhotoStep,cost_basis:normalPhoto4K?"complete_input_4096_text_2520_image_bound":"complete_input_4096_text_1680_image_bound",input_token_allowance:genInput.extra?.photo_input_allowance ?? 8192} : {}), ...(maskB64&&isMaskedFillStep(step)?{cost_basis:"source_megapixels_rounded_up_5_cents_bound",priced_megapixels:step.unit_cents/5}:{}), request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
+      meta: { edit, space_type: space, ...((ownerPhotoStep || normalPhoto4K) ? {image_size:timedPhoto4K?"4K":"2K",owner_quality_comparison:!!ownerPhotoStep,cost_basis:ownerPhotoPro4KStep?"complete_input_4096_text_2000_pro_image_bound":normalPhoto4K?"complete_input_4096_text_2520_image_bound":"complete_input_4096_text_1680_image_bound",input_token_allowance:genInput.extra?.photo_input_allowance ?? 8192} : {}), ...(maskB64&&isMaskedFillStep(step)?{cost_basis:"source_megapixels_rounded_up_5_cents_bound",priced_megapixels:step.unit_cents/5}:{}), request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
         ...(referenceB64 ? { input_images: 2, staging_furniture_reference: true,
-          ...(normalPhoto4K ? {} : {cost_basis: "route_output_image_estimate_input_tokens_unmodeled"}) } : {}) },
+          ...(timedPhoto4K ? {} : {cost_basis: "route_output_image_estimate_input_tokens_unmodeled"}) } : {}) },
     });
 
     // Ledger liability above survives every later quality/storage refusal.
@@ -1008,7 +1014,8 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       phase="evidence_persistence";
       quality=await retainPhotoCandidate(adminClient(),quality,decoded,{stage:`${task}:${chain.indexOf(step)}`,provider:step.provider,model:step.model});
       phase="photo_output_geometry";
-      if(ownerPhotoStep)assertOwnerQaPhotoOutput(outB64,outMime);
+      if(ownerPhotoPro4KStep)assertPhotoPro4KGeometry(decoded);
+      else if(ownerPhotoStep)assertOwnerQaPhotoOutput(outB64,outMime);
       else if(normalPhoto4K)assertPhoto4KGeometry(decoded);
     }catch(error){
       const over=error instanceof HttpError&&error.details?.failure_phase==="photo_output_size";

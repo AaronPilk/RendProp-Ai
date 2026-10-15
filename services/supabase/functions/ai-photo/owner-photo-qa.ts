@@ -4,6 +4,7 @@ import type { ChainStep } from "../_shared/router.ts";
 import type { GenerateInput } from "../_shared/providers/types.ts";
 import { HttpError } from "../_shared/http.ts";
 import { validatePhotoInput } from "./input-policy.ts";
+import { preparePhoto4KInput } from "./photo-quality.ts";
 export const OWNER_PHOTO_QA_KEY = "owner_photo_quality_qa";
 export const OWNER_PHOTO_QA_CONSENT = "owner-authorized-2k-media-qa-2026-10-12";
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -43,4 +44,29 @@ export function prepareOwnerQaPhotoInput(input:GenerateInput):GenerateInput{
 export function assertOwnerQaPhotoOutput(b64:string,mime:string):void{
  const image=validatePhotoInput(b64,mime);
  if(image.width*image.height<3_800_000||image.width*image.height>4_800_000)throw new HttpError(502,"The image provider returned a size outside the requested 2K resolution. The comparison was not delivered as a verified 2K image.","upstream");
+}
+
+// Separate from the historical Flash2K selector. No public route is changed.
+export const OWNER_PHOTO_PRO_4K_KEY="owner_photo_pro_4k_qa";
+export const OWNER_PHOTO_PRO_4K_CONSENT="owner-authorized-gemini-pro-4k-media-qa-2026-10-15";
+export async function ownerQaPhotoPro4KStep(args:{actorId:string;orgId:string;listingId?:string|null;task:string},db=adminClient(),now=new Date()):Promise<ChainStep|null>{
+ const actor=canonical(args.actorId),org=canonical(args.orgId),listing=canonical(args.listingId);
+ if(!actor||!org||!listing||!["photo.stage","photo.declutter"].includes(args.task))return null;
+ const row=await db.from("app_config").select("value").eq("key",OWNER_PHOTO_PRO_4K_KEY).maybeSingle();
+ if(row.error||!row.data?.value||typeof row.data.value!=="object"||Array.isArray(row.data.value))return null;
+ const grant=row.data.value as Record<string,unknown>;
+ if(grant.enabled!==true||canonical(grant.actor_id)!==actor||canonical(grant.org_id)!==org||canonical(grant.listing_id)!==listing||
+  canonical(grant.changed_by)!==actor||grant.task!==args.task||grant.consent!==OWNER_PHOTO_PRO_4K_CONSENT||grant.provider!=="gemini"||grant.model!=="gemini-3-pro-image"||grant.image_size!=="4K")return null;
+ const start=typeof grant.created_at==="string"?Date.parse(grant.created_at):NaN,end=typeof grant.expires_at==="string"?Date.parse(grant.expires_at):NaN;
+ if(![start,end,now.getTime()].every(Number.isFinite)||start>now.getTime()||end<=now.getTime()||end<=start||end-start>24*3600*1000)return null;
+ const profile=await db.from("profiles").select("is_admin").eq("id",actor).maybeSingle();
+ if(profile.error||profile.data?.is_admin!==true)return null;
+ // Standard Google tariff: $2/M input, $12/M text/thinking, $120/M image.
+ //4K=2000 image tokens. Actual prepared input tier reprices before dispatch.
+ return {route_id:"owner-qa-gemini-pro-4k-20261015",task:args.task,position:1,provider:"gemini",model:"gemini-3-pro-image",unit:"image",unit_cents:30.5536,
+  capabilities:["prompt-edit","fidelity","4K"],max_latency_s:120,min_plan:"free",same_model_as:null,privacy_tier:"retained_30d",enabled:true,retire_after:null,params:{image_size:"4K"}};
+}
+export function prepareOwnerQaPhotoPro4KInput(input:GenerateInput):GenerateInput{
+ const prepared=preparePhoto4KInput(input);
+ return {...prepared,extra:{...prepared.extra,owner_photo_pro_4k:true}};
 }

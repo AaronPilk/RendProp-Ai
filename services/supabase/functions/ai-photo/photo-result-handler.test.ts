@@ -66,10 +66,14 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
  import {PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from ${url("./photo-qc-wait.ts")};
- import {preparePhoto4KInput,photo4KChain,assertPhoto4KGeometry} from ${url("./photo-quality.ts")};
+ import {preparePhoto4KInput,photo4KChain,assertPhoto4KGeometry,assertPhotoPro4KGeometry} from ${url("./photo-quality.ts")};
  import {priceMaskedPhotoChain,isMaskedFillStep} from ${url("./masked-photo-pricing.ts")};
- import {ownerQaPhotoStep as actualOwnerQaPhotoStep,prepareOwnerQaPhotoInput,assertOwnerQaPhotoOutput} from ${url("./owner-photo-qa.ts")};
+ import {ownerQaPhotoStep as actualOwnerQaPhotoStep,prepareOwnerQaPhotoInput,assertOwnerQaPhotoOutput,ownerQaPhotoPro4KStep as actualOwnerQaPhotoPro4KStep,prepareOwnerQaPhotoPro4KInput} from ${url("./owner-photo-qa.ts")};
  const ownerQaPhotoStep=(args)=>actualOwnerQaPhotoStep(args,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{value:{enabled:false}},error:null})})})})});
+ const ownerQaPhotoPro4KStep=(args)=>actualOwnerQaPhotoPro4KStep(args,{from:(table)=>({select:()=>({eq:()=>({maybeSingle:async()=>{
+  if(table==="profiles")return{data:{is_admin:state.proAdmin!==false},error:null};
+  state.proLookups=(state.proLookups??0)+1;return{data:{value:state.proExpiresAfterLookup&&state.proLookups>1?null:state.proGrant??null},error:null};
+ }})})})});
  import {assertCustomPhotoPrompt,assertCustomPhotoOutput} from ${url("../ai-copy/guard.ts")};
  import {CUSTOM_PHOTO_FIXED_FEATURES} from ${url("../_shared/custom-photo-prompt.ts")};
  import {buildRealEstateStagePrompt} from ${url("../_shared/photo-stage-prompt.ts")};
@@ -645,5 +649,31 @@ Deno.test("actual quarantine retains exact25MiB candidate with9MB source and rep
   const request=()=>f.request({image_b64:source}),response=await f.run(request());assertEquals(response.status,409);assertEquals((await response.json()).code,"photo_quality_pending");
   assertEquals(f.state.puts,2);assertEquals(f.state.object.byteLength,25*1024*1024);assertEquals(f.state.quality.evidence.output.bytes,25*1024*1024);assertEquals(f.state.quality.evidence.input.bytes,9_000_000);assertEquals(f.state.journal,null);
   assertEquals((await f.run(request())).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.gets,0);assertEquals(f.state.puts,2);
+ }finally{f.close();}
+});
+
+function proGrantForHandler(task="photo.stage"){
+ const now=Date.now();return{enabled:true,actor_id:actor,org_id:org,listing_id:listing,changed_by:actor,provider:"gemini",model:"gemini-3-pro-image",image_size:"4K",task,consent:"owner-authorized-gemini-pro-4k-media-qa-2026-10-15",created_at:new Date(now-1000).toISOString(),expires_at:new Date(now+3600_000).toISOString()};
+}
+Deno.test("actual owner Pro4K entrypoint preserves paid private evidence and same-key replay with exact model quote",async()=>{
+ for(const edit of ["stage","declutter"]){const f=await fixture(false,null,true);try{
+  f.state.proGrant=proGrantForHandler("photo."+edit);f.state.output=outputJPEG(3584,4800);
+  const request=()=>f.request({edit,...(edit==="stage"?{style:"contemporary"}:{})});
+  assertEquals((await f.run(request())).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.costs.length,1);
+  assertEquals(f.state.costs[0].step.model,"gemini-3-pro-image");assertEquals(f.state.costs[0].meta.image_size,"4K");assertEquals(f.state.costs[0].meta.cost_basis,"complete_input_4096_text_2000_pro_image_bound");
+  const allowance=f.state.inputs[0].extra.photo_input_allowance,price=(allowance*2+4096*12+2000*120)/10000;
+  assertEquals(f.state.costs[0].step.unit_cents,price);assert(Number(f.state.holdArguments[0].p_hold_cents)>=price);
+  assertEquals(f.state.quality.evidence.generation_model,"gemini-3-pro-image");assertEquals(f.state.quality.evidence.output.width,3584);assertEquals(f.state.quality.evidence.output.height,4800);
+  assert(f.state.providerDeadline>Date.now());assertEquals((await f.run(request())).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.costs.length,1,"Pending replay cannot regenerate or reprice");
+ }finally{f.close();}}
+});
+Deno.test("actual owner Pro4K reauthorizes its exact selector before money/provider dispatch",async()=>{
+ const f=await fixture(false,null,true);try{f.state.proGrant=proGrantForHandler();f.state.proExpiresAfterLookup=true;
+  const response=await f.run(f.request({edit:"stage",style:"contemporary"}));assert(response.status!==200);assertEquals(f.state.submits,0);assertEquals(f.state.holds,0);assertEquals(f.state.costs.length,0);
+ }finally{f.close();}
+});
+Deno.test("actual owner Pro4K rejects Flash-only extreme output after recording paid liability",async()=>{
+ const f=await fixture(false,null,true);try{f.state.proGrant=proGrantForHandler();f.state.output=outputJPEG(2048,8192);
+  const response=await f.run(f.request({edit:"stage",style:"contemporary"}));assert(response.status!==200);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.quality.evidence.state,"hold");assertEquals(f.state.quality.evidence.failure.phase,"photo_output_geometry");
  }finally{f.close();}
 });

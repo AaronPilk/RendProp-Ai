@@ -19,3 +19,10 @@ export function photo4KInputAllowance(input:unknown):number|null {
  if(extra.owner_photo_2k===true||extra.photo_quality_2k===true)return null;
  return preparedInputAllowance(extra,"photo_quality_4k");
 }
+
+/** Set only by the separately scoped server owner-comparison path. */
+export function ownerPhotoPro4KInputAllowance(input:unknown):number|null {
+ const value=input&&typeof input==="object"&&!Array.isArray(input)?input as Record<string,unknown>:{};
+ const extra=value.extra&&typeof value.extra==="object"&&!Array.isArray(value.extra)?value.extra as Record<string,unknown>:{};
+ return extra.owner_photo_pro_4k===true?photo4KInputAllowance(input):null;
+}

@@ -73,3 +73,11 @@ export function assertPhoto4KGeometry(image:Pick<DecodedStillImage,"width"|"heig
  if(!PHOTO_4K_DIMENSIONS.some(([width,height])=>Math.abs(image.width-width)<=width*.01&&Math.abs(image.height-height)<=height*.01))
   throw new HttpError(502,"The provider returned an image outside the requested 4K size. That image was not saved as a 4K edit.","upstream");
 }
+
+/** Pro4K has ten published aspects; Flash-only1:4/1:8 extremes are excluded.
+ * https://ai.google.dev/gemini-api/docs/image-generation#aspect_ratios_and_image_size */
+const PHOTO_PRO_4K_DIMENSIONS=[[4096,4096],[3392,5056],[5056,3392],[3584,4800],[4800,3584],[3712,4608],[4608,3712],[3072,5504],[5504,3072],[6336,2688]]as const;
+export function assertPhotoPro4KGeometry(image:Pick<DecodedStillImage,"width"|"height">):void{
+ if(!PHOTO_PRO_4K_DIMENSIONS.some(([width,height])=>Math.abs(image.width-width)<=width*.01&&Math.abs(image.height-height)<=height*.01))
+  throw new HttpError(502,"The provider returned an image outside the requested Pro4K size. That comparison was not saved as a verified4K edit.","upstream");
+}

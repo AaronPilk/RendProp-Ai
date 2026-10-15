@@ -9,7 +9,7 @@ import { anthropicMaxTokens } from "./providers/anthropic.ts";
 import { openaiChatConfig } from "./providers/openai.ts";
 import { geminiImageGenerationConfig } from "./providers/gemini.ts";
 import type { GenerateInput } from "./providers/types.ts";
-import { photo2KInputAllowance, photo4KInputAllowance } from "./photo-image-quality.ts";
+import { photo2KInputAllowance, photo4KInputAllowance, ownerPhotoPro4KInputAllowance } from "./photo-image-quality.ts";
 
 export class FundingAdmissionError extends HttpError { readonly funding_admission = true; }
 export class SavedFundingResponse extends HttpError {
@@ -142,7 +142,7 @@ export async function boundedPhotoChain(context: FundingContext, steps: RouteSte
  if(await servingMode()==="ceiling")return steps;
  if(await unlimitedSponsored(context))return steps;
  if(input.extra?.photo_quality_4k===true){
-  if(steps.length!==1||steps[0].task!==input.task||steps[0].provider!=="gemini"||steps[0].model!=="gemini-3.1-flash-image"||input.mask_url||!photo4KInputAllowance(input)||!mediaAttemptQuote(steps[0],input))
+  if(steps.length!==1||steps[0].task!==input.task||steps[0].provider!=="gemini"||!(steps[0].model==="gemini-3.1-flash-image"||(steps[0].model==="gemini-3-pro-image"&&ownerPhotoPro4KInputAllowance(input)!==null))||input.mask_url||!photo4KInputAllowance(input)||!mediaAttemptQuote(steps[0],input))
    throw new FundingAdmissionError(503,"This photo tool has no complete bounded 4K serving route. No edit was sent.","upstream");
   return steps;
  }
@@ -265,6 +265,10 @@ export function ceilingVerifiedQuote(step:Pick<RouteStep,"provider"|"model">,inp
  const data=input&&typeof input==="object"&&!Array.isArray(input)?input as Record<string,unknown>:{};
  const model=step.model.replace(/^fal-ai\//,"");
  const bound=(cents:number)=>({cents:Math.ceil(cents*10000)/10000,version:"documented-bound-20261008"});
+ if(step.provider==="gemini"&&model==="gemini-3-pro-image"){
+  const allowance=ownerPhotoPro4KInputAllowance(input);
+  return data.mask_url||paramsOf(step as RouteStep)?.image_size!=="4K"||allowance===null?null:geminiPro4KGenerationQuote(geminiImageGenerationConfig(model,"4K"),allowance);
+ }
  if(step.provider==="gemini"&&model==="gemini-3.1-flash-image"){
   const size=paramsOf(step as RouteStep)?.image_size;
   const extra=data.extra as Record<string,unknown>|undefined;
@@ -424,7 +428,20 @@ export function geminiImageGenerationQuote(config:Record<string,unknown>,inputAl
  return {cents:(131072*.5+output*60)/10000,version:TARIFF_VERSION};
 }
 
+/** Separate Pro tariff, not a Flash quote or a measured supplier invoice.
+ * Reserve the complete input tier plus4096 text/thinking and2000 image tokens.
+ * https://ai.google.dev/gemini-api/docs/pricing#gemini-3-pro-image */
+export function geminiPro4KGenerationQuote(config:Record<string,unknown>,inputAllowance=8192):AttemptQuote|null{
+ if(geminiImageGenerationQuote(config,inputAllowance)===null||!config.imageConfig||
+  (config.imageConfig as Record<string,unknown>).imageSize!=="4K")return null;
+ return {cents:(inputAllowance*2+Number(config.maxOutputTokens)*12+2000*120)/10000,version:"owner-photo-pro-4k-standard-20261015"};
+}
+
 export function mediaAttemptQuote(step:RouteStep,input:GenerateInput):AttemptQuote|null {
+ if(step.provider==="gemini"&&step.model==="gemini-3-pro-image"){
+  const allowance=ownerPhotoPro4KInputAllowance(input);
+  return input.mask_url||paramsOf(step)?.image_size!=="4K"||allowance===null?null:geminiPro4KGenerationQuote(geminiImageGenerationConfig(step.model,"4K"),allowance);
+ }
  if(step.provider==="gemini"&&step.model==="gemini-3.1-flash-image")
   {
    const size=paramsOf(step)?.image_size;
