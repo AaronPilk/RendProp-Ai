@@ -192,7 +192,7 @@ jobs:
         run: python3 apps/ios/tests/run-photo-browser-original.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-browser-original"
       - name: Photo review previews and pre-sign-in playback preserve local privacy
         run: python3 apps/ios/tests/run-photo-review-preview.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-review-preview"
-      - name: Bundled quick-start video stays within 60 seconds with a readable transcript
+      - name: Branded quick-start video stays within two minutes with a readable transcript
         run: |
           if ! command -v ffprobe >/dev/null; then
             brew install ffmpeg
@@ -637,6 +637,7 @@ jobs:
           node tests/projects-browser.mjs
           node tests/creative-browser.mjs
           node tests/photo-delivery-browser.mjs
+          node tests/photo-output-browser.mjs
           node tests/photographer-browser.mjs
           node tests/business-browser.mjs
           node tests/industry-details-browser.mjs
@@ -747,6 +748,7 @@ jobs:
             /tmp/rendprop-connected-browser-*/receipt.json
             /tmp/rendprop-connected-browser-*/*.png
             /tmp/rendprop-studio-recovery-*/receipt.json
+            /tmp/rendprop-photo-output-*/receipt.json
             ${{ runner.temp }}/recovery-*.log
             /tmp/rendprop-contact-navigation-*/receipt.json
             /tmp/rendprop-contact-navigation-*/*.png
@@ -1406,6 +1408,16 @@ jobs:
         run: |
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/photo_quality_background_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-background-pg"
+      - name: Native4K output preserves bounded candidate authority and smaller source limits
+        timeout-minutes: 10
+        run: |
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/photo_output_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-output-pg"
+      - name: Failed recipes release supplier capacity only after a paid terminal receipt
+        timeout-minutes: 10
+        run: |
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_failed_terminal_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-video-failed-terminal-pg"
       - name: Retain actual background authority and privacy receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1416,6 +1428,8 @@ jobs:
             ${{ runner.temp }}/rendprop-studio-photo-pg/**
             ${{ runner.temp }}/rendprop-photo-quality-pg/**
             ${{ runner.temp }}/rendprop-photo-background-pg/**
+            ${{ runner.temp }}/rendprop-photo-output-pg/**
+            ${{ runner.temp }}/rendprop-video-failed-terminal-pg/**
           if-no-files-found: warn
 
   python-worker:
