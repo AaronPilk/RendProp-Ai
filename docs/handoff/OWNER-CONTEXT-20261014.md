@@ -42,16 +42,18 @@ are historical; retain their receipts without treating them as current status.
 - Atomic cloud removal is deployed as listings 56/migration 20261015144353.
   Ordinary Pro4K photo and FAL4K video policies are activated; owner-only success
   is not ordinary paid receipt/funding proof. No retail price/quota reset.
-- Normal operator Resume for the SAME 14-photo Listing 16:9 job c40f4860… was
-  accepted at 17:38:34 UTC through the existing service RPC, not a phone action.
-  The current job is FAILED at assembly with a container ready_timeout before
-  CPU execution; all 13 AI shots and one original-photo fallback are retained.
-  Source 6's old 210-cent receipt remains immutable. The admitted recipe and
-  completed clips stay intact. A bounded pre-output assembly recovery is a
-  source-only candidate, not live. No final master, publication or completed-video
-  push is claimed. The owner approved these portrait crops; a fresh landscape-home
-  test later is not a prerequisite for this approved job.
-- Studio frontend 72e336f2 has 35 exact files/39 GET readbacks. Edge Studio 34
+- The SAME14-photo Listing job c40f4860… retains all13paidAI clips plus one
+  original-photo fallback. Safe pre-output recovery SQL20261015184528/jobs11 was
+  deployed and operator Resume18:51 UTC retained source/paid/output identities.
+  The normal cron reached CPU execution, but the cycle failed without outputs.
+  Exact fallback310425B/SHA bac1640f… is896×1195, yielding896×504 landscape crop;
+  its motion encoder rejection is reproduced on the exact bytes. Reviewed
+  static-only fallback now produces a complete local70s/1920×1080 master from
+  the exact14 inputs (58,991,523B/SHA1a6e3b21…), full AV decode passes and source
+  hashes remain unchanged. It is NOT deployed. A separate explicit repair-op
+  candidate, not another old Resume replay, is being prepared. No new paid AI,
+  public publication, completed-video push or physical acceptance is claimed.
+- Studio frontend 72e336f2 has 35 exact files/39 GET readbacks. Fresh Edge Studio35 readback
   and migration 20261015164224 enforce photo/recorded-source separation;
   authenticated customer UI acceptance remains open. W05 thumbnail source and
   matching gateway configuration are deployed. W05 point authority is now LIVE:

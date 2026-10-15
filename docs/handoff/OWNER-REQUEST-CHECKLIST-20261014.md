@@ -2,7 +2,7 @@
 
 This is the consolidated acceptance list for the owner's messages, not a claim that
 all work is finished. Latest explicit decisions override earlier wording/prices.
-Updated October 15 at 18:30 UTC after source review. Earlier detailed ledger
+Updated October 15 at 19:15 UTC after live and local acceptance checks. Earlier detailed ledger
 is retained at
 `_bridge/build83-owner-checklist/CHECKLIST-PRE-CONSOLIDATION-20261015-1503.md`
 (relative to the outer Rendprop AI folder).
@@ -29,14 +29,19 @@ is retained at
   diagnostics 56aeb29 preserve the CI timing refusal; one local six-variant run
   passed with runtime/thresholds unchanged. These repairs and fixture-only
   2e59899 are outside that run. No full current-head CI pass is claimed.
-- The SAME 14-photo Listing 16:9 job c40f4860… resumed at 17:38:34 UTC through
-  its normal service RPC, not a phone action. It is now FAILED at assembly with
-  a container ready_timeout before CPU execution; 13 AI shots and one original-
-  photo fallback are retained. The old source 6 210-cent receipt is immutable.
-  Bounded pre-output assembly recovery is a source-only candidate, not live.
-  Preserve paid evidence and the recipe. No complete master, publication or push
-  is claimed. The approved portrait crops remain authorized; a fresh landscape-
-  home test later is not an invented prerequisite for this job.
+- The SAME 14-photo Listing 16:9 job c40f4860… still has all 13 paid AI
+  clips and one saved-photo fallback. SQL20261015184528 / jobs11 safely enabled
+  one explicit assembly recovery; operator Resume at18:51 UTC preserved all
+  source/paid/output identities. The recovered cycle reached CPU execution but
+  failed without outputs. Exact R2-read diagnosis proved the fallback JPEG is
+  896×1195 and its landscape crop896×504; the former motion encoder refuses it.
+  A separately reviewed static-only fallback now produces a real local70s
+  1920×1080 master from those exact14 inputs; all bytes/hashes and full AV
+  decoding pass. This CPU change is NOT deployed yet. The softer still is not
+  restored4K. A distinct bounded repair operation is being prepared; no further
+  Resume, new paid generation, publication or completed-video push is claimed.
+  The owner approved these portrait crops for this test; a fresh landscape-home
+  test later is not an invented prerequisite.
 - The owner explicitly allows Simulator UI acceptance while the physical phone
   is unavailable. Compact review and two batches retaining six exact PNG Originals
   were observed there; physical 84 acceptance remains open. Keep Simulator,
@@ -51,27 +56,34 @@ is retained at
   text grid/viewer reachability is unresolved, not a proven scrolling defect.
   The isolated test Simulator has been shut down; no UI test is still running.
   Claude's separate web/Studio work is preserved.
-- Studio 72e336f2 has 35 exact files/39 GET readbacks. Edge Studio 34 and migration
-  20261015164224 enforce photo/recorded-source separation. Authenticated customer
-  UI acceptance remains open. W05 SQL 20261015184120/tours68 are LIVE and exact:
-  only the photo helper changed; three fresh Worker checks, legacy fallback and
-  exact masters remain. Applied-name PG passed 32 fresh/32 replay assertions,
-  13 fault/receipt controls and five withdrawal races; 41 tours tests/typecheck
-  and peer review passed. SAME saved-edit preview repeat GET measured 6.5564→
-  1.6701s, HEAD 6.3236→3.3843s and 304 6.1230→1.8681s; Original repeat measured
-  3.5797→1.5815s. Bytes, geometry, hashes and ETags remain exact. Full masters
-  still use generic authority at about 7.8–9.5s; phone loading/detail remains open.
-  These controls do not certify every image or user. Evidence:
-  `_bridge/build84-altered-photo-rpc/FINAL-DEPLOYED-RECEIPT.json`.
+- Studio frontend72e336f2 remains deployed, with35 exact files/39 GET readbacks.
+  Fresh Supabase readback is Studio35, not the separate frontend's version34.
+  C2 atomic discard/upload ordering is integrated in6849c3e/4a14484b with actual
+  SQL39+19 assertions, race/fault controls,575 Studio tests and two browser flows;
+  C2 is NOT live yet. Root43bf1e8 additionally projects new-video sources in
+  saved gallery order and uses the chosen edited key; missing/revoked edits
+  never silently become Original or offer preparation. All35 jobs handler tests
+  and three compiled controls pass, with peer review. Explicit gallery IDs and
+  frozen/manual recipes retain their order. Authenticated customer acceptance
+  remains open.
+- W05 point authority is LIVE: SQL20261015184120 / tours68 exact readback.
+  The SAME saved-edit preview initial GET measured7.3032→1.6476s and repeat
+  6.5564→1.6701s; Original repeat3.5797→1.5815s. Master/preview hashes and geometry
+  are unchanged. These are single-sample hosted controls, not a phone guarantee.
+  The actual Home cover is served directly by public R2 and decoded in230–312ms;
+  hero readiness measured2.02–3.35s across the three designs. A proposed hero
+  preview change would have slowed this cover and was reverted in49d242a without
+  deployment. The separate generic private full-master path remains slower.
+  Worker996484bb, three fresh authority checks, flags and secrets are unchanged.
 - Owner media migration 20261015170710 and general product-media migration
   20261015171923 are LIVE. Authorized media no longer requires a financial reserve
   to activate; current publication/object/hosting/visibility checks remain. Actual
   requests/bytes are metered as unpriced usage, without invented funding/cost rows.
-- The retained 17:20:24 UTC API-cost export covers 266 ledger rows/7548.9440 cents;
-  42.3796 cents of unreconciled holds and the owner's $25 FAL funding event are
-  separate. Supplier invoices, unpriced infrastructure, missing historical links,
-  deletion-related history loss and unseen worker spools remain explicit limits.
-  This is not an all-time supplier-billed total.
+- The retained18:50:52 UTC whole-app accounting export covers283 ledger rows /
+  9030.6640 cents. Unreconciled holds42.3796 cents and the owner's$25 FAL funding
+  are separate. Invoices, unpriced infrastructure, missing historical links,
+  deletion-related history and unseen worker spools remain explicit gaps. This
+  is internal retained accounting, not an all-time supplier-billed total.
 - Onboarding is still LAST and not done. The rejected 118.73s intro is unchanged
   in internal84; it must not become the finished App Store onboarding.
 
@@ -143,7 +155,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 | V09 | Finish accepted work away from editor; notify and review private result | Two-shot hosted completion/push proven; today's 14-shot job continued after leaving editor | Recover larger job; actual push/reopen/review, no auto-publication |
 | V10 | Check status must visibly respond | Delivered 83 spinner, actual last-checked time and safe network feedback; SDK passed | Actual phone tap/refresh acceptance |
 | V11 | Ready banner Review must open exact video, including while modal is closing | Delivered 83 exact-job navigation;50 checks +20 controls and SDK passed | Actual phone opening; unavailable-home banners stay suppressed |
-| V12 | Fix today's quality-retry failure; retain already paid/accepted clips | SAME job now13AI+one fallback retained; assembly FAILED at ready_timeout before CPU execution. Recovery candidate not live; old210c source6 receipt retained | Recover assembly on SAME job and inspect complete master; service recovery is not phone proof |
+| V12 | Fix today's quality-retry failure; retain already paid/accepted clips | Safe recovery SQL/jobs11 live, one explicit operator cycle preserved all13AI+fallback but exposed low-resolution photo motion refusal. Static-only fix produces complete local70s/1080p master with full AV decode; not deployed yet | Deploy verified CPU fix, bounded same-job repair and hosted master inspection; operator/local proof is not phone proof |
 | V13 | Recorded drone-style walkthrough is separate optional toolbox tool | Built; optional route observed | Final upload/play/tag check with real recorded video |
 | V14 | Explain slow/steady drone-like capture, gimbal and actual drone options | Built capture guidance | Final phone copy/animation inspection |
 | V15 | Tag rooms muted until genuine recorded/uploaded walkthrough; tap explains requirement | Delivered 83 predicate/entrypoint proof 32 checks +5 controls; SDK passed | Actual no-source/upload/tag phone tests; generated/sample video must not unlock it |
