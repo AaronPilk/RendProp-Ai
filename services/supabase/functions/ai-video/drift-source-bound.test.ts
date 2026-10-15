@@ -62,7 +62,7 @@ async function compiled(mutation?: Mutation) {
     export {requireDriftImage};
     export async function parseBody(req:Request){${read[0]}return body;}
     export function tokens(frameCount:number,rubric:string){const args={frames:new Array(frameCount)};${token}return judgeInputTokens;}
-    export async function preflight(req:Request,deps:any){const seg=["reel-clip"],db={},user={id:"fixture-actor"};
+    export async function preflight(req:Request,deps:any){const seg=["reel-clip"],db={},user={id:"fixture-actor"},worker=undefined;
       const guardGenerate=deps.admit,resolvePublicAsset=async()=>{throw Error("Asset path outside inline-source fixture");};
       const spaceTypeOf=()=>"real_estate",cleanPrompt=()=>null,SCENE_NOUN={real_estate:"home"};
       const assertVideoReceiptSigningReady=async()=>{},listingSpaceType=async()=>"real_estate",assertFairHousing=()=>{},guardedUserPrompt=()=>"";
