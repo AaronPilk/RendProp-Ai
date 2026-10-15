@@ -83,7 +83,7 @@ export async function resumeVideo(services:Pick<StudioServices,"api"|"getSnapsho
 }
 
 const SCENES=["front_exterior","entry","living","kitchen","dining","bedroom","bathroom","outdoor","rear_exterior","detail","unknown"];
-export async function planVideoSources(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,sources:FrozenSource[],operation:string,automaticOrder:boolean,signal?:AbortSignal):Promise<FrozenSource[]>{
+export async function planVideoSources(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,sources:FrozenSource[],operation:string,_legacyAutomaticOrder:boolean,signal?:AbortSignal):Promise<FrozenSource[]>{
  const planned:Array<{source:FrozenSource;scene:string;index:number}>=[];
  for(let start=0;start<sources.length;start+=20){
   assertVideoScope(services,scope,signal);const batch=sources.slice(start,start+20);
@@ -94,7 +94,9 @@ export async function planVideoSources(services:Pick<StudioServices,"api"|"getSn
   batch.forEach((source,index)=>{const p=map.get(source.photo_id);if(!p||p.asset_id!==source.photo_asset_id||!SCENES.includes(String(p.scene))||!["fly_through","push_in","side_glide","pull_back"].includes(String(p.motion))||typeof p.confidence!=="number"||!Number.isFinite(p.confidence)||p.confidence<0||p.confidence>1)throw Error("The automatic plan changed a selected source.");
    planned.push({source:{...source,motion:(p.confidence>.6&&p.scene!=="unknown"?p.motion:"push_in") as VideoMotion},scene:p.confidence>.6?String(p.scene):"unknown",index:start+index});});
  }
- return (automaticOrder?planned.sort((a,b)=>SCENES.indexOf(a.scene)-SCENES.indexOf(b.scene)||a.index-b.index):planned).map(p=>p.source);
+ // The planner supplies per-photo classification and motion, never a new sequence.
+ // Ignore the legacy automatic-order preference even on an unplanned saved recipe.
+ return planned.map(p=>p.source);
 }
 export type VideoPreparation={photosComplete?:boolean;framingReviewed?:boolean;planned:boolean;voiceComplete:boolean;automatic:boolean;camera:string;voice:"off"|"own"|"ai";voiceID:string;script:string};
 export type VideoJournal={schema:1;actor:string;org:string;library:string;listing:string;input:VideoInput;job_id?:string;preparation?:VideoPreparation;publication?:{id:string;job_id:string;asset_id:string};};

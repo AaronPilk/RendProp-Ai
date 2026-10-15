@@ -1,7 +1,7 @@
 # Claude Studio lane — October 15, 2026
 
 Branch `claude/launch83-web-studio-20261015`, base `3483a36`. Edits are limited to `apps/studio/src` and
-`apps/studio/tests`. **Uncommitted. The coordinator commits.** Evidence is local and headless only:
+`apps/studio/tests`. **Committed in `ddb386c`; the later Codex ordering follow-up is described in the combined handoff.** Evidence is local and headless only:
 Node unit tests plus Playwright Chromium over isolated fixtures. Nothing touched production, a provider,
 real accounts or purchases, and nothing here counts as phone acceptance.
 
@@ -85,7 +85,7 @@ For each bug, "Before" was run against HEAD `src` with the new tests, and "After
 **MakeVideo**
 - Voice is Off by default and the spoken-caption UI appears only when voice ≠ off (`MakeVideo.tsx:184`). `spoken_captions = voice!=="off"&&spoken` (`:113`).
 - Voice/music sit under "(optional)" (`:177`). Labels, transitions and camera are under Advanced (`:182`).
-- Automatic planning falls back to the selected order with push-in, and there are no per-photo questions (`:133`; `property-video.ts:86-97`).
+- New and still-unplanned restored videos preserve the explicit input order. Automatic planning chooses per-photo movement and falls back to gentle push-in; it never sorts by room (`property-video.ts`). No per-photo questions are added.
 - No 8 or 15 cap: "Select up to 100", the 101st is disabled (`:172-173`), and the 1–100 guard is at `property-video.ts:56,63`.
 
 **Jobs, recovery and publication**

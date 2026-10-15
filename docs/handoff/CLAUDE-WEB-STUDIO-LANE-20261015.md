@@ -148,7 +148,7 @@ All three designs were rendered with the actual renderer: Classic (`basic`), Sig
   - **S5:** server video processing copies and poster frames are no longer treated as photo versions or ZIP masters (P10, P11). This is a client stopgap; see contract C1.
 - **Verified unchanged and correct** (see Studio doc for line numbers):
   - Voice Off hides spoken captions.
-  - Advanced is optional; motion and order are automatic.
+  - Advanced is optional; per-photo motion is automatic and new videos keep the explicit input sequence.
   - A 100-photo bound, no 8 or 15 cap.
   - Journaled single dispatch, recover/resume of the same job, server-confirmed cancel.
   - Private results; explicit 16:9 publish only.
@@ -234,3 +234,11 @@ All three designs were rendered with the actual renderer: Classic (`basic`), Sig
    - More than 50 photos.
    - Multi-part coordinator ZIP over 10 minutes opened in Files.
    - Make a video → leave → recover → review → explicit publish on the same job.
+
+## Codex follow-up: preserve selected photo order
+
+The latest owner feedback supersedes automatic room-based ordering. New video recipes now save `automatic:false`; the arrange-scenes control is removed. The planner validates the same selected photo and asset identities, then keeps their exact input sequence while applying per-photo motion. Still-unplanned restored recipes ignore the legacy automatic-order flag. Accepted jobs and already-frozen request bodies are never re-sorted.
+
+Focused validation: 23 Node tests, Studio typecheck, and the actual MakeVideo browser lifecycle pass. The browser restores an unplanned legacy `automatic:true` recipe after a lost preparation reply, receives a reversed planner response, and confirms selected order, per-photo motion, and an unchanged admitted manifest after a lost accepted reply/reload. Two compiled controls reintroducing the new-recipe default and room sorting fail at the intended assertions. Evidence is external at `/Volumes/Rendprop Files/Builds/Active/build83-normal-release/guards/studio-upload-order/FINAL-SOURCE-BINDING.json`. The initial missing headless-shell environment failure and narrow journal-selector fixture failure are retained; the final run uses installed full Chromium 1243. No hosted or paid calls, deployment, or physical-phone acceptance are claimed.
+
+Integration still needs CI registration for the new property-site viewer, complete-photo-page and stale-job browser gates (and MakeVideo lifecycle gate, not previously invoked by CI). The optional `thumb_url` backend contract remains intentionally unimplemented.

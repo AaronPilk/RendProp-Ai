@@ -29,15 +29,17 @@ test("exact selected staged version, empty gallery and ineligible source stay ex
  assert.throws(()=>decodeSources({...raw,sources:[{...photo(1),photo_version_id:`asset:${asset}`}],selected_count:1},scope));
 });
 
-test("all100 photos are planned in20 batches, with no omission or replacement across batch seams",async()=>{
+test("all100 photos keep exact input order across20-photo plans, even with reversed responses and a legacy reorder preference",async()=>{
  const batches:number[]=[];
  const api=service(async(_path,options)=>{batches.push(options.body.photos.length);assert.equal(options.aiConsent,"property-video-plan-v1");return{listing_id:listing,org_id:library,photos:[...options.body.photos].reverse().map((p:any)=>({...p,scene:p.photo_id==="photo-100"?"front_exterior":"living",confidence:.9,motion:"side_glide"}))};});
  const frozen=selectedSources(photos,photos.map(s=>s.photo_id));
  const planned=await planVideoSources(api,scope,frozen,operation,true);
- assert.deepEqual(batches,[20,20,20,20,20]);assert.equal(planned.length,100);assert.equal(planned[0]!.photo_id,"photo-100");assert.equal(new Set(planned.map(s=>s.photo_asset_id)).size,100);
- assert.equal(planned[0]!.photo_version_id,photos[99]!.photo_version_id);assert.equal(planned[0]!.motion,"side_glide");
+ assert.deepEqual(batches,[20,20,20,20,20]);assert.equal(planned.length,100);assert.deepEqual(planned.map(s=>s.photo_id),frozen.map(s=>s.photo_id));assert.equal(new Set(planned.map(s=>s.photo_asset_id)).size,100);
+ assert.deepEqual(planned.map(s=>[s.photo_asset_id,s.photo_version_id,s.photo_provenance_id]),frozen.map(s=>[s.photo_asset_id,s.photo_version_id,s.photo_provenance_id]));assert.equal(planned[0]!.motion,"side_glide");
  const ordered=await planVideoSources(api,scope,frozen,operation,false);assert.deepEqual(ordered.map(s=>s.photo_id),frozen.map(s=>s.photo_id));
  await assert.rejects(()=>planVideoSources(service(async()=>({listing_id:listing,org_id:library,photos:[]})),scope,frozen,operation,true),/omitted/);
+ for(const fault of ["duplicate","wrong-asset"]){await assert.rejects(()=>planVideoSources(service(async(_path,options)=>({listing_id:listing,org_id:library,photos:options.body.photos.map((p:any,index:number)=>({...p,...(index===1?(fault==="duplicate"?{photo_id:options.body.photos[0].photo_id}:{asset_id:poster}):{}),scene:"living",confidence:.9,motion:"push_in"}))})),scope,frozen,operation,true),/repeats|changed/);}
+ assert.deepEqual(frozen,selectedSources(photos,photos.map(s=>s.photo_id)),"planning cannot mutate selected source/version identity");
 });
 
 test("late identity and aborted planner replies cannot populate a new account",async()=>{
