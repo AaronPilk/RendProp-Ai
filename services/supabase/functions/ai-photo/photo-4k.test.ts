@@ -40,8 +40,9 @@ Deno.test("normal4K output accepts every official aspect but refuses2K, malforme
  assertThrows(()=>validatePhotoInput(jpeg(12288,1536),"image/jpeg"),HttpError);
  assertEquals(validatePhotoOutput(jpeg(12288,1536),"image/jpeg").width,12288);
  assertThrows(()=>validatePhotoOutput("A".repeat(PHOTO_OUTPUT_POLICY.maxBase64Chars+4),"image/jpeg"),HttpError);
- // A full structural9MB JPEG is valid provider output but still too large
- // to submit as a source. No compressed-image decoder/visual proof is implied.
+ // A full structural9MB JPEG is valid provider output. Its4096px edge still
+ // exceeds the2048px source geometry limit; its byte size is allowed.
+ // No compressed-image decoder/visual proof is implied.
  const frame=Uint8Array.from(atob(jpeg(4096,4096)),c=>c.charCodeAt(0)),parts:Uint8Array[]=[];let size=frame.length;
  while(size<9_000_000){const n=Math.min(65_000,9_000_000-size),part=new Uint8Array(n);part.set([255,224,(n-2)>>8,(n-2)&255]);parts.push(part);size+=n;}
  const bytes=new Uint8Array(size);bytes.set(frame.subarray(0,2));let offset=2;for(const part of parts){bytes.set(part,offset);offset+=part.length;}bytes.set(frame.subarray(2),offset);

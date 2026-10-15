@@ -12,7 +12,7 @@ const rpc=(name:string,args:Record<string,unknown>)=>photoQualityRpc(adminClient
 const uuid=(v:unknown)=>{assert(photoUUID(v),400,'Use the retained photo check identity.');return v;};
 async function scope(check:string,lease:string){return await rpc('photo_quality_worker_scope',{p_check:check,p_lease:lease});}
 async function media(e:any,kind:'input'|'output'){
- const f=e[kind],etag=e[kind+'_etag'];assert(f&&f.bucket==='renders'&&f.key===`ai-router/${e.org_id}/photo-evidence/${e.actor_id}/${e.id}/${kind==='input'?'input':'candidate'}.${f.mime==='image/jpeg'?'jpg':f.mime==='image/png'?'png':'webp'}`&&photoSHA(f.sha256)&&Number.isSafeInteger(f.bytes)&&f.bytes>0&&f.bytes<=(kind==='input'?1000000:9000000)&&typeof etag==='string',409,'The saved comparison source changed.');
+ const f=e[kind],etag=e[kind+'_etag'];assert(f&&f.bucket==='renders'&&f.key===`ai-router/${e.org_id}/photo-evidence/${e.actor_id}/${e.id}/${kind==='input'?'input':'candidate'}.${f.mime==='image/jpeg'?'jpg':f.mime==='image/png'?'png':'webp'}`&&photoSHA(f.sha256)&&Number.isSafeInteger(f.bytes)&&f.bytes>0&&f.bytes<=9000000&&typeof etag==='string',409,'The saved comparison source changed.');
  const head=await photoOutputHead(f.key);assert(head.bytes===f.bytes&&head.sha256===f.sha256&&head.mime===f.mime&&head.etag===etag,409,'The exact saved photo evidence changed.');
  return{bucket:'renders',key:f.key,etag,bytes:f.bytes,sha256:f.sha256,mime:f.mime,url:await presignGet(R2_BUCKET_RENDERS,f.key,600)};
 }

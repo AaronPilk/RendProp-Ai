@@ -5,7 +5,7 @@ import { HttpError } from "../_shared/http.ts";
 import { PHOTO_2K_INPUT_ALLOWANCES, photo2KInputAllowance, photo4KInputAllowance } from "../_shared/photo-image-quality.ts";
 import { validatePhotoInput, decodePhotoOutput, type DecodedStillImage } from "./input-policy.ts";
 // Conditioned provider inputs, not the immutable original/master upload cap.
-export const PHOTO_4K_PREPARED_INPUT_BYTES = 1_000_000;
+export const PHOTO_4K_PREPARED_INPUT_BYTES = 9_000_000;
 
 /** Preserve submitted bytes.4096 tokens cover an ordinary <=4:1 source;
  * wider/narrower inputs multiply that allowance by ceil(aspect/4). This
@@ -26,7 +26,7 @@ function preparePhotoInput(input:GenerateInput,size:"2K"|"4K"):GenerateInput {
  if(input.extra?.staging_reference_b64!==undefined)images.push([input.extra.staging_reference_b64,String(input.extra.staging_reference_mime)]);
  let used=new TextEncoder().encode(input.prompt??"").byteLength,preparedBytes=0;
  for(const [b64,mime]of images){const image=validatePhotoInput(b64,mime);if(Math.max(image.width,image.height)>2048)throw new HttpError(413,`Use a source no larger than 2048 pixels for this ${size} edit.`,"payload_too_large");preparedBytes+=image.bytes;used+=4096*Math.ceil((Math.max(image.width,image.height)/Math.min(image.width,image.height))/4);}
- if(size==="4K"&&preparedBytes>PHOTO_4K_PREPARED_INPUT_BYTES)throw new HttpError(413,"Keep your original photo. Prepare the editing copy and any furniture reference as JPEGs up to 1 MB combined, with a 2048-pixel longest edge. No edit was sent.","payload_too_large",{failure_phase:"prepared_photo_size",no_provider_dispatch:true});
+ if(size==="4K"&&preparedBytes>PHOTO_4K_PREPARED_INPUT_BYTES)throw new HttpError(413,"Keep your original photo. Prepare the editing copy and any furniture reference up to 9 MB combined, with a 2048-pixel longest edge. No edit was sent.","payload_too_large",{failure_phase:"prepared_photo_size",no_provider_dispatch:true});
  if(images.length>1)used+=512;
  const allowance=PHOTO_2K_INPUT_ALLOWANCES.find(cap=>used<=cap);
  if(allowance===undefined)throw new HttpError(413,`This photo and its instructions exceed the verified ${size} input bound. No edit was sent.`,"payload_too_large");

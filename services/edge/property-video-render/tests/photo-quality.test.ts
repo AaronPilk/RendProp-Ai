@@ -6,6 +6,9 @@ const expires_at=new Date(Date.now()+600_000).toISOString(),hosts=new Set(['owne
 const input={bucket:'renders',key:'private/source.jpg',etag:'"owned"',bytes:10,sha256:'a'.repeat(64),mime:'image/jpeg' as const,url:'https://owned.example/source?cap=private'};
 const action={action:'prepare_photo_quality' as const,policy:'photo-fixed-features-v1' as const,check_id:check,evidence_id:evidence,lease_token:lease,expires_at,prepared_source:input,candidate:{...input,key:'private/candidate.jpg',sha256:'b'.repeat(64),url:'https://owned.example/candidate?cap=private'}};
 assert.equal(photoCapabilities(action,hosts).capabilities.length,2);
+assert.equal(photoCapabilities({...action,prepared_source:{...input,bytes:9_000_000}},hosts).capabilities[0].bytes,9_000_000);
+assert.throws(()=>photoCapabilities({...action,prepared_source:{...input,bytes:9_000_001}},hosts));
+assert.equal(photoCapabilities({...action,candidate:{...input,bytes:50*1024*1024}},hosts).capabilities[1].bytes,50*1024*1024,'candidate legacy bound is separate');
 for(const altered of[{...action,check_id:'invalid'},{...action,lease_token:'invalid'},{...action,expires_at:'2000-01-01'},{...action,policy:'video-jpeg-v1'},{...action,candidate:{...input,bytes:50*1024*1024+1}},{...action,candidate:{...input,url:'https://evil.test/photo'}}])assert.throws(()=>photoCapabilities(altered as any,hosts));
 const images=['source','candidate'].flatMap(role=>['whole','tl','tr','bl','br'].map(region=>({role,region,bytes:10,width:2,height:2,sha256:'c'.repeat(64),crop:{left:0,top:0,width:2,height:2}})));
 const receipt={check_id:check,evidence_id:evidence,lease_token:lease,manifest:{images}};

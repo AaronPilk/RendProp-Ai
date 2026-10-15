@@ -8,24 +8,25 @@ const sha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',jpeg)),
 const root=`ai-router/${org}/photo-evidence/${actor}/${evidence}/`,file=(kind:string)=>({bucket:'renders',key:root+kind+'.jpg',bytes:jpeg.length,mime:'image/jpeg',width:2,height:2,sha256:sha});
 const e={id:evidence,org_id:org,actor_id:actor,input:file('input'),output:file('candidate'),input_etag:'"retained-etag"',output_etag:'"retained-etag"'};
 const images=['source','candidate'].flatMap(role=>['whole','tl','tr','bl','br'].map(region=>({...file('unused'),role,region,key:root+`checks/${check}/${role}-${region}.jpg`,crop:{left:0,top:0,width:2,height:2}})));
-async function invoke(path:string,body:any={},options:{auth?:string|null;stale?:boolean;changed?:boolean;rawChanged?:boolean;state?:string;method?:string}={}){
+async function invoke(path:string,body:any={},options:{auth?:string|null;stale?:boolean;changed?:boolean;rawChanged?:boolean;state?:string;sourceBytes?:number;method?:string}={}){
+ const scoped=structuredClone(e);if(options.sourceBytes!==undefined)scoped.input.bytes=options.sourceBytes;
  const old=fetch,calls:string[]=[],rpcs:string[]=[],puts:any[]=[];globalThis.fetch=async(raw,init)=>{
   const req=new Request(raw,init),url=new URL(req.url);calls.push(req.method+' '+url.hostname+url.pathname);const response=(value:unknown,status=200)=>Response.json(value,{status});
   if(url.hostname==='qc-db.fixture.invalid'){
    assertEquals(req.headers.get('apikey'),secret);
    if(url.pathname.endsWith('/photo_quality_checks')){assertEquals(url.searchParams.get('limit'),'20');return response([{id:check}]);}
    if(url.pathname.includes('/rpc/')){const name=url.pathname.split('/').at(-1)!,b=await req.json();rpcs.push(name);
-    if(name==='photo_quality_claim')return response({action:options.state==='derivative_ready'?'judge':'prepare_photo_quality',evidence:e,check:{id:check,evidence_id:evidence,lease_token:lease,lease_until:new Date(Date.now()+600000).toISOString(),state:options.state??'preparing'}});
-    if(name==='photo_quality_worker_scope'){if(options.stale)return response({message:'RP409: Photo comparison lease was superseded',code:'P0001'},400);assertEquals(b.p_check,check);assertEquals(b.p_lease,lease);return response({evidence:e,check:{id:check,derivatives:images}});}
+    if(name==='photo_quality_claim')return response({action:options.state==='derivative_ready'?'judge':'prepare_photo_quality',evidence:scoped,check:{id:check,evidence_id:evidence,lease_token:lease,lease_until:new Date(Date.now()+600000).toISOString(),state:options.state??'preparing'}});
+    if(name==='photo_quality_worker_scope'){if(options.stale)return response({message:'RP409: Photo comparison lease was superseded',code:'P0001'},400);assertEquals(b.p_check,check);assertEquals(b.p_lease,lease);return response({evidence:scoped,check:{id:check,derivatives:images}});}
     if(name==='photo_quality_derivatives_reserve')return response({check_id:check,evidence_id:evidence,parents:[],images});
-    if(name==='photo_quality_derivatives_complete'){assertEquals(b.p_receipts,images.map(f=>({...f,etag:'"retained-etag"'})));return response({evidence:e,check:{state:'derivative_ready'}});}
+    if(name==='photo_quality_derivatives_complete'){assertEquals(b.p_receipts,images.map(f=>({...f,etag:'"retained-etag"'})));return response({evidence:scoped,check:{state:'derivative_ready'}});}
     if(name==='photo_quality_heartbeat')return response(true);
     if(name==='photo_quality_cpu_failure'){assertEquals(b.p_code,'cpu_photo_comparison_failed');return response({check:{state:'pending'}});}
     throw Error('Unexpected RPC '+name);
    }
   }
   if(url.hostname==='a'.repeat(32)+'.r2.cloudflarestorage.com'){
-   assertEquals(req.method==='HEAD'||req.method==='GET',true);const headers={'content-type':'image/jpeg','content-length':String(jpeg.length),etag:'"retained-etag"','x-amz-meta-sha256':options.changed?'f'.repeat(64):sha};
+   assertEquals(req.method==='HEAD'||req.method==='GET',true);const headers={'content-type':'image/jpeg','content-length':String(url.pathname.endsWith('/input.jpg')?scoped.input.bytes:jpeg.length),etag:'"retained-etag"','x-amz-meta-sha256':options.changed?'f'.repeat(64):sha};
    return new Response(req.method==='HEAD'?null:options.rawChanged?new Uint8Array([...jpeg.slice(0,-1),0]):jpeg,{headers});
   }
   puts.push(req);throw Error('External transport forbidden '+url.hostname);
@@ -39,3 +40,8 @@ Deno.test('derivative capabilities bind exact reserved key,size,MIME,SHA and imm
 Deno.test('all ten measured derivative objects rehashed and header checked before ready callback',async()=>{const r=await invoke('derivatives-finish',{check_id:check,lease_token:lease,receipts:images});assertEquals(r.status,200);assertEquals(r.body.state,'derivative_ready');assertEquals(r.rpcs.at(-1),'photo_quality_derivatives_complete');assertEquals(r.calls.filter(c=>c.startsWith('GET')&&c.includes('r2.cloudflarestorage')).length,10);for(const options of[{changed:true},{rawChanged:true}]){const bad=await invoke('derivatives-finish',{check_id:check,lease_token:lease,receipts:images},options);assertEquals(bad.status,409);assert(!bad.rpcs.includes('photo_quality_derivatives_complete'));}const wrong=structuredClone(images);wrong[0].key=root+'unrelated.jpg';const bad=await invoke('derivatives-finish',{check_id:check,lease_token:lease,receipts:wrong});assertEquals(bad.status,409);assert(!bad.calls.some(c=>c.includes('r2.cloudflarestorage')));});
 Deno.test('private queue and heartbeat/failure are bounded CPU-only metadata',async()=>{const q=await invoke('queue',null,{method:'GET'});assertEquals(q.body.checks,[{check_id:check}]);const h=await invoke('heartbeat',{check_id:check,lease_token:lease});assertEquals(h.body.current,true);const f=await invoke('failure',{check_id:check,lease_token:lease,code:'cpu_photo_comparison_failed'});assertEquals(f.body.recorded,true);const bad=await invoke('failure',{check_id:check,lease_token:lease,code:'model_failed'});assertEquals(bad.status,400);assertEquals(bad.rpcs,[]);});
 Deno.test('internal kickoff makes one bounded private request, never retries lost/foreign acknowledgments',async()=>{Deno.env.set('PHOTO_QUALITY_RENDER_URL','https://cpu.fixture.invalid');Deno.env.set('PHOTO_QUALITY_RENDER_TRIGGER_KEY','inert-private-trigger');for(const mode of['ok','lost','foreign']){const old=fetch;let calls=0;globalThis.fetch=async(raw,init)=>{calls++;const req=new Request(raw,init);assertEquals(req.url,'https://cpu.fixture.invalid/photo-quality/start');assertEquals(req.headers.get('authorization'),'Bearer inert-private-trigger');assertEquals(await req.json(),{check_id:check});if(mode==='lost')throw Error('lostack');return Response.json({accepted:true,check_id:mode==='foreign'?id(99):check},{status:202});};try{assertEquals(await startPhotoComparison(check),{started:mode==='ok'});assertEquals(calls,1);}finally{globalThis.fetch=old;}}});
+
+Deno.test('CPU bridge permits exact9MB prepared receipt and refuses the next byte before storage capability',async()=>{
+ const at=await invoke('tick',{check_id:check,worker_id:'slot-0'},{sourceBytes:9_000_000});assertEquals(at.status,200);assertEquals(at.body.prepared_source.bytes,9_000_000);
+ const above=await invoke('tick',{check_id:check,worker_id:'slot-0'},{sourceBytes:9_000_001});assertEquals(above.status,409);assert(!above.calls.some(c=>c.includes('r2.cloudflarestorage')));
+});

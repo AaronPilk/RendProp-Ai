@@ -617,7 +617,7 @@ Deno.serve(async (req) => {
     }
     if (req.method !== "POST") throw new HttpError(405, "POST only");
     if(new URL(req.url).pathname.endsWith("/ai-photo/check-existing")){
-      const body=calibrationRequest(await readJsonLimited(req,1_400_000));
+      const body=calibrationRequest(await readJsonLimited(req,12_100_000));
       const org=await requireEditorRole(user,req,"Photo quality checks",body.generation_request_body.listing_id);
       const row=await beginPhotoCalibration(adminClient(),{actor:user.id,org,selected:preferredOrg(req)??null,body});
       const checked=await waitForPhotoQuality(adminClient(),row,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.generation_request_body.prompt});

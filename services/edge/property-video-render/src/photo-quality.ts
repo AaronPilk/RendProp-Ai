@@ -16,8 +16,8 @@ const rows=(value:unknown):Record<string,unknown>[]=>{if(!Array.isArray(value)||
 export function photoCapabilities(task:PhotoAction,hosts:Set<string>):EgressProps {
   const expiresAt=Date.parse(task.expires_at);
   if(task.action!=='prepare_photo_quality'||task.policy!=='photo-fixed-features-v1'||!UUID.test(task.check_id)||!UUID.test(task.evidence_id)||!UUID.test(task.lease_token)||!Number.isFinite(expiresAt)||expiresAt<=Date.now()||expiresAt>Date.now()+610_000)throw Error('photo_quality_lease_required');
-  return{expiresAt,capabilities:[task.prepared_source,task.candidate].map(input=>{
-    if(!input||!Number.isSafeInteger(input.bytes)||input.bytes<1||input.bytes>50*1024*1024||!SHA.test(input.sha256)||!['image/jpeg','image/png','image/webp'].includes(input.mime)||!input.bucket||!input.key||!input.etag)throw Error('photo_quality_input_required');
+  return{expiresAt,capabilities:[task.prepared_source,task.candidate].map((input,index)=>{
+    if(!input||!Number.isSafeInteger(input.bytes)||input.bytes<1||input.bytes>(index===0?9_000_000:50*1024*1024)||!SHA.test(input.sha256)||!['image/jpeg','image/png','image/webp'].includes(input.mime)||!input.bucket||!input.key||!input.etag)throw Error('photo_quality_input_required');
     return{url:mediaURL(input.url,hosts),method:'GET',bytes:input.bytes};
   })};
 }

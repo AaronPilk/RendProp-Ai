@@ -16,6 +16,7 @@ from prepare_image import decoded_srgb, MAX_SOURCE_BYTES
 POLICY = 'photo-fixed-features-v1'
 REGIONS = ('whole', 'tl', 'tr', 'bl', 'br')
 MAX_DERIVATIVE_BYTES = 6_000_000
+MAX_PREPARED_SOURCE_BYTES = 9_000_000
 
 
 def validate_photo_task(task):
@@ -33,7 +34,7 @@ def validate_photo_task(task):
         item = task[key]
         if (not isinstance(item,dict) or set(item)-{'bucket','key','etag','bytes','sha256','mime','url'}
                 or item.get('mime') not in {'image/jpeg','image/png','image/webp'}
-                or not isinstance(item.get('bytes'),int) or isinstance(item['bytes'],bool) or not 1 <= item['bytes'] <= MAX_SOURCE_BYTES
+                or not isinstance(item.get('bytes'),int) or isinstance(item['bytes'],bool) or not 1 <= item['bytes'] <= (MAX_PREPARED_SOURCE_BYTES if key == 'prepared_source' else MAX_SOURCE_BYTES)
                 or not isinstance(item.get('sha256'),str) or len(item['sha256'])!=64 or any(c not in '0123456789abcdef' for c in item['sha256'])
                 or any(not isinstance(item.get(k),str) or not item[k] or len(item[k])>2048 for k in ('bucket','key','etag'))):
             raise ValueError('exact_owned_photo_required')
@@ -59,7 +60,7 @@ def prepare_photo_quality(task,directory,hosts):
     sizes=[]
     for role,field in (('source','prepared_source'),('candidate','candidate')):
         path = directory/f'{role}-master'
-        input_sha = download(task[field],path,hosts,max_bytes=MAX_SOURCE_BYTES)
+        input_sha = download(task[field],path,hosts,max_bytes=MAX_PREPARED_SOURCE_BYTES if field == 'prepared_source' else MAX_SOURCE_BYTES)
         with Image.open(path) as header:
             if min(header.size)<2 or max(header.size)>16384 or header.width*header.height>24_000_000:
                 raise ValueError('photo_quality_parent_geometry_refused')

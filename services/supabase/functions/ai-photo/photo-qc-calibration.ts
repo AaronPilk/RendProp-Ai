@@ -22,7 +22,7 @@ export function calibrationRequest(raw:unknown):PhotoCalibrationBody{
   &&["stage","declutter","sky","twilight","lawn","custom"].includes(edit)&&(!body.style||typeof body.style==="string"&&body.style.length<=40)&&(!body.prompt||typeof body.prompt==="string"&&body.prompt.length<=600)
   &&body.mask_b64===undefined&&body.staging_reference_b64===undefined,400,"This check requires the exact original photo request and its owned original asset.");
  const source=validatePhotoInput(body.image_b64,mime);
- assert(source.bytes<=1_000_000,413,"The saved editing copy exceeds the current safe 1 MB review bound. Keep the original unchanged.","payload_too_large");
+ assert(source.bytes<=9_000_000,413,"The saved editing copy exceeds the 9 MB review bound. Keep the original unchanged.","payload_too_large");
  return{generation_request_key:data.generation_request_key,generation_request_body:body};
 }
 export interface PhotoCalibrationIO {

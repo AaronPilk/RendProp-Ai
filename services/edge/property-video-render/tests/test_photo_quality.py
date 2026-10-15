@@ -99,6 +99,16 @@ class PhotoQualityTests(unittest.TestCase):
                        lambda t:t.update(expires_at='2000-01-01T00:00:00Z')]:
             task=copy.deepcopy(self.task);mutate(task)
             with self.assertRaises((ValueError,TypeError)):validate_photo_task(task)
+    def test_prepared_source_exact_9mb_and_candidate_bound_are_separate(self):
+        self.task['prepared_source']['bytes']=9_000_000
+        validate_photo_task(self.task)
+        self.task['prepared_source']['bytes']=9_000_001
+        with self.assertRaisesRegex(ValueError,'exact_owned_photo_required'):validate_photo_task(self.task)
+        self.task['prepared_source']['bytes']=9_000_000
+        self.task['candidate']['bytes']=50*1024*1024
+        validate_photo_task(self.task)
+        self.task['candidate']['bytes']+=1
+        with self.assertRaisesRegex(ValueError,'exact_owned_photo_required'):validate_photo_task(self.task)
     def test_aspect_mismatch_and_invalid_icc_refuse_without_judgement(self):
         Image.new('RGB',(192,128)).save(self.candidate,'PNG')
         self.task['candidate'].update(sha256=digest(self.candidate),bytes=self.candidate.stat().st_size)

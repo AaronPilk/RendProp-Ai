@@ -71,7 +71,7 @@ export const photoEvidenceIO:PhotoEvidenceIO={write:writePhotoEvidence,inspect:i
 }};
 export function assertPhotoEvidenceFile(e:PhotoEvidence,file:PhotoEvidenceFile,kind:"input"|"output"):void{
  const ext:{[mime:string]:string}={"image/jpeg":"jpg","image/png":"png","image/webp":"webp"};
- assert(file&&file.bucket==="renders"&&photoSHA(file.sha256)&&Number.isSafeInteger(file.bytes)&&file.bytes>0&&file.bytes<=(kind==="input"?1_000_000:9_000_000)
+ assert(file&&file.bucket==="renders"&&photoSHA(file.sha256)&&Number.isSafeInteger(file.bytes)&&file.bytes>0&&file.bytes<=9_000_000
   &&ext[file.mime]&&file.key===`ai-router/${e.org_id}/photo-evidence/${e.actor_id}/${e.id}/${kind==="input"?"input":"candidate"}.${ext[file.mime]}`,503,"The retained photo identity is inconsistent.","upstream");
 }
 async function persistEvidence(admin:PhotoAdmin,row:PhotoQualityEnvelope,kind:"input"|"output",bytes:Uint8Array<ArrayBuffer>,io:PhotoEvidenceIO):Promise<PhotoQualityEnvelope>{
@@ -91,7 +91,7 @@ export async function savePhotoJudgeContext(admin:PhotoAdmin,row:PhotoQualityEnv
 }
 export async function beginPhotoQuality(admin:PhotoAdmin,identity:PhotoResultIdentity,args:{edit:string;style?:string;instruction?:string;originalAsset?:string;imageB64:string;mime:string},io=photoEvidenceIO):Promise<PhotoQualityEnvelope>{
  const image=validatePhotoInput(args.imageB64,args.mime);
- if(image.bytes>1_000_000)throw new HttpError(413,"Keep the original photo. Prepare an editing copy up to 1 MB before trying this edit. No edit was sent.","payload_too_large",{no_provider_dispatch:true,failure_phase:"prepared_photo_size"});
+ if(image.bytes>9_000_000)throw new HttpError(413,"Keep the original photo. Prepare an editing copy up to 9 MB before trying this edit. No edit was sent.","payload_too_large",{no_provider_dispatch:true,failure_phase:"prepared_photo_size"});
  const bytes=decodeBase64Bytes(args.imageB64),input={...image,sha256:await photoBytesHash(bytes)};
  const row=photoEnvelope(await photoQualityRpc(admin,"photo_quality_begin",{p_actor:identity.actorId,p_org:identity.orgId,p_key:identity.requestKey,p_listing:identity.listingId,p_edit:args.edit,p_style:args.style??null,p_original_asset:args.originalAsset??null,p_input:input,p_legacy_keys:Object.values(await photoResultKeys(identity))}),identity.actorId,identity);
  // A concurrent/replayed begin may never become another generation owner.

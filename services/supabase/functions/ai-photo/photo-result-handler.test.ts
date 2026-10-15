@@ -505,11 +505,10 @@ const sizedOutputJPEG=(size:number,width=3584,height=4780)=>{
  while(left){let length=Math.min(65000,left);if(left-length>0&&left-length<4)length-=4;bytes.set([255,224,(length-2)>>8,(length-2)&255],offset);offset+=length;left-=length;}
  bytes.set(frame.subarray(2),offset);let binary="";for(let n=0;n<bytes.length;n+=32768)binary+=String.fromCharCode(...bytes.subarray(n,n+32768));return btoa(binary);
 };
-Deno.test("actual4K handler rejects conditioned1MB overflow before a hold/provider and retains the full original contract",async()=>{
+Deno.test("actual4K handler refuses one byte over the9MB source bound before quota, hold or provider",async()=>{
  const f=await fixture();try{
-  const response=await f.run(f.request({image_b64:sizedOutputJPEG(1_000_001,1536,2048)}));
-  assertEquals(response.status,413);const error=await response.json();assertEquals(error.no_provider_dispatch,true);
-  assert(error.error.includes("Keep your original"));assertEquals(f.state.holds,0);assertEquals(f.state.submits,0);assertEquals(f.state.costs.length,0);assertEquals(f.state.puts,0);assertEquals(f.state.refunds,1);
+  const response=await f.run(f.request({image_b64:sizedOutputJPEG(9_000_001,1536,2048)}));
+  assertEquals(response.status,413);assertEquals(f.state.charges,0);assertEquals(f.state.holds,0);assertEquals(f.state.submits,0);assertEquals(f.state.costs.length,0);assertEquals(f.state.puts,0);assertEquals(f.state.refunds,0);
  }finally{f.close();}
 });
 Deno.test("actual4K handler validates9MB once and reuses those exact bytes for immutable storage and base64 JSON",async()=>{
@@ -548,11 +547,11 @@ Deno.test("actual GET status cannot consume quota or dispatch generation",async(
   const status=await f.run(new Request("https://example.invalid/ai-photo/status?check_id=synthetic-check",{headers:{"X-Org":org}}));assertEquals(status.status,409);assertEquals((await status.json()).code,"photo_quality_pending");assertEquals({charges:f.state.charges,holds:f.state.holds,submits:f.state.submits,puts:f.state.puts},before);
  }finally{f.close();}
 });
-Deno.test("actual handler plus real quarantine pipeline retains1MB/9MB exact evidence and only returns pending",async()=>{
+Deno.test("actual handler plus real quarantine pipeline retains9MB/9MB exact evidence and only returns pending",async()=>{
  const f=await fixture(false,null,true);try{
-  const source=sizedOutputJPEG(1_000_000,1536,2048);f.state.output=sizedOutputJPEG(9_000_000);
+  const source=sizedOutputJPEG(9_000_000,1536,2048);f.state.output=sizedOutputJPEG(9_000_000);
   const request=()=>f.request({image_b64:source}),response=await f.run(request());assertEquals(response.status,409);const body=await response.json();assertEquals(body.code,"photo_quality_pending");assertEquals(body.image_b64,undefined);assertEquals(body.asset_key,undefined);
-  assertEquals(f.state.puts,2);assertEquals(f.state.objects.size,2);assertEquals(f.state.journal,null,"No ordinary delivery registration before accept");assertEquals(f.state.object.byteLength,9_000_000);assertEquals(f.state.quality.evidence.input.bytes,1_000_000);assertEquals(f.state.saved.kind,"photo_quality");assertEquals(f.state.saved.evidence_id,f.state.quality.evidence.id);
+  assertEquals(f.state.puts,2);assertEquals(f.state.objects.size,2);assertEquals(f.state.journal,null,"No ordinary delivery registration before accept");assertEquals(f.state.object.byteLength,9_000_000);assertEquals(f.state.quality.evidence.input.bytes,9_000_000);assertEquals(f.state.saved.kind,"photo_quality");assertEquals(f.state.saved.evidence_id,f.state.quality.evidence.id);
   assertEquals((await f.run(request())).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.puts,2);assertEquals(f.state.gets,0);
  }finally{f.close();}
 });
@@ -573,4 +572,29 @@ Deno.test("explicit check-existing handler route never enters generation quota o
   const response=await f.run(new Request("https://example.invalid/ai-photo/check-existing",{method:"POST",headers:{"content-type":"application/json","X-Org":org},body:JSON.stringify({generation_request_key:"old-paid-key",generation_request_body:{listing_id:listing}})}));
   assertEquals(response.status,409);assertEquals((await response.json()).code,"photo_quality_pending");assertEquals(f.state.calibrationCalls,1);assertEquals(f.state.started,false);assertEquals(f.state.charges,0);assertEquals(f.state.holds,0);assertEquals(f.state.submits,0);assertEquals(f.state.puts,0);
  }finally{f.close();}
+});
+
+Deno.test("check-existing wire admits the full9MB legacy source but refuses oversized JSON before calibration",async()=>{
+ const f=await fixture();try{
+  const source=sizedOutputJPEG(9_000_000,1536,2048),body={generation_request_key:"old-paid-key",generation_request_body:{image_b64:source,mime:"image/jpeg",listing_id:listing}};
+  const send=(data:unknown)=>f.run(new Request("https://example.invalid/ai-photo/check-existing",{method:"POST",headers:{"content-type":"application/json","X-Org":org},body:JSON.stringify(data)}));
+  assertEquals((await send(body)).status,409);assertEquals(f.state.calibrationCalls,1);
+  assertEquals((await send({...body,padding:"x".repeat(100_001)})).status,413);assertEquals(f.state.calibrationCalls,1);
+  assertEquals(f.state.submits,0);assertEquals(f.state.holds,0);assertEquals(f.state.charges,0);
+ }finally{f.close();}
+});
+
+Deno.test("legacy masked route retains exact combined9MB source/mask and refuses one byte above without dispatch",async()=>{
+ const f=await fixture(false,null,true);try{
+  f.state.qa=true;f.state.router=true;f.state.routes=[{route_id:"existing-mask-route",provider:"fal",model:"fal-ai/flux-pro/v1/fill",task:"photo.declutter",unit:"image",unit_cents:5,capabilities:["mask"],max_latency_s:60,min_plan:"free",privacy_tier:"retained_30d",enabled:true}];
+  const mask=outputJPEG(1536,2048),source=sizedOutputJPEG(9_000_000-atob(mask).length,1536,2048);f.state.output=outputJPEG(1536,2048);
+  const request=()=>f.request({image_b64:source,edit:"declutter",mask_b64:mask,mask_mime:"image/jpeg"});
+  assertEquals((await f.run(request())).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.quality.evidence.input.bytes,9_000_000-atob(mask).length);
+  assertEquals(f.state.inputs[0].image_b64,source);assertEquals(f.state.inputs[0].mask_url,"data:image/jpeg;base64,"+mask);assertEquals(f.state.inputs[0].extra.photo_quality_4k,undefined);
+  assertEquals((await f.run(request())).status,409);assertEquals(f.state.submits,1);
+ }finally{f.close();}
+ const over=await fixture();try{
+  const mask=outputJPEG(1536,2048),response=await over.run(over.request({edit:"declutter",image_b64:sizedOutputJPEG(9_000_001-atob(mask).length,1536,2048),mask_b64:mask,mask_mime:"image/jpeg"}));
+  assertEquals(response.status,413);assertEquals(over.state.submits,0);assertEquals(over.state.holds,0);assertEquals(over.state.puts,0);assertEquals(over.state.costs.length,0);
+ }finally{over.close();}
 });
