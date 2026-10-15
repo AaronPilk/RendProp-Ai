@@ -44,6 +44,25 @@ export async function propertyOriginalPhoto(photo: StudioPhoto, signal: AbortSig
   signal.throwIfAborted();
   return { ...importedPhoto(original), originalVerified: !altered || photo.originalVerified === true };
 }
+/** Storage key inside an already-admitted media URL (gateway capability or path-style R2 link). */
+function mediaStorageKey(raw: string): string | null {
+  try {
+    const url = new URL(raw), capability = /^\/private-media\/([A-Za-z0-9_-]+)\.[a-f0-9]{64}$/.exec(url.pathname);
+    if (url.hostname === "rendprop.com" && capability) {
+      const value = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(capability[1]!.replaceAll("-", "+").replaceAll("_", "/")), c => c.charCodeAt(0)))) as { key?: unknown };
+      return typeof value.key === "string" ? value.key : null;
+    }
+    if (url.hostname.endsWith(".r2.cloudflarestorage.com")) return url.pathname.split("/").slice(2).map(decodeURIComponent).join("/");
+  } catch { /* An unreadable address is never treated as derived. */ }
+  return null;
+}
+const SERVER_DERIVED = /^(?:uploads\/[^/]+\/[^/]+\/prepared-video\/|renders\/[^/]+\/[^/]+\/background\/)/;
+/** Server-made video processing copies (≤2048px JPEGs) and finished-video poster frames are listed
+ * with uploads but are not photo versions: never offer them as originals, edits or package masters. */
+export function isServerDerivedPhoto(photo: Pick<StudioPhoto, "url">): boolean {
+  const key = mediaStorageKey(photo.url);
+  return key !== null && SERVER_DERIVED.test(key);
+}
 export type PhotoLibraryTab = "original" | "declutter" | "stage" | "saved";
 export function photosInTab(photos: readonly StudioPhoto[], tab: PhotoLibraryTab): StudioPhoto[] {
   if (tab === "original") return photos.filter(photo => !(photo.isAltered || photo.isStaged) || !!photo.originalUrl);

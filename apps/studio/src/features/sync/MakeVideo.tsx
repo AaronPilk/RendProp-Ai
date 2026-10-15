@@ -65,10 +65,11 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
  },[api,refresh,loadSources,scope,current,services]);
  useEffect(()=>{
   if(!active||!job||["ready","failed","cancelled","needs_reconciliation"].includes(job.state))return;
-  let running=false;
-  const tick=async()=>{if(running||document.hidden)return;running=true;try{const updated=decodeJob(await api(`property-video-jobs/${job.job_id}`),scope,job.operation_id);setJob(updated);if(updated.state==="ready"){setNotice("Your finished video is ready. Review it before downloading or selecting it for the website.");onChanged();}}catch(value){if(mounted.current)setError(value instanceof Error?value.message:"Video status is unavailable. Your saved server job is retained.");}finally{running=false;}};
+  // A reply that lands after the agent opened another saved video must not replace it.
+  let running=false,closed=false;
+  const tick=async()=>{if(closed||running||document.hidden)return;running=true;try{const updated=decodeJob(await api(`property-video-jobs/${job.job_id}`),scope,job.operation_id);if(closed)return;setJob(current=>current?.job_id===updated.job_id?updated:current);if(updated.state==="ready"){setNotice("Your finished video is ready. Review it before downloading or selecting it for the website.");onChanged();}}catch(value){if(mounted.current&&!closed)setError(value instanceof Error?value.message:"Video status is unavailable. Your saved server job is retained.");}finally{running=false;}};
   const timer=window.setInterval(()=>void tick(),15_000);const visible=()=>{if(!document.hidden)void tick();};document.addEventListener("visibilitychange",visible);
-  return()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",visible);};
+  return()=>{closed=true;window.clearInterval(timer);document.removeEventListener("visibilitychange",visible);};
  },[active,job?.job_id,job?.state,api,scope,onChanged]);
  useEffect(()=>{
   if(voice!=="ai"||voices.length)return;

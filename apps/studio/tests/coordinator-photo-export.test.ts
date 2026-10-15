@@ -60,3 +60,45 @@ test("real HEIC original bytes survive when a browser cannot create delivery cop
   assert.deepEqual(zip.get(proof.files[0].masterPath),heic);assert.match(proof.files[0].masterPath,/^Originals\/.*\.heic$/);assert.deepEqual(proof.files[0].copies,[]);assert.equal(proof.notes.length,1);assert.ok(![...zip.keys()].some(path=>path.endsWith(".jpg")));
  }finally{globalThis.fetch=saved;}
 });
+// The server lists every uploaded capture asset. Video-only processing copies (≤2048px JPEGs under
+// uploads/.../prepared-video/) and finished-video poster frames (renders/.../background/.../first-clip.jpg)
+// are not photo versions: they must not be filed as Originals/Edited masters or get delivery copies.
+const r2=(key:string)=>`https://012345678901234567890123456789ab.r2.cloudflarestorage.com/rendprop-${key.split("/")[0]}/${key}?X-Amz-Signature=${"a".repeat(64)}`;
+const capability=(key:string)=>`https://rendprop.com/private-media/${Buffer.from(JSON.stringify({v:1,actor:"11111111-1111-4111-8111-111111111111",org:"22222222-2222-4222-8222-222222222222",listing:"33333333-3333-4333-8333-333333333333",bucket:key.split("/")[0],key,exp:4102444800})).toString("base64url")}.${"b".repeat(64)}`;
+const scoped="22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333";
+test("video processing copies and video poster frames never enter the coordinator photo package",async()=>{
+ const rows:StudioPhoto[]=[{...photo(1),url:r2(`uploads/${scoped}/original-1.jpg`),originalUrl:null,isAltered:false,isStaged:false,editKind:null},
+  {...photo(2),url:r2(`uploads/${scoped}/prepared-video/44444444-4444-4444-8444-444444444444/55555555-5555-4555-8555-555555555555.jpg`),originalUrl:null,isAltered:false,isStaged:false,editKind:null},
+  {...photo(3),url:capability(`renders/${scoped}/background/66666666-6666-4666-8666-666666666666/77777777-7777-4777-8777-777777777777/first-clip.jpg`),originalUrl:null,isAltered:true,isStaged:false,editKind:null},
+  {...photo(4),url:capability(`uploads/${scoped}/prepared-video/88888888-8888-4888-8888-888888888888/99999999-9999-4999-8999-999999999999.jpg`),originalUrl:null,isAltered:false,isStaged:false,editKind:null},
+  {...photo(5,"stage"),url:capability(`renders/${scoped}/stage-5.jpg`)}];
+ const listMedia=async()=>({orgId:"org",listingId:"listing",photos:rows,videos:[],nextOffset:null,unavailableCount:0});
+ assert.deepEqual((await loadCoordinatorPhotos({listMedia} as any,"org","listing",signal(),()=>{})).map(p=>p.id),["photo-1","photo-5"]);
+ await assert.rejects(loadCoordinatorPhotos({listMedia:async()=>({...(await listMedia()),photos:rows.slice(1,4)})} as any,"org","listing",signal(),()=>{}),/no uploaded photos/);
+ const first=await coordinatorPhotoParts([rows[0]!],signal(),()=>{},{load,render}).next();assert.ok(!first.done);
+ assert.match(new TextDecoder().decode((await unzip(first.value.blob)).get("READ-ME-part-01.txt")),/processing copies made only for video creation and video poster frames are not photo versions/);
+});
+// Signed media links last 10 minutes. A large library is split into user-paced parts, so later
+// photos must be re-signed for the SAME saved photo list, never skipped, substituted or restarted.
+const stale="2000-01-01T00:00:00Z",fresh="2099-01-01T00:00:00Z";
+const plain=(i:number,expiresAt=fresh):StudioPhoto=>({...photo(i),url:`https://media.invalid/${i}-first`,originalUrl:null,isAltered:false,isStaged:false,editKind:null,expiresAt});
+test("later parts re-sign expired links for the same saved photos instead of failing the package",async()=>{
+ const saved=globalThis.fetch,requests:string[]=[];globalThis.fetch=async(input)=>{requests.push(String(input));return new Response(png,{headers:{"content-length":String(png.length)}});};
+ try{
+  const list=[plain(1),plain(2,stale),plain(3,stale)];let refreshes=0;
+  const parts=[];for await(const part of coordinatorPhotoParts(list,signal(),()=>{},{render,maxEntries:14,refresh:async()=>{refreshes++;return list.map(p=>({...p,url:p.url.replace("-first","-resigned"),expiresAt:fresh}));}}))parts.push(part);
+  assert.deepEqual(parts.map(p=>[p.from,p.through,p.more]),[[1,1,true],[2,2,true],[3,3,false]]);assert.equal(refreshes,1);
+  assert.deepEqual(requests,["https://media.invalid/1-first","https://media.invalid/2-resigned","https://media.invalid/3-resigned"]);
+  for(const part of parts){const zip=await unzip(part.blob),manifest=JSON.parse(new TextDecoder().decode(zip.get(`manifest-part-${String(part.part).padStart(2,"0")}.json`)));assert.equal(manifest.files.length,1);assert.deepEqual(zip.get(manifest.files[0].masterPath),png);assert.equal(manifest.files[0].copies.length,4);}
+ }finally{globalThis.fetch=saved;}
+});
+test("a changed saved photo list during re-signing refuses instead of producing a partial package",async()=>{
+ const saved=globalThis.fetch;globalThis.fetch=async()=>new Response(png,{headers:{"content-length":String(png.length)}});
+ try{
+  for(const changed of [[plain(1),plain(3)],[plain(1),plain(2),plain(3),plain(4)],[plain(2),plain(1),plain(3)]]){
+   const yielded:number[]=[];await assert.rejects(async()=>{for await(const part of coordinatorPhotoParts([plain(1),plain(2),plain(3,stale)],signal(),()=>{},{render,maxEntries:14,refresh:async()=>changed}))yielded.push(part.part);},/saved photos changed/);
+   assert.deepEqual(yielded,[1]);
+  }
+  await assert.rejects(async()=>{for await(const _p of coordinatorPhotoParts([plain(1,stale)],signal(),()=>{},{render,refresh:async()=>[plain(1,stale)]})){}},/expired/);
+ }finally{globalThis.fetch=saved;}
+});

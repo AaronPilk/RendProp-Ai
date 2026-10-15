@@ -30,7 +30,7 @@ export default function CoordinatorPhotoExportPanel({ services, orgId, listingId
         setStatus(`Preparing ${photos.length} uploaded photos and their delivery copies…`);
         active.parts = coordinatorPhotoParts(photos,signal,check,{title,progress:(done,total) => {
           if (run.current === active) setStatus(`Preparing photo ${Math.min(done+1,total)} of ${total} and its delivery copies…`);
-        }});
+        },refresh:() => loadCoordinatorPhotos(services,orgId,listingId,signal,check)});
       } else setStatus("Preparing the next full-quality part…");
       const value = await active.parts!.next(); check(); active.controller.signal.throwIfAborted();
       if (run.current !== active) return;

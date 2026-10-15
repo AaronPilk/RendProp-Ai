@@ -44,7 +44,7 @@ import CoordinatorPhotoExportPanel from "./CoordinatorPhotoExportPanel";
 import {retainedPhotoRequest,resumePhotoRequest} from "./creative-request";
 import {savedPhotoRequests,matchingPhotoRequest,finishPhotoRequest,type SavedPhotoRequest} from "./photo-request-journal";
 import { creativeCoachContext } from "./coach-context";
-import { importedPhoto, inputForEdit, photoDelivery, propertyPhoto, propertyOriginalPhoto, photosInTab, type PhotoLibraryTab, type PhotoDelivery, type PhotoSource } from "./photo-lineage";
+import { importedPhoto, inputForEdit, isServerDerivedPhoto, photoDelivery, propertyPhoto, propertyOriginalPhoto, photosInTab, type PhotoLibraryTab, type PhotoDelivery, type PhotoSource } from "./photo-lineage";
 import { importSubtitleTranscript, TRANSCRIPT_FILE_BYTES } from "./transcript";
 const PresenterPanel = lazy(() => import("../presenter/PresenterPanel"));
 const PromptLibrary = lazy(() => import("../prompts/PromptLibrary"));
@@ -477,12 +477,22 @@ function ListingCreative(
     }
   }
   async function loadPhotos(offset = 0) {
-    const media = await services.listMedia(orgId, listingId, signal, offset);
+    // Read every media page: saved Decluttered/Staged versions and their originals
+    // can sit past the first 50 rows, and the version tabs must not hide them.
+    const found: StudioPhoto[] = [], seen = new Set<string>();
+    let next: number | null = offset;
+    while (next !== null) {
+      const media = await services.listMedia(orgId, listingId, signal, next);
+      if (media.nextOffset !== null && media.nextOffset <= next) throw new Error("The saved photo list could not be loaded completely. Refresh this property.");
+      for (const photo of media.photos) if (!seen.has(photo.id) && !isServerDerivedPhoto(photo)) { seen.add(photo.id); found.push(photo); }
+      if (found.length > 5000) throw new Error("This property has too many photos to open at once.");
+      next = media.nextOffset;
+    }
     if (alive.current) {
       setPhotos((old) =>
-        offset ? [...old, ...media.photos] : [...media.photos]
+        offset ? [...old, ...found.filter((photo) => !old.some((prior) => prior.id === photo.id))] : found
       );
-      setMediaOffset(media.nextOffset);
+      setMediaOffset(null);
     }
   }
   useEffect(() => {

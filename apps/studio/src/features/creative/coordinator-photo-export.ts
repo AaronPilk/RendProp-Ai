@@ -3,7 +3,7 @@ import type { StudioServices } from "../../data/services";
 import { createStoredZip, filenamePart, KIT_MAX_BYTES, KIT_MAX_ENTRIES, type ZipEntry } from "../listings/kit-archive";
 import { kitText } from "../listings/delivery-kit";
 import { renderPhoto } from "./photo-export";
-import type { PhotoDelivery } from "./photo-lineage";
+import { isServerDerivedPhoto, type PhotoDelivery } from "./photo-lineage";
 
 const IMAGE_BYTES = 32 * 1024 * 1024, META_RESERVE = 1024 * 1024;
 const targets = [["MLS", "4:3"], ["Zillow", "4:3"], ["Instagram/Feed4x5", "4:5"], ["Instagram/Stories9x16", "9:16"]] as const;
@@ -24,7 +24,7 @@ export async function loadCoordinatorPhotos(services: Pick<StudioServices, "list
     if (page.unavailableCount) throw new Error("Some saved media is unavailable. Refresh this property before preparing its complete photo package.");
     for (const photo of page.photos) {
       if (seen.has(photo.id)) throw new Error("The saved photo list changed while loading. Refresh and try again.");
-      seen.add(photo.id); result.push({ ...photo });
+      seen.add(photo.id); if (!isServerDerivedPhoto(photo)) result.push({ ...photo });
     }
     if (page.nextOffset === null) break;
     if (page.nextOffset !== offset + 50) throw new Error("The complete photo list could not be loaded.");
@@ -82,13 +82,17 @@ const encoder = new TextEncoder();
 const readme = (part: number, from: number, through: number, total: number, more: boolean) =>
   `RENDPROP COORDINATOR PHOTO PACKAGE — PART ${part}\nPhotos ${from}–${through} of ${total}. ${more ? "More numbered parts follow; download every part." : "This is the final part."}\n\n` +
   "Extract ALL numbered ZIP parts into the same folder, preserving the folder tree. Unique photo IDs in filenames prevent parts or saved versions from overwriting one another. Each part has its own manifest and matching disclosure notes.\n\n" +
-  "Originals, Decluttered, Staged and Edited contain exact saved file bytes, original format and available dimensions. Unknown edit kinds stay in Edited; captions never determine the folder. Only uploaded media accessible to this account is included; files stored only on a phone are not fetched. A paired original is included only when server history verifies it. Other available paired sources go in EarlierSources with unverified history. No missing source is replaced or called an original. HEIC/HEIF masters and paired sources retain their real format. If this browser cannot decode a HEIC/HEIF master, it is retained without substituted delivery copies; the manifest and part notes identify that limitation.\n\n" +
+  "Originals, Decluttered, Staged and Edited contain exact saved file bytes, original format and available dimensions. Unknown edit kinds stay in Edited; captions never determine the folder. Only uploaded media accessible to this account is included; files stored only on a phone are not fetched. Server processing copies made only for video creation and video poster frames are not photo versions and are not included. A paired original is included only when server history verifies it. Other available paired sources go in EarlierSources with unverified history. No missing source is replaced or called an original. HEIC/HEIF masters and paired sources retain their real format. If this browser cannot decode a HEIC/HEIF master, it is retained without substituted delivery copies; the manifest and part notes identify that limitation.\n\n" +
   "MLS and Zillow use landscape 4:3 delivery presets; Instagram/Feed4x5 uses 4:5 and Instagram/Stories9x16 uses 9:16. These are presets, not universal platform requirements. Copies are clean JPEGs at quality 0.97, center-cropped at the available resolution, never enlarged, stretched, blurred or watermarked. Originals and saved masters are untouched. Review crops: they remove edges. Limited source resolution remains limited; no 4K detail is invented.\n\n" +
   "All saved versions are retained separately. Downloading does not approve an edit, select it for a listing or publish anything. Check fixed features and required review in the app before advertising. Every altered copy has a matching disclosure text file; add that disclosure and any required original link using your MLS/advertising platform's rules. This package does not certify legal or platform compliance.\n";
-/** Serial decode/render and numbered bounded ZIPs retain quality without loading an entire 4K library into memory. */
-export async function* coordinatorPhotoParts(photos: readonly StudioPhoto[], signal: AbortSignal, assertScope: () => void,
-  options: { title?: string; load?: typeof loadCoordinatorPhoto; render?: typeof renderPhoto; maxBytes?: number; maxEntries?: number; progress?: (done: number,total: number) => void } = {}): AsyncGenerator<CoordinatorPart> {
+/** Signed media links last ten minutes; re-sign before a photo family could outlive its link. */
+const LINK_MARGIN_MS = 2 * 60 * 1000;
+/** Serial decode/render and numbered bounded ZIPs retain quality without loading an entire 4K library into memory.
+ * User-paced parts can outlast signed links, so `refresh` re-reads the SAME saved photo list for new links. */
+export async function* coordinatorPhotoParts(input: readonly StudioPhoto[], signal: AbortSignal, assertScope: () => void,
+  options: { title?: string; load?: typeof loadCoordinatorPhoto; render?: typeof renderPhoto; maxBytes?: number; maxEntries?: number; progress?: (done: number,total: number) => void; refresh?: () => Promise<readonly StudioPhoto[]> } = {}): AsyncGenerator<CoordinatorPart> {
   const check = () => { signal.throwIfAborted(); assertScope(); }; check();
+  const photos = input.map(photo => ({ ...photo }));
   if (!photos.length) throw new Error("Choose uploaded photos for this package.");
   const maxBytes = Math.min(options.maxBytes ?? KIT_MAX_BYTES,KIT_MAX_BYTES), maxEntries = Math.min(options.maxEntries ?? KIT_MAX_ENTRIES,KIT_MAX_ENTRIES);
   if (maxBytes <= META_RESERVE || maxEntries < 14) throw new Error("The photo package bounds are invalid.");
@@ -104,8 +108,17 @@ export async function* coordinatorPhotoParts(photos: readonly StudioPhoto[], sig
     const blob = await createStoredZip([...entries,...metadata],signal); check();
     return { blob, filename:`${filenamePart(options.title || "rendprop")}-coordinator-part-${String(part).padStart(2,"0")}.zip`, part, files:entries.length+metadata.length, from,through,total:photos.length,more,notes };
   }
-  for (const [index,photo] of photos.entries()) {
-    check(); options.progress?.(index,photos.length); const loaded = await (options.load ?? loadCoordinatorPhoto)(photo,signal,assertScope); check();
+  for (const [index,listed] of photos.entries()) {
+    check(); options.progress?.(index,photos.length);
+    let photo = listed;
+    if (options.refresh && Date.parse(photo.expiresAt) - Date.now() < LINK_MARGIN_MS) {
+      const fresh = await options.refresh(); check();
+      if (fresh.length !== photos.length || fresh.some((row,at) => row.id !== photos[at]!.id))
+        throw new Error("The saved photos changed while this package was being prepared. Prepare the package again so it includes every current saved version.");
+      for (const [at,row] of fresh.entries()) if (at >= index) photos[at] = { ...row };
+      photo = photos[index]!;
+    }
+    const loaded = await (options.load ?? loadCoordinatorPhoto)(photo,signal,assertScope); check();
     const master = new Uint8Array(await loaded.delivery.file.arrayBuffer()); check();
     const category = loaded.category, stem = `${String(index+1).padStart(3,"0")}-${filenamePart(photo.id)}`;
     const photoEntries: ZipEntry[] = [], proof: Record<string,unknown> = { photoId:photo.id,category,sourceStatus:category === "Originals" ? "saved-original" : loaded.delivery.originalVerified ? "verified-paired-original" : "history-unverified",copies:[] };
