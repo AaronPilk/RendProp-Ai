@@ -11,10 +11,17 @@ SOCK=Path(tempfile.mkdtemp(prefix='owner-media-sock-'))
 TOOLS={n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)for n in ['initdb','pg_ctl','psql','createdb']}
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 MIG=SQL/'migrations/20261015170710_owner_testing_media_delivery_usage.sql';TEST=SQL/'tests/owner_testing_media_delivery.sql'
+# Historical owner-only contract is retained by the product serving migration.
+# Exercise that exact implementation; current ordinary metering has its own PG gate.
+TARGET='public.media_delivery_admit_before_product_serving_20261015'
+def historical(source):
+    return source.replace('public.media_delivery_admit(',TARGET+'(')
+FIXTURE=historical(TEST.read_text())
+REPLAY=historical(MIG.read_text())
 FILES=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',TEST,Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in FILES}
 r={'passed':False,'scope':'Actual disposable socket-only PostgreSQL; synthetic identities and usage only',
-   'sourceHashes':hashes(),'controls':[],'commands':[],'networkCalls':0,'providerCalls':0,'productionMutations':0}
+   'sourceHashes':hashes(),'controls':[],'commands':[],'networkCalls':0,'providerCalls':0,'productionMutations':0,'historicalTarget':TARGET,'fixtureProjectionCount':TEST.read_text().count('public.media_delivery_admit('),'migrationProjectionCount':MIG.read_text().count('public.media_delivery_admit(')}
 started=False
 def run(name,args,stdin=None,okay=True):
     x=subprocess.run([str(v)for v in args],input=stdin,env=ENV,cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)
@@ -30,11 +37,11 @@ try:
     run('bootstrap',[*P,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
     for m in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+m.stem,[*P,'-q','-1','-f',m])
     for name in ['fresh','replay']:
-        if name=='replay':run('replay-migration',[*P,'-q','-1','-f',MIG])
-        x=run(name,[*P,'-Atq'],TEST.read_text())
+        if name=='replay':run('replay-migration',[*P,'-q','-1'],REPLAY)
+        x=run(name,[*P,'-Atq'],FIXTURE)
         proof=[json.loads(l)for l in x.stdout.splitlines()if l.startswith('{')and'assertions'in l]
         assert len(proof)==1 and proof[0]['passed'];r[name]=proof[0]
-    definition=run('definition',P+['-Atq','-c',"select pg_get_functiondef('public.media_delivery_admit(uuid,bigint,boolean)'::regprocedure)"]).stdout
+    definition=run('definition',P+['-Atq','-c',f"select pg_get_functiondef('{TARGET}(uuid,bigint,boolean)'::regprocedure)"]).stdout
     start=definition.index('    insert into public.owner_testing_media_usage(');end=definition.index('    return jsonb_build_object',start)
     controls=[('owner-authority','if public.org_has_internal_testing_grant(billing) then','if true then','ordinary Team is not testing authority'),
               ('request-byte-meter',definition[start:end],'    null;\n','HEAD and bytes both metered'),
@@ -42,7 +49,7 @@ try:
     for name,before,after,expected in controls:
         assert definition.count(before)==1,(name,before)
         run('install-'+name,[*P,'-Atq'],definition.replace(before,after))
-        x=run('fault-'+name,[*P,'-Atq'],TEST.read_text(),False)
+        x=run('fault-'+name,[*P,'-Atq'],FIXTURE,False)
         assert x.returncode!=0 and expected in x.stdout,(name,x.stdout[-2000:])
         r['controls'].append({'name':name,'compiledActualSQL':True,'oracleRejected':expected})
         run('restore-'+name,[*P,'-Atq'],definition)
@@ -53,7 +60,7 @@ update public.orgs set plan='team',plan_source='manual',plan_expires_at=null whe
 insert into public.org_internal_testing_grants(org_id,owner_user_id,unmetered_business_allowances)select org_id,user_id,true from memberships where user_id='c1600000-0000-4000-8000-000000000001';""")
     org=run('race-org',[*P,'-Atq','-c',"select org_id from memberships where user_id='c1600000-0000-4000-8000-000000000001'"]).stdout.strip()
     children=[subprocess.Popen([str(v)for v in [*P,'-Atq']],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,env=ENV)for _ in range(2)]
-    for i,c in enumerate(children):c.stdin.write(f"begin;set local role service_role;select public.media_delivery_admit('{org}',{100+i},true);select pg_sleep(0.1);commit;");c.stdin.close()
+    for i,c in enumerate(children):c.stdin.write(f"begin;set local role service_role;select {TARGET}('{org}',{100+i},true);select pg_sleep(0.1);commit;");c.stdin.close()
     for i,c in enumerate(children):
         c.wait(timeout=30);s=c.stdout.read();(OUT/f'race-{i}.log').write_text(s);assert c.returncode==0,s
     value=run('race-counts',[*P,'-Atq','-c',f"select used_requests=2 and used_bytes=201 from public.owner_testing_media_usage where org_id='{org}'"]).stdout.strip();assert value=='t',value

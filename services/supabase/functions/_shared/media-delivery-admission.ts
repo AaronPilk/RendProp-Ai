@@ -24,10 +24,10 @@ export function deliveryBytes(req: Request, maximum=256*1024*1024): number {
   return bytes;
 }
 
-/** Counts all authority reads, HEAD and conditional reads too. Spending is
- * conservative: lost responses/cancelled downloads cannot release allowance.
- * Legacy private replay remains compatible until an explicit budget is staged;
- * any financially funded workspace always needs its exact bounded budget. */
+/** Counts authority reads, HEAD and conditional reads and admitted bytes.
+ * Already-authorized media does not require a fabricated financial reserve.
+ * Publication/hosting/library/ownership checks remain in the media authority;
+ * this receipt is honest unpriced usage, never a paid AI-generation grant. */
 // deno-lint-ignore no-explicit-any
 export async function admitMediaRead(admin: any, org: string, bytes: number, required = true, actor?: string): Promise<void> {
   const {data, error} = await admin.rpc(actor ? "library_media_delivery_admit" : "media_delivery_admit", {...(actor ? {p_actor:actor} : {}),p_org:org,p_bytes:bytes,p_required:required});
@@ -36,4 +36,5 @@ export async function admitMediaRead(admin: any, org: string, bytes: number, req
     throw new HttpError(prefix ? Number(prefix[1]) : 503, prefix?.[1] === "429" ? "Media serving allowance exhausted." : "Media service is unavailable.");
   }
   assert(data?.admitted === true && typeof data.legacy_unbudgeted === "boolean" && (!required || data.legacy_unbudgeted === false), 503, "Media admission could not be verified.");
+  if(data.basis === "product_media_serving") assert(data.financial_budget_bypassed === true && data.infrastructure_cost === "unpriced" && data.request_counted === true && data.bytes_counted === bytes,503,"Media usage could not be verified.");
 }

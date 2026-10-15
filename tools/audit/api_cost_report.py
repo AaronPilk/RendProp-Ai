@@ -24,6 +24,21 @@ TABLES = ("ledger", "serving", "video", "photo_scope", "video_scope", "spatial",
 ZERO = Decimal("0")
 
 
+def unpriced_usage(value):
+    """Closed nonnegative counters only; no tariffs or dollar conversion."""
+    keys = {"metering_watch_ms", "media_delivery_requests", "media_delivery_bytes",
+            "owner_testing_media_requests", "owner_testing_media_bytes",
+            "product_media_serving_requests", "product_media_serving_bytes"}
+    if not isinstance(value, dict) or set(value) - keys:
+        raise ValueError("Unknown unpriced usage fields")
+    result = {}
+    for key, count in value.items():
+        if isinstance(count, bool) or not re.fullmatch(r"[0-9]{1,40}", str(count)):
+            raise ValueError("Invalid unpriced usage counter")
+        result[key] = str(int(count))
+    return result
+
+
 def money(value):
     try:
         number = Decimal(str(value))
@@ -242,7 +257,7 @@ def accounting_report(snapshot, events=(), spool=()):
             "external_fixed_infrastructure_invoice_cents_separate": cents(sum((money(e["amount_cents"]) for e in external if e["kind"] == "fixed_infrastructure_invoice"), ZERO)),
             "spatial_cost_rollups_not_added_to_ledger": [{"job": scope(r["id"]), "status": token(r.get("status")), "reported_cents": cents(money(r["cost_cents"])), "invoice_verified": False} for r in snapshot["spatial"]],
             "other_accounting_journals_not_added_to_ledger": [{"kind": token(r["kind"]), "job": scope(r["id"]), "account": scope(r.get("org_id")), "listing": scope(r.get("listing_id")), "state": token(r.get("state")), "priced_cents": cents(money(r["priced_cents"])), "held_cents": cents(money(r["held_cents"])), "charged_cents": cents(money(r["charged_cents"])) if r.get("charged_cents") is not None else None, "ledger_id": r.get("ledger_id"), "supplier_request_id": request_id(r.get("supplier_request_id")), "price_version": token(r.get("price_version")), "has_billing_reference": r.get("has_billing_reference") is True} for r in snapshot["other_journals"]],
-            "unpriced_usage": snapshot.get("unpriced_usage", {}),
+            "unpriced_usage": unpriced_usage(snapshot.get("unpriced_usage", {})),
             "coverage": {"source_rows": snapshot["counts"], "unique_ledger_rows": len(ledger), "serving_rows_reconciled_to_ledger": len(hold_links), "ledger_rows_without_listing": sum(x["listing"] == "unknown" for x in lines), "ledger_rows_without_supplier_id": sum(not x["supplier_request_ids"] for x in lines), "ledger_rows_without_tariff": sum(not x["tariff_versions"] for x in lines), "supplier_invoice_reconciliation": "not supplied; no recorded cost labeled invoice verified", "spool_visibility": "supplied local spool only; other running workers unknown", "infrastructure": "vendor invoices/account telemetry not automatically imported", "hold_total_scope": "unreconciled serving/app-video holds; presenter/erase journals and spatial rollups separate to prevent duplicate summation", "failed_context": "current job/source state or retained ledger refusal flag; resumed jobs can change context without changing any recorded cost", "history": "account deletion can remove ledger rows; retained reservation tombstones are reported separately"}}
 
 

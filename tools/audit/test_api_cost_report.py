@@ -78,6 +78,20 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(len(r["external_events_separate_from_consumption"]), 2)
         self.assertEqual(r["external_supplier_usage_invoice_cents_not_added"], "100.0000")
 
+    def test_media_counters_remain_unpriced_and_separate_from_money(self):
+        f = fixture()
+        f["unpriced_usage"] = {"owner_testing_media_requests": "8", "owner_testing_media_bytes": "9000000",
+                              "product_media_serving_requests": "12", "product_media_serving_bytes": "25000000"}
+        r = accounting_report(f)
+        self.assertEqual(r["unpriced_usage"], f["unpriced_usage"])
+        self.assertEqual(r["totals"]["recorded_ledger_cents"], "0.1000")
+        self.assertEqual(r["provider_credit_funding_cents"], "0.0000")
+        for invalid in ({"tariff_dollars": "5"}, {"product_media_serving_bytes": "-1"},
+                        {"owner_testing_media_requests": True}, {"product_media_serving_bytes": "private prose"}):
+            f["unpriced_usage"] = invalid
+            with self.assertRaisesRegex(ValueError, "unpriced usage"):
+                accounting_report(f)
+
     def test_higher_overlapping_hold_keeps_excess(self):
         f = fixture(); f["serving"] = [hold(request_key="video-key", stage="reel", provider="fal", model="kling")]
         f["video"] = [{"id": "video", "org_id": "org1", "actor_id": "actor1", "idempotency_key": "video-key", "feature": "reel", "provider": "fal", "model": "kling", "hold_cents": "4"}]

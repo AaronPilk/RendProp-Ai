@@ -83,4 +83,8 @@ select jsonb_build_object('schema',1,'currency','USD','exported_at',now(),
  'unpriced_usage',jsonb_build_object(
   'metering_watch_ms',(select coalesce(sum(watch_ms),0)::text from public.metering),
   'media_delivery_requests',(select coalesce(sum(used_requests),0)::text from public.media_delivery_budgets),
-  'media_delivery_bytes',(select coalesce(sum(used_bytes),0)::text from public.media_delivery_budgets))) as snapshot;
+  'media_delivery_bytes',(select coalesce(sum(used_bytes),0)::text from public.media_delivery_budgets),
+  'owner_testing_media_requests',(select coalesce(sum(used_requests),0)::text from public.owner_testing_media_usage),
+  'owner_testing_media_bytes',(select coalesce(sum(used_bytes),0)::text from public.owner_testing_media_usage),
+  'product_media_serving_requests',(select coalesce(sum(used_requests),0)::text from public.media_serving_usage),
+  'product_media_serving_bytes',(select coalesce(sum(used_bytes),0)::text from public.media_serving_usage))) as snapshot;
