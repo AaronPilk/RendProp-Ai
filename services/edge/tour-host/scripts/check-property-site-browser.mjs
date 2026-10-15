@@ -7,7 +7,8 @@
 // No phone, customer content, purchase, provider or production request.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -21,20 +22,22 @@ const load = buildSrc("property-site-browser-" + process.pid);
 const { renderTourPage } = await load("player");
 const { buildDemoTour } = await load("demo");
 const { propertyPage } = await load("property-site");
+const sourceHashes = Object.fromEntries(["src/player.ts", "src/property-site.ts", "src/property-video.ts", "scripts/check-property-site-browser.mjs"].map((file) => [file, createHash("sha256").update(readFileSync(join(ROOT, file))).digest("hex")]));
 
 const checks = [];
 const check = (condition, label) => { assert.ok(condition, label); checks.push(label); };
 const svg = (label, color) => `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200"><rect width="1600" height="1200" fill="${color}"/><text x="80" y="600" font-size="96" fill="white">SYNTHETIC ${label}</text></svg>`;
 const PHOTOS = [["Front exterior", "#264653"], ["Living room", "#2a9d8f"], ["Kitchen", "#8a5a44"], ["Primary bedroom", "#6d597a"], ["Terrace", "#355070"], ["Broken file", "#000000"]];
 const photoPath = (i) => i === 5 ? "/photos/missing-5.svg" : `/photos/photo-${i}.svg`;
-let theme = "basic", useThumbs = false, thumbFailure = false;
+let theme = "basic", useThumbs = false, thumbFailure = false, heroOnly = false, coverOverride = null;
 function fixture() {
   const t = buildDemoTour();
   t.slug = "synthetic-site"; t.website_theme = theme;
   t.listing = { address: "123 Synthetic Lane, Example, FL 33000", tagline: null, details: { story: "Synthetic description.", show_app_cta: false, show_partners: false }, beds: 3, baths: 2, sqft: 1800, price_cents: 50000000, price: null, lat: 27.9, lng: -82.5 };
-  t.cover_url = photoPath(0); t.poster = "/posters/poster.svg";
+  t.cover_url = coverOverride || photoPath(0); t.poster = "/posters/poster.svg";
   t.gallery = PHOTOS.map(([label], i) => ({ url: photoPath(i), label, ...(useThumbs ? { thumb_url: photoPath(i).replace("/photos/", "/thumbs/") } : {}) }));
   t.listing_video = { url: "/media/master.mp4", poster_url: "/posters/poster.svg", width: 1920, height: 1080, duration_s: 30, disclosure: "Synthetic photo-based video.", branding_policy: "unbranded" };
+  if (heroOnly) t.listing_video = null;
   t.video_url = t.scrub_url = "/media/recorded.mp4"; t.hls_url = null; t.duration_s = 30; t.chapters = [];
   t.staged = false; t.altered_media = []; t.floorplan_url = null; t.published_at = "2026-10-01T00:00:00Z";
   t.agent_card = { name: "Synthetic Contact", brokerage: "Example Realty", phone: "5550100100", email: "contact@example.invalid" };
@@ -46,6 +49,7 @@ let origin;
 const server = createServer((req, res) => {
   const url = new URL(req.url, "http://127.0.0.1"); requests.push(url.pathname);
   if (thumbFailure && url.pathname === "/thumbs/photo-0.svg") { res.writeHead(503); res.end("synthetic thumbnail outage"); return; }
+  if (url.pathname === "/photos/separate-cover.svg") { res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-store" }); res.end(svg("SEPARATE COVER", "#333333")); return; }
   if (url.pathname === "/posters/poster.svg") { res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end(svg("POSTER", "#333333")); return; }
   const photo = url.pathname.match(/^\/(?:photos|thumbs)\/photo-(\d)\.svg$/);
   if (photo) { res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-store" }); res.end(svg(PHOTOS[Number(photo[1])][0], PHOTOS[Number(photo[1])][1])); return; }
@@ -61,6 +65,7 @@ origin = "http://127.0.0.1:" + server.address().port;
 const browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
 const errors = [];
 const measurements = [];
+const heroRequests = [];
 try {
   for (theme of ["basic", "signature-estate", "coastal-luxe"]) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -182,11 +187,52 @@ try {
     await context.close();
   }
   useThumbs = false;
+  // A non-video Home hero must use the derivative of the exact selected cover,
+  // while opening the full viewer still requests that same published master.
+  heroOnly = true; useThumbs = true; coverOverride = photoPath(2);
+  for (theme of ["basic", "signature-estate", "coastal-luxe"]) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await context.route("**/*", (route) => { const u = new URL(route.request().url()); return u.origin === origin || u.protocol === "data:" ? route.continue() : route.abort(); });
+    const page = await context.newPage(); page.on("pageerror", (e) => errors.push(theme + " hero: " + e));
+    requests.length = 0;
+    await page.goto(origin + "/property/synthetic-site", { waitUntil: "networkidle" });
+    const hero = page.locator("#property-hero-image");
+    check(await hero.evaluate((img) => img.naturalWidth > 0 && new URL(img.currentSrc).pathname === "/thumbs/photo-2.svg"), theme + ": Initial hero displays the exact selected cover preview");
+    check(requests.includes("/thumbs/photo-2.svg") && !requests.some((path) => path.startsWith("/photos/")), theme + ": Initial Home requests previews and no photo master before explicit viewing");
+    check(new URL(await page.locator('meta[property="og:image"]').getAttribute("content")).pathname === photoPath(2), theme + ": Hero display leaves full-master SEO unchanged");
+    check(await page.locator("#property-photo-full").getAttribute("src") === null, theme + ": Full viewer remains unloaded initially");
+    heroRequests.push({ theme, phase: "initial-home", requests: [...requests], displayed: await hero.getAttribute("src"), master: coverOverride });
+    await page.locator("[data-property-photo]").nth(2).click();
+    await page.waitForFunction(() => document.querySelector("#property-photo-full").naturalWidth > 0);
+    check(requests.includes(photoPath(2)) && await page.locator("#property-photo-full").evaluate((img) => new URL(img.currentSrc).pathname) === photoPath(2), theme + ": Explicit viewing opens the same exact full master");
+    heroRequests.push({ theme, phase: "explicit-viewer", requests: [...requests], viewedMaster: await page.locator("#property-photo-full").getAttribute("src") });
+    await context.close();
+  }
+  {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await context.route("**/*", (route) => { const u = new URL(route.request().url()); return u.origin === origin || u.protocol === "data:" ? route.continue() : route.abort(); });
+    const page = await context.newPage(); page.on("pageerror", (e) => errors.push("hero fallback: " + e));
+    theme = "basic"; coverOverride = photoPath(0); thumbFailure = true; requests.length = 0;
+    await page.goto(origin + "/property/synthetic-site", { waitUntil: "networkidle" });
+    check(await page.locator("#property-hero-image").evaluate((img) => img.naturalWidth > 0 && new URL(img.currentSrc).pathname === "/photos/photo-0.svg"), "Hero preview outage displays its exact master");
+    check(requests.filter((p) => p === "/thumbs/photo-0.svg").length === 1 && requests.filter((p) => p === photoPath(0)).length === 1, "Hero preview outage makes one bounded fallback request");
+    thumbFailure = false; useThumbs = false; requests.length = 0;
+    await page.goto(origin + "/property/synthetic-site", { waitUntil: "networkidle" });
+    check(await page.locator("#property-hero-image").getAttribute("src") === photoPath(0) && !requests.some((path) => path.startsWith("/thumbs/")), "Missing hero preview preserves the original full-master path");
+    useThumbs = true; coverOverride = "/photos/separate-cover.svg"; requests.length = 0;
+    await page.goto(origin + "/property/synthetic-site", { waitUntil: "networkidle" });
+    check(await page.locator("#property-hero-image").getAttribute("src") === coverOverride && requests.includes(coverOverride), "A separate authorized cover cannot use a different gallery photo's preview");
+    heroOnly = false; coverOverride = photoPath(2); requests.length = 0;
+    await page.goto(origin + "/property/synthetic-site", { waitUntil: "networkidle" });
+    check(await page.locator("#property-video").getAttribute("poster") === "/posters/poster.svg" && await page.locator("#property-hero-image").count() === 0, "Photo-video retains its own first-clip poster identity rather than the gallery preview");
+    check(!requests.some((path) => path.endsWith(".mp4")), "Hero preview handling cannot eagerly load the selected video or optional walkthrough");
+    await context.close();
+  }
   check(errors.length === 0, "No page JavaScript errors: " + errors.join("; "));
-  writeFileSync(join(evidence, "receipt.json"), JSON.stringify({ passed: true, checks, measurements, scope: "Synthetic loopback pages and SVG photos; no customer media, phone or production request." }, null, 2));
+  writeFileSync(join(evidence, "receipt.json"), JSON.stringify({ passed: true, checks, measurements, heroRequests, sourceHashes, scope: "Synthetic loopback pages and SVG photos; no customer media, phone or production request. Request/DOM assertions are not a Core Web Vitals measurement." }, null, 2));
   console.log(`Property site browser: ${checks.length} real-browser assertions passed; receipt ${join(evidence, "receipt.json")}`);
 } catch (error) {
-  writeFileSync(join(evidence, "failure.json"), JSON.stringify({ passed: false, error: String(error && error.message || error), checks, measurements, errors }, null, 2));
+  writeFileSync(join(evidence, "failure.json"), JSON.stringify({ passed: false, error: String(error && error.message || error), checks, measurements, sourceHashes, errors }, null, 2));
   throw error;
 } finally {
   await browser.close(); server.close();

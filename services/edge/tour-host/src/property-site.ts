@@ -121,6 +121,17 @@ export const PROPERTY_SITE_CSS = `
 // native lazy-load window. Anchors/lightbox still use the exact published master,
 // and noscript markup preserves photos when JavaScript is unavailable.
 export const PROPERTY_SITE_JS = `
+  var propertyHero=document.getElementById('property-hero-image');
+  if (propertyHero && propertyHero.getAttribute('data-property-hero-master')) {
+    function loadHeroMaster(){
+      var master=propertyHero.getAttribute('data-property-hero-master');
+      if (!master) return;
+      propertyHero.removeAttribute('data-property-hero-master'); propertyHero.src=master;
+    }
+    propertyHero.addEventListener('error',loadHeroMaster,{once:true});
+    // A cached/early preview failure can precede this deferred script.
+    if (propertyHero.complete && propertyHero.naturalWidth===0) loadHeroMaster();
+  }
   var propertyThumbs=document.querySelectorAll('img[data-property-src]');
   function loadPropertyThumb(image){
     var source=image.getAttribute('data-property-src');
