@@ -213,7 +213,7 @@ export const kieAdapter: ProviderAdapter = {
         if (!imageUrl || duration !== "5" || resolution !== "1080p" ||
             !["pro", "4K"].includes(String(input.extra?.kie_mode)) || input.extra?.sound !== false ||
             input.framing !== "preserve_photo") {
-          throw new ProviderError(PROVIDER, "validation", "Kling comparison requires a five-second Pro silent photo-preserving shot.", 400, true);
+          throw new ProviderError(PROVIDER, "validation", "Kling comparison requires a priced five-second Pro or 4K silent photo-preserving shot.", 400, true);
         }
         jobInput.image_urls = [imageUrl];
         jobInput.sound = false;

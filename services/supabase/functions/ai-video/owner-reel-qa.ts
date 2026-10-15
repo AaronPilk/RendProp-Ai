@@ -49,6 +49,7 @@ export async function ownerQaReelStep(
   // top-up bonus or marketing speed claim as a billing/latency guarantee.
   // https://kie.ai/seedance-1-0-pro-fast
   // Kling3 Pro silent:18credits/s=$0.09/s. Its comparison is opt-in only;
+  // 4K:67credits/s=$0.335/s, explicitly selected by the same exact grant.
   // installed clients without preserve_photo keep their ordinary route.
   // https://kie.ai/kling-3-0
   return {
