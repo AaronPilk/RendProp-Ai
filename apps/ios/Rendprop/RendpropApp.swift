@@ -1260,7 +1260,7 @@ final class AppModel: ObservableObject {
             return assetID
         } catch {
             noteUploadProblem("The untouched original of this edit didn't reach the tour, so its \"View original\" link will be missing. "
-                              + "Edit the photo again to retry. \(Self.userMessage(for: error))",
+                              + "The saved edit is kept. Publish the listing again to retry its upload. \(Self.userMessage(for: error))",
                               listingServerID: listingServerID, error: error)
             return nil
         }

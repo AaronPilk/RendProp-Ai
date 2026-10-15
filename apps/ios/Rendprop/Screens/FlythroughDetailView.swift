@@ -3174,12 +3174,25 @@ enum AIImagePrep {
     static func reelSource(_ image: UIImage, aspect: String) -> UIImage { image }
 
     /// The photo at `url` → downscaled JPEG → base64 (no data: prefix), off main.
-    static func jpegBase64(at url: URL, maxDimension: CGFloat, quality: CGFloat) async -> String? {
+    static func jpegBase64(at url: URL, maxDimension: CGFloat, quality: CGFloat, maxBytes: Int? = nil) async -> String? {
         await Task.detached(priority: .userInitiated) { () -> String? in
             guard let ui = UIImage(contentsOfFile: url.path) else { return nil }
-            return AIImagePrep.downscaled(ui, maxDimension: maxDimension)
-                .jpegData(compressionQuality: quality)?
-                .base64EncodedString()
+            guard let maxBytes else {
+                return AIImagePrep.downscaled(ui, maxDimension: maxDimension)
+                    .jpegData(compressionQuality: quality)?.base64EncodedString()
+            }
+            // Only the AI request copy is conditioned. The complete original
+            // file and every saved/exported version remain untouched.
+            guard maxBytes > 0 else { return nil }
+            for scale: CGFloat in [1, 0.875, 0.75, 0.625, 0.5] {
+                let image = AIImagePrep.downscaled(ui, maxDimension: maxDimension * scale)
+                for candidate: CGFloat in [quality, min(quality, 0.85), min(quality, 0.8)] {
+                    if let jpeg = image.jpegData(compressionQuality: candidate), jpeg.count <= maxBytes {
+                        return jpeg.base64EncodedString()
+                    }
+                }
+            }
+            return nil
         }.value
     }
 

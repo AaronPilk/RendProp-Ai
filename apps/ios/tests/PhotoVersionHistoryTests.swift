@@ -587,6 +587,22 @@ struct PhotoVersionHistoryTests {
                 }
             }
         }
+        let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4V8AAAAASUVORK5CYII=")!
+        let rawFormatDir = root.appendingPathComponent("raw-formats")
+        try PhotoVersionHistory.saveCapture(original: captured, enhanced: brightened, id: "raw-source", directory: rawFormatDir)
+        let pngSource = try PhotoVersionHistory.ensureOriginalSources(directory: rawFormatDir).libraryVersions(.original)[0]
+        let pngContext = try PhotoVersionHistory.editContext(for: pngSource.id, edit: "stage", directory: rawFormatDir)
+        let rawVersion = try PhotoVersionHistory.saveEdit(jpeg: png, id: "raw-checked-png",
+            parentID: pngContext.parent.id, sourceID: pngSource.id, edit: "stage", style: "modern", disclosure: nil,
+            provenanceID: UUID().uuidString, provenanceRecorded: true, directory: rawFormatDir, imageExtension: "png")
+        check(rawVersion.imageFile.hasSuffix(".png"), "checked image keeps the correct browser MIME extension")
+        check((try? Data(contentsOf: rawFormatDir.appendingPathComponent(rawVersion.imageFile))) == png, "checked candidate bytes survive local save without recompression")
+        check((try? Data(contentsOf: rawFormatDir.appendingPathComponent(pngSource.imageFile))) == captured, "saving checked bytes cannot rewrite the original")
+        rejected("image suffix cannot escape the listing folder") {
+            _ = try PhotoVersionHistory.saveEdit(jpeg: png, id: "unsafe-suffix", parentID: pngSource.id,
+                sourceID: pngSource.id, edit: "stage", style: "modern", disclosure: nil, provenanceID: nil,
+                provenanceRecorded: false, directory: rawFormatDir, imageExtension: "../png")
+        }
         print("Photo history/export geometry: \(checks) passed")
     }
 }

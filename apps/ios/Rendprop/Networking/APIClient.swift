@@ -263,7 +263,7 @@ struct ProvenanceRecord: Identifiable, Hashable, Sendable {
 /// the edit at all), a human label for the disclosure line, and the asset id of
 /// the untouched ORIGINAL uploaded with `role:"original"` — which is what makes
 /// the public "View original" link real (California AB 723).
-struct AIPhotoEditRequest: Sendable, Hashable {
+struct AIPhotoEditRequest: Sendable, Hashable, Codable {
     var imageBase64: String
     var mime: String = "image/jpeg"
     /// "twilight" | "sky" | "lawn" | "declutter" | "stage" | "custom".
@@ -286,7 +286,7 @@ struct AIPhotoEditRequest: Sendable, Hashable {
     var label: String? = nil
     /// `capture_assets.id` of the untouched source (uploads `role:"original"`).
     var originalAssetID: String? = nil
-    /// One UUID per user TAP (billed provider call).
+    /// One UUID per paid attempt, retained through a lost answer or quality pause.
     var idempotencyKey: String? = nil
 }
 

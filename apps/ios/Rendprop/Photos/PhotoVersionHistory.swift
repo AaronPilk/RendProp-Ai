@@ -509,10 +509,11 @@ enum PhotoVersionHistory {
                          edit: String, style: String?, disclosure: String?, provenanceID: String?,
                          provenanceRecorded: Bool, directory: URL, originalAssetID: String? = nil, serverListingID: String? = nil,
                          stagingReferenceID: String? = nil, stagingBrief: String? = nil,
+                         imageExtension: String = "jpg",
                          write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws -> Version {
         lock.lock(); defer { lock.unlock() }
         var index = try loadUnlocked(directory: directory)
-        guard safeName(id), !jpeg.isEmpty else { throw Failure.invalidHistory }
+        guard safeName(id), !jpeg.isEmpty, ["jpg", "png", "webp"].contains(imageExtension) else { throw Failure.invalidHistory }
         guard index.versions[id] == nil else { throw Failure.duplicate }
         guard let parent = index.versions[parentID], let source = index.versions[sourceID],
               parent.familyID == source.familyID, index.isVisible(parentID) else { throw Failure.changedVersion }
@@ -523,7 +524,7 @@ enum PhotoVersionHistory {
             guard edit == "stage", let reference = index.versions[stagingReferenceID],
                   reference.effects.contains("stage"), reference.stagingReviewed == true else { throw Failure.reviewRequired }
         }
-        let imageName = "edit-\(id).jpg", imageURL = directory.appendingPathComponent("edit-\(id).jpg")
+        let imageName = "edit-\(id).\(imageExtension)", imageURL = directory.appendingPathComponent(imageName)
         guard !FileManager.default.fileExists(atPath: imageURL.path) else { throw Failure.duplicate }
         var effects = source.effects
         if !effects.contains(edit) { effects.append(edit) }

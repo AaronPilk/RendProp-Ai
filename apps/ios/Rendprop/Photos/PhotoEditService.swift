@@ -48,7 +48,7 @@ final class PhotoEditService {
             guard edit == "stage" else { throw PhotoVersionHistory.Failure.reviewRequired }
             let reference = try PhotoVersionHistory.stagingReference(id: stagingReferenceID, directory: directory)
             referenceBase64 = await AIImagePrep.jpegBase64(at: directory.appendingPathComponent(reference.imageFile),
-                                                         maxDimension: 1024, quality: 0.85)
+                                                         maxDimension: 1024, quality: 0.85, maxBytes: 200_000)
             guard referenceBase64 != nil else { throw PhotoVersionHistory.Failure.missingImage }
             try requireUnsentWork()
         }
@@ -58,7 +58,8 @@ final class PhotoEditService {
         let context = try PhotoVersionHistory.editContext(for: requested.id, edit: edit, directory: directory)
         let parent = context.parent, sourceVersion = context.source
         guard let b64 = await AIImagePrep.jpegBase64(at: directory.appendingPathComponent(sourceVersion.imageFile),
-                                                   maxDimension: 2048, quality: 0.9) else {
+                                                   maxDimension: 2048, quality: 0.9,
+                                                   maxBytes: referenceBase64 == nil ? 1_000_000 : 800_000) else {
             throw AIImagePrep.error("Couldn't read that photo.")
         }
         try requireUnsentWork()
@@ -82,7 +83,17 @@ final class PhotoEditService {
         request.stagingReferenceMime = referenceBase64 == nil ? nil : "image/jpeg"
         request.listingServerID = serverID
         request.label = PhotoStudioView.provenanceLabel(edit: edit, style: style, space: space)
-        request.originalAssetID = originalAssetID; request.idempotencyKey = UUID().uuidString
+        request.originalAssetID = originalAssetID
+        var pending: PhotoPendingEdit.Saved?
+        if let owner, let workspace {
+            pending = try PhotoPendingEdit.begin(request,
+                identity: .init(actor: owner, library: workspace, listing: listing.id, sourceVersion: sourceVersion.id),
+                directory: directory)
+            request = pending!.request
+        } else {
+            guard listing.isSample else { throw CloudSyncError.identityChanged }
+            request.idempotencyKey = UUID().uuidString
+        }
         // Preparation can suspend. Recheck the original grant at the actual
         // provider boundary; revoke followed by grant cannot revive this batch.
         try requireUnsentWork()
@@ -90,27 +101,44 @@ final class PhotoEditService {
             _ = try PhotoVersionHistory.stagingReference(id: stagingReferenceID, directory: directory)
         }
         progress?(.generatingAndChecking)
-        let result = try await api.aiPhotoEdit(request)
+        let result: AIPhotoEditResult
+        do { result = try await api.aiPhotoEdit(request) }
+        catch {
+            // A definite validation/admission refusal bought no edit. A final
+            // quality refusal is retained by the server; the next explicit
+            // user edit may be a different paid attempt. Unknown/pending/held
+            // answers keep the exact operation for a manual status check.
+            if let failure = error as? APIError,
+               failure.isValidation || failure.isQuota || failure.code == "photo_quality_refused",
+               let pending { try? PhotoPendingEdit.finish(pending) }
+            throw error
+        }
         // This request was already sent. Keep its returned edit under the same
         // account/workspace; consent revocation fences the next unsent photo.
         try requireIdentity()
         progress?(.checkingReturnedImage)
-        let jpeg = try await Task.detached(priority: .userInitiated) {
-            guard let raw = Data(base64Encoded: result.imageBase64), let image = UIImage(data: raw),
-                  let jpeg = image.jpegData(compressionQuality: 0.97) else {
+        let raw = try await Task.detached(priority: .userInitiated) {
+            guard let raw = Data(base64Encoded: result.imageBase64), UIImage(data: raw) != nil else {
                 throw AIImagePrep.error("The AI didn't return an image. Try again.")
             }
-            return jpeg
+            return raw
         }.value
+        let imageExtension: String
+        if raw.starts(with: [0xFF, 0xD8, 0xFF]) { imageExtension = "jpg" }
+        else if raw.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { imageExtension = "png" }
+        else if raw.count >= 12, raw.prefix(4) == Data("RIFF".utf8), raw.dropFirst(8).prefix(4) == Data("WEBP".utf8) { imageExtension = "webp" }
+        else { throw AIImagePrep.error("The returned image format could not be saved. Your paid request is retained.") }
         try requireIdentity()
         progress?(.saving)
         let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000)) + "-" + UUID().uuidString
-        let version = try PhotoVersionHistory.saveEdit(jpeg: jpeg, id: id, parentID: parent.id,
+        let version = try PhotoVersionHistory.saveEdit(jpeg: raw, id: id, parentID: parent.id,
             sourceID: sourceVersion.id, edit: edit, style: style, disclosure: result.disclosure,
             provenanceID: result.provenanceID, provenanceRecorded: result.provenanceRecorded,
-            directory: directory, originalAssetID: originalAssetID, serverListingID: serverID?.uuidString,
-            stagingReferenceID: stagingReferenceID, stagingBrief: edit == "stage" ? prompt : nil)
+            directory: directory, originalAssetID: request.originalAssetID, serverListingID: request.listingServerID?.uuidString,
+            stagingReferenceID: stagingReferenceID, stagingBrief: edit == "stage" ? prompt : nil,
+            imageExtension: imageExtension)
         let output = directory.appendingPathComponent(version.imageFile)
+        if let pending { try? PhotoPendingEdit.finish(pending) }
         if wasMain && version.canAutomaticallySelectForListing
             && model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath == FileStore.relativePath(for: p.enhancedURL) {
             model.setMainPhoto(FileStore.relativePath(for: output), for: listing.id)
