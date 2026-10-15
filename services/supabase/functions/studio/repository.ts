@@ -11,6 +11,21 @@ export interface StudioRepositoryDependencies {
   listingScope(userId: string, listingId: string): Promise<{ actor_id: string; org_id: string; library_org_id: string; can_read: boolean }>;
 }
 
+// These are server-reserved namespaces, not ordinary photo filenames. Apply
+// exclusions before range/lookahead so internal rows never consume a photo page.
+function videoPhotoPatterns(scope: {orgId:string;listingId:string}): string[] {
+  return [`uploads/${scope.orgId}/${scope.listingId}/prepared-video/%`,
+    `renders/${scope.orgId}/${scope.listingId}/background/%/first-clip.jpg`];
+}
+function visiblePhotoFilter(scope: {orgId:string;listingId:string}): string {
+  const excluded = videoPhotoPatterns(scope);
+  const keep = (column:string) => excluded.map(pattern => `${column}.not.like.${pattern}`).join(",");
+  // Match the handler's enhanced_key || original_key, including legacy empty
+  // enhanced keys and null unavailable rows (which retain their honest error).
+  return `and(enhanced_key.not.is.null,enhanced_key.neq.,${keep("enhanced_key")}),` +
+    `and(or(enhanced_key.is.null,enhanced_key.eq.),or(original_key.is.null,and(${keep("original_key")})))`;
+}
+
 /** Keep the real query/authorization adapter testable without credentials or Deno.serve. */
 export function createStudioRepository(
   req: Request,
@@ -59,7 +74,8 @@ export function createStudioRepository(
           // The native/gallery sort is business state, not a display hint.
           // Apply it before pagination; UUID alone preserves the old order after
           // a successful reorder and puts the wrong photos on later pages.
-          .eq("listing_id", scope.listingId).order("sort", { ascending: true })
+          .eq("listing_id", scope.listingId).or(visiblePhotoFilter(scope))
+          .order("sort", { ascending: true })
           .order("id", { ascending: true })
           .range(offset, offset + PAGE_SIZE).abortSignal(req.signal),
         db().from("capture_assets")
@@ -68,6 +84,8 @@ export function createStudioRepository(
           )
           .eq("listing_id", scope.listingId).eq("uploaded", true)
           .not("storage_key", "like", "%/contact-%")
+          .not("storage_key", "like", videoPhotoPatterns(scope)[0])
+          .not("storage_key", "like", videoPhotoPatterns(scope)[1])
           .order("id", { ascending: true }).range(offset, offset + PAGE_SIZE)
           .abortSignal(req.signal),
         db().from("renders")

@@ -92,6 +92,16 @@ export function bucketForKey(
   return null;
 }
 
+/** Server-reserved video working copies/posters are not property photographs.
+ * Keep untouched capture originals, gallery uploads and saved edits; never
+ * infer a room/photo identity from captions or from the renders bucket alone. */
+export function internalVideoPhoto(key: string, scope: MediaScope): boolean {
+  const root = `${scope.orgId}/${scope.listingId}/`;
+  const uuid = "[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}";
+  return new RegExp(`^uploads/${root}prepared-video/${uuid}/${uuid}\\.jpg$`).test(key) ||
+    new RegExp(`^renders/${root}background/${uuid}/${uuid}/first-clip\\.jpg$`).test(key);
+}
+
 export function createStudioHandler(deps: StudioDependencies) {
   return async (req: Request): Promise<Response> => {
     if (req.method === "OPTIONS") return handleOptions();
@@ -199,6 +209,7 @@ export function createStudioHandler(deps: StudioDependencies) {
       // Sequential signing is intentionally bounded (at most 200 objects per page).
       // It does no object download, provider work, mutation, or publication.
       for (const photo of pagePhotos) {
+        if (internalVideoPhoto(photo.enhanced_key || photo.original_key || "", scope)) continue;
         const url = await sign(
           photo.enhanced_key || photo.original_key,
           photo.listing_id,
@@ -235,6 +246,7 @@ export function createStudioHandler(deps: StudioDependencies) {
         // Keep the canonical gallery identity and caption, not a second source
         // card whose only difference is the backing capture UUID.
         if (asset.kind === "photo" && photoAssetAliases.has(asset.storage_key)) continue;
+        if (asset.kind === "photo" && internalVideoPhoto(asset.storage_key, scope)) continue;
         const url = await sign(
           asset.storage_key,
           asset.listing_id,

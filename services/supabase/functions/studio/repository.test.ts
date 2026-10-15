@@ -17,6 +17,21 @@ const listing = "30000000-0000-4000-8000-000000000003";
 const req = new Request("https://fixture.invalid/studio/media");
 type Result = { data: unknown; error: { message: string } | null };
 
+// Closed PostgREST filter/range semantics, applied to the actual adapter's
+// emitted query before slicing. This catches missing pre-pagination exclusions.
+function splitLogic(text:string):string[] {
+ let depth=0,start=0;const parts:string[]=[];
+ for(let i=0;i<text.length;i++){if(text[i]==="(")depth++;else if(text[i]===")")depth--;else if(text[i]===","&&depth===0){parts.push(text.slice(start,i));start=i+1;}}
+ return [...parts,text.slice(start)];
+}
+function logic(row:Record<string,unknown>,term:string):boolean {
+ if(term.startsWith("and(")||term.startsWith("or(")){const parts=splitLogic(term.slice(term.indexOf("(")+1,-1)).map(t=>logic(row,t));return term.startsWith("and(")?parts.every(Boolean):parts.some(Boolean);}
+ const [column,...rest]=term.split(".");let expression=rest.join("."),negated=false;if(expression.startsWith("not.")){negated=true;expression=expression.slice(4);}
+ const separator=expression.indexOf("."),op=expression.slice(0,separator),value=expression.slice(separator+1),actual=row[column];
+ let match:boolean;if(op==="is")match=value==="null"&&actual==null;else if(op==="like")match=actual!=null&&new RegExp("^"+value.replace(/[.*+?^${}()|[\]\\]/g,"\\$&").replaceAll("%",".*").replaceAll("_",".")+"$").test(String(actual));else if(op==="eq")match=actual===value;else if(op==="neq")match=actual!=null&&actual!==value;else throw Error("Unsupported closed filter "+op);
+ return negated?(actual!=null&&!match):match;
+}
+
 function fixture() {
   const events: string[] = [];
   const queries: { table: string; operations: [string, ...unknown[]][] }[] = [];
@@ -49,6 +64,7 @@ function fixture() {
         },
         in(...args: unknown[]) { operations.push(["in", ...args]); return query; },
         not(...args: unknown[]) { operations.push(["not", ...args]); return query; },
+        or(...args: unknown[]) { operations.push(["or", ...args]); return query; },
         limit(...args: unknown[]) { operations.push(["limit", ...args]); return query; },
         order(...args: unknown[]) {
           operations.push(["order", ...args]);
@@ -76,7 +92,8 @@ function fixture() {
           // fail if a persisted gallery order is never included in the query.
           const order = operations.filter(op => op[0] === "order");
           let data = [...result.data].filter(row => operations.every(op => (op[0] !== "in" || (op[2] as unknown[]).includes(row[String(op[1])])) &&
-            (op[0] !== "not" || op[1] !== "storage_key" || !String(row.storage_key).includes("/contact-")))).sort((a, b) => {
+            (op[0] !== "not" || logic(row,`${op[1]}.not.${op[2]}.${op[3]}`)) &&
+            (op[0] !== "or" || splitLogic(String(op[1])).some(term=>logic(row,term))))).sort((a, b) => {
             for (const [, column, options] of order) {
               const field = String(column), direction = (options as { ascending?: boolean }).ascending === false ? -1 : 1;
               if (a[field] !== b[field]) return (a[field] < b[field] ? -1 : 1) * direction;
@@ -329,4 +346,22 @@ Deno.test("selected-key provenance projection classifies saved results and refus
   assertEquals((await (await handler(request())).json()).photos[0].edit_kind, null);
   f.results.media_provenance.data = [{ ...stage, org_id: user }];
   assertEquals((await handler(request())).status, 503);
+});
+
+Deno.test("video working JPEGs and generated posters never become photos; untouched originals and saved gallery photos remain", async () => {
+ const f=fixture(),repository=createStudioRepository(req,f.deps),id=(n:number)=>`50000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+ const keys=[`uploads/${org}/${listing}/prepared-video/${id(10)}/${id(11)}.jpg`,`renders/${org}/${listing}/background/${id(12)}/${id(13)}/first-clip.jpg`,`uploads/${org}/${listing}/${id(14)}.jpg`,`renders/${org}/${listing}/gallery-${id(15)}.jpg`];
+ f.results.capture_assets.data=keys.map((storage_key,n)=>({id:id(n),listing_id:listing,storage_key,kind:'photo',bucket:n===0||n===2?'uploads':'renders',uploaded:true,duration_s:null,created_at:'2026-10-15T00:00:00Z'}));
+ const signed:string[]=[],handler=createStudioHandler({...repository,authorize:async()=>({userId:user,orgId:org,listingId:listing}),rateLimit:async()=>true,sign:async(_bucket,key)=>{signed.push(key);return'https://fixture.invalid/read/'+encodeURIComponent(key);},now:()=>0});
+ const response=await handler(new Request(`https://fixture.invalid/studio/media?org_id=${org}&listing_id=${listing}`)),body=await response.json();assertEquals(response.status,200);assertEquals(body.photos.map((p:{id:string})=>p.id),[id(2),id(3)]);assertEquals(signed,keys.slice(2));assertEquals(body.next_offset,null);assert(!JSON.stringify(body).includes('prepared-video')&&!JSON.stringify(body).includes('first-clip'));
+});
+
+Deno.test("internal video photo rows are excluded before range/lookahead without dropping normal masters or saved history",async()=>{
+ const f=fixture(),repo=createStudioRepository(req,f.deps),id=(n:number)=>`51000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+ const prepared=`uploads/${org}/${listing}/prepared-video/${id(900)}/${id(901)}.jpg`,poster=`renders/${org}/${listing}/background/${id(902)}/${id(903)}/first-clip.jpg`;
+ f.results.capture_assets.data=[...Array.from({length:60},(_,n)=>({id:id(n),listing_id:listing,kind:'photo',uploaded:true,bucket:'uploads',storage_key:prepared})),...Array.from({length:51},(_,n)=>({id:id(100+n),listing_id:listing,kind:'photo',uploaded:true,bucket:'uploads',storage_key:`uploads/${org}/${listing}/original-${n}.jpg`}))];
+ f.results.photos.data=[...Array.from({length:60},(_,n)=>({id:id(n),listing_id:listing,enhanced_key:n%2?poster:null,original_key:n%2?null:prepared,sort:n})),...Array.from({length:51},(_,n)=>({id:id(100+n),listing_id:listing,enhanced_key:n%3===0?null:n%3===1?'':`renders/${org}/${listing}/saved-edit-${n}.jpg`,original_key:`uploads/${org}/${listing}/original-${n}.jpg`,sort:100+n}))];
+ const page=await repo.read({userId:user,orgId:org,listingId:listing},0);assertEquals(page.assets.length,51);assertEquals(page.photos.length,51);assertEquals(page.assets[0].id,id(100));assertEquals(page.photos[0].id,id(100));
+ const next=await repo.read({userId:user,orgId:org,listingId:listing},50);assertEquals(next.assets.map(row=>row.id),[id(150)]);assertEquals(next.photos.map(row=>row.id),[id(150)]);
+ for(const query of f.queries.filter(q=>(q.table==='photos'||q.table==='capture_assets')&&q.operations.some(op=>op[0]==='range'))){const before=query.operations.slice(0,query.operations.findIndex(op=>op[0]==='range'));assert(before.some(op=>op[0]===(query.table==='photos'?'or':'not')));}
 });
