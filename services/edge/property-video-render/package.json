@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types tests/controller.test.ts && node tests/durable.test.mjs && node tests/runtime.test.mjs && python3 -m unittest discover -s tests -p 'test_*.py'",
+    "test": "node --experimental-strip-types tests/controller.test.ts && node tests/durable.test.mjs && node tests/runtime.test.mjs && node --experimental-strip-types tests/photo-quality.test.ts && node tests/photo-durable.test.mjs && node tests/photo-runtime.test.mjs && python3 -m unittest discover -s tests -p 'test_*.py'",
     "verify": "npm run typecheck && npm test",
     "deploy": "wrangler deploy"
   },

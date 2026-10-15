@@ -11,6 +11,7 @@ from pathlib import Path
 from capabilities import download, upload, digest
 from prepare_image import prepare_image, normalize_full_resolution, MAX_SOURCE_BYTES
 from photo_motion import encode_photo_motion
+from photo_quality import validate_photo_task, prepare_photo_quality, upload_photo_quality
 from compose import MusicSource, QualityError, compose, probe, run
 from music_catalog import validate_music
 
@@ -32,6 +33,9 @@ def expiry(value):
 
 
 def validate_task(task):
+    if task.get("action") == "prepare_photo_quality":
+        validate_photo_task(task)
+        return
     uuid_value(task["job_id"])
     uuid_value(task["lease_token"])
     expiry(task["expires_at"])
@@ -176,7 +180,7 @@ def render(task, hosts, work_root="/work"):
         raise QualityError("insufficient_private_work_disk")
     directory = Path(tempfile.mkdtemp(prefix="render-", dir=work_root))
     try:
-        result = inspect_audio(task, directory, hosts) if task["action"] == "inspect_audio" else prepare_image(task, directory, hosts) if task["action"] == "prepare_image" else extract(task, directory, hosts) if task["action"] == "extract_frames" else compose_task(task, directory, hosts)
+        result = prepare_photo_quality(task, directory, hosts) if task["action"] == "prepare_photo_quality" else inspect_audio(task, directory, hosts) if task["action"] == "inspect_audio" else prepare_image(task, directory, hosts) if task["action"] == "prepare_image" else extract(task, directory, hosts) if task["action"] == "extract_frames" else compose_task(task, directory, hosts)
         return {"result": result, "directory": directory}
     except BaseException:
         shutil.rmtree(directory, ignore_errors=True)
@@ -184,6 +188,8 @@ def render(task, hosts, work_root="/work"):
 
 
 def upload_prepared(prepared, output, hosts):
+    if "photo_quality_images" in prepared["result"]:
+        return upload_photo_quality(prepared, output, hosts)
     expiry(output["expires_at"])
     receipt = prepared["result"]["receipt"]
     if "prepared_image" in prepared["result"]:

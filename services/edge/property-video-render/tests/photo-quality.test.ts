@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import{photoCapabilities,photoOutputCapabilities,checkedPhotoResult,photoFailure}from'../src/photo-quality.ts';
+import{egress}from'../src/controller.ts';
+const check='00000000-0000-4000-8000-000000000001',evidence='00000000-0000-4000-8000-000000000002',lease='00000000-0000-4000-8000-000000000003';
+const expires_at=new Date(Date.now()+600_000).toISOString(),hosts=new Set(['owned.example']);
+const input={bucket:'renders',key:'private/source.jpg',etag:'"owned"',bytes:10,sha256:'a'.repeat(64),mime:'image/jpeg' as const,url:'https://owned.example/source?cap=private'};
+const action={action:'prepare_photo_quality' as const,policy:'photo-fixed-features-v1' as const,check_id:check,evidence_id:evidence,lease_token:lease,expires_at,prepared_source:input,candidate:{...input,key:'private/candidate.jpg',sha256:'b'.repeat(64),url:'https://owned.example/candidate?cap=private'}};
+assert.equal(photoCapabilities(action,hosts).capabilities.length,2);
+for(const altered of[{...action,check_id:'invalid'},{...action,lease_token:'invalid'},{...action,expires_at:'2000-01-01'},{...action,policy:'video-jpeg-v1'},{...action,candidate:{...input,bytes:50*1024*1024+1}},{...action,candidate:{...input,url:'https://evil.test/photo'}}])assert.throws(()=>photoCapabilities(altered as any,hosts));
+const images=['source','candidate'].flatMap(role=>['whole','tl','tr','bl','br'].map(region=>({role,region,bytes:10,width:2,height:2,sha256:'c'.repeat(64),crop:{left:0,top:0,width:2,height:2}})));
+const receipt={check_id:check,evidence_id:evidence,lease_token:lease,manifest:{images}};
+assert.equal(checkedPhotoResult(receipt,action),receipt);
+for(const altered of[{...receipt,check_id:lease},{...receipt,evidence_id:lease},{...receipt,lease_token:check},{...receipt,job_id:check}])assert.throws(()=>checkedPhotoResult(altered,action));
+const output={check_id:check,evidence_id:evidence,expires_at,images:images.map(row=>({...row,bucket:'renders',key:`private/${row.role}/${row.region}.jpg`,mime:'image/jpeg',crop:{height:2,width:2,top:0,left:0},put_url:`https://owned.example/put/${row.role}/${row.region}?signature=private`,headers:{'content-length':'10','content-type':'image/jpeg','if-none-match':'*','x-amz-meta-sha256':row.sha256}}))};
+const props=photoOutputCapabilities(output,receipt,hosts);assert.equal(props.capabilities.length,10,'crop key-order is not geometry');
+for(const mutate of[(o:any)=>o.check_id=lease,(o:any)=>o.images.pop(),(o:any)=>o.images[0].sha256='d'.repeat(64),(o:any)=>o.images[0].crop.left=1,(o:any)=>o.images[0].bucket='uploads',(o:any)=>o.images[0].headers['if-none-match']='anything',(o:any)=>o.images[0].put_url='https://evil.test/put']){const copy=structuredClone(output);mutate(copy);assert.throws(()=>photoOutputCapabilities(copy,receipt,hosts));}
+let calls=0;const forbidden=async()=>{calls++;throw Error('unexpected');};
+assert.equal((await egress(new Request(input.url),props,forbidden)).status,403,'PUT phase removes all original GET capabilities');
+assert.equal((await egress(new Request('https://owned.example/unreserved',{method:'PUT',body:'abcdefghij'}),props,forbidden)).status,403);assert.equal(calls,0);
+assert.deepEqual(photoFailure(action),{check_id:check,lease_token:lease,code:'cpu_photo_comparison_failed'});
+assert.ok(!JSON.stringify(photoFailure(action)).includes('private'));
+console.log('Separate photo-check capabilities: exact identity,10 roles, geometry, aggregate, headers, host and phase fences passed.');

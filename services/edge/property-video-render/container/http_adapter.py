@@ -47,12 +47,12 @@ class Runtime:
                 return {"state": "uploaded", "result": value}
             self.prepared = value
             result = value["result"]
-            return {"state": "prepared" if self.task["action"] in {"compose", "prepare_image"} else "inspected" if self.task["action"] == "inspect_audio" else "extracted",
-                    "result": result["receipt"] if self.task["action"] in {"compose", "prepare_image"} else result}
+            return {"state": "prepared" if self.task["action"] in {"compose", "prepare_image", "prepare_photo_quality"} else "inspected" if self.task["action"] == "inspect_audio" else "extracted",
+                    "result": result["receipt"] if self.task["action"] in {"compose", "prepare_image", "prepare_photo_quality"} else result}
 
     def start_upload(self, task_id, output):
         with self.lock:
-            if task_id != self.task_id or self.task["action"] not in {"compose", "prepare_image"} or not self.prepared:
+            if task_id != self.task_id or self.task["action"] not in {"compose", "prepare_image", "prepare_photo_quality"} or not self.prepared:
                 raise ValueError("prepared_task_required")
             if self.uploading:
                 return

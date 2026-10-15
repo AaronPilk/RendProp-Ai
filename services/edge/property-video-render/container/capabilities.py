@@ -86,7 +86,7 @@ def download(item, target, allowed_hosts, *, max_bytes=MAX_MEDIA_BYTES, hash_opt
         connection.close()
 
 
-def upload(raw, source, content_type, allowed_hosts, capability_headers):
+def upload(raw, source, content_type, allowed_hosts, capability_headers, *, allow_existing=False):
     source = Path(source)
     size = source.stat().st_size
     if not 1 <= size <= MAX_MASTER_BYTES:
@@ -106,7 +106,10 @@ def upload(raw, source, content_type, allowed_hosts, capability_headers):
                 connection.send(chunk)
         response = connection.getresponse()
         response.read(8192)
-        if response.status not in {200, 201, 204}:
+        if response.status not in ({200, 201, 204, 412} if allow_existing else {200, 201, 204}):
             raise ValueError("output_capability_refused")
+        # Video callers ignore the return; photo comparison binds each immutable
+        # upload receipt to the storage ETag for the separate check authority.
+        return response.getheader("ETag") if response.status != 412 else None
     finally:
         connection.close()

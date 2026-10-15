@@ -40,7 +40,7 @@ try {
       EDGE_WORKER_URL:{type:'text',value:'https://authority.test.supabase.co/functions/v1/property-video-worker'},MEDIA_HOSTS:{type:'text',value:'media.example.test'},
       CPU:{type:'durable-object',worker:'renderer',exportName:'PropertyVideoCPU'}},exports:{PropertyVideoCPU:{type:'durable-object',storage:'sqlite'}}};
   runtime=new Miniflare({handleStructuredLogs(log){logs.push(log.message);resolveLog?.(log.message);},workers:[{config,dev:{outboundService:{type:'fetcher',handler(request){
-    const url=new URL(request.url);assert.equal(url.hostname,'authority.test.supabase.co');assert.equal(url.pathname,'/functions/v1/property-video-worker/queue');
+    const url=new URL(request.url);assert.equal(url.hostname,'authority.test.supabase.co');if(url.pathname==='/functions/v1/photo-quality-worker/queue'){assert.equal(request.headers.get('apikey'),'fixture-authority-secret');return Response.json({enabled:false,checks:[]});}assert.equal(url.pathname,'/functions/v1/property-video-worker/queue');
     assert.equal(request.method,'GET');assert.equal(request.headers.get('Authorization'),'Bearer fixture-authority-secret');assert.equal(request.headers.get('apikey'),'fixture-authority-secret');
     hits.push({url:request.url,status});resolveHit?.();
     return status===200?Response.json({enabled:false,jobs:[]}):new Response('PRIVATE-BODY',{status,headers:{Location:'https://private-redirect.invalid/never'}});

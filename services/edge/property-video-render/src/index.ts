@@ -2,6 +2,9 @@ import {DurableObject,WorkerEntrypoint} from 'cloudflare:workers';
 import type {WorkerAction} from '../../../supabase/functions/property-video-jobs/contracts.ts';
 import {UUID,capabilities,outputCapabilities,egress,isTerminal,sanitizedFailure} from './controller';
 import type {SlotState,EgressProps,CPUAction,PrepareImageAction} from './controller';
+import {photoCapabilities,photoOutputCapabilities,checkedPhotoResult,photoFailure} from './photo-quality';
+import type {PhotoSlotState,PhotoAction} from './photo-quality';
+type WorkState=SlotState|PhotoSlotState;
 
 interface Env {
   CPU:DurableObjectNamespace<PropertyVideoCPU>;
@@ -16,6 +19,13 @@ const POLL_MS=15_000;
 const CPU_TIMEOUT_MS=20*60_000;
 const COLD_READY_MS=120_000;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
+async function photoStartBody(request:Request):Promise<{check_id:string}|null>{
+  if(request.headers.get('Content-Type')?.split(';')[0].trim()!=='application/json'||Number(request.headers.get('Content-Length')??0)>256||!request.body)return null;
+  const reader=request.body.getReader();let text='';const decoder=new TextDecoder();let bytes=0;
+  try{for(;;){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>256){await reader.cancel();return null;}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();
+    const value=JSON.parse(text);return value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).join(',')==='check_id'&&typeof value.check_id==='string'&&UUID.test(value.check_id)?value:null;
+  }catch{return null;}finally{reader.releaseLock();}
+}
 
 class AuthorityRefusal extends Error {constructor(readonly status:number){super("authority_refused");}}
 type TransportName='TypeError'|'TimeoutError'|'AbortError'|'Other';
@@ -65,9 +75,10 @@ function closedDiagnostic(error:unknown):ClosedDiagnostic {
   return checkedDiagnostic({phase:typeof d.phase==='string'?d.phase:category.startsWith('bridge_')?'bridge':'controller',error_name:typeof d.error_name==='string'?d.error_name:'Other',reason,...(typeof d.status==='number'?{http_status:d.status}:{}),...(typeof d.exit_code==='number'?{exit_code:d.exit_code}:{}),timestamp:Date.now()})!;
 }
 
-async function bridge(env:Env,path:string,body?:unknown):Promise<Record<string,unknown>> {
+async function bridge(env:Env,path:string,body?:unknown,domain:'video'|'photo'='video'):Promise<Record<string,unknown>> {
   let base:URL;try {base=new URL(env.EDGE_WORKER_URL);}catch {throw new BridgeFailure('bridge_configuration');}
   if (base.protocol!=='https:'||!base.hostname.endsWith('.supabase.co')||!env.EDGE_SERVICE_ROLE_KEY) throw new BridgeFailure('bridge_configuration');
+  if(domain==='photo')base=new URL('/functions/v1/photo-quality-worker',base.origin);
   let response:Response;try {response=await fetch(`${base.toString().replace(/\/$/,'')}/${path}`,{
     method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${env.EDGE_SERVICE_ROLE_KEY}`,apikey:env.EDGE_SERVICE_ROLE_KEY,'Content-Type':'application/json'},
     // workerd rejects redirect:'error' before issuing this subrequest. Manual
@@ -94,15 +105,22 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     const row=this.ctx.storage.sql.exec<{observation:string}>('SELECT observation FROM diagnostic WHERE id=1').toArray()[0];
     if(!row)return null;try{return checkedDiagnostic(JSON.parse(row.observation));}catch{return null;}
   }
-  private read():SlotState|null {const row=this.ctx.storage.sql.exec<{state:string}>('SELECT state FROM slot WHERE id=1').toArray()[0];return row?JSON.parse(row.state):null;}
-  private save(state:SlotState):void {this.ctx.storage.sql.exec('INSERT INTO slot (id,state) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state',JSON.stringify(state));}
+  private read():WorkState|null {const row=this.ctx.storage.sql.exec<{state:string}>('SELECT state FROM slot WHERE id=1').toArray()[0];return row?JSON.parse(row.state):null;}
+  private save(state:WorkState):void {this.ctx.storage.sql.exec('INSERT INTO slot (id,state) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state',JSON.stringify(state));}
   async wake(jobID:string,slot:'slot-0'|'slot-1'):Promise<boolean> {
     if (this.env.ENABLED!=='true'||!UUID.test(jobID)||!['slot-0','slot-1'].includes(slot)) return false;
     const prior=this.read();
-    if (prior&&prior.jobID!==jobID) return false;
+    if (prior&&('kind'in prior&&prior.kind==='photo_quality'||!('jobID'in prior)||prior.jobID!==jobID)) return false;
     if (!prior) this.save({jobID,slot,token:crypto.randomUUID()+crypto.randomUUID()});
     await this.ctx.storage.setAlarm(Date.now()+1);
     return true;
+  }
+  async wakePhoto(checkID:string,slot:'slot-0'|'slot-1'):Promise<boolean> {
+    if(this.env.ENABLED!=='true'||!UUID.test(checkID)||!['slot-0','slot-1'].includes(slot))return false;
+    const prior=this.read();
+    if(prior&&(!('kind'in prior)||prior.kind!=='photo_quality'||prior.checkID!==checkID))return false;
+    if(!prior)this.save({kind:'photo_quality',checkID,slot,token:crypto.randomUUID()+crypto.randomUUID()});
+    await this.ctx.storage.setAlarm(Date.now()+1);return true;
   }
   private async stop():Promise<void> {
     if (this.ctx.container?.running) await this.ctx.container.destroy();
@@ -125,7 +143,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     try {await this.ctx.container.interceptOutboundHttps('*',binding);}catch(error){throw cpuAPIFailure('egress',error);}
     // HTTP remains un-intercepted, therefore blocked by enableInternet:false.
   }
-  private async boot(state:SlotState):Promise<void> {
+  private async boot(state:WorkState):Promise<void> {
     const container=this.ctx.container;
     if (!container||!state.capabilities) throw Error('cpu_configuration_missing');
     let startup:CPUFailure|undefined;
@@ -155,7 +173,9 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     try {await this.advance();} finally {this.advancing=false;}
   }
   private async advance():Promise<void> {
-    let state=this.read();
+    const current=this.read();
+    if(current&&'kind'in current&&current.kind==='photo_quality'){await this.advancePhoto(current);return;}
+    let state=current as SlotState|null;
     if (!state) return;
     if (this.env.ENABLED!=='true') {await this.stop();return;}
     try {
@@ -227,7 +247,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       this.ctx.storage.sql.exec('INSERT INTO diagnostic (id,observation) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET observation=excluded.observation',JSON.stringify(closedDiagnostic(error)));
       if (error instanceof AuthorityRefusal&&[403,404,409].includes(error.status)) {await this.stop();return;}
       // Only CPU phases can be retried. Never invent a paid supplier retry here.
-      state=this.read();
+      state=this.read() as SlotState|null;
       if (state?.task&&!state.pendingCallback) {
         state.pendingCallback={path:'failure',body:sanitizedFailure(state.task)};
         this.save(state);
@@ -242,6 +262,68 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       }
     }
   }
+  private async advancePhoto(state:PhotoSlotState):Promise<void> {
+    if(this.env.ENABLED!=='true'){await this.stop();return;}
+    const call=(path:string,body?:unknown)=>bridge(this.env,path,body,'photo');
+    try{
+      if(this.ctx.container?.running)await this.ctx.container.setInactivityTimeout(60_000);
+      if(state.pendingCallback){
+        if(this.ctx.container?.running)await this.ctx.container.destroy();
+        await call(state.pendingCallback.path,state.pendingCallback.body);
+        await this.stop();return;
+      }
+      if(state.taskID&&state.task){
+        if(!this.ctx.container?.running||Date.now()-(state.startedAt??0)>CPU_TIMEOUT_MS)throw Error('cpu_interrupted');
+        if(Date.now()-(state.heartbeatAt??0)>=60_000){
+          const current=await call('heartbeat',{check_id:state.checkID,lease_token:state.task.lease_token});
+          if(current.current!==true){await this.stop();return;}
+          state.heartbeatAt=Date.now();this.save(state);
+        }
+        await this.bindEgress(state.capabilities!);
+        const status=await this.cpu('status',{task_id:state.taskID});
+        if(status.state==='working'){await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;}
+        if(status.state==='failed'||status.state==='missing')throw new CPUFailure('status',status.state==='failed'?'cpu_task_failed':'cpu_task_missing');
+        const result=checkedPhotoResult(status.result,state.task);
+        if(status.state==='prepared'){
+          const output=await call('derivatives',{check_id:state.checkID,lease_token:state.task.lease_token,manifest:result.manifest});
+          state.capabilities=photoOutputCapabilities(output,result,new Set(this.env.MEDIA_HOSTS.split(',')));
+          this.save(state);await this.bindEgress(state.capabilities);
+          await this.cpu('upload',{task_id:state.taskID,output});
+          await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;
+        }
+        if(status.state!=='uploaded'||!Array.isArray(result.receipts)||result.receipts.length!==10)throw Error('photo_quality_protocol_refused');
+        state.pendingCallback={path:'derivatives-finish',body:{check_id:state.checkID,lease_token:state.task.lease_token,receipts:result.receipts}};
+        this.save(state);
+        if(this.ctx.container?.running)await this.ctx.container.destroy();
+        await this.ctx.storage.setAlarm(Date.now()+1);return;
+      }
+      const action=await call('tick',{check_id:state.checkID,worker_id:state.slot});
+      if(action.check_id!==state.checkID||'job_id'in action)throw Error('photo_quality_identity_conflict');
+      if(action.action==='done'){await this.stop();return;}
+      if(action.action==='wait'){
+        if(this.ctx.container?.running)await this.ctx.container.destroy();
+        await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;
+      }
+      if(action.action!=='prepare_photo_quality')throw Error('photo_quality_action_required');
+      state.task=action as unknown as PhotoAction;state.startedAt=Date.now();
+      state.capabilities=photoCapabilities(state.task,new Set(this.env.MEDIA_HOSTS.split(',')));this.save(state);
+      await this.boot(state);
+      const accepted=await this.cpu('execute',action);
+      if(typeof accepted.task_id!=='string'||!/^[0-9a-f]{64}$/.test(accepted.task_id))throw Error('cpu_receipt_invalid');
+      state.taskID=accepted.task_id;this.save(state);await this.ctx.storage.setAlarm(Date.now()+POLL_MS);
+    }catch(error){
+      console.warn('photo_quality_cpu_refused',cpuDiagnostic(error));
+      this.ctx.storage.sql.exec('INSERT INTO diagnostic (id,observation) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET observation=excluded.observation',JSON.stringify(closedDiagnostic(error)));
+      if(error instanceof AuthorityRefusal&&[403,404,409].includes(error.status)){await this.stop();return;}
+      if(state.task&&!state.pendingCallback){
+        state.pendingCallback={path:'failure',body:photoFailure(state.task)};this.save(state);
+        if(this.ctx.container?.running)await this.ctx.container.destroy();
+        try{await call('failure',state.pendingCallback.body);await this.stop();}
+        catch(failure){if(failure instanceof AuthorityRefusal&&[403,404,409].includes(failure.status))await this.stop();else await this.ctx.storage.setAlarm(Date.now()+POLL_MS);}
+      }else await this.ctx.storage.setAlarm(Date.now()+POLL_MS);
+    }
+  }
+
 }
 
 async function dispatch(env:Env):Promise<void> {
@@ -256,19 +338,36 @@ async function dispatch(env:Env):Promise<void> {
   }
 }
 
+async function dispatchPhoto(env:Env):Promise<void>{
+  if(env.ENABLED!=='true')return;
+  const queue=await bridge(env,'queue',undefined,'photo');
+  if(queue.enabled!==true||!Array.isArray(queue.checks))return;
+  for(const item of queue.checks.slice(0,32) as Array<{check_id:string}>){
+    if(!UUID.test(item.check_id))continue;
+    if(await env.CPU.getByName('slot-0').wakePhoto(item.check_id,'slot-0'))continue;
+    await env.CPU.getByName('slot-1').wakePhoto(item.check_id,'slot-1');
+  }
+}
 export default {
   async fetch(request:Request,env:Env,ctx:ExecutionContext):Promise<Response> {
     const url=new URL(request.url);
     if (request.method==='GET'&&url.pathname==='/health') return json({service:'property-video-render',enabled:env.ENABLED==='true',provider_dispatch:false});
     const inspect=request.method==='GET'&&url.pathname==='/diagnostic';
-    if (!inspect&&(request.method!=='POST'||url.pathname!=='/wake')) return json({error:'not_found'},404);
+    const photoStart=request.method==='POST'&&url.pathname==='/photo-quality/start';
+    if (!inspect&&!photoStart&&(request.method!=='POST'||url.pathname!=='/wake')) return json({error:'not_found'},404);
     if (!env.RENDER_TRIGGER_KEY||request.headers.get('Authorization')!==`Bearer ${env.RENDER_TRIGGER_KEY}`) return json({error:'private_controller_only'},403);
     if(inspect)return json({slots:await Promise.all((['slot-0','slot-1'] as const).map(async slot=>({slot,observation:await env.CPU.getByName(slot).diagnostic()})))});
     if (env.ENABLED!=='true') return json({error:'renderer_disabled'},503);
+    if(photoStart){
+      const body=await photoStartBody(request);if(!body)return json({error:'bounded_check_required'},400);
+      const checkID=body.check_id;
+      const accepted=await env.CPU.getByName('slot-0').wakePhoto(checkID,'slot-0')||await env.CPU.getByName('slot-1').wakePhoto(checkID,'slot-1');
+      return json(accepted?{accepted:true,check_id:checkID}:{accepted:false,check_id:checkID},accepted?202:503);
+    }
     ctx.waitUntil(dispatch(env).catch(error=>console.warn('property_video_dispatch_refused',dispatchDiagnostic(error))));
     return json({accepted:true},202);
   },
   async scheduled(_event:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void> {
-    ctx.waitUntil(dispatch(env).catch(error=>console.warn('property_video_dispatch_refused',dispatchDiagnostic(error))));
+    ctx.waitUntil(Promise.all([dispatch(env).catch(error=>console.warn('property_video_dispatch_refused',dispatchDiagnostic(error))),dispatchPhoto(env).catch(error=>console.warn('photo_quality_dispatch_refused',dispatchDiagnostic(error)))]).then(()=>undefined));
   }
 } satisfies ExportedHandler<Env>;

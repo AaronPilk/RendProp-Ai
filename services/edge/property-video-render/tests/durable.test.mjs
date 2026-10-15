@@ -114,7 +114,7 @@ try {
     const originalAuthority=globalThis.fetch;
     const warn=console.warn,diagnostics=[];console.warn=(...args)=>diagnostics.push(args);
     const scheduled=async(config,transport)=>{
-      diagnostics.length=0;globalThis.fetch=transport;let pending;
+      diagnostics.length=0;globalThis.fetch=(url,init)=>new URL(url).pathname.includes('/photo-quality-worker/')?Promise.resolve(Response.json({enabled:false,checks:[]})):transport(url,init);let pending;
       await worker.scheduled({},config,{waitUntil(value){assert.equal(pending,undefined);pending=value;}});
       await pending;return structuredClone(diagnostics);
     };
@@ -122,7 +122,7 @@ try {
       let calls=0;
       const noFetch=async()=>{calls++;throw Error('PRIVATE-URL-TOKEN');};
       for(const config of [{...env,EDGE_WORKER_URL:'invalid-private-url'},{...env,EDGE_SERVICE_ROLE_KEY:''}]){
-        assert.deepEqual(await scheduled(config,noFetch),[['property_video_dispatch_refused',{category:'bridge_configuration'}]]);
+        assert.deepEqual(await scheduled(config,noFetch),[['property_video_dispatch_refused',{category:'bridge_configuration'}],['photo_quality_dispatch_refused',{category:'bridge_configuration'}]]);
       }
       assert.equal(calls,0,'bad bridge config performs no request');
       for(const status of [302,307,401,403,500]){
