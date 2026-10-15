@@ -28,6 +28,7 @@ Deno.test("every actual real-estate stage style retains its useful description a
   for (const [style, details] of Object.entries(styles)) {
     const prompt = buildRealEstateStagePrompt(details);
     assertStringIncludes(prompt, JSON.stringify(details));
+    assert(!/wall art|shelves|shelving|mounted decor|installed lighting/i.test(details), `${style}: the furniture data must not ask for new mounted items`);
     // Owner 2K comparison has 4096 text bytes available beside the source.
     // Allow a full 2400-byte custom furnishing brief separately; that case
     // remains subject to the normal 8192-byte provider prompt admission.

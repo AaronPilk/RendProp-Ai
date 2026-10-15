@@ -440,7 +440,7 @@ const RE_PROMPTS: Record<string, string> = {
 const RE_STAGE_STYLES: Record<string, string> = {
   modern:
     "modern contemporary furniture: clean-lined sofa and chairs, a low-profile coffee table, " +
-    "a large area rug, tasteful wall art, and designer accent lighting in a neutral palette " +
+    "a large area rug, tasteful freestanding decor, and movable floor or table lamps in a neutral palette " +
     "with warm accents",
   rustic:
     "rustic farmhouse furniture: warm natural woods, a comfortable linen-upholstered sofa, " +
