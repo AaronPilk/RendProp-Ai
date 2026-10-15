@@ -22,7 +22,7 @@ def block(text, anchor):
 
 review = block(source, 'struct PhotoCompareView: View {')
 sheet = block(source, 'private struct PhotoReviewEditSheet: View {')
-for required in ['SecondaryButton(title: "Edit original photo"', 'action: openSinglePhotoEdit',
+for required in ['SecondaryButton(title: "Edit"', '.accessibilityLabel("Edit original photo")', 'action: openSinglePhotoEdit',
                  '.onReceive(photoJobs.$job) { receiveSinglePhotoWork($0) }',
                  '.sheet(isPresented: $showEditActions, onDismiss: continueSinglePhotoEdit)',
                  '.aiConsentGate()', 'job.phase?.title', 'photoVersion.edit.progress',
