@@ -3,26 +3,36 @@
 import {HttpError,assert} from "../_shared/http.ts";
 import {fundingContext,fundedAttempt,completeFundingOperation,textAttemptQuote,type FundingContext} from "../_shared/funded-serving.ts";
 import {resolveRoute,paramsOf,reportOutcome,type RouteStep} from "../_shared/router.ts";
-import {anthropicMessages,anthropicMaxTokens,imageBlock,type ContentBlock} from "../_shared/providers/anthropic.ts";
+import {anthropicMessages,anthropicMaxTokens,imageBlock,type ContentBlock,type AnthropicStopReason} from "../_shared/providers/anthropic.ts";
 import {ProviderError,bytesToB64,presignGet} from "../_shared/providers/common.ts";
 import {R2_BUCKET_RENDERS,headObject} from "../_shared/r2.ts";
 import {recordAppAiCost} from "../_shared/ledger.ts";
 import {entitlementForCharge} from "../_shared/entitlements.ts";
 import {boundedPhotoResultBytes} from "./photo-result.ts";
 import {validatePhotoInput} from "./input-policy.ts";
-import {PHOTO_QC_POLICY,PHOTO_QC_REGIONS,photoQualityRubric,parsePhotoQuality} from "./photo-qc-verdict.ts";
+import {PHOTO_QC_POLICY,PHOTO_QC_REGIONS,photoQualityRubric,parsePhotoQuality,unavailablePhotoQuality,MAX_PHOTO_QC_VERDICT_BYTES} from "./photo-qc-verdict.ts";
 import {photoQualityRpc,photoEnvelope,photoQualityScope,statusPhotoQuality,failPhotoQuality,photoBytesHash,photoSHA,type PhotoAdmin,type PhotoDerivative,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
 
 export const PHOTO_QC_AGGREGATE_BYTES=6_000_000;
 export const PHOTO_QC_MAX_TEXT_BYTES=12_288;
 export const PHOTO_QC_MAX_WIRE_BYTES=9_000_000; // below the provider's32MB standard envelope
-const MAX_OUTPUT_TOKENS=400;
+// Eight concise findings plus the complete3000-byte verdict need more than
+// the generic400-token classifier default. Reserve/quote this SAME explicit
+// ceiling before dispatch; no follow-up paid call completes truncated JSON.
+export const PHOTO_QC_MAX_OUTPUT_TOKENS=4096;
+export const PHOTO_QC_JUDGE_CONTRACT="photo-qc-json4096-v2";
+const MAX_OUTPUT_TOKENS=PHOTO_QC_MAX_OUTPUT_TOKENS;
+export function photoJudgeRubric(context:{edit:string;style?:string;instruction?:string}):string {
+ return photoQualityRubric(context)+`
+Output formatting: return one complete compact JSON object, at most${MAX_PHOTO_QC_VERDICT_BYTES}UTF-8 bytes in total. No Markdown or preamble. Up to8findings: prioritize distinct fixed-feature discrepancies, combine repeated evidence, keep each source/output observation concise (prefer80characters or fewer) and the reason concise (prefer160characters or fewer). Preserve every required schema key and close the JSON object. Never omit an axis or convert uncertainty into a pass to fit the response.`;
+}
+
 type Usage={inputTokens:number;outputTokens:number;cacheReadInputTokens?:number;cacheCreationInputTokens?:number};
 export interface PhotoJudgeDependencies {
  plan(org:string):Promise<string>;
  routes(plan:string):Promise<RouteStep[]>;
  read(file:PhotoDerivative,signal?:AbortSignal):Promise<Uint8Array<ArrayBuffer>>;
- call(step:RouteStep,rubric:string,content:ContentBlock[],onUsage:(usage:Usage)=>void,options?:{signal:AbortSignal;timeoutMs:number}):Promise<string>;
+ call(step:RouteStep,rubric:string,content:ContentBlock[],onUsage:(usage:Usage)=>void,options?:{signal:AbortSignal;timeoutMs:number;onStopReason:(reason:AnthropicStopReason)=>void}):Promise<string>;
  report(step:RouteStep,ok:boolean,milliseconds:number):Promise<void>;
  ledger:typeof recordAppAiCost;
 }
@@ -46,7 +56,7 @@ const actual:PhotoJudgeDependencies={
  * and /docs/en/about-claude/pricing ($2/M input,$10/M output). */
 export function photoJudgeQuote(step:RouteStep,rubric:string,labels:string){
  const textBytes=new TextEncoder().encode(rubric+labels).byteLength;
- if(step.provider!=="anthropic"||step.model!=="claude-sonnet-5"||anthropicMaxTokens(paramsOf(step),MAX_OUTPUT_TOKENS)>MAX_OUTPUT_TOKENS||textBytes>PHOTO_QC_MAX_TEXT_BYTES)return null;
+ if(step.provider!=="anthropic"||step.model!=="claude-sonnet-5"||anthropicMaxTokens(paramsOf(step),MAX_OUTPUT_TOKENS)!==MAX_OUTPUT_TOKENS||textBytes>PHOTO_QC_MAX_TEXT_BYTES)return null;
  const inputBound=2*4784+8*1369+textBytes+1024;
  const quote=textAttemptQuote(step,rubric,labels,MAX_OUTPUT_TOKENS,true,inputBound);
  return quote?{...quote,inputBound,textBytes}:null;
@@ -84,7 +94,7 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
   const plan=await deps.plan(e.org_id);
   const steps=await deps.routes(plan),step=steps.find(s=>s.provider===approved.provider&&s.model===approved.model);
   if(!step)return row; // no invented fallback or second judge
-  const files=photoDerivatives(row),rubric=photoQualityRubric({edit:context.edit,...(context.style?{style:context.style}:{}),instruction:context.instruction});
+  const files=photoDerivatives(row),rubric=photoJudgeRubric({edit:context.edit,...(context.style?{style:context.style}:{}),instruction:context.instruction});
   const labels=files.map(f=>`${f.role.toUpperCase()} ${f.region}`).join("\n"),quote=photoJudgeQuote(step,rubric,labels);
   if(!quote)return row;
   const content:ContentBlock[]=[];
@@ -102,12 +112,12 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
   if(claim?.action!=="judge")return await statusPhotoQuality(admin,args.actor,row.check.id,args.selected);
   claimed=photoEnvelope(claim,args.actor);await photoQualityScope(admin,claimed,args.actor,args.selected);
   assert(claimed.check.id===row.check.id&&claimed.evidence.id===e.id&&claimed.evidence.org_id===e.org_id&&claimed.evidence.input.sha256===e.input.sha256&&claimed.evidence.output?.sha256===e.output?.sha256&&claimed.check.state==="derivative_ready"&&claimed.check.lease_token&&claimed.check.judge_started_at===null&&claimed.check.derivative_manifest_sha256===row.check.derivative_manifest_sha256,409,"The photo comparison lease changed.","conflict");
-  const binding={policy:PHOTO_QC_POLICY,check_id:row.check.id,evidence_id:e.id,prepared_sha256:e.input.sha256,output_sha256:e.output?.sha256,derivative_manifest_sha256:row.check.derivative_manifest_sha256,rubric,images:files.map(f=>({role:f.role,region:f.region,sha256:f.sha256,bytes:f.bytes,width:f.width,height:f.height})),input_token_bound:quote.inputBound,max_output_tokens:MAX_OUTPUT_TOKENS};
+  const binding={policy:PHOTO_QC_POLICY,judge_contract:PHOTO_QC_JUDGE_CONTRACT,check_id:row.check.id,evidence_id:e.id,prepared_sha256:e.input.sha256,output_sha256:e.output?.sha256,derivative_manifest_sha256:row.check.derivative_manifest_sha256,rubric,images:files.map(f=>({role:f.role,region:f.region,sha256:f.sha256,bytes:f.bytes,width:f.width,height:f.height})),input_token_bound:quote.inputBound,max_output_tokens:MAX_OUTPUT_TOKENS};
   let reservation:string|undefined;
   const rpc:FundingContext["rpc"]=async(name,parameters)=>{const admission=name==="serving_cost_reserve"||name==="serving_operation_begin";if(admission)signal.throwIfAborted();let query=admin.rpc(name,parameters);if(admission&&typeof query?.abortSignal==="function")query=query.abortSignal(signal);const result=await query;if(name==="serving_cost_reserve"&&!result.error&&result.data?.reserved===true){reservation=result.data.id;reservedBeforeDispatch=true;}return result;};
   const headers=new Headers(args.request.headers);headers.set("Idempotency-Key",`photo-qc:${row.check.id}`);
   const funding=await fundingContext(args.actor,e.org_id,new Request(args.request.url,{method:"POST",headers}),binding,rpc);
-  let usage:Usage|undefined;started=Date.now();paidStep=step;
+  let usage:Usage|undefined;const completion:{reason:AnthropicStopReason}={reason:"unknown"};started=Date.now();paidStep=step;
   const raw=await fundedAttempt(funding,"photo.qc:0",step,binding,quote,async()=>{
    // The wrapper captures the ID returned by this exact fresh reserve. A
    // missing/lost reserve response cannot reach bind or the provider.
@@ -117,13 +127,13 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
     const verified=photoEnvelope(bound,args.actor);assert(verified.check.state==="checking"&&verified.check.judge_started_at,503,"The photo review dispatch fence was not confirmed.");
    }catch{throw new ProviderError(step.provider,"validation","The photo review could not be bound before dispatch.",0,true);}
    signal.throwIfAborted();dispatched=true;
-   return await deps.call(step,rubric,content,value=>{usage=value;},{signal,timeoutMs:Math.min(30_000,Math.max(1,deadline-Date.now()))});
+   return await deps.call(step,rubric,content,value=>{usage=value;},{signal,timeoutMs:Math.min(30_000,Math.max(1,deadline-Date.now())),onStopReason:value=>{completion.reason=value;}});
   });
   await deps.report(step,true,Date.now()-started).catch(()=>{});
   // This is the documented complete bound, not a fabricated provider invoice.
   // Actual usage is retained as metadata; SQL requires its matching paid receipt.
-  await deps.ledger(admin,{orgId:e.org_id,provider:step.provider,model:step.model,feature:"qc",unitCents:quote.cents,meta:{request_key:funding.requestKey,stage:"photo.qc:0",photo_check_id:row.check.id,evidence_id:e.id,prepared_sha256:e.input.sha256,output_sha256:e.output!.sha256,derivative_manifest_sha256:row.check.derivative_manifest_sha256,policy:e.policy,cost_basis:"published_complete_input_output_bound",input_token_bound:quote.inputBound,max_output_tokens:MAX_OUTPUT_TOKENS,...(usage?{provider_usage:usage}:{})}});
-  const finished=photoEnvelope(await photoQualityRpc(admin,"photo_quality_finish",{p_actor:args.actor,p_check:row.check.id,p_lease:claimed.check.lease_token,p_result:parsePhotoQuality(raw)}),args.actor);
+  await deps.ledger(admin,{orgId:e.org_id,provider:step.provider,model:step.model,feature:"qc",unitCents:quote.cents,meta:{request_key:funding.requestKey,stage:"photo.qc:0",photo_check_id:row.check.id,evidence_id:e.id,prepared_sha256:e.input.sha256,output_sha256:e.output!.sha256,derivative_manifest_sha256:row.check.derivative_manifest_sha256,policy:e.policy,judge_contract:PHOTO_QC_JUDGE_CONTRACT,cost_basis:"published_complete_input_output_bound",input_token_bound:quote.inputBound,max_output_tokens:MAX_OUTPUT_TOKENS,provider_stop_reason:completion.reason,...(usage?{provider_usage:usage}:{})}});
+  const finished=photoEnvelope(await photoQualityRpc(admin,"photo_quality_finish",{p_actor:args.actor,p_check:row.check.id,p_lease:claimed.check.lease_token,p_result:completion.reason==="end_turn"?parsePhotoQuality(raw):unavailablePhotoQuality(completion.reason==="max_tokens"?"The photo quality response reached its saved output limit (max_tokens). No complete verdict was confirmed and no repeat judge was started.":`The photo quality response did not finish normally (${completion.reason}). No complete verdict was confirmed and no repeat judge was started.`)}),args.actor);
   await completeFundingOperation(funding,{kind:"photo_quality_check",check_id:row.check.id,evidence_id:e.id});
   return finished;
  }catch(error){

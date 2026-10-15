@@ -2,9 +2,9 @@ import {assert,assertEquals,assertRejects,assertThrows} from "https://deno.land/
 import {HttpError} from "../_shared/http.ts";
 import {inputHash,resetServingModeCache} from "../_shared/funded-serving.ts";
 import {decodePhotoOutput} from "./input-policy.ts";
-import {PHOTO_QC_POLICY,unavailablePhotoQuality} from "./photo-qc-verdict.ts";
+import {PHOTO_QC_POLICY,unavailablePhotoQuality,type PhotoQualityVerdict} from "./photo-qc-verdict.ts";
 import {beginPhotoQuality,retainPhotoCandidate,statusPhotoQuality,photoQualityResponse,photoBytesHash,failPhotoQuality,throwPhotoQualityState,type PhotoQualityEnvelope,type PhotoEvidenceIO} from "./photo-qc-store.ts";
-import {continuePhotoQuality,photoJudgeQuote,photoDerivatives,type PhotoJudgeDependencies} from "./photo-qc-runner.ts";
+import {continuePhotoQuality,photoJudgeQuote,photoJudgeRubric,PHOTO_QC_MAX_OUTPUT_TOKENS,PHOTO_QC_JUDGE_CONTRACT,photoDerivatives,type PhotoJudgeDependencies} from "./photo-qc-runner.ts";
 import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
 import {photoResultKeys} from "./photo-result.ts";
 const actor="ea100606-0000-4000-8000-000000000001",org="ea100606-0000-4000-8000-000000000002",listing="ea100606-0000-4000-8000-000000000003",evidence="ea100606-0000-4000-8000-000000000004",check="ea100606-0000-4000-8000-000000000005",lease="ea100606-0000-4000-8000-000000000006",reservation="ea100606-0000-4000-8000-000000000007";
@@ -15,7 +15,7 @@ const step={route_id:"existing-approved-sonnet",task:"judge.qc_drift",provider:"
 async function fixture(){
  const input=jpeg(),output=jpeg(3584,4780),inputSHA=await photoBytesHash(input),outputSHA=await photoBytesHash(output);
  const identity={actorId:actor,orgId:org,requestKey:"photo-qc-runtime-fixture",listingId:listing};
- const state={row:null as PhotoQualityEnvelope|null,enabled:true,current:true,library:org,readWithdraw:false,wrongPutHash:false,corruptGet:false,headChanged:false,beginArgs:null as any,rpcs:[] as string[],puts:0,reads:0,claims:0,binds:0,calls:0,holds:0,ledger:[] as any[],attempt:null as any,operation:false,verdict:JSON.stringify(pass),lostReply:false,missingLedger:false,objects:new Map<string,{bytes:Uint8Array<ArrayBuffer>;mime:string;sha256:string;etag:string}>()};
+ const state={row:null as PhotoQualityEnvelope|null,enabled:true,current:true,library:org,readWithdraw:false,wrongPutHash:false,corruptGet:false,headChanged:false,beginArgs:null as any,rpcs:[] as string[],puts:0,reads:0,claims:0,binds:0,calls:0,holds:0,ledger:[] as any[],attempt:null as any,operation:false,verdict:JSON.stringify(pass),lostReply:false,missingLedger:false,stopReason:"end_turn" as import("../_shared/providers/anthropic.ts").AnthropicStopReason,objects:new Map<string,{bytes:Uint8Array<ArrayBuffer>;mime:string;sha256:string;etag:string}>()};
  const view=()=>{const row=structuredClone(state.row!);row.can_continue=!!row.evidence.output_etag&&["pending","derivative_ready"].includes(row.check.state)&&row.check.judge_started_at===null&&(!state.attempt||state.attempt.state==="rejected");return row;};
  const unavailable=()=>({data:null,error:{message:"RP404: Current selected library is unavailable"}});
  const admin:any={from:(table:string)=>{const query:any={select:()=>query,eq:()=>query,maybeSingle:async()=>{
@@ -66,7 +66,7 @@ async function fixture(){
   if(name==="photo_quality_finish"){
    assertEquals(state.attempt.state,"succeeded");assertEquals(state.binds,1);assertEquals(args.p_lease,lease);
    const accepted=state.ledger.length===1&&args.p_result.action==="accept",s=accepted?"accept":args.p_result.action==="refuse"&&!state.missingLedger?"refuse":"hold";
-   state.row!.check.state=s;state.row!.evidence.state=s;return{data:view(),error:null};
+   state.row!.check.state=s;state.row!.check.result=args.p_result;state.row!.evidence.state=s;return{data:view(),error:null};
   }
   if(name==="serving_operation_complete")return{data:{saved:true},error:null};
   if(name==="serving_operation_no_dispatch")return{data:{retryable:false},error:null};
@@ -82,7 +82,7 @@ async function fixture(){
   for(const region of ["whole","tl","tr","bl","br"] as const)for(const role of ["source","candidate"] as const){const data=jpeg(region==="whole"?1536:768,region==="whole"?2048:1024);files.push({bucket:"renders" as const,key:`ai-router/${org}/photo-evidence/${actor}/${evidence}/checks/${check}/${role}-${region}.jpg`,role,region,bytes:data.length,sha256:await photoBytesHash(data),mime:"image/jpeg",width:region==="whole"?1536:768,height:region==="whole"?2048:1024,etag:'"derivative"'});}
   state.row!.check.derivatives=files;state.row!.check.derivative_manifest_sha256="a".repeat(64);state.row!.check.state="derivative_ready";return view();
  };
- const deps:PhotoJudgeDependencies={plan:async()=>"free",routes:async()=>[step],read:async file=>jpeg(file.width,file.height),call:async(_step,_rubric,content,onUsage)=>{assertEquals(state.binds,1);assertEquals(state.attempt.state,"reserved");assertEquals(state.row!.check.state,"checking");assertEquals(content.length,20);state.calls++;if(state.lostReply)throw Error("Synthetic lost supplier reply");onUsage({inputTokens:18000,outputTokens:160});return state.verdict;},report:async()=>{},ledger:async(_admin,args)=>{if(!state.missingLedger)state.ledger.push(args);return{recorded:!state.missingLedger,total_cents:args.unitCents};}};
+ const deps:PhotoJudgeDependencies={plan:async()=>"free",routes:async()=>[step],read:async file=>jpeg(file.width,file.height),call:async(_step,_rubric,content,onUsage,options)=>{assertEquals(state.binds,1);assertEquals(state.attempt.state,"reserved");assertEquals(state.row!.check.state,"checking");assertEquals(content.length,20);state.calls++;if(state.lostReply)throw Error("Synthetic lost supplier reply");onUsage({inputTokens:18000,outputTokens:state.stopReason==="max_tokens"?PHOTO_QC_MAX_OUTPUT_TOKENS:160});options?.onStopReason(state.stopReason);return state.verdict;},report:async()=>{},ledger:async(_admin,args)=>{if(!state.missingLedger)state.ledger.push(args);return{recorded:!state.missingLedger,total_cents:args.unitCents};}};
  const run=(row:PhotoQualityEnvelope)=>continuePhotoQuality(admin,row,{actor,selected:org,request:new Request("https://example.invalid/ai-photo",{method:"POST",headers:{"X-Org":org}})},deps);
  return{state,admin,io,identity,input,output,inputSHA,outputSHA,view,begin,retain,prepare,deps,run};
 }
@@ -130,7 +130,33 @@ Deno.test("oversize paid failure remains explicit and cannot advertise a saved r
 Deno.test("Sonnet5 quote covers native whole images and all quadrants; no low-resolution generic estimate",()=>{
  const quote=photoJudgeQuote(step,"a".repeat(8192),"source whole\ncandidate whole")!;
  assertEquals(quote.inputBound,2*4784+8*1369+8192+"source whole\ncandidate whole".length+1024);assert(quote.inputBound>10*2048+1024);assert(quote.cents>6);assertEquals(photoJudgeQuote({...step,model:"claude-haiku-4-5"},"r","l"),null);
- assertEquals(photoJudgeQuote({...step,params:{max_output_tokens:401}} as any,"r","l"),null);assertEquals(photoJudgeQuote(step,"a".repeat(12289),""),null);
+ assertEquals(PHOTO_QC_MAX_OUTPUT_TOKENS,4096);for(const tokens of[400,4095,4097,8000])assertEquals(photoJudgeQuote({...step,params:{max_output_tokens:tokens}} as any,"r","l"),null);assert(photoJudgeQuote({...step,params:{max_output_tokens:4096}} as any,"r","l"));assertEquals(photoJudgeQuote(step,"a".repeat(12289),""),null);
+});
+Deno.test("photo verdict contract quotes the complete4096 output budget and fits all eight concise findings",async()=>{
+ const rubric=photoJudgeRubric({edit:"stage",style:"modern",instruction:"Preserve the fixed room features."});
+ assert(rubric.includes("at most3000UTF-8 bytes"));assert(rubric.includes("Never omit an axis"));
+ const f=await fixture(),ready=await f.prepare(),before=globalThis.fetch;resetServingModeCache();globalThis.fetch=(()=>{throw Error("No external transport in QC fixture");})as any;
+ const finding={category:"openings",region:"tr",source:"Original opaque covering remains in this region.",output:"The candidate replaces the covered area with clear glazing.",certainty:"confirmed"};
+ f.state.verdict=JSON.stringify({...pass,verdict:"fail",action:"refuse",preservation:{...pass.preservation,openings:35},findings:Array.from({length:8},()=>finding),reason:"Confirmed fixed-feature differences in the marked regions."});
+ assert(new TextEncoder().encode(f.state.verdict).byteLength<=3000);
+ try{
+  const result=await f.run(ready);assertEquals(result.check.state,"refuse");assertEquals((result.check.result as PhotoQualityVerdict).findings.length,8);
+  const cost=f.state.ledger[0];assertEquals(cost.meta.max_output_tokens,4096);assertEquals(cost.meta.judge_contract,PHOTO_QC_JUDGE_CONTRACT);assertEquals(cost.meta.provider_stop_reason,"end_turn");
+  assertEquals(f.state.attempt.p_hold_cents,cost.unitCents);assertEquals(f.state.calls,1);
+  await f.run(ready);assertEquals(f.state.calls,1,"A confirmed terminal result is never rerolled");
+ }finally{globalThis.fetch=before;resetServingModeCache();}
+});
+Deno.test("truncated or non-final photo verdict stays HOLD even when its returned text is valid pass JSON",async()=>{
+ for(const reason of ["max_tokens","refusal","pause_turn","unknown"]as const)for(const truncated of reason==="max_tokens"?[false,true]:[false]){
+  const f=await fixture(),ready=await f.prepare(),before=globalThis.fetch;resetServingModeCache();globalThis.fetch=(()=>{throw Error("No external transport in QC fixture");})as any;
+  f.state.stopReason=reason;if(truncated)f.state.verdict=f.state.verdict.slice(0,-5);
+  try{
+   const result=await f.run(ready);assertEquals(result.check.state,"hold");assertEquals((result.check.result as PhotoQualityVerdict).verdict,"unknown");
+   assert((result.check.result as PhotoQualityVerdict).reason.includes(reason));assertEquals(f.state.ledger[0].meta.provider_stop_reason,reason);
+   assertEquals(f.state.calls,1);assertEquals(f.state.holds,1);assertEquals(f.state.attempt.state,"succeeded");
+   await f.run(ready);assertEquals(f.state.calls,1,"An inconclusive paid verdict cannot automatically buy a second judge");
+  }finally{globalThis.fetch=before;resetServingModeCache();}
+ }
 });
 Deno.test("incomplete/repeated/cross-operation/over-bound comparison never reaches a judge",async()=>{
  for(const kind of ["duplicate","cross_operation","aggregate"]){const f=await fixture();const row=await f.prepare();

@@ -81,6 +81,13 @@ export type AnthropicEffort = typeof ANTHROPIC_EFFORTS[number];
 /** The default answer ceiling this adapter shipped with, used whenever neither
  *  a params row nor the caller says otherwise. */
 export const ANTHROPIC_DEFAULT_MAX_TOKENS = 400;
+/** Closed completion metadata; never retains raw provider text or stop sequences. */
+export const ANTHROPIC_STOP_REASONS = ["end_turn","max_tokens","stop_sequence","tool_use","pause_turn","refusal","model_context_window_exceeded"] as const;
+export type AnthropicStopReason = typeof ANTHROPIC_STOP_REASONS[number] | "unknown";
+export function anthropicStopReason(value:unknown):AnthropicStopReason {
+  return typeof value === "string" && (ANTHROPIC_STOP_REASONS as readonly string[]).includes(value) ? value as AnthropicStopReason : "unknown";
+}
+
 
 /**
  * The `output_config` for one call, or null for "send no output_config at all".
@@ -157,6 +164,7 @@ export interface MessagesArgs {
    *  whatever a passed step carries; omit it in every ordinary call. */
   params?: Record<string, unknown> | null;
   onUsage?: (usage: {inputTokens:number;outputTokens:number;cacheReadInputTokens?:number;cacheCreationInputTokens?:number}) => void;
+  onStopReason?: (reason:AnthropicStopReason) => void;
   signal?:AbortSignal;
   timeoutMs?:number;
 }
@@ -196,6 +204,7 @@ export async function anthropicMessages(args: MessagesArgs): Promise<string> {
     undefined,
     args.signal?{signal:args.signal}:undefined,
   );
+  args.onStopReason?.(anthropicStopReason(data.stop_reason));
   const usage = data.usage as Record<string, unknown> | undefined;
   if (args.onUsage && usage && Number.isSafeInteger(usage.input_tokens) && Number(usage.input_tokens) >= 0 &&
       Number.isSafeInteger(usage.output_tokens) && Number(usage.output_tokens) >= 0) {
