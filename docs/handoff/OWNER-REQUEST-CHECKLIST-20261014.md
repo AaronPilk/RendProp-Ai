@@ -21,9 +21,12 @@ is retained at
   verified with no LAB/DEBUG. Actual 84 compact-review acceptance remains open.
 - App Store 1.0.5 remains an unattached PREPARE_FOR_SUBMISSION draft configured
   AFTER_APPROVAL. No latest-build App Store submission or release is claimed.
-- Prior source 2fe6d669 passed all 16 CI jobs. Current focused checks and signed
-  Release SDK passed; full CI awaits the final integrated head. No dispatch is
-  authorized by this documentation update, and prior CI is not relabeled.
+- Prior source 2fe6d669 passed all 16 CI jobs. Run 38780154650 was dispatched
+  once on ff84129; its native audit hit a stale three-field privacy harness.
+  Test-only b911419 passes 42 checks and all 17 compiled fault controls, preserving
+  the prior 14 controls. Fixture-only 2e59899 is outside that run; other failures
+  remain under bounded harness/export triage. No full current-head CI pass or
+  additional dispatch is claimed.
 - The SAME 14-photo Listing 16:9 job c40f4860… resumed at 17:38:34 UTC through
   its normal service RPC, not a phone action. Nine AI shots and one original-photo
   fallback are ready; source 6's one paid replacement and source 11 are processing,
@@ -35,8 +38,15 @@ is retained at
   is unavailable. Compact review and two batches retaining six exact PNG Originals
   were observed there; physical 84 acceptance remains open. Keep Simulator,
   SDK/backend and actual-device results distinct: fixture UI does not establish
-  hardware, purchase, notification or provider proof. Claude's separate web/Studio
-  work must not be overwritten.
+  hardware, purchase, notification or provider proof. Both apparent navigation
+  freezes were fixture-only NaN/equality artifacts: 2e59899 fixes just two sentinels,
+  and one controlled rebuild opened both routes at idle CPU. No production route
+  bug/fix is claimed. Largest-text Add/Take wrapping remains a separate layout
+  finding. Source8e0eeaa now stacks those buttons only at accessibility sizes;
+  the controlled Simulator build proves readable labels and unchanged normal row.
+  It is NOT in delivered84; coordinated normal85 SDK/release work remains. Largest-
+  text grid/viewer reachability is unresolved, not a proven scrolling defect.
+  Claude's separate web/Studio work is preserved.
 - Studio 72e336f2 has 35 exact files/39 GET readbacks. Edge Studio 34 and migration
   20261015164224 enforce photo/recorded-source separation. Authenticated customer
   UI acceptance remains open. Root owns current W05 photo-delivery wiring and
@@ -93,7 +103,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 | P02 | Original tab is default edit starting point | Built; Original/Latest/Decluttered/Staged observed today | Retest only changed final selection behavior |
 | P03 | Keep all saved declutter/staging versions; try new style from Original | Built; history preservation tested and earlier phone observation retained | Whole-home fresh capture later |
 | P04 | Contemporary instead of Scandinavian | Built; saved Contemporary/Modern history observed | Preserve older stored style compatibility |
-| P05 | Clean tab labels, selection badges and photo-version review layout | Owner rejected oversized 83 controls; 84 compact controls/50%-viewport preview passed focused checks, SDK and bounded Simulator inspection | Physical84 compact UI acceptance remains open; full-image/large-type behavior preserved |
+| P05 | Clean tab labels, selection badges and photo-version review layout | 84 compact review passed checks/SDK/normal-text Simulator inspection; prospective85 source8e0eeaa accessibility-only import-button stack passed readable-label/normal-row controls | Not shipped in84; normal85 SDK still pending. Physical compact acceptance and largest-text grid/viewer reachability remain open |
 | P06 | Real progress while editing/uploading; background work and notification | Built stage/count reporting, not invented AI percentage | Physical completion/reopen/notification acceptance for exposed paths |
 | P07 | Select AND unselect a photo for listing without deleting original/edits | Selection/removal fix retained in 84; atomic server removal deployed; compact footer says Unselect | Remove/reopen/re-add; verify gallery, cover and retained originals/history |
 | P08 | Original can replace an edited public selection without false disclosure error | Genuine Original proof/sync fix built/tested for 83 | Actual original selection → published gallery sync |
@@ -162,7 +172,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 
 | ID | Required action | State |
 |---|---|---|
-| R01 | Freeze latest native fixes, peer review, compile and run appropriate checks | 84 focused checks and one signed SDK/archive passed; final integrated full CI pending |
+| R01 | Freeze latest native fixes, peer review, compile and run appropriate checks | 84 SDK/archive passed; CI38780154650 tests ff84129, native harness repaired separately in b911419; no final-head CI pass claimed |
 | R02 | Deliver internal normal TestFlight 84 from reviewed native source | Done; compact08098a9/metadata75738bf, VALID/APP_STORE_ELIGIBLE/IN_BETA_TESTING; final integrated push/CI coordinated separately |
 | R03 | Test final changed UI and recover 14-photo job; inspect final output | Simulator UI now owner-authorized while phone unavailable; 84 compact device acceptance and real output/hardware checks remain open |
 | R04 | Finish real paid website/ordinary-account/export/site/Studio acceptance above | Open; no fake transactions or claims that previews prove purchases |
@@ -209,11 +219,16 @@ LAST after app/URL acceptance, then verify that final resource build and submit.
 - Historical normal83 delivery: `_bridge/build83-normal-testflight/attempt3/FINAL-TESTFLIGHT83-DELIVERY-RECEIPT.json`.
 - Current normal84 delivery: `_bridge/build84-normal-testflight/FINAL-TESTFLIGHT84-DELIVERY-RECEIPT.json`.
 - Current native gate: `_bridge/build84-normal-testflight/FINAL-INTEGRATED-GATES.json`.
+- Simulator fixture classification: `_bridge/build84-simulator-stall-classification/FINAL-FIXTURE-CLASSIFICATION-RECEIPT.json`.
+- Simulator actual UI/control receipts: `/Volumes/Rendprop Files/Builds/Active/build84-simulator-acceptance/{UI-ACCEPTANCE-RECEIPT,FIXTURE-CONTROL-RECEIPT}.json`.
+- Prospective accessibility layout/source proof: `/Volumes/Rendprop Files/Builds/Active/build84-simulator-acceptance/accessibility-layout-control/FINAL-RECEIPT.json`.
+- Retained CI failure and focused harness repair: `_bridge/build84-ci-native-privacy-failure/HARNESS-REPAIR-RECEIPT.json`.
 - Product-media SQL/cost coverage: `_bridge/build84-product-media-serving/FINAL-CLOSURE.private.json` and `cost-export/report.private.json`.
 - Missing paid-result recovery: `_bridge/build83-fal-missing-result/FINAL-DEPLOYED-RECEIPT.json`.
 - C1/C4 deployed authority: `_bridge/build83-studio-recorded-source/ROOT-DEPLOYED-READBACK.json`.
 - Matched gateway configuration: `_bridge/build83-media-gateway-configuration/FINAL-CONFIGURATION-RECEIPT.json`.
 - Apple13:50UTC read-only truth: `_bridge/build82-release-readonly-refresh/20261015T135013Z/READONLY-RECEIPT.json`.
 - Studio/accepted AI outputs/earlier delivery receipts retain their detailed history
-  in the archived checklist and OWNER-CONTEXT-20261014.md. Evidence paths are relative
-  to outer `/Users/pilksclaes/Rendprop AI`, not this Git worktree.
+  in the archived checklist and OWNER-CONTEXT-20261014.md. Except explicit external
+  paths, evidence paths are relative to outer `/Users/pilksclaes/Rendprop AI`, not
+  this Git worktree.

@@ -24,8 +24,11 @@ are historical; retain their receipts without treating them as current status.
   `_bridge/build84-normal-testflight/FINAL-TESTFLIGHT84-DELIVERY-RECEIPT.json`.
 - Public **1.0.4 (74)** stays unchanged. Draft 1.0.5 is unattached,
   PREPARE_FOR_SUBMISSION and AFTER_APPROVAL. No latest App Store submission.
-  Prior source 2fe6d669 passed 16/16 CI; full CI on the final integrated head
-  remains pending. Earlier CI is not relabeled as current-head evidence.
+  Prior source 2fe6d669 passed 16/16 CI. Run 38780154650 tests ff84129 and
+  exposed a stale native privacy harness with three missing room-tag state stubs.
+  Test-only repair b911419 passes 42 checks and 17 compiled fault controls. The
+  fixture-only 2e59899 change is outside that run. Other CI failures remain under
+  bounded harness/export triage; no final-head CI pass is claimed.
 - Build 84 retains 83's deselection/cover and genuine Original sync fixes, exact
   cloud removal, exact-job Review, recorded-only Tags, selected Sold/Archived
   Ask AI context, single-photo Original editing, family swipe/count, oldest-first
@@ -52,6 +55,15 @@ are historical; retain their receipts without treating them as current status.
 - The owner explicitly authorized Simulator UI checks while the physical phone
   is unavailable. The child observed compact review controls and two import
   batches retaining six exact PNG Originals; physical 84 acceptance remains open.
+  Two apparent navigation stalls were isolated fixture NaN/equality artifacts:
+  sentinel-only commit 2e59899 fixed both exact routes in one controlled rebuild,
+  returning CPU to idle without changing production navigation. Largest-text
+  Add/Take wrapping was a separate observed layout issue. Prospective source
+  8e0eeaa stacks only those buttons for accessibility sizes; one incremental
+  Simulator build verified readable word wrapping and the unchanged normal row.
+  This change is NOT in delivered TestFlight84 and still needs the coordinated
+  normal85 SDK/release process. Largest-text grid reachability remains unresolved;
+  CUA scroll/drag failure alone does not establish a product scroll defect.
   Record Simulator, SDK/backend and actual-device evidence separately. This does
   not prove phone hardware, Apple purchase, notification, provider output or
   whole-home acceptance. Claude's separate web/Studio lane must not be overwritten.
