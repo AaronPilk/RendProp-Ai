@@ -1,7 +1,7 @@
 import { requireContentWrite } from "../_shared/library-access.ts";
 import { assert, HttpError } from "../_shared/http.ts";
 import { R2_BUCKET_RENDERS, headObject } from "../_shared/r2.ts";
-import { MAX_INLINE_IMAGE_BYTES, persistResult, presignGet, bytesToB64 } from "../_shared/providers/common.ts";
+import { MAX_INLINE_IMAGE_BYTES, persistResult, presignGet, bytesToB64, putBytes } from "../_shared/providers/common.ts";
 import type { DoneState } from "../_shared/providers/types.ts";
 import { admitMediaRead } from "../_shared/media-delivery-admission.ts";
 import { assertHostingAvailable } from "../_shared/hosting-retention.ts";
@@ -14,9 +14,10 @@ export interface PhotoResultDependencies {
   sign(key:string):Promise<string>;
   read(url:string):Promise<Response>;
   persist(state:DoneState,key:string,beforeWrite:(intent:{key:string;bytes:number})=>Promise<void>):Promise<{key:string;bytes:number}>;
+  persistBytes?(mime:string,key:string,bytes:Uint8Array<ArrayBuffer>):Promise<{key:string;bytes:number}>;
 }
 const mimeExtensions:Record<string,string>={"image/jpeg":"jpg","image/png":"png","image/webp":"webp"};
-const actual:PhotoResultDependencies={head:key=>headObject(R2_BUCKET_RENDERS,key),sign:key=>presignGet(R2_BUCKET_RENDERS,key,600),read:url=>fetch(url,{method:"GET",credentials:"omit",redirect:"error",signal:AbortSignal.timeout(30_000)}),persist:(state,key,before)=>persistResult("saved-photo",state,key,before,true)};
+const actual:PhotoResultDependencies={head:key=>headObject(R2_BUCKET_RENDERS,key),sign:key=>presignGet(R2_BUCKET_RENDERS,key,600),read:url=>fetch(url,{method:"GET",credentials:"omit",redirect:"error",signal:AbortSignal.timeout(30_000)}),persist:(state,key,before)=>persistResult("saved-photo",state,key,before,true),persistBytes:(mime,key,bytes)=>putBytes(R2_BUCKET_RENDERS,key,bytes,mime,true)};
 export async function photoResultKeys(identity:PhotoResultIdentity):Promise<Record<string,string>> {
  const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify({v:1,...identity})))),byte=>byte.toString(16).padStart(2,"0")).join("");
  return Object.fromEntries(Object.entries(mimeExtensions).map(([mime,extension])=>[mime,`ai-router/${identity.orgId}/completed-photo/${digest}.${extension}`]));
@@ -73,10 +74,12 @@ export async function restorePhotoResult(admin:any,identity:PhotoResultIdentity,
 }
 /** Every generated photo, including router-off, gets one immutable owned copy.
  * Journal before PUT; failures after generation never authorize paid fallback. */
-export async function persistOwnedPhotoResult(admin:any,identity:PhotoResultIdentity,state:DoneState,deps=actual):Promise<{key:string;mime:string}> {
+export async function persistOwnedPhotoResult(admin:any,identity:PhotoResultIdentity,state:DoneState,deps=actual,validatedBytes?:Uint8Array<ArrayBuffer>):Promise<{key:string;mime:string}> {
  const mime=state.mime.split(";")[0].trim().toLowerCase(),keys=await photoResultKeys(identity),key=keys[mime];
  assert(key,503,"The generated photo format cannot be saved.");
- const stored=await deps.persist(state,key,async intent=>{assert(intent.key===key&&Number.isSafeInteger(intent.bytes)&&intent.bytes>0&&intent.bytes<=MAX_INLINE_IMAGE_BYTES,503,"The generated photo receipt could not be verified.");await authority(admin,identity,key,intent.bytes);});
+ let stored:{key:string;bytes:number};
+ if(validatedBytes){assert(deps.persistBytes&&validatedBytes instanceof Uint8Array&&validatedBytes.byteLength>0&&validatedBytes.byteLength<=MAX_INLINE_IMAGE_BYTES,503,"The validated photo bytes could not be saved.");await authority(admin,identity,key,validatedBytes.byteLength);stored=await deps.persistBytes(mime,key,validatedBytes);}
+ else stored=await deps.persist(state,key,async intent=>{assert(intent.key===key&&Number.isSafeInteger(intent.bytes)&&intent.bytes>0&&intent.bytes<=MAX_INLINE_IMAGE_BYTES,503,"The generated photo receipt could not be verified.");await authority(admin,identity,key,intent.bytes);});
  assert(stored.key===key,503,"The generated photo identity changed.");
  const saved=await receipt(admin,identity,keys);assert(saved&&saved.key===key&&saved.bytes===stored.bytes,503,"The generated photo receipt could not be verified.");
  const head=await deps.head(key);assert(head.exists&&head.bytes===saved.bytes,503,"The generated photo could not be verified.");

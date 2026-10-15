@@ -40,10 +40,10 @@ Deno.test("normal4K output accepts every official aspect but refuses2K, malforme
  assertThrows(()=>validatePhotoInput(jpeg(12288,1536),"image/jpeg"),HttpError);
  assertEquals(validatePhotoOutput(jpeg(12288,1536),"image/jpeg").width,12288);
  assertThrows(()=>validatePhotoOutput("A".repeat(PHOTO_OUTPUT_POLICY.maxBase64Chars+4),"image/jpeg"),HttpError);
- // A full structural10MB JPEG is valid provider output but still too large
+ // A full structural9MB JPEG is valid provider output but still too large
  // to submit as a source. No compressed-image decoder/visual proof is implied.
  const frame=Uint8Array.from(atob(jpeg(4096,4096)),c=>c.charCodeAt(0)),parts:Uint8Array[]=[];let size=frame.length;
- while(size<10_000_000){const n=Math.min(65_000,10_000_000-size),part=new Uint8Array(n);part.set([255,224,(n-2)>>8,(n-2)&255]);parts.push(part);size+=n;}
+ while(size<9_000_000){const n=Math.min(65_000,9_000_000-size),part=new Uint8Array(n);part.set([255,224,(n-2)>>8,(n-2)&255]);parts.push(part);size+=n;}
  const bytes=new Uint8Array(size);bytes.set(frame.subarray(0,2));let offset=2;for(const part of parts){bytes.set(part,offset);offset+=part.length;}bytes.set(frame.subarray(2),offset);
  const pieces:string[]=[];for(let i=0;i<bytes.length;i+=32768)pieces.push(String.fromCharCode(...bytes.subarray(i,i+32768)));const b64=btoa(pieces.join(""));
  const decode=globalThis.atob,encode=globalThis.btoa;let calls=0;
@@ -51,7 +51,7 @@ Deno.test("normal4K output accepts every official aspect but refuses2K, malforme
  globalThis.btoa=()=>{throw Error("A4K check must validate pad bits without re-encoding the entire image");};
  try {assertPhoto4KOutput(b64,"image/jpeg");assert(calls>1,"The large image must exercise bounded decode chunks");}
  finally {globalThis.atob=decode;globalThis.btoa=encode;}
- assertThrows(()=>validatePhotoInput(b64,"image/jpeg"),HttpError);
+ assertThrows(()=>preparePhoto4KInput(input({image_b64:b64})),HttpError);
 });
 
 Deno.test("actual normal4K adapter holds the complete price before its only POST and refuses unpriced/denied dispatch",async()=>{

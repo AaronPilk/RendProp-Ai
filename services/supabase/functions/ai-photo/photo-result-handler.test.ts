@@ -33,7 +33,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
   assert(source.includes(anchor));source=source.replace(anchor,"");
  }
  if(removeAdmission==="quality"){
-  const anchor="else if (normalPhoto4K) assertPhoto4KOutput(outB64, outMime);";assert(source.includes(anchor));source=source.replace(anchor,"");
+  const anchor="else if (normalPhoto4K) validatedPhotoBytes=assertPhoto4KOutput(outB64, outMime).data;";assert(source.includes(anchor));source=source.replace(anchor,"");
  }
  if(removeAdmission==="stage_prompt"){
   const anchor="return buildRealEstateStagePrompt(styleDesc);";
@@ -70,6 +70,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {MAX_PROMPT_INPUT,MAX_PROMPT_OUTPUT,editPromptInstruction} from ${url("../ai-copy/prompt.ts")};
  import {validatePhotoInputs,validatePhotoPrompt} from ${url("./input-policy.ts")};
  import {persistOwnedPhotoResult,restorePhotoResult,photoResultKeys} from ${helper};
+ import {photoJsonResponse} from ${url("./photo-response.ts")};
  import {inlineImageResult,inlineBase64,ProviderError,BUDGETS} from ${url("../_shared/providers/common.ts")};
  import {runChain} from ${url("../_shared/providers/chain.ts")};
  export const state={actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0};
@@ -440,4 +441,36 @@ Deno.test("masked Fill actual handler records rounded source megapixels once and
  }finally{f.close();}};
  await oracle(false);
  await assertRejects(()=>oracle(true),AssertionError,"must not settle as a5-cent image");
+});
+const sizedOutputJPEG=(size:number,width=3584,height=4780)=>{
+ const frame=Uint8Array.from(atob(outputJPEG(width,height)),c=>c.charCodeAt(0)),bytes=new Uint8Array(size);
+ bytes.set(frame.subarray(0,2));let offset=2,left=size-frame.length;
+ while(left){let length=Math.min(65000,left);if(left-length>0&&left-length<4)length-=4;bytes.set([255,224,(length-2)>>8,(length-2)&255],offset);offset+=length;left-=length;}
+ bytes.set(frame.subarray(2),offset);let binary="";for(let n=0;n<bytes.length;n+=32768)binary+=String.fromCharCode(...bytes.subarray(n,n+32768));return btoa(binary);
+};
+Deno.test("actual4K handler rejects conditioned1MB overflow before a hold/provider and retains the full original contract",async()=>{
+ const f=await fixture();try{
+  const response=await f.run(f.request({image_b64:sizedOutputJPEG(1_000_001,1536,2048)}));
+  assertEquals(response.status,413);const error=await response.json();assertEquals(error.no_provider_dispatch,true);
+  assert(error.error.includes("Keep your original"));assertEquals(f.state.holds,0);assertEquals(f.state.submits,0);assertEquals(f.state.costs.length,0);assertEquals(f.state.puts,0);assertEquals(f.state.refunds,1);
+ }finally{f.close();}
+});
+Deno.test("actual4K handler validates9MB once and reuses those exact bytes for immutable storage and base64 JSON",async()=>{
+ const f=await fixture(),decode=globalThis.atob;
+ try{
+  const image=sizedOutputJPEG(9_000_000);f.state.output=image;let chunks=0;
+  globalThis.atob=value=>{if(value.length===32768)chunks++;return decode(value);};
+  const response=await f.run(f.request());assertEquals(response.status,200);
+  assertEquals(chunks,Math.floor(image.length/32768),"Persistence must not decode another complete output buffer");
+  assertEquals(f.state.object.byteLength,9_000_000);assertEquals(f.state.puts,1);assertEquals(f.state.costs.length,1);
+  const result=await response.json();assertEquals(result.image_b64,image);assertEquals(result.mime,"image/jpeg");
+ }finally{globalThis.atob=decode;f.close();}
+});
+Deno.test("actual4K handler keeps paid supplier liability for one-byte output overflow and never persists or regenerates",async()=>{
+ const f=await fixture();try{
+  f.state.output=sizedOutputJPEG(9_000_001);const response=await f.run(f.request());assertEquals(response.status,502);
+  const error=await response.json();assertEquals(error.failure_phase,"photo_output_size");assertEquals(error.provider_cost_incurred,true);
+  assertEquals(f.state.costs.length,1);assertEquals(f.state.submits,1);assertEquals(f.state.refunds,0);assertEquals(f.state.puts,0);assertEquals(f.state.completes,0);
+  const same=await f.run(f.request());assertEquals(same.status,409);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);
+ }finally{f.close();}
 });

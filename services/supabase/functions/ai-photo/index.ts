@@ -115,6 +115,7 @@ import type { DoneState, GenerateInput } from "../_shared/providers/types.ts";
 // See ai-copy/prompt.ts's header and improvePrompt() below.
 import { MAX_PROMPT_INPUT, MAX_PROMPT_OUTPUT, editPromptInstruction } from "../ai-copy/prompt.ts";
 import { persistOwnedPhotoResult, restorePhotoResult, type PhotoResultPointer } from "./photo-result.ts";
+import { photoJsonResponse } from "./photo-response.ts";
 import { validatePhotoInputs, validatePhotoPrompt } from "./input-policy.ts";
 import { photoHelperPayload, photoHelperQuote, type PhotoHelperPayload } from "./helper-policy.ts";
 
@@ -790,7 +791,7 @@ Deno.serve(async (req) => {
           provenance: { id: null, recorded: false, reason: "The image was recovered before its disclosure receipt was saved. Review the original before publishing." },
         };
         if (!pointer) await completeFundingOperation(funding, {kind:"photo_output",bucket:"renders",key:saved.key,mime:saved.mime,metadata});
-        return json({...metadata, image_b64:saved.image_b64, mime:saved.mime, asset_key:saved.key});
+        return photoJsonResponse(metadata,saved.image_b64,saved.mime,saved.key);
       }
       throw error;
     }
@@ -945,8 +946,9 @@ Deno.serve(async (req) => {
     });
 
     // The supplier was paid even when it ignored the size; bind that cost first.
+    let validatedPhotoBytes:Uint8Array<ArrayBuffer>|undefined;
     if (ownerPhotoStep) assertOwnerQaPhotoOutput(outB64, outMime);
-    else if (normalPhoto4K) assertPhoto4KOutput(outB64, outMime);
+    else if (normalPhoto4K) validatedPhotoBytes=assertPhoto4KOutput(outB64, outMime).data;
 
     // COMPLIANCE: enter the edit in the org's AI audit log and hand the app the
     // exact sentence the public tour will print. Best effort — never fatal (the
@@ -968,7 +970,7 @@ Deno.serve(async (req) => {
     // failure cannot dispatch or charge another model. Router-off also stores
     // the exact owned immutable output for loss-of-response recovery.
     let savedPhoto: {key:string;mime:string};
-    try { savedPhoto = await persistOwnedPhotoResult(adminClient(), resultIdentity, attempt.value.local); }
+    try { savedPhoto = await persistOwnedPhotoResult(adminClient(), resultIdentity, attempt.value.local,undefined,validatedPhotoBytes); }
     catch { throw new HttpError(503,"The edit was generated but its saved copy could not be confirmed. Retry the same request to recover it.","upstream",{failure_phase:"persistence",retry_existing_job:true}); }
     const metadata = {
       edit,
@@ -990,7 +992,7 @@ Deno.serve(async (req) => {
       },
     };
     await completeFundingOperation(funding, {kind:"photo_output",bucket:"renders",key:savedPhoto.key,mime:savedPhoto.mime,metadata});
-    return json({...metadata,image_b64:outB64,mime:outMime ?? "image/png",asset_key:savedPhoto.key});
+    return photoJsonResponse(metadata,outB64,outMime ?? "image/png",savedPhoto.key);
   } catch (err) {
     return respondError(err);
   }

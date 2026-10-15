@@ -16,15 +16,17 @@ export const PHOTO_INPUT_POLICY = Object.freeze({
 });
 // Provider output has a separate cap. Google documents4K panoramas with a
 // 12288px edge; accepting those must not loosen submitted-source admission.
-// The25MiB ceiling matches the existing inline/persisted result byte guard.
+// Photo JSON responses have a tighter measured envelope than generic media.
+// Retain actual4K geometry; compressed byte size is a separate memory bound.
 export const PHOTO_OUTPUT_POLICY = Object.freeze({
-  maxBase64Chars: 4 * Math.ceil(25 * 1024 * 1024 / 3),
-  maxDecodedBytes: 25 * 1024 * 1024,
+  maxBase64Chars: 4 * Math.ceil(9_000_000 / 3),
+  maxDecodedBytes: 9_000_000,
   maxPixels: 24_000_000,
   maxEdge: 16384,
 });
 type ImageBounds = { maxBase64Chars:number; maxDecodedBytes:number; maxPixels:number; maxEdge:number; tooLarge:()=>never };
 export interface StillImage { mime: string; bytes: number; width: number; height: number }
+export interface DecodedStillImage extends StillImage { data:Uint8Array<ArrayBuffer> }
 const invalid = (): never => { throw new HttpError(400, "Use a complete still JPEG, PNG or WebP photo. Animated images and HEIC/HEIF must be exported as a still JPEG first.", "validation"); };
 const large = (): never => { throw new HttpError(413, "Resize the photo before editing: at most 9 MB, 24 megapixels and 8192 pixels on either edge.", "payload_too_large"); };
 const be16 = (b: Uint8Array, i: number) => b[i] * 256 + b[i + 1];
@@ -126,14 +128,21 @@ function webp(b: Uint8Array, bounds:ImageBounds) {
   return image!;
 }
 export function validatePhotoInput(value: unknown, mime: string): StillImage {
-  return validateStillImage(value,mime,{...PHOTO_INPUT_POLICY,tooLarge:large});
+  const {data:_,...image}=validateStillImage(value,mime,{...PHOTO_INPUT_POLICY,tooLarge:large});return image;
 }
 export function validatePhotoOutput(value:unknown,mime:string):StillImage {
+  const {data:_,...image}=decodePhotoOutput(value,mime);return image;
+}
+/** Decode once; the exact validated bytes can be reused by owned persistence. */
+export function decodePhotoOutput(value:unknown,mime:string):DecodedStillImage {
+  const padding=typeof value==="string"?(value.endsWith("==")?2:value.endsWith("=")?1:0):0;
+  if(typeof value==="string"&&(value.length>PHOTO_OUTPUT_POLICY.maxBase64Chars||value.length/4*3-padding>PHOTO_OUTPUT_POLICY.maxDecodedBytes))
+    throw new HttpError(502,"The generated photo exceeds the 9 MB delivery limit. It could not be saved safely. This generation was already processed; no additional edit was started.","upstream",{failure_phase:"photo_output_size",provider_cost_incurred:true});
   const tooLarge=():never=>{throw new HttpError(502,"The provider image exceeds the bounded output size.","upstream");};
   try { return validateStillImage(value,mime,{...PHOTO_OUTPUT_POLICY,tooLarge}); }
   catch { throw new HttpError(502,"The provider returned an incomplete, unsupported or oversized image. It was not saved.","upstream"); }
 }
-function validateStillImage(value:unknown,mime:string,bounds:ImageBounds):StillImage {
+function validateStillImage(value:unknown,mime:string,bounds:ImageBounds):DecodedStillImage {
   if (typeof value !== "string" || !value.length) return invalid();
   if (value.length > bounds.maxBase64Chars) bounds.tooLarge();
   // Canonical padded base64 only: no data-URL, whitespace or decoder salvage.
@@ -146,10 +155,10 @@ function validateStillImage(value:unknown,mime:string,bounds:ImageBounds):StillI
     ||(padding===1&&(alphabet.indexOf(value[value.length-2])&3)!==0)) invalid();
   if(value.length/4*3-padding>bounds.maxDecodedBytes)bounds.tooLarge();
   // Chunked decoding avoids both Uint8Array.from's intermediate JS array and
-  // a complete decoded string beside the final25MiB image buffer.
+  // a complete decoded string beside the final whole-photo buffer.
   let bytes:Uint8Array<ArrayBuffer>;try{bytes=decodeBase64Bytes(value);}catch{return invalid();}
   const dimensions = mime === "image/jpeg" ? jpeg(bytes,bounds) : mime === "image/png" ? png(bytes,bounds) : mime === "image/webp" ? webp(bytes,bounds) : invalid();
-  return { mime, bytes: bytes.length, ...dimensions };
+  return { mime, bytes: bytes.length, ...dimensions, data:bytes };
 }
 export function validatePhotoInputs(image: unknown, mime: string, mask?: unknown, maskMime = "image/png") {
   const source = validatePhotoInput(image, mime);

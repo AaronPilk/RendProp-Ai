@@ -3,7 +3,9 @@ import type { RouteStep } from "../_shared/router.ts";
 import { paramsOf } from "../_shared/router.ts";
 import { HttpError } from "../_shared/http.ts";
 import { PHOTO_2K_INPUT_ALLOWANCES, photo2KInputAllowance, photo4KInputAllowance } from "../_shared/photo-image-quality.ts";
-import { validatePhotoInput, validatePhotoOutput } from "./input-policy.ts";
+import { validatePhotoInput, decodePhotoOutput, type DecodedStillImage } from "./input-policy.ts";
+// Conditioned provider inputs, not the immutable original/master upload cap.
+export const PHOTO_4K_PREPARED_INPUT_BYTES = 1_000_000;
 
 /** Preserve submitted bytes.4096 tokens cover an ordinary <=4:1 source;
  * wider/narrower inputs multiply that allowance by ceil(aspect/4). This
@@ -22,8 +24,9 @@ function preparePhotoInput(input:GenerateInput,size:"2K"|"4K"):GenerateInput {
  if(input.mask_url)throw new HttpError(400,"Masked edits use their existing resolution route.","validation");
  const images:[unknown,string][]=[[input.image_b64,String(input.extra?.image_mime??"image/jpeg")]];
  if(input.extra?.staging_reference_b64!==undefined)images.push([input.extra.staging_reference_b64,String(input.extra.staging_reference_mime)]);
- let used=new TextEncoder().encode(input.prompt??"").byteLength;
- for(const [b64,mime]of images){const image=validatePhotoInput(b64,mime);if(Math.max(image.width,image.height)>2048)throw new HttpError(413,`Use a source no larger than 2048 pixels for this ${size} edit.`,"payload_too_large");used+=4096*Math.ceil((Math.max(image.width,image.height)/Math.min(image.width,image.height))/4);}
+ let used=new TextEncoder().encode(input.prompt??"").byteLength,preparedBytes=0;
+ for(const [b64,mime]of images){const image=validatePhotoInput(b64,mime);if(Math.max(image.width,image.height)>2048)throw new HttpError(413,`Use a source no larger than 2048 pixels for this ${size} edit.`,"payload_too_large");preparedBytes+=image.bytes;used+=4096*Math.ceil((Math.max(image.width,image.height)/Math.min(image.width,image.height))/4);}
+ if(size==="4K"&&preparedBytes>PHOTO_4K_PREPARED_INPUT_BYTES)throw new HttpError(413,"Keep your original photo. Prepare the editing copy and any furniture reference as JPEGs up to 1 MB combined, with a 2048-pixel longest edge. No edit was sent.","payload_too_large",{failure_phase:"prepared_photo_size",no_provider_dispatch:true});
  if(images.length>1)used+=512;
  const allowance=PHOTO_2K_INPUT_ALLOWANCES.find(cap=>used<=cap);
  if(allowance===undefined)throw new HttpError(413,`This photo and its instructions exceed the verified ${size} input bound. No edit was sent.`,"payload_too_large");
@@ -61,8 +64,9 @@ export function assertPhoto2KOutput(b64:string,mime:string):void{
  * Header/container validation establishes dimensions, not visual fidelity.
  * https://ai.google.dev/gemini-api/docs/generate-content/image-generation */
 const PHOTO_4K_DIMENSIONS = [[4096,4096],[2048,8192],[8192,2048],[1536,12288],[12288,1536],[3392,5056],[5056,3392],[3584,4800],[4800,3584],[3712,4608],[4608,3712],[3072,5504],[5504,3072],[6336,2688]] as const;
-export function assertPhoto4KOutput(b64:string,mime:string):void {
- const image=validatePhotoOutput(b64,mime);
+export function assertPhoto4KOutput(b64:string,mime:string):DecodedStillImage {
+ const image=decodePhotoOutput(b64,mime);
  if(!PHOTO_4K_DIMENSIONS.some(([width,height])=>Math.abs(image.width-width)<=width*.01&&Math.abs(image.height-height)<=height*.01))
   throw new HttpError(502,"The provider returned an image outside the requested 4K size. That image was not saved as a 4K edit.","upstream");
+ return image;
 }
