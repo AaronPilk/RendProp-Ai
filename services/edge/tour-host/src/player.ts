@@ -3051,9 +3051,6 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const socialMeta = propertySearchMeta(page, header.ogTitle, header.ogDesc, header.entityName);
   const poster = safeUrl(tour.poster || "");
   const coverImage = safeUrl(tour.cover_url || "") || galleryItems(tour)[0]?.url || poster;
-  // Display the derivative of this exact published cover, never another photo.
-  // Keep coverImage as the full-resolution SEO, viewer and video fallback source.
-  const coverPreview = polished ? galleryItems(tour).find((photo) => photo.url === coverImage)?.thumb || coverImage : coverImage;
   const staged = !!tour.staged;
   const hasAltered = Array.isArray(tour.altered_media) && tour.altered_media.length > 0;
   const chapters = Array.isArray(tour.chapters) ? tour.chapters : [];
@@ -3189,7 +3186,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // "See it in action" card. Otherwise render the full listing microsite.
   const hasVideo = !!(scrubUrl || hlsUrl);
   const coverHtml = `<section class="listing-cover${primaryVideo ? " property-video-hero" : ""}" aria-label="Property media">
-    ${primaryVideo ? listingVideoStage(primaryVideo, coverImage, header.entityName) : coverImage ? `<img${polished ? ' id="property-hero-image"' : ""} src="${escapeAttr(coverPreview)}"${coverPreview !== coverImage ? ` data-property-hero-master="${escapeAttr(coverImage)}"` : ""} alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`}
+    ${primaryVideo ? listingVideoStage(primaryVideo, coverImage, header.entityName) : coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`}
     ${polished ? `<div class="property-hero-copy"><div class="lp-eyebrow">${escapeHtml(isSoldOrArchived(tour) ? "Sold property" : "Discover the residence")}</div><h1 class="property-hero-title">${escapeHtml(header.entityName)}</h1>${priceText(tour) ? `<p class="property-hero-price">${escapeHtml(priceText(tour))}</p>` : ""}` : ""}
     <div class="listing-cover-actions">
       ${hasVideo && !primaryVideo ? `<button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button><p>Open the video when you want to explore.</p>` : primaryVideo ? "" : `<p>Photos and location details are available below.</p>`}

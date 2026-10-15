@@ -62,44 +62,6 @@ const fullGallery = renderTourPage(many, "", "", "", { page: "gallery" });
 check((preview.match(/data-property-photo href=/g) || []).length === 4 && preview.includes('View all 13 photos'), "Home previews four photos and links to the complete Gallery");
 check((fullGallery.match(/data-property-photo href=/g) || []).length === 13, "Dedicated Gallery preserves all published selections");
 check(fullGallery.includes('href="/published-12.jpg"') && fullGallery.includes('data-property-src="/published-12.jpg"'), "Deferred image and full-size link retain the same actual source");
-const heroTag = (tour, options = {}) => renderTourPage(tour, "", "", "", { page: "home", ...options }).match(/<img id="property-hero-image"[^>]*>/)?.[0] || "";
-for (const theme of ["basic", "signature-estate", "coastal-luxe"]) {
-  const t = fixture(); t.website_theme = theme;
-  t.gallery = [{ url: "/other-master.jpg", thumb_url: "/other-preview.jpg" }, { url: t.cover_url, thumb_url: "/exact-cover-preview.jpg" }];
-  const home = renderTourPage(t, "", "", "", { page: "home" });
-  check(heroTag(t).includes('src="/exact-cover-preview.jpg"') && heroTag(t).includes('data-property-hero-master="/published-cover.jpg"'), theme + ": Hero preview matches the exact chosen master rather than first gallery photo");
-  check(home.includes('data-property-photo href="/published-cover.jpg"') && home.includes('property="og:image" content="https://rendprop.com/published-cover.jpg"'), theme + ": Full viewer and SEO retain the exact master");
-  t.cover_url = "/separate-authorized-cover.jpg";
-  check(heroTag(t).includes('src="/separate-authorized-cover.jpg"') && !heroTag(t).includes('data-property-hero-master'), theme + ": Unmatched cover cannot borrow another selected photo's preview");
-  t.cover_url = null;
-  check(heroTag(t).includes('src="/other-preview.jpg"'), theme + ": Missing cover previews the same first selected gallery photo");
-  t.gallery = [{ url: "/first-master.jpg", thumb_url: "javascript:private()" }];
-  check(heroTag(t).includes('src="/first-master.jpg"') && !heroTag(t).includes('data-property-hero-master'), theme + ": Unsafe or missing preview retains the exact master");
-  t.gallery = []; t.poster = "/recorded-poster.jpg";
-  check(heroTag(t).includes('src="/recorded-poster.jpg"'), theme + ": Empty selection never recovers a stale gallery preview");
-}
-function checkHeroLoading(script, earlyFailure = false) {
-  const listeners = new Map(), requests = [], hero = {
-    master: "/exact-master.jpg", complete: earlyFailure, naturalWidth: earlyFailure ? 0 : 1280, current: "/exact-preview.jpg",
-    get src() { return this.current; }, set src(value) { this.current = value; requests.push(value); },
-    getAttribute(name) { assert.equal(name, "data-property-hero-master"); return this.master; },
-    removeAttribute(name) { assert.equal(name, "data-property-hero-master"); this.master = null; },
-    addEventListener(type, fn, options) { assert.equal(type, "error"); assert.equal(options.once, true); listeners.set(type, fn); },
-    error() { const fn = listeners.get("error"); listeners.delete("error"); fn?.(); },
-  };
-  vm.runInNewContext(script, { document: { getElementById(id) { return id === "property-hero-image" ? hero : null; }, querySelectorAll() { return []; } } });
-  if (!earlyFailure) assert.deepEqual(requests, [], "A healthy initial preview must not fetch its master");
-  hero.error(); hero.error();
-  assert.equal(hero.src, "/exact-master.jpg", "Failed hero preview must use its exact master");
-  assert.deepEqual(requests, ["/exact-master.jpg"], "Early and later failures must make only one master fallback request");
-}
-checkHeroLoading(PROPERTY_SITE_JS); checkHeroLoading(PROPERTY_SITE_JS, true); assertions += 6;
-const wrongHero = PROPERTY_SITE_JS.replace("propertyHero.src=master", "propertyHero.src='/another-photo.jpg'");
-check(wrongHero !== PROPERTY_SITE_JS, "Wrong-master control binds shipped hero loader");
-assert.throws(() => checkHeroLoading(wrongHero), /Failed hero preview must use its exact master/); assertions++;
-const repeatHero = PROPERTY_SITE_JS.replace("propertyHero.removeAttribute('data-property-hero-master');", "");
-check(repeatHero !== PROPERTY_SITE_JS, "Repeated-fallback control binds shipped hero loader");
-assert.throws(() => checkHeroLoading(repeatHero, true), /only one master fallback/); assertions++;
 // Execute the actual progressive loader with closed DOM/observer boundaries.
 // Offscreen master files are not assigned until a viewport intersection; older
 // browsers without IntersectionObserver still display every published image.
