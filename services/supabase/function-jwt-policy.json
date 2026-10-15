@@ -16,6 +16,7 @@
   "me": false,
   "notify": false,
   "portfolio": false,
+  "photo-quality-worker": false,
   "presenter-drain": false,
   "property": true,
   "property-sites": true,
