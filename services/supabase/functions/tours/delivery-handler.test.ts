@@ -6,8 +6,8 @@ for(const[name,value]of Object.entries({SUPABASE_URL:"https://media-delivery-fix
 let handler!:(req:Request)=>Promise<Response>;const descriptor=Object.getOwnPropertyDescriptor(Deno,"serve")!;
 Object.defineProperty(Deno,"serve",{configurable:true,writable:true,value:(fn:typeof handler)=>{handler=fn;return {};}});
 try{await import("./index.ts");}finally{Object.defineProperty(Deno,"serve",descriptor);}
-async function invoke(options:{unpublish?:boolean;changedObject?:boolean;revokedAtFinal?:boolean;missingPermission?:boolean;crossProperty?:boolean;deleteAtFinal?:boolean;withStream?:boolean;expiredHosting?:boolean;hostingExpiresAtFinal?:boolean;badHostingReceipt?:boolean;photoVideo?:boolean;compositionChanged?:boolean;publicPage?:boolean;photoSelectionChanged?:boolean;contactChanged?:boolean;identityChanged?:boolean;revokedAtPublicFinal?:boolean;parallelFinalBarrier?:boolean;parallelOptionalBarrier?:boolean;contactPortraitRevoked?:boolean;preview?:boolean;previewDisclosure?:boolean;duplicatePreviewKey?:boolean;missingGateway?:boolean}={}){
- const original=globalThis.fetch;let renders=0,listings=0,permissions=0,retentionReads=0;const requests:string[]=[];let presentationReads=0,contacts=0,identities=0,contactChecks=0;const contactKey=`${base}/contact-fixture.jpg`;
+async function invoke(options:{unpublish?:boolean;changedObject?:boolean;revokedAtFinal?:boolean;missingPermission?:boolean;crossProperty?:boolean;deleteAtFinal?:boolean;withStream?:boolean;expiredHosting?:boolean;hostingExpiresAtFinal?:boolean;badHostingReceipt?:boolean;photoVideo?:boolean;compositionChanged?:boolean;publicPage?:boolean;photoSelectionChanged?:boolean;contactChanged?:boolean;identityChanged?:boolean;revokedAtPublicFinal?:boolean;parallelFinalBarrier?:boolean;parallelOptionalBarrier?:boolean;contactPortraitRevoked?:boolean;preview?:boolean;previewDisclosure?:boolean;previewLegacy?:boolean;duplicatePreviewKey?:boolean;missingGateway?:boolean}={}){
+ const original=globalThis.fetch;let renders=0,listings=0,permissions=0,retentionReads=0;const requests:string[]=[];let presentationReads=0,contacts=0,identities=0,contactChecks=0,photoReads=0;const contactKey=`${base}/contact-fixture.jpg`;
  const finalReads=new Set<string>();let releaseFinal!:()=>void;const finalGate=new Promise<void>(resolve=>{releaseFinal=resolve;});
  const finalRead=async(kind:string)=>{if(!options.parallelFinalBarrier)return;finalReads.add(kind);if(finalReads.size===3)releaseFinal();let timer:ReturnType<typeof setTimeout>|undefined;try{await Promise.race([finalGate,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error("Final independent reads were serialized or omitted")),2000);})]);}finally{if(timer!==undefined)clearTimeout(timer);}};
  const optionalReads=new Set<string>();let releaseOptional!:()=>void;const optionalGate=new Promise<void>(resolve=>{releaseOptional=resolve;});
@@ -15,6 +15,12 @@ async function invoke(options:{unpublish?:boolean;changedObject?:boolean;revoked
  const reply=(data:unknown,status=200)=>Response.json(data,{status});
  globalThis.fetch=async(raw,init)=>{
   const req=new Request(raw,init),u=new URL(req.url);assertEquals(u.hostname,"media-delivery-fixture.invalid");requests.push(u.pathname);
+  if(u.pathname.endsWith("/rpc/published_photo_delivery")){
+   photoReads++;assertEquals(await req.json(),{p_slug:slug,p_key:gallery,p_bytes:0});
+   if(options.unpublish||options.photoSelectionChanged||options.expiredHosting)return reply({code:"P0001",message:"RP404: current published photo refused"},400);
+   if(options.missingPermission)return reply({code:"P0001",message:"RP503: incomplete canonical visibility"},400);
+   return reply(options.previewLegacy?null:{schema:1,slug,objects:{[gallery]:"renders"},stream_uid:null});
+  }
   if(u.pathname.endsWith("/rpc/property_public_presentation")){presentationReads++;return reply(options.photoVideo?{website_theme:"basic",listing_video:{composition_id:render,asset_id:photo,poster_asset_id:other,storage_key:`${base}/${options.compositionChanged&&presentationReads>1?"new-selected":"selected"}.mp4`,poster_key:`${base}/first-clip.jpg`,width:1920,height:1080,duration_s:15,branding_policy:"unbranded",disclosure:"Photo movement",source_asset_ids:[photo]}}:null);}
   if(u.pathname.endsWith("/rpc/media_delivery_admit")){const body=await req.json();assertEquals(body,{p_org:org,p_bytes:0,p_required:true});return reply({admitted:true,legacy_unbudgeted:false});}
   if(u.pathname.endsWith("/rpc/studio_presenter_media_visibility")){
@@ -40,16 +46,19 @@ async function invoke(options:{unpublish?:boolean;changedObject?:boolean;revoked
   throw Error("Unexpected fixture request "+u.pathname);
  };
  const route=options.preview?`/photo-delivery?key=${encodeURIComponent(gallery)}${options.duplicatePreviewKey?`&key=${encodeURIComponent(retired)}`:""}`:options.publicPage?"":"/delivery";
- try{const res=await handler(new Request(`https://api.fixture.invalid/tours/${slug}${route}`,{headers:options.missingGateway?{}:{"X-Rendprop-Media-Gateway":"d".repeat(64)}}));return{status:res.status,body:await res.json(),timing:res.headers.get("Server-Timing"),renders,listings,permissions,requests,contacts,identities,finalReads:[...finalReads],optionalReads:[...optionalReads],contactChecks};}finally{globalThis.fetch=original;}
+ try{const res=await handler(new Request(`https://api.fixture.invalid/tours/${slug}${route}`,{headers:options.missingGateway?{}:{"X-Rendprop-Media-Gateway":"d".repeat(64)}}));return{status:res.status,body:await res.json(),timing:res.headers.get("Server-Timing"),renders,listings,permissions,requests,contacts,identities,finalReads:[...finalReads],optionalReads:[...optionalReads],contactChecks,photoReads};}finally{globalThis.fetch=original;}
 }
 Deno.test("actual thumbnail authority route admits one photo without building contacts or unrelated media",async()=>{
- const r=await invoke({preview:true});assertEquals(r.status,200);assertEquals(r.body,{schema:1,slug,objects:{[gallery]:"renders"},stream_uid:null});assertEquals(r.contacts,0);assertEquals(r.identities,0);assertEquals(r.renders,2);assertEquals(r.listings,2);
+ const r=await invoke({preview:true});assertEquals(r.status,200);assertEquals(r.body,{schema:1,slug,objects:{[gallery]:"renders"},stream_uid:null});assertEquals(r.contacts,0);assertEquals(r.identities,0);assertEquals(r.renders,0);assertEquals(r.listings,0);assertEquals(r.photoReads,1);assertEquals(r.requests,["/rest/v1/rpc/published_photo_delivery"]);
 });
-Deno.test("thumbnail route keeps gateway, exact-key and final publication fences",async()=>{
- for(const options of[{missingGateway:true},{duplicatePreviewKey:true},{unpublish:true},{photoSelectionChanged:true},{expiredHosting:true},{missingPermission:true}]){const r=await invoke({preview:true,...options});assert([400,403,404,503].includes(r.status));assert(!JSON.stringify(r.body).includes(gallery));}
+Deno.test("thumbnail route keeps gateway, exact-key checks and current authority refusals",async()=>{
+ for(const options of[{missingGateway:true},{duplicatePreviewKey:true},{unpublish:true},{photoSelectionChanged:true},{expiredHosting:true},{missingPermission:true}]){const r=await invoke({preview:true,...options});assert([400,403,404,503].includes(r.status));assert(!JSON.stringify(r.body).includes(gallery));assertEquals(r.contacts,0);assertEquals(r.renders,0);assertEquals(r.photoReads,options.missingGateway||options.duplicatePreviewKey?0:1);}
 });
-Deno.test("thumbnail disclosures fall through the existing complete delivery authority",async()=>{
- const r=await invoke({preview:true,previewDisclosure:true});assertEquals(r.status,200);assertEquals(r.body.objects[gallery],"renders");assertEquals(r.body.objects[video],"renders");assert(r.contacts>0);
+Deno.test("known saved edits use the same one-object route without assembling unrelated disclosures or contacts",async()=>{
+ const r=await invoke({preview:true,previewDisclosure:true});assertEquals(r.status,200);assertEquals(r.body,{schema:1,slug,objects:{[gallery]:"renders"},stream_uid:null});assertEquals(r.photoReads,1);assertEquals(r.requests,["/rest/v1/rpc/published_photo_delivery"]);
+});
+Deno.test("unsupported legacy lineage alone falls through the existing complete delivery authority",async()=>{
+ const r=await invoke({preview:true,previewDisclosure:true,previewLegacy:true});assertEquals(r.status,200);assertEquals(r.body.objects[gallery],"renders");assertEquals(r.body.objects[video],"renders");assert(r.contacts>0);
 });
 Deno.test("actual delivery endpoint carries only DB-published video/poster/current selected gallery exact identities",async()=>{
  const r=await invoke();assertEquals(r.status,200);assertEquals(r.body,{schema:1,slug,objects:{[gallery]:"renders",[video]:"renders",[poster]:"renders"},stream_uid:null});assertEquals(r.renders,2);assert(r.permissions>=4);assert(!JSON.stringify(r.body).includes(retired));assert(!JSON.stringify(r.body).includes("private-sentinel"));

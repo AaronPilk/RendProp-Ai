@@ -2,7 +2,7 @@
 
 This is the consolidated acceptance list for the owner's messages, not a claim that
 all work is finished. Latest explicit decisions override earlier wording/prices.
-Updated October 15 after the 17:37 UTC normal84 delivery. Earlier detailed ledger
+Updated October 15 at 18:30 UTC after source review. Earlier detailed ledger
 is retained at
 `_bridge/build83-owner-checklist/CHECKLIST-PRE-CONSOLIDATION-20261015-1503.md`
 (relative to the outer Rendprop AI folder).
@@ -21,19 +21,22 @@ is retained at
   verified with no LAB/DEBUG. Actual 84 compact-review acceptance remains open.
 - App Store 1.0.5 remains an unattached PREPARE_FOR_SUBMISSION draft configured
   AFTER_APPROVAL. No latest-build App Store submission or release is claimed.
-- Prior source 2fe6d669 passed all 16 CI jobs. Run 38780154650 was dispatched
-  once on ff84129; its native audit hit a stale three-field privacy harness.
-  Test-only b911419 passes 42 checks and all 17 compiled fault controls, preserving
-  the prior 14 controls. Fixture-only 2e59899 is outside that run; other failures
-  remain under bounded harness/export triage. No full current-head CI pass or
-  additional dispatch is claimed.
+- Prior source 2fe6d669 passed all 16 CI jobs. Run 38780154650 completed on
+  ff84129 with four component-job failures and the required aggregate failure.
+  Actual UIKit passed 693 rendering/packaging checks, including 449 ZIP checks
+  and 33 compiled controls. Later privacy repair b911419 passes 42 checks/17
+  controls, and PG harness repair f68118f passed its isolated proofs. Export
+  diagnostics 56aeb29 preserve the CI timing refusal; one local six-variant run
+  passed with runtime/thresholds unchanged. These repairs and fixture-only
+  2e59899 are outside that run. No full current-head CI pass is claimed.
 - The SAME 14-photo Listing 16:9 job c40f4860… resumed at 17:38:34 UTC through
-  its normal service RPC, not a phone action. Nine AI shots and one original-photo
-  fallback are ready; source 6's one paid replacement and source 11 are processing,
-  with 12–13 pending. The old source 6 210-cent receipt stays immutable. Preserve
-  paid evidence and the admitted recipe. No complete master, publication or
-  completed-video push is claimed. The approved portrait crops remain authorized;
-  a fresh landscape-home test later is not an invented prerequisite for this job.
+  its normal service RPC, not a phone action. It is now FAILED at assembly with
+  a container ready_timeout before CPU execution; 13 AI shots and one original-
+  photo fallback are retained. The old source 6 210-cent receipt is immutable.
+  Bounded pre-output assembly recovery is a source-only candidate, not live.
+  Preserve paid evidence and the recipe. No complete master, publication or push
+  is claimed. The approved portrait crops remain authorized; a fresh landscape-
+  home test later is not an invented prerequisite for this job.
 - The owner explicitly allows Simulator UI acceptance while the physical phone
   is unavailable. Compact review and two batches retaining six exact PNG Originals
   were observed there; physical 84 acceptance remains open. Keep Simulator,
@@ -46,11 +49,17 @@ is retained at
   the controlled Simulator build proves readable labels and unchanged normal row.
   It is NOT in delivered84; coordinated normal85 SDK/release work remains. Largest-
   text grid/viewer reachability is unresolved, not a proven scrolling defect.
+  The isolated test Simulator has been shut down; no UI test is still running.
   Claude's separate web/Studio work is preserved.
 - Studio 72e336f2 has 35 exact files/39 GET readbacks. Edge Studio 34 and migration
   20261015164224 enforce photo/recorded-source separation. Authenticated customer
-  UI acceptance remains open. Root owns current W05 photo-delivery wiring and
-  hosted loading verification; deployed code/configuration is not itself a pass.
+  UI acceptance remains open. W05 saved-edit previews still take the slow
+  whole-tour authority fallback. A source-only per-key candidate passed 41 tours
+  tests, 32 fresh/32 replay PG assertions, 13 fault/receipt controls and five real
+  withdrawal races, plus peer review. It preserves three fresh Worker checks,
+  legacy fallback and master bytes. It is not applied/deployed; hosted loading
+  acceptance remains open. Evidence:
+  `_bridge/build84-altered-photo-rpc/SOURCE-REVIEW-RECEIPT.json`.
 - Owner media migration 20261015170710 and general product-media migration
   20261015171923 are LIVE. Authorized media no longer requires a financial reserve
   to activate; current publication/object/hosting/visibility checks remain. Actual
@@ -65,8 +74,8 @@ is retained at
 
 ## Latest beta feedback
 
-Fresh read-only App Store Connect fetch at 11:13 a.m. Eastern found three
-screenshot/general submissions since October14, all build82: two comments on
+Fresh read-only App Store Connect fetch at 18:15 UTC (2:15 p.m. Eastern) found
+the same three screenshot/general submissions since October14, all build82: two comments on
 single-photo editing (one explicitly preserves bulk editing) and one on upload
 order across batches. Zero crash feedback submissions in that interval; this is
 not a claim that no unsubmitted crash occurred. Original reports/screenshots are
@@ -131,7 +140,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 | V09 | Finish accepted work away from editor; notify and review private result | Two-shot hosted completion/push proven; today's 14-shot job continued after leaving editor | Recover larger job; actual push/reopen/review, no auto-publication |
 | V10 | Check status must visibly respond | Delivered 83 spinner, actual last-checked time and safe network feedback; SDK passed | Actual phone tap/refresh acceptance |
 | V11 | Ready banner Review must open exact video, including while modal is closing | Delivered 83 exact-job navigation;50 checks +20 controls and SDK passed | Actual phone opening; unavailable-home banners stay suppressed |
-| V12 | Fix today's quality-retry failure; retain already paid/accepted clips | Normal service-RPC Resume accepted17:38:34Z; nine AI+one fallback ready, two processing/two pending; old210c source6 receipt retained | Finish SAME job and inspect complete master; service recovery is not phone proof |
+| V12 | Fix today's quality-retry failure; retain already paid/accepted clips | SAME job now13AI+one fallback retained; assembly FAILED at ready_timeout before CPU execution. Recovery candidate not live; old210c source6 receipt retained | Recover assembly on SAME job and inspect complete master; service recovery is not phone proof |
 | V13 | Recorded drone-style walkthrough is separate optional toolbox tool | Built; optional route observed | Final upload/play/tag check with real recorded video |
 | V14 | Explain slow/steady drone-like capture, gimbal and actual drone options | Built capture guidance | Final phone copy/animation inspection |
 | V15 | Tag rooms muted until genuine recorded/uploaded walkthrough; tap explains requirement | Delivered 83 predicate/entrypoint proof 32 checks +5 controls; SDK passed | Actual no-source/upload/tag phone tests; generated/sample video must not unlock it |
@@ -146,7 +155,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 | W02 | Finished photo-based Listing video is main presentation; recorded swipe tour secondary | Built/deployed renderer | Accepted Listing video explicitly published on SAME home and played |
 | W03 | Attractive included Classic plus two distinct luxury designs with restrained glass/motion | Classic + Signature Estate + Coastal Luxe built/deployed previews | Final phone aesthetic/accessibility acceptance; preview ≠ paid entitlement |
 | W04 | Luxury design $25 one-time PER PROPERTY, switching both paid designs for that home | Backend/native product routing built; Apple draft SKU exists | Genuine Sandbox buy/recovery/property binding; real review screenshot/metadata; Production still OFF |
-| W05 | Fast loading, full-quality images; old low-detail edited files not called 4K | HTML median 3.921→1.479s is HTML-only evidence. Bounded thumbnail source and matched gateway configuration deployed; full masters preserved | Confirm tours projection/real hosted transforms and actual phone loading/detail; old low-resolution media is not magically replaced |
+| W05 | Fast loading, full-quality images; old low-detail edited files not called 4K | Existing thumbnails/config deployed; saved edits still use slow whole-tour fallback. Per-key RPC candidate passed PG/Deno/race/peer checks, not deployed. Exact masters unchanged | Apply/review candidate, then repeat hosted timing and final phone loading/detail; HTML-only improvement and source tests do not prove this fixed |
 | W06 | Real nearby shops/restaurants/location at low cost | Live OpenStreetMap data: nine named places with attribution | Actual coordinate/place/map/empty-error acceptance |
 | W07 | Buyer links open website rather than app; preserve old links | Direct /property route and association exclusions deployed | Real Messages/Safari share/open including older cached association |
 | W08 | Readable address URLs, canonical/share metadata, privacy-aware sitemap | Built/deployed and automated checks passed | Actual shared card; genuine opted-in publication inspection; no SEO ranking guarantee |

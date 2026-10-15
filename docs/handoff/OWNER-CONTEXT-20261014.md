@@ -1,4 +1,4 @@
-# Current execution checkpoint — October 15, 2026, after 17:37 UTC delivery
+# Current execution checkpoint — October 15, 2026, 18:30 UTC source review
 
 The authoritative acceptance list is
 `docs/handoff/OWNER-REQUEST-CHECKLIST-20261014.md`. Earlier execution snapshots
@@ -24,11 +24,14 @@ are historical; retain their receipts without treating them as current status.
   `_bridge/build84-normal-testflight/FINAL-TESTFLIGHT84-DELIVERY-RECEIPT.json`.
 - Public **1.0.4 (74)** stays unchanged. Draft 1.0.5 is unattached,
   PREPARE_FOR_SUBMISSION and AFTER_APPROVAL. No latest App Store submission.
-  Prior source 2fe6d669 passed 16/16 CI. Run 38780154650 tests ff84129 and
-  exposed a stale native privacy harness with three missing room-tag state stubs.
-  Test-only repair b911419 passes 42 checks and 17 compiled fault controls. The
-  fixture-only 2e59899 change is outside that run. Other CI failures remain under
-  bounded harness/export triage; no final-head CI pass is claimed.
+  Prior source 2fe6d669 passed 16/16 CI. Run 38780154650 completed on ff84129
+  with four component-job failures plus the required aggregate failure. Actual
+  UIKit passed 693 rendering/packaging checks, including 449 ZIP checks and 33
+  compiled controls. Privacy-harness repair b911419 passes 42 checks/17 controls;
+  historical-PG harness repair f68118f passed its isolated proofs. Browser-export
+  diagnostics 56aeb29 retain the original timing refusal; one local six-variant
+  run passed without changing thresholds or runtime. These later repairs and
+  fixture-only 2e59899 are outside that CI run. No final-head CI pass is claimed.
 - Build 84 retains 83's deselection/cover and genuine Original sync fixes, exact
   cloud removal, exact-job Review, recorded-only Tags, selected Sold/Archived
   Ask AI context, single-photo Original editing, family swipe/count, oldest-first
@@ -41,17 +44,23 @@ are historical; retain their receipts without treating them as current status.
   is not ordinary paid receipt/funding proof. No retail price/quota reset.
 - Normal operator Resume for the SAME 14-photo Listing 16:9 job c40f4860… was
   accepted at 17:38:34 UTC through the existing service RPC, not a phone action.
-  The latest snapshot has nine AI shots and one original-photo fallback ready;
-  source 6's single paid replacement and source 11 are processing, with 12–13
-  pending. Source 6's old 210-cent paid receipt remains immutable. The admitted
-  recipe and other completed clips stay intact. No final master, publication or
-  completed-video push is claimed. The owner approved these portrait crops;
-  a fresh landscape-home test later is not a prerequisite for this approved job.
+  The current job is FAILED at assembly with a container ready_timeout before
+  CPU execution; all 13 AI shots and one original-photo fallback are retained.
+  Source 6's old 210-cent receipt remains immutable. The admitted recipe and
+  completed clips stay intact. A bounded pre-output assembly recovery is a
+  source-only candidate, not live. No final master, publication or completed-video
+  push is claimed. The owner approved these portrait crops; a fresh landscape-home
+  test later is not a prerequisite for this approved job.
 - Studio frontend 72e336f2 has 35 exact files/39 GET readbacks. Edge Studio 34
   and migration 20261015164224 enforce photo/recorded-source separation;
   authenticated customer UI acceptance remains open. W05 thumbnail source and
-  matching gateway configuration are deployed; root's narrow photo-delivery
-  integration and actual hosted thumbnail/loading verification are in progress.
+  matching gateway configuration are deployed. Saved-edit previews still use
+  the slow whole-tour authority fallback. A source-only per-key RPC candidate
+  passed 41 tours tests, 32 fresh/32 replay PG assertions, 13 PG fault/receipt
+  controls and five real withdrawal races; independent review passed. It retains
+  all three Worker authority checks, legacy fallback and exact masters. It is
+  not applied/deployed and does not establish a hosted latency improvement.
+  Evidence: `_bridge/build84-altered-photo-rpc/SOURCE-REVIEW-RECEIPT.json`.
 - The owner explicitly authorized Simulator UI checks while the physical phone
   is unavailable. The child observed compact review controls and two import
   batches retaining six exact PNG Originals; physical 84 acceptance remains open.
@@ -64,6 +73,7 @@ are historical; retain their receipts without treating them as current status.
   This change is NOT in delivered TestFlight84 and still needs the coordinated
   normal85 SDK/release process. Largest-text grid reachability remains unresolved;
   CUA scroll/drag failure alone does not establish a product scroll defect.
+  The isolated test Simulator is now shut down; no UI acceptance run is active.
   Record Simulator, SDK/backend and actual-device evidence separately. This does
   not prove phone hardware, Apple purchase, notification, provider output or
   whole-home acceptance. Claude's separate web/Studio lane must not be overwritten.
@@ -83,6 +93,10 @@ are historical; retain their receipts without treating them as current status.
   pass, matching every narrated page to its actual final screen; no duration cap,
   Willow 1.2×, Realtors only. Production premium purchase remains OFF; genuine
   $25 Sandbox purchase/recovery and release metadata acceptance remain open.
+- Read-only beta feedback refresh at 18:15 UTC is unchanged: three build82
+  screenshot/general submissions about single-photo actions and upload order,
+  and zero submitted crash reports since October14. This does not prove that
+  no unsubmitted device crash occurred. No feedback or Apple state was mutated.
 
 # Rendprop owner context — October 14, 2026
 
