@@ -42,8 +42,10 @@ test("mixed JWT preserved; live drift, missing/duplicate functions and undeclare
   assert.throws(() => selectedPolicy({ studio: "true" }, ["studio"]));
 });
 test("first deployment requires explicit reviewed endpoint names; policy mismatch or absent ordinary functions still refuse",()=>{
-  assert.deepEqual(NEW_FUNCTION_POLICIES,{"property-sites":true,"property-video-plan":true,"property-video-jobs":true,"property-video-worker":false,"photo-quality-worker":false});
+  assert.deepEqual(NEW_FUNCTION_POLICIES,{"property-sites":true,"property-video-plan":true,"property-video-jobs":true,"property-video-worker":false,"photo-quality-worker":false,"photo-quality-review":true});
   assert.deepEqual(verifyDeploymentBefore([],{"photo-quality-worker":false},["photo-quality-worker"]),{"photo-quality-worker":{create:true,verifyJwt:false}});
+  assert.deepEqual(verifyDeploymentBefore([],{"photo-quality-review":true},["photo-quality-review"]),{"photo-quality-review":{create:true,verifyJwt:true}});
+  assert.throws(()=>verifyDeploymentBefore([],{"photo-quality-review":false},["photo-quality-review"]),/reviewed JWT/);
   assert.throws(()=>verifyDeploymentBefore([],{"photo-quality-worker":true},["photo-quality-worker"]),/reviewed JWT/);
   assert.deepEqual(verifyDeploymentBefore([],{"property-video-worker":false},["property-video-worker"]),{"property-video-worker":{create:true,verifyJwt:false}});
   assert.throws(()=>verifyDeploymentBefore([],{"property-video-worker":true},["property-video-worker"]),/reviewed JWT/);
@@ -243,4 +245,13 @@ else if(action==='deploy'){
    assert(!calls.some(c=>c.includes('--no-verify-jwt')||c.includes('--prune')));
   }finally{for(const c of calls.filter(c=>c[1]==='download'))await rm(c[c.indexOf('--workdir')+1],{recursive:true,force:true});await rm(path.dirname(receiptPath),{recursive:true,force:true});}
  }
+}));
+
+test("photo review first-deploy dry run stages only its closure with JWT on and no generation entrypoint",async()=>fixture(async(root)=>{
+ const result=spawnSync(process.execPath,[path.resolve(import.meta.dirname,"../scripts/deploy-backend.mjs"),"--functions","photo-quality-review","--create-new","photo-quality-review"],{encoding:"utf8",env:{...process.env,PATH:root}});
+ assert.equal(result.status,0,result.stderr);const receipt=JSON.parse(result.stdout);
+ try{
+  const stored=JSON.parse(await readFile(receipt.receipt,"utf8"));assert.equal(stored.mode,"dry-run");assert.deepEqual(stored.jwtPolicy,{"photo-quality-review":true});assert.deepEqual(stored.requestedNewFunctions,["photo-quality-review"]);assert.equal(stored.before,undefined);
+  const files=Object.keys(stored.manifest.hashes);assert(files.includes("photo-quality-review/index.ts"));assert(files.includes("ai-photo/photo-qc-calibration.ts"));assert(!files.includes("ai-photo/index.ts"));assert(!files.some(name=>name.includes(".test.")));
+ }finally{await rm(receipt.stage,{recursive:true,force:true});}
 }));

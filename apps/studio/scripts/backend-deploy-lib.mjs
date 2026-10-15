@@ -8,7 +8,7 @@ export const PROJECT_REF = "ymgqpbnjpztwjsyvceld";
 const FUNCTION_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 export const MODERN_SERVICE_FUNCTIONS = ["notify", "presenter-drain", "me", "uploads", "tours"];
 // Only reviewed first-deployment candidates; no JWT weakening is permitted.
-export const NEW_FUNCTION_POLICIES = Object.freeze({"property-sites":true,"property-video-plan":true,"property-video-jobs":true,"property-video-worker":false,"photo-quality-worker":false});
+export const NEW_FUNCTION_POLICIES = Object.freeze({"property-sites":true,"property-video-plan":true,"property-video-jobs":true,"property-video-worker":false,"photo-quality-worker":false,"photo-quality-review":true});
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 export function parseDeploymentArgs(args) {
