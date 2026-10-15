@@ -7,6 +7,12 @@ struct EnhancedPhoto {
     let id: String
     let enhancedURL: URL
     let originalURL: URL
+    var savedVersion: SavedPhotoVersion? = nil
+}
+struct SavedPhotoVersion {
+    var parentID: String?
+    var imageFile: String
+    var originalFile: String
 }
 @MainActor final class AuthStore {
     static let shared = AuthStore()
@@ -128,6 +134,21 @@ final class AVAudioSession {
         Checks.check(!normal.stagingReview.comparedSource && !normal.customReview.comparedSource, "loading edited image does not approve comparison")
         normal.sourceChanged(true)
         Checks.check(normal.stagingReview.comparedSource && normal.customReview.comparedSource, "opening source records comparison only")
+        let savedSource = SavedPhotoVersion(parentID: nil, imageFile: "original.jpg", originalFile: "original.jpg")
+        let exactSource = EnhancedPhoto(id: "source", enhancedURL: normal.viewed.originalURL,
+                                        originalURL: normal.viewed.originalURL, savedVersion: savedSource)
+        Checks.check(normal.isRetainedSource(exactSource), "the exact saved source is highlighted when full-size comparison returns Original")
+        let differentSource = EnhancedPhoto(id: "other-source", enhancedURL: URL(fileURLWithPath: "/another/original.jpg"),
+                                            originalURL: URL(fileURLWithPath: "/another/original.jpg"), savedVersion: savedSource)
+        Checks.check(!normal.isRetainedSource(differentSource), "an Original or Earlier source label cannot select a different retained file")
+        let editedSource = EnhancedPhoto(id: "edited-copy", enhancedURL: normal.viewed.originalURL,
+                                         originalURL: normal.viewed.originalURL,
+                                         savedVersion: .init(parentID: "parent", imageFile: "original.jpg", originalFile: "original.jpg"))
+        Checks.check(!normal.isRetainedSource(editedSource), "an edited descendant cannot impersonate the saved source chip")
+        let normalizedSource = EnhancedPhoto(id: "normalized-source", enhancedURL: URL(fileURLWithPath: "/local/folder/../original.jpg"),
+                                             originalURL: normal.viewed.originalURL, savedVersion: savedSource)
+        Checks.check(normal.isRetainedSource(normalizedSource), "equivalent retained file paths keep their exact normalized source identity")
+        Checks.check(!normal.isRetainedSource(normal.viewed), "a photo without registered source history cannot impersonate a source chip")
 
         for boundary in ["owner", "revision", "workspace", "photo"] {
             for decode in [1, 2] {

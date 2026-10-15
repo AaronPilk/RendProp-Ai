@@ -6,7 +6,7 @@ from pathlib import Path
 import argparse,hashlib,json,re,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3]
 p=argparse.ArgumentParser();p.add_argument('--output',type=Path);a=p.parse_args();OUT=a.output or Path(tempfile.mkdtemp(prefix='rendprop-photo-review80-',dir='/tmp'));OUT.mkdir(parents=True,exist_ok=True)
-paths={'detail':ROOT/'apps/ios/Rendprop/Screens/FlythroughDetailView.swift','queue':ROOT/'apps/ios/Rendprop/Photos/PhotoWorkQueue.swift','service':ROOT/'apps/ios/Rendprop/Photos/PhotoEditService.swift','test':ROOT/'tests/phase1/PhotoWorkProgressTests.swift','theme':ROOT/'apps/ios/Rendprop/DesignSystem/Theme.swift'}
+paths={'detail':ROOT/'apps/ios/Rendprop/Screens/FlythroughDetailView.swift','queue':ROOT/'apps/ios/Rendprop/Photos/PhotoWorkQueue.swift','service':ROOT/'apps/ios/Rendprop/Photos/PhotoEditService.swift','test':ROOT/'tests/phase1/PhotoWorkProgressTests.swift','theme':ROOT/'apps/ios/Rendprop/DesignSystem/Theme.swift','banner':ROOT/'apps/ios/Rendprop/Photos/PhotoWorkBanner.swift'}
 sources={k:q.read_text()for k,q in paths.items()}
 def block(s,needle):
  start=s.index(needle);op=s.index('{',start);i=op+1;n=1
@@ -41,6 +41,9 @@ def boundary(s):
  assert 'Menu {'in r and 'ForEach(photo.history)'in r,'All saved styles must remain accessible'
  assert 'reviewCheck("Windows, walls and fixtures match", detail: "Windows, walls and fixed appliances match the source", isOn: $stagingReview.fixedFeaturesMatch)' in r,'Staging check must name the actual source features while preserving accessibility and binding'
 boundary(sources['detail']);controls=[]
+for literal in ['if let job = jobs.visibleJob', 'Text(PhotoWorkBannerCopy.phaseSummary(for: job))', '.accessibilityValue(PhotoWorkBannerCopy.completedSummary(for: job))', '.onChange(of: auth.userID)', '.rendpropWorkspaceChanged']:
+ assert literal in sources['banner'],'Global progress phase/count/privacy wiring missing: '+literal
+assert 'job.percent' not in sources['banner'],'Global banner must not imply provider percentage'
 for name,old,new in [('forced-dark','.background(Theme.bg.ignoresSafeArea())','.background(Theme.bg.ignoresSafeArea()).environment(\\.colorScheme, .dark)'),('no-fixed-actions','.safeAreaInset(edge: .bottom','.overlay(alignment: .bottom'),('crop-preview','.resizable().scaledToFit()','.resizable().scaledToFill()'),('bypass-stage-review','guard !needsStagingReview || stagingReview.isComplete else {','guard true else {'),('bypass-current-account','guard imageContext?.isCurrent == true else { clearAndDismiss(); return }','guard true else { clearAndDismiss(); return }')]:
  changed=sources['detail'];st=changed.index('struct PhotoCompareView: View {');section=changed[st:];assert old in section,name;mutant=changed[:st]+section.replace(old,new,1)
  try:boundary(mutant)
@@ -86,7 +89,21 @@ commands=[]
 def run(label,args):
  r=subprocess.run(list(map(str,args)),cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120);(OUT/(label+'.log')).write_text(r.stdout);commands.append({'label':label,'exit':r.returncode});assert r.returncode==0,label+': '+r.stdout[-2000:];return r.stdout
 run('layout-compile',['xcrun','swiftc','-parse-as-library',lf,'-o',OUT/'layout']);run('layout-runtime',[OUT/'layout'])
-run('progress-compile',['xcrun','swiftc','-swift-version','5','-parse-as-library',paths['queue'],paths['test'],'-o',OUT/'progress']);run('progress-runtime',[OUT/'progress'])
+banner=block(sources['banner'],'@MainActor private enum PhotoWorkBannerCopy {').replace('private enum','enum',1)
+banner_file=OUT/'ActualBannerCopy.swift';banner_file.write_text('import Foundation\n'+banner+'\n')
+run('progress-compile',['xcrun','swiftc','-swift-version','5','-parse-as-library',paths['queue'],banner_file,paths['test'],'-o',OUT/'progress']);run('progress-runtime',[OUT/'progress'])
+compiled_controls=[]
+for name,old,new,reason in [
+ ('banner-stale-phase','job.phase?.title ?? PhotoWorkQueue.Phase.preparing.title','PhotoWorkQueue.Phase.preparing.title','Global banner exposes the actual observed phase'),
+ ('banner-failed-as-saved','\\(job.done) of \\(job.total) saved','\\(job.attempted) of \\(job.total) saved','Global saved count excludes attempted photos that failed'),
+ ('banner-position-is-saved','min(max(1, job.current), job.total)','min(max(1, job.done), job.total)','Global banner reports the current photo position')]:
+ assert old in banner,name
+ changed=OUT/(name+'.swift');changed.write_text('import Foundation\n'+banner.replace(old,new,1)+'\n')
+ run(name+'-compile',['xcrun','swiftc','-swift-version','5','-parse-as-library',paths['queue'],changed,paths['test'],'-o',OUT/name])
+ r=subprocess.run([str(OUT/name)],cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30)
+ (OUT/(name+'-runtime.log')).write_text(r.stdout)
+ assert r.returncode!=0 and reason in r.stdout,name+' did not fail at its intended consumer invariant'
+ compiled_controls.append({'name':name,'compileExit':0,'runtimeExit':r.returncode,'expectedFailure':reason})
 assert all(q.read_text()==sources[k]for k,q in paths.items()),'Source changed during proof'
-receipt={'passed':True,'sourceHashes':{str(q.relative_to(ROOT)):hashlib.sha256(q.read_bytes()).hexdigest()for q in paths.values()},'reviewActionBodiesUnchangedFrom':'1955b70','sourceNegativeControls':controls,'layoutRuntimeAssertions':86,'commands':commands,'liveCalls':0,'uiExecution':False,'physicalPhoneAcceptance':'Parent checks the integrated build; no simulator UI was used.'}
+receipt={'passed':True,'sourceHashes':{str(q.relative_to(ROOT)):hashlib.sha256(q.read_bytes()).hexdigest()for q in paths.values()},'reviewActionBodiesUnchangedFrom':'1955b70','sourceNegativeControls':controls,'compiledBannerControls':compiled_controls,'layoutRuntimeAssertions':86,'commands':commands,'liveCalls':0,'uiExecution':False,'physicalPhoneAcceptance':'Parent checks the integrated build; no simulator UI was used.'}
 (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps(receipt))

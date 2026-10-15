@@ -4537,7 +4537,7 @@ private struct PhotoStagingSetupView: View {
                         DetailPhotoThumb(url: reference.enhancedURL, height: 180)
                         Toggle("This is the same room and I checked this furniture layout", isOn: $sameRoomConfirmed)
                     } else if setup.references.isEmpty {
-                        Text("Reviewed staging references will be supported after their cost and output checks are approved.")
+                        Text("Furniture references are coming soon.")
                     }
                     Text("Same-room photo references are not available yet. Use the same furnishing brief for each view, then compare every output; matching furniture is not guaranteed.").font(.caption)
                 }
@@ -7029,6 +7029,12 @@ struct PhotoCompareView: View {
         return effects.contains("stage") ? "Staged" : effects.contains("declutter") ? "Decluttered" : "Enhanced"
     }
 
+    private func isRetainedSource(_ version: EnhancedPhoto) -> Bool {
+        guard let saved = version.savedVersion,
+              saved.parentID == nil, saved.imageFile == saved.originalFile else { return false }
+        return version.enhancedURL.standardizedFileURL == viewed.originalURL.standardizedFileURL
+    }
+
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -7154,15 +7160,13 @@ struct PhotoCompareView: View {
     private var savedVersionStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                if viewed.originalURL != viewed.enhancedURL && !versionChoices.contains(where: {
-                    $0.savedVersion.map { $0.parentID == nil && $0.imageFile == $0.originalFile } ?? false
-                }) {
+                if viewed.originalURL != viewed.enhancedURL && !versionChoices.contains(where: isRetainedSource) {
                     versionChip(viewed.retainedSourceIsVerified ? "Original" : "Earlier source", selected: showOriginal) {
                         showOriginal = true
                     }
                 }
                 ForEach(versionChoices) { version in
-                    versionChip(choiceTitle(version), selected: !showOriginal && choiceTitle(viewed) == choiceTitle(version)) {
+                    versionChip(choiceTitle(version), selected: showOriginal ? isRetainedSource(version) : choiceTitle(viewed) == choiceTitle(version)) {
                         chooseVersion(version)
                     }
                 }

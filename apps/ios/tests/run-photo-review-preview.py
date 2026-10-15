@@ -23,6 +23,8 @@ for forbidden in ['selectForPublication','confirmCustomReview','PhotoExportSheet
     assert forbidden not in full,forbidden
 for text in ['guard !needsStagingReview || stagingReview.isComplete','guard !needsCustomReview || customReview.isComplete','try PhotoVersionHistory.selectForPublication','try PhotoVersionHistory.confirmCustomReview']:
     assert text in review,text
+for text in ['!versionChoices.contains(where: isRetainedSource)', 'selected: showOriginal ? isRetainedSource(version) : choiceTitle(viewed) == choiceTitle(version)']:
+    assert text in review,'Saved source selection must follow the displayed source: '+text
 signin=block(account,'struct SignInView: View {')
 assert 'if requiresAccount {\n                Button { showQuickStart = true }' in signin
 assert 'QuickStartVideoView()' in signin and 'if !requiresAccount {' in signin and '.interactiveDismissDisabled(requiresAccount || isExchanging)' in signin
@@ -45,7 +47,7 @@ var audioError: String?
 '''+playback_methods+'\n}\n'
 task=block(review,'.task(id: viewed.id) {'); task=task[task.index('{'):]
 change=block(review,'.onChange(of: showOriginal) {'); change=change[change.index('{'):].replace('{ showing in','{',1)
-methods='\n'.join(block(review,x).replace('private func','func',1) for x in ['private func clearAndDismiss()','private func chooseVersion('])
+methods='\n'.join(block(review,x).replace('private func','func',1) for x in ['private func clearAndDismiss()','private func chooseVersion(','private func isRetainedSource('])
 actual+='''@MainActor final class PhotoReviewHarness {
 let photo=EnhancedPhoto(id:"photo",enhancedURL:URL(fileURLWithPath:"/local/edited.jpg"),originalURL:URL(fileURLWithPath:"/local/original.jpg"))
 var selectedVersion: EnhancedPhoto?; var viewed: EnhancedPhoto { selectedVersion ?? photo }
@@ -66,6 +68,9 @@ variants=[('actual',actual,None),
  ('negative-stale-version',actual.replace('        imageContext = nil\n        enhanced = nil\n        original = nil\n        imageLoadComplete = false','        imageLoadComplete = false'),'version switch clears prior preview before the next decode'),
  ('negative-same-version',actual.replace('        if version.id == viewed.id {\n            showOriginal = false\n            return\n        }\n',''),'choosing the current version preserves loaded pixels because the decode task ID is unchanged'),
  ('negative-same-version-original',actual.replace('        if version.id == viewed.id {\n            showOriginal = false','        if version.id == viewed.id {\n            // lost source toggle'),'choosing the current edited chip switches back from Original without reloading'),
+ ('negative-source-label-only',actual.replace('return version.enhancedURL.standardizedFileURL == viewed.originalURL.standardizedFileURL','return true'),'an Original or Earlier source label cannot select a different retained file'),
+ ('negative-edited-source',actual.replace('        guard let saved = version.savedVersion,\n              saved.parentID == nil, saved.imageFile == saved.originalFile else { return false }\n',''),'an edited descendant cannot impersonate the saved source chip'),
+ ('negative-source-normalization',actual.replace('version.enhancedURL.standardizedFileURL == viewed.originalURL.standardizedFileURL','version.enhancedURL == viewed.originalURL'),'equivalent retained file paths keep their exact normalized source identity'),
  ('negative-audio-category',actual.replace('try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])','try session.setCategory(.ambient, mode: .moviePlayback, options: [.mixWithOthers])'),'explicit introduction playback uses movie audio that is not silenced by the ringer category'),
  ('negative-audio-restore',actual.replace('try? session.setCategory(saved.category, mode: saved.mode, options: saved.options)','// omitted prior configuration restoration'),'audio cleanup restores the exact prior category mode and options'),
  ('negative-audio-deactivate',actual.replace('try? session.setActive(false, options: .notifyOthersOnDeactivation)','// omitted deactivation'),'audio cleanup deactivates with notifyOthersOnDeactivation'),

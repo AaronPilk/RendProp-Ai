@@ -1,5 +1,18 @@
 import SwiftUI
 
+/// These counts describe saved photos, never a supplier's in-flight percentage.
+@MainActor private enum PhotoWorkBannerCopy {
+    static func phaseSummary(for job: PhotoWorkQueue.Job) -> String {
+        let position = min(max(1, job.current), job.total)
+        return "\(job.phase?.title ?? PhotoWorkQueue.Phase.preparing.title) · photo \(position) of \(job.total)"
+    }
+
+    static func completedSummary(for job: PhotoWorkQueue.Job) -> String {
+        let failures = job.failures.count
+        return "\(job.done) of \(job.total) saved" + (failures > 0 ? " · \(failures) failed" : "")
+    }
+}
+
 struct PhotoWorkBanner: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject private var jobs = PhotoWorkQueue.shared
@@ -14,7 +27,7 @@ struct PhotoWorkBanner: View {
                     HStack(spacing: 10) {
                         Image(systemName: job.running ? "sparkles" : job.failures.isEmpty && !job.interrupted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                             .foregroundStyle(Theme.accent)
-                        Text(job.running ? "\(job.title) · \(job.percent)%" : "\(job.done) of \(job.total) photos ready")
+                        Text(job.running ? job.title : "\(job.done) of \(job.total) photos ready")
                             .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
                             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
@@ -27,10 +40,14 @@ struct PhotoWorkBanner: View {
                         }
                     }
                     if job.running {
+                        Text(PhotoWorkBannerCopy.phaseSummary(for: job))
+                            .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("photoWork.phase")
                         ProgressView(value: job.fraction).tint(Theme.accent)
                             .accessibilityLabel("Photo batch progress")
-                            .accessibilityValue("\(job.percent) percent; \(job.done) changed, \(job.failures.count) failed")
-                        Text("Photo \(job.current) of \(job.total). You can use other screens in Rendprop while this finishes.")
+                            .accessibilityValue(PhotoWorkBannerCopy.completedSummary(for: job))
+                        Text(PhotoWorkBannerCopy.completedSummary(for: job) + ". You can use other screens in Rendprop while this finishes.")
                             .font(.rpCaption).foregroundStyle(Theme.inkDim)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if job.interrupted {

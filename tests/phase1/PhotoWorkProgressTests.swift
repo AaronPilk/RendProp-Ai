@@ -12,6 +12,23 @@ import Combine
     }
     enum Refusal: Error { case expected }
     @MainActor static func main() async {
+        var banner = PhotoWorkQueue.Job(listingID: UUID(), title: "Staging", total: 3)
+        for phase in [PhotoWorkQueue.Phase.preparing, .uploading, .generatingAndChecking, .checkingReturnedImage, .saving] {
+            banner.phase = phase
+            check(PhotoWorkBannerCopy.phaseSummary(for: banner) == "\(phase.title) · photo 1 of 3",
+                  "Global banner exposes the actual observed phase even before any photo is saved")
+        }
+        check(PhotoWorkBannerCopy.completedSummary(for: banner) == "0 of 3 saved",
+              "An in-flight photo does not fabricate saved progress")
+        banner.current = 3; banner.done = 1
+        banner.failures = [.init(photoID: "failed", position: 2, error: Refusal.expected)]
+        check(PhotoWorkBannerCopy.phaseSummary(for: banner) == "Saving version · photo 3 of 3",
+              "Global banner reports the current photo position independently of saved counts")
+        check(PhotoWorkBannerCopy.completedSummary(for: banner) == "1 of 3 saved · 1 failed",
+              "Global saved count excludes attempted photos that failed")
+        check(!PhotoWorkBannerCopy.phaseSummary(for: banner).contains("%")
+              && !PhotoWorkBannerCopy.completedSummary(for: banner).contains("%"),
+              "Global copy never claims an in-flight supplier percentage")
         let queue = PhotoWorkQueue.shared
         var current = true
         var release: CheckedContinuation<Void, Never>?
