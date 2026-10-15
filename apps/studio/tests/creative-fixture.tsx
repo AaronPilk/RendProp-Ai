@@ -1,4 +1,5 @@
 import {useState} from "react";
+import {StudioError} from "../src/data/config";
 import {createRoot} from "react-dom/client";
 import CreativeWorkspace from "../src/features/creative/CreativeWorkspace";
 import type {StudioServices} from "../src/data/services";
@@ -26,7 +27,10 @@ const services={subscribe:()=>()=>{},getSnapshot:()=>({status:"signed-in",identi
  if(path.endsWith("ai-copy/shotlist"))return {script:"Welcome inside. The bright kitchen opens onto a patio.",shots:body.photos.map((p:any,i:number)=>({photo_id:p.id,order:i+1,room:p.room,motion:"push_in",seconds:5,on_screen_text:"Bright kitchen",voice_line:"The kitchen opens onto the patio."}))};
  if(path.endsWith("ai-copy/agent-reel"))return {cutaways:[{photo_id:source,start:4,end:6,on_screen_text:"Kitchen and patio",motion:"push_in"}]};
  if(path.endsWith("ai-copy/edit-prompt"))return {prompt:"Remove the movable boxes while preserving the room and permanent features."};
- if(path.endsWith("ai-photo")){if(body.edit==="suggest")return {suggestions:[{edit:"declutter",reason:"Clear the movable boxes to show the room."}]};return {...(photoResponses.shift()??{image_b64:png,disclosure:"This photo was digitally altered with AI."}),mime:"image/png",provenance:{id:provenance,recorded:true}};}
+ if(path.endsWith("ai-photo-v2")&&localStorage.getItem("fixture-photo-http")==="true"){
+  const response=await fetch("/fixture/photo",{method:"POST",headers:{"content-type":"application/json","idempotency-key":options.idempotencyKey,"x-org-id":options.orgId,"x-rendprop-photo-quality-protocol":options.photoQualityProtocol},body:JSON.stringify(body),signal:options.signal});const value=await response.json();if(!response.ok)throw new StudioError(value.code,value.error,response.status,value);return value;
+ }
+ if(path.endsWith("ai-photo")||path.endsWith("ai-photo-v2")){if(body.edit==="suggest")return {suggestions:[{edit:"declutter",reason:"Clear the movable boxes to show the room."}]};return {...(photoResponses.shift()??{image_b64:png,disclosure:"This photo was digitally altered with AI."}),mime:"image/png",provenance:{id:provenance,recorded:true}};}
  if(path==="/functions/v1/uploads"&&method==="POST"){const id=`88888888-8888-4888-8888-${String(++counter).padStart(12,"0")}`;const ticket={asset_id:id,storage_key:`renders/${org}/${body.listing_id}/${body.role}-${id}.png`,uploaded:false,mode:"single",put_url:`https://uploads.rendprop.com/v2/${id}?signature=fixture`};tickets.set(id,ticket);return ticket;}
  if(/\/uploads\/[^/]+\/complete$/.test(path)){const id=path.split("/").at(-2)!;const ticket=tickets.get(id);return {...ticket,id,listing_id:listing,uploaded:true};}
  if(path.includes("me/compliance/")&&method==="PATCH")return {ok:true};

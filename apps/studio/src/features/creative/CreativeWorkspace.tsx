@@ -40,6 +40,8 @@ import "./creative.css";
 import BatchPhotoStudio from "./BatchPhotoStudio";
 import PhotoExportPanel from "./PhotoExportPanel";
 import CoordinatorPhotoExportPanel from "./CoordinatorPhotoExportPanel";
+import {retainedPhotoRequest,resumePhotoRequest} from "./creative-request";
+import {savedPhotoRequests,matchingPhotoRequest,finishPhotoRequest,type SavedPhotoRequest} from "./photo-request-journal";
 import { importedPhoto, inputForEdit, photoDelivery, propertyPhoto, propertyOriginalPhoto, photosInTab, type PhotoLibraryTab, type PhotoDelivery, type PhotoSource } from "./photo-lineage";
 import { importSubtitleTranscript, TRANSCRIPT_FILE_BYTES } from "./transcript";
 const PresenterPanel = lazy(() => import("../presenter/PresenterPanel"));
@@ -192,6 +194,7 @@ function ListingCreative(
     [style, setStyle] = useState("modern"),
     [prompt, setPrompt] = useState(""),
     [room, setRoom] = useState("");
+  const photoRequestRow=useRef<SavedPhotoRequest|null>(null);
   const [photoTab, setPhotoTab] = useState<PhotoLibraryTab>("original");
   const [suggestions, setSuggestions] = useState<
       { edit: Edit; reason: string }[]
@@ -608,43 +611,44 @@ function ListingCreative(
       const decision = analyzeCustomPhotoPrompt(prompt, listing.spaceType);
       if (decision.status !== "ready") throw new Error(decision.message);
     }
-    const originalAssetId = await ensureOriginal();
+    const identity={actor:workspace.user.id,library:workspace.libraryOrgId??orgId,listing:listingId};
     assertPhotoScope();
-    const input = inputForEdit(source, edit);
-    const response = record(
-      await api("ai-photo", {
-        listing_id: listingId,
-        original_asset_id: originalAssetId,
-        image_b64: input.base64,
-        mime: input.mime,
-        edit,
-        space_type: listing.spaceType,
-        label: room || "Studio photo",
-        ...(edit === "stage" ? { style } : {}),
-        ...(edit === "custom" ? { prompt: prompt.trim() } : {}),
-      }, {
-        idempotencyKey: crypto.randomUUID(),
-        timeoutMs: 300_000,
-        maxResponseBytes: 32 * 1024 * 1024,
-      }),
-    );
-    assertPhotoScope();
-    const file = editedImage(
-        requiredText(response.image_b64, "an edited photo", 32 * 1024 * 1024),
-        text(response.mime, 50) || "image/png",
-      ),
-      preview = `data:${file.type};base64,${String(response.image_b64)}`;
-    const provenance = response.provenance ? record(response.provenance) : {};
-    const disclosure = requiredText(response.disclosure, "the photo disclosure", 1000);
-    const delivery = photoDelivery(source, file, edit, disclosure, provenance.recorded === true ? text(provenance.id, 80) || null : null);
-    setPhotoResult({ ...delivery, preview, originalAssetId, disclosure: delivery.disclosures.join("\n"),
-      saved: false, reviewed: edit !== "custom", edit, source: { ...source, originalAssetId } });
+    const existing=await matchingPhotoRequest(identity,source);assertPhotoScope();
+    if(existing){
+      const changed=existing.context.edit!==edit||edit==="stage"&&existing.context.style!==style||edit==="custom"&&existing.context.prompt!==prompt.trim();
+      if(existing.state==="ready"&&changed){await finishPhotoRequest(existing);assertPhotoScope();photoRequestRow.current=null;}
+      else{photoRequestRow.current=existing;applySavedPhoto(await resumePhotoRequest(services,identity,existing,assertPhotoScope,signal));return;}
+    }
+    const originalAssetId=await ensureOriginal();assertPhotoScope();
+    const input=inputForEdit(source,edit);
+    applySavedPhoto(await retainedPhotoRequest(services,identity,{
+      listing_id:listingId,original_asset_id:originalAssetId,image_b64:input.base64,mime:input.mime,edit,space_type:listing.spaceType,label:room||"Studio photo",
+      ...(edit==="stage"?{style}:{}),...(edit==="custom"?{prompt:prompt.trim()}:{})
+    },{channel:"single",source:{...source,originalAssetId},edit,style,prompt:prompt.trim(),originalAssetId},assertPhotoScope,signal));
+  }
+  function applySavedPhoto(saved:{row:SavedPhotoRequest;result:unknown}){
+    assertPhotoScope();const {row}=saved,originalAssetId=row.context.originalAssetId,source=row.context.source,edit=row.context.edit,response=record(saved.result);
+    const file=editedImage(requiredText(response.image_b64,"an edited photo",32*1024*1024),text(response.mime,50)||"image/png"),preview=`data:${file.type};base64,${String(response.image_b64)}`;
+    const provenance=response.provenance?record(response.provenance):{},disclosure=requiredText(response.disclosure,"the photo disclosure",1000),delivery=photoDelivery(source,file,edit,disclosure,provenance.recorded===true?text(provenance.id,80)||null:null);
+    photoRequestRow.current=row;setSource(source);setEdit(edit);setStyle(row.context.style);setPrompt(row.context.prompt);setPhotoTab("original");
+    setPhotoResult({...delivery,preview,originalAssetId,disclosure:delivery.disclosures.join("\n"),saved:false,reviewed:edit!=="custom",edit,source});
     if (provenance.recorded !== true) {
       setNotice(
         "Your edited photo is ready to review, but its disclosure record could not be saved. Download the result and retry later before adding it to a public gallery.",
       );
     }
   }
+  useEffect(()=>{
+    let cancelled=false;const identity={actor:workspace.user.id,library:workspace.libraryOrgId??orgId,listing:listingId};
+    void savedPhotoRequests(identity).then(rows=>{
+      if(cancelled||!alive.current||signal.aborted)return;const row=rows.find(item=>item.context.channel==="single");if(!row)return;
+      return run("Checking your saved photo",async()=>{
+        assertPhotoScope();photoRequestRow.current=row;setSource(row.context.source);setEdit(row.context.edit);setStyle(row.context.style);setPrompt(row.context.prompt);setPhotoTab("original");
+        applySavedPhoto(await resumePhotoRequest(services,identity,row,assertPhotoScope,signal));
+      });
+    }).catch(reason=>{if(!cancelled&&alive.current&&!signal.aborted)setError(message(reason));});
+    return()=>{cancelled=true;};
+  },[services,orgId,listingId,workspace.user.id,workspace.libraryOrgId]);
   async function savePhoto() {
     if (!photoResult) return;
     if (photoResult.edit === "custom" && !photoResult.reviewed) throw new Error("Compare the preview with its original and confirm the fixed features before saving it.");
@@ -684,6 +688,7 @@ function ListingCreative(
       provenance_id: photoResult.provenanceId,
     });
     assertPhotoScope();
+    if(photoRequestRow.current){await finishPhotoRequest(photoRequestRow.current);photoRequestRow.current=null;}
     setPhotoResult({ ...photoResult, saved: true });
     setNotice(
       "Photo saved to this property's cloud gallery with the original and AI disclosure attached.",
@@ -1387,7 +1392,7 @@ function ListingCreative(
                 disabled={!source || source.edits.length > 0 || !source.originalVerified || isBusy || !canCreate || edit === "custom" && analyzeCustomPhotoPrompt(prompt, listing.spaceType).status !== "ready"}
                 onClick={() => run("Creating your photo", generatePhoto)}
               >
-                Generate preview
+                {photoRequestRow.current?.state==="pending"?"Check saved edit":"Generate preview"}
               </button>
             </div>
             <small>Uses the same photo allowance as your iPhone app.</small>
@@ -1439,6 +1444,7 @@ function ListingCreative(
                 </button>
                 <button disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed} onClick={() => void run("Opening original", async () => {
                   if (photoResult.edit === "custom" && !photoResult.reviewed) throw new Error("Compare and confirm this custom edit before continuing.");
+                  if(photoRequestRow.current){await finishPhotoRequest(photoRequestRow.current);photoRequestRow.current=null;}
                   const next = { ...importedPhoto(photoResult.source.original!), originalAssetId: photoResult.originalAssetId };
                   setPhotoTab("original");
                   await chooseSource(next);

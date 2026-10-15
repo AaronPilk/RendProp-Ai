@@ -116,6 +116,7 @@ export type StudioRequestOptions = {
   body?: unknown;
   signal?: AbortSignal;
   idempotencyKey?: string;
+  photoQualityProtocol?: "retained-operation-v1";
   aiConsent?: "property-video-jobs-v1" | "property-video-plan-v1";
   timeoutMs?: number;
   maxResponseBytes?: number;
@@ -391,6 +392,7 @@ export function createStudioServices(
             if (options?.binary) headers["Content-Type"] = "application/octet-stream";
             if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
             if (options?.aiConsent) headers["X-Rendprop-AI-Consent"] = options.aiConsent;
+            if (options?.photoQualityProtocol) headers["X-Rendprop-Photo-Quality-Protocol"] = options.photoQualityProtocol;
             const response = await fetcher(`${config.supabaseUrl}${path}`, {
               method,
               body: options?.binary ?? (options?.body === undefined ? undefined : JSON.stringify(options.body)),
@@ -418,11 +420,17 @@ export function createStudioServices(
                       : response.status === 402 ? "Your current plan has reached its allowance. Review your plan in Workspace."
                       : response.status === 429 ? "Please wait a moment before trying again."
                       : "Rendprop could not complete this request. Please retry.";
+              let failureCode="request-failed";let failureDetails:Record<string,unknown>|undefined;
               // Existing Edge Functions return user-facing HttpError messages. Never
               // echo provider/5xx bodies or URLs, which may contain signed capabilities.
               if ([400, 402, 409, 413, 422].includes(response.status)) {
                 try {
-                  const detail = await boundedJson(response, controller.signal, 8192) as { error?: unknown; code?: unknown };
+                  const detail = await boundedJson(response, controller.signal, 8192) as { error?: unknown; code?: unknown; [key:string]:unknown };
+                  if (["photo_quality_pending","photo_quality_hold","photo_quality_refused","photo_clarification_required","unsupported_edit"].includes(String(detail.code))) failureCode=String(detail.code);
+                  failureDetails=Object.fromEntries(Object.entries(detail).filter(([key,value])=>
+                    ["no_provider_dispatch","retry_existing_job","recovery_protocol_required"].includes(key)&&typeof value==="boolean"
+                    ||key==="provider_cost_incurred"&&(typeof value==="boolean"||value==="possible")
+                    ||["check_id","evidence_id"].includes(key)&&typeof value==="string"&&/^[a-f0-9-]{36}$/i.test(value)));
                   if (response.status === 402 && detail.code === "trial_capacity_unavailable") {
                     throw new StudioError("trial_capacity_unavailable", "Trial AI is temporarily unavailable. Please try again later or contact support. Your saved work is unchanged.", 402);
                   }
@@ -433,7 +441,7 @@ export function createStudioServices(
                   /* Use the stable status message. */
                 }
               } else void response.body?.cancel().catch(() => {});
-              throw new StudioError("request-failed", message, response.status);
+              throw new StudioError(failureCode, message, response.status, failureDetails);
             }
             if (response.status === 204) { assertCurrent(version, controller.signal); return null; }
             let result: unknown;
@@ -516,6 +524,8 @@ export function createStudioServices(
       if (!/^\/functions\/v1\/[a-z][a-z0-9-]*(?:[/?][^#\\]*)?$/.test(path) ||
         path.includes("..") || /%2e|%2f|%5c|[\u0000-\u0020]/i.test(path))
         throw new StudioError("request-path", "Choose a valid Rendprop action.");
+      if (options.photoQualityProtocol !== undefined && (options.photoQualityProtocol !== "retained-operation-v1" || path !== "/functions/v1/ai-photo-v2" || options.method !== "POST"))
+        throw new StudioError("request-path", "Use the saved photo operation for this request.");
       const audioUpload = /^\/functions\/v1\/property-video-jobs\/audio\/[a-f0-9-]{36}\/content$/.test(path);
       if (options.binary && (options.body !== undefined || options.method !== "PUT" ||
         !(audioUpload || /^\/functions\/v1\/studio\/project-media\/[a-f0-9-]{36}\/(?:[0-9]|1[0-5])$/.test(path)) ||

@@ -1249,3 +1249,15 @@ test("property video consent is sent only to exact admitted routes and owned aud
  await services.api(`/functions/v1/property-video-jobs/${PHOTO}/resume`,{orgId:ORG,method:'POST',body:{},aiConsent:'property-video-jobs-v1'});assert.equal(calls[2]!.headers.get('X-Rendprop-AI-Consent'),'property-video-jobs-v1');
  assert.equal(calls.length,3);await assert.rejects(services.api(path,{orgId:ORG,method:'PUT',binary:file}));assert.equal(calls.length,4);assert.equal(calls[3]!.headers.get('Content-Type'),'application/octet-stream');assert.equal(calls[3]!.headers.get('X-Org-Id'),ORG);assert.equal(calls[3]!.body,file);assert.equal(auth.refreshCalls(),0);services.dispose();
 });
+
+test("retained photo transport sends only typed protocol on v2 POST and preserves safe QC recovery metadata",async()=>{
+ const auth=mockAuth(),calls:{headers:Headers;body:unknown}[]=[];let mode="pending";
+ const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url,options)=>{
+  if(url.pathname==="/functions/v1/ai-photo-v2"){calls.push({headers:new Headers(options.headers),body:options.body});return json({error:"The photo is saved privately while checking.",code:mode==="refused"?"photo_quality_refused":"photo_quality_pending",check_id:PHOTO,evidence_id:LISTING,retry_existing_job:true,no_provider_dispatch:false,untrusted_url:"https://must-not-retain.invalid"},mode==="refused"?422:409);}return fixtureResponse(url);
+ })});await services.loadWorkspace();
+ const options={orgId:ORG,method:"POST"as const,body:{image_b64:"exact-source",listing_id:LISTING},idempotencyKey:"studio-photo:11111111-1111-4111-8111-111111111111",photoQualityProtocol:"retained-operation-v1"as const};
+ for(mode of["pending","refused"])await assert.rejects(services.api("/functions/v1/ai-photo-v2",options),(error:unknown)=>{const e=error as StudioError;assert.equal(e.code,mode==="refused"?"photo_quality_refused":"photo_quality_pending");assert.equal(e.details?.check_id,PHOTO);assert.equal(e.details?.retry_existing_job,true);assert.equal(e.details?.untrusted_url,undefined);return true;});
+ assert.equal(calls.length,2);assert.equal(calls[0]!.headers.get("X-Rendprop-Photo-Quality-Protocol"),"retained-operation-v1");assert.equal(calls[0]!.headers.get("X-Org-Id"),ORG);assert.equal(calls[0]!.headers.get("Idempotency-Key"),options.idempotencyKey);assert.equal(calls[0]!.body,calls[1]!.body);
+ for(const path of["/functions/v1/ai-photo","/functions/v1/ai-photo-v2/status"])await assert.rejects(services.api(path,options));
+ await assert.rejects(services.api("/functions/v1/ai-photo-v2",{...options,photoQualityProtocol:"invented"}as any));assert.equal(calls.length,2);services.dispose();
+});

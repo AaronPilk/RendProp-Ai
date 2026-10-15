@@ -69,7 +69,7 @@ try {
   await page.getByRole("group", { name: "Staging style", exact: true }).getByRole("button", { name: "Rustic", exact: true }).click();
   await page.getByRole("button", { name: "Generate preview", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Review your edit", exact: true })).toBeVisible();
-  const calls = await page.evaluate(() => window.creativeFixture.calls()), generations = calls.filter(c => c.path.endsWith("ai-photo") && c.body.edit !== "suggest");
+  const calls = await page.evaluate(() => window.creativeFixture.calls()), generations = calls.filter(c => (c.path.endsWith("ai-photo")||c.path.endsWith("ai-photo-v2")) && c.body.edit !== "suggest");
   assert.deepEqual(generations.map(c => c.body.edit), ["declutter", "stage", "twilight", "stage"]);
   const inputPixels = await Promise.all(generations.map(c => inspect(Buffer.from(c.body.image_b64, "base64"))));
   assert.ok(inputPixels[0].center[2] > 240 && inputPixels[0].center[0] < 10, "first edit starts with original blue pixels");
@@ -124,7 +124,7 @@ try {
   await page.evaluate(photos => window.creativeFixture.photos(photos), [legacy, { ...legacy, id: "44444444-4444-4444-8444-444444444446", originalUrl: null, caption: "Original unavailable." }, decluttered, staged]);
   await page.getByRole("combobox", { name: "Property", exact: true }).selectOption(other); await page.getByRole("combobox", { name: "Property", exact: true }).selectOption(listing);
   const versionTabs = page.getByRole("navigation", { name: "Photo versions" });
-  const beforeReview = await page.evaluate(() => window.creativeFixture.calls().filter(call => call.path.endsWith("ai-photo")).length);
+  const beforeReview = await page.evaluate(() => window.creativeFixture.calls().filter(call => (call.path.endsWith("ai-photo")||call.path.endsWith("ai-photo-v2"))).length);
   await versionTabs.getByRole("button", { name: "Decluttered", exact: true }).click();
   await expect(page.getByRole("button", { name: "Generate preview", exact: true })).toHaveCount(0);
   await page.getByRole("combobox", { name: "Source property photo", exact: true }).selectOption(decluttered.id);
@@ -136,7 +136,7 @@ try {
   await expect(versionTabs.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-current", "page");
   const originalPixels = await inspect(Buffer.from((await page.getByAltText("Selected source property", { exact: true }).getAttribute("src")).split(",")[1], "base64"));
   assert.ok(originalPixels.center[2] > 240 && originalPixels.center[0] < 10);
-  assert.equal(await page.evaluate(() => window.creativeFixture.calls().filter(call => call.path.endsWith("ai-photo")).length), beforeReview, "review/tab changes never dispatch an edit");
+  assert.equal(await page.evaluate(() => window.creativeFixture.calls().filter(call => (call.path.endsWith("ai-photo")||call.path.endsWith("ai-photo-v2"))).length), beforeReview, "review/tab changes never dispatch an edit");
   receipt.checks.push("Typed Decluttered/Staged tabs review finished versions without edit controls or generation; Edit original with AI opens actual original pixels and preserves all saved variants");
   await page.getByRole("navigation", { name: "Photo versions" }).getByRole("button", { name: "Saved edits", exact: true }).click();
   await expect(page.getByRole("button", { name: "Generate preview", exact: true })).toHaveCount(0);
@@ -164,7 +164,7 @@ try {
   await batch.getByText(`Verify the original for ${legacy.caption}`, { exact: true }).click(); await batch.getByRole("checkbox", { name: "This is the actual unedited original.", exact: true }).check();
   await page.evaluate(responses => window.creativeFixture.photoResponses(responses), [response("green", "Movable clutter removed with AI.")]);
   await batch.getByRole("button", { name: "Generate 1 photo previews", exact: true }).click(); await expect(batch.getByText("Review your preview", { exact: true })).toBeVisible();
-  const batchCall = await page.evaluate(() => window.creativeFixture.calls().filter(c => c.path.endsWith("ai-photo")).at(-1));
+  const batchCall = await page.evaluate(() => window.creativeFixture.calls().filter(c => (c.path.endsWith("ai-photo")||c.path.endsWith("ai-photo-v2"))).at(-1));
   const batchInput = await inspect(Buffer.from(batchCall.body.image_b64, "base64")); assert.ok(batchInput.center[2] > 240 && batchInput.center[0] < 10);
   assert.equal((await page.evaluate(() => window.creativeFixture.uploadedFiles())).at(-1).sha256, hash(images.blue));
   await batch.getByRole("button", { name: "Download photo", exact: true }).first().click();
