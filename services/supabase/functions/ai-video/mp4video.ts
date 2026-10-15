@@ -422,10 +422,10 @@ function editList(
   movieScale: number,
   trackSeconds: number,
   mediaTicks: number,
-) {
+): number {
   const edits = boxes.filter((b) => b.type === "edts");
   need(edits.length <= 1);
-  if (!edits.length) return;
+  if (!edits.length) return 0;
   const entries = children(v, edits[0].start, edits[0].end),
     e = one(entries, "elst");
   need(entries.length === 1);
@@ -446,6 +446,7 @@ function editList(
       Math.abs(segment / movieScale - trackSeconds) <= 0.001 &&
       v.getInt16(rateAt) === 1 && v.getInt16(rateAt + 2) === 0,
   );
+  return mediaTime;
 }
 function table(v: DataView, b: Box, width: number, max = 65536): number {
   full(v, b);
@@ -459,6 +460,7 @@ function sampleTimes(
   samples: Box[],
   scale: number,
   mediaTicks: number,
+  composedStart?: number,
 ): { count: number; fps: number } {
   const b = one(samples, "stts"), entries = table(v, b, 8);
   let count = 0, ticks = 0, fps = 0;
@@ -473,6 +475,33 @@ function sampleTimes(
     need(Number.isSafeInteger(ticks) && count <= 720_000);
   }
   need(ticks === mediaTicks && fps > 0 && fps <= 240);
+  // Only our server-rendered CFR30 master may use the wider normal x264
+  // reordering window. Its presentation timestamps must be an exact permutation
+  // of every frame in the edit window: no gaps, duplicates or hidden seconds.
+  // Uploaded paid-provider admission keeps its existing conservative contract.
+  const composed = composedStart !== undefined;
+  const frameTicks = v.getUint32(b.start + 12);
+  if (composed) {
+    need(
+      count <= 15000 && fps === 30 && composedStart >= 0 &&
+        composedStart % frameTicks === 0,
+    );
+    for (let i = 0; i < entries; i++) {
+      need(v.getUint32(b.start + 12 + i * 8) === frameTicks);
+    }
+  }
+  const seen = composed ? new Uint8Array(Math.ceil(count / 8)) : null;
+  function presentation(first: number, n: number, offset: number) {
+    if (!composed) return;
+    need(Math.abs(offset) <= 6 * frameTicks && offset % frameTicks === 0);
+    for (let i = first; i < first + n; i++) {
+      const frame = i + (offset - composedStart!) / frameTicks;
+      need(Number.isSafeInteger(frame) && frame >= 0 && frame < count);
+      const byte = frame >> 3, bit = 1 << (frame & 7);
+      need((seen![byte] & bit) === 0);
+      seen![byte] |= bit;
+    }
+  }
   // Composition offsets may reorder pictures, not introduce unpriced seconds.
   const ctts = samples.filter((s) => s.type === "ctts");
   need(ctts.length <= 1);
@@ -488,11 +517,15 @@ function sampleTimes(
       const at = c.start + 8 + i * 8,
         n = v.getUint32(at),
         offset = version ? v.getInt32(at + 4) : v.getUint32(at + 4);
-      need(n > 0 && Math.abs(offset / scale) <= 0.15);
+      need(
+        n > 0 && total + n <= count &&
+          (composed || Math.abs(offset / scale) <= 0.15),
+      );
+      presentation(total, n, offset);
       total += n;
     }
     need(total === count);
-  }
+  } else presentation(0, count, 0);
   return { count, fps };
 }
 function sampleExtents(
@@ -551,7 +584,7 @@ function sampleExtents(
     need(spans[i].start >= spans[i - 1].end);
   }
 }
-function movie(bytes: Uint8Array, mdats: Span[]): MP4Video {
+function movie(bytes: Uint8Array, mdats: Span[], composed: boolean): MP4Video {
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
     root = header(v, 0);
   need(root.type === "moov" && root.size === bytes.length);
@@ -582,7 +615,33 @@ function movie(bytes: Uint8Array, mdats: Span[]): MP4Video {
     if (type === "vide") {
       need(!samples.some((b) => ["sgpd", "sbgp"].includes(b.type)));
     }
-    const times = sampleTimes(v, samples, mediaClock.scale, mediaClock.ticks);
+    let composedStart: number | undefined;
+    if (composed && type === "vide") {
+      const tkhd = trackHeader(v, one(trackBoxes, "tkhd"), timeline.scale);
+      // Movie/edit clocks round to their own ticks (normally milliseconds),
+      // while CFR video uses a finer clock. Allow one tick from each clock;
+      // the frame-grid permutation below still admits no added media samples.
+      const difference = BigInt(mediaClock.ticks) * BigInt(timeline.scale) -
+        BigInt(timeline.ticks) * BigInt(mediaClock.scale);
+      need(
+        (difference < 0n ? -difference : difference) <=
+          BigInt(timeline.scale) + BigInt(mediaClock.scale),
+      );
+      composedStart = editList(
+        v,
+        trackBoxes,
+        timeline.scale,
+        tkhd.seconds,
+        mediaClock.ticks,
+      );
+    }
+    const times = sampleTimes(
+      v,
+      samples,
+      mediaClock.scale,
+      mediaClock.ticks,
+      composedStart,
+    );
     sampleExtents(v, samples, times.count, mdats);
     // Data references must name this file, never an external video URL.
     const dinf = one(children(v, minf.start, minf.end), "dinf"),
@@ -618,9 +677,24 @@ function movie(bytes: Uint8Array, mdats: Span[]): MP4Video {
 
 /** Source URL is server-selected. Byte/version checks do not replace that
  * authorization or immutable publication fence for the provider's later GET. */
-export async function probeMP4Video(
+export function probeMP4Video(url: string, fetcher: Fetch): Promise<MP4Video> {
+  return probe(url, fetcher, false);
+}
+
+/** Only for the exact immutable output reserved by our private compositor.
+ * Accepts CFR30 x264 B-frame reordering only when the edit window contains
+ * every frame exactly once. Never use for paid uploaded-video admission. */
+export function probeComposedMP4Video(
   url: string,
   fetcher: Fetch,
+): Promise<MP4Video> {
+  return probe(url, fetcher, true);
+}
+
+async function probe(
+  url: string,
+  fetcher: Fetch,
+  composed: boolean,
 ): Promise<MP4Video> {
   try {
     const parsed = new URL(url);
@@ -747,7 +821,7 @@ export async function probeMP4Video(
       offset += h.size;
     }
     need(offset === total && moov !== null && mdats.length > 0);
-    return movie(moov, mdats);
+    return movie(moov, mdats, composed);
   } catch (error) {
     if (error instanceof HttpError) throw error;
     unavailable();

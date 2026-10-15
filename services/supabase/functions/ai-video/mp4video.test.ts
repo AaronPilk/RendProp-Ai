@@ -1,5 +1,11 @@
+import roundingMetadata from "./fixtures/composed-cfr30-transition-rounding.json" with {
+  type: "json",
+};
 import { HttpError } from "../_shared/http.ts";
-import { probeMP4Video } from "./mp4video.ts";
+import { probeComposedMP4Video, probeMP4Video } from "./mp4video.ts";
+import composedMetadata from "./fixtures/composed-x264-bframes.json" with {
+  type: "json",
+};
 
 function ok(value: unknown, message = "assertion failed"): asserts value {
   if (!value) throw new Error(message);
@@ -599,4 +605,116 @@ Deno.test("a stalled metadata body expires at the real deadline and cancels its 
     }), 409);
   ok(Date.now() - start >= 14000 && Date.now() - start < 18000);
   ok(cancelled && (signal as AbortSignal | null)?.aborted);
+});
+
+// Exact metadata from the private compositor, with all video payload removed.
+// The parser must accept the actual 5-frame x264 reordering but cannot trust
+// container dimensions, increase the paid-upload window or skip timeline checks.
+function composedFixture(metadata = composedMetadata): Fixture {
+  const segments = metadata.segments.map((s) => ({
+    start: s.start,
+    bytes: Uint8Array.from(atob(s.bytes), (c) => c.charCodeAt(0)),
+  }));
+  const moov =
+    segments.find((s) =>
+      new TextDecoder().decode(s.bytes.subarray(4, 8)) === "moov"
+    )!.bytes;
+  const requests: Fixture["requests"] = [];
+  const f: Fixture = {
+    total: metadata.total,
+    segments,
+    moov,
+    requests,
+    fetch: async (_url, init) => {
+      const headers = new Headers(init.headers),
+        m = /^bytes=(\d+)-(\d+)$/.exec(headers.get("range")!)!;
+      const first = Number(m[1]),
+        last = Number(m[2]),
+        bytes = new Uint8Array(last - first + 1);
+      requests.push({ first, last, headers });
+      for (const s of segments) {
+        const a = Math.max(first, s.start),
+          b = Math.min(last + 1, s.start + s.bytes.length);
+        if (b > a) {
+          bytes.set(
+            s.bytes.subarray(a - s.start, b - s.start),
+            a - first,
+          );
+        }
+      }
+      return new Response(bytes, {
+        status: 206,
+        headers: {
+          etag: '"composed-master"',
+          "content-range": `bytes ${first}-${last}/${f.total}`,
+          "content-length": String(bytes.length),
+        },
+      });
+    },
+  };
+  return f;
+}
+Deno.test("real composed CFR30 x264 B-frame presentation covers its exact 1080p edit window", async () => {
+  const f = composedFixture();
+  equal(await probeComposedMP4Video(URL, f.fetch), {
+    duration_s: 10,
+    billable_s: 10,
+    width: 1080,
+    height: 1920,
+    fps: 30,
+  });
+  ok(f.requests.reduce((n, r) => n + r.last - r.first + 1, 0) < 8192);
+  await rejects(() => probeMP4Video(URL, composedFixture().fetch), 400);
+});
+Deno.test("composed timing refuses off-grid, duplicated, hidden-tail, altered edit and non-CFR frames", async () => {
+  for (
+    const [box, offset, value] of [
+      ["ctts", 12, 1025],
+      ["ctts", 12, 1536],
+      ["ctts", 12, 8192],
+      ["ctts", 12, 0xffffffff],
+      ["elst", 12, 1536],
+      ["elst", 8, 11000],
+      ["stts", 12, 513],
+    ] as const
+  ) {
+    const f = composedFixture();
+    mutate(f, box, offset, value);
+    await rejects(() => probeComposedMP4Video(URL, f.fetch), 400);
+  }
+});
+Deno.test("composed timing still rejects forged geometry, fragmented, multi-video and out-of-file samples", async () => {
+  for (
+    const [box, offset, value] of [["tkhd", 76, 1920 * 65536], [
+      "stco",
+      8,
+      1,
+    ]] as const
+  ) {
+    const f = composedFixture();
+    mutate(f, box, offset, value);
+    await rejects(() => probeComposedMP4Video(URL, f.fetch), 400);
+  }
+  for (
+    const options of [{ fps: 30, fragment: true }, {
+      fps: 30,
+      duplicateVideo: true,
+    }]
+  ) {
+    await rejects(
+      () => probeComposedMP4Video(URL, fixture(options).fetch),
+      400,
+    );
+  }
+});
+
+Deno.test("composed CFR30 transition duration accepts separate movie/media tick rounding only", async () => {
+  const f = composedFixture(roundingMetadata);
+  const measured = await probeComposedMP4Video(URL, f.fetch);
+  equal(measured.fps, 30);
+  equal(measured.duration_s, 9.734);
+  ok(Math.abs(measured.billable_s - 9.734) < 0.000001);
+  const altered = composedFixture(roundingMetadata);
+  mutate(altered, "mvhd", 16, 9736);
+  await rejects(() => probeComposedMP4Video(URL, altered.fetch), 400);
 });
