@@ -9,7 +9,7 @@ import {
 const SELECTED_ORG = "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb";
 const ACTIVE_ORG = "bbbbbbbb-1111-2222-3333-cccccccccccc";
 
-async function fixture(bypassMembership = false, dropPreference = false) {
+async function fixture(bypassMembership = false, dropPreference = false, availabilityFault?: "sold_at" | "projection") {
   let source = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
   source = source.replace(/^import [\s\S]*?;\n/gm, "");
   source = source.replace(
@@ -45,6 +45,15 @@ async function fixture(bypassMembership = false, dropPreference = false) {
     "export function",
     "function",
   );
+  let contextModule = new URL("./context.ts", import.meta.url).href;
+  if (availabilityFault) {
+    let contextSource = await Deno.readTextFile(new URL("./context.ts", import.meta.url));
+    const before = availabilityFault === "sold_at" ? 'if (row.sold_at || row.status === "archived")' : 'availability: row ? availability(row) : null';
+    assert(contextSource.includes(before));
+    contextSource = contextSource.replace(before, availabilityFault === "sold_at" ? 'if (row.status === "archived")' : 'availability: null');
+    contextSource = contextSource.replace(/from "(\.[^"]+)"/g, (_all, path) => `from ${JSON.stringify(new URL(path, new URL("./context.ts", import.meta.url)).href)}`);
+    contextModule = `data:application/typescript;base64,${btoa(String.fromCharCode(...new TextEncoder().encode(contextSource)))}`;
+  }
   const code = `
     import {HttpError,assert,json,pathSegments,readJsonLimited,respondError} from ${
     JSON.stringify(new URL("../_shared/http.ts", import.meta.url).href)
@@ -58,7 +67,7 @@ async function fixture(bypassMembership = false, dropPreference = false) {
     import {boundedCoachChain,boundedCoachTurn,coachAttemptQuote,coachPromptBytes,COACH_MAX_OUTPUT_TOKENS,COACH_MAX_ATTEMPTS} from ${JSON.stringify(new URL("./budget.ts", import.meta.url).href)};
     import {CoachUsageEvidence} from ${JSON.stringify(new URL("./usage.ts",import.meta.url).href)};
     import {workspaceDirectory} from ${JSON.stringify(new URL("../_shared/workspaces.ts",import.meta.url).href)};
-    import {coachContext} from ${JSON.stringify(new URL("./context.ts", import.meta.url).href)};
+    import {coachContext} from ${JSON.stringify(contextModule)};
     import {fundingContext,fundedAttempt,textAttemptQuote,completeFundingOperation} from ${JSON.stringify(new URL("../_shared/funded-serving.ts",import.meta.url).href)};
     import {parseCoachOutput} from ${
     JSON.stringify(new URL("./actions.ts", import.meta.url).href)
@@ -365,6 +374,67 @@ Deno.test("actual Coach verifies local-to-cloud project mapping and drops foreig
   assertEquals(lookup.filters.id,[cloud]);
   assertEquals(lookup.filters.limit,25);
   assertEquals(f.state.ledgerRows[0].meta.listing_count,1);
+});
+
+async function assertSoldAvailability(f:Awaited<ReturnType<typeof fixture>>) {
+  const id="c0100501-0000-4000-8000-000000000011";
+  f.reset({listingRows:[{id,org_id:SELECTED_ORG,deleted_at:null,status:"ready",sold_at:"2026-10-11T14:52:52.261Z",space_type:"real_estate"}]});
+  const response=await f.handler(req("c0300501-0000-4000-8000-000000000001","team",SELECTED_ORG,{context:{screen:"listing",selected_listing_id:id,listings:[{id,server_id:id,title:"Central Ave",availability:"current"}]}}));
+  assertEquals(response.status,200);assert(f.state.userTurn.includes("server_status=ready, server_availability=sold"),"actual paid Coach prompt must retain the owned Sold availability fact");
+  assert(f.state.userTurn.includes(`Selected project id: ${id}`));assert(f.state.userTurn.includes('title="Central Ave"'));
+  assert(f.state.system.includes("server_status describes media processing only"));
+  assert(f.state.system.includes("current means only not archived in the app"));
+  assert(f.state.system.includes("server_availability=unavailable means unknown"));
+  assert(f.state.system.startsWith("You are Coach, the assistant built into the Rendprop iPhone app. Start with property photos, optional reviewed AI edits, Make a video in Listing or Social format, then a property website."));
+  assert(f.state.system.includes("Recorded walkthroughs and existing drone footage are separate optional media."));
+  assert(f.state.system.includes("not real drone footage or a measured 3D reconstruction"));
+  const lookup=f.state.contextQueries.find((q:any)=>q.table==="listings"&&!q.head);
+  assertEquals(lookup.columns,"id,status,sold_at,space_type");assertEquals(lookup.filters.id,[id]);assertEquals(lookup.filters.deleted_at,null);
+}
+Deno.test("actual Coach keeps ready processing status but uses owned sold_at for Sold availability", async () => {
+  await assertSoldAvailability(await fixture());
+});
+for(const fault of ["sold_at","projection"]as const)Deno.test(`compiled ${fault} omission is rejected by the same actual Sold prompt oracle`,async()=>{
+  const mutated=await fixture(false,false,fault);
+  await assertRejects(()=>assertSoldAvailability(mutated),Error,"actual paid Coach prompt must retain the owned Sold availability fact");
+});
+
+Deno.test("actual Coach never trusts client availability and does not turn an unarchived current home into Sold",async()=>{
+  const f=await fixture(),id="c0100501-0000-4000-8000-000000000012";
+  f.reset({listingRows:[{id,org_id:SELECTED_ORG,deleted_at:null,status:"processing",sold_at:null,space_type:"real_estate"}]});
+  assertEquals((await f.handler(req("c0300501-0000-4000-8000-000000000001","team",SELECTED_ORG,{context:{selected_listing_id:id,listings:[{id,title:"Current Street",availability:"sold",status:"archived",sold_at:"2026-01-01T00:00:00Z"}]}}))).status,200);
+  assert(f.state.userTurn.includes("server_status=processing, server_availability=current"));
+  assert(!f.state.userTurn.includes("server_availability=sold"));assert(!f.state.userTurn.includes("2026-01-01"));
+});
+
+Deno.test("actual Coach distinguishes archived business, legacy archived home and unknown archive evidence",async()=>{
+  const f=await fixture(),id="c0100501-0000-4000-8000-000000000013";
+  for(const [row,expected]of [
+    [{status:"ready",sold_at:"2026-10-11T14:52:52.261Z",space_type:"venue"},"archived"],
+    [{status:"archived",sold_at:null,space_type:"real_estate"},"sold"],
+    [{status:"ready",sold_at:"not-a-date",space_type:"real_estate"},"unavailable"],
+    [{status:"ready",sold_at:1,space_type:"real_estate"},"unavailable"],
+    [{status:"ready",sold_at:null,space_type:"unknown"},"unavailable"],
+    [{status:"ready",space_type:"real_estate"},"unavailable"],
+  ]as const){
+    f.reset({listingRows:[{id,org_id:SELECTED_ORG,deleted_at:null,...row}]});
+    assertEquals((await f.handler(req("c0300501-0000-4000-8000-000000000001","team",SELECTED_ORG,{context:{listings:[{id,title:"Bounded Street"}]}}))).status,200);
+    assert(f.state.userTurn.includes(`server_availability=${expected}`));
+    assert(!f.state.userTurn.includes("not-a-date"));
+  }
+});
+
+Deno.test("actual Coach excludes deleted and foreign Sold facts, and local drafts cannot supply availability",async()=>{
+  const f=await fixture(),own="c0100501-0000-4000-8000-000000000014",foreign="c0100501-0000-4000-8000-000000000015",deleted="c0100501-0000-4000-8000-000000000016",draft="c0100501-0000-4000-8000-000000000017";
+  f.reset({listingRows:[
+    {id:own,org_id:SELECTED_ORG,deleted_at:null,status:"ready",sold_at:null,space_type:"real_estate"},
+    {id:foreign,org_id:ACTIVE_ORG,deleted_at:null,status:"ready",sold_at:"2026-10-11T14:52:52.261Z",space_type:"real_estate"},
+    {id:deleted,org_id:SELECTED_ORG,deleted_at:"2026-10-12T00:00:00Z",status:"ready",sold_at:"2026-10-11T14:52:52.261Z",space_type:"real_estate"},
+  ]});
+  assertEquals((await f.handler(req("c0300501-0000-4000-8000-000000000001","team",SELECTED_ORG,{context:{selected_listing_id:foreign,listings:[{id:own,title:"Owned Street"},{id:foreign,title:"Foreign Sold"},{id:deleted,title:"Deleted Sold"},{id:draft,title:"Device Draft",local_draft:true,availability:"sold"}]}}))).status,200);
+  assert(!f.state.userTurn.includes("Foreign Sold"));assert(!f.state.userTurn.includes("Deleted Sold"));assert(f.state.userTurn.includes("No project is selected."));
+  assert(!f.state.userTurn.includes("server_availability=sold"));
+  const line=f.state.userTurn.split("\n").find((s:string)=>s.includes('title="Device Draft"'));assert(line.includes("server_availability=unavailable"));
 });
 
 Deno.test("actual Coach uses only bounded real selected-workspace account/usage facts and marks degraded plan unknown", async () => {

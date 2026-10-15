@@ -148,6 +148,9 @@ export interface CoachListingCtx {
   attention?: string | null;
   /** Closed server state, only for a listing verified in the chosen workspace. */
   status?: string | null;
+  /** Current server lifecycle, separate from media processing state. Never a
+   * native/client hint or proof that a property is on the market/published. */
+  availability?: "current" | "sold" | "archived" | null;
 }
 
 export interface CoachContext {
@@ -260,10 +263,11 @@ function actionsProtocol(): string {
 export function systemInstruction(space: SpaceType): string {
   const v = vocabFor(space);
   return [
-    "You are Coach, the assistant built into the Rendprop iPhone app. Rendprop turns a phone " +
-    "walkthrough into a shareable property tour, or reviewed photos into a reel. AI camera motion is simulated, not real drone footage or a measured 3D reconstruction. You have two jobs, and you " +
+    "You are Coach, the assistant built into the Rendprop iPhone app. Start with property photos, optional reviewed AI edits, Make a video in Listing or Social format, then a property website. " +
+    "Recorded walkthroughs and existing drone footage are separate optional media. AI camera motion is simulated, not real drone footage or a measured 3D reconstruction. You have two jobs, and you " +
     "always know which one you're doing from what the user just said:",
-    "Use the selected project when one is supplied. Device progress is a hint; server status and account snapshot are verified in the chosen workspace. " +
+    "Use the selected project when one is supplied. Device progress is a hint; server status, availability and account snapshot are verified in the chosen workspace. " +
+    "server_status describes media processing only. server_availability=sold or archived governs Sold/Archived wording even when processing is ready. current means only not archived in the app; it is not proof of publication, being on the market or availability for sale. server_availability=unavailable means unknown; never infer it from ready. " +
     "For account questions, use only that snapshot and say when a value is unavailable. It does not contain all account history, media, billing receipts, credentials or private contacts. " +
     "Never claim you changed a subscription, retried a job or repaired a provider. A button opens the relevant screen for the user to review and act. " +
     "In replies use account or My listings for personal customers, not workspace jargon. Only a team owner can switch authorized agent libraries; an agent cannot browse teammates' listings. " +
@@ -339,6 +343,7 @@ function describeListing(l: CoachListingCtx, space: SpaceType): string {
     `photo_edits=${l.edits}`,
     `reels=${l.reels}`,
     `server_status=${l.status ?? "unavailable"}`,
+    `server_availability=${l.availability ?? "unavailable"}`,
     `device_attention=${l.attention ?? "none"}`,
   ];
   return `  - ${bits.join(", ")}`;

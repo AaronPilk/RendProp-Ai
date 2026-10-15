@@ -29,6 +29,12 @@ function date(raw: unknown): string | null {
 function count(raw: unknown): number | null {
   return typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0 ? raw : null;
 }
+function availability(row: {status: string; sold_at?: unknown; space_type?: unknown}): CoachListingCtx["availability"] {
+  if (!STATES.has(row.status) || !["real_estate", "venue", "restaurant", "retail", "fitness", "other"].includes(String(row.space_type))) return null;
+  if (row.sold_at !== null && row.sold_at !== undefined && !date(row.sold_at)) return null;
+  if (row.sold_at || row.status === "archived") return row.space_type === "real_estate" ? "sold" : "archived";
+  return row.sold_at === null ? "current" : null;
+}
 
 /** Only selected-workspace counts, closed states and billing dates. Never read
  * profiles, addresses, leads content, raw job errors, receipts or provider keys.
@@ -59,7 +65,7 @@ export async function coachContext(
     admin.from("orgs").select("plan_source,plan_expires_at,trial_ends_at,deleted_at").eq("id", billingOrg).is("deleted_at", null).maybeSingle(),
     Promise.resolve({data:access,error:null}),
     libraryUsageSummary(admin,user,org,month).catch(error=>{if(error instanceof HttpError && error.status===503)return {listings:null,leads_new:null,render_count:null};throw error;}),
-    cloudIds.length ? db.from("listings").select("id,status").is("deleted_at", null).in("id",cloudIds).limit(25) : { data: [], error: null },
+    cloudIds.length ? db.from("listings").select("id,status,sold_at,space_type").is("deleted_at", null).in("id",cloudIds).limit(25) : { data: [], error: null },
     admin.from("rate_limits").select("key,count,window_start,window_seconds").in("key", Object.values(METERS).map((key) => `${key}:${billingOrg}`)),
     entitlement && !entitlement.degraded && entitlement.plan !== "free"
       ? admin.from("apple_subscriptions").select("status,auto_renew,expires_at").eq("org_id", billingOrg).eq("plan", entitlement.plan).in("status", ["active", "grace"]).order("expires_at", { ascending: false }).limit(1).maybeSingle()
@@ -88,8 +94,11 @@ export async function coachContext(
   }
   const sub = !subscription.error && source === "apple" ? subscription.data : null;
   const state = sub && ["active", "grace"].includes(sub.status) ? sub.status : null;
-  const authorized = new Map((listings.error ? [] : listings.data ?? []).map((row: { id: string; status: string }) => [row.id.toLowerCase(), row.status]));
-  const verified = hints.filter((l) => l.localDraft || authorized.has(l.serverID ?? l.id)).map((l) => ({ ...l, status: STATES.has(String(authorized.get(l.serverID ?? l.id))) ? String(authorized.get(l.serverID ?? l.id)) : null }));
+  const authorized = new Map((listings.error ? [] : listings.data ?? []).map((row: { id: string; status: string; sold_at?: unknown; space_type?: unknown }) => [row.id.toLowerCase(), row]));
+  const verified = hints.filter((l) => l.localDraft || authorized.has(l.serverID ?? l.id)).map((l) => {
+    const row = authorized.get(l.serverID ?? l.id) as {status:string; sold_at?:unknown; space_type?:unknown} | undefined;
+    return { ...l, status: row && STATES.has(row.status) ? row.status : null, availability: row ? availability(row) : null };
+  });
   return {
     account: {
       available: planAvailable,
