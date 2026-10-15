@@ -1,3 +1,69 @@
+# Latest execution delta — October15,2026,20:05 UTC
+
+## Latest checkpoint — October15,20:25UTC (supersedes older status below)
+
+Owner away, Simulator authorized, can remotely control laptop; notify in chat for
+human steps. Studio normal Apple sign-in is pending. No Apple submission/release.
+
+- c40 SAME14-photo job now READY: actual hostedH2641920x1080/30fps/70s/56,590,848B,
+  SHA3ec4d2f5… full decode/42 temporal samples pass,13AI+1static saved-photo fallback.
+  Fixed CPU exact image801fd35b/Workerd98a3ddd; distinct default-OFF repair193930
+  explicitly released/cycle2 once; no new AI/QC and all retained paid/source IDs unchanged.
+- Normal explicit website publication then failed400: generic uploaded-input MP4
+  timing parser rejects valid compositor B-frame window. Reproduction strict400 vs
+  composedPASS. Fix56ab142 uses existing registered-background authority at0bytes,
+  exact asset/bytes/SHA/currentsource-QC then composed verifier; native staysstrict.
+  72 tests/3 compiled omissions caught/peer pass; deployment and final publication pending.
+- Animate native24b5157 now77assertions/22controls and209-input unsigned ReleaseSDK
+  PASS140s. Exact receipt SQL actual200518 +ai-video84 deployed/readback. One direct
+  ordinary sponsored Animate test running; not normalpaiduser proof/no85 upload.
+- Sky currentv2 real4K ACCEPT; Suggest passed; customlighting correctlyHOLD due changed
+  TV/cat. Improve502 exactcause keeping not keep preservation; narrow fixec4ed60,
+  42focused/43copy tests and private captured answers/Studiohelper/peer pass. Final
+  minimal3Edge consumer overlays deploying; tempone-key diagnostic removed in source.
+- CI38795295089 COMPLETEFAILURE3component+aggregate/12componentpass.2a7163b/932e788
+  harness-only fixes passed actual native+PG+Simulator controls. New fullheadCI due.
+- C2 Studio frontend91727361/Edge36/jobs12/SQL191755+191916 live; real authenticated
+  acceptance open. W05 tours68/SQL184120 live; exact savededit preview1.65s vs7.30s,
+  native/phone loading and actual published Listing playback still open.
+- Public1.0.4(74) unchanged, normal1.0.5(84) internal delivered, draft1.0.5 unattached
+  AFTER_APPROVAL/PREPARE_FOR_SUBMISSION. Onboarding118.73s REJECTED/temp: remakeLAST
+  only after screens/URLs acceptance. Genuine purchases/memberinvite/phone checks open.
+
+
+- SAME14-photo c40 job is READY after ONE distinct fixed-image repairfb32d201…,
+  normalcron composeattempt1. All13paidAI+1savedphoto/source rows and283 old ledger
+  rows remain exact. Worker d98a3ddd…/image801fd35b… live; original ETag mismatch
+  reconciled as exactlyfour source-path comments, no executable difference.
+  Actual master SHA3ec4d2f5…/56,590,848B/1920x1080/70s/30fps/2100frames/noaudio,
+  full AV decode passes. Root inspected42 temporal samples: motion/fullframe and
+  one softer staticphoto. One completion push sent. NOT publicly published or
+  physically accepted; no new generation/QC was bought. New repair SQL actual
+  timestamp20261015193930; local192807 mapping is pending coordinated alignment.
+- Current-v2 Sky completed75.12s: true3584x4780 JPEG9,523,986B/SHA5a307357…,
+  prospectiveQC ACCEPT and paired visual review; original/gallery/cover unchanged.
+  Recorded sponsored cost26.6156c, noinvoice/normalpaid/UIclaim. Suggest correctly
+  recommends declutter on living-room Original,1.3184c. Improve harmless lighting
+  request failed502/photo_scope after2 internalSonnet calls4.2c; no clientretry.
+  Custom lighting candidate changed TV content/cat and is correctlyheld byQC,
+  recorded26.638c; do NOT weakenquality or claim accepted. Both are active work.
+- Native Animate audit found transientreceipt/new-paid-key risk. Parent builds a
+  narrow durable actor/library/listing/source-scoped recovery; root review caught
+  knownreceipt provenance loss (lookup now onlywhenjobnil) and definitive4xx
+  retryblocking. Current patch/controls still finishing, no SDK/archive/upload.
+  Root Edge adds an exact stored JobRef read-only lookup; inventory PG adds a
+  service-only immutable receipt table so originalsubmitted_at/pollURL are never
+  fabricated. New SQL195312 is source/proof only, NOTlive; no new paid Animatecall.
+- Unsigned normalRelease SDK compile for prior209inputs passed140s/zeroerrors,
+  174trackedSwift+generated/7exactresources/noLABDEBUG; old signed84 receipts intact.
+  CurrentAnimate changes require separate source-bound SDK verification.
+- FullCI38795295089 at695b64d is stillrunning with2 failedharnessjobs; other13
+  componentjobs passed. Root2a7163b repairs actual missingJPEGclosedfixture
+  dependency and wrong ancestorTeamreplay, without changingproductionruntimeSQL.
+  Actual279 recoveryassertions+55compiledcontrols and169PG current83+83 /historical83
+  assertions/fivefaults/tworaces pass, both peersPASS. Oldredremains; finalnewfullCI
+  mustuse finalsource. NoAppStoresubmission/onboardingremake/85upload.
+
 # Latest execution delta — October15,2026,19:36 UTC
 
 This delta supersedes the historical checkpoint below. The full current acceptance

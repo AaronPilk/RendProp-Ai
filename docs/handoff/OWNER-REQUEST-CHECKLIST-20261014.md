@@ -2,7 +2,7 @@
 
 This is the consolidated acceptance list for the owner's messages, not a claim that
 all work is finished. Latest explicit decisions override earlier wording/prices.
-Updated October 15 at 19:36 UTC after live and local acceptance checks. Earlier detailed ledger
+Updated October 15 at 20:25 UTC after live and local acceptance checks. Earlier detailed ledger
 is retained at
 `_bridge/build83-owner-checklist/CHECKLIST-PRE-CONSOLIDATION-20261015-1503.md`
 (relative to the outer Rendprop AI folder).
@@ -29,23 +29,35 @@ is retained at
   diagnostics 56aeb29 preserve the CI timing refusal; one local six-variant run
   passed with runtime/thresholds unchanged. These repairs and fixture-only
   2e59899 are outside that run. No full current-head CI pass is claimed.
-- The SAME 14-photo Listing 16:9 job c40f4860… still has all 13 paid AI
-  clips and one saved-photo fallback. SQL20261015184528 / jobs11 safely enabled
-  one explicit assembly recovery; operator Resume at18:51 UTC preserved all
-  source/paid/output identities. The recovered cycle reached CPU execution but
-  failed without outputs. Exact R2-read diagnosis proved the fallback JPEG is
-  896×1195 and its landscape crop896×504; the former motion encoder refuses it.
-  A separately reviewed static-only fallback now produces a real local70s
-  1920×1080 master from those exact14 inputs; all bytes/hashes and full AV
-  decoding pass. The exact new CPU image passed nine actual-container tests and one default-
-  entrypoint/authentication check. One deployment reached Worker d98a3ddd… with
-  image801fd35b… and unchanged six bindings; readback found a changed script ETag,
-  so GET-only artifact comparison is underway before repair activation. The softer
-  still is not restored4K. The default-OFF distinct repair migration192807 is
-  committed92ff808 and proven locally, but is NOT applied/activated; no further
-  Resume, paid generation, publication or completed-video push is claimed.
-  The owner approved these portrait crops for this test; a fresh landscape-home
-  test later is not an invented prerequisite.
+- Current CI38795295089 at695b64d completed FAILURE:12 component jobs passed,
+  three failed (source-bound Swift dependencies/old button assertions and an old
+  PostgreSQL replay boundary), plus required aggregate failure. Harness-only
+  repairs2a7163b/932e788 passed279+55 recovery controls,169-migration replay checks,
+  130+3 batch controls,263+9 actual Simulator media checks and ten focused Swift
+  runners. Runtime guards were retained. A new full current-head run is still due.
+- Native standalone Animate recovery24b5157 retains the exact request/JPEG/receipt
+  before dispatch, recovers lost acceptance without a new paid key, and pins QC to
+  exact downloaded bytes.77 assertions/22 controls and the actual209-input unsigned
+  Release SDK compile passed140.09s; no85 archive/upload or physical acceptance.
+  SQL200518 and ai-video84 exact runtime readbacks are live; one ordinary-route
+  owner-sponsored Animate acceptance test is underway, separate from normal payer proof.
+
+- The SAME14-photo Listing job c40f4860… is now **READY**. Exact CPU image
+  801fd35b… / Worker d98a3ddd… was verified; its script ETag change was independently
+  proved to be only four non-executing build-path comments. Default-OFF repair SQL
+  applied once as20261015193930, then an explicit operator repairfb32d201… retained
+  every source, paid row, operation, manifest, output ID and original history entry.
+  Normal cron assembled on attempt1: H2641920×1080/30fps/70.000s/2100frames,
+  56,590,848 bytes/SHA3ec4d2f5…. Full decode passed;42 sampled temporal frames
+  show full-frame scenes, motion and the intended softer saved-photo still.
+  One completion push was sent. No new AI/QC charge or automatic publication.
+  One explicit normal owner publication attempt failed400 before publishing because
+  the website used the uploaded-input timing verifier on a composed master. Exact
+  master reproduction: strict400 vs composed70s1080p PASS. Fix56ab142 permits the
+  existing exact compositor verifier ONLY after registered ready output/source/QC
+  authority; native uploads remain strict.72 focused tests and three compiled
+  guard-removal controls pass; deployment/publication/browser acceptance are pending.
+  Owner-approved portrait crops remain a test limitation, not a new requirement.
 - The owner explicitly allows Simulator UI acceptance while the physical phone
   is unavailable. Compact review and two batches retaining six exact PNG Originals
   were observed there; physical 84 acceptance remains open. Keep Simulator,
@@ -56,7 +68,9 @@ is retained at
   bug/fix is claimed. Largest-text Add/Take wrapping remains a separate layout
   finding. Source8e0eeaa now stacks those buttons only at accessibility sizes;
   the controlled Simulator build proves readable labels and unchanged normal row.
-  It is NOT in delivered84; coordinated normal85 SDK/release work remains. Largest-
+  It is NOT in delivered84. One normal unsigned Release iphoneos compile passed
+  for the209-input post-delivery source including960ef4b; later Animate changes
+  now also passed a separate209-input Release SDK check, but need a normal release. Largest-
   text grid/viewer reachability is unresolved, not a proven scrolling defect.
   The isolated test Simulator has been shut down; no UI test is still running.
   Claude's separate web/Studio work is preserved.
@@ -129,11 +143,11 @@ No whole feature is closed by source existence, upload or a preview alone.
 | P02 | Original tab is default edit starting point | Built; Original/Latest/Decluttered/Staged observed today | Retest only changed final selection behavior |
 | P03 | Keep all saved declutter/staging versions; try new style from Original | Built; history preservation tested and earlier phone observation retained | Whole-home fresh capture later |
 | P04 | Contemporary instead of Scandinavian | Built; saved Contemporary/Modern history observed | Preserve older stored style compatibility |
-| P05 | Clean tab labels, selection badges and photo-version review layout | 84 compact review passed checks/SDK/normal-text Simulator inspection; prospective85 source8e0eeaa accessibility-only import-button stack passed readable-label/normal-row controls | Not shipped in84; normal85 SDK still pending. Physical compact acceptance and largest-text grid/viewer reachability remain open |
+| P05 | Clean tab labels, selection badges and photo-version review layout | 84 compact review passed checks/SDK/normal-text Simulator inspection; prospective85 source8e0eeaa accessibility-only import-button stack passed readable-label/normal-row controls | Not shipped in84; unsigned209-input Release SDK passed; no85 upload. Physical compact acceptance and largest-text grid/viewer reachability remain open |
 | P06 | Real progress while editing/uploading; background work and notification | Built stage/count reporting, not invented AI percentage | Physical completion/reopen/notification acceptance for exposed paths |
 | P07 | Select AND unselect a photo for listing without deleting original/edits | Selection/removal fix retained in 84; atomic server removal deployed; compact footer says Unselect | Remove/reopen/re-add; verify gallery, cover and retained originals/history |
 | P08 | Original can replace an edited public selection without false disclosure error | Genuine Original proof/sync fix built/tested for 83 | Actual original selection → published gallery sync |
-| P09 | AI preserves structure; staging/declutter actually look professional | New Pro4K routes and stricter removal-only declutter prompt live; real stage/declutter outputs accepted | Broader actual-home output review; other exposed edits/masking remain open |
+| P09 | AI preserves structure; staging/declutter actually look professional | Prior stage/declutter accepted; new current-v2 Sky4K accepted with real prospective QC and visual review. Custom lighting correctly HOLDs changed TV/cat; Suggest content passed; Improve502 traced to preservation gerund parsing and fixedec4ed60 | Deploy/retest normal Improve and obtain a safe positive custom result; further appropriate distinct edits and actual device acceptance remain open |
 | P10 | Genuine high-quality exports, not screenshots or fake 4K | Real accepted photo outputs 3584×4780, retained-master bytes checked | Actual phone save/share and final coordinator ZIP |
 | P11 | Organized ZIP: Originals / Decluttered / Staged and listing/social copies | Native/Studio implementation built; masters retained | Open final full export in Files, verify folders, dimensions and completeness |
 | P12 | Landscape listing capture; portrait social capture; 0.5× when whole room needs it | Guide/crop detection built; guidance now placed before video photo grid | Actual camera/lens/orientation and final branded framing footer |
@@ -148,16 +162,16 @@ No whole feature is closed by source existence, upload or a preview alone.
 |---|---|---|---|
 | V01 | Make a reel → Make a video; Listing or Social first | Built; naming/destination observed | Final end-to-end destination tests |
 | V02 | Listing landscape 16:9 / Social portrait 9:16 | Built; actual Listing crop review observed today | Review accepted Listing master; originals remain unchanged |
-| V03 | More than eight photos; current video recipe up to 100 | Built; actual 14-source job admitted today | Finish/recover that job; larger capacity still not physically certified |
+| V03 | More than eight photos; current video recipe up to 100 | Built; actual 14-source job admitted today | Same14-source job is READY; actual phone/explicit website acceptance and larger capacity still not physically certified |
 | V04 | Video uses chosen reviewed staged/decluttered bytes without re-upload questions | Built source/provenance contract; unsafe staged photo refused in today's picker | Verify final chosen clips/versions against accepted video |
 | V05 | Automatic useful motion; preserve uploaded order by default; no per-photo editing | Planner/default flow built; current beta requires upload-order preservation | Verify new-job order and whole-property motion |
 | V06 | Simple default UI; Advanced voice/style/transitions; Voice Off hides spoken captions | Built | Actual exposed setting/playback matrix still open |
 | V07 | Commercially reusable optional music; default Off | Three pinned CC0 tracks and mix/encoding checks built | Actual phone listening, loop/duck and voice balance |
 | V08 | At least 1080p; no black bars, blurred panels or severe zoom | Real normal-route two-shot Social master 1080×1920; decoded/sample-frame checks passed | Full actual-phone playback and representative Listing result |
-| V09 | Finish accepted work away from editor; notify and review private result | Two-shot hosted completion/push proven; today's 14-shot job continued after leaving editor | Recover larger job; actual push/reopen/review, no auto-publication |
+| V09 | Finish accepted work away from editor; notify and review private result | Two-shot hosted completion/push proven; today's 14-shot job continued after leaving editor | Larger14-source job READY and one completion push sent; actual phone reopen/review remains, no auto-publication |
 | V10 | Check status must visibly respond | Delivered 83 spinner, actual last-checked time and safe network feedback; SDK passed | Actual phone tap/refresh acceptance |
 | V11 | Ready banner Review must open exact video, including while modal is closing | Delivered 83 exact-job navigation;50 checks +20 controls and SDK passed | Actual phone opening; unavailable-home banners stay suppressed |
-| V12 | Fix today's quality-retry failure; retain already paid/accepted clips | Safe recovery SQL/jobs11 live, one explicit operator cycle preserved all13AI+fallback but exposed low-resolution photo motion refusal. Static-only fix produces complete local70s/1080p master with full AV decode; not deployed yet | Deploy verified CPU fix, bounded same-job repair and hosted master inspection; operator/local proof is not phone proof |
+| V12 | Fix today's quality-retry failure; retain already paid/accepted clips | Fixed CPU image/live distinct repair completed SAME14-source job: real70s/1920×1080 master, full decode and temporal samples pass; all paid/source identities unchanged, one push sent | Explicit review/publication and actual phone playback; operator/backend proof is not phone proof |
 | V13 | Recorded drone-style walkthrough is separate optional toolbox tool | Built; optional route observed | Final upload/play/tag check with real recorded video |
 | V14 | Explain slow/steady drone-like capture, gimbal and actual drone options | Built capture guidance | Final phone copy/animation inspection |
 | V15 | Tag rooms muted until genuine recorded/uploaded walkthrough; tap explains requirement | Delivered 83 predicate/entrypoint proof 32 checks +5 controls; SDK passed | Actual no-source/upload/tag phone tests; generated/sample video must not unlock it |
@@ -200,7 +214,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 |---|---|---|
 | R01 | Freeze latest native fixes, peer review, compile and run appropriate checks | Native prepaid-source fix960ef4b and accessibility changes peer-reviewed; compile-only Release iphoneos check now authorized with protected prior archive. Current CI still pending; old ff84129 run remains red |
 | R02 | Deliver internal normal TestFlight 84 from reviewed native source | Done; compact08098a9/metadata75738bf, VALID/APP_STORE_ELIGIBLE/IN_BETA_TESTING; final integrated push/CI coordinated separately |
-| R03 | Test final changed UI and recover 14-photo job; inspect final output | Simulator UI now owner-authorized while phone unavailable; 84 compact device acceptance and real output/hardware checks remain open |
+| R03 | Test final changed UI and recover 14-photo job; inspect final output | SAME14-photo job recovered to READY and hosted master decoded/visually sampled. Simulator checks pass for reviewed flows; actual84 compact/device/hardware acceptance remains open |
 | R04 | Finish real paid website/ordinary-account/export/site/Studio acceptance above | Open; no fake transactions or claims that previews prove purchases |
 | R05 | Final Codex + Claude audit with current full context, not stale build 58 text | Open; prepare concrete current handoff; no external message without authorization |
 | R06 | LAST: remake **Rendprop for Realtors** onboarding from actual FINAL screens and URL pages | Deliberately LAST; current 118.73s version REJECTED, not finished |
@@ -251,7 +265,10 @@ LAST after app/URL acceptance, then verify that final resource build and submit.
 - Prospective accessibility layout/source proof: `/Volumes/Rendprop Files/Builds/Active/build84-simulator-acceptance/accessibility-layout-control/FINAL-RECEIPT.json`.
 - Retained CI failure and focused harness repair: `_bridge/build84-ci-native-privacy-failure/HARNESS-REPAIR-RECEIPT.json`.
 - C2 complete live rollout: `_bridge/build84-c2-rollout/FINAL-ROLLOUT-RECEIPT.json`.
-- CPU exact-image tests and staged repair: `_bridge/build84-static-compose-repair/FINAL-PREDEPLOY-READINESS-v2.json`; deployment outcome in `DEPLOY-STATIC-READABLE-ONCE.json` remains under GET-only comparison.
+- Hosted completed14-source master: `_bridge/build84-static-compose-repair/FINAL-ACTUAL-READY-RECEIPT.json`; exact master/temporal samples external `Builds/Active/build84-static-compose-hosted-ready/`.
+- Current Sky acceptance: `_bridge/build84-sky-current-v2/FINAL-CANARY-RECEIPT.json`; actual sponsored usage26.6156 cents, separate from ordinary paid admission and invoices.
+- Exposed feature audit and retained Improve/custom refusals: `_bridge/build84-exposed-ai-audit/REPORT.md` and `_bridge/build84-exposed-ai-small-batch/`.
+- CPU exact-image tests and staged repair: `_bridge/build84-static-compose-repair/FINAL-PREDEPLOY-READINESS-v2.json`; original strict-ETag failure is retained; `DEPLOYED-IMAGE-GET-RECONCILIATION.json` proves the comment-only difference.
 - Native prepaid source floor: `_bridge/build85-video-source-floor/SOURCE-BINDING.json`; compile-only plan in `_bridge/build84-postdelivery-native-sdk/COMPILE-PLAN.json`.
 - Latest cost coverage: `/Volumes/Rendprop Files/Builds/Active/build84-owner-api-costs/20261015T1854Z/ACCOUNTING-READONLY-RECEIPT.json`.
 - Backup read-only status: `/Volumes/Rendprop Files/Builds/Active/build84-backup-readonly/STATUS-20261015T1930Z.json`.
