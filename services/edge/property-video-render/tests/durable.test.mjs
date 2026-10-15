@@ -83,6 +83,35 @@ try {
     assert.equal((await worker.fetch(new Request('https://controller.test/wake',{method:'POST',headers:{Authorization:'Bearer trigger-test'}}),disabled,{waitUntil(){throw Error('disabled dispatch');}})).status,503);
     assert.equal((await worker.fetch(new Request('https://controller.test/wake',{method:'POST'}),env,{waitUntil(){throw Error('unauthorized dispatch');}})).status,403);
     assert.equal((await worker.fetch(new Request('https://controller.test/anything'),env,{})).status,404);
+    // Exercise the actual scheduled entry and its caught bridge, not merely a
+    // formatter. Hostile exception/body strings must never enter a log.
+    const warn=console.warn,diagnostics=[];console.warn=(...args)=>diagnostics.push(args);
+    const scheduled=async(config,transport)=>{
+      diagnostics.length=0;globalThis.fetch=transport;let pending;
+      await worker.scheduled({},config,{waitUntil(value){assert.equal(pending,undefined);pending=value;}});
+      await pending;return structuredClone(diagnostics);
+    };
+    try {
+      let calls=0;
+      const noFetch=async()=>{calls++;throw Error('PRIVATE-URL-TOKEN');};
+      for(const config of [{...env,EDGE_WORKER_URL:'invalid-private-url'},{...env,EDGE_SERVICE_ROLE_KEY:''}]){
+        assert.deepEqual(await scheduled(config,noFetch),[['property_video_dispatch_refused',{category:'bridge_configuration'}]]);
+      }
+      assert.equal(calls,0,'bad bridge config performs no request');
+      for(const status of [401,403,500]){
+        assert.deepEqual(await scheduled(env,async(_url,init)=>{
+          calls++;assert.equal(init.method,'GET');assert.equal(init.headers.apikey,env.EDGE_SERVICE_ROLE_KEY);assert.equal(init.headers.Authorization,'Bearer '+env.EDGE_SERVICE_ROLE_KEY);
+          return new Response('PRIVATE-RESPONSE-TOKEN',{status});
+        }),[['property_video_dispatch_refused',{category:'bridge_http',status}]]);
+      }
+      assert.equal(calls,3,'one request per scheduled refusal, no retry');
+      assert.deepEqual(await scheduled(env,noFetch),[['property_video_dispatch_refused',{category:'bridge_transport'}]]);
+      assert.deepEqual(await scheduled(env,async()=>new Response('PRIVATE-BODY-TOKEN')),[['property_video_dispatch_refused',{category:'bridge_response'}]]);
+      assert.deepEqual(await scheduled({...env,CPU:{getByName(){throw Error('PRIVATE-CONTROLLER-TOKEN');}}},async()=>Response.json({enabled:true,jobs:[{job_id:job}]})),[['property_video_dispatch_refused',{category:'controller'}]]);
+      assert.ok(!JSON.stringify(diagnostics).includes('PRIVATE-'),'raw thrown data is not logged');
+      assert.deepEqual(await scheduled(env,async()=>Response.json({enabled:false,jobs:[]})),[],'disabled DB queue remains quiet');
+    } finally {console.warn=warn;}
+
   } finally {globalThis.fetch=originalFetch;}
   console.log('Actual DO controller with isolated lifecycle doubles: persisted output admission/callback/restart, interrupt failure, sleep, private routes passed. Hosted Container acceptance remains required.');
 } finally {await rm(directory,{recursive:true,force:true});}

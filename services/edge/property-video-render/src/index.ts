@@ -17,15 +17,20 @@ const CPU_TIMEOUT_MS=20*60_000;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
 
 class AuthorityRefusal extends Error {constructor(readonly status:number){super("authority_refused");}}
+class BridgeFailure extends Error {constructor(readonly category:'bridge_configuration'|'bridge_transport'|'bridge_response'){super(category);}}
+function dispatchDiagnostic(error:unknown):Record<string,string|number> {
+  return error instanceof AuthorityRefusal ? {category:'bridge_http',status:error.status}
+    : error instanceof BridgeFailure ? {category:error.category} : {category:'controller'};
+}
 
 async function bridge(env:Env,path:string,body?:unknown):Promise<Record<string,unknown>> {
-  const base=new URL(env.EDGE_WORKER_URL);
-  if (base.protocol!=='https:'||!base.hostname.endsWith('.supabase.co')||!env.EDGE_SERVICE_ROLE_KEY) throw Error('bridge_configuration_missing');
-  const response=await fetch(`${base.toString().replace(/\/$/,'')}/${path}`,{
+  let base:URL;try {base=new URL(env.EDGE_WORKER_URL);}catch {throw new BridgeFailure('bridge_configuration');}
+  if (base.protocol!=='https:'||!base.hostname.endsWith('.supabase.co')||!env.EDGE_SERVICE_ROLE_KEY) throw new BridgeFailure('bridge_configuration');
+  let response:Response;try {response=await fetch(`${base.toString().replace(/\/$/,'')}/${path}`,{
     method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${env.EDGE_SERVICE_ROLE_KEY}`,apikey:env.EDGE_SERVICE_ROLE_KEY,'Content-Type':'application/json'},
-    body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(50_000)});
+    body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(50_000)});}catch {throw new BridgeFailure('bridge_transport');}
   if (!response.ok) throw new AuthorityRefusal(response.status);
-  return await response.json() as Record<string,unknown>;
+  try {return await response.json() as Record<string,unknown>;}catch {throw new BridgeFailure('bridge_response');}
 }
 
 export class MediaEgress extends WorkerEntrypoint<Env,EgressProps> {
@@ -194,10 +199,10 @@ export default {
     if (request.method!=='POST'||url.pathname!=='/wake') return json({error:'not_found'},404);
     if (!env.RENDER_TRIGGER_KEY||request.headers.get('Authorization')!==`Bearer ${env.RENDER_TRIGGER_KEY}`) return json({error:'private_controller_only'},403);
     if (env.ENABLED!=='true') return json({error:'renderer_disabled'},503);
-    ctx.waitUntil(dispatch(env).catch(()=>console.warn('property_video_dispatch_refused')));
+    ctx.waitUntil(dispatch(env).catch(error=>console.warn('property_video_dispatch_refused',dispatchDiagnostic(error))));
     return json({accepted:true},202);
   },
   async scheduled(_event:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void> {
-    ctx.waitUntil(dispatch(env).catch(()=>console.warn('property_video_dispatch_refused')));
+    ctx.waitUntil(dispatch(env).catch(error=>console.warn('property_video_dispatch_refused',dispatchDiagnostic(error))));
   }
 } satisfies ExportedHandler<Env>;
