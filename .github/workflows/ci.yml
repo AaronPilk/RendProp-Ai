@@ -1401,6 +1401,11 @@ jobs:
           python3 services/supabase/tests/property_video_jobs_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-pg"
           python3 services/supabase/tests/studio_photo_history_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-photo-pg"
           python3 services/supabase/tests/photo_quality_evidence_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-quality-pg"
+      - name: Actual saved photo background judge race and no-repeat control
+        timeout-minutes: 10
+        run: |
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/photo_quality_background_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-background-pg"
       - name: Retain actual background authority and privacy receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1410,6 +1415,7 @@ jobs:
             ${{ runner.temp }}/rendprop-property-video-pg/**
             ${{ runner.temp }}/rendprop-studio-photo-pg/**
             ${{ runner.temp }}/rendprop-photo-quality-pg/**
+            ${{ runner.temp }}/rendprop-photo-background-pg/**
           if-no-files-found: warn
 
   python-worker:
