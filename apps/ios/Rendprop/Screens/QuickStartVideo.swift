@@ -29,17 +29,17 @@ struct QuickStartKnowledgeCheck: Identifiable {
 
     static let questions: [QuickStartKnowledgeCheck] = [
         .init(id: "journey", question: "After entering the address and listing details, what comes next?",
-              answers: ["Add photos or record/import a walkthrough", "Publish the empty listing right away"],
+              answers: ["Add photos, then edit and review the versions", "Publish the empty listing right away"],
               correctAnswer: 0,
-              explanation: "Add photos or a walkthrough, then use the tools you need. Compare AI edits with their retained source and select the reviewed versions for the listing."),
-        .init(id: "capture", question: "How should you film a walkthrough?",
-              answers: ["Keep the phone level, walk slowly, and turn smoothly", "Rush through rooms and spin quickly"],
+              explanation: "Add photos first; a recorded walkthrough is optional. Compare AI edits with their retained source and select the reviewed versions. Then make and review the property video before publishing the website."),
+        .init(id: "capture", question: "How should you photograph rooms for a listing?",
+              answers: ["Shoot landscape, keep the phone level, and fit the whole room", "Use extreme angles and leave important room details out"],
               correctAnswer: 0,
-              explanation: "Keep the phone level and move steadily at a slow walking pace. Make smooth turns so viewers can follow the rooms."),
+              explanation: "Use good light and keep the phone level. Use the hardware 0.5× lens indoors when available and needed to fit the room; 1× works when the room already fits. Your original photo stays unchanged."),
         .init(id: "share", question: "What should you do before sending buyers the link?",
               answers: ["Review the content and buyer contact, publish, then share the link", "Share an unreviewed editor preview"],
               correctAnswer: 0,
-              explanation: "Compare AI edits with the source and select the reviewed versions. Check who buyers should contact, publish the property website, then share its published link.")
+              explanation: "Compare AI edits with the source and select the reviewed versions. Review the finished video and check who buyers should contact, publish the property website, then share its published link.")
     ]
 }
 
