@@ -4,10 +4,14 @@ import {belongsToLibrary,canEditListing} from "../../data/contracts";
 import {StudioError} from "../../data/config";
 import type {StudioServices} from "../../data/services";
 import {decodeResult} from "../creative/model";
-import {assertVideoScope,decodeJob,decodeSources,enqueueVideo,MUSIC,planVideoSources,publishVideo,readVideoJournal,inspectVideoOperation,retainRejectedVideo,resumeVideo,saveVideoJournal,selectedSources,videoScopeKey,type VideoInput,type VideoJob,type VideoJournal,type VideoPurpose,type VideoScope,type VideoSource,type VideoPresentation,type VideoPreparation} from "./property-video";
+import {abandonVideoOperation,assertVideoScope,decodeJob,decodeSources,enqueueVideo,MUSIC,planVideoSources,publishVideo,readVideoJournal,inspectVideoOperation,retainAbandonedVideo,retainRejectedVideo,resumeVideo,saveVideoJournal,selectedSources,videoClosure,videoScopeKey,type VideoClosure,type VideoInput,type VideoJob,type VideoJournal,type VideoPurpose,type VideoScope,type VideoSource,type VideoPresentation,type VideoPreparation} from "./property-video";
 import {framingSummary,photoFrame} from "./video-framing";
 import {prepareVideoSources} from "./source-preparation";
 import "./make-video.css";
+
+const REFUSED_NOTICE="No video job was accepted. Choose fewer photos or change the options, then create a new video.";
+const DISCARDED_NOTICE="This saved request is discarded. No video was started from it, and it can't start later. Choose your photos and options for a new video.";
+const DISCARD_CONFIRM="Discard this saved request? If the server never accepted it, it can't start later. If it was already accepted, that video is kept.";
 
 type Props={services:StudioServices;workspace:Workspace;listings:Listing[];listingId?:string;active?:boolean;onChanged:()=>void;onSelectListing?:(id:string)=>boolean|void;readOnly?:boolean};
 export default function MakeVideo(props:Props){
@@ -27,7 +31,8 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
  const [sources,setSources]=useState<VideoSource[]>([]),[selection,setSelection]=useState<string[]>([]),[jobs,setJobs]=useState<VideoJob[]>([]),[job,setJob]=useState<VideoJob|null>(null),[journal,setJournal]=useState<VideoJournal|null>(null);
  const [purpose,setPurpose]=useState<VideoPurpose>("listing"),[voice,setVoice]=useState<"off"|"own"|"ai">("off"),[script,setScript]=useState(""),[voiceID,setVoiceID]=useState(""),[voices,setVoices]=useState<{id:string;name:string}[]>([]),[ownFile,setOwnFile]=useState<File|null>(null),[music,setMusic]=useState("");
  const [camera,setCamera]=useState("automatic"),[transition,setTransition]=useState<VideoPresentation['transition']>("cut"),[caption,setCaption]=useState<VideoPresentation['shot_caption_style']>("off"),[labels,setLabels]=useState<Record<string,string>>({}),[spoken,setSpoken]=useState(false),[titleCard,setTitleCard]=useState(false);
- const [framingReviewed,setFramingReviewed]=useState(false),[capacityRefused,setCapacityRefused]=useState(false),[recordingChanged,setRecordingChanged]=useState(false);
+ // A server-confirmed closure (capacity refusal or C2 discard) unlocks a new recipe; the saved one is archived.
+ const [framingReviewed,setFramingReviewed]=useState(false),[closed,setClosed]=useState<VideoClosure|null>(null),[recordingChanged,setRecordingChanged]=useState(false);
  const [consent,setConsent]=useState(false),[busy,setBusy]=useState(""),[notice,setNotice]=useState(""),[error,setError]=useState(""),[loaded,setLoaded]=useState(false),[reviewed,setReviewed]=useState(false),[share,setShare]=useState("");
  const writable=!readOnly&&canEditListing(workspace,listing);
  const current=useCallback(()=>{if(!mounted.current)throw Error("This video workspace was closed.");assertVideoScope(services,scope,control.current.signal);},[services,scope]);
@@ -56,8 +61,8 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
    if(saved){setFramingReviewed(saved.preparation?.framingReviewed===true);setPurpose(saved.input.purpose);setMusic(saved.input.music?.track_id??"");setTransition(saved.input.presentation.transition);setCaption(saved.input.presentation.shot_caption_style);setSpoken(saved.input.presentation.spoken_captions);setTitleCard(!!saved.input.presentation.title_card);if(saved.preparation){setVoice(saved.preparation.voice);setVoiceID(saved.preparation.voiceID);setScript(saved.preparation.script);setCamera(saved.preparation.camera);}}
    const [photos,existing]=await Promise.all([loadSources(),refresh()]);
    current();setSources(photos);setSelection(saved?saved.input.sources.map(item=>item.photo_id):[]);
-   if(saved){const operation=await inspectVideoOperation(services,scope,saved,controller.signal);const recovered=operation.job;current();if(recovered){setJob(recovered);const next={...saved,job_id:recovered.job_id};saveVideoJournal(localStorage,scope,next);setJournal(next);}else if(operation.closed){retainRejectedVideo(localStorage,scope,saved);setCapacityRefused(true);setNotice('No video job was accepted. Choose fewer photos or change the options, then create a new video.');}
-   else setNotice("Your saved request was not found on the server. Check the selection and consent, then resume that same request.");}
+   if(saved){const operation=await inspectVideoOperation(services,scope,saved,controller.signal);const recovered=operation.job;current();if(recovered){setJob(recovered);const next={...saved,job_id:recovered.job_id};saveVideoJournal(localStorage,scope,next);setJournal(next);}else if(videoClosure(operation))closeSaved(saved,videoClosure(operation)!);
+   else setNotice("Your saved request was not found on the server. Resume that same request after checking consent, or discard it to change photos or options.");}
    else {const pub=localStorage.getItem(`${videoScopeKey(scope)}:publication`);let target:string|undefined;try{target=pub?JSON.parse(pub).job_id:undefined;}catch{/* invalid publication is refused again before any mutation */}setJob(existing.find(item=>item.job_id===target)??existing.find(item=>!["ready","failed","cancelled","needs_reconciliation"].includes(item.state))??null);}
    setLoaded(true);
   }catch(value){if(mounted.current&&!controller.signal.aborted)setError(value instanceof Error?value.message:"Saved property videos are unavailable.");}})();
@@ -77,6 +82,19 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
  },[voice,voices.length,api]);
  async function action(label:string,task:()=>Promise<void>){if(flight.current)return;flight.current=true;setBusy(label);setError("");try{await task();}catch(value){if(mounted.current&&!control.current.signal.aborted)setError(value instanceof Error?value.message:"That saved video action could not be confirmed.");}finally{flight.current=false;if(mounted.current)setBusy("");}}
  function updateJournal(next:VideoJournal){saveVideoJournal(localStorage,scope,next);setJournal(next);}
+ // Only after the server confirms a closure: archive the saved recipe and unlock a new one.
+ function closeSaved(saved:VideoJournal,reason:VideoClosure){
+  if(reason==="abandoned"){retainAbandonedVideo(localStorage,scope,saved);setFramingReviewed(false);setNotice(DISCARDED_NOTICE);}
+  else{retainRejectedVideo(localStorage,scope,saved);setNotice(REFUSED_NOTICE);}
+  setClosed(reason);
+ }
+ // C2: the server resolves the exact saved operation first. A lost reply leaves this request pending; retrying is safe.
+ async function discard(){
+  if(!journal||journal.job_id||closed||!writable)return;
+  const outcome=await abandonVideoOperation(services,scope,journal,control.current.signal);current();
+  if(outcome.job){updateJournal({...journal,job_id:outcome.job.job_id});setJob(outcome.job);setReviewed(false);setShare("");setNotice("The server had already accepted this request, so its video was kept. Cancel it below if you don't want it.");void refresh().catch(()=>{/* The accepted job is retained; manual refresh reports any outage. */});return;}
+  const closure=videoClosure(outcome);if(closure)closeSaved(journal,closure);
+ }
  async function narration(operation:string,frozen:VideoPreparation):Promise<{result:string|null;asset:string|null;words:VideoInput['narration_words']}>{
   if(frozen.voice==="off")return{result:null,asset:null,words:[]};
   if(frozen.voice==="ai"){
@@ -101,18 +119,18 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
  }
  async function start(){
   if(!writable||!consent)throw Error("Confirm AI processing of your selected property photos first.");
-  let next=journal&&!journal.job_id&&!capacityRefused?journal:null;
-  if(next&&next.input.sources.some(old=>!sources.some(saved=>(saved.eligible||saved.needs_preparation)&&saved.photo_id===old.photo_id&&(saved.photo_asset_id===old.photo_asset_id||next?.preparation?.photosComplete===false&&saved.preparation?.source_asset_id===old.photo_asset_id)&&saved.photo_version_id===old.photo_version_id&&saved.photo_provenance_id===old.photo_provenance_id)))throw Error("The saved request uses earlier photo versions. Recover its server job before starting; new versions will not replace those sources automatically.");
+  let next=journal&&!journal.job_id&&!closed?journal:null;
+  if(next&&next.input.sources.some(old=>!sources.some(saved=>(saved.eligible||saved.needs_preparation)&&saved.photo_id===old.photo_id&&(saved.photo_asset_id===old.photo_asset_id||next?.preparation?.photosComplete===false&&saved.preparation?.source_asset_id===old.photo_asset_id)&&saved.photo_version_id===old.photo_version_id&&saved.photo_provenance_id===old.photo_provenance_id)))throw Error("The saved request uses earlier photo versions. Recover its server job, or discard the request to use your new versions. New versions never replace saved sources automatically.");
   if(!next){
    const operation=crypto.randomUUID();const rows=selection.map(id=>sources.find(source=>source.photo_id===id));
    if(!rows.length||rows.length>100||rows.some(row=>!row||!row.photo_asset_id||!row.eligible&&!row.needs_preparation))throw Error('Choose 1–100 saved property photos.');
    const chosen=selectedSources(rows.map(row=>({...row!,eligible:true})),selection);
    if(voice==="ai"&&(!voiceID||!script.trim()))throw Error("Choose an AI voice and reviewed narration first.");
-   const priorVoice=capacityRefused&&journal?.preparation?.voiceComplete&&journal.preparation.voice===voice&&journal.preparation.voiceID===voiceID&&journal.preparation.script===script&&!recordingChanged?journal.input:null;
+   const priorVoice=closed&&journal?.preparation?.voiceComplete&&journal.preparation.voice===voice&&journal.preparation.voiceID===voiceID&&journal.preparation.script===script&&!recordingChanged?journal.input:null;
    if(voice==="own"&&!ownFile&&!priorVoice?.narration_asset_id)throw Error("Choose your M4A or MP3 recording first.");
    const presentation:VideoPresentation={transition,shot_caption_style:caption,spoken_captions:voice!=="off"&&spoken,title_card:purpose==="social"&&titleCard?{title:listing.address||"Property tour",subtitle:listing.tagline||"",watermark:"Made with Rendprop"}:null,shot_labels:chosen.map(s=>caption!=="off"?labels[s.photo_id]?.trim()||null:null)};
    const input:VideoInput={operation_id:operation,listing_id:scope.listing,expected_org_id:scope.library,purpose,aspect:purpose==="listing"?"16:9":"9:16",sources:chosen,narration_result_id:priorVoice?.narration_result_id??null,narration_asset_id:priorVoice?.narration_asset_id??null,narration_words:priorVoice?.narration_words??[],music:MUSIC.find(item=>item.track_id===music)??null,presentation,allow_original_photo_fallback:false};
-   next={schema:1,actor:scope.actor,org:scope.org,library:scope.library,listing:scope.listing,input,preparation:{photosComplete:false,framingReviewed:false,planned:false,voiceComplete:!!priorVoice,automatic:false,camera,voice,voiceID,script}};setCapacityRefused(false);setRecordingChanged(false);updateJournal(next); // before any paid planner/voice request
+   next={schema:1,actor:scope.actor,org:scope.org,library:scope.library,listing:scope.listing,input,preparation:{photosComplete:false,framingReviewed:false,planned:false,voiceComplete:!!priorVoice,automatic:false,camera,voice,voiceID,script}};setClosed(null);setRecordingChanged(false);updateJournal(next); // before any paid planner/voice request
   }
   let frameSources=next.input.sources.map(old=>sources.find(saved=>saved.photo_id===old.photo_id&&saved.photo_version_id===old.photo_version_id)!);
   if(next.preparation?.photosComplete===false){
@@ -142,17 +160,18 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
   setBusy("Starting your saved video…");let accepted:VideoJob;
   try{accepted=await enqueueVideo(services,scope,next,localStorage,control.current.signal);}
   catch(value){
-   if(value instanceof StudioError&&value.status===402){
+   // 402 capacity refusal, or 409 when this request was discarded (C2): resolve the exact operation before anything else.
+   if(value instanceof StudioError&&(value.status===402||value.status===409)){
     const operation=await inspectVideoOperation(services,scope,next,control.current.signal);current();
     if(operation.job)accepted=operation.job;
-    else if(operation.closed){retainRejectedVideo(localStorage,scope,next);setCapacityRefused(true);setError(value.message);setNotice('No video job was accepted. Choose fewer photos or change the options, then create a new video.');return;}
+    else if(videoClosure(operation)){const closure=videoClosure(operation)!;closeSaved(next,closure);if(closure==="capacity_refused")setError(value.message);return;}
     else throw value;
    }else throw value;
   }
   current();
   updateJournal({...next,job_id:accepted.job_id});setJob(accepted);setReviewed(false);setShare("");setNotice("Your video is creating on the server. You can leave Studio or lock your phone; open this property to check its progress.");void refresh().catch(()=>{/* The accepted job is retained; manual refresh reports any outage. */});
  }
- async function recover(){if(!journal)return;const operation=await inspectVideoOperation(services,scope,journal,control.current.signal);current();if(operation.job){updateJournal({...journal,job_id:operation.job.job_id});setJob(operation.job);setCapacityRefused(false);setNotice("Recovered the same saved server job. No new video was started.");}else if(operation.closed){retainRejectedVideo(localStorage,scope,journal);setCapacityRefused(true);setNotice("No video job was accepted. Choose fewer photos or change the options, then create a new video.");}else setNotice("No job was found for that saved operation. Resume the same request after confirming consent.");}
+ async function recover(){if(!journal)return;const operation=await inspectVideoOperation(services,scope,journal,control.current.signal);current();if(operation.job){updateJournal({...journal,job_id:operation.job.job_id});setJob(operation.job);setClosed(null);setNotice("Recovered the same saved server job. No new video was started.");}else if(videoClosure(operation))closeSaved(journal,videoClosure(operation)!);else setNotice("No job was found for that saved operation. Resume the same request after confirming consent, or discard it to change photos or options.");}
  async function cancel(){if(!job)return;const updated=decodeJob(await api(`property-video-jobs/${job.job_id}/cancel`,{orgId:scope.library,method:"POST",body:{}}),scope,job.operation_id);setJob(updated);if(updated.state!=="cancelled")throw Error("Cancellation is not confirmed yet. Refresh this saved job before retrying.");setNotice("The video is cancelled. Already accepted provider work remains accounted for.");void refresh().catch(()=>{/* The accepted job is retained; manual refresh reports any outage. */});}
  async function publish(){if(!job?.result||!reviewed||!writable)throw Error("Review the full video and property details before selecting it for the website.");
   const key=`${videoScopeKey(scope)}:publication`;const saved=localStorage.getItem(key);let prior:{id:string;job_id:string;asset_id:string}|null=null;
@@ -161,7 +180,7 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
   localStorage.setItem(key,JSON.stringify(publication));const url=await publishVideo(services,scope,job,publication.id,control.current.signal);current();setShare(url);setNotice("This reviewed video is selected for your property website.");onChanged();
  }
  const working=job!==null&&!["ready","failed","cancelled","needs_reconciliation"].includes(job.state);
- const pending=journal!==null&&!journal.job_id&&!capacityRefused;
+ const pending=journal!==null&&!journal.job_id&&!closed;
  const chosenFrames=sources.filter(source=>selection.includes(source.photo_id));
  const framing=framingSummary(chosenFrames,purpose);
  const reviewFraming=!working&&framing.majorCrop>0;
@@ -184,7 +203,7 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
    {voice!=="off"&&<label><input type="checkbox" checked={spoken} onChange={event=>setSpoken(event.target.checked)} disabled={voice==="own"}/>Spoken captions{voice==="own"&&<small>Timed captions need a saved transcript; your uploaded recording remains unchanged.</small>}</label>}
   </fieldset></details>
   <label className="video-consent"><input type="checkbox" checked={consent} onChange={event=>setConsent(event.target.checked)} disabled={!!busy||!writable}/>I allow AI processing of these selected property photos. I’ll review the result for property accuracy.</label>
-  <div className="video-photo-actions"><button className="primary" disabled={!loaded||!!busy||!writable||working||!consent||(!pending&&selection.length===0)||reviewFraming&&!framingReviewed} onClick={()=>void action(pending?"Resuming saved request…":"Preparing your video…",start)}>{pending?"Resume same saved request":working?"Video is creating…":"Create video"}</button>{pending&&<button disabled={!!busy} onClick={()=>void action("Checking saved operation…",recover)}>Recover saved job</button>}<button disabled={!!busy} onClick={()=>void action("Refreshing videos…",async()=>{await refresh();if(job)setJob(decodeJob(await api(`property-video-jobs/${job.job_id}`),scope,job.operation_id));})}>Refresh videos</button></div>
+  <div className="video-photo-actions"><button className="primary" disabled={!loaded||!!busy||!writable||working||!consent||(!pending&&selection.length===0)||reviewFraming&&!framingReviewed} onClick={()=>void action(pending?"Resuming saved request…":"Preparing your video…",start)}>{pending?"Resume same saved request":working?"Video is creating…":"Create video"}</button>{pending&&<button disabled={!!busy} onClick={()=>void action("Checking saved operation…",recover)}>Recover saved job</button>}{pending&&<button disabled={!!busy||!writable} onClick={()=>{if(window.confirm(DISCARD_CONFIRM))void action("Discarding saved request…",discard);}}>Discard saved request</button>}<button disabled={!!busy} onClick={()=>void action("Refreshing videos…",async()=>{await refresh();if(job)setJob(decodeJob(await api(`property-video-jobs/${job.job_id}`),scope,job.operation_id));})}>Refresh videos</button></div>
   {pending&&journal.preparation?.voice==="own"&&!journal.preparation.voiceComplete&&<label>Choose the same original recording to resume<input type="file" accept=".m4a,.mp3,audio/mp4,audio/mpeg" disabled={!!busy} onChange={event=>{setOwnFile(event.target.files?.[0]??null);setRecordingChanged(true);}}/></label>}
   {job&&<section className="video-job" aria-label="Current property video"><h3>{job.state==="ready"?"Your finished video":"Saved video progress"}</h3><p>{job.state.replaceAll("_"," ")} · {job.completed_sources}/{job.source_count} photos complete</p>{job.message&&<p>{job.message}</p>}{working&&<><p>This is a saved server job. You can close Studio while it works.</p><button disabled={!!busy||!writable} onClick={()=>void action("Cancelling saved video…",cancel)}>Cancel video</button></>}
    {job.resume_available===true&&<button disabled={!!busy||!writable||!consent} onClick={()=>void action("Resuming saved video…",async()=>{const resumed=await resumeVideo(services,scope,job,control.current.signal);current();setJob(resumed);setNotice("Resumed the same saved video. Completed shots are retained.");})}>Resume saved video</button>}

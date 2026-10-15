@@ -310,7 +310,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
     const order = gallery.map(photo => photo.id), index = order.indexOf(photoId), target = index + direction;
     if (index < 0 || target < 0 || target >= order.length) return;
     const next = [...order]; [next[index], next[target]] = [next[target], next[index]];
-    void changeGallery({ action: "reorder", expected_order: order, photo_ids: next }, "Gallery order saved for every device and the property tour.");
+    void changeGallery({ action: "reorder", expected_order: order, photo_ids: next }, "Gallery order saved in Studio. Your property website and new videos keep their own photo order.");
   };
   const finish = listingFinish({ listing, state, media, loading, loadFailed, pendingUploads: journals.length, canWrite, hasCreativeTools: Boolean(onOpenFeature) });
   const navigateFinish = (destination: ListingDestination) => {

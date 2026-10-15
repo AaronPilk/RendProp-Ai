@@ -96,7 +96,7 @@ try {
   receipt.checks.push("File imported, verified asset completed, gallery attached, refresh shows photo");
   await page.locator('input[type="file"][multiple]').setInputFiles(["living.png", "garden.png"].map(name => ({ name, mimeType: "image/png", buffer: Buffer.from(png, "base64") })));
   await expect(page.locator(".lw-gallery-photo")).toHaveCount(3);
-  const originalOrder = await page.evaluate(() => window.listingFixture.snapshot().photos.slice().sort((a,b) => a.sort - b.sort || a.id.localeCompare(b.id)).map(photo => photo.id));
+  const originalOrder = await page.evaluate(() => window.listingFixture.snapshot().photos.slice().sort((a,b) => a.sort - b.sort || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)).map(photo => photo.id));
   let firstPhoto = page.locator(".lw-gallery-photo").first();
   await firstPhoto.getByRole("button", { name: "Edit caption" }).click(); await firstPhoto.getByLabel("Photo caption").fill("Bright kitchen with garden views"); await firstPhoto.getByRole("button", { name: "Save caption" }).click();
   await expect(firstPhoto.getByRole("img")).toHaveAttribute("alt", "Bright kitchen with garden views");
@@ -104,7 +104,7 @@ try {
   await firstPhoto.getByRole("button", { name: "Move photo 1 later" }).click();
   await expect(page.locator(".lw-gallery-photo").nth(1).getByRole("img")).toHaveAttribute("alt", "Bright kitchen with garden views");
   const gallery = await page.evaluate(() => window.listingFixture.snapshot());
-  assert.deepEqual(gallery.photos.slice().sort((a,b) => a.sort-b.sort || a.id.localeCompare(b.id)).map(photo => photo.id), [originalOrder[1], originalOrder[0], originalOrder[2]]);
+  assert.deepEqual(gallery.photos.slice().sort((a,b) => a.sort-b.sort || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)).map(photo => photo.id), [originalOrder[1], originalOrder[0], originalOrder[2]]);
   assert.equal(gallery.photos.filter(photo => photo.is_main).length, 1); assert.equal(gallery.listings[0].mainPhotoKey, gallery.photos.find(photo => photo.id === originalOrder[0]).original_key);
   await page.evaluate(() => window.listingFixture.reopen());
   await expect(page.locator(".lw-gallery-photo").nth(1).getByRole("img")).toHaveAttribute("alt", "Bright kitchen with garden views");

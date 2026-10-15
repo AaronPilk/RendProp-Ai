@@ -648,6 +648,8 @@ jobs:
           node tests/creative-photo-pages-browser.mjs
           node tests/make-video-browser.mjs
           node tests/make-video-status-browser.mjs
+          node tests/make-video-discard-browser.mjs
+          node tests/listing-upload-order-browser.mjs
           node tests/photo-recovery-browser.mjs
           node tests/photo-delivery-browser.mjs
           node tests/photo-output-browser.mjs
@@ -656,6 +658,41 @@ jobs:
           node tests/industry-details-browser.mjs
           node tests/recovery-browser.mjs
           node --test ../../tools/deploy/check-migration-ledger.test.mjs
+      - name: C2 discard and upload-order compiled browser faults
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          for control in client-only-discard forget-after-lost-reply discard-hides-accepted-job uuid-tie-break; do
+            evidence_root="$RUNNER_TEMP/rendprop-c2-browser-control-$control"
+            mkdir -p "$evidence_root"
+            script=make-video-discard-browser.mjs
+            if [ "$control" = "uuid-tie-break" ]; then script=listing-upload-order-browser.mjs; fi
+            set +e
+            TMPDIR="$evidence_root" node "tests/$script" --fault="$control" > "$evidence_root/run.log" 2>&1
+            control_status=$?
+            set -e
+            test "$control_status" -ne 0
+            C2_EVIDENCE="$evidence_root" C2_CONTROL="$control" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,readdirSync} from 'node:fs';
+          import {join} from 'node:path';
+          const root=process.env.C2_EVIDENCE, control=process.env.C2_CONTROL;
+          const folders=readdirSync(root,{withFileTypes:true}).filter(item=>item.isDirectory());
+          assert.equal(folders.length,1);
+          const receipt=JSON.parse(readFileSync(join(root,folders[0].name,'receipt.json'),'utf8'));
+          const expected={
+            'client-only-discard':'the server recorded the discard',
+            'forget-after-lost-reply':'lost discard response',
+            'discard-hides-accepted-job':'already accepted this request',
+            'uuid-tie-break':'earlier photos keep their upload order',
+          };
+          assert.equal(receipt.status,'failed');
+          assert.equal(receipt.fault,control);
+          assert.ok(receipt.failure.includes(expected[control]));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          NODE
+          done
       - name: Recovery retains drafts and suppresses private caught errors
         run: |
           for control in clear-draft-on-reload unsafe-react-logging; do
@@ -754,6 +791,11 @@ jobs:
             /tmp/rendprop-make-video-*/*.png
             /tmp/rendprop-make-video-status-*/receipt.json
             /tmp/rendprop-make-video-status-*/*.png
+            /tmp/rendprop-listing-order-*/receipt.json
+            /tmp/rendprop-listing-order-*/*.png
+            ${{ runner.temp }}/rendprop-c2-browser-control-*/**/receipt.json
+            ${{ runner.temp }}/rendprop-c2-browser-control-*/**/*.png
+            ${{ runner.temp }}/rendprop-c2-browser-control-*/run.log
             /tmp/rendprop-photo-recovery-*/receipt.json
             /tmp/rendprop-photo-recovery-*/*.png
             /tmp/rendprop-property-reels-*/receipt.json
@@ -1439,6 +1481,20 @@ jobs:
           python3 services/supabase/tests/property_video_jobs_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-pg"
           python3 services/supabase/tests/studio_photo_history_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-photo-pg"
           python3 services/supabase/tests/photo_quality_evidence_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-quality-pg"
+      - name: Unaccepted saved video discard serializes admission and preserves accepted work
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_abandon_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-abandon-pg"
+      - name: Studio uploads append in order across concurrent batches and reordering
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/studio_gallery_order_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-gallery-order-pg"
       - name: Actual saved photo background judge race and no-repeat control
         timeout-minutes: 10
         run: |
@@ -1558,6 +1614,8 @@ jobs:
           name: property-video-authority-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/rendprop-property-video-pg/**
+            ${{ runner.temp }}/rendprop-property-video-abandon-pg/**
+            ${{ runner.temp }}/rendprop-studio-gallery-order-pg/**
             ${{ runner.temp }}/rendprop-studio-photo-pg/**
             ${{ runner.temp }}/rendprop-photo-quality-pg/**
             ${{ runner.temp }}/rendprop-photo-background-pg/**

@@ -9,7 +9,10 @@ export type GalleryPhoto = { id: string; listing_id: string; original_key: strin
 export type ListingState = { assets: Asset[]; jobs: Job[]; renders: Published[]; photos: GalleryPhoto[]; chapters: Chapter[]; nextOffset: number | null };
 export const EMPTY_STATE: ListingState = { assets: [], jobs: [], renders: [], photos: [], chapters: [], nextOffset: null };
 export function isContactPhotoKey(value: unknown): boolean { return typeof value === "string" && value.split("/").at(-1)?.startsWith("contact-") === true; }
-export function orderedGallery(photos: GalleryPhoto[]): GalleryPhoto[] { return [...photos].sort((a, b) => a.sort - b.sort || a.id.localeCompare(b.id)); }
+/** Saved position first; photos attached before positions were assigned (all 0) keep their upload
+ * (attach) order instead of a random UUID order. The reorder RPC compares this same order. */
+export function orderedGallery(photos: GalleryPhoto[]): GalleryPhoto[] { return [...photos].sort((a, b) => a.sort - b.sort || attachTime(a) - attachTime(b) || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)); }
+function attachTime(photo: GalleryPhoto): number { const time = Date.parse(photo.created_at); return Number.isFinite(time) ? time : 0; }
 export function canPublishAsset(asset: Asset): boolean { return asset.qc_required !== true || asset.qc_publishable === true; }
 export function safeHTTPS(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 4096) return null;

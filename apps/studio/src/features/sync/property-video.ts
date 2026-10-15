@@ -116,21 +116,50 @@ export async function enqueueVideo(services:Pick<StudioServices,"api"|"getSnapsh
  const raw=await services.api("/functions/v1/property-video-jobs",{method:"POST",orgId:scope.library,body:journal.input,idempotencyKey:`property-video:${journal.input.operation_id}`,aiConsent:"property-video-jobs-v1",signal,timeoutMs:90_000});
  assertVideoScope(services,scope,signal);const job=decodeJob(raw,scope,journal.input.operation_id);saveVideoJournal(storage,scope,{...journal,job_id:job.job_id});return job;
 }
-export async function inspectVideoOperation(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,journal:VideoJournal,signal?:AbortSignal):Promise<{job:VideoJob|null;closed:boolean}>{
- assertVideoScope(services,scope,signal);
- const raw=object(await services.api(`/functions/v1/property-video-jobs?operation_id=${journal.input.operation_id}&listing_id=${scope.listing}&expected_org_id=${scope.library}`,{orgId:scope.library,signal}));
- assertVideoScope(services,scope,signal);
+// A closed operation can never start a job: either a durable capacity refusal
+// or the agent's server-confirmed discard (C2). Servers before C2 send no
+// reason, and then only a capacity refusal could close an operation.
+export type VideoClosure="capacity_refused"|"abandoned";
+// `abandoned` is present only for a server-confirmed discard, so existing
+// capacity-refusal and open-operation shapes are unchanged.
+export type VideoOperation={job:VideoJob|null;closed:boolean;abandoned?:true};
+export function videoClosure(operation:VideoOperation):VideoClosure|null{return operation.closed?(operation.abandoned?"abandoned":"capacity_refused"):null;}
+function decodeOperation(rawValue:unknown,scope:VideoScope,journal:VideoJournal):VideoOperation{
+ const raw=object(rawValue);
  const job=raw.job===null?null:decodeJob(raw.job,scope,journal.input.operation_id);
  if(raw.operation_closed===true){
   if(job||raw.operation_id!==journal.input.operation_id||raw.listing_id!==scope.listing||raw.selected_library_org_id!==scope.library)throw Error('The rejected operation proof belongs to another request.');
+  if(raw.closed_reason==="abandoned")return{job:null,closed:true,abandoned:true};
+  if(raw.closed_reason!=null&&raw.closed_reason!=="capacity_refused")throw Error("The saved request's server state is not recognized. Refresh this property before changing it.");
   return{job:null,closed:true};
  }
+ if(raw.closed_reason!=null)throw Error("The saved request's server state is incomplete. Refresh this property before changing it.");
  return{job,closed:false};
 }
-export function retainRejectedVideo(storage:Pick<Storage,'setItem'>,scope:VideoScope,journal:VideoJournal):void{
- if(journal.job_id)throw Error('An accepted video cannot be replaced as a rejected request.');
- saveVideoJournal({setItem:(_key,value)=>storage.setItem(`${videoScopeKey(scope)}:capacity-refused:${journal.input.operation_id}`,value)},scope,journal);
+export async function inspectVideoOperation(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,journal:VideoJournal,signal?:AbortSignal):Promise<VideoOperation>{
+ assertVideoScope(services,scope,signal);
+ const raw=await services.api(`/functions/v1/property-video-jobs?operation_id=${journal.input.operation_id}&listing_id=${scope.listing}&expected_org_id=${scope.library}`,{orgId:scope.library,signal});
+ assertVideoScope(services,scope,signal);
+ return decodeOperation(raw,scope,journal);
 }
+/** C2: the server resolves this exact unaccepted request. An accepted job comes back untouched; only an unseen operation is closed for good. */
+export async function abandonVideoOperation(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,journal:VideoJournal,signal?:AbortSignal):Promise<VideoOperation>{
+ assertVideoScope(services,scope,signal);
+ if(journal.job_id)throw Error("This request already has a server video. Cancel or recover that video instead.");
+ const operation=id(journal.input.operation_id);
+ const raw=object(await services.api(`/functions/v1/property-video-jobs/operations/${operation}/abandon`,{method:"POST",orgId:scope.library,body:{listing_id:scope.listing,expected_org_id:scope.library},idempotencyKey:`property-video-abandon:${operation}`,signal}));
+ assertVideoScope(services,scope,signal);
+ if(raw.operation_id!==operation||raw.listing_id!==scope.listing||raw.selected_library_org_id!==scope.library)throw Error("The discard reply belongs to another request. Your saved request is unchanged.");
+ const outcome=decodeOperation(raw,scope,journal);
+ if(!outcome.closed&&!outcome.job)throw Error("The discard was not confirmed. Your saved request is unchanged; try again.");
+ return outcome;
+}
+function retainClosedVideo(storage:Pick<Storage,'setItem'>,scope:VideoScope,journal:VideoJournal,reason:VideoClosure):void{
+ if(journal.job_id)throw Error('An accepted video cannot be replaced as a rejected request.');
+ saveVideoJournal({setItem:(_key,value)=>storage.setItem(`${videoScopeKey(scope)}:${reason==="abandoned"?"abandoned":"capacity-refused"}:${journal.input.operation_id}`,value)},scope,journal);
+}
+export function retainRejectedVideo(storage:Pick<Storage,'setItem'>,scope:VideoScope,journal:VideoJournal):void{retainClosedVideo(storage,scope,journal,"capacity_refused");}
+export function retainAbandonedVideo(storage:Pick<Storage,'setItem'>,scope:VideoScope,journal:VideoJournal):void{retainClosedVideo(storage,scope,journal,"abandoned");}
 export async function recoverVideo(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,journal:VideoJournal,signal?:AbortSignal):Promise<VideoJob|null>{
  return (await inspectVideoOperation(services,scope,journal,signal)).job;
 }
