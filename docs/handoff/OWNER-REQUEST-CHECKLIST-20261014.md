@@ -207,3 +207,29 @@ secret, funding or feature flag changed and no provider call was made by this
 deployment. Studio80 source is tested but not yet deployed. New background-video
 execution and premium purchases are still disabled pending their live acceptance;
 80 must not be described as full launch acceptance or a public Apple submission.
+
+
+### Actual80/81 phone and delivery update,01:12UTC
+
+- [x] Contemporary is visible instead of Scandinavian for new edits; one actual
+  phone Contemporary operation completed and remains saved beside Modern.
+- [x] Photo versions adaptive light layout, original comparison, scrollable
+  required checks and safe-area footer observed on the actual phone80. No
+  publication/check approval was made.
+- [x] Owner's8:38PM selector-only clarification implemented in81: readable glass
+  capsules, current full labels, actual selected state and existing filter
+  semantics. All four filters were tapped on actual TestFlight81.
+- [x] New selector observed in Light and temporary Dark appearance.
+- [ ] Physical Large Text/smaller-phone selector check remains open.
+- [ ] Full per-operation phase visibility in the global photo banner remains a
+  polish follow-up; it currently shows truthful completed-photo percentage.
+
+Both80 and81 internal uploads succeeded once; Apple reports VALID/INTERNAL_ONLY
+and IN_BETA_TESTING with existing group/notes verified. Source81 is3c19f441;
+its fresh signed archive performs the real81SDKcompile. Delivery/phone receipts
+are in `_bridge/build81-photo-labels-testflight/` and the80photo receipt is in
+`_bridge/build80-photo-review-testflight/phone80-partial-acceptance.json`.
+These newer observations supersede the preceding pending80delivery paragraph.
+Public1.0.4(74) is still READY_FOR_SALE, AFTER_APPROVAL and unchanged. No full
+launch, hosted background rendering, premium purchase or website/Studio rollout
+acceptance is implied.

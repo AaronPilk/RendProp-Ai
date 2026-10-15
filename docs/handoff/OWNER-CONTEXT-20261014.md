@@ -133,8 +133,9 @@ decisions supersede earlier prices, limits and priorities. The acceptance ledger
   The owner will also test at a real house with better representative pictures.
 - Test major updates before the next App Store submission. Newest tested normal
   build should distribute automatically after approval. Never submit a spatial-lab
-  internal build publicly. Build74 currently remains the protected in-review
-  public candidate; installed TestFlight is78 and the next internal work is79.
+  internal build publicly. Public1.0.4(74) is READY_FOR_SALE and stays untouched. Internal
+  TestFlight1.0.5(81) is installed on the owner phone; it is internal-only and
+  cannot be submitted as the public App Store candidate.
 - Aerial intro stays **Coming soon**. Later, a faithful front-exterior opening
   could lead the property video/site. It is not a current release guarantee.
 - **3D tours** are the main later experimental priority: navigable walkthroughs,
@@ -167,3 +168,38 @@ New79 hosted jobs/provider quality/locked-phone
 completion/purchases/onboarding acceptance remain open. Do not mark launch ready
 from counts or old receipts. Continue from the exact current checkpoint, without
 restarting unrelated passed checks or silently dropping requests.
+
+
+## 01:12UTC physical photo and selector checkpoint (October15UTC / October14ET)
+
+The owner clarified that the8:38PM complaint referred specifically to the
+Original/Latest/Decluttered/Staged selector, not the green thumbnail publication
+badges. Build81 changes only that selector and its existing UI helper, plus
+lab metadata. Keep thumbnail publication labels/actions unchanged.
+
+Internal1.0.5(80) and(81) both uploaded once, VALID/INTERNAL_ONLY, existing
+internal group and testing notes read back. Actual phone installed81 through
+TestFlight. All four glass-tab names fit at the owner's current text size;
+Original starts selected. Actual taps of Staged, Decluttered, Latest and Original
+show the expected saved results/empty state, with the purple selected capsule.
+Light and temporary Dark appearance were visually checked on that phone.
+Large-text and smaller-device physical acceptance are not claimed.
+
+On80, the adaptive Photo versions screen, larger aspect-fit photo, original
+comparison, reachable required checks and persistent safe-area footer were
+observed. Use on listing stayed disabled before review, and root did not approve
+checks, change the cover, choose a published version or publish. One Contemporary
+edit from the living-room Original completed, with the actual0%-completed-batch
+bar followed by1of1ready. Staged now retains Contemporary and Modern separately.
+This is one real Contemporary result, not acceptance of all AI outputs. The
+global banner currently shows completed-photo percentage; detailed phase text
+is in the detailed studio batch card rather than that global banner.
+
+Source81 is3c19f441 (selector e1a4352); one real signed archive compiled3app
+Swift commands withLAB/noDEBUG; signature/resource/dSYM verification passed,
+and internal delivery is recorded under `_bridge/build81-photo-labels-testflight/`.
+No normal App Store74 project, public candidate or release setting changed.
+80CI hosted UIKit passed693pixel and449ZIP assertions with33compiled negative
+controls on exact cfad13f; whole-run native audit was still running at the last
+readback. Background canary, website/Studio rollout, premium purchase acceptance
+and refreshed onboarding remain open.
