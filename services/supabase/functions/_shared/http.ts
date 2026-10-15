@@ -31,6 +31,9 @@ export type ErrorCode =
   // can show the refusal differently from an ordinary validation error.
   | "unsupported_edit"
   | "photo_clarification_required"
+  | "photo_quality_pending"
+  | "photo_quality_hold"
+  | "photo_quality_refused"
   | "upstream"
   | "internal";
 

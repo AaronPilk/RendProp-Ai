@@ -5,7 +5,7 @@ const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
 // Complete structural JPEG geometry fixture, not a decoded/visual quality proof.
 const outputJPEG=(width=2048,height=2048)=>btoa(String.fromCharCode(...[255,216,255,192,0,11,8,height>>8,height&255,width>>8,width&255,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]));
 const OUTPUT=outputJPEG(4096,4096);
-async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|null=null){
+async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|null=null,actualEvidence=false){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
  if(removeAdmission==="input"){
   const anchor='validatePhotoInputs(body.image_b64,mime,body.mask_b64,\n        String(body.mask_mime??"image/png").split(";")[0].trim().toLowerCase());';
@@ -33,7 +33,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
   assert(source.includes(anchor));source=source.replace(anchor,"");
  }
  if(removeAdmission==="quality"){
-  const anchor="else if (normalPhoto4K) validatedPhotoBytes=assertPhoto4KOutput(outB64, outMime).data;";assert(source.includes(anchor));source=source.replace(anchor,"");
+  const anchor="else if(normalPhoto4K)assertPhoto4KGeometry(decoded);";assert(source.includes(anchor));source=source.replace(anchor,"");
  }
  if(removeAdmission==="stage_prompt"){
   const anchor="return buildRealEstateStagePrompt(styleDesc);";
@@ -60,7 +60,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {requiredIdempotencyKey} from ${url("../_shared/idempotency.ts")};
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
- import {preparePhoto4KInput,photo4KChain,assertPhoto4KOutput} from ${url("./photo-quality.ts")};
+ import {preparePhoto4KInput,photo4KChain,assertPhoto4KGeometry} from ${url("./photo-quality.ts")};
  import {priceMaskedPhotoChain,isMaskedFillStep} from ${url("./masked-photo-pricing.ts")};
  import {ownerQaPhotoStep as actualOwnerQaPhotoStep,prepareOwnerQaPhotoInput,assertOwnerQaPhotoOutput} from ${url("./owner-photo-qa.ts")};
  const ownerQaPhotoStep=(args)=>actualOwnerQaPhotoStep(args,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{value:{enabled:false}},error:null})})})})});
@@ -68,12 +68,14 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {CUSTOM_PHOTO_FIXED_FEATURES} from ${url("../_shared/custom-photo-prompt.ts")};
  import {buildRealEstateStagePrompt} from ${url("../_shared/photo-stage-prompt.ts")};
  import {MAX_PROMPT_INPUT,MAX_PROMPT_OUTPUT,editPromptInstruction} from ${url("../ai-copy/prompt.ts")};
- import {validatePhotoInputs,validatePhotoPrompt} from ${url("./input-policy.ts")};
+ import {validatePhotoInputs,validatePhotoPrompt,decodePhotoOutput} from ${url("./input-policy.ts")};
  import {persistOwnedPhotoResult,restorePhotoResult,photoResultKeys} from ${helper};
  import {photoJsonResponse} from ${url("./photo-response.ts")};
+ import * as actualQualityStore from ${url("./photo-qc-store.ts")};
  import {inlineImageResult,inlineBase64,ProviderError,BUDGETS} from ${url("../_shared/providers/common.ts")};
  import {runChain} from ${url("../_shared/providers/chain.ts")};
- export const state={actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0};
+ const actualEvidence=${actualEvidence};
+ export const state={objects:new Map(),actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,quality:null,qualityEnabled:true,qualityPending:false,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0};
  const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{}},RE_PROMPTS={twilight:"Synthetic",declutter:"Synthetic declutter"};
  ${source.slice(locksStart,locksEnd)}
  ${source.slice(customStart,customEnd)}
@@ -94,6 +96,22 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  return {data:{actor_id:state.actor,org_id:state.org,library_owner_user_id:state.actor,role:state.role,access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:state.org,team_org_id:null,
  ...(name==="listing_library_scope"?{listing_id:args.p_listing,library_org_id:state.org,listing_owner_user_id:state.actor}:{})},error:null};
  }
+ if(name==="photo_quality_lookup"||name==="photo_quality_status")return {data:state.quality?structuredClone(state.quality):null,error:null};
+ if(name==="photo_quality_begin"){
+  if(!state.qualityEnabled)return{data:null,error:{message:"RP503: Photo quality review is not active yet"}};
+  if(state.quality)return{data:{...structuredClone(state.quality),created:false},error:null};
+  const id="ea100606-0000-4000-8000-000000000004",check="ea100606-0000-4000-8000-000000000005",input=args.p_input;
+  state.quality={evidence:{id,actor_id:state.actor,org_id:state.org,library_org_id:state.org,listing_id:args.p_listing,request_key:args.p_key,request_sha256:state.operationInputHash,policy:"photo-fixed-features-v1",edit:args.p_edit,style:args.p_style,input:{...input,bucket:"renders",key:"ai-router/"+state.org+"/photo-evidence/"+state.actor+"/"+id+"/input.jpg"},output:null,input_etag:null,output_etag:null,state:"pending",provenance_id:null},check:{id:check,evidence_id:id,policy:"photo-fixed-features-v1",state:"pending",lease_token:null,lease_until:null,judge_started_at:null,derivatives:null,derivative_manifest_sha256:null},can_continue:false,created:true};
+  return{data:structuredClone(state.quality),error:null};
+ }
+ if(name==="photo_quality_evidence_reserve"){
+  const {generation_stage,provider,model,...facts}=args.p_output,e=state.quality.evidence,ext={"image/jpeg":"jpg","image/png":"png","image/webp":"webp"}[facts.mime];
+  e.output={...facts,bucket:"renders",key:"ai-router/"+state.org+"/photo-evidence/"+state.actor+"/"+e.id+"/candidate."+ext};e.generation_stage=generation_stage;e.generation_provider=provider;e.generation_model=model;return{data:structuredClone(e),error:null};
+ }
+ if(name==="photo_quality_evidence_receipt"){
+  const e=state.quality.evidence;if(args.p_kind==="input"){e.input_etag=args.p_etag;e.state="input_ready";}else{e.output_etag=args.p_etag;e.state="evidence_ready";e.provenance_id="ea100606-0000-4000-8000-000000000008";}return{data:structuredClone(state.quality),error:null};
+ }
+ if(name==="photo_quality_failure"){state.quality.evidence.state="hold";state.quality.evidence.failure={phase:args.p_phase,facts:args.p_facts};state.quality.check.state="hold";return{data:structuredClone(state.quality),error:null};}
  if(name==="serving_operation_begin"){
  if(state.deleted||state.role!=="owner")return{data:null,error:{message:"RP403: Current editor access is required"}};
  if(state.started){if(state.operationInputHash!==args.p_input_sha256)return{data:null,error:{message:"RP409: This request key was used for different input"}};if(state.saved)return{data:{replay:true,result:structuredClone(state.saved)},error:null};return{data:null,error:{message:"RP409: This operation already started. Check its saved result or status before starting another"}};}
@@ -114,6 +132,31 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  throw Error("Unexpected RPC "+name);
  }};
  const adminClient=()=>admin;
+ // This existing prompt/ledger/legacy-storage harness supplies a synthetic
+ // accepted QC dependency. Actual quarantine/funding/judge/status behavior is
+ // tested in photo-qc-runtime.test.ts, never inferred from this dependency.
+ const preferredOrg=()=>state.org;
+ const lookupPhotoQuality=actualEvidence?actualQualityStore.lookupPhotoQuality:async()=>state.quality;
+ const photoQualityScope=actualEvidence?actualQualityStore.photoQualityScope:async()=>{};
+ const statusPhotoQuality=actualEvidence?actualQualityStore.statusPhotoQuality:async()=>state.quality;
+ const beginPhotoQuality=actualEvidence?actualQualityStore.beginPhotoQuality:async(_admin,identity,args)=>{
+  if(!state.qualityEnabled)throw new HttpError(503,"Photo quality review is not active yet.","upstream");
+  state.quality={identity,args,created:true,evidence:{id:"synthetic-evidence",request_sha256:state.operationInputHash},check:{state:"pending"}};return state.quality;
+ };
+ const retainPhotoCandidate=actualEvidence?actualQualityStore.retainPhotoCandidate:async(_admin,row,decoded)=>{
+  row.saved=await persistOwnedPhotoResult(admin,row.identity,{status:"done",mime:decoded.mime,result_url:"data:"+decoded.mime+";base64,"+state.output},undefined,decoded.data);
+  row.evidence.output_etag="synthetic-confirmed";
+  row.check.state=state.qualityPending?"pending":"accept";return row;
+ };
+ const failPhotoQuality=actualEvidence?actualQualityStore.failPhotoQuality:async(_admin,row,phase,facts)=>{row.check.state="hold";row.failure={phase,facts};return row;};
+ const continuePhotoQuality=async(_admin,row)=>row;
+ const photoQualityResponse=actualEvidence?actualQualityStore.photoQualityResponse:async(_admin,row)=>{
+  if(row.check.state!=="accept")throw new HttpError(409,"Saved photo is private pending review.",row.check.state==="hold"?"photo_quality_hold":"photo_quality_pending",{check_id:"synthetic-check",evidence_id:"synthetic-evidence",retry_existing_job:true,failure_phase:row.failure?.phase,...row.failure?.facts});
+  const metadata={edit:row.args.edit,...(row.args.style?{style:row.args.style}:{}),disclosure:"Synthetic disclosure",provenance:{id:"synthetic-provenance",recorded:true}};
+  if(!row.responded){row.responded=true;return photoJsonResponse(metadata,state.output,row.saved.mime,row.saved.key);}
+  const saved=await restorePhotoResult(admin,row.identity);if(!saved)throw new HttpError(503,"Saved photo is not available.");
+  return photoJsonResponse(metadata,saved.image_b64,saved.mime,saved.key);
+ };
  export const run=${source.slice(start,end)}};
  export async function restore(identity,pointer){return await restorePhotoResult(admin,identity,pointer);}
  export async function withdrawDuringSign(){return await restorePhotoResult(admin,{actorId:state.actor,orgId:state.org,requestKey:"owned-photo-0001",listingId:${JSON.stringify(listing)}},undefined,{head:async()=>({exists:true,bytes:${atob(OUTPUT).length}}),sign:async()=>{state.role="viewer";return"https://synthetic.invalid";},read:async()=>{state.gets++;throw Error("Never read after signing-time withdrawal");}});}
@@ -123,6 +166,14 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  globalThis.fetch=(async(input:Request|string|URL,init?:RequestInit)=>{
  const request=input instanceof Request?input:new Request(input,init),u=new URL(request.url),method=request.method;
  if(!u.hostname.endsWith(".r2.cloudflarestorage.com"))throw Error("Unexpected vendor/network transport");
+ if(actualEvidence){
+  const key=decodeURIComponent(u.pathname.split("/").slice(2).join("/")),object=imported.state.objects.get(key);
+  if(method==="PUT"){imported.state.puts++;assertEquals(request.headers.get("if-none-match"),"*");if(imported.state.storageFail)return new Response(null,{status:503});if(object)return new Response(null,{status:412});
+   const bytes=await request.arrayBuffer();imported.state.objects.set(key,{bytes,mime:request.headers.get("content-type"),sha256:request.headers.get("x-amz-meta-sha256"),etag:'"fixture-etag"'});if(key.includes("/candidate."))imported.state.object=bytes;if(imported.state.putLost)throw Error("lost committed evidence PUT");return new Response(null,{status:200});}
+  if(method==="HEAD")return object?new Response(null,{headers:{"content-length":String(object.bytes.byteLength),"content-type":object.mime,"x-amz-meta-sha256":object.sha256,etag:object.etag}}):new Response(null,{status:404});
+  if(method==="GET"){imported.state.gets++;return new Response(object.bytes,{headers:{"content-length":String(object.bytes.byteLength),"content-type":object.mime}});}
+  throw Error("Unexpected evidence transport");
+ }
  if(method==="PUT"){
  imported.state.puts++;assertEquals(request.headers.get("if-none-match"),"*");assertEquals(request.redirect,"error");
  if(imported.state.storageFail)return new Response("",{status:503});
@@ -202,7 +253,7 @@ Deno.test("actual staging refuses1K fallback while preserving the surgical promp
   {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.stage",unit:"output_image",unit_cents:4}];
   const brief="Outdoor chairs and a small movable table, with natural linen cushions.";
   const request=f.request({edit:"stage",style:"rustic",prompt:brief}),body=await request.clone().json();
-  const response=await f.run(request);assertEquals(response.status,502,await response.text());
+  const response=await f.run(request);assertEquals(response.status,409,await response.text());
   assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.helperDispatch,0);
   assertEquals(f.state.inputs[0].extra.photo_quality_4k,true);assert(f.state.prompts[0].includes(JSON.stringify(brief)));
   assert(f.state.prompts[0].includes("solid slabs solid"));assert(f.state.prompts[0].includes("existing open pergolas open"));
@@ -250,7 +301,7 @@ Deno.test("actual custom handler cannot quietly fallback to1K after its prepared
  const f=await fixture();try{f.state.router=true;f.state.primaryFail=true;f.state.routes=[
   {route_id:"primary",provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.custom",unit:"output_image",unit_cents:6.7},
   {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.custom",unit:"output_image",unit_cents:4}];
-  const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,502,await response.text());
+  const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,409,await response.text());
   assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.inputs[0].extra.photo_quality_4k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
  }finally{f.close();}
 });
@@ -275,16 +326,16 @@ Deno.test("actual photo handler refuses a duplicated priced primary before any p
 });
 Deno.test("actual photo handler recovers a committed output whose result-pointer response was lost",async()=>{
  const f=await fixture();try{f.state.completeLost=true;assertEquals((await f.run(f.request())).status,200);assertEquals(f.state.saved,null);
- const retry=await f.run(f.request());assertEquals(retry.status,200);assertEquals((await retry.json()).image_b64,OUTPUT);assertEquals(f.state.submits,1);assertEquals(f.state.puts,1);assertEquals(f.state.charges,1);assertEquals(f.state.completes,2);assert(f.state.saved);
+ const retry=await f.run(f.request());assertEquals(retry.status,200);assertEquals((await retry.json()).image_b64,OUTPUT);assertEquals(f.state.submits,1);assertEquals(f.state.puts,1);assertEquals(f.state.charges,1);assertEquals(f.state.completes,1);assertEquals(f.state.saved,null,"Quality row recovery does not depend on repairing the pointer ACK");
  }finally{f.close();}
 });
-Deno.test("actual photo handler recovers a lost committed PUT without another provider or object write",async()=>{
- const f=await fixture();try{f.state.putLost=true;assertEquals((await f.run(f.request())).status,503);assert(f.state.journal&&f.state.object);
- const retry=await f.run(f.request());assertEquals(retry.status,200);assertEquals((await retry.json()).image_b64,OUTPUT);assertEquals(f.state.submits,1);assertEquals(f.state.puts,1);assertEquals(f.state.charges,1);
+Deno.test("actual photo handler holds a lost committed evidence PUT without another provider or object write",async()=>{
+ const f=await fixture();try{f.state.putLost=true;assertEquals((await f.run(f.request())).status,409);assert(f.state.journal&&f.state.object);
+ const retry=await f.run(f.request());assertEquals(retry.status,409);const body=await retry.json();assertEquals(body.code,"photo_quality_hold");assertEquals(body.image_b64,undefined);assertEquals(f.state.submits,1);assertEquals(f.state.puts,1);assertEquals(f.state.charges,1);
  }finally{f.close();}
 });
 Deno.test("actual completed-image storage failure cannot start paid fallback or regenerate a missing object",async()=>{
- const f=await fixture();try{f.state.storageFail=true;assertEquals((await f.run(f.request())).status,503);assertEquals((await f.run(f.request())).status,503);assertEquals(f.state.submits,1);assertEquals(f.state.puts,1);assertEquals(f.state.charges,1);
+ const f=await fixture();try{f.state.storageFail=true;assertEquals((await f.run(f.request())).status,409);assertEquals((await f.run(f.request())).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.puts,1);assertEquals(f.state.charges,1);
  }finally{f.close();}
 });
 Deno.test("actual photo replay refuses foreign exact receipt and deletion before storage",async()=>{
@@ -320,7 +371,7 @@ Deno.test("actual saved2K photo recovery preserves historical size and input now
   assertEquals((await f.run(f.request())).status,200);
   const historical2K=outputJPEG(1792,2390);
   f.state.object=Uint8Array.from(atob(historical2K),c=>c.charCodeAt(0)).buffer;
-  f.state.saved.metadata.image_size="2K";
+  f.state.saved={kind:"photo_output",bucket:"renders",key:f.state.journal.storage_key,mime:"image/jpeg",metadata:{image_size:"2K"}};f.state.quality=null;
   const request=f.request({image_b64:"QUFB",mime:"image/heic"});
   // Represent an exact immutable old financial input journal, whose saved
   // owned output predates this new dispatch policy. No old provider is called.
@@ -402,21 +453,21 @@ Deno.test("actual handler still admits safe glass, wood, painted furniture and f
  }finally{f.close();}}
 });
 
-Deno.test("actual normal4K handler records its exact quoted size then withholds1K/2K before persistence without refunding incurred cost",async()=>{
+Deno.test("actual normal4K handler retains wrong-size evidence while withholding1K/2K delivery and keeping incurred cost",async()=>{
  for(const [width,height,valid]of [[4096,4096,true],[3584,4800,true],[1792,2390,false],[896,1195,false]]as const){const f=await fixture();try{
   f.state.output=outputJPEG(width,height);
-  const response=await f.run(f.request({edit:"stage",style:"modern"}));assertEquals(response.status,valid?200:502,await response.text());
+  const response=await f.run(f.request({edit:"stage",style:"modern"}));assertEquals(response.status,valid?200:409,await response.text());
   assertEquals(f.state.holds,1);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);
   assertEquals(f.state.costs[0].step.params.image_size,"4K");assertEquals(f.state.costs[0].step.unit_cents,16.7584);
   assertEquals(f.state.refunds,0,"A received supplier image cannot erase incurred liability");assertEquals(f.state.costs[0].meta.owner_quality_comparison,false);assertEquals(f.state.costs[0].meta.image_size,"4K");assertEquals(f.state.costs[0].meta.cost_basis,"complete_input_4096_text_2520_image_bound");
   const hold=f.state.holdArguments[0].p_hold_cents;assert(hold>=16.7584&&hold-16.7584<0.00021,"Complete4K liability with conservative four-decimal rounding");
-  assertEquals(f.state.puts,valid?1:0);assertEquals(f.state.completes,valid?1:0);
+  assertEquals(f.state.puts,1,"Valid still bytes are retained privately even when supplier geometry is wrong");assertEquals(f.state.completes,1);
  }finally{f.close();}}
 });
-Deno.test("compiled missing normal4K output floor fails unchanged actual-handler no-persistence oracle",async()=>{
+Deno.test("compiled missing normal4K output floor fails unchanged actual-handler no-delivery oracle",async()=>{
  const oracle=async(remove:boolean)=>{const f=await fixture(false,remove?"quality":null);try{
   f.state.output=outputJPEG(1792,2390);const response=await f.run(f.request({edit:"stage",style:"modern"}));
-  assertEquals(response.status,502,"Undersized supplier output reached delivery");assertEquals(f.state.puts,0);assertEquals(f.state.costs.length,1);
+  assertEquals(response.status,409,"Undersized supplier output reached delivery");assertEquals(f.state.puts,1);assertEquals(f.state.costs.length,1);
  }finally{f.close();}};
  await oracle(false);await assertRejects(()=>oracle(true),AssertionError,"Undersized supplier output reached delivery");
 });
@@ -468,9 +519,37 @@ Deno.test("actual4K handler validates9MB once and reuses those exact bytes for i
 });
 Deno.test("actual4K handler keeps paid supplier liability for one-byte output overflow and never persists or regenerates",async()=>{
  const f=await fixture();try{
-  f.state.output=sizedOutputJPEG(9_000_001);const response=await f.run(f.request());assertEquals(response.status,502);
+  f.state.output=sizedOutputJPEG(9_000_001);const response=await f.run(f.request());assertEquals(response.status,409);
   const error=await response.json();assertEquals(error.failure_phase,"photo_output_size");assertEquals(error.provider_cost_incurred,true);
-  assertEquals(f.state.costs.length,1);assertEquals(f.state.submits,1);assertEquals(f.state.refunds,0);assertEquals(f.state.puts,0);assertEquals(f.state.completes,0);
+  assertEquals(f.state.costs.length,1);assertEquals(f.state.submits,1);assertEquals(f.state.refunds,0);assertEquals(f.state.puts,0);assertEquals(f.state.completes,1);
   const same=await f.run(f.request());assertEquals(same.status,409);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);
  }finally{f.close();}
+});
+Deno.test("actual handler policy-disabled boundary prevents every new paid supplier dispatch",async()=>{
+ const f=await fixture();try{f.state.qualityEnabled=false;const response=await f.run(f.request());assertEquals(response.status,503);assertEquals(f.state.submits,0);assertEquals(f.state.holds,0);assertEquals(f.state.puts,0);assertEquals(f.state.costs.length,0);assertEquals(f.state.refunds,1);}finally{f.close();}
+});
+Deno.test("actual same-key pending row resolves before legacy fallback even after lost pointer ACK",async()=>{
+ const f=await fixture();try{f.state.qualityPending=true;f.state.completeLost=true;
+  const first=await f.run(f.request());assertEquals(first.status,409);assertEquals((await first.json()).code,"photo_quality_pending");assertEquals(f.state.saved,null);
+  const replay=await f.run(f.request());assertEquals(replay.status,409);const body=await replay.json();assertEquals(body.code,"photo_quality_pending");assertEquals(body.image_b64,undefined);assertEquals(body.asset_key,undefined);
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.puts,1);assertEquals(f.state.gets,0,"No legacy/private GET may rescue unchecked evidence");
+  const changed=await f.run(f.request({label:"different body"}));assertEquals(changed.status,409);assertEquals((await changed.json()).code,"conflict");assertEquals(f.state.submits,1);
+ }finally{f.close();}
+});
+Deno.test("actual GET status cannot consume quota or dispatch generation",async()=>{
+ const f=await fixture();try{f.state.qualityPending=true;assertEquals((await f.run(f.request())).status,409);
+  const before={charges:f.state.charges,holds:f.state.holds,submits:f.state.submits,puts:f.state.puts};
+  const status=await f.run(new Request("https://example.invalid/ai-photo/status?check_id=synthetic-check",{headers:{"X-Org":org}}));assertEquals(status.status,409);assertEquals((await status.json()).code,"photo_quality_pending");assertEquals({charges:f.state.charges,holds:f.state.holds,submits:f.state.submits,puts:f.state.puts},before);
+ }finally{f.close();}
+});
+Deno.test("actual handler plus real quarantine pipeline retains1MB/9MB exact evidence and only returns pending",async()=>{
+ const f=await fixture(false,null,true);try{
+  const source=sizedOutputJPEG(1_000_000,1536,2048);f.state.output=sizedOutputJPEG(9_000_000);
+  const request=()=>f.request({image_b64:source}),response=await f.run(request());assertEquals(response.status,409);const body=await response.json();assertEquals(body.code,"photo_quality_pending");assertEquals(body.image_b64,undefined);assertEquals(body.asset_key,undefined);
+  assertEquals(f.state.puts,2);assertEquals(f.state.objects.size,2);assertEquals(f.state.journal,null,"No ordinary delivery registration before accept");assertEquals(f.state.object.byteLength,9_000_000);assertEquals(f.state.quality.evidence.input.bytes,1_000_000);assertEquals(f.state.saved.kind,"photo_quality");assertEquals(f.state.saved.evidence_id,f.state.quality.evidence.id);
+  assertEquals((await f.run(request())).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.puts,2);assertEquals(f.state.gets,0);
+ }finally{f.close();}
+});
+Deno.test("actual handler plus quarantine records paid output overflow without fake full-output retention",async()=>{
+ const f=await fixture(false,null,true);try{f.state.output=sizedOutputJPEG(9_000_001);const response=await f.run(f.request());assertEquals(response.status,409);const body=await response.json();assertEquals(body.code,"photo_quality_hold");assertEquals(body.failure_phase,"photo_output_size");assertEquals(body.provider_cost_incurred,true);assertEquals(body.retained_output,false);assertEquals(f.state.puts,1,"Only the prepared source is retained");assertEquals(f.state.quality.evidence.output,null);assertEquals(f.state.costs.length,1);assertEquals(f.state.refunds,0);assertEquals((await f.run(f.request())).status,409);assertEquals(f.state.submits,1);}finally{f.close();}
 });

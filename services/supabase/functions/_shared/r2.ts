@@ -109,6 +109,25 @@ export async function inspectBrandLogo(key: string): Promise<{ bytes: number; ty
   return { bytes: Number(response.headers.get("content-length")), type: response.headers.get("content-type") ?? "", sha256: response.headers.get("x-amz-meta-sha256") ?? "", etag: response.headers.get("etag") ?? "" };
 }
 
+const PHOTO_EVIDENCE_KEY = /^ai-router\/[a-f0-9-]{36}\/photo-evidence\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/(?:input|candidate)\.(?:jpg|png|webp)$/;
+/** Only after the service-only evidence RPC reserved this exact destination.
+ * Immutable PUT plus hash metadata distinguishes an existing equal-size object
+ * from this operation's exact bytes, without allocating another9MB download. */
+export async function writePhotoEvidence(key:string,bytes:Uint8Array<ArrayBuffer>,mime:string,sha256:string):Promise<void>{
+  const max=key.includes("/input.")?1_000_000:9_000_000;
+  if(!PHOTO_EVIDENCE_KEY.test(key)||!Number.isSafeInteger(bytes.byteLength)||bytes.byteLength<1||bytes.byteLength>max||!["image/jpeg","image/png","image/webp"].includes(mime)||!/^[a-f0-9]{64}$/.test(sha256))throw new HttpError(400,"Invalid private photo evidence.");
+  const response=await uploadDispatch(`${endpoint()}/${R2_BUCKET_RENDERS}/${encodeKey(key)}`,{method:"PUT",headers:{"content-type":mime,"content-length":String(bytes.byteLength),"if-none-match":"*","x-amz-meta-sha256":sha256},body:bytes,aws:{allHeaders:true}},30_000);
+  void response.body?.cancel().catch(()=>{});
+  if(!response.ok&&response.status!==412)throw new HttpError(503,"The private photo evidence could not be confirmed.","upstream");
+}
+export async function inspectPhotoEvidence(key:string):Promise<{bytes:number;mime:string;sha256:string;etag:string}|null>{
+  if(!PHOTO_EVIDENCE_KEY.test(key))throw new HttpError(400,"Invalid private photo evidence identity.");
+  const response=await uploadDispatch(`${endpoint()}/${R2_BUCKET_RENDERS}/${encodeKey(key)}`,{method:"HEAD"},10_000);
+  if(response.status===404)return null;
+  if(!response.ok)throw new HttpError(503,"The private photo evidence could not be checked.","upstream");
+  return{bytes:Number(response.headers.get("content-length")),mime:(response.headers.get("content-type")??"").split(";")[0].trim().toLowerCase(),sha256:response.headers.get("x-amz-meta-sha256")??"",etag:response.headers.get("etag")??""};
+}
+
 export interface PresignArgs {
   bucket: string;
   key: string;

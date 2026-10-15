@@ -66,7 +66,10 @@ export function assertPhoto2KOutput(b64:string,mime:string):void{
 const PHOTO_4K_DIMENSIONS = [[4096,4096],[2048,8192],[8192,2048],[1536,12288],[12288,1536],[3392,5056],[5056,3392],[3584,4800],[4800,3584],[3712,4608],[4608,3712],[3072,5504],[5504,3072],[6336,2688]] as const;
 export function assertPhoto4KOutput(b64:string,mime:string):DecodedStillImage {
  const image=decodePhotoOutput(b64,mime);
+ assertPhoto4KGeometry(image);
+ return image;
+}
+export function assertPhoto4KGeometry(image:Pick<DecodedStillImage,"width"|"height">):void {
  if(!PHOTO_4K_DIMENSIONS.some(([width,height])=>Math.abs(image.width-width)<=width*.01&&Math.abs(image.height-height)<=height*.01))
   throw new HttpError(502,"The provider returned an image outside the requested 4K size. That image was not saved as a 4K edit.","upstream");
- return image;
 }

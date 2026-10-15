@@ -67,13 +67,11 @@ import { libraryBillingOrg } from "../_shared/library-access.ts";
 // objects added, nothing that singles people out) but not the housing-steering
 // rules or the HUD wording — see _shared/fairhousing.ts, SCOPE.
 //
-// PROVENANCE. A successful edit records one media_provenance row (migration
-// 0012) via the record_provenance RPC when `listing_id` is sent, mapping
-// stage → virtual_stage, declutter → declutter, everything else → photo_edit.
-// The response always carries `disclosure` (the exact sentence the public tour
-// will print for this asset — CA AB 723 / NorthstarMLS) and `provenance`
-// ({ id, recorded, reason? }). Recording is BEST EFFORT: a failed audit insert
-// never fails an edit the caller has already paid for.
+// PROVENANCE. Prospective edits retain exact private source/candidate evidence.
+// A separate funded fixed-feature photo review must atomically record matching
+// paid receipts, QC and provenance before ordinary delivery is allowed. Pending
+// or uncertain checks return their saved IDs without image bytes or an asset key.
+// Historical photo_output replays preserve their original disclosure receipt.
 // `original_asset_id` (optional) is the untouched source uploaded via
 // POST /uploads role:"original", which makes "View original" a real public link
 // — the access-to-the-original half of AB 723.
@@ -88,15 +86,15 @@ import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
 import { CUSTOM_PHOTO_FIXED_FEATURES } from "../_shared/custom-photo-prompt.ts";
 import { buildRealEstateStagePrompt } from "../_shared/photo-stage-prompt.ts";
 import { assertCustomPhotoPrompt, assertCustomPhotoOutput } from "../ai-copy/guard.ts";
-import { type ProvenanceKind, disclosureFallback, recordProvenance } from "../_shared/provenance.ts";
+import { type ProvenanceKind, disclosureFallback } from "../_shared/provenance.ts";
 import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
-import { fundingContext, fundedAttempt, mediaAttemptQuote, SavedFundingResponse, completeFundingOperation, abortFundingOperationBeforeDispatch, boundedPhotoChain, assertPhotoHelperSponsorship, type FundingContext } from "../_shared/funded-serving.ts";
+import { fundingContext, fundedAttempt, mediaAttemptQuote, SavedFundingResponse, completeFundingOperation, abortFundingOperationBeforeDispatch, boundedPhotoChain, assertPhotoHelperSponsorship, inputHash, type FundingContext } from "../_shared/funded-serving.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
 import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput } from "./owner-photo-qa.ts";
-import { preparePhoto4KInput, photo4KChain, assertPhoto4KOutput } from "./photo-quality.ts";
+import { preparePhoto4KInput, photo4KChain, assertPhoto4KGeometry } from "./photo-quality.ts";
 import { priceMaskedPhotoChain, isMaskedFillStep } from "./masked-photo-pricing.ts";
 import { supportsStagingReference } from "../_shared/providers/gemini.ts";
 import {
@@ -114,10 +112,12 @@ import type { DoneState, GenerateInput } from "../_shared/providers/types.ts";
 // handler, its router glue or its Supabase clients into this function's bundle.
 // See ai-copy/prompt.ts's header and improvePrompt() below.
 import { MAX_PROMPT_INPUT, MAX_PROMPT_OUTPUT, editPromptInstruction } from "../ai-copy/prompt.ts";
-import { persistOwnedPhotoResult, restorePhotoResult, type PhotoResultPointer } from "./photo-result.ts";
+import { restorePhotoResult, type PhotoResultPointer } from "./photo-result.ts";
 import { photoJsonResponse } from "./photo-response.ts";
-import { validatePhotoInputs, validatePhotoPrompt } from "./input-policy.ts";
+import { validatePhotoInputs, validatePhotoPrompt, decodePhotoOutput } from "./input-policy.ts";
 import { photoHelperPayload, photoHelperQuote, type PhotoHelperPayload } from "./helper-policy.ts";
+import {lookupPhotoQuality,statusPhotoQuality,photoQualityScope,beginPhotoQuality,retainPhotoCandidate,failPhotoQuality,photoQualityResponse,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
+import {continuePhotoQuality} from "./photo-qc-runner.ts";
 
 // Money admission uses the actual conservative payload hold independently of
 // these burst/monthly feature counters.
@@ -610,6 +610,10 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
   try {
     const user = await getUser(req); // owner auth; RLS not needed (no DB touch beyond quota)
+    if(req.method==="GET"&&new URL(req.url).pathname.endsWith("/ai-photo/status")){
+      const row=await statusPhotoQuality(adminClient(),user.id,new URL(req.url).searchParams.get("check_id")??"",preferredOrg(req)??null);
+      return await photoQualityResponse(adminClient(),row,user.id,preferredOrg(req)??null);
+    }
     if (req.method !== "POST") throw new HttpError(405, "POST only");
     if (!GEMINI_KEY) throw new HttpError(500, "GEMINI_API_KEY function secret is not set", "internal");
 
@@ -782,7 +786,18 @@ Deno.serve(async (req) => {
       funding = await fundingContext(user.id, orgId, req, body, funding.rpc);
     } catch (error) {
       if (error instanceof SavedFundingResponse || (error instanceof HttpError && error.details?.funding_operation_replay === true)) {
-        const pointer = error instanceof SavedFundingResponse ? error.saved_response as unknown as PhotoResultPointer : undefined;
+        // The serving-operation begin above checks the complete request hash.
+        // Resolve prospective policy FIRST, even when its pointer ACK was lost.
+        const quality=await lookupPhotoQuality(adminClient(),resultIdentity);
+        if(quality){
+          assert(quality.evidence.request_sha256===await inputHash(body),409,"This request identifier belongs to different photo instructions.","conflict");
+          await photoQualityScope(adminClient(),quality,user.id,preferredOrg(req)??null);
+          const continued=await continuePhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt});
+          return await photoQualityResponse(adminClient(),continued,user.id,preferredOrg(req)??null,{space_type:space});
+        }
+        const stored=error instanceof SavedFundingResponse?error.saved_response:undefined;
+        assert(stored?.kind!=="photo_quality",503,"The saved photo quality journal is temporarily unavailable. No new edit was started.","upstream");
+        const pointer = stored as unknown as PhotoResultPointer|undefined;
         const saved = await restorePhotoResult(adminClient(), resultIdentity, pointer);
         if (!saved) throw new HttpError(409, "This edit is already underway, but its saved image is not available yet. Retry the same request shortly.", "conflict");
         const metadata = pointer?.metadata ?? {
@@ -896,6 +911,17 @@ Deno.serve(async (req) => {
       throw error;
     }
 
+    // This is the sole new-generation owner. While policy is disabled begin
+    // fails before supplier dispatch; historical saved results above still work.
+    let quality:PhotoQualityEnvelope;
+    try{
+      quality=await beginPhotoQuality(adminClient(),resultIdentity,{edit,style,originalAsset:body.original_asset_id,imageB64:body.image_b64,mime});
+      if(quality.created!==true){
+        await refundEditCharge(charge);
+        return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null,{space_type:space});
+      }
+    }catch(error){await refundEditCharge(charge);await abortFundingOperationBeforeDispatch(funding);throw error;}
+
     // The chain throwing means every step failed (or a validation/nsfw refusal
     // fired) — no image was produced, so hand the quota back (audit item 2 /
     // F-E-16). Once runChain RETURNS, a provider ran and produced bytes; the
@@ -921,11 +947,16 @@ Deno.serve(async (req) => {
       });
     } catch (e) {
       await refundEditCharge(charge);
+      try{
+        quality=await failPhotoQuality(adminClient(),quality,"generation",{provider_cost_incurred:"possible",message:"The generation did not return a confirmed image. No repeat generation was started."});
+        return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null);
+      }catch(statusError){if(statusError instanceof HttpError&&statusError.code.startsWith("photo_quality_"))throw statusError;}
       throw e;
     }
     const step = attempt.step;
     const outB64 = attempt.value.b64;
     const outMime = attempt.value.mime;
+    await completeFundingOperation(funding,{kind:"photo_quality",evidence_id:quality.evidence.id});
 
     // COST LEDGER (F-E-15): the image edit succeeded and is billed, so record
     // ONE org-scoped cost_ledger row with job_id = NULL. This is what the owner
@@ -945,54 +976,25 @@ Deno.serve(async (req) => {
           ...(normalPhoto4K ? {} : {cost_basis: "route_output_image_estimate_input_tokens_unmodeled"}) } : {}) },
     });
 
-    // The supplier was paid even when it ignored the size; bind that cost first.
-    let validatedPhotoBytes:Uint8Array<ArrayBuffer>|undefined;
-    if (ownerPhotoStep) assertOwnerQaPhotoOutput(outB64, outMime);
-    else if (normalPhoto4K) validatedPhotoBytes=assertPhoto4KOutput(outB64, outMime).data;
-
-    // COMPLIANCE: enter the edit in the org's AI audit log and hand the app the
-    // exact sentence the public tour will print. Best effort — never fatal (the
-    // image is already generated and already billed). See _shared/provenance.ts.
-    const prov = await recordProvenance(req, {
-      listingId: body.listing_id,
-      kind: provenanceKind(edit),
-      label: body.label ?? null,
-      modelId: step.model,
-      edit,
-      style: style ?? null,
-      // Free-text only, and only the user's own words (the canned guardrails
-      // add nothing). Bounded and stripped by the RPC; never public.
-      promptSummary: edit === "custom" || edit === "stage" ? (body.prompt ?? "").trim().slice(0, 300) || null : null,
-      originalAssetId: body.original_asset_id ?? null,
-    });
-
-    // Persistence is outside the provider chain: a completed edit's storage
-    // failure cannot dispatch or charge another model. Router-off also stores
-    // the exact owned immutable output for loss-of-response recovery.
-    let savedPhoto: {key:string;mime:string};
-    try { savedPhoto = await persistOwnedPhotoResult(adminClient(), resultIdentity, attempt.value.local,undefined,validatedPhotoBytes); }
-    catch { throw new HttpError(503,"The edit was generated but its saved copy could not be confirmed. Retry the same request to recover it.","upstream",{failure_phase:"persistence",retry_existing_job:true}); }
-    const metadata = {
-      edit,
-      space_type: space,
-      ...(style ? { style } : {}),
-      // Provider diagnostics remain additive while the router is on. The
-      // owned asset_key below is available on both paths for recovery.
-      ...(routerOn
-        ? {
-          route: { provider: step.provider, model: step.model, route_id: step.route_id },
-        }
-        : {}),
-      // The disclosure this edit carries onto the tour (CA AB 723 / NorthstarMLS).
-      disclosure: prov.disclosure,
-      provenance: {
-        id: prov.id,
-        recorded: prov.recorded,
-        ...(prov.reason ? { reason: prov.reason } : {}),
-      },
-    };
-    await completeFundingOperation(funding, {kind:"photo_output",bucket:"renders",key:savedPhoto.key,mime:savedPhoto.mime,metadata});
-    return photoJsonResponse(metadata,outB64,outMime ?? "image/png",savedPhoto.key);
+    // Ledger liability above survives every later quality/storage refusal.
+    // Decode once within the measured9MB envelope, retain exact quarantine
+    // bytes, then evaluate requested geometry. Even a wrong-size valid photo
+    // remains private evidence rather than being silently discarded.
+    let phase="photo_output_validation";
+    try{
+      const decoded=decodePhotoOutput(outB64,outMime);
+      phase="evidence_persistence";
+      quality=await retainPhotoCandidate(adminClient(),quality,decoded,{stage:`${task}:${chain.indexOf(step)}`,provider:step.provider,model:step.model});
+      phase="photo_output_geometry";
+      if(ownerPhotoStep)assertOwnerQaPhotoOutput(outB64,outMime);
+      else if(normalPhoto4K)assertPhoto4KGeometry(decoded);
+    }catch(error){
+      const over=error instanceof HttpError&&error.details?.failure_phase==="photo_output_size";
+      quality=await failPhotoQuality(adminClient(),quality,over?"photo_output_size":phase,{provider_cost_incurred:true,retained_output:!!quality.evidence.output_etag,encoded_characters:outB64.length,mime:outMime,provider:step.provider,model:step.model,message:over?"The paid image exceeded the safe9MB output bound and could not be retained.":"The generated edit could not be confirmed as a usable high-resolution photo. No new generation was started."});
+      return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null);
+    }
+    quality=await continuePhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt});
+    return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null,{space_type:space,...(routerOn?{route:{provider:step.provider,model:step.model,route_id:step.route_id}}:{})});
   } catch (err) {
     return respondError(err);
   }
