@@ -39,6 +39,7 @@ import {
 import "./creative.css";
 import BatchPhotoStudio from "./BatchPhotoStudio";
 import PhotoExportPanel from "./PhotoExportPanel";
+import CoordinatorPhotoExportPanel from "./CoordinatorPhotoExportPanel";
 import { importedPhoto, inputForEdit, photoDelivery, propertyPhoto, propertyOriginalPhoto, photosInTab, type PhotoLibraryTab, type PhotoDelivery, type PhotoSource } from "./photo-lineage";
 import { importSubtitleTranscript, TRANSCRIPT_FILE_BYTES } from "./transcript";
 const PresenterPanel = lazy(() => import("../presenter/PresenterPanel"));
@@ -1402,6 +1403,8 @@ function ListingCreative(
             ))}
           </div>}
           {sourcePicker}
+          <CoordinatorPhotoExportPanel services={services} orgId={orgId} listingId={listingId} title={listing.address || "property"}
+            scopeSignal={signal} assertScope={() => assertPhotoScope(false)} disabled={isBusy} />
           {photoResult && (
             <section className="creative-card creative-wide">
               <h2>Review your edit</h2>

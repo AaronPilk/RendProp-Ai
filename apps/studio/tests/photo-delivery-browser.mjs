@@ -30,10 +30,10 @@ try {
   await new Promise(done => server.listen(0, "127.0.0.1", done)); const origin = `http://127.0.0.1:${server.address().port}`;
   browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
-  const images = {};
+  const images = { heic: await readFile(join(root, "tests/fixtures/coordinator-source.heic")) };
   await context.route("**/*", route => {
     const url = new URL(route.request().url()); if (url.origin === origin) return route.continue();
-    if (url.hostname === "012345678901234567890123456789ab.r2.cloudflarestorage.com") return route.fulfill({ status: 200, contentType: "image/png", headers: { "Access-Control-Allow-Origin": "*" }, body: images[url.pathname.includes("edited") ? "red" : "blue"] });
+    if (url.hostname === "012345678901234567890123456789ab.r2.cloudflarestorage.com") return route.fulfill({ status: 200, contentType: url.pathname.includes("heic") ? "image/heic" : "image/png", headers: { "Access-Control-Allow-Origin": "*" }, body: images[url.pathname.includes("heic") ? "heic" : url.pathname.includes("edited") ? "red" : "blue"] });
     receipt.externalRequests.push(url.origin); return route.abort();
   });
   const page = await context.newPage(); page.setDefaultTimeout(12000); page.on("pageerror", error => receipt.errors.push(error.message));
@@ -171,6 +171,52 @@ try {
   const batchZip = await download(batch.getByRole("region", { name: "Download photos", exact: true }), "batch.zip");
   assert.ok(!batchZip.get("captions.txt").toString().includes("Earlier furniture edit")); assert.match(batchZip.get("captions.txt").toString(), /Movable clutter removed/);
   receipt.checks.push("Batch editing uses the actual original pixels, preserves the original and exports only the new result disclosure");
+  const coordinator = page.getByRole("region", { name: "Coordinator photo package", exact: true });
+  const coordinatorPhotos = Array.from({ length: 20 }, (_, index) => ({ ...legacy,
+    id: `44444444-4444-4444-8444-${String(5000 + index).padStart(12, "0")}`,
+    caption: `Exact saved version ${index + 1}`, editKind: index % 2 ? "stage" : "declutter", originalVerified: true }));
+  coordinatorPhotos.push({ ...legacy, id: "44444444-4444-4444-8444-000000005020", url: mediaURL("heic"), originalUrl: null, isStaged: false, isAltered: false, editKind: null, originalVerified: false, caption: "HEIC original" });
+  const browserCanReadHEIC = await page.evaluate(async b64 => { try { const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], { type: "image/heic" })); bitmap.close(); return true; } catch { return false; } }, images.heic.toString("base64"));
+  await page.evaluate(photos => window.creativeFixture.photos(photos), coordinatorPhotos);
+  const callsBeforeCoordinator = (await page.evaluate(() => window.creativeFixture.calls())).length;
+  await coordinator.getByRole("button", { name: "Prepare coordinator ZIP", exact: true }).click();
+  const coordinatorIDs = [], allCoordinatorNames = new Set();
+  for (const part of [1, 2]) {
+    const button = coordinator.getByRole("button", { name: `Download coordinator ZIP · part ${part}`, exact: true });
+    await expect(button).toBeVisible({ timeout: 90000 });
+    if (part === 1) await expect(coordinator.getByRole("button", { name: "Prepare next part", exact: true })).toBeDisabled();
+    const nextDownload = page.waitForEvent("download"); await button.click();
+    const downloaded = await nextDownload, path = join(artifacts, `coordinator-part-${part}.zip`); await downloaded.saveAs(path);
+    const zipBytes = await readFile(path), zip = unzip(zipBytes), manifest = JSON.parse(zip.get(`manifest-part-${String(part).padStart(2, "0")}.json`));
+    receipt.artifacts.push({ path: `coordinator-part-${part}.zip`, bytes: zipBytes.length, sha256: hash(zipBytes) });
+    assert.equal(manifest.part, part); assert.equal(manifest.totalPhotos, 21); assert.equal(manifest.moreParts, part === 1);
+    assert.equal(zip.size, 2 + manifest.files.reduce((n,record) => n + 2 + (record.originalPath ? 1 : 0) + (record.earlierSourcePath ? 1 : 0) + record.copies.length * 2, 0));
+    for (const name of zip.keys()) { assert.ok(!allCoordinatorNames.has(name)); allCoordinatorNames.add(name); }
+    for (const record of manifest.files) {
+      coordinatorIDs.push(record.photoId);
+      if (record.masterPath.endsWith(".heic")) {
+        assert.deepEqual(zip.get(record.masterPath), images.heic); assert.equal(record.masterSHA256, hash(images.heic));
+        assert.equal(record.category, "Originals"); assert.equal(record.copies.length, browserCanReadHEIC ? 4 : 0);
+        if (!browserCanReadHEIC) { assert.equal(manifest.notes.length, 1); await expect(coordinator.getByRole("note")).toContainText("HEIC"); }
+      } else {
+        assert.deepEqual(zip.get(record.masterPath), images.red); assert.equal(record.masterSHA256, hash(images.red));
+        assert.deepEqual(zip.get(record.originalPath), images.blue); assert.equal(record.originalSHA256, hash(images.blue)); assert.equal(record.copies.length, 4);
+        assert.ok(record.masterPath.startsWith(record.category === "Staged" ? "Staged/" : "Decluttered/"));
+      }
+      for (const copy of record.copies) {
+        assert.equal(copy.sha256, hash(zip.get(copy.path))); const pixels = await inspect(zip.get(copy.path));
+        assert.equal(pixels.width, copy.width); assert.equal(pixels.height, copy.height);
+        assert.ok(pixels.width <= 800 && pixels.height <= 600); assert.ok(record.masterPath.endsWith(".heic") ? pixels.bottom[2] > 240 && pixels.bottom[0] < 10 : pixels.bottom[0] > 240 && pixels.bottom[1] < 10, "coordinator JPEG has no dark label overlay");
+      }
+    }
+    assert.match(zip.get(`READ-ME-part-${String(part).padStart(2, "0")}.txt`).toString(), /Extract ALL numbered ZIP parts/);
+    if (part === 1) await coordinator.getByRole("button", { name: "Prepare next part", exact: true }).click();
+  }
+  assert.deepEqual(coordinatorIDs, coordinatorPhotos.map(photo => photo.id));
+  for (const prefix of ["Originals/", "Staged/", "Decluttered/", "MLS/", "Zillow/", "Instagram/Feed4x5/", "Instagram/Stories9x16/"]) assert.ok([...allCoordinatorNames].some(path => path.startsWith(prefix)));
+  assert.equal((await page.evaluate(() => window.creativeFixture.calls())).length, callsBeforeCoordinator, "coordinator uses owned media GETs only; no generation, gallery selection or publish");
+  await coordinator.getByRole("button", { name: "Close package", exact: true }).click();
+  receipt.checks.push("Real21-photo full-library coordinator flow creates2numberedZIPs including an exact HEIC master (native decoder availability measured), with exact PNGmasters/originals, typed Staged/Decluttered folders, actual4:3/4:5/9:16 clean JPEG pixels and no publication or paid calls");
   await page.screenshot({ path: join(artifacts, "photo-delivery-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
@@ -185,7 +231,7 @@ try {
   await expect(guarded.getByRole("alert")).toContainText("account"); assert.equal(downloadsAfterAccountChange, 0);
   receipt.checks.push("Identity changes while the actual canvas JPEG is encoding refuse the download");
   assert.deepEqual(receipt.externalRequests, []); assert.deepEqual(receipt.errors, []);
-  receipt.sourceHashes = Object.fromEntries(await Promise.all(["src/features/creative/photo-lineage.ts", "src/features/creative/photo-export.ts", "src/features/creative/PhotoExportPanel.tsx", "src/features/creative/CreativeWorkspace.tsx", "src/features/creative/BatchPhotoStudio.tsx", "tests/photo-delivery-browser.mjs"].map(async path => [path, hash(await readFile(join(root, path)))])));
+  receipt.sourceHashes = Object.fromEntries(await Promise.all(["src/features/creative/coordinator-photo-export.ts", "src/features/creative/CoordinatorPhotoExportPanel.tsx", "src/features/creative/photo-lineage.ts", "src/features/creative/photo-export.ts", "src/features/creative/PhotoExportPanel.tsx", "src/features/creative/CreativeWorkspace.tsx", "src/features/creative/BatchPhotoStudio.tsx", "tests/fixtures/coordinator-source.heic", "tests/photo-delivery-browser.mjs"].map(async path => [path, hash(await readFile(join(root, path)))])));
   await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2));
 } catch (error) { console.error(JSON.stringify({ ...receipt, artifacts, error: error.stack }, null, 2)); throw error; }
 finally { await browser?.close(); await new Promise(done => server?.close(done) ?? done()); }

@@ -50,7 +50,7 @@ export async function renderPhoto(photo: PhotoDelivery, options: PhotoExportOpti
       ctx.fillStyle = "white"; ctx.textBaseline = "top";
       lines.forEach((text, index) => ctx.fillText(text, padding, canvas.height - band + padding + index * font * 1.3));
     }
-    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("The JPEG could not be prepared.")), "image/jpeg", .94));
+    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("The JPEG could not be prepared.")), "image/jpeg", .97));
     signal.throwIfAborted();
     return { blob, ...frame };
   } finally { image.close(); }
@@ -68,7 +68,7 @@ function originalExtension(bytes: Uint8Array) {
 export async function buildPhotoDownload(photos: readonly PhotoDelivery[], options: PhotoExportOptions,
   signal: AbortSignal, assertScope: () => void, renderer = renderPhoto) {
   const check = () => { signal.throwIfAborted(); assertScope(); };
-  check(); if (!photos.length || photos.length > 6) throw new Error("Choose one to six completed photos.");
+  check(); if (!photos.length) throw new Error("Choose completed photos.");
   const entries: ZipEntry[] = [], records: unknown[] = [], captions: string[] = [];
   for (const [index, photo] of photos.entries()) {
     check();
