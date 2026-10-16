@@ -2,7 +2,7 @@
 
 Work as the independent DevOps partner to Codex, who leads integration and release. Complete this assigned lane; do not take over the whole checklist or overlap the other active agents.
 
-Create a fresh isolated branch/worktree from `2209a45f017b298414823476ec78f6a123263926`. The current integrated checkout is `/Users/pilksclaes/Rendprop AI/Rendprop Workspace/Worktrees/Active/build82-launch-checklist`; read it for context but do not edit it. Preserve every existing Claude branch and uncommitted change. Do not reimport the superseded motion patch or earlier Kie drafts.
+Create a fresh isolated branch/worktree from `b7c4515`. The current integrated checkout is `/Users/pilksclaes/Rendprop AI/Rendprop Workspace/Worktrees/Active/build82-launch-checklist`; read it for context but do not edit it. Preserve every existing Claude branch and uncommitted change. Do not reimport the superseded motion patch or earlier Kie drafts.
 
 First confirm that the shell works. Your old Linux session failed every shell call with `useradd … input/output error`; if that recurs, stop that route and report it once. Do not spend the session repeatedly calling a broken shell or call file edits tested without executing them.
 
@@ -12,7 +12,7 @@ Read these current repository files before working:
 - `docs/context/RENDPROP-CONTEXT.md`
 - `docs/handoff/OWNER-CONTEXT-20261014.md`
 
-Do not depend on `~/.codex/memories`, which was outside your connected folders. Current chronology supersedes older dated receipts. Website77 is live; Studio46 is live. Kie backend source is now committed at `2209a45` and passes 175 integrated offline tests; it is not deployed or active. Native/Studio permission clients and portable CI gates are still being integrated. Orientation changes are committed but not in internal TestFlight87. Codex's active agents own Kie, the native/Studio permission clients, the export-clock failure and current CI observation. Do not edit those lanes.
+Do not depend on `~/.codex/memories`, which was outside your connected folders. Current chronology supersedes older dated receipts. Website77 is live; Studio46 is live. Kie backend source is now committed at `2209a45` and passes 175 integrated offline tests; it is not deployed or active. Native791022e/Studio8180ca1 permission clients and portable CI gatesb7c4515 are committed and locally verified; the next whole CI is pending. They are not deployed or delivered. Orientation changes are committed but not in internal TestFlight87. Codex's active agents own Kie, the native/Studio permission clients, the export-clock failure and current CI observation. Do not edit those lanes.
 
 ## Your assignment
 
