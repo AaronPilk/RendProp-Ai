@@ -76,21 +76,21 @@ Submit one clearly identified test enquiry **only after the destination recipien
 
 ## 11. Continue the same home in Studio
 
-After root's Studio44 rollout/readbacks, open the same account/library/home in Studio. Confirm photo families, selected versions/order, video job, contact, website design and exports agree with authoritative saved state. Refresh once and change focus; gallery must remain usable. A current failure must stay visible and recoverable, not disappear through error suppression. Do not replay a selection mutation just because its reply was lost.
+After root's Studio46 rollout/readbacks, open the same account/library/home in Studio. Confirm photo families, selected versions/order, video job, contact, website design and exports agree with authoritative saved state. Refresh once and change focus; gallery must remain usable. A current failure must stay visible and recoverable, not disappear through error suppression. Do not replay a selection mutation just because its reply was lost.
 
-Complete actual two-batch upload, large-library (>50 photos), multipart Files export and full Make a video when suitable authorized media and paid-video permission exist. Current342-source build,666 unit tests,7copy/9selection local browser checks do not replace these real-account checks. The narrow abandoned-mapping-read fix is live44. Actual44 kit still aborts; completed directory-owner cancellation and a separate logical-library Kit issue are causally reproduced and under repair. Genuine hosted kit acceptance remains required. Keep the private fixture private. (O01, O05–O07, O06, P11, P14, V16)
+Complete actual two-batch upload, large-library (>50 photos), multipart Files export and full Make a video when suitable authorized media and paid-video permission exist. Studio46 is deployed fromd93c3cb with24connected browser checks and exact hosted readbacks. Actual2-photo Kit builds and reports sent to downloads with0alerts, but the observer times out and actual file acceptance remains open. Earlier45 Failedfetch is retained; native-cache hazard is fixed without claiming actual R2 response metadata is known. None of those checks replace large-library, multi-batch or full-job acceptance. Keep the private fixture private. (O01, O05–O07, O06, P11, P14, V16)
 
 ## 12. Close evidence, then onboarding and release
 
 Record pass/fail/blocked with build, exact house/job/asset/version and evidence for each step. Do not mark the72-row checklist complete from this sequence. Keep normal paid-account/member/invite isolation, complete supplier/QC/infrastructure cost reconciliation and final pricing audit open where evidence is missing; owner sponsorship is not ordinary-user billing proof. Preserve backups/release evidence while testing.
 
-The fresh Apple feedback attempt returned a screenshot-fetch timeout and crash-endpoint404: **current totals are unknown**, not zero or cleared. The last successful fetch retained three build82 submissions. Resolve/read back feedback when access works without replying, marking or deleting anything implicitly.
+The fresh Apple feedback read16:40UTC succeeds: same three build82 submissions and zero submitted crash reports sinceOctober14. This does not prove crash-free operation. No reply, marking or deletion occurred; retain the earlier timeout/404 separately.
 
 Root's current exact-source CI, remaining consumer/quality/purchase/export acceptance and final Codex/Claude audit must finish before release. **Last**, remake Rendprop for Realtors onboarding from literal final app screens and URL pages in this logical order, with capture/edit/video/website best practices and no duration cap. Verify its final resource build on the phone, then submit only the accepted normal candidate. Bars/Restaurants and future3D/floor/CMA work do not enter this walkthrough. (O02–O03, O08–O10, R01–R08)
 
 ## Source and evidence used
 
-- The72-row owner checklist: `docs/handoff/OWNER-REQUEST-CHECKLIST-20261014.md`. Its Studio43/older-CI summary is not substituted for root's newer44/current-CI receipts.
+- The72-row owner checklist: `docs/handoff/OWNER-REQUEST-CHECKLIST-20261014.md`. Use its current checkpoint and exact receipts; historical Studio43/44 and failed CI checkpoints do not supersede Studio46 and c46's16/16 result.
 - Native offer: `apps/ios/Rendprop/Screens/WebsiteDesignPickerView.swift`.
 - `/Volumes/Rendprop Files/Builds/Active/build86-native-cloud-selection-scope/READONLY-CONTRACT-AND-QA-PLAN.json` and `MINIMAL-TRUE-CLOUD-ACCEPTANCE-PROPOSAL.json`.
 - `/Volumes/Rendprop Files/Builds/Active/build86-luxury-iap-readiness/FINAL-READONLY-READINESS.json` and `NORMAL86-PREMIUM-OFFER-NAVIGATION.json`.

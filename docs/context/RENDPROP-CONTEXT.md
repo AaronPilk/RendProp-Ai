@@ -1,6 +1,18 @@
 # RENDPROP — current engineering context and historical chat log
 
-## Current checkpoint — 2026-10-05
+## Authoritative entry point — October 16, 2026
+
+Read the [72-item owner checklist](../handoff/OWNER-REQUEST-CHECKLIST-20261014.md),
+[latest execution context](../handoff/OWNER-CONTEXT-20261014.md), and
+[consumer acceptance sequence](../handoff/CONSUMER-ACCEPTANCE-SEQUENCE-20261016.md).
+These supersede every historical checkpoint below, including old versions,
+provider/pricing assumptions and incomplete implementation claims. Quality and
+functionality take priority;75% is not a hard margin. Public74/internal86 remain
+the last verified deliveries. Kie is selected but not live; paid tests paused.
+The checklist remains open, App Store submission on hold, Realtor onboarding last.
+
+
+## Historical checkpoint — 2026-10-05
 
 Read [the current audit follow-up](../handoff/FULL-SYSTEM-AUDIT-20261005.md),
 [the full beta inventory](../handoff/BETA-FEEDBACK-20261005.md), and
