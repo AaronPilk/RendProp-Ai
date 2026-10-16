@@ -47,6 +47,21 @@ def composition_fps(profile):
     raise QualityError('unsupported_composition_profile')
 
 
+def sdr_colorspace_conversion(video):
+    """Convert only fully identified SDR; never invent missing input metadata."""
+    matrix = video.get("color_space")
+    transfer = video.get("color_transfer")
+    primaries = video.get("color_primaries")
+    if (matrix, transfer, primaries) == ("bt709", "bt709", "bt709"):
+        return ""  # Preserve the existing canonical path exactly.
+    if (matrix in {"bt709", "bt470bg", "smpte170m", "bt2020nc"}
+            and transfer in {"bt709", "gamma28", "smpte170m", "bt2020-10", "bt2020-12"}
+            and primaries in {"bt709", "bt470bg", "smpte170m", "bt2020"}
+            and video.get("color_range") in {"tv", "pc"}):
+        return "colorspace=all=bt709:range=tv:format=yuv420p,"
+    return ""  # Untagged, partial, HDR and other existing policies stay unchanged.
+
+
 def require_cfr24(source, facts, *, exact_frames=None):
     video = next(s for s in facts['streams'] if s['codec_type'] == 'video')
     if video.get('avg_frame_rate') != '24/1' or video.get('r_frame_rate') != '24/1':
@@ -114,6 +129,7 @@ def compose(clips: list[Path], directory: Path, *, aspect="16:9", narration: Pat
         filters = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,fps=30,format=yuv420p"
         if fps == 24:
             filters = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,format=yuv420p"
+        filters = sdr_colorspace_conversion(video) + filters
         run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(source),
              "-map", "0:v:0", "-an", "-t", "5", "-vf", filters,
              "-c:v", "libx264", "-preset", "ultrafast" if test_fast else "medium", "-crf", "18", "-maxrate", "24M", "-bufsize", "48M", "-threads", "2",
