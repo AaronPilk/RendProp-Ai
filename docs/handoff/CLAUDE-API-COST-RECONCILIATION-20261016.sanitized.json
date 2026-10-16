@@ -1,0 +1,165 @@
+{
+  "artifact": "Rendprop API cost reconciliation — sanitized",
+  "prepared_by": "Claude (independent DevOps lane, O09)",
+  "prepared_at": "2026-10-16T22:50:00Z",
+  "currency": "USD",
+  "sanitization": "No account, actor, listing or job UUIDs; no customer text, media URLs, card digits, API-key fragments or credentials. Accounts appear only as sha256-derived scope tokens. Figures are copied from retained read-only snapshots and signed-in supplier consoles read without any click that changes state.",
+  "labels": {
+    "internal": "Rendprop cost_ledger priced accounting. Not a supplier invoice.",
+    "supplier": "Supplier console reading or invoice line. Authoritative for what the supplier charges; may lag recent usage.",
+    "estimate": "Catalog/configured amount or an inference from two readings; explicitly not an invoice.",
+    "unknown": "No evidence accessible to this lane. Never zero."
+  },
+  "internal_ledger_retained_snapshot": {
+    "source": "_bridge/build85-final-cost-snapshot/20261015T204653Z/COST-SNAPSHOT.private.json (read-only, all-account authority, schema 1), re-run through tools/audit/api_cost_report.py at commit on branch claude/api-cost-audit-20261016",
+    "exported_at": "2026-10-15T20:46:56Z",
+    "period_covered": "2026-08-25T20:22Z to 2026-10-15T20:44Z (earliest/latest retained row)",
+    "ledger_rows": 297,
+    "recorded_cents": "9148.0052",
+    "recorded_usd": "91.480052",
+    "by_cost_basis": {
+      "catalog_estimate": {"rows": 67, "cents": "5841.9100"},
+      "unclassified_recorded_cost": {"rows": 187, "cents": "2658.3428", "note": "stored amount without a cost_basis/price flag — mostly Gemini photo rows before the bound metadata existed and Anthropic/OpenAI judge rows"},
+      "published_bound": {"rows": 41, "cents": "646.4136"},
+      "usage_priced_estimate": {"rows": 2, "cents": "1.3388"}
+    },
+    "by_provider": {
+      "fal": {"rows": 44, "cents": "7186.5400"},
+      "gemini": {"rows": 92, "cents": "915.9768"},
+      "kie": {"rows": 18, "cents": "581.5000"},
+      "anthropic": {"rows": 126, "cents": "335.6136"},
+      "openai": {"rows": 16, "cents": "126.9888"},
+      "elevenlabs": {"rows": 1, "cents": "1.3860"}
+    },
+    "by_month_utc": {
+      "2026-08": {"rows": 7, "cents": "55.6000"},
+      "2026-09": {"rows": 62, "cents": "2197.2100"},
+      "2026-10": {"rows": 228, "cents": "6895.1952", "note": "through 2026-10-15T20:46Z only"}
+    },
+    "by_month_provider_model_cents": {
+      "2026-08": {"fal/seedance-v1-pro-fast": "24.0000", "fal/flux-pro-v1-fill": "4.0000", "fal/topaz-upscale-video": "12.0000", "gemini/gemini-2.5-flash-image": "15.6000"},
+      "2026-09": {"anthropic/claude-sonnet-5": "76.5000", "fal/topaz-upscale-video": "1922.8800", "gemini/gemini-3.1-flash-image": "187.6000", "gemini/gemini-3.1-flash-lite-image": "10.0800", "openai/whisper-1": "0.1500"},
+      "2026-10": {"anthropic/claude-haiku-4-5": "7.2600", "anthropic/claude-sonnet-5": "251.8536", "elevenlabs/eleven_multilingual_v2": "1.3860", "fal/seedance-v1-pro-fast (16 rows, 81 s @ 4.86c/s)": "393.6600", "fal/kling-video-v3-4k (23 rows, 115 s @ 42c/s)": "4830.0000", "gemini/gemini-3-pro-image": "244.4288", "gemini/gemini-3.1-flash-image": "455.6312", "gemini/gemini-3.6-flash": "2.6368", "kie/bytedance-v1-pro-fast (13 rows)": "234.0000", "kie/kling-3.0 (5 rows)": "347.5000", "openai/gpt-5.6-terra": "1.3388", "openai/gpt-6-astra": "125.5000"}
+    },
+    "by_feature_cents": {"reel": "5776.0000", "drone_render": "1934.8800", "photo_edit": "905.5400", "qc": "212.9136", "copy_assist": "162.1000", "coach": "86.1000", "aerial": "29.1600", "hero": "24.0000", "restage": "7.8000", "declutter": "4.0000", "photo_helper": "2.6368", "voiceover": "1.3860", "video_plan": "1.3388", "speech_captions": "0.1500"},
+    "by_paying_account_top": [
+      {"account": "scope-be350ae14a8c00406ee4", "rows": 205, "cents": "8267.9788", "note": "owner testing library"},
+      {"account": "scope-a0eccc1bda36a50c1c2a", "rows": 26, "cents": "435.8600"},
+      {"account": "scope-5afa4c0f8b98d764bc4b", "rows": 13, "cents": "164.6178"},
+      {"account": "scope-ff72c7c837054071cca5", "rows": 11, "cents": "109.0486"},
+      {"account": "scope-65896026595b8ad8e587", "rows": 13, "cents": "68.7000"},
+      {"account": "unknown", "rows": 8, "cents": "57.7000", "note": "2026-08-25..2026-09-09 rows with no org and no billing org (pre-billing-column / erased account); attributable to no current account"}
+    ],
+    "recorded_in_failed_or_refused_context_cents": "116.1000",
+    "unledgered_holds": {
+      "total_cents": "42.3796",
+      "rows": [
+        {"journal": "serving", "state": "succeeded", "provider": "gemini", "model": "gemini-3.1-flash-image", "hold_cents": "8.3584", "created": "2026-10-09"},
+        {"journal": "serving", "state": "succeeded", "provider": "elevenlabs", "model": "eleven_multilingual_v2", "hold_cents": "0.5040", "created": "2026-10-13"},
+        {"journal": "serving", "state": "uncertain", "provider": "gemini", "model": "gemini-3.1-flash-image", "hold_cents": "16.7586", "created": "2026-10-15T05:44Z"},
+        {"journal": "serving", "state": "uncertain", "provider": "gemini", "model": "gemini-3.1-flash-image", "hold_cents": "16.7586", "created": "2026-10-15T06:10Z"}
+      ],
+      "meaning": "potential liability, not consumption; not added to recorded_cents"
+    },
+    "coverage_gaps": {
+      "rows_without_listing": 247,
+      "rows_without_supplier_request_id": {"total": 177, "fal": 3, "gemini": 92, "anthropic": 65, "openai": 16, "elevenlabs": 1, "kie": 0},
+      "rows_without_tariff_link": 107,
+      "provider_attempt_journal": "not exported (schema-1 snapshot predates provider_attempt_receipts); unknown, not zero",
+      "uncertain_dispatch_rows": 0,
+      "duplicate_attempt_identities": 0,
+      "duplicate_supplier_ids": 0
+    },
+    "unpriced_usage_counters": {"product_media_serving_requests": 238, "product_media_serving_bytes": 57608876, "owner_testing_media_requests": 28, "owner_testing_media_bytes": 10896844, "metering_watch_ms": 1527449},
+    "later_internal_aggregate_not_reverified_here": {
+      "source": "owner context notes; artifact on external drive (build86-video-cost-review/APP-LEDGER-AGGREGATE-20261016T153350Z.json) not connected to this session",
+      "exported_at": "2026-10-16T15:33:50Z",
+      "ledger_rows": 306,
+      "recorded_usd": "104.712124",
+      "delta_vs_retained_snapshot_usd": "13.232072",
+      "itemised_in_notes_usd": {"fal kling 4K canary (2 clips)": "4.20", "pro stage + declutter (2 rows)": "0.611072", "coach": "0.021", "unitemised_remainder": "8.40"}
+    }
+  },
+  "supplier_evidence": {
+    "fal": {
+      "read_at": "2026-10-16T22:4xZ (signed-in dashboard, read-only; Usage, Billing and Invoices pages)",
+      "billing_period": "current cycle, October 2026, times in UTC",
+      "current_cycle": {
+        "total_cost_usd": "62.79",
+        "lines": [
+          {"endpoint": "fal-ai/kling-video/v3/4k/image-to-video", "quantity": "140.00", "unit": "Seconds", "unit_price_usd": "0.42", "total_usd": "58.80"},
+          {"endpoint": "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video", "quantity": "3.99", "unit": "1m Tokens", "unit_price_usd": "1.00", "total_usd": "3.99114"}
+        ],
+        "selected_period_credits_usd": "-60.00",
+        "current_credit_balance_usd": "-2.79",
+        "current_invoice_due_usd": "0.00",
+        "daily_burn_usd": "3.94",
+        "note": "console says balance updates may lag recent usage"
+      },
+      "invoices": [
+        {"date": "2026-10-14", "status": "paid", "amount_usd": "10.00", "kind": "credit top-up (not consumption)"},
+        {"date": "2026-10-14", "status": "paid", "amount_usd": "25.00", "kind": "credit top-up (not consumption)"},
+        {"date": "2026-10-02", "status": "paid", "amount_usd": "25.00", "kind": "credit top-up (not consumption)"},
+        {"date": "2026-09-30", "status": "paid", "amount_usd": "3.38", "kind": "estimate: September usage beyond prepaid credits (receipt 2026-10-07)"},
+        {"date": "2026-09-03", "status": "paid", "amount_usd": "10.00", "kind": "credit top-up (not consumption)"},
+        {"date": "2026-08-31", "status": "paid", "amount_usd": "0.00", "kind": "monthly statement"},
+        {"date": "2026-08-24", "status": "paid", "amount_usd": "10.00", "kind": "credit top-up (not consumption)"}
+      ],
+      "receipts_local_time": ["2026-10-15 22:46 $10.00", "2026-10-15 16:54 $25.00", "2026-10-07 00:04 $3.38", "2026-10-03 16:32 $25.00", "2026-09-04 18:28 $10.00", "2026-08-25 20:20 $10.00"],
+      "credit_purchases_total_usd": "80.00",
+      "paid_to_supplier_total_usd": "83.38"
+    },
+    "kie": {
+      "read_at": "2026-10-16T22:43Z (signed-in console, read-only; Billing and API Usage pages)",
+      "usage_period": "2026-10-03 to 2026-10-16 (console default range)",
+      "usage": {"total_spend_usd": "5.815", "kling3_usd": "3.475", "seedance-1-pro-fast_usd": "2.34", "api_key": "one default key, last used 2026-10-14"},
+      "credit_purchases": [{"date": "2026-10-16 08:39", "credits": 1000, "amount_usd": "5"}, {"date": "2026-09-04", "credits": 1000, "amount_usd": "5"}, {"date": "2026-08-25", "credits": 1000, "amount_usd": "5"}],
+      "balance_credits": {"first_page_load": 709, "after_console_refresh_2026-10-16_18:43:10_local": 1909, "note": "two readings minutes apart differ by 1,200 credits; 3,000 bought − 1,909 = 1,091 consumed (≈ $5.455 at 200 credits/$) does not equal the $5.815 usage view. Unresolved; flag for the owner, do not pick one."}
+    },
+    "openai": {"status": "unknown/pending", "reason": "console requires sign-in; not authenticated by this lane"},
+    "anthropic": {"status": "unknown/pending", "reason": "console requires sign-in; not authenticated by this lane"},
+    "elevenlabs": {"status": "unknown/pending", "reason": "console requires sign-in; not authenticated by this lane"},
+    "google_gemini": {"status": "unknown/pending", "reason": "Google Cloud billing not attempted (account selection risk in a shared browser)"},
+    "bria_direct": {"status": "unknown/pending", "reason": "no console reachable; no direct-Bria ledger rows in the retained snapshot"},
+    "rentcast": {"status": "unknown/pending", "reason": "no property-lookup rows in the retained snapshot; provider_attempt_receipts live since 2026-10-16 20:20Z but production export was not permitted in this session"},
+    "higgsfield_worldlabs_modal": {"status": "unknown/pending", "reason": "no live spend rows; presenter/spatial journals empty in the retained snapshot"}
+  },
+  "reconciliation": {
+    "fal_october_2026": {
+      "kling_v3_4k": {
+        "supplier_seconds": "140.00", "supplier_usd": "58.80",
+        "internal_snapshot_shots": 23, "internal_snapshot_seconds": 115, "internal_snapshot_usd": "48.30",
+        "unit_rate_match": "internal 42.000000 c/s == supplier $0.42/s",
+        "known_after_snapshot": "4K canary 2 shots / $4.20 (retained receipt), plus ≈$8.40 (4 shot-equivalents) unitemised inside the 2026-10-16 15:33Z aggregate delta",
+        "internal_estimated_total_shots": "27–29", "supplier_shots": 28,
+        "variance": "≤ 1 shot ($2.10) — estimate; exact figure needs the 2026-10-16 snapshot on the external drive"
+      },
+      "seedance_v1_pro_fast": {
+        "supplier_tokens_m": "3.99", "supplier_usd": "3.99114",
+        "internal_rows": 16, "internal_seconds": 81, "internal_usd": "3.9366",
+        "variance_usd": "0.05454 (1.4%)", "note": "internal prices per second, supplier bills per token; catalog rate holds"
+      },
+      "total": {"supplier_usd": "62.79", "internal_snapshot_usd": "52.2366", "internal_with_known_later_rows_usd": "≈ 64.84 (estimate)", "variance_usd": "≈ -2.05 (estimate)"},
+      "credits_vs_consumption": {"period_credits_usd": "60.00 (= $25 + $25 + $10 top-ups)", "balance_usd": "-2.79", "consistency": "60.00 − 62.79 = −2.79 ✓", "owner_events_file_gap": "the retained OWNER-EVENTS file records one $25 funding event; the console shows three October purchases ($60). Update the events file before the next report run."}
+    },
+    "fal_all_time": {
+      "supplier_implied_consumption_usd": "≈ 86.17 (= $80 credits + $3.38 overage + $2.79 negative balance) — estimate",
+      "internal_usd": "71.8654 (snapshot) + 4.20 (canary) + ≈ 8.40 (inferred) ≈ 84.47 — estimate",
+      "variance_usd": "≈ 1.70 — estimate; September alone: supplier-implied ≈ $22.98 vs internal $19.23"
+    },
+    "kie_october_2026": {"supplier_usd": "5.815", "internal_usd": "5.815", "variance_usd": "0.000", "detail": "kling3 $3.475 = internal kling-3.0 5 rows 347.5c; seedance-1-pro-fast $2.34 = internal 13 rows 234c", "open": "Kie credit-balance readings are inconsistent with the usage view (see supplier_evidence.kie)"}
+  },
+  "infrastructure_and_fixed_costs": {
+    "cloudflare": {"status": "unknown/pending", "scope": "R2 storage/ops, Stream storage/delivery, Workers/DO, Images transforms, Containers CPU, domain", "note": "no billing tool in this session; byte/request counters above are usage evidence, not dollars"},
+    "supabase": {"status": "unknown/pending", "known": "organization is on the Pro tier and is shared with three other projects, so the invoice is not Rendprop-only", "note": "invoice amount and split not accessible"},
+    "apple_developer_program_and_commissions": {"status": "unknown/pending"},
+    "resend_email": {"status": "unknown/pending"},
+    "fixed_subscriptions_other": {"status": "unknown/pending"}
+  },
+  "not_claimed": [
+    "an all-time or invoice-complete total",
+    "that any internal estimate equals a supplier invoice",
+    "that the current retail prices or the 75% margin target are met or missed",
+    "that the production provider_attempt_receipts journal has any particular content"
+  ]
+}
