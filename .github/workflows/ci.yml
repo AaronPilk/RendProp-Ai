@@ -1567,6 +1567,13 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/studio_gallery_order_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-gallery-order-pg"
+      - name: Native photo choices preserve unrelated selections and serialize competing requests
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/native_photo_family_selection_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-native-photo-selection-pg"
       - name: Exact-byte gallery copies retain source history and serialize completion
         timeout-minutes: 10
         run: |

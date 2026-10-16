@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """Actual disposable PostgreSQL proof; never connects to a hosted service."""
 from pathlib import Path
-import argparse,datetime,hashlib,json,os,shutil,subprocess,tempfile,time,uuid
+import argparse,datetime,hashlib,json,os,shutil,subprocess,sys,tempfile,time,uuid
 from concurrent.futures import ThreadPoolExecutor
 os.umask(0o077)
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path,required=True);args=p.parse_args()
 OUT=args.evidence_dir.resolve();OUT.mkdir(mode=0o700,parents=True,exist_ok=False)
-INTERNAL=Path('/Users/pilksclaes');EXTERNAL=Path('/Volumes/Rendprop Files')
+INTERNAL=Path.home();EXTERNAL=Path('/Volumes/Rendprop Files')
 def guard():
- assert EXTERNAL.is_mount(),'External evidence volume must be mounted'
- assert shutil.disk_usage(INTERNAL).free>=3*1024**3,'Preserve internal 3GiB'
- assert shutil.disk_usage(EXTERNAL).free>=8*1024**3,'Preserve external 8GiB'
+ if sys.platform=='darwin':
+  assert EXTERNAL.is_mount(),'External evidence volume must be mounted'
+  assert OUT.is_relative_to(EXTERNAL),'Keep local database evidence on the external volume'
+  assert shutil.disk_usage(INTERNAL).free>=3*1024**3,'Preserve internal 3GiB'
+  assert shutil.disk_usage(EXTERNAL).free>=8*1024**3,'Preserve external 8GiB'
+ else:
+  assert shutil.disk_usage(OUT).free>=1024**3,'Preserve isolated CI evidence reserve'
  assert time.monotonic()<DEADLINE,'Whole proof deadline'
 DEADLINE=time.monotonic()+600;guard()
 DATA=Path(tempfile.mkdtemp(prefix='owned-native-pg-',dir=OUT));SOCK=Path(tempfile.mkdtemp(prefix='native-pg-',dir='/tmp'))
-ENV={'PATH':'/opt/homebrew/bin:/opt/homebrew/opt/postgresql@17/bin:/usr/bin:/bin','LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
+ENV={'PATH':'/opt/homebrew/bin:/opt/homebrew/opt/postgresql@17/bin:'+os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda x:shutil.which(x,path=ENV['PATH'])
 assert all(tool(x)for x in ['initdb','pg_ctl','createdb','psql'])
 MIG=SQL/'migrations/20261016163911_native_photo_family_selection.sql';FIX=SQL/'tests/native_photo_family_selection.sql';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
