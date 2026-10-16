@@ -796,6 +796,10 @@ export function createStudioServices(
         const workspace = decodeWorkspace(me, actor.userId, found, target, directory);
         assertWorkspace(read, signal);
         memberships = found;
+        // The directory caller owns cancellation only while this read is pending.
+        // Later UI-effect cleanup must not poison unrelated same-workspace reads;
+        // current-generation, identity and per-action signals still fence them.
+        read.signal = undefined;
         return workspace;
       })().finally(() => { read.pending = false; });
       return read.directory;
