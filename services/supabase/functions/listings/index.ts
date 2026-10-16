@@ -29,6 +29,7 @@ import { listingLibraryScope, requireLibraryWrite } from "../_shared/library-acc
 import { clientContact, saveClientContact } from "./client-contact.ts";
 import { appendPublishedPhotos, publishedPhotoPatch } from "../_shared/property-cover.ts";
 import { publishedGallerySnapshot, removePublishedPhotos } from "./gallery-remove.ts";
+import { readPhotoSelection, changePhotoSelection } from "./photo-selection.ts";
 
 /** How long a deleted listing can be restored (build 58). Mirrors the app copy. */
 // The 30-day restore window is opened by the trash_listing RPC (build 59);
@@ -196,6 +197,25 @@ Deno.serve(async (req) => {
       assert(fresh.org_id === row.org_id, 503, "Listing identity changed during this request.");
       return {...canonicalTimestamps(row), library_org_id: fresh.library_org_id};
     };
+
+    // Explicit photo-family intent is isolated from legacy whole-gallery PATCH.
+    if (seg.length === 2 && seg[1] === "photo-selection") {
+      assert(req.method === "GET" || req.method === "PATCH", 405, "Use GET or PATCH for a photo selection.");
+      assert(scope && requested !== undefined && requested === scope.library_org_id, 409, "Choose this home's current library before selecting photos.");
+      const selectionScope = { orgId: scope.org_id, libraryOrgId: scope.library_org_id, listingId: id.toLowerCase() };
+      let value;
+      if (req.method === "GET") {
+        const query = new URL(req.url).searchParams;
+        assert([...query.keys()].every(key => key === "operation_id") && query.getAll("operation_id").length <= 1, 400, "Keep one saved photo operation.");
+        value = await readPhotoSelection(adminClient(), selectionScope, user.id, query.get("operation_id"));
+      } else {
+        await assertNotDeleting(user.id);
+        value = await changePhotoSelection(adminClient(), selectionScope, user.id, await readJsonLimited<Record<string, unknown>>(req, 16384), req.headers.get("Idempotency-Key"));
+      }
+      const current = await listingLibraryScope(adminClient(), user.id, id);
+      assert(current.org_id === selectionScope.orgId && current.library_org_id === selectionScope.libraryOrgId, 503, "This home's library changed during the photo request.");
+      return json(value, 200, { "cache-control": "private, no-store" });
+    }
 
     if (seg.length === 2 && seg[1] === "facts") {
       assert(req.method === "PUT", 405, "Use PUT for listing details.");
