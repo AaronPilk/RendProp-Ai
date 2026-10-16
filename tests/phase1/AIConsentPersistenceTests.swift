@@ -4,6 +4,19 @@
 import Foundation
 import Combine
 
+
+// Compile-only boundaries for the new video withdrawal hooks. These fixtures
+// continue to execute the exact base AIConsent class; scoped video side effects
+// are exercised by run-property-video-processors.py, never by these inert stubs.
+@MainActor final class PropertyVideoProcessorConsent {
+    static let shared = PropertyVideoProcessorConsent()
+    func revoke() {}
+}
+@MainActor final class PropertyVideoJobCancellation {
+    static let shared = PropertyVideoJobCancellation()
+    func consentWasRevoked() {}
+}
+
 enum UserDefaults {
     static let suiteName = CommandLine.arguments[2]
     static let standard = Foundation.UserDefaults(suiteName: suiteName)!
