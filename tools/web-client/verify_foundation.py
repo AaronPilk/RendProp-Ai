@@ -24,8 +24,12 @@ EXTRA_IDS = {
     "agent-reel-client", "saved-drafts-transfers", "review-submit", "two-links-playback",
     "share-qr-download", "account-deletion", "analytics-contract", "brokerage-governance",
     "speech-transcription", "admin-provider-probe", "admin-funnel", "gear-catalog",
+    "listing-photo-publication",
 }
-REQUIRED_SYMBOLS = {"admin-provider-probe": {"adminProbeKeys", "adminLastKeyProbe"},
+PHOTO_FAMILY_SYMBOLS = {"ListingPhotoCloudSelectionAPI", "photoCloudSelection",
+                        "changePhotoCloudSelection", "abandonPhotoCloudSelection"}
+REQUIRED_SYMBOLS = {"listing-photo-publication": PHOTO_FAMILY_SYMBOLS,
+                    "admin-provider-probe": {"adminProbeKeys", "adminLastKeyProbe"},
                     "admin-funnel": {"adminFunnel"}, "gear-catalog": {"performRefresh", "normalizedASIN"},
                     "speech-transcription": {"SpeechTranscriber"}}
 
@@ -85,6 +89,12 @@ def validate_capabilities(doc, source, root=ROOT):
             contents = target.read_text()
             for symbol in row["symbols"]:
                 require(bool(re.search(r"\b" + re.escape(symbol) + r"\b", contents)), "direct-client source symbol missing")
+            if row["id"] == "listing-photo-publication":
+                marker = "protocol ListingPhotoCloudSelectionAPI: Sendable {"
+                require(contents.count(marker) == 1, "ambiguous typed photo family contract")
+                body = contents.split(marker, 1)[1].split("\n}", 1)[0]
+                require(set(re.findall(r"\bfunc\s+(\w+)\s*\(", body)) == PHOTO_FAMILY_SYMBOLS - {"ListingPhotoCloudSelectionAPI"},
+                        "typed photo family methods changed: review mapping")
     return {"apiMethods": len(declarations), "apiDeclarations": sum(declarations.values()),
             "capabilityGroups": len(rows), "outsideProtocol": len(extras), "browserVerified": 0}
 
@@ -144,10 +154,10 @@ class FoundationTests(unittest.TestCase):
         # photographer/client, photo selection, distinct personal-card/logo methods
         # and the account-owned JSON inventory export.
         # Inventory coverage does not establish browser, phone or live parity.
-        self.assertEqual(result["apiMethods"], 78)
-        self.assertEqual(result["apiDeclarations"], 80)
-        self.assertEqual(result["capabilityGroups"], 26)
-        self.assertEqual(result["outsideProtocol"], 24)
+        self.assertEqual(result["apiMethods"], 76)
+        self.assertEqual(result["apiDeclarations"], 78)
+        self.assertEqual(result["capabilityGroups"], 25)
+        self.assertEqual(result["outsideProtocol"], 25)
         self.assertEqual(result["browserVerified"], 0)
 
     def test_identity_methods_have_explicit_product_mappings(self):
@@ -190,13 +200,26 @@ class FoundationTests(unittest.TestCase):
             validate_capabilities(incomplete, SWIFT)
 
     def test_photo_publication_methods_must_be_mapped(self):
-        row = next(row for row in self.cap["api"] if row["id"] == "listing-photo-publication")
-        self.assertEqual(set(row["methods"]), {"selectListingPhotos", "addListingPhotos"})
-        for method in row["methods"]:
+        row = next(row for row in self.cap["outsideProtocol"] if row["id"] == "listing-photo-publication")
+        self.assertEqual(set(row["symbols"]), PHOTO_FAMILY_SYMBOLS)
+        self.assertEqual(row["source"], "apps/ios/Rendprop/Photos/PhotoCloudSelection.swift")
+        self.assertEqual(row["status"], "native-handoff")
+        self.assertFalse({"selectListingPhotos", "addListingPhotos"} & set(api_declarations(SWIFT)))
+        for contract in ["GET /listings/:id/photo-selection", "PATCH /listings/:id/photo-selection",
+                         "POST /listings/:id/photo-selection/abandon", "actor", "library", "physical org",
+                         "family_asset_ids", "target", "expected_selection", "follow_family_cover", "reviewed",
+                         "promote_cover", "operation_id", "tombstones", "GET-only", "401",
+                         "current state", "not verified"]:
+            self.assertIn(contract, row["web"])
+        for symbol in PHOTO_FAMILY_SYMBOLS:
             incomplete = copy.deepcopy(self.cap)
-            next(item for item in incomplete["api"] if item["id"] == row["id"])["methods"].remove(method)
-            with self.subTest(method=method), self.assertRaises(ContractError):
+            next(item for item in incomplete["outsideProtocol"] if item["id"] == row["id"])["symbols"].remove(symbol)
+            with self.subTest(symbol=symbol), self.assertRaisesRegex(ContractError, "direct-client symbol mapping"):
                 validate_capabilities(incomplete, SWIFT)
+        incomplete = copy.deepcopy(self.cap)
+        incomplete["outsideProtocol"].remove(next(item for item in incomplete["outsideProtocol"] if item["id"] == row["id"]))
+        with self.assertRaisesRegex(ContractError, "outside-protocol capability inventory changed"):
+            validate_capabilities(incomplete, SWIFT)
 
     def test_standalone_video_recovery_mapping_and_missing_failure(self):
         row = next(row for row in self.cap["api"] if row["id"] == "standalone-video-recovery")

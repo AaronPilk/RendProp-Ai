@@ -54,7 +54,7 @@ def main():
     load = block(detail, "    private func loadFiles(force:")
     contact = block(detail, "    @MainActor private func refreshClientContactIfCurrent()")
     template = '''import Foundation
-struct FixtureListing { var id = UUID(); var isSample = false; var aerialRelPath: String?; var aerialGeneratedAt: Date? }
+struct FixtureListing { var id = UUID(); var isSample = false; var serverID: UUID? = nil; var aerialRelPath: String?; var aerialGeneratedAt: Date? }
 struct FixtureTour { var url: URL }
 @MainActor final class FixtureAuth { var userID: String?; init(userID: String?) { self.userID = userID } }
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? }
@@ -65,7 +65,12 @@ struct FixtureTour { var url: URL }
 }
 @MainActor final class FixtureConnection { var cancelled = 0; func cancel() { cancelled += 1 } }
 @MainActor final class FixturePlayer { var pauses = 0; func pause() { pauses += 1 } }
-@MainActor final class FixtureModel { var contactCalls = 0; func refreshClientContact(for id: UUID) async throws { contactCalls += 1 } }
+@MainActor final class FixtureModel {
+    var contactCalls = 0
+    func refreshClientContact(for id: UUID) async throws { contactCalls += 1 }
+    // This presentation fixture closes the cloud-read boundary; no API is invoked.
+    func refreshCloudPhotoSelection(listingID: UUID) async throws {}
+}
 struct ListingMediaItem {
     struct ScanRequest { let listingID: UUID; let tourURL: URL?; let aerialRelPath: String?; let aerialGeneratedAt: Date? }
     struct Scan { let stamp: Int; let items: [Int] }
@@ -106,10 +111,12 @@ CONTACT
     inputs = [app_path, detail_path, test_path, Path(__file__).resolve()]
     receipt = {"accepted": False, "network": 0, "camera": 0, "sourceRoot": str(root), "sourceHashes": {
         str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs}, "runs": []}
+    # The cloud read adds an earlier guard. These scan controls must remove the
+    # exact post-scan guard, so an unchanged later guard cannot mask the fault.
     controls = [
         ("no-account-fence", "self.actorID == actorID && self.orgID == orgID", "self.orgID == orgID", "Another account invalidates presentation"),
         ("no-workspace-fence", "self.actorID == actorID && self.orgID == orgID", "self.actorID == actorID", "Another workspace invalidates presentation"),
-        ("late-scan-publishes", "hasCurrentPresentationContext else { return }", "true else { return }", "Late file scan cannot publish after account switch"),
+        ("late-scan-publishes", "!Task.isCancelled, expectedScope == presentationScope,\n                  hasCurrentPresentationContext else { return }", "!Task.isCancelled, expectedScope == presentationScope,\n                  true else { return }", "Late file scan cannot publish after account switch"),
         ("keeps-local-files", "mediaItems = []; availableRerenderSource", "availableRerenderSource", "Invalidation clears old local-file presentation"),
         ("keeps-package-extras", "filePackageExtras = []; packageError = nil", "packageError = nil", "Account invalidation clears old listing package extras"),
         ("keeps-package-error", "filePackageExtras = []; packageError = nil", "filePackageExtras = []", "Account invalidation clears old listing package error"),
@@ -119,7 +126,7 @@ CONTACT
         ("keeps-room-tag-source", "; availableRoomTagAsset = nil", "", "Invalidation drops old room-tag source"),
         ("keeps-video-playing", "websiteVideoPlayer?.pause(); websiteVideoPlayer = nil", "websiteVideoPlayer = nil", "Account invalidation pauses the old property video"),
         ("keeps-video-reference", "websiteVideoPlayer?.pause(); websiteVideoPlayer = nil", "websiteVideoPlayer?.pause()", "Account invalidation drops the old property video reference"),
-        ("ignores-scan-cancellation", "!Task.isCancelled, expectedScope", "true, expectedScope", "Cancelled scan cannot restore files after invalidation"),
+        ("ignores-scan-cancellation", "!Task.isCancelled, expectedScope == presentationScope,\n                  hasCurrentPresentationContext else { return }", "true, expectedScope == presentationScope,\n                  hasCurrentPresentationContext else { return }", "Cancelled scan cannot restore files after invalidation"),
         ("stale-contact-dispatch", "!Task.isCancelled, hasCurrentPresentationContext, !currentListing.isSample", "!Task.isCancelled, !currentListing.isSample", "Stale account cannot dispatch listing contact request"),
         ("actor-global-indexing", 'return "\\(actor.lowercased()):\\(org.uuidString.lowercased())"', 'return actor.lowercased()', "Indexing opt-in cannot carry into another workspace"),
         ("workspace-global-indexing", 'return "\\(actor.lowercased()):\\(org.uuidString.lowercased())"', 'return org.uuidString.lowercased()', "Indexing opt-in cannot carry into another account"),

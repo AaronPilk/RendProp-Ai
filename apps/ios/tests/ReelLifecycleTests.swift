@@ -311,13 +311,13 @@ final class ClosedLifetime { let id = UUID() }
             reset(); ReelCompletionNotice.post(success: true, identity: a)
             center.answer(status); await tick()
             check(center.requests.count == 1, "an authorized background completion enqueues exactly one local banner")
-            check(center.requests.first?.content.title == "Your reel is ready", "successful completion carries the ready title")
+            check(center.requests.first?.content.title == "Your video is ready", "successful completion carries the ready title")
             check(center.requests.first?.content.userInfo["recipient_user_id"] as? String == a.owner.uuidString, "local completion is scoped to its captured owner")
             check(center.requests.first?.content.userInfo["category"] as? String == "reel_done", "local completion has no cross-account listing route")
         }
         reset(); ReelCompletionNotice.post(success: false, identity: a)
         center.answer(.authorized); await tick()
-        check(center.requests.first?.content.title == "Your reel couldn't be made", "failed completion has a distinct honest title")
+        check(center.requests.first?.content.title == "Your video couldn't be made", "failed completion has a distinct honest title")
         check(center.requests.first?.content.body.contains("Finished clips are kept") == true, "failure notice explains retained paid work")
 
         // Actual global screen-awake policy covers other tabs/editor dismissal,
