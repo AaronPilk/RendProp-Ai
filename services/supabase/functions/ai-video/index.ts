@@ -231,6 +231,7 @@ import { falResultErrorReason, falResultReadIssue, falCompletedFailure, falLegac
 import { persistResult, persistedUrl, putBytes, presignGet } from "../_shared/providers/common.ts";
 import { R2_BUCKET_RENDERS,R2_BUCKET_UPLOADS,headObject } from "../_shared/r2.ts";
 import { verifyPropertyVideoInput } from '../_shared/property-video.ts';
+import { recordDirectPropertyVideoSource } from './property-source-provenance.ts';
 import { createEraseHandler, extractEraseJob, readEraseConfig } from "./erase.ts";
 import { renewEraseOutput } from "./erase-output.ts";
 import { privateMediaUrl } from "../_shared/private-media.ts";
@@ -1684,7 +1685,14 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
 
       // submitReservedVideo settled one ledger row or retained its priced hold.
 
-      const prov = await provenance({
+      let sourceBound=false;
+      let prov:ProvenanceResult;
+      if(!worker&&propertySource){
+        const recorded=await recordDirectPropertyVideoSource({actor:user.id,org:orgId,key:requiredIdempotencyKey(req),
+          request:sub.request_id,source:propertySource,label:body.label??null,style:chosenMotion,promptSummary:userMotion??null},rpc);
+        prov=recorded.provenance;sourceBound=recorded.sourceBound;
+      }else{
+      prov = await provenance({
         listingId: body.listing_id ?? reelListingId,
         kind: "reel",
         label: body.label ?? null,
@@ -1695,11 +1703,11 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         style: chosenMotion,
         promptSummary: userMotion ?? null,
       });
-      let sourceBound=false;
       if(propertySource&&prov.id){
         const bound=await adminClient().rpc('bind_property_video_source',{p_actor:user.id,p_listing:propertySource.listing,p_asset:propertySource.asset,
           p_photo_provenance:propertySource.photoProvenance,p_request:sub.request_id,p_generation_provenance:prov.id,p_sha256:propertySource.sha256,p_qc_hash:propertySource.qcHash});
         sourceBound=!bound.error&&bound.data?.bound===true;
+      }
       }
       return json({
         ...sub,

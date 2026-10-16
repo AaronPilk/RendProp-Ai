@@ -23,7 +23,7 @@ function withoutImports(source: string): string {
 // Production route bodies, price arithmetic, response envelope and reservation
 // helper run unchanged. Only Auth/DB, route resolution and provider boundaries
 // are isolated doubles. Only synthetic config; no network, writes or provider requests.
-async function fixture(reserveLate = false, priceRequestedTier = false, dropRejectionEvidence = false, dropSigningReadiness = false, dropAerialLaunchGate = false) {
+async function fixture(reserveLate = false, priceRequestedTier = false, dropRejectionEvidence = false, dropSigningReadiness = false, dropAerialLaunchGate = false, legacyDirectSource = false) {
   const source = await Deno.readTextFile(
     new URL("./index.ts", import.meta.url),
   );
@@ -84,6 +84,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     `export const handler = async (req: Request,suppliedWorker?:any) => {const worker=suppliedWorker??(state.options.background?{user:{id:"actor-synthetic",is_anonymous:false},targetAspect:"16:9",authorize:async()=>{state.events.push("fresh-worker-authority");},accepted:async(r:any)=>{state.accepted=r;state.events.push("saved-accepted-receipt");},provenance:async()=>{state.events.push("worker-provenance");if(state.options.provenanceError)throw Error("closed provenance outage");return{id:"provenance-synthetic",recorded:true};}}:undefined);`,
   );
   let routes = source.slice(drone, end);
+  if(legacyDirectSource){const needle="if(!worker&&propertySource){";assertEquals(routes.split(needle).length,2);routes=routes.replace(needle,"if(false&&!worker&&propertySource){");}
   if(dropSigningReadiness){
     const check="      await assertVideoReceiptSigningReady();\n";
     assertEquals(routes.split(check).length,4);routes=routes.split(check).join("");
@@ -117,6 +118,8 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {requiredIdempotencyKey} from ${
     JSON.stringify(new URL("../_shared/idempotency.ts", import.meta.url).href)
   };
+    import {recordDirectPropertyVideoSource} from ${JSON.stringify(new URL("./property-source-provenance.ts",import.meta.url).href)};
+    import {optionalUuid,type ProvenanceResult} from ${JSON.stringify(new URL("../_shared/provenance.ts",import.meta.url).href)};
     import {assertPublicSupabaseOrigin} from ${JSON.stringify(new URL("../_shared/providers/jobtoken.ts", import.meta.url).href)};
     import {GUARDRAILS,FAIR_HOUSING_LOCK,assertFairHousing} from ${
     JSON.stringify(new URL("../_shared/fairhousing.ts", import.meta.url).href)
@@ -146,8 +149,8 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {unlimitedSponsored} from ${JSON.stringify(new URL("../_shared/funded-serving.ts", import.meta.url).href)};
     type PaidAiCaller=any;
     type RouteStep=any;type JobRef=any;type JobTokenOwner=any;type ChainResult<T>={value:T,step:any};type GenerateInput=any;type DroneBody=any;type AerialBody=any;type ReelBody=any;type DroneEstimate=any;type AerialMotion=any;type ReelMotion=any;
-    export const state:any={options:{},events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]};
-    export function reset(options:any={}){Object.assign(state,{options,events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],grantReads:[],access:null,billing:null,refunds:0,oldLedger:0,profileReads:0,admitted:new Set(),holds:new Map(),ledger:[]});}
+    export const state:any={options:{},events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,legacyProvenanceCalls:0,admitted:new Set(),holds:new Map(),ledger:[]};
+    export function reset(options:any={}){Object.assign(state,{options,events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],grantReads:[],access:null,billing:null,refunds:0,oldLedger:0,legacyProvenanceCalls:0,profileReads:0,admitted:new Set(),holds:new Map(),ledger:[]});}
     const getUser=async(_req:Request)=>({id:"actor-synthetic",is_anonymous:false});
     const userClient=(_req:Request)=>({});
     const orgForUser=async(..._a:any[])=>"org-synthetic";
@@ -186,7 +189,9 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     const echo={request_id:"accepted-provider-id",status_url:"https://fixture.invalid/ai-video/status?job=opaque-fixture",response_url:"https://queue.fal.run/model/requests/accepted-provider-id"};
     const falSubmitEcho=(_id:string)=>echo;
     const routerStatusUrl=async(..._a:any[])=>{if(state.options.background)state.events.push("signed-worker-receipt");if(state.options.signerMissing)throw Error("No signer");return "https://fixture.invalid/ai-video/status?job=opaque-fixture";};
-    const recordProvenance=async(..._a:any[])=>({id:"provenance-synthetic",recorded:true,disclosure:"AI edited video"});
+    const recordProvenance=async(..._a:any[])=>{state.legacyProvenanceCalls++;return{id:"provenance-synthetic",recorded:true,disclosure:"AI edited video"};};
+    const verifyPropertyVideoInput=async(_actor:string,listing:string,asset:string,_b64:string,photoProvenance:string|null)=>({asset,listing,photoProvenance,sha256:"a".repeat(64),qcHash:"b".repeat(32),org:"org-synthetic"});
+    const retainVideoSubmission=async(..._a:any[])=>{state.events.push("retained-accepted");};
     const recordRoutedAiCost=async(..._a:any[])=>{state.oldLedger++;throw Error("Legacy ledger double booking reached");};
     const recordAppAiCost=recordRoutedAiCost;
     const adapterFor=(provider:string)=>({submit:async(step:any,input:any)=>{state.events.push("POST");state.posts.push({provider,step,input});if(state.options.submitReject)throw new HttpError(502,"The media service could not accept this request.","upstream",{provider_status:state.options.submitReject,error_class:"upstream",dispatch_rejected:true});if(state.options.submitThrow)throw Error("private-provider-body-marker");return {id:state.options.badReceipt?"":"accepted-provider-id",provider};}});
@@ -200,6 +205,13 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
         return {data:name==="org_has_internal_testing_grant"?(state.options.masterGrant??!state.options.ordinary):(state.options.privateGrant??false),error:null};
       }
       state.events.push(name==="app_video_cost_reserve_v2"?"reserve":name==="app_video_cost_release_rejected"?"release":"settle");state.rpcs.push({name,args});
+      if(name==="record_direct_property_video_source"){
+        state.events.push("direct-source-provenance");
+        if(state.options.sourceAuditThrow)throw Error("private-audit-error-marker");
+        if(state.options.sourceAuditError)return{data:null,error:{message:"private-audit-error-marker"}};
+        return{data:state.options.sourceAuditReply??{bound:true,request_id:args.p_request,provenance_id:"fa850000-0000-4000-8000-000000000001",disclosure:"SQL-derived reel disclosure"},error:null};
+      }
+      if(name==="bind_property_video_source")return{data:{bound:true},error:null};
       if(name==="app_video_cost_reserve_v2"){
         if(state.admitted.has(args.p_key))return {data:null,error:{message:"RP409: This video request was already admitted"}};
         if(state.options.reserveError)return {data:null,error:{message:"RP402: Workspace processing budget reached"}};
@@ -731,4 +743,30 @@ Deno.test("new profile route revocation refuses before HTTP and preserves known-
  const r=await f.handler(req("reel-clip","profile-refused-"+fault,{preset_version:1,motion:"push_in",framing:"preserve_photo",aspect:"9:16"}),worker);
  assert(r.status>=400);assertEquals(f.state.posts.length,0);assertEquals(f.state.refunds,1);assertEquals(f.state.holds.size,0);assertEquals(f.state.ledger.length,0);
  }
+});
+
+async function directPropertyOracle(f:any){
+ f.reset({ordinary:true});
+ const r=await f.handler(req("reel-clip","direct-source-operation",{listing_id:"fa850000-0000-4000-8000-000000000002",source_asset_id:"fa850000-0000-4000-8000-000000000003",space_type:"real_estate"}));
+ assertEquals(r.status,202);const body=await r.json();assertEquals(body.request_id,"accepted-provider-id");assertEquals(body.source_bound,true);assertEquals(body.provenance,{id:"fa850000-0000-4000-8000-000000000001",recorded:true});
+ assertEquals(f.state.posts.length,1);assertEquals(f.state.ledger.length,1);assertEquals(f.state.refunds,0);
+ assertEquals(f.state.rpcs.filter((x:any)=>x.name==="record_direct_property_video_source").length,1);
+ assert(!f.state.rpcs.some((x:any)=>x.name==="bind_property_video_source"));assert(f.state.legacyProvenanceCalls===0);
+ assert(f.state.events.indexOf("retained-accepted")<f.state.events.indexOf("direct-source-provenance"));
+ const audit=f.state.rpcs.find((x:any)=>x.name==="record_direct_property_video_source").args;
+ assertEquals(audit.p_key,"direct-source-operation");assertEquals(audit.p_request,body.request_id);assertEquals(audit.p_sha256,"a".repeat(64));
+}
+Deno.test("actual direct property reel uses atomic provenance after one accepted paid dispatch",async()=>{await directPropertyOracle(await fixture());});
+Deno.test("compiled actual legacy-writer regression fails direct paid-source oracle",async()=>{await assertRejects(async()=>directPropertyOracle(await fixture(false,false,false,false,false,true)),Error,"Values are not equal");});
+Deno.test("actual accepted direct property reel remains202 when atomic audit fails, never retries or legacy-dedupes",async()=>{
+ for(const options of[{sourceAuditThrow:true},{sourceAuditError:true},{sourceAuditReply:{bound:true,request_id:"other-request",provenance_id:"fa850000-0000-4000-8000-000000000001",disclosure:"wrong request"}}]){
+  const f=await fixture();f.reset({ordinary:true,...options});const r=await f.handler(req("reel-clip","direct-source-failure",{listing_id:"fa850000-0000-4000-8000-000000000002",source_asset_id:"fa850000-0000-4000-8000-000000000003"}));
+  assertEquals(r.status,202);const body=await r.json();assertEquals(body.request_id,"accepted-provider-id");assertEquals(body.source_bound,false);assertEquals(body.provenance,{id:null,recorded:false,reason:"source_audit_unavailable"});
+  assertEquals(f.state.posts.length,1);assertEquals(f.state.ledger.length,1);assertEquals(f.state.refunds,0);assert(f.state.legacyProvenanceCalls===0);assert(!JSON.stringify(body).includes("private-audit"));
+ }
+});
+Deno.test("actual non-property direct reel keeps legacy provenance and background property reel keeps worker provenance",async()=>{
+ const f=await fixture();f.reset({ordinary:true});assertEquals((await f.handler(req("reel-clip","direct-unbound-operation"))).status,202);assert(f.state.legacyProvenanceCalls>0);assert(!f.state.rpcs.some((x:any)=>x.name==="record_direct_property_video_source"));
+ f.reset({ordinary:true,background:true});const r=await f.handler(req("reel-clip","worker-source-operation",{listing_id:"fa850000-0000-4000-8000-000000000002",source_asset_id:"fa850000-0000-4000-8000-000000000003"}));
+ assertEquals(r.status,202);assert(f.state.events.includes("worker-provenance"));assert(!f.state.rpcs.some((x:any)=>x.name==="record_direct_property_video_source"));assertEquals(f.state.rpcs.filter((x:any)=>x.name==="bind_property_video_source").length,1);
 });
