@@ -1,7 +1,7 @@
 import {decodeMusic} from "./music";
 import {musicGainAt} from "./finishing";
 import {OverlayPainter} from "./overlay-renderer";
-import {RecordingClock} from "./recording-clock";
+import {AudioStartupClock, RecordingClock} from "./recording-clock";
 import {
   EDIT_LIMITS,
   draftMedia,
@@ -105,6 +105,35 @@ export function nextExportFrame(signal: AbortSignal, remainingMs: number): Promi
     const timer = setTimeout(done, Math.max(1, Math.min(remainingMs, 1000 / 30)));
     signal.addEventListener("abort", aborted, { once: true });
   });
+}
+
+// No recorder or user source is started during this phase. Feed only the
+// prepared first picture and existing zero-valued source until actual Web Audio
+// time advances consistently with the capture wall clock. Once recording starts,
+// its origins and strict drift monitor are never reset to hide lost content.
+async function awaitAudioStartup(audio: AudioContext, signal: AbortSignal,
+  requireCurrent: () => void, paintFirstFrame: () => Promise<void>): Promise<void> {
+  const clock = new AudioStartupClock(), deadline = performance.now() + 2000;
+  while (true) {
+    requireCurrent();
+    if (audio.state !== "running") throw new Error("Audio stopped before recording could start. No download was created.");
+    await paintFirstFrame();
+    requireCurrent();
+    if (audio.state !== "running") throw new Error("Audio stopped before recording could start. No download was created.");
+    const now = performance.now();
+    if (now >= deadline) throw new Error("Audio did not begin advancing before export. No download was created.",
+      {cause: {readings: [...clock.readings]}});
+    if (clock.read(now / 1000, audio.currentTime)) return;
+    // This is pre-content readiness, independent of the timeline frame helper.
+    // The timer and abort listener are owned and removed on every exit.
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); signal.removeEventListener("abort", aborted); };
+      const aborted = () => { cleanup(); reject(signal.reason instanceof Error ? signal.reason : new DOMException("Operation cancelled.", "AbortError")); };
+      const timer = setTimeout(() => { cleanup(); resolve(); }, Math.min(1000 / 30, deadline - now));
+      signal.addEventListener("abort", aborted, {once: true});
+      if (signal.aborted) aborted();
+    });
+  }
 }
 
 /** A real-time local draft export; its bytes are not the canonical server artifact. */
@@ -354,6 +383,14 @@ export async function exportLocalVideo(options: {
       await overlays.paint(canvas, elapsedBefore);
       throwIfAborted(renderSignal);
       if (recorder.state === "inactive") {
+        if (audio) await awaitAudioStartup(audio, renderSignal,
+          () => assertCurrentRevision(draft, currentDraft(), renderSignal), async () => {
+            drawFrame(canvas, decoded!, clip, draft, {time: elapsedBefore, localTime: 0});
+            await overlays.paint(canvas, elapsedBefore);
+            (stream!.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined)?.requestFrame?.();
+          });
+        assertCurrentRevision(draft, currentDraft(), renderSignal);
+        if (audio && audio.state !== "running") throw new Error("Audio stopped before recording could start. No download was created.");
         // start() changes state synchronously. Some WebM encoders emit `start`
         // only after receiving a fresh frame; awaiting that event before the
         // render loop deadlocks. Submit a frame and let the loop feed the encoder.

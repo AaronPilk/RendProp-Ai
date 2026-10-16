@@ -179,8 +179,9 @@ document.querySelector("#run").onclick=async()=>{
   } };
   const oldFrameClockPlugin = { name: "negative-control-animation-only-clock", enforce: "pre", transform(code, id) {
     if (!id.endsWith("/src/editor/export.ts")) return;
-    const seam = /export function nextExportFrame\([\s\S]*?\n}\n\n\/\*\* A real-time/;
+    const seam = /export function nextExportFrame\([\s\S]*?\n}\n/;
     assert(seam.test(code), "Frame-clock control must match the actual deadline helper");
+    assert(!code.match(seam)[0].includes("awaitAudioStartup"), "Frame-clock control must preserve independent startup readiness");
     // Reproduce the historical exporter, including its missing capture/audio
     // guard. The fixed and late-frames variants always use the actual guard.
     return code.replace('const recordingClock = new RecordingClock();', 'const recordingClock = {read() {}};').replace(seam, `export function nextExportFrame(signal: AbortSignal, _remainingMs: number): Promise<number> {
@@ -191,8 +192,7 @@ document.querySelector("#run").onclick=async()=>{
         signal.addEventListener("abort", aborted, {once:true});
       });
     }
-
-/** A real-time`);
+`);
   } };
   const deadlineOnlyPlugin = { name: "negative-control-deadline-only-cadence", enforce: "pre", transform(code, id) {
     if (!id.endsWith("/src/editor/export.ts")) return;
