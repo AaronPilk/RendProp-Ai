@@ -69,7 +69,7 @@ try:
     final_catalog = run('library-catalog-before-historical-replay', [*psql, '-Atq'], catalog)
     # Save only this test's three current definitions. Replaying the entire
     # older library migration would try to overwrite unrelated, newer guarded
-    # render authority and must fail rather than downgrade the current schema.
+    # upload/render authority and must fail rather than downgrade the schema.
     current_definitions = run('current-measurement-definitions', [*psql, '-Atq'],
                               "select pg_get_functiondef(oid)||';' from pg_proc where oid=any(array[" +
                               ','.join("'" + s + "'::regprocedure" for s in signatures) + "]) order by proname;")
@@ -80,8 +80,10 @@ try:
     run('facts-prerequisite-replay', [*psql, '-q', '-1', '-f', FACTS_PREREQUISITE])
     run('floorplan-prerequisite-replay', [*psql, '-q', '-1', '-f', FLOORPLAN_PREREQUISITE])
     run('terminal-replay', [*psql, '-q', '-1', '-f', TERMINAL])
+    # Newer gallery upload authority trips this guard before the render guard.
+    # Require the exact current refusal, never an unrelated migration error.
     run('superseded-library-replay-refused', [*psql, '-q', '-1', '-f', LIBRARY_AUTHORITY],
-        refuses='Review changed function create_render_job(uuid,uuid,text,jsonb,text,text)')
+        refuses='Review changed function reserve_upload_assets(uuid,jsonb)')
     run('restore-current-measurement-definitions', [*psql, '-q', '-1'], current_definitions)
     assert run('library-catalog-after-replay', [*psql, '-Atq'], catalog) == final_catalog
     receipt['finalLibraryBodiesAndAuthorityPreserved'] = True
