@@ -13,6 +13,8 @@ import {
   mediaOffset,
   uuid,
   type Membership,
+  type Listing,
+  type Workspace,
 } from "./contracts";
 
 // Metadata has a separate, measured budget from the editor's media downloads.
@@ -112,6 +114,8 @@ export type StudioDependencies = {
 
 export type StudioRequestOptions = {
   orgId: string;
+  /** Local authority fence only; never sent in a header or request body. */
+  expectedLibraryOrgId?: string;
   method?: "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
   binary?: Blob;
   body?: unknown;
@@ -223,6 +227,13 @@ export function createStudioServices(
   let memberships: Membership[] = [];
   let workspaceReadGeneration = 0;
   const listingScopes = new Map<string, {orgId:string; libraryOrgId:string}>();
+  type WorkspaceRead = {
+    version: number; generation: number; target?: string; signal?: AbortSignal;
+    pending: boolean; directory: Promise<Workspace>; mapped: boolean;
+    mappingError?: unknown;
+    listings?: { promise: Promise<Listing[]>; controller: AbortController; waiters: number; settled: boolean };
+  };
+  let workspaceRead: WorkspaceRead | null = null;
   let authRevision = 0;
   let disposed = false;
   let signingOut = false;
@@ -243,7 +254,7 @@ export function createStudioServices(
     session = next;
     if (changed) {
       memberships = [];
-      listingScopes.clear(); workspaceReadGeneration++;
+      listingScopes.clear(); workspaceReadGeneration++; workspaceRead = null;
       // Even A → B → A must reject an operation created in the first A session.
       for (const request of activeRequests) request.abort();
     }
@@ -293,6 +304,21 @@ export function createStudioServices(
         "The account changed while this request was running.",
       );
     signal?.throwIfAborted();
+  }
+  function assertWorkspace(read: WorkspaceRead, signal?: AbortSignal) {
+    assertCurrent(read.version, signal);
+    read.signal?.throwIfAborted();
+    if (workspaceRead !== read || read.generation !== workspaceReadGeneration)
+      throw new StudioError("identity-changed", "Your listing selection changed while loading. Reopen your listings.");
+  }
+  function waitFor<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
+    if (!signal) return promise;
+    return new Promise<T>((resolve, reject) => {
+      const abort = () => reject(signal.reason ?? new DOMException("The request was cancelled.", "AbortError"));
+      signal.addEventListener("abort", abort, { once: true });
+      promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    });
   }
   async function identity(signal?: AbortSignal) {
     const invokedVersion =
@@ -364,6 +390,7 @@ export function createStudioServices(
     orgId?: string,
     page?: ReadPage,
     options?: StudioRequestOptions,
+    scopeCurrent?: () => void,
   ): Promise<unknown> {
     assertCurrent(version, signal);
     const controller = new AbortController();
@@ -376,6 +403,7 @@ export function createStudioServices(
           const method = options?.method ?? "GET";
           for (let attempt = 0; attempt < (method === "GET" ? 2 : 1); attempt++) {
             assertCurrent(version, controller.signal);
+            scopeCurrent?.();
             const token = session?.access_token;
             if (!token)
               throw new StudioError(
@@ -404,6 +432,7 @@ export function createStudioServices(
               redirect: "error",
             });
             assertCurrent(version, controller.signal);
+            scopeCurrent?.();
             if (response.status === 401 && attempt === 0 && method === "GET") {
               void response.body?.cancel().catch(() => {});
               await refresh(version, token);
@@ -456,6 +485,7 @@ export function createStudioServices(
               );
             }
             assertCurrent(version, controller.signal);
+            scopeCurrent?.();
             return page ? decodePage(result, response, page) : result;
           }
           throw new StudioError(
@@ -518,6 +548,85 @@ export function createStudioServices(
     }
   }
 
+  async function listingRead(read: WorkspaceRead, actor: {version:number;userId:string}, selected: string, signal?: AbortSignal): Promise<Listing[]> {
+    assertWorkspace(read, signal);
+    if (read.target !== selected || !memberships.some(m => m.orgId === selected))
+      throw new StudioError("membership-required", "Load this workspace before opening its listings.");
+    if (!read.listings) {
+      const allowed = [...memberships], controller = new AbortController();
+      const abort = () => controller.abort(read.signal?.reason);
+      read.signal?.addEventListener("abort", abort, { once: true });
+      const flight = { promise: Promise.resolve([] as Listing[]), controller, waiters: 0, settled: false };
+      read.mapped = false; read.mappingError = undefined;
+      for (const [id, scope] of listingScopes) if (scope.libraryOrgId === selected) listingScopes.delete(id);
+      flight.promise = deadline(async () => {
+        const rows: unknown[] = []; let offset = 0, total: number | undefined, bytes = 0;
+        while (true) {
+          const raw = await request(`/functions/v1/listings?library=1&limit=500&offset=${offset}`, actor.version, controller.signal, selected);
+          assertWorkspace(read, controller.signal);
+          if (!memberships.some(m => m.orgId === selected)) throw new StudioError("identity-changed", "Your listing access changed. Reload your listings.");
+          const page = raw as {actor_id?:unknown;listings?:unknown;total?:unknown;next_offset?:unknown};
+          if (!page || uuid(page.actor_id, "listing actor") !== actor.userId || !Array.isArray(page.listings) ||
+              !Number.isSafeInteger(page.total) || (page.total as number) < offset || (page.total as number) > MAX_READ_ROWS ||
+              (total !== undefined && page.total !== total) || page.listings.length !== Math.min(500, (page.total as number) - offset))
+            throw new StudioError("incomplete-response", "Your listing library changed while loading. Reload to see all listings.");
+          total = page.total as number; offset += page.listings.length;
+          if (page.next_offset !== (offset < total ? offset : null)) throw new StudioError("incomplete-response", "Your listing library response was incomplete. Reload your listings.");
+          bytes += new TextEncoder().encode(JSON.stringify(page.listings)).byteLength;
+          if (bytes > MAX_METADATA_BYTES * 4) throw new StudioError("response-too-large", "Your listing metadata is too large to load safely. Contact support.");
+          rows.push(...page.listings);
+          if (page.next_offset === null) break;
+        }
+        const result = decodeListings(rows, selected, allowed.filter(m => m.orgId === selected), true);
+        assertWorkspace(read, controller.signal);
+        for (const [id, scope] of listingScopes) if (scope.libraryOrgId === selected) listingScopes.delete(id);
+        for (const row of result) listingScopes.set(row.id, {orgId:row.orgId,libraryOrgId:selected});
+        assertCurrent(actor.version, controller.signal);
+        return result;
+
+      }, readTimeoutMs, "Loading all of your listings timed out. Check your connection and retry.", () => controller.abort())
+        .then(result => { assertWorkspace(read, controller.signal); read.mapped = true; return result; })
+        .catch(error => { read.mappingError = error; throw error; })
+        .finally(() => {
+          flight.settled = true;
+          read.signal?.removeEventListener("abort", abort);
+          if (read.listings === flight) read.listings = undefined;
+        });
+      read.listings = flight;
+    }
+    const flight = read.listings;
+    flight.waiters++;
+    try { const result = await waitFor(flight.promise, signal); assertWorkspace(read, signal); return result; }
+    finally { if (--flight.waiters === 0 && !flight.settled) flight.controller.abort(); }
+  }
+
+  async function requestScope(actor: {version:number;userId:string}, selected: string, expectedLibrary: string | undefined, signal?: AbortSignal) {
+    const read = workspaceRead;
+    if (!read || read.version !== actor.version)
+      throw new StudioError("membership-required", "Load this workspace before making changes.");
+    const library = expectedLibrary !== undefined ? uuid(expectedLibrary, "selected library") : read.target;
+    const pending = read.pending;
+    assertWorkspace(read, signal);
+    await waitFor(read.directory, signal);
+    assertWorkspace(read, signal);
+    const target = library ?? read.target;
+    if (target !== read.target)
+      throw new StudioError("identity-changed", "Your listing selection changed. Reopen this property.");
+    // A directory response alone cannot authorize an adopted listing's storage org.
+    // App and waiting actions join the same paginated listing read for this generation.
+    if (read.mappingError) throw read.mappingError;
+    if (read.listings || !read.mapped && (pending || expectedLibrary !== undefined))
+      await listingRead(read, actor, target!, signal);
+    const current = () => {
+      assertWorkspace(read, signal);
+      if (read.target !== target || !memberships.some(m => m.orgId === target) ||
+        !(selected === target || [...listingScopes.values()].some(s => s.orgId === selected && s.libraryOrgId === target)))
+        throw new StudioError("membership-required", "Load this workspace before making changes.");
+    };
+    current();
+    return current;
+  }
+
   return {
     async api(path: string, options: StudioRequestOptions): Promise<unknown> {
       // Resolve only local Edge routes; never permit credentials to follow a
@@ -534,8 +643,7 @@ export function createStudioServices(
         throw new StudioError("request-size", "Choose a bounded project upload part.");
       const selected = uuid(options.orgId, "selected organization");
       const actor = await identity(options.signal);
-      if (!memberships.some(m => m.orgId === selected) && ![...listingScopes.values()].some(s => s.orgId === selected && memberships.some(m => m.orgId === s.libraryOrgId)))
-        throw new StudioError("membership-required", "Load this workspace before making changes.");
+      const scopeCurrent = await requestScope(actor, selected, options.expectedLibraryOrgId, options.signal);
       if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 600_000))
         throw new StudioError("configuration", "The request timeout is invalid.");
       if (options.maxResponseBytes !== undefined && (!Number.isSafeInteger(options.maxResponseBytes) || options.maxResponseBytes < 1 || options.maxResponseBytes > (path === "/functions/v1/ai-photo-v2" && options.method === "POST" && options.photoQualityProtocol === "retained-operation-v1" ? PHOTO_OUTPUT_WIRE_BYTES : 32 * 1024 * 1024)))
@@ -550,16 +658,15 @@ export function createStudioServices(
         throw new StudioError("request-size", "This request is too large. Choose a smaller image.");
       if (options.body !== undefined && (!options.method || options.method === "GET"))
         throw new StudioError("request-method", "A read request cannot change data.");
-      return request(path, actor.version, options.signal, selected, undefined, options);
+      return request(path, actor.version, options.signal, selected, undefined, options, scopeCurrent);
     },
     async upload(rawUrl: string, body: Blob, options: {
-      orgId: string; signal?: AbortSignal; contentType?: string;
+      orgId: string; expectedLibraryOrgId?: string; signal?: AbortSignal; contentType?: string;
       onProgress?: (loaded: number, total: number) => void;
     }): Promise<{ etag: string | null }> {
       const actor = await identity(options.signal);
       const selected = uuid(options.orgId, "selected organization");
-      if (!memberships.some(m => m.orgId === selected) && ![...listingScopes.values()].some(s => s.orgId === selected && memberships.some(m => m.orgId === s.libraryOrgId)))
-        throw new StudioError("membership-required", "Load this workspace before uploading.");
+      const scopeCurrent = await requestScope(actor, selected, options.expectedLibraryOrgId, options.signal);
       const url = validateUploadUrl(rawUrl);
       if (!body.size || body.size > 64 * 1024 * 1024)
         throw new StudioError("upload-size", "Upload each file in parts of 64 MB or smaller.");
@@ -570,15 +677,19 @@ export function createStudioServices(
       try {
         return await deadline(async () => {
           assertCurrent(actor.version, controller.signal);
+          scopeCurrent();
           options.onProgress?.(0, body.size);
+          scopeCurrent();
           const response = await fetcher(url, {
             method: "PUT", body, headers: { "Content-Type": options.contentType || body.type || "application/octet-stream" },
             credentials: "omit", redirect: "error", signal: controller.signal,
           });
           assertCurrent(actor.version, controller.signal);
+          scopeCurrent();
           void response.body?.cancel().catch(() => {});
           if (!response.ok) throw new StudioError("upload-failed", "Upload was not confirmed. Resume it to reconcile its saved parts.", response.status);
           options.onProgress?.(body.size, body.size);
+          scopeCurrent();
           return { etag: response.headers.get("ETag") };
         }, 600_000, "The upload was interrupted. Resume it to check which parts reached Rendprop.", () => controller.abort());
       } catch (error) {
@@ -656,69 +767,33 @@ export function createStudioServices(
       const actor = await identity(signal);
       const generation = ++workspaceReadGeneration;
       memberships = []; listingScopes.clear();
-      const selected = preferredOrgId
-        ? uuid(preferredOrgId, "selected organization")
-        : undefined;
-      const directory = decodeWorkspaceDirectory(await request("/functions/v1/me/workspaces", actor.version, signal), actor.userId);
-      const found = directory.canSwitchAgentLibraries ? directory.workspaces : directory.workspaces.filter(m => m.orgId === directory.ownOrgId);
-      if (selected && !found.some((m) => m.orgId === selected))
-        throw new StudioError(
-          "membership-required",
-          "You no longer have access to those listings. Reconnect to open your own listings.",
-        );
-      const target = selected ?? (directory.canSwitchAgentLibraries ? directory.activeOrgId : directory.ownOrgId);
-      const me = await request(
-        "/functions/v1/me",
-        actor.version,
-        signal,
-        target,
-      );
-      const workspace = decodeWorkspace(me, actor.userId, found, target, directory);
-      assertCurrent(actor.version, signal);
-      if (generation !== workspaceReadGeneration) throw new StudioError("identity-changed", "Your listing selection changed while loading. Reopen your listings.");
-      memberships = found;
-      return workspace;
+      const selected = preferredOrgId ? uuid(preferredOrgId, "selected organization") : undefined;
+      const read: WorkspaceRead = {version:actor.version,generation,target:selected,signal,pending:true,mapped:false,directory:Promise.resolve(null as unknown as Workspace)};
+      workspaceRead = read;
+      read.directory = (async () => {
+        const directory = decodeWorkspaceDirectory(await request("/functions/v1/me/workspaces", actor.version, signal), actor.userId);
+        assertWorkspace(read, signal);
+        const found = directory.canSwitchAgentLibraries ? directory.workspaces : directory.workspaces.filter(m => m.orgId === directory.ownOrgId);
+        if (selected && !found.some(m => m.orgId === selected))
+          throw new StudioError("membership-required", "You no longer have access to those listings. Reconnect to open your own listings.");
+        const target = selected ?? (directory.canSwitchAgentLibraries ? directory.activeOrgId : directory.ownOrgId);
+        read.target = target;
+        const me = await request("/functions/v1/me", actor.version, signal, target);
+        const workspace = decodeWorkspace(me, actor.userId, found, target, directory);
+        assertWorkspace(read, signal);
+        memberships = found;
+        return workspace;
+      })().finally(() => { read.pending = false; });
+      return read.directory;
     },
     async listListings(orgId: string, signal?: AbortSignal) {
       const actor = await identity(signal);
-      const selected = uuid(orgId, "selected organization");
-      const allowed = [...memberships];
-      if (!allowed.some((m) => m.orgId === selected))
-        throw new StudioError(
-          "membership-required",
-          "Load this workspace before opening its listings.",
-        );
-      const generation = workspaceReadGeneration;
-      const controller = new AbortController();
-      const abort = () => controller.abort(signal?.reason);
-      signal?.addEventListener("abort", abort, { once: true });
-      try {
-        assertCurrent(actor.version, signal);
-        return await deadline(async () => {
-      const rows: unknown[] = []; let offset = 0, total: number | undefined, bytes = 0;
-      while (true) {
-        const raw = await request(`/functions/v1/listings?library=1&limit=500&offset=${offset}`, actor.version, controller.signal, selected);
-        if (generation !== workspaceReadGeneration || !memberships.some(m => m.orgId === selected)) throw new StudioError("identity-changed", "Your listing access changed. Reload your listings.");
-        const page = raw as {actor_id?:unknown;listings?:unknown;total?:unknown;next_offset?:unknown};
-        if (!page || uuid(page.actor_id, "listing actor") !== actor.userId || !Array.isArray(page.listings) ||
-            !Number.isSafeInteger(page.total) || (page.total as number) < offset || (page.total as number) > MAX_READ_ROWS ||
-            (total !== undefined && page.total !== total) || page.listings.length !== Math.min(500, (page.total as number) - offset))
-          throw new StudioError("incomplete-response", "Your listing library changed while loading. Reload to see all listings.");
-        total = page.total as number; offset += page.listings.length;
-        if (page.next_offset !== (offset < total ? offset : null)) throw new StudioError("incomplete-response", "Your listing library response was incomplete. Reload your listings.");
-        bytes += new TextEncoder().encode(JSON.stringify(page.listings)).byteLength;
-        if (bytes > MAX_METADATA_BYTES * 4) throw new StudioError("response-too-large", "Your listing metadata is too large to load safely. Contact support.");
-        rows.push(...page.listings);
-        if (page.next_offset === null) break;
-      }
-      const result = decodeListings(rows, selected, allowed.filter(m => m.orgId === selected), true);
-      for (const [id, scope] of listingScopes) if (scope.libraryOrgId === selected) listingScopes.delete(id);
-      for (const row of result) listingScopes.set(row.id, {orgId:row.orgId,libraryOrgId:selected});
-      assertCurrent(actor.version, controller.signal);
-      return result;
-
-        }, readTimeoutMs, "Loading all of your listings timed out. Check your connection and retry.", () => controller.abort());
-      } finally { signal?.removeEventListener("abort", abort); }
+      const selected = uuid(orgId, "selected organization"), read = workspaceRead;
+      if (!read || read.version !== actor.version)
+        throw new StudioError("membership-required", "Load this workspace before opening its listings.");
+      assertWorkspace(read, signal);
+      await waitFor(read.directory, signal);
+      return listingRead(read, actor, selected, signal);
     },
     async listMedia(
       orgId: string,

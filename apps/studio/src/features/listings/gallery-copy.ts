@@ -57,7 +57,13 @@ export async function prepareGalleryCopy(services:StudioServices,scope:GallerySc
  if(raw){try{const v=JSON.parse(raw);if(raw.length>20_000||v.schema!==1||v.sourceId!==sourceId||JSON.stringify(v.scope)!==JSON.stringify(scope)||!UUID.test(v.operationId)||v.sourceSHA!==undefined&&!SHA.test(v.sourceSHA))throw problem();journal=v;}catch{throw problem();}}
  else journal={schema:1,scope:{...scope},sourceId,operationId:crypto.randomUUID()};
  const persist=()=>{assertCurrent();storage.setItem(storageKey,JSON.stringify(journal));};persist();
- const api=async(body:Record<string,unknown>)=>{const result=decodeGalleryCopy(await services.api("/functions/v1/studio/photo-copy",{orgId:scope.org,method:"POST",body:{listing_id:scope.listing,operation_id:journal.operationId,...body},signal,timeoutMs:120_000}),scope,sourceId);assertCurrent();return result;};
+ // Bind every internal upload/copy step to the logical library that mounted this action.
+ // This is a local fence: API headers, bodies, upload keys and durable journals stay unchanged.
+ const scopedServices:StudioServices={...services,
+  api:(path,request)=>services.api(path,{...request,expectedLibraryOrgId:scope.library}),
+  upload:(url,body,request)=>services.upload(url,body,{...request,expectedLibraryOrgId:scope.library}),
+ };
+ const api=async(body:Record<string,unknown>)=>{const result=decodeGalleryCopy(await scopedServices.api("/functions/v1/studio/photo-copy",{orgId:scope.org,method:"POST",body:{listing_id:scope.listing,operation_id:journal.operationId,...body},signal,timeoutMs:120_000}),scope,sourceId);assertCurrent();return result;};
  options.progress?.("Checking this saved photo…");
  let copy=await api({action:"prepare",source_asset_id:sourceId,caption:caption.slice(0,500)});
  if(journal.sourceSHA!==undefined&&journal.sourceSHA!==copy.source.sha256)throw problem();
@@ -68,7 +74,7 @@ export async function prepareGalleryCopy(services:StudioServices,scope:GallerySc
  if(!journal.upload){journal.upload={version:1,userId:scope.actor,orgId:scope.org,listingId:scope.listing,filename:file.name,bytes:file.size,contentType:file.type,role:"gallery",fingerprint:await fingerprintFile(file,signal),operationId:copy.operation_id,assetId:copy.destination_asset_id??undefined,parts:[],updatedAt:new Date().toISOString()};persist();}
  if(copy.destination_asset_id&&journal.upload.assetId&&journal.upload.assetId!==copy.destination_asset_id)throw problem();
  if(copy.destination_asset_id&&!journal.upload.assetId){journal.upload={...journal.upload,assetId:copy.destination_asset_id};persist();}
- await(options.upload??uploadListingAsset)(services,{orgId:scope.org,listingId:scope.listing,file,role:"gallery",signal,resume:journal.upload,
+ await(options.upload??uploadListingAsset)(scopedServices,{orgId:scope.org,listingId:scope.listing,file,role:"gallery",signal,resume:journal.upload,
   onJournal:value=>{journal={...journal,upload:value};persist();},
   onReserved:async assetId=>{const bound=await api({action:"bind",destination_asset_id:assetId});if(bound.operation_id!==copy.operation_id||bound.destination_asset_id!==assetId)throw problem();copy=bound;},
  });assertCurrent();

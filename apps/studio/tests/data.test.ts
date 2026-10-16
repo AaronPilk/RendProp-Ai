@@ -562,7 +562,8 @@ test("401 retry is single-flight with a new token and same workspace", async () 
   refreshed.resolve({ data: { session: next }, error: null });
   assert.equal((await pending).length, 2);
   assert.equal(refreshCount, 1);
-  assert.equal(listingHeaders.length, 4);
+  // Both listing callers join one current read and its single authorized GET retry.
+  assert.equal(listingHeaders.length, 2);
   assert.ok(listingHeaders.every((headers) => headers.get("X-Org-Id") === ORG));
   services.dispose();
 });
