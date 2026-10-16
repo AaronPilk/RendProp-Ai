@@ -19,6 +19,12 @@ export function kitFixture() {
   let holdRead = false, releaseRead: (() => void) | undefined;
   const services = {
     getSnapshot: snapshot, subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); },
+    listingReadScope: async (physicalOrg: string, listingId: string, libraryOrg: string, signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      if (physicalOrg !== org || libraryOrg !== org || ![listingA, listingB].includes(listingId)) throw new Error("Fixture refuses another property scope");
+      const captured = version;
+      return () => { signal?.throwIfAborted(); if (version !== captured || currentUser !== user) throw new Error("Fixture account changed"); };
+    },
     listListings: async () => structuredClone(listings), listMedia: async (_org: string, id: string) => media(id),
     api: async (path: string, options: { orgId: string; method?: string; signal?: AbortSignal }) => {
       if (options.orgId !== org || options.method && options.method !== "GET") throw new Error("Fixture blocks all mutations and foreign workspaces");

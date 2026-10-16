@@ -641,6 +641,14 @@ export function createStudioServices(
   }
 
   return {
+    /** Read-only local scope check. Join a fresh directory/map only when needed;
+     * the returned synchronous guard must be used immediately, never across awaits. */
+    async listingReadScope(orgId: string, listingId: string, libraryOrgId: string, signal?: AbortSignal): Promise<() => void> {
+      const actor = await identity(signal);
+      const current = await requestScope(actor, uuid(orgId, "selected organization"), uuid(libraryOrgId, "selected library"), signal, uuid(listingId, "selected listing"));
+      current();
+      return current;
+    },
     async api(path: string, options: StudioRequestOptions): Promise<unknown> {
       // Resolve only local Edge routes; never permit credentials to follow a
       // client-provided origin, relative traversal, fragment or redirect.
@@ -818,6 +826,7 @@ export function createStudioServices(
       listingId: string,
       signal?: AbortSignal,
       offset = 0,
+      expectedLibraryOrgId?: string,
     ) {
       const actor = await identity(signal);
       const selected = uuid(orgId, "selected organization");
@@ -826,7 +835,7 @@ export function createStudioServices(
       // Focus/timer refresh clears these caches while the fresh directory and
       // listing map are loading. Join that generation, then fence this exact
       // listing before and after transport rather than using a stale org hint.
-      const scopeCurrent = await requestScope(actor, selected, undefined, signal, listing);
+      const scopeCurrent = await requestScope(actor, selected, expectedLibraryOrgId, signal, listing);
       const query = new URLSearchParams({
         org_id: selected,
         listing_id: listing,

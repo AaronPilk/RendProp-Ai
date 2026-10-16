@@ -21,20 +21,21 @@ const record = (raw: unknown) => {
 };
 export function assertKitIdentity(services: StudioServices, workspace: Workspace, version: number, signal: AbortSignal) {
   signal.throwIfAborted(); const current = services.getSnapshot();
-  if (current.status !== "signed-in" || current.identity?.userId !== workspace.user.id || current.identity.isAnonymous || current.identityVersion !== version || !workspace.memberships.some(row => row.orgId === workspace.org.id)) throw new Error("Your account changed. Reopen this property before downloading.");
+  if (current.status !== "signed-in" || current.identity?.userId !== workspace.user.id || current.identity.isAnonymous || current.identityVersion !== version || !workspace.memberships.some(row => row.orgId === (workspace.libraryOrgId ?? workspace.org.id))) throw new Error("Your account changed. Reopen this property before downloading.");
 }
 /** Only saved server state is read; local drafts and upload journals stay untouched. */
 export async function loadKit(services: StudioServices, workspace: Workspace, listingId: string, signal: AbortSignal): Promise<KitSnapshot> {
-  uuid(listingId); const orgId = uuid(workspace.org.id), version = services.getSnapshot().identityVersion;
+  uuid(listingId); const orgId = uuid(workspace.org.id), libraryId = uuid(workspace.libraryOrgId ?? workspace.org.id), version = services.getSnapshot().identityVersion;
   const check = () => assertKitIdentity(services, workspace, version, signal); check();
-  const listingPromise = services.listListings(orgId, signal).then(rows => {
-    const listing = rows.find(row => row.id === listingId && row.orgId === orgId);
-    if (!listing) throw new Error("This property is no longer available in your workspace."); return listing;
-  });
+  // Confirm this exact property in the selected logical library before reading
+  // any materials from its physical storage organization.
+  const listing = (await services.listListings(libraryId, signal)).find(row => row.id === listingId && row.orgId === orgId && belongsToLibrary(row, workspace));
+  check();
+  if (!listing) throw new Error("This property is no longer available in your workspace.");
   const statePromise = (async () => {
     const all: ListingState = { ...EMPTY_STATE, assets: [], photos: [], jobs: [], renders: [], chapters: [] }; let offset = 0;
     for (;;) {
-      const page = decodeListingState(await services.api(`/functions/v1/studio/listing-state?listing_id=${listingId}&offset=${offset}`, { orgId, signal }), orgId, listingId, offset); check();
+      const page = decodeListingState(await services.api(`/functions/v1/studio/listing-state?listing_id=${listingId}&offset=${offset}`, { orgId, expectedLibraryOrgId: libraryId, expectedListingId: listingId, signal }), orgId, listingId, offset); check();
       all.assets.push(...page.assets); all.photos.push(...page.photos); all.renders.push(...page.renders);
       if (all.assets.length + all.photos.length + all.renders.length > 2000) throw new Error("This property has too many saved materials for one kit. Download individual files from Media.");
       if (page.nextOffset === null) return all; offset = page.nextOffset;
@@ -43,7 +44,7 @@ export async function loadKit(services: StudioServices, workspace: Workspace, li
   const mediaPromise = (async () => {
     const all: ListingMedia = { orgId, listingId, photos: [], videos: [], nextOffset: null, unavailableCount: 0 }; let offset = 0;
     for (;;) {
-      const page = await services.listMedia(orgId, listingId, signal, offset); check();
+      const page = await services.listMedia(orgId, listingId, signal, offset, libraryId); check();
       if (page.orgId !== orgId || page.listingId !== listingId) throw new Error("The media belongs to another property.");
       all.photos = [...all.photos, ...page.photos]; all.videos = [...all.videos, ...page.videos]; all.unavailableCount += page.unavailableCount;
       if (all.photos.length + all.videos.length > 1000) throw new Error("This property's media is too large for one kit. Download individual files from Media.");
@@ -54,7 +55,7 @@ export async function loadKit(services: StudioServices, workspace: Workspace, li
   const creativePromise = (async () => {
     const all: ReturnType<typeof decodeResult>[] = []; let offset = 0;
     for (;;) {
-      const page = record(await services.api(`/functions/v1/studio/creative-results?listing_id=${listingId}&offset=${offset}`, { orgId, signal })); check();
+      const page = record(await services.api(`/functions/v1/studio/creative-results?listing_id=${listingId}&offset=${offset}`, { orgId, expectedLibraryOrgId: libraryId, expectedListingId: listingId, signal })); check();
       if (!Array.isArray(page.results) || page.results.length > 100) throw new Error("Saved video results could not be checked.");
       for (const raw of page.results) { if (record(raw).listing_id !== listingId) throw new Error("A video result belongs to another property."); all.push(decodeResult(raw,{actor:workspace.user.id,org:orgId,listing:listingId})); }
       if (all.length > 1000) throw new Error("This property has too many saved results for one kit.");
@@ -63,11 +64,11 @@ export async function loadKit(services: StudioServices, workspace: Workspace, li
     }
   })();
   const scriptPromise = (async () => {
-    const key = `creative:${listingId}`, doc = decodeDocument(await services.api(`/functions/v1/studio/documents?key=${key}`, { orgId, signal }), key);
+    const key = `creative:${listingId}`, doc = decodeDocument(await services.api(`/functions/v1/studio/documents?key=${key}`, { orgId, expectedLibraryOrgId: libraryId, expectedListingId: listingId, signal }), key);
     if (doc && (doc.kind !== "creative" || doc.listing_id !== listingId)) throw new Error("The saved script belongs to another property.");
     return doc ? decodeDraft(doc.payload).script : "";
   })();
-  const [listing, state, media, creative, script] = await Promise.all([listingPromise, statePromise, mediaPromise, creativePromise, scriptPromise]); check();
+  const [state, media, creative, script] = await Promise.all([statePromise, mediaPromise, creativePromise, scriptPromise]); check();
   const items: KitItem[] = [], excluded: string[] = [], seen = new Set<string>();
   const scoped = (url: string, expires: string) => mediaURL(url, orgId, listingId, expires, Date.now(), workspace.user.id);
   const storageKey = (url: string) => isPrivateMediaURL(url)?privateMediaCapability(url,{actor:workspace.user.id,org:orgId,listing:listingId}).key:new URL(url).pathname.split("/").slice(2).map(decodeURIComponent).join("/");
@@ -118,20 +119,31 @@ function mediaExtension(bytes: Uint8Array, type: string, kind: "photo" | "video"
   throw new Error("A saved file has an unsupported or mismatched format. No incomplete kit was downloaded.");
 }
 export async function buildKit(snapshot: KitSnapshot, selectedIds: string[], options: { services: StudioServices; workspace: Workspace; signal: AbortSignal; progress: (value: KitProgress) => void; fetcher?: typeof fetch }) {
-  const { signal, services, workspace } = options, check = () => assertKitIdentity(services, workspace, snapshot.identityVersion, signal);
-  check(); if (!belongsToLibrary(snapshot.listing, workspace)) throw new Error("This kit belongs to another workspace.");
+  const { signal, services, workspace } = options;
+  const check = async () => {
+    assertKitIdentity(services, workspace, snapshot.identityVersion, signal);
+    const current = await services.listingReadScope(workspace.org.id, snapshot.listing.id, workspace.libraryOrgId ?? workspace.org.id, signal);
+    assertKitIdentity(services, workspace, snapshot.identityVersion, signal);
+    current();
+    return current;
+  };
+  assertKitIdentity(services, workspace, snapshot.identityVersion, signal);
+  if (snapshot.listing.orgId !== workspace.org.id || !belongsToLibrary(snapshot.listing, workspace)) throw new Error("This kit belongs to another workspace.");
+  (await check())();
   if (selectedIds.length > KIT_MAX_SELECTED || new Set(selectedIds).size !== selectedIds.length) throw new Error("Choose up to 40 photos or videos for one kit.");
   const selected = selectedIds.map(id => { const item = snapshot.items.find(row => row.id === id); if (!item) throw new Error("Your selection changed. Refresh the kit materials."); return item; });
   const entries: ZipEntry[] = [], files: Record<string, unknown>[] = []; let bytesRead = 0, done = 0;
   const total = selected.reduce((sum, item) => sum + (item.originalUrl ? 2 : 1), 0);
   const read = async (url: string, expiresAt: string, label: string, kind: "photo" | "video") => {
-    check(); const verified = mediaURL(url, workspace.org.id, snapshot.listing.id, expiresAt, Date.now(), workspace.user.id);
-    const response = await (options.fetcher ?? fetch)(verified, { credentials: "omit", referrerPolicy: "no-referrer", redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]) }); check();
+    (await check())(); const verified = mediaURL(url, workspace.org.id, snapshot.listing.id, expiresAt, Date.now(), workspace.user.id);
+    const response = await (options.fetcher ?? fetch)(verified, { credentials: "omit", referrerPolicy: "no-referrer", redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]) });
+    try { (await check())(); }
+    catch (error) { void response.body?.cancel().catch(() => {}); throw error; }
     if (!response.ok || !response.body) throw new Error(`${label} could not download. Refresh the kit and try again. No incomplete kit was downloaded.`);
     const available = Math.min(KIT_MAX_FILE_BYTES, KIT_MAX_BYTES - 1024 * 1024 - bytesRead), length = response.headers.get("content-length");
     if (length !== null && (!/^\d+$/.test(length) || Number(length) > available)) { void response.body.cancel(); throw new Error("This kit exceeds its download size. Choose fewer files, or download a large video separately."); }
     const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
-    try { for (;;) { const next = await reader.read(); check(); if (next.done) break; size += next.value.length; if (size > available) throw new Error("This kit exceeds its download size. Choose fewer files."); chunks.push(next.value); options.progress({ done, total, bytes: bytesRead + size, label }); } }
+    try { for (;;) { const next = await reader.read(); (await check())(); if (next.done) break; size += next.value.length; if (size > available) throw new Error("This kit exceeds its download size. Choose fewer files."); chunks.push(next.value); options.progress({ done, total, bytes: bytesRead + size, label }); } }
     finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
     const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
     const extension = mediaExtension(bytes, (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase(), kind);
@@ -152,14 +164,14 @@ export async function buildKit(snapshot: KitSnapshot, selectedIds: string[], opt
   if (snapshot.script.trim()) text("saved-script.txt", `${kitText(snapshot.script)}\n\nSaved script only. Review claims, pricing and wording before use.\n`);
   if (links && snapshot.published) {
     text("sharing-links.txt", `Published marketing tour: ${links.branded}\nPublished unbranded tour: ${links.unbranded}\nPublished at: ${snapshot.published.published_at}\nThese links open the existing published tour. Downloading a kit does not publish new work. Check your destination's rules before sharing.\n`);
-    text("sharing/marketing-qr.svg", await createTourQR(snapshot.published.slug)); check();
-    text("sharing/unbranded-qr.svg", await createTourQR(snapshot.published.slug, "unbranded")); check();
+    text("sharing/marketing-qr.svg", await createTourQR(snapshot.published.slug)); (await check())();
+    text("sharing/unbranded-qr.svg", await createTourQR(snapshot.published.slug, "unbranded")); (await check())();
   }
   const manifest = { format: "rendprop-listing-kit", version: 1, savedSnapshotAt: snapshot.checkedAt, facts, files, publishedLinks: links, selectedMediaCount: selected.length, availableMediaCount: snapshot.items.length, excluded: snapshot.excluded.map(kitText), review: "The person downloading confirmed they reviewed the selected materials. This is not an approval record, a new publication or an MLS compliance certification." };
   text("manifest.json", JSON.stringify(manifest, null, 2) + "\n");
   text("disclosures.txt", files.map(file => `${file.path}\n${file.disclosure}\n${file.originalPath ? `${file.originalRelationship}: ${file.originalPath}` : ""}${file.sourceNote ? `\n${file.sourceNote}` : ""}`).join("\n\n") + "\n\nKeep each altered image with its paired original and disclosure when sharing. This kit is not an MLS compliance certification.\n");
   text("START-HERE.html", `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:"><title>${escapeHTML(facts.address)} — Rendprop listing kit</title><style>body{font:16px/1.6 system-ui,sans-serif;background:#f8f7fb;color:#211c2b;max-width:900px;padding:32px;margin:auto}h1{line-height:1.2}header{border-bottom:3px solid #7351b5;padding-bottom:20px}small{color:#615769}a{color:#63419f}article{background:white;border:1px solid #e3dfeb;border-radius:12px;padding:20px;margin:18px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}img{max-width:180px}li{margin:8px 0}</style><header><strong>RENDPROP</strong><h1>${escapeHTML(facts.address)}</h1><p>Your selected listing materials, together.</p><small>Saved snapshot: ${escapeHTML(snapshot.checkedAt)}</small></header><article><h2>Property details</h2><pre>${escapeHTML(factsText)}</pre><a href="property-details.txt">Open saved property details</a>${snapshot.script.trim() ? ' · <a href="saved-script.txt">Open saved script</a>' : ""}<p>Only saved details are included. Review the facts and keep disclosures with altered media before sharing.</p></article><article><h2>Selected media (${selected.length})</h2><ul>${files.map(file => `<li><a href="${file.path}">${escapeHTML(String(file.path))}</a>${file.originalPath ? ` · <a href="${file.originalPath}">${file.originalRelationship}</a>` : ""}<br>${escapeHTML(String(file.disclosure))}${file.sourceNote ? `<br>${escapeHTML(String(file.sourceNote))}` : ""}</li>`).join("")}</ul><a href="disclosures.txt">Open disclosures and original pairings</a></article><article><h2>Published sharing links</h2>${links ? `<p><a href="${links.branded}" rel="noreferrer">Open marketing tour</a> · <a href="${links.unbranded}" rel="noreferrer">Open unbranded tour</a></p><p><a href="sharing/marketing-qr.svg">Marketing QR</a> · <a href="sharing/unbranded-qr.svg">Unbranded QR</a></p><p>These open the existing published version. New work was not published by this download.</p>` : "<p>No published tour was available when this kit was prepared. No tour links or QR codes are included.</p>"}</article>${snapshot.excluded.length ? `<article><h2>Unavailable materials</h2><ul>${snapshot.excluded.map(reason => `<li>${escapeHTML(reason)}</li>`).join("")}</ul></article>` : ""}<p>${selected.length} selected media item(s) included from ${snapshot.items.length} available. <a href="manifest.json">File inventory</a>. This download does not certify advertising or MLS compliance.</p></html>`);
-  check(); options.progress({ done, total, bytes: bytesRead, label: "Packing your listing kit…" });
-  const blob = await createStoredZip(entries, signal); check();
+  (await check())(); options.progress({ done, total, bytes: bytesRead, label: "Packing your listing kit…" });
+  const blob = await createStoredZip(entries, signal); (await check())();
   return { blob, filename: `${filenamePart(listing.address ?? "property")}-listing-kit.zip`, mediaCount: selected.length };
 }
