@@ -4788,6 +4788,51 @@ private struct BatchRun: Equatable {
     var phase: PhotoWorkQueue.Phase = .preparing
 }
 
+private struct PhotoOrientationFilterControl: View {
+    @Binding var filter: PhotoOrientation?
+    let orientations: [PhotoOrientation]
+    var selectedCount: Int? = nil
+    var identifier = "photos.orientation"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("\(orientations.count) photos" + (selectedCount.map { " · \($0) selected" } ?? ""))
+                    .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Menu {
+                    Picker("Photo orientation", selection: $filter) {
+                        Text("All photos").tag(Optional<PhotoOrientation>.none)
+                        ForEach(PhotoOrientation.allCases, id: \.self) { orientation in
+                            Text("\(orientation.label) (\(PhotoOrientation.counts(orientations)[orientation, default: 0]))")
+                                .tag(Optional(orientation))
+                        }
+                    }
+                } label: {
+                    Label(filter?.label ?? "All photos", systemImage: "line.3.horizontal.decrease")
+                        .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 10).frame(minHeight: 44)
+                        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10))
+                }
+                .accessibilityLabel("Filter photo orientation")
+                .accessibilityValue(filter?.label ?? "All photos")
+                .accessibilityIdentifier(identifier + ".filter")
+            }
+            Text(PhotoOrientation.summary(orientations))
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(identifier + ".counts")
+            if filter != nil, selectedCount != nil {
+                Text("Filtering keeps your selected photos and their order.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct PhotoStudioView: View {
     /// WHICH OF THE TWO SCREENS THIS IS.
     ///
@@ -4993,6 +5038,8 @@ struct PhotoStudioView: View {
 
     @State private var photos: [EnhancedPhoto] = []
     @State private var libraryKind: PhotoVersionHistory.LibraryKind = .original
+    @State private var photoOrientationFilter: PhotoOrientation?
+    @State private var photoOrientations: [PhotoGeometryInput: PhotoOrientation] = [:]
     @State private var selectedPhotoIDs: Set<String> = []
     @State private var publicationLabels: [String: String] = [:]
     @State private var galleryRetrying = false
@@ -5006,6 +5053,16 @@ struct PhotoStudioView: View {
                                  enhancedURL: image)
         }
     }
+    private var photoGeometryInputs: [PhotoGeometryInput] {
+        libraryPhotos.map { PhotoGeometryInput(id: $0.id, url: $0.enhancedURL) }
+    }
+    private func photoOrientation(_ photo: EnhancedPhoto) -> PhotoOrientation {
+        photoOrientations[PhotoGeometryInput(id: photo.id, url: photo.enhancedURL)] ?? .unknown
+    }
+    private var filteredLibraryPhotos: [EnhancedPhoto] {
+        PhotoOrientation.filtered(libraryPhotos, by: photoOrientationFilter, orientation: photoOrientation)
+    }
+
     private var galleryFamilyPhotos: [EnhancedPhoto] {
         let directory = EnhancedPhoto.directory(for: listing.id)
         guard let index = try? PhotoVersionHistory.load(directory: directory) else { return [] }
@@ -5672,18 +5729,37 @@ struct PhotoStudioView: View {
     }
 
     private var photoGrid: some View {
-        LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(libraryPhotos) { p in
-                VStack(alignment: .leading, spacing: 5) {
-                    photoCell(p, selectedForListing: listingPhotoSelected(p.id))
-                    if entry == .photos && libraryKind == .staged, let style = p.savedVersion?.style, !style.isEmpty {
-                        Text(style.capitalized).font(.rpCaption).foregroundStyle(Theme.inkDim)
+        VStack(alignment: .leading, spacing: 10) {
+            PhotoOrientationFilterControl(filter: $photoOrientationFilter,
+                orientations: libraryPhotos.map(photoOrientation), selectedCount: batchEdit == nil ? nil : batchSelection.count)
+            if filteredLibraryPhotos.isEmpty && !libraryPhotos.isEmpty {
+                Text("No \(photoOrientationFilter?.rawValue ?? "matching") photos in this view.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button("Show all photos") { photoOrientationFilter = nil }
+                    .font(.rpCaption.weight(.semibold)).frame(minHeight: 44)
+            }
+            LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(filteredLibraryPhotos) { p in
+                    VStack(alignment: .leading, spacing: 5) {
+                        photoCell(p, selectedForListing: listingPhotoSelected(p.id))
+                        Text(photoOrientation(p).label).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            .accessibilityIdentifier("photos.orientation.\(p.id)")
+                        if entry == .photos && libraryKind == .staged, let style = p.savedVersion?.style, !style.isEmpty {
+                            Text(style.capitalized).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        }
                     }
                 }
             }
         }
-        // New AI edits and deletions settle into the grid instead of
-        // popping — keyed on count so only inserts/removes animate.
+        .task(id: photoGeometryInputs) {
+            let inputs = photoGeometryInputs, actor = auth.userID, revision = auth.syncSessionRevision
+            let workspace = WorkspaceContext.selectedOrgID
+            let values = await PhotoGeometryReader.observe(inputs)
+            guard !Task.isCancelled, photoGeometryInputs == inputs, auth.userID == actor,
+                  auth.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == workspace else { return }
+            photoOrientations = values
+        }
+        // Filters never reorder the underlying source list or selection.
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: photos.count)
     }
 
@@ -10357,6 +10433,17 @@ struct ReelStudioView: View {
     @State private var savedPhotoError: String?
     @State private var showReelPhotos = false
     private var reelPhotos: [EnhancedPhoto] { refreshedPhotos ?? photos }
+    @State private var photoOrientationFilter: PhotoOrientation?
+    @State private var photoOrientations: [PhotoGeometryInput: PhotoOrientation] = [:]
+    private var photoGeometryInputs: [PhotoGeometryInput] {
+        reelPhotos.map { PhotoGeometryInput(id: $0.id, url: $0.enhancedURL) }
+    }
+    private func photoOrientation(_ photo: EnhancedPhoto) -> PhotoOrientation {
+        photoOrientations[PhotoGeometryInput(id: photo.id, url: photo.enhancedURL)] ?? .unknown
+    }
+    private var filteredReelPhotos: [EnhancedPhoto] {
+        PhotoOrientation.filtered(reelPhotos, by: photoOrientationFilter, orientation: photoOrientation)
+    }
     /// Finished clips to put in front of the photo clips (the aerial intro).
     var extraClipURLs: [URL] = []
 
@@ -10966,6 +11053,7 @@ struct ReelStudioView: View {
     }
 
     @ViewBuilder private var photoPickerGrid: some View {
+        Group {
         if let savedPhotoError {
             VStack(alignment: .leading, spacing: 10) {
                 Text(savedPhotoError).font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -10983,9 +11071,35 @@ struct ReelStudioView: View {
                 .accessibilityIdentifier("reel.addPhotos")
             }
         } else {
-            LazyVGrid(columns: selectColumns, spacing: 8) {
-                ForEach(reelPhotos) { p in selectThumb(p) }
+            VStack(alignment: .leading, spacing: 10) {
+                PhotoOrientationFilterControl(filter: $photoOrientationFilter,
+                    orientations: reelPhotos.map(photoOrientation), selectedCount: selected.count,
+                    identifier: "video.photos.orientation")
+                if filteredReelPhotos.isEmpty {
+                    Text("No \(photoOrientationFilter?.rawValue ?? "matching") photos here. Your selection is kept.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    Button("Show all photos") { photoOrientationFilter = nil }
+                        .font(.rpCaption.weight(.semibold)).frame(minHeight: 44)
+                }
+                LazyVGrid(columns: selectColumns, spacing: 8) {
+                    ForEach(filteredReelPhotos) { p in
+                        VStack(alignment: .leading, spacing: 4) {
+                            selectThumb(p)
+                            Text(photoOrientation(p).label).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                .accessibilityIdentifier("video.photos.orientation.\(p.id)")
+                        }
+                    }
+                }
             }
+        }
+        }
+        .task(id: photoGeometryInputs) {
+            let inputs = photoGeometryInputs, actor = auth.userID, revision = auth.syncSessionRevision
+            let workspace = WorkspaceContext.selectedOrgID
+            let values = await PhotoGeometryReader.observe(inputs)
+            guard !Task.isCancelled, photoGeometryInputs == inputs, auth.userID == actor,
+                  auth.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == workspace else { return }
+            photoOrientations = values
         }
     }
 

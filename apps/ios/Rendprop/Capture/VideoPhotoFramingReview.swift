@@ -1,6 +1,88 @@
 import Foundation
 import ImageIO
 
+enum PhotoOrientation: String, CaseIterable, Hashable, Sendable {
+    case landscape, portrait, square, unknown
+
+    var label: String { rawValue.capitalized }
+
+    static func measured(width: Int, height: Int) -> Self {
+        guard width > 0, height > 0 else { return .unknown }
+        return width == height ? .square : width > height ? .landscape : .portrait
+    }
+
+    static func filtered<T>(_ items: [T], by filter: Self?, orientation: (T) -> Self) -> [T] {
+        items.filter { filter == nil || orientation($0) == filter }
+    }
+
+    static func counts(_ values: [Self]) -> [Self: Int] {
+        values.reduce(into: Dictionary(uniqueKeysWithValues: allCases.map { ($0, 0) })) { $0[$1, default: 0] += 1 }
+    }
+
+    static func summary(_ values: [Self]) -> String {
+        let count = counts(values)
+        return allCases.filter { count[$0, default: 0] > 0 }
+            .map { "\(count[$0, default: 0]) \($0.rawValue)" }.joined(separator: " · ")
+    }
+}
+
+struct PhotoPixelGeometry: Equatable, Sendable {
+    let width: Int
+    let height: Int
+    var orientation: PhotoOrientation { .measured(width: width, height: height) }
+}
+
+struct PhotoGeometryInput: Hashable, Sendable {
+    let id: String
+    let url: URL
+    let bytes: Int?
+    let modified: Date?
+
+    init(id: String, url: URL) {
+        self.id = id
+        self.url = url
+        let values = try? FileManager.default.attributesOfItem(atPath: url.path)
+        bytes = (values?[.size] as? NSNumber)?.intValue
+        modified = values?[.modificationDate] as? Date
+    }
+}
+
+/// Observes the exact saved image with a tiny transformed decode. No rewrite,
+/// upload or full-resolution raster is needed to classify a photo.
+enum PhotoGeometryReader {
+    static func observe(_ inputs: [PhotoGeometryInput]) async -> [PhotoGeometryInput: PhotoOrientation] {
+        let worker = Task.detached(priority: .utility) {
+            var values: [PhotoGeometryInput: PhotoOrientation] = [:]
+            for input in inputs {
+                guard !Task.isCancelled else { break }
+                guard PhotoGeometryInput(id: input.id, url: input.url) == input else { continue }
+                let size = autoreleasepool { read(url: input.url) }
+                // A replaced version cannot inherit the previous file's label.
+                guard PhotoGeometryInput(id: input.id, url: input.url) == input else { continue }
+                values[input] = size?.orientation ?? .unknown
+            }
+            return values
+        }
+        return await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
+    }
+
+    static func read(url: URL) -> PhotoPixelGeometry? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              let size = VideoFramingReviewPolicy.displayedSize(width: width, height: height,
+                exifOrientation: properties[kCGImagePropertyOrientation] as? Int ?? 1),
+              CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 32,
+                kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary) != nil else { return nil }
+        return PhotoPixelGeometry(width: size.0, height: size.1)
+    }
+}
+
 struct VideoPhotoFramingAssessment: Identifiable, Sendable {
     let photoID: String
     let sourceURL: URL
@@ -100,19 +182,8 @@ enum VideoPreparedSourcePolicy {
 /// orientation-correct thumbnail. No original is rewritten or stretched.
 enum VideoPhotoFramingReader {
     static func read(photoID: String, url: URL, aspect: Double) -> VideoPhotoFramingAssessment? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int,
-              let size = VideoFramingReviewPolicy.displayedSize(width: width, height: height,
-                exifOrientation: properties[kCGImagePropertyOrientation] as? Int ?? 1),
-              CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: 32,
-                kCGImageSourceShouldCacheImmediately: true,
-              ] as CFDictionary) != nil,
-              let crop = DeliveryCrop.centered(sourceWidth: Double(size.0), sourceHeight: Double(size.1), deliveryAspect: aspect) else { return nil }
-        return .init(photoID: photoID, sourceURL: url, displayedWidth: size.0, displayedHeight: size.1, crop: crop)
+        guard let size = PhotoGeometryReader.read(url: url),
+              let crop = DeliveryCrop.centered(sourceWidth: Double(size.width), sourceHeight: Double(size.height), deliveryAspect: aspect) else { return nil }
+        return .init(photoID: photoID, sourceURL: url, displayedWidth: size.width, displayedHeight: size.height, crop: crop)
     }
 }

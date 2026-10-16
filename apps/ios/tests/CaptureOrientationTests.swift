@@ -20,6 +20,18 @@ import CoreGraphics
         check(VideoAspectChoice.allCases.first == .listing, "listing is the first new-video destination")
         check(VideoFramingReviewPolicy.displayedSize(width:4000,height:3000,exifOrientation:6)?.0 == 3000, "EXIF rotation determines imported displayed orientation")
         check(VideoFramingReviewPolicy.displayedSize(width:4000,height:3000,exifOrientation:9) == nil, "unknown EXIF orientation cannot fake a framing review")
+        check(PhotoOrientation.measured(width: 4000, height: 3000) == .landscape && PhotoOrientation.measured(width: 3000, height: 4000) == .portrait,
+              "actual displayed dimensions classify landscape and portrait without AI")
+        check(PhotoOrientation.measured(width: 1000, height: 1000) == .square && PhotoOrientation.measured(width: 0, height: 3000) == .unknown,
+              "square and unreadable dimensions retain their own categories")
+        let orientations: [String: PhotoOrientation] = ["A": .landscape, "B": .portrait, "C": .square, "D": .landscape]
+        let uploadedOrder = ["A", "B", "C", "D"]
+        check(PhotoOrientation.filtered(uploadedOrder, by: .landscape, orientation: { orientations[$0] ?? .unknown }) == ["A", "D"],
+              "orientation filter preserves original source order")
+        check(PhotoOrientation.filtered(uploadedOrder, by: nil, orientation: { orientations[$0] ?? .unknown }) == uploadedOrder,
+              "All restores the same source order without automatic selection")
+        check(PhotoOrientation.counts([.landscape, .portrait, .square, .unknown]) == [.landscape: 1, .portrait: 1, .square: 1, .unknown: 1],
+              "orientation totals retain square and unknown photos")
         check(VideoPreparedSourcePolicy.cropMeetsFloor(width:896,height:1195,aspect:"16:9"), "saved896x1195 photo keeps896x504 landscape crop above the480 floor")
         check(VideoPreparedSourcePolicy.cropMeetsFloor(width:855,height:480,aspect:"16:9"), "even480pixel crop boundary remains usable")
         check(!VideoPreparedSourcePolicy.cropMeetsFloor(width:480,height:640,aspect:"16:9") && VideoPreparedSourcePolicy.cropMeetsFloor(width:480,height:854,aspect:"9:16"), "the selected destination determines the actual crop floor")
@@ -92,6 +104,22 @@ import CoreGraphics
             check(CGImageDestinationFinalize(writer), "the owned framing fixture writes valid JPEG bytes")
         }
         let wideBytes=try! Data(contentsOf:wideURL), rotatedBytes=try! Data(contentsOf:rotatedURL)
+        for orientation in 1...8 {
+            let fixtureURL = directory.appendingPathComponent("exif-\(orientation).jpg")
+            try jpeg(40, 30, orientation: orientation).write(to: fixtureURL)
+            let observed = PhotoGeometryReader.read(url: fixtureURL)
+            check(observed?.orientation == ((5...8).contains(orientation) ? .portrait : .landscape),
+                  "all eight actual EXIF orientations use displayed dimensions")
+        }
+        let input = PhotoGeometryInput(id: "exact-version", url: rotatedURL)
+        let geometry = await PhotoGeometryReader.observe([input])
+        check(geometry[input] == .portrait, "serial exact-file observation classifies the saved version")
+        try jpeg(50, 50).write(to: rotatedURL)
+        check(geometry[PhotoGeometryInput(id: "exact-version", url: rotatedURL)] == nil,
+              "a changed file cannot inherit the previous version orientation")
+        try rotatedBytes.write(to: rotatedURL)
+        check(PhotoGeometryReader.read(url: directory.appendingPathComponent("missing.jpg")) == nil,
+              "missing source remains Unknown rather than guessed landscape")
         let wideRead=VideoPhotoFramingReader.read(photoID:"wide-reviewed",url:wideURL,aspect:16.0/9.0)!
         let rotatedRead=VideoPhotoFramingReader.read(photoID:"staged-reviewed",url:rotatedURL,aspect:16.0/9.0)!
         check(wideRead.displayedWidth==40 && wideRead.displayedHeight==30 && !wideRead.isMajorCrop,"actual decoded landscape photo keeps a modest widescreen crop")
