@@ -1,5 +1,6 @@
 import type { StudioServices } from "../../data/services";
-import { privateMediaCapability } from "../../data/private-media";
+import { isPrivateMediaURL, privateMediaCapability } from "../../data/private-media";
+import { mediaURL } from "../../data/contracts";
 import type { GalleryScope } from "./gallery-selection";
 import { fingerprintFile, uploadListingAsset, type UploadJournal } from "./uploads";
 
@@ -19,8 +20,15 @@ export function decodeGalleryCopy(value:unknown,scope:GalleryScope,sourceId:stri
  if(r.complete){if(r.download!==null||r.photo?.id!==r.destination_asset_id||r.photo?.listing_id!==scope.listing)throw problem();}
  else{
   if(!r.download||!Number.isFinite(Date.parse(r.download.expires_at))||Date.parse(r.download.expires_at)<=Date.now())throw problem();
-  const capability=privateMediaCapability(r.download.url,{actor:scope.actor,org:scope.org,listing:scope.listing});
-  if(capability.bucket!=="renders"||capability.key!==r.source.key||Date.parse(r.download.expires_at)>capability.exp*1000+1000)throw problem();
+  // The existing server supports both its signed gateway and scoped SigV4
+  // downloads. Validate either transport without changing delivery settings.
+  mediaURL(r.download.url,scope.org,scope.listing,r.download.expires_at,Date.now(),scope.actor);
+  if(isPrivateMediaURL(r.download.url)){
+   privateMediaCapability(r.download.url,{actor:scope.actor,org:scope.org,listing:scope.listing,bucket:"renders",key:r.source.key});
+  }else{
+   const path=new URL(r.download.url).pathname.slice(1).split("/").map(decodeURIComponent);
+   if(path.slice(1).join("/")!==r.source.key)throw problem();
+  }
  }
  return r;
 }
