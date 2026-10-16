@@ -693,6 +693,34 @@ jobs:
           assert.deepEqual(receipt.externalRequests,[]);
           NODE
           done
+      - name: Saved source copies preserve exact bytes and recover one private version
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rendprop-gallery-copy-browser"
+          mkdir -p "$evidence_root"
+          STUDIO_PROOF_ROOT="$evidence_root/positive" node tests/gallery-copy-browser.mjs > "$evidence_root/positive.log" 2>&1
+          control_root="$evidence_root/client-hash-omitted"
+          mkdir -p "$control_root"
+          set +e
+          STUDIO_PROOF_ROOT="$control_root" node tests/gallery-copy-browser.mjs --fault=client-hash-omitted > "$control_root/run.log" 2>&1
+          control_status=$?
+          set -e
+          test "$control_status" -ne 0
+          COPY_EVIDENCE="$control_root" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,readdirSync} from 'node:fs';
+          import {join} from 'node:path';
+          const root=process.env.COPY_EVIDENCE;
+          const folders=readdirSync(root,{withFileTypes:true}).filter(item=>item.isDirectory());
+          assert.equal(folders.length,1);
+          const receipt=JSON.parse(readFileSync(join(root,folders[0].name,'receipt.json'),'utf8'));
+          assert.equal(receipt.status,'failed');
+          assert.equal(receipt.fault,'client-hash-omitted');
+          assert.ok(receipt.failure.includes('Changed source must refuse BEFORE any destination PUT'));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          NODE
       - name: C2 discard and upload-order compiled browser faults
         timeout-minutes: 5
         run: |
@@ -832,6 +860,10 @@ jobs:
             ${{ runner.temp }}/rendprop-gallery-selection-browser/**/*.png
             ${{ runner.temp }}/rendprop-gallery-selection-browser/**/*.log
             ${{ runner.temp }}/rendprop-gallery-selection-browser/positive.log
+            ${{ runner.temp }}/rendprop-gallery-copy-browser/**/receipt.json
+            ${{ runner.temp }}/rendprop-gallery-copy-browser/**/*.png
+            ${{ runner.temp }}/rendprop-gallery-copy-browser/**/*.log
+            ${{ runner.temp }}/rendprop-gallery-copy-browser/positive.log
             ${{ runner.temp }}/rendprop-c2-browser-control-*/**/receipt.json
             ${{ runner.temp }}/rendprop-c2-browser-control-*/**/*.png
             ${{ runner.temp }}/rendprop-c2-browser-control-*/run.log
@@ -1534,6 +1566,24 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/studio_gallery_order_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-gallery-order-pg"
+      - name: Exact-byte gallery copies retain source history and serialize completion
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/studio_gallery_source_copy_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-gallery-source-copy-pg"
+      - name: Direct video provenance isolates requests and preserves account erasure scope
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/direct_property_video_source_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-direct-property-source-pg"
+      - name: Steady video profiles preserve frozen jobs and native frame timing
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_steady_v2_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-steady-v2-pg"
       - name: Actual saved photo background judge race and no-repeat control
         timeout-minutes: 10
         run: |
@@ -1683,6 +1733,9 @@ jobs:
             ${{ runner.temp }}/rendprop-property-video-pg/**
             ${{ runner.temp }}/rendprop-property-video-abandon-pg/**
             ${{ runner.temp }}/rendprop-studio-gallery-order-pg/**
+            ${{ runner.temp }}/rendprop-gallery-source-copy-pg/**
+            ${{ runner.temp }}/rendprop-direct-property-source-pg/**
+            ${{ runner.temp }}/rendprop-property-steady-v2-pg/**
             ${{ runner.temp }}/rendprop-studio-photo-pg/**
             ${{ runner.temp }}/rendprop-photo-quality-pg/**
             ${{ runner.temp }}/rendprop-photo-background-pg/**
