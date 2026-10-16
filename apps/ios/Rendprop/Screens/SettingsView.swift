@@ -1511,6 +1511,7 @@ enum UserFacingError {
 
 struct LeadsView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// nil = every lead for the account; a listing = only that listing's leads.
     var listing: Listing? = nil
 
@@ -1544,6 +1545,12 @@ struct LeadsView: View {
     }
     private var listingSections: [LeadInboxSection] {
         LeadInboxGrouping.sections(visibleLeads.filter { selectedListing.includes($0) }, listings: visibleListings)
+    }
+    private var selectedListingTitle: String {
+        listingOptions.first { $0.filter == selectedListing }?.title ?? "All listings"
+    }
+    private var selectedLeadCount: Int {
+        visibleLeads.filter { selectedListing.includes($0) }.count
     }
 
     private var needsSignIn: Bool { Config.enableAuth && !auth.isSignedIn }
@@ -1580,6 +1587,8 @@ struct LeadsView: View {
             content
         }
         .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Theme.bg)
         .navigationTitle("Leads")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("leads.inbox")
@@ -1617,15 +1626,46 @@ struct LeadsView: View {
     private var content: some View {
         if listing == nil, !needsSignIn {
             Section {
-                Picker("Listing", selection: $selectedListing) {
-                    Text("All listings").tag(LeadInboxFilter.all)
+                Menu {
+                    Button { selectedListing = .all } label: {
+                        Label("All listings", systemImage: selectedListing == .all ? "checkmark" : "house")
+                    }.accessibilityIdentifier("leads.filter.all")
                     ForEach(listingOptions) { group in
-                        Text(group.title).tag(group.filter)
+                        Button { selectedListing = group.filter } label: {
+                            Label(group.title, systemImage: selectedListing == group.filter ? "checkmark" : "house")
+                        }.accessibilityIdentifier("leads.filter.\(group.id)")
                     }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "house")
+                            .font(dynamicTypeSize.isAccessibilitySize ? .system(size: 18, weight: .medium) : .body.weight(.medium))
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Property").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            Text(selectedListingTitle)
+                                .font(.rpHeadline).foregroundStyle(Theme.ink)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("\(selectedLeadCount) \(selectedLeadCount == 1 ? "lead" : "leads")")
+                                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.down")
+                            .font(dynamicTypeSize.isAccessibilitySize ? .system(size: 12, weight: .semibold) : .caption.weight(.semibold))
+                            .foregroundStyle(Theme.inkDim)
+                            .accessibilityHidden(true)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
                 }
-                .pickerStyle(.menu)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Filter leads by property")
+                .accessibilityValue("\(selectedListingTitle), \(selectedLeadCount) \(selectedLeadCount == 1 ? "lead" : "leads")")
                 .accessibilityIdentifier("leads.listingFilter")
             }
+            .listRowBackground(Theme.card)
         }
         if let listing {
             Section {
@@ -1708,7 +1748,11 @@ struct LeadsView: View {
                     Section {
                         ForEach(group.leads) { lead in inquiryRow(lead, showDate: true) }
                     } header: {
-                        Text("\(group.title) · \(group.leads.count)")
+                        if selectedListing == .all {
+                            Text("\(group.title) · \(group.leads.count)")
+                                .textCase(nil)
+                                .accessibilityIdentifier("leads.propertyHeading")
+                        }
                     }
                 }
             } else {
@@ -1723,6 +1767,8 @@ struct LeadsView: View {
 
     private func inquiryRow(_ lead: Lead, showDate: Bool) -> some View {
         LeadRow(lead: lead, showListing: false, showDate: showDate)
+            .listRowBackground(Theme.card)
+            .listRowSeparator(.hidden)
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) {
                     pendingDeletion = lead; deletionContext = currentDeletionContext
@@ -1811,6 +1857,8 @@ struct LeadRow: View {
     var showListing = true
     var showDate = false
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var showDeliveryDetails = false
     @State private var latestDelivery: ClientLeadDelivery?
     @State private var showSendConfirmation = false
     @State private var isSending = false
@@ -1822,26 +1870,45 @@ struct LeadRow: View {
     @State private var confirmedRevision: UInt64?
     @State private var confirmedOrg: UUID?
     private var delivery: ClientLeadDelivery? { latestDelivery ?? lead.clientDelivery }
+    private var metadataLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+    }
+    private var contactLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+    }
+    private var extraLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(lead.name.trimmingCharacters(in: .whitespaces).isEmpty ? "Someone" : lead.name)
                     .font(.rpHeadline)
                     .foregroundStyle(Theme.ink)
-                Spacer()
-                Group {
-                    if showDate {
-                        Text(lead.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
-                    } else {
-                        Text(lead.createdAt, style: .time)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("lead.name")
+                metadataLayout {
+                    Group {
+                        if showDate {
+                            Text(lead.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
+                        } else {
+                            Text(lead.createdAt, style: .time)
+                        }
                     }
-                }
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
-            }
-            if let status = lead.status, ["new", "contacted", "won", "lost"].contains(status) {
-                Text(status.capitalized).font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
+                    if let status = lead.status, ["new", "contacted", "won", "lost"].contains(status) {
+                        Text(status.capitalized)
+                            .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
+                    }
+                }
             }
             if showListing, let address = lead.listingAddress?.trimmingCharacters(in: .whitespaces), !address.isEmpty {
                 Label(address, systemImage: SpaceType.current.systemImage)
@@ -1857,7 +1924,7 @@ struct LeadRow: View {
             if let extra = lead.extra, !extra.isEmpty {
                 ForEach(extra.keys.sorted(), id: \.self) { key in
                     if let value = extra[key], !value.trimmingCharacters(in: .whitespaces).isEmpty {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        extraLayout {
                             Text(Self.prettyKey(key))
                                 .font(.rpCaption.weight(.semibold))
                                 .foregroundStyle(Theme.inkDim)
@@ -1868,77 +1935,57 @@ struct LeadRow: View {
                     }
                 }
             }
-            // Two SEPARATE actions with their own hit targets. Owner feedback,
-            // 15 Sep: "when I click the phone number it should call not open up
-            // email." The links were always built correctly — the row merged
-            // them. Each one now carries its own contentShape and 44pt minimum
-            // so a thumb lands where the eye aimed, and `.buttonStyle(.plain)`
-            // stops a surrounding List row from swallowing the tap first.
-            HStack(spacing: 8) {
+            // Phone and email remain separate full-row links with independent
+            // 44pt targets. Their compact labels cannot merge the destinations.
+            VStack(alignment: .leading, spacing: 2) {
                 if let phone = lead.phone?.trimmingCharacters(in: .whitespaces), !phone.isEmpty,
                    let url = Self.telURL(phone) {
-                    Link(destination: url) {
-                        Label(phone, systemImage: "phone.fill")
-                            .padding(.vertical, 10)
-                            .padding(.horizontal, 8)
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.accent)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(Text("Call \(phone)"))
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityIdentifier("lead.call")
+                    contactLink(phone, title: "Call", icon: "phone.fill", url: url)
+                        .accessibilityLabel(Text("Call \(phone)"))
+                        .accessibilityIdentifier("lead.call")
                 }
                 if let email = lead.email?.trimmingCharacters(in: .whitespaces), !email.isEmpty,
                    let url = Self.mailURL(email) {
-                    Link(destination: url) {
-                        Label(email, systemImage: "envelope.fill")
-                            .lineLimit(1)
-                            .padding(.vertical, 10)
-                            .padding(.horizontal, 8)
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.accent)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(Text("Email \(email)"))
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityIdentifier("lead.email")
+                    contactLink(email, title: "Email", icon: "envelope.fill", url: url)
+                        .accessibilityLabel(Text("Email \(email)"))
+                        .accessibilityIdentifier("lead.email")
                 }
-                Spacer(minLength: 0)
             }
-            .font(.rpCaption.weight(.semibold))
             if let source = lead.source?.trimmingCharacters(in: .whitespaces), !source.isEmpty, source != "tour" {
                 Text("via \(source)")
                     .font(.caption2)
                     .foregroundStyle(Theme.inkDim)
             }
             if let delivery {
-                Divider()
-                Label(delivery.label, systemImage: delivery.state == "email_sent" ? "envelope.badge.fill" : "envelope")
-                    .font(.rpCaption.weight(.semibold)).foregroundStyle(delivery.state == "failed" ? Theme.warn : Theme.inkDim)
-                if let email = delivery.recipientEmail { Text(email).font(.rpCaption).foregroundStyle(Theme.inkDim) }
-                if let raw = delivery.sentAt ?? delivery.lastAttemptAt, let date = CloudListingMerge.date(raw) {
-                    Text(date.formatted(date: .abbreviated, time: .shortened)).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                DisclosureGroup(isExpanded: $showDeliveryDetails) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let email = delivery.recipientEmail { Text(email).font(.rpCaption).foregroundStyle(Theme.inkDim) }
+                        if let raw = delivery.sentAt ?? delivery.lastAttemptAt, let date = CloudListingMerge.date(raw) {
+                            Text(date.formatted(date: .abbreviated, time: .shortened)).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        }
+                        if delivery.canResend, let recipient = delivery.currentRecipientEmail ?? delivery.recipientEmail, ClientContactPolicy.isEmail(recipient) {
+                            Button {
+                                confirmedRecipient = recipient
+                                confirmedOwner = AuthStore.shared.userID
+                                confirmedRevision = AuthStore.shared.syncSessionRevision
+                                confirmedOrg = WorkspaceContext.selectedOrgID
+                                showSendConfirmation = true
+                            } label: {
+                                Label(isSending ? "Sending…" : (requestID == nil ? (delivery.lastAttemptAt == nil ? "Send to client" : "Send to client again") : "Retry sending to client"), systemImage: "paperplane")
+                            }.buttonStyle(.borderless).disabled(isSending).accessibilityIdentifier("lead.sendToClient")
+                        }
+                        if let sendError { Text(sendError).font(.rpCaption).foregroundStyle(Theme.warn) }
+                    }.padding(.top, 4)
+                } label: {
+                    Label(delivery.label, systemImage: delivery.state == "email_sent" ? "envelope.badge.fill" : "envelope")
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(delivery.state == "failed" ? Theme.warn : Theme.inkDim)
                 }
-                if delivery.canResend, let recipient = delivery.currentRecipientEmail ?? delivery.recipientEmail, ClientContactPolicy.isEmail(recipient) {
-                    Button {
-                        confirmedRecipient = recipient
-                        confirmedOwner = AuthStore.shared.userID
-                        confirmedRevision = AuthStore.shared.syncSessionRevision
-                        confirmedOrg = WorkspaceContext.selectedOrgID
-                        showSendConfirmation = true
-                    } label: {
-                        Label(isSending ? "Sending…" : (requestID == nil ? (delivery.lastAttemptAt == nil ? "Send to client" : "Send to client again") : "Retry sending to client"), systemImage: "paperplane")
-                    }.buttonStyle(.borderless).disabled(isSending).accessibilityIdentifier("lead.sendToClient")
-                }
-                if let sendError { Text(sendError).font(.rpCaption).foregroundStyle(Theme.warn) }
+                .tint(Theme.inkDim)
+                .accessibilityIdentifier("lead.deliveryDetails")
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
         // NOT `.accessibilityElement(children: .combine)`. That merged the whole
         // card — both Links included — into ONE element, which made the two
         // actions indistinguishable to VoiceOver and is the likeliest reason a
@@ -1951,6 +1998,27 @@ struct LeadRow: View {
         } message: {
             Text("The inquiry and buyer's contact details will be sent to \(confirmedRecipient ?? "your client's saved email").")
         }
+    }
+
+    private func contactLink(_ detail: String, title: String, icon: String, url: URL) -> some View {
+        Link(destination: url) {
+            contactLayout {
+                Text(detail)
+                    .font(.rpCaption).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Label(title, systemImage: icon)
+                    .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 10)
+                    .frame(minWidth: 72, minHeight: 36)
+                    .background(Theme.accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
     }
 
     @MainActor private func sendToClient() async {
@@ -3626,11 +3694,16 @@ struct ProfileFeedbackFixtureHost: View {
                         if let contactListing { ListingClientContactEditor(listing: contactListing) }
                     }.tabItem { Label("Client", systemImage: "person.text.rectangle") }
                     PaywallView().tabItem { Label("Plans", systemImage: "creditcard") }
+                    if Config.uiTestSampleLeads {
+                        NavigationStack { LeadsView() }
+                            .tabItem { Label("Leads", systemImage: "tray") }
+                    }
                 }
             } else if let failure {
                 Text(failure).accessibilityIdentifier("profile.fixture.failure")
             } else { ProgressView("Preparing synthetic Profile") }
-        }.environment(\.dynamicTypeSize, ProcessInfo.processInfo.arguments.contains("-ui.profileFeedbackLargeText") ? .accessibility3 : .large)
+        }.environment(\.dynamicTypeSize, ProcessInfo.processInfo.arguments.contains("-ui.leadsFeedbackLargestText")
+            ? .accessibility5 : (ProcessInfo.processInfo.arguments.contains("-ui.profileFeedbackLargeText") ? .accessibility3 : .large))
             .task { if !ready && failure == nil { seed() } }
     }
 

@@ -23,6 +23,64 @@ final class BetaPolishUITests: XCTestCase {
         app.terminate()
     }
 
+    func testLeadsPropertyFilterAndContactControlsFitNormalAndLargestText() {
+        executionTimeAllowance = 180
+        for largestText in [false, true] {
+            if app.state != .notRunning { app.terminate() }
+            app.launchArguments = baseArguments + ["-ui.profileFeedbackFixture", "-ui.sampleLeads",
+                "-auth.supabase.userID", "b3710000-0000-4000-8000-000000000001"]
+            if largestText { app.launchArguments += ["-ui.leadsFeedbackLargestText"] }
+            app.launch()
+            XCTAssertTrue(app.navigationBars["Profile"].waitForExistence(timeout: 25), app.debugDescription)
+            app.tabBars.buttons["Leads"].tap()
+            XCTAssertTrue(app.navigationBars["Leads"].waitForExistence(timeout: 10), app.debugDescription)
+            let filter = element("leads.listingFilter")
+            expectation(for: NSPredicate(format: "value == %@", "All listings, 3 leads"), evaluatedWith: filter)
+            waitForExpectations(timeout: 10)
+            let mode = largestText ? "largest-text" : "normal"
+            attach("leads-\(mode)-all-properties")
+            filter.tap()
+            let property = app.buttons["leads.filter.unassigned"]
+            XCTAssertTrue(property.waitForExistence(timeout: 5), app.debugDescription)
+            let title = property.label
+            property.tap()
+            expectation(for: NSPredicate(format: "value == %@", "\(title), 3 leads"), evaluatedWith: filter)
+            waitForExpectations(timeout: 5)
+            XCTAssertEqual(app.staticTexts.matching(identifier: "leads.propertyHeading").count, 0,
+                           "The selected property is already named by the filter")
+            XCTAssertGreaterThanOrEqual(filter.frame.height, 44)
+            XCTAssertGreaterThanOrEqual(filter.frame.minX, app.frame.minX + 15)
+            XCTAssertLessThanOrEqual(filter.frame.maxX, app.frame.maxX - 15)
+            let name = app.staticTexts.matching(identifier: "lead.name").firstMatch
+            XCTAssertEqual(name.label, "Jordan Whitfield")
+            XCTAssertLessThanOrEqual(name.frame.maxX, app.frame.maxX - 15)
+            attach("leads-\(mode)-selected-property")
+            var geometry = "Filter: \(filter.frame)\nName: \(name.frame)\n"
+            for (id, label) in [("lead.call", "Call (555) 014-7720"), ("lead.email", "Email jordan.w@example.com")] {
+                let control = element(id)
+                let list = app.collectionViews.firstMatch
+                XCTAssertTrue(list.waitForExistence(timeout: 5), app.debugDescription)
+                for _ in 0..<10 {
+                    if control.exists && control.isHittable && control.frame.minY >= app.navigationBars["Leads"].frame.maxY && control.frame.maxY < app.tabBars.firstMatch.frame.minY { break }
+                    let start = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
+                    let end = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.32))
+                    start.press(forDuration: 0.05, thenDragTo: end)
+                }
+                XCTAssertTrue(control.exists && control.isHittable, app.debugDescription)
+                XCTAssertEqual(control.label, label, "Phone and email keep independent destinations")
+                XCTAssertGreaterThanOrEqual(control.frame.height, 43.5)
+                XCTAssertGreaterThanOrEqual(control.frame.minX, app.frame.minX + 15)
+                XCTAssertLessThanOrEqual(control.frame.maxX, app.frame.maxX - 15)
+                XCTAssertLessThanOrEqual(control.frame.maxY, app.tabBars.firstMatch.frame.minY)
+                geometry += "\(label): \(control.frame)\n"
+                attach("leads-\(mode)-\(id)")
+                // Inspect only: never open Phone/Mail, send, swipe-delete or confirm.
+            }
+            let attachment = XCTAttachment(string: geometry)
+            attachment.name = "leads-\(mode)-geometry"; attachment.lifetime = .keepAlways; add(attachment)
+        }
+    }
+
     func testProfileBusinessCardAndExplicitPortfolioSelection() {
         launchProfile()
         let card = app.buttons["profile.sendBusinessCard"]
