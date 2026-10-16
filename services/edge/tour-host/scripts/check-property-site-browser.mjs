@@ -7,7 +7,7 @@
 // No phone, customer content, purchase, provider or production request.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -24,17 +24,19 @@ const { propertyPage } = await load("property-site");
 
 const checks = [];
 const check = (condition, label) => { assert.ok(condition, label); checks.push(label); };
-const svg = (label, color) => `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200"><rect width="1600" height="1200" fill="${color}"/><text x="80" y="600" font-size="96" fill="white">SYNTHETIC ${label}</text></svg>`;
+const svg = (label, color, portrait = false) => `<svg xmlns="http://www.w3.org/2000/svg" width="${portrait ? 900 : 1600}" height="${portrait ? 1600 : 1200}"><rect width="100%" height="100%" fill="${color}"/><text x="80" y="600" font-size="96" fill="white">SYNTHETIC ${label}</text></svg>`;
 const PHOTOS = [["Front exterior", "#264653"], ["Living room", "#2a9d8f"], ["Kitchen", "#8a5a44"], ["Primary bedroom", "#6d597a"], ["Terrace", "#355070"], ["Broken file", "#000000"]];
 const photoPath = (i) => i === 5 ? "/photos/missing-5.svg" : `/photos/photo-${i}.svg`;
-let theme = "basic", useThumbs = false, thumbFailure = false;
+let theme = "basic", useThumbs = false, thumbFailure = false, presentation = "video", longAddress = false;
 function fixture() {
   const t = buildDemoTour();
   t.slug = "synthetic-site"; t.website_theme = theme;
   t.listing = { address: "123 Synthetic Lane, Example, FL 33000", tagline: null, details: { story: "Synthetic description.", show_app_cta: false, show_partners: false }, beds: 3, baths: 2, sqft: 1800, price_cents: 50000000, price: null, lat: 27.9, lng: -82.5 };
+  if (longAddress) { t.listing.address = "12345 Synthetic Architectural Promenade, Residence Twelve, Example, FL 33000"; t.listing.price_cents = null; }
   t.cover_url = photoPath(0); t.poster = "/posters/poster.svg";
   t.gallery = PHOTOS.map(([label], i) => ({ url: photoPath(i), label, ...(useThumbs ? { thumb_url: photoPath(i).replace("/photos/", "/thumbs/") } : {}) }));
   t.listing_video = { url: "/media/master.mp4", poster_url: "/posters/poster.svg", width: 1920, height: 1080, duration_s: 30, disclosure: "Synthetic photo-based video.", branding_policy: "unbranded" };
+  if (presentation === "photo") t.listing_video = null;
   t.video_url = t.scrub_url = "/media/recorded.mp4"; t.hls_url = null; t.duration_s = 30; t.chapters = [];
   t.staged = false; t.altered_media = []; t.floorplan_url = null; t.published_at = "2026-10-01T00:00:00Z";
   t.agent_card = { name: "Synthetic Contact", brokerage: "Example Realty", phone: "5550100100", email: "contact@example.invalid", website: "https://contact.example.invalid", instagram: "synthetic-agent", twitter: "synthetic-agent" };
@@ -48,10 +50,10 @@ const server = createServer((req, res) => {
   if (thumbFailure && url.pathname === "/thumbs/photo-0.svg") { res.writeHead(503); res.end("synthetic thumbnail outage"); return; }
   if (url.pathname === "/posters/poster.svg") { res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end(svg("POSTER", "#333333")); return; }
   const photo = url.pathname.match(/^\/(?:photos|thumbs)\/photo-(\d)\.svg$/);
-  if (photo) { res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-store" }); res.end(svg(PHOTOS[Number(photo[1])][0], PHOTOS[Number(photo[1])][1])); return; }
+  if (photo) { res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-store" }); res.end(svg(PHOTOS[Number(photo[1])][0], PHOTOS[Number(photo[1])][1], Number(photo[1]) === 1)); return; }
   if (url.pathname === "/f/synthetic-site/nearby") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ status: "available", places: [{ name: "Synthetic Café", category: "Cafe", distance_m: 300, source_url: "https://www.openstreetmap.org/node/1" }] })); return; }
   if (url.pathname === "/property/synthetic-site") {
-    const html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin, page: propertyPage(url.searchParams.get("page")), publicBase: "/property" });
+    const html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin, page: propertyPage(url.searchParams.get("page")), publicBase: "/property", previewTheme:url.searchParams.get("preview_theme") });
     res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" }); res.end(html); return;
   }
   res.writeHead(404); res.end("not found");
@@ -61,7 +63,49 @@ origin = "http://127.0.0.1:" + server.address().port;
 const browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
 const errors = [];
 const measurements = [];
+const presentationChecks = [];
 try {
+  // Same actual listing/media rendered in each composition. This regression
+  // fails the former phone layout where both premiums put film before copy.
+  for (const width of [390, 1440]) for (presentation of ["video", "photo"]) {
+    for (theme of ["basic", "signature-estate", "coastal-luxe"]) {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 1000 } });
+      await context.route("**/*", route => new URL(route.request().url()).origin === origin || route.request().url().startsWith("data:") ? route.continue() : route.abort());
+      const page = await context.newPage(); page.on("pageerror", e => errors.push(theme + ": " + e));
+      await page.goto(origin + "/property/synthetic-site", { waitUntil: "networkidle" });
+      const composition = await page.evaluate(() => {
+        const box = el => { const r = el.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom,right:r.right }; };
+        const media = document.querySelector(".property-video-stage") || document.querySelector(".listing-cover > img,.property-hero-media > img");
+        const lum = color => color.match(/[\d.]+/g).slice(0,3).map(Number).map(value => { value /= 255; return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4; }).reduce((sum,value,index) => sum + value * [.2126,.7152,.0722][index],0);
+        const watchContrast = [...document.querySelectorAll("#listing-nav .watch-button")].map(button => { const style = getComputedStyle(button); const [hi,lo] = [lum(style.color),lum(style.backgroundColor)].sort((a,b) => b-a); return (hi+.05)/(lo+.05); });
+        return { media:box(media),copy:box(document.querySelector(".property-hero-copy")),title:box(document.querySelector(".property-hero-title")),nav:box(document.querySelector("#listing-nav")),overflow:document.documentElement.scrollWidth > innerWidth,bodyText:document.body.innerText,watchContrast,contain:document.querySelector("#property-video") ? getComputedStyle(document.querySelector("#property-video")).objectFit : null };
+      });
+      measurements.push({ theme,width,presentation,composition });
+      const tag = `${theme}-${width}-${presentation}`;
+      for (const image of await page.locator("img.property-thumb").all()) {
+        await image.scrollIntoViewIfNeeded();
+        await image.evaluate(img => img.naturalWidth > 1 ? Promise.resolve() : new Promise((resolve,reject) => { img.addEventListener("load",resolve,{once:true});img.addEventListener("error",reject,{once:true}); }));
+      }
+      await page.evaluate(() => scrollTo(0,0));
+      await page.screenshot({path:join(evidence,tag+"-viewport.png")});
+      await page.screenshot({ path:join(evidence,tag+".png"),fullPage:true });
+      if (theme === "basic") {
+        const html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin,page:"home",publicBase:"/property" }).replace(/<style>[\s\S]*?<\/style>/g,"<style></style>").replaceAll(origin,"http://closed-loopback.invalid");
+        writeFileSync(join(evidence,tag+".html"),html);
+        if(arg("--classic-baseline")) check(html === readFileSync(join(resolve(arg("--classic-baseline")),tag+".html"),"utf8"),tag+": Classic HTML and behavior remain byte-identical outside premium-only CSS");
+      }
+      check(!composition.overflow,tag+": no horizontal overflow");
+      if(presentation === "video") check(composition.contain === "contain" && Math.abs(composition.media.width/composition.media.height-16/9)<.01,tag+": full16:9 film remains contain, independent of page height");
+      if (theme !== "basic") presentationChecks.push([composition.watchContrast.length > 0 && composition.watchContrast.every(ratio => ratio >= 4.5),tag+": film navigation text meets 4.5:1 contrast with either primary media"]);
+      if (theme === "signature-estate") presentationChecks.push([composition.media.bottom <= composition.copy.y+1,tag+": Signature leads with complete media before editorial copy"]);
+      if (theme === "coastal-luxe") {
+        presentationChecks.push([width === 390 ? composition.copy.bottom <= composition.media.y+1 : composition.copy.x < composition.media.x && composition.copy.y <= composition.media.y+1,tag+": Coastal leads with address and price before the media"]);
+      }
+      await context.close();
+    }
+  }
+  for (const [condition,label] of presentationChecks) check(condition,label);
+  presentation = "video";
   for (theme of ["basic", "signature-estate", "coastal-luxe"]) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     await context.route("**/*", (route) => { const u = new URL(route.request().url()); return u.origin === origin || u.protocol === "data:" ? route.continue() : route.abort(); });
@@ -81,6 +125,7 @@ try {
     await page.waitForFunction(() => document.querySelector("#property-photo-full").complete);
     check(await full.evaluate((img) => img.src) === href(1) && await count.innerText() === "2 of " + PHOTOS.length, theme + ": Right arrow shows the next exact published photo");
     check(await page.locator("#property-photo-title").innerText() === "Living room", theme + ": Viewer title follows the photo label");
+    check(await full.evaluate(img => img.naturalHeight > img.naturalWidth && getComputedStyle(img).objectFit === "contain"),theme+": portrait master stays complete in the mixed-aspect viewer");
     await page.locator("#property-photo-next").click();
     check(await full.evaluate((img) => img.src) === href(2), theme + ": Next button advances");
     await full.evaluate((img) => {
@@ -120,7 +165,7 @@ try {
       const nav = await page.evaluate(() => {
         const n = document.getElementById("listing-nav").getBoundingClientRect();
         const actions = [...document.querySelectorAll(".listing-nav-actions > *")].map((el) => { const r = el.getBoundingClientRect(); return { top: r.top, height: r.height, width: r.width }; });
-        return { height: n.height, actions };
+        return { height: n.height, actions:actions.filter(a => a.width > 0 && a.height > 0) };
       });
       measurements.push({ theme, target, ...nav });
       check(nav.height <= 114, `${theme}: ${target} navigation stays within the compact mobile height (${nav.height}px)`);
@@ -138,7 +183,7 @@ try {
       const lum = ({ r, g, b }) => [r, g, b].map((v) => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }).reduce((s, v, i) => s + v * [.2126, .7152, .0722][i], 0);
       const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a); return (hi + .05) / (lo + .05);
     });
-    for (const selector of [".agent .avatar", ".agent .social a", ".field .lbl .opt"]) {
+    for (const selector of [".agent .avatar", ".agent .social a", ".field .lbl .opt", ...(theme === "basic" ? [] : [".property-hero-title", ".property-hero-price", ".lp-stat .k", ".property-page-menu summary"])]) {
       const ratio = await contrast(selector); measurements.push({ theme, selector, ratio });
       check(ratio >= 4.5, `${theme}: ${selector} text meets 4.5:1 contrast (${ratio.toFixed(2)})`);
     }
@@ -166,7 +211,66 @@ try {
     await page.goto(origin + "/property/synthetic-site?page=contact", { waitUntil: "networkidle" });
     check(await page.getByRole("region", { name: "Contact the listing agent" }).locator("#leadform").count() === 1, theme + ": Contact card and form sit in a named landmark");
     await checkContactTargets("Contact");
+    if (theme === "signature-estate") {
+      const display = await page.locator(".panel h2").first().evaluate(el => ({ family:getComputedStyle(el).fontFamily,weight:getComputedStyle(el).fontWeight }));
+      check(/Georgia|Palatino|Iowan/.test(display.family) && display.weight === "400", "Signature contact keeps its editorial serif instead of being reset by shared sans rules");
+    }
     await page.screenshot({ path: join(evidence, theme + "-mobile-contact.png") });
+    await context.close();
+  }
+
+  // Premium navigation remains native and complete with scripts disabled.
+  // Reduced-motion/transparency are actual browser preferences, not CSS injected
+  // to hide failures. All four page URLs remain normal public anchors.
+  for (theme of ["signature-estate", "coastal-luxe"]) {
+    const context = await browser.newContext({ viewport:{width:390,height:844},javaScriptEnabled:false,reducedMotion:"reduce" });
+    await context.route("**/*",route => new URL(route.request().url()).origin === origin || route.request().url().startsWith("data:") ? route.continue() : route.abort());
+    const page = await context.newPage();
+    longAddress = true; presentation = "video";
+    await page.goto(origin+"/property/synthetic-site",{waitUntil:"networkidle"});
+    check(await page.locator(".property-hero-price").count() === 0,theme+": missing price is omitted without invented facts");
+    check((await page.locator(".property-hero-title").innerText()).includes("Architectural Promenade, Residence Twelve"),theme+": long actual address is complete");
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),theme+": long address has no phone overflow");
+    const menu=page.locator(".property-page-menu"),summary=menu.locator("summary");
+    check(!(await menu.evaluate(el=>el.open)),theme+": compact menu starts closed without script");
+    const nav=await page.locator("#listing-nav").boundingBox();check(nav.height<=72,theme+": premium phone header is a single compact material surface");
+    const target=await summary.boundingBox();check(target.height>=44&&target.width>=44,theme+": native page menu keeps44px target");
+    await summary.focus();await page.keyboard.press("Enter");check(await menu.evaluate(el=>el.open),theme+": keyboard opens native menu with JavaScript disabled");
+    for(const name of ["Home","Gallery","Location","Contact"]){
+      const link=menu.getByRole("link",{name,exact:true});check(await link.isVisible(),theme+": no-script menu exposes "+name);
+      const box=await link.boundingBox();check(box.height>=44&&box.width>=44,theme+": "+name+" remains44px");
+    }
+    check(await menu.getByRole("link",{name:"Back to top ↑",exact:true}).isVisible(),theme+": top action remains discoverable");
+    await menu.getByRole("link",{name:"Gallery",exact:true}).click();
+    check(new URL(page.url()).searchParams.get("page")==="gallery"&&await page.locator("[data-property-photo]").count()===PHOTOS.length,theme+": native no-script Gallery navigation preserves every photo");
+    check(await page.locator(".property-photo noscript img").count()===PHOTOS.length && await page.locator(".property-photo noscript img").first().isVisible(),theme+": existing noscript master images remain available");
+    await page.goto(origin+"/property/synthetic-site",{waitUntil:"networkidle"});
+    const session=await context.newCDPSession(page);await session.send("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"reduce"},{name:"prefers-reduced-transparency",value:"reduce"}]});
+    const fallback=await page.locator("#listing-nav").evaluate(el=>({background:getComputedStyle(el).backgroundColor,blur:getComputedStyle(el).backdropFilter,animation:getComputedStyle(document.querySelector(".property-hero-copy")).animationName,opacity:getComputedStyle(document.querySelector(".property-hero-copy")).opacity}));
+    check(fallback.blur==="none"&&!fallback.background.startsWith("rgba")&&fallback.animation==="none"&&fallback.opacity==="1",theme+": actual reduced-transparency/motion preferences keep opaque visible content");
+    await page.screenshot({path:join(evidence,theme+"-390-long-no-price-no-script-opaque.png"),fullPage:true});
+    await page.goto(origin+"/property/synthetic-site?preview_theme="+theme,{waitUntil:"networkidle"});
+    check(await page.locator(".property-preview-banner").isVisible() && await page.locator("form").count()===0,theme+": actual design preview retains its label and omits enquiry");
+    check(await page.locator("#listing-nav").evaluate(el=>getComputedStyle(el).position)==="relative",theme+": preview navigation preserves its non-sticky placement beneath the sticky preview banner");
+    check(await page.locator(".property-page-menu-links a[href*='preview_theme="+theme+"']").count()===4,theme+": native preview menu preserves all four preview URLs");
+    await page.screenshot({path:join(evidence,theme+"-390-preview-native-menu.png"),fullPage:true});
+    await context.close();longAddress=false;
+  }
+
+  // Classic preview chrome is shared with the existing mobile design preview.
+  // A premium restyle must retain those exact compact banner/watermark sizes.
+  theme = "basic"; presentation = "video";
+  {
+    const context = await browser.newContext({viewport:{width:390,height:844},javaScriptEnabled:false});
+    await context.route("**/*",route=>new URL(route.request().url()).origin===origin||route.request().url().startsWith("data:")?route.continue():route.abort());
+    const page = await context.newPage();
+    await page.goto(origin+"/property/synthetic-site?preview_theme=basic",{waitUntil:"networkidle"});
+    const style = selector=>page.locator(selector).evaluate(el=>({font:getComputedStyle(el).fontSize,padding:getComputedStyle(el).padding}));
+    const banner = await style(".property-preview-banner"),watermark = await style(".property-preview-watermark");
+    measurements.push({theme,presentation:"classic-preview",banner,watermark});
+    check(banner.font==="12px"&&banner.padding==="10px 16px","Classic390 design-preview banner retains its exact original mobile font and padding");
+    check(watermark.font==="10px"&&watermark.padding==="6px 9px","Classic390 design-preview watermark retains its exact original mobile font and padding");
+    await page.screenshot({path:join(evidence,"basic-390-preview-original-chrome.png"),fullPage:true});
     await context.close();
   }
 

@@ -3040,6 +3040,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const previewTheme = polished ? previewWebsiteTheme(opts.previewTheme) : null;
   const preview = previewTheme !== null;
   const theme = previewTheme || websiteTheme(tour.website_theme);
+  const premiumPresentation = polished && theme !== "basic";
   const primaryVideo = !embed && isRealEstate(tour) ? listingVideo(tour.listing_video) : null;
   const addressPath = polished && opts.addressUrls ? propertyAddressPath(tour.slug, tour.listing?.address) : undefined;
   const pageHref = (target: PropertyPage) => propertyPageHref(tour.slug, target, publicBase, previewTheme, addressPath);
@@ -3185,8 +3186,21 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // Embed mode (?embed=1): render ONLY the flythrough hero — for the in-app
   // "See it in action" card. Otherwise render the full listing microsite.
   const hasVideo = !!(scrubUrl || hlsUrl);
-  const coverHtml = `<section class="listing-cover${primaryVideo ? " property-video-hero" : ""}" aria-label="Property media">
-    ${primaryVideo ? listingVideoStage(primaryVideo, coverImage, header.entityName) : coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`}
+  // Presentation reuses the same resolved media and safe listing values. The
+  // included Classic markup is unchanged; neither theme changes source order.
+  const coverMediaHtml = primaryVideo ? listingVideoStage(primaryVideo, coverImage, header.entityName) : coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`;
+  const premiumHeroCopy = premiumPresentation ? `<div class="property-hero-copy"><div class="lp-eyebrow">${escapeHtml(isSoldOrArchived(tour) ? "Sold property" : "Discover the residence")}</div><h1 class="property-hero-title">${escapeHtml(header.entityName)}</h1>${priceText(tour) ? `<p class="property-hero-price">${escapeHtml(priceText(tour))}</p>` : ""}
+    <div class="listing-cover-actions">
+      ${hasVideo && !primaryVideo ? `<button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button><p>Open the video when you want to explore.</p>` : primaryVideo ? "" : `<p>Photos and location details are available below.</p>`}
+      <a class="property-hero-link" href="${escapeAttr(pageHref("gallery"))}">View gallery</a>${!isSoldOrArchived(tour) ? `<a class="property-hero-link" href="${escapeAttr(pageHref("contact"))}">Enquire about this home</a>` : ""}
+    </div>
+    ${primaryVideo?.disclosure ? `<span class="listing-media-label">Photo-based property video${hasDisclosureSection ? ` · <a href="#disclosure">Media details and originals</a>` : ""}</span>` : ""}
+    ${staged || hasAltered ? `<span class="listing-media-label">${escapeHtml(chipLabel)}${hasDisclosureSection ? ` · <a href="#disclosure">See disclosures and originals</a>` : ""}</span>` : ""}
+    ${primaryVideo && hasVideo ? `<details class="property-recorded-option"><summary>Optional recorded walkthrough</summary><p>Explore the separately recorded tour.</p><button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Open recorded walkthrough</button></details>` : ""}
+  </div>` : "";
+  const premiumMedia = `<div class="property-hero-media">${coverMediaHtml}</div>`;
+  const coverHtml = premiumPresentation ? `<section class="listing-cover${primaryVideo ? " property-video-hero" : ""}" aria-label="Property media">${theme === "coastal-luxe" ? premiumHeroCopy + premiumMedia : premiumMedia + premiumHeroCopy}</section>` : `<section class="listing-cover${primaryVideo ? " property-video-hero" : ""}" aria-label="Property media">
+    ${coverMediaHtml}
     ${polished ? `<div class="property-hero-copy"><div class="lp-eyebrow">${escapeHtml(isSoldOrArchived(tour) ? "Sold property" : "Discover the residence")}</div><h1 class="property-hero-title">${escapeHtml(header.entityName)}</h1>${priceText(tour) ? `<p class="property-hero-price">${escapeHtml(priceText(tour))}</p>` : ""}` : ""}
     <div class="listing-cover-actions">
       ${hasVideo && !primaryVideo ? `<button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button><p>Open the video when you want to explore.</p>` : primaryVideo ? "" : `<p>Photos and location details are available below.</p>`}
@@ -3360,7 +3374,7 @@ ${footerHtml}
   ${galleryItems(tour).length || chapters.length ? `<a href="#gallery">${galleryItems(tour).length ? "Photos" : "Rooms"}</a>` : ""}
   ${safeUrl(tour.floorplan_url || "") ? `<a href="#plan">Floor plan</a>` : ""}
   ${!unbranded ? `<a href="#endcard">Contact</a>` : ""}`}
-  </div><div class="listing-nav-actions">
+  </div>${premiumPresentation ? `<details class="property-page-menu"><summary aria-label="Pages: ${escapeAttr((page || "home")[0].toUpperCase() + (page || "home").slice(1))}">${escapeHtml((page || "home")[0].toUpperCase() + (page || "home").slice(1))}<svg aria-hidden="true" viewBox="0 0 12 12" fill="none"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></summary><div class="property-page-menu-links">${(["home", "gallery", "location", "contact"] as const).map(target => `<a href="${escapeAttr(pageHref(target))}"${target === page ? ' aria-current="page"' : ""}>${target[0].toUpperCase() + target.slice(1)}</a>`).join("")}<a href="#listing-top">Back to top ↑</a></div></details>` : ""}<div class="listing-nav-actions">
   ${primaryVideo ? page === "home" || !polished ? `<button type="button" id="property-video-nav-play" class="watch-button property-primary-play" aria-controls="property-video">${polished ? `<span class="nav-full">Play property video</span><span class="nav-short" aria-hidden="true">▶ Video</span>` : "Play property video"}</button>` : `<a class="property-primary-play" href="${escapeAttr(pageHref("home") + "#property-video")}"><span class="nav-full">Property video</span><span class="nav-short" aria-hidden="true">▶ Video</span></a>` : ""}
   ${hasVideo ? `<button type="button" class="${primaryVideo ? "walkthrough-secondary" : "watch-button"}" data-open-flythrough aria-label="${primaryVideo ? "Open optional recorded walkthrough" : "Open fly-through"}" aria-haspopup="dialog">${primaryVideo ? polished ? `<span class="nav-full">Recorded walkthrough</span><span class="nav-short" aria-hidden="true">Walkthrough</span>` : "Recorded walkthrough" : "Fly-through"}</button>` : ""}
   ${shareHtml}
