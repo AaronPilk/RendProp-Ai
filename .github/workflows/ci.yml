@@ -264,6 +264,9 @@ jobs:
         run: python3 apps/ios/tests/run-listing-video-native.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-video-native"
       - name: Durable property video jobs retain admission, cancellation and same-job recovery
         run: python3 apps/ios/tests/run-property-video-jobs.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-jobs"
+      - name: Native processor permission preserves saved jobs and durable withdrawal
+        timeout-minutes: 5
+        run: python3 apps/ios/tests/run-property-video-processors.py --output-dir "$RUNNER_TEMP/rendprop-property-video-processors" --controls
       - name: Photo orientation, crop confirmation and optional music preserve exact sources
         run: python3 apps/ios/tests/run-capture-orientation.py --evidence-dir "$RUNNER_TEMP/rendprop-capture-orientation"
       - name: Room tags require a real recorded or uploaded walkthrough
@@ -277,6 +280,9 @@ jobs:
           name: listing77-native-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/rendprop-property-video-jobs/**
+            ${{ runner.temp }}/rendprop-property-video-processors/receipt.json
+            ${{ runner.temp }}/rendprop-property-video-processors/*/*.log
+            ${{ runner.temp }}/rendprop-property-video-processors/*/*.swift
             ${{ runner.temp }}/rendprop-capture-orientation/**
             ${{ runner.temp }}/rendprop-room-tag-walkthrough/**
             ${{ runner.temp }}/rendprop-lead-inbox/receipt.json
@@ -692,6 +698,51 @@ jobs:
           node tests/industry-details-browser.mjs
           node tests/recovery-browser.mjs
           node --test ../../tools/deploy/check-migration-ledger.test.mjs
+      - name: Exact processor permission preserves saved jobs and durable withdrawal
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rendprop-processor-consent-browser"
+          mkdir -p "$evidence_root"
+          # The joint stop control removes both redundant safeguards; each
+          # single omission is intentionally protected by the other safeguard.
+          for control in positive unpublished-any404 journal-permission-omitted resume-without-local-allow v2-fal-downgrade revocation-no-durable-stop revocation-keeps-planning stop-join-and-confirmation-omitted; do
+            control_root="$evidence_root/$control"
+            mkdir -p "$control_root"
+            set +e
+            if [ "$control" = positive ]; then
+              TMPDIR="$control_root" node tests/make-video-consent-browser.mjs > "$control_root/run.log" 2>&1
+            else
+              TMPDIR="$control_root" node tests/make-video-consent-browser.mjs --fault="$control" > "$control_root/run.log" 2>&1
+            fi
+            control_status=$?
+            set -e
+            if [ "$control" = positive ]; then
+              if [ "$control_status" -ne 0 ]; then tail -n 60 "$control_root/run.log"; exit "$control_status"; fi
+            else
+              test "$control_status" -ne 0
+            fi
+            CONSENT_EVIDENCE="$control_root" CONSENT_CONTROL="$control" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,readdirSync} from 'node:fs';
+          import {join} from 'node:path';
+          const root=process.env.CONSENT_EVIDENCE,control=process.env.CONSENT_CONTROL;
+          const folders=readdirSync(root,{withFileTypes:true}).filter(item=>item.isDirectory());
+          assert.equal(folders.length,1);
+          const receipt=JSON.parse(readFileSync(join(root,folders[0].name,'receipt.json'),'utf8'));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          if(control==='positive'){
+            assert.equal(receipt.status,'passed');assert.equal(receipt.fault,null);assert.equal(receipt.checks.length,13);
+          }else{
+            const expected={"unpublished-any404":{"failure":["Create video","Expected: disabled","Received: enabled"],"visible":null},"journal-permission-omitted":{"failure":["Current property video","Expected substring: \"queued\""],"visible":"Fixture processor consent/operation missing"},"resume-without-local-allow":{"failure":["Resume saved video","Expected: disabled","Received: enabled"],"visible":null},"v2-fal-downgrade":{"failure":["Resume saved video","element is not enabled"],"visible":null},"revocation-no-durable-stop":{"failure":["Expected substring: \"lost cancel reply\"","element(s) not found"],"visible":"Video work is stopped."},"revocation-keeps-planning":{"failure":["Revoke during planning never starts downstream voice","1 !== 0"],"visible":null},"stop-join-and-confirmation-omitted":{"failure":["Video work is stopped.","Expected: 0","Received: 1"],"visible":null}};
+            assert.equal(receipt.status,'failed');assert.equal(receipt.fault,control);
+            assert.ok(expected[control],'Unknown consent control');
+            for(const text of expected[control].failure)assert.ok(receipt.failure.includes(text),control+': missing intended failure '+text);
+            if(expected[control].visible)assert.ok(receipt.visibleText.includes(expected[control].visible));
+          }
+          NODE
+          done
       - name: Explicit listing selection requires original review and a fresh snapshot
         timeout-minutes: 5
         run: |
@@ -894,6 +945,9 @@ jobs:
             ${{ runner.temp }}/rendprop-gallery-copy-browser/**/*.png
             ${{ runner.temp }}/rendprop-gallery-copy-browser/**/*.log
             ${{ runner.temp }}/rendprop-gallery-copy-browser/positive.log
+            ${{ runner.temp }}/rendprop-processor-consent-browser/**/receipt.json
+            ${{ runner.temp }}/rendprop-processor-consent-browser/**/*.log
+            ${{ runner.temp }}/rendprop-processor-consent-browser/**/*.png
             ${{ runner.temp }}/rendprop-c2-browser-control-*/**/receipt.json
             ${{ runner.temp }}/rendprop-c2-browser-control-*/**/*.png
             ${{ runner.temp }}/rendprop-c2-browser-control-*/run.log
@@ -1567,6 +1621,14 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.14"
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6"
+      - name: Warm pinned imports for closed Kie dispatch tests
+        run: |
+          deno install --no-config --no-lock --node-modules-dir=none --entrypoint \
+            services/supabase/functions/ai-video/property-video-kie-dispatch.test.ts \
+            services/supabase/functions/property-video-worker/kie-dispatch-authority.test.ts
       - name: Install actual CPU, font and isolated database test dependencies
         run: |
           sudo apt-get update
@@ -1629,6 +1691,20 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/property_video_steady_v2_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-steady-v2-pg"
+      - name: Kie profile preserves native pixels, frozen jobs, operators and cutover races
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_kie_profile_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-kie-profile-pg"
+      - name: Kie consent and grant authority reject stale or revoked dispatch
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_kie_scope_consent_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-kie-scope-pg"
       - name: Actual saved photo background judge race and no-repeat control
         timeout-minutes: 10
         run: |
@@ -1782,6 +1858,11 @@ jobs:
             ${{ runner.temp }}/rendprop-gallery-source-copy-pg/**
             ${{ runner.temp }}/rendprop-direct-property-source-pg/**
             ${{ runner.temp }}/rendprop-property-steady-v2-pg/**
+            ${{ runner.temp }}/rendprop-property-kie-profile-pg/receipt.json
+            ${{ runner.temp }}/rendprop-property-kie-profile-pg/*.log
+            ${{ runner.temp }}/rendprop-property-kie-profile-pg/*.sql
+            ${{ runner.temp }}/rendprop-property-kie-scope-pg/receipt.json
+            ${{ runner.temp }}/rendprop-property-kie-scope-pg/*.log
             ${{ runner.temp }}/rendprop-studio-photo-pg/**
             ${{ runner.temp }}/rendprop-photo-quality-pg/**
             ${{ runner.temp }}/rendprop-photo-background-pg/**
