@@ -69,6 +69,8 @@ struct Listing {
     func setLastError(_ message: String?, for id: UUID) { if let i = index(of: id) { listings[i].lastError = message } }
     func syncClientContactBeforePublish(_ id: UUID, requireClient: Bool) async throws {}
     func syncListing(_ id: UUID) async { syncs += 1 }
+    // Closed cloud boundary; the initial family queue has its own authority tests.
+    func publishInitialPhotoChoicesIfNeeded(listingID: UUID) async throws {}
     func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async { syncs += 1 }
 __ACTUAL_MODEL_METHODS__
     func publish(_ id: UUID) async throws -> URL { try await publishSelectedWebsiteVideo(listingID: id) }
