@@ -25,10 +25,12 @@ import Foundation
         let aerial = AerialFixture(); aerial.tap()
         check(aerial.sessionCalls == 0 && aerial.postBoundaryCalls == 0 && aerial.phase == .form, "new aerial tap cannot ask for session or reach dispatch")
         for cap in [2, 4, 8, 2_147_483_647] {
-            let allowance = PlanAllowances(renders: 4, photoEdits: 100, reels: 6, aerials: cap, topaz: 0, seats: 1)
-            check(allowance.aerials == cap, "internal future and saved-result entitlement is retained")
-            check(!allowance.benefitLines.contains { $0.lowercased().contains("aerial") }, "paid plan benefits cannot include aerial generation")
-            check(allowance.benefitLines.contains("6 reel clips"), "other paid benefits remain available")
+            for shots in [30, 60, 150] {
+                let allowance = PlanAllowances(renders: 4, photoEdits: 100, reels: shots, aerials: cap, topaz: 0, seats: 1)
+                check(allowance.aerials == cap, "internal future and saved-result entitlement is retained")
+                check(!allowance.benefitLines.contains { $0.lowercased().contains("aerial") }, "paid plan benefits cannot include aerial generation")
+                check(allowance.benefitLines.contains("\(shots) AI video shots a month"), "other paid benefits remain available")
+            }
         }
         print("PASS: \(checks) actual shipping Aerial availability assertions; no UI/network/Apple")
     }
