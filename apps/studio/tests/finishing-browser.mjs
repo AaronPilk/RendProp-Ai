@@ -12,9 +12,28 @@ import {chromium, expect} from "@playwright/test";
 import {fixedAACTailWindow, fixedPCMWindow, measureTonePCM, requireAudibleFadeOut} from "./finishing-audio-probe.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-finishing-")), dist = join(artifacts, "dist");
 const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", checks: [], errors: [], externalRequests: [], status: "running"};
-let browser, server;
+let browser, server, page;
+// Retain the actual clock guard's cause without changing its readings,
+// scheduling, thresholds or error. A missing download alone cannot explain a
+// refused export.
+const clockReceiptPlugin = {name: "finishing-clock-refusal-receipt", enforce: "pre", transform(code, id) {
+  if (!id.endsWith("/src/editor/recording-clock.ts")) return;
+  const seam = "export class RecordingClock {";
+  assert.equal(code.split(seam).length, 2, "Actual recording-clock observation anchor missing");
+  return code.replace(seam, "class ShippingRecordingClock {") + `
+export class RecordingClock extends ShippingRecordingClock {
+  read(wall: number, timeline: number, audio?: number): void {
+    try { super.read(wall, timeline, audio); }
+    catch(error) {
+      const observations = (window as any).exportClockRefusals ??= [];
+      observations.push({atMs: performance.now(), message: (error as Error).message, cause: (error as Error).cause});
+      throw error;
+    }
+  }
+}`;
+}};
 try {
-  await build({configFile: false, root, publicDir: false, logLevel: "error", build: {outDir: dist, rollupOptions: {input: join(root, "tests/finishing-fixture.html")}}});
+  await build({configFile: false, root, publicDir: false, logLevel: "error", plugins: [clockReceiptPlugin], build: {outDir: dist, rollupOptions: {input: join(root, "tests/finishing-fixture.html")}}});
   server = createServer(async (request, response) => {
     const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`);
     if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end();
@@ -28,7 +47,23 @@ try {
   browser = await chromium.launch({headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE});
   const context = await browser.newContext({viewport:{width:1440,height:1100}, acceptDownloads:true, serviceWorkers:"block"});
   await context.route("**/*", route => {const url = new URL(route.request().url()); if (url.origin === origin && route.request().method() === "GET" || url.protocol === "blob:") return route.continue(); receipt.externalRequests.push(url.href); return route.abort();});
-  const page = await context.newPage(); page.setDefaultTimeout(12000); page.on("pageerror", error => receipt.errors.push(error.message));
+  page = await context.newPage(); page.setDefaultTimeout(12000); page.on("pageerror", error => receipt.errors.push(error.message));
+  receipt.browserVersion = browser.version();
+  await page.addInitScript(() => {
+    const NativeAudioContext = window.AudioContext;
+    window.finishingAudioContexts = [];
+    window.finishingAudioEvents = [];
+    window.AudioContext = class extends NativeAudioContext {
+      constructor(...args) {
+        super(...args);
+        window.finishingAudioContexts.push(this);
+        this.addEventListener("statechange", () => window.finishingAudioEvents.push({
+          atMs: performance.now(), state: this.state, currentTime: this.currentTime,
+          visibilityState: document.visibilityState,
+        }));
+      }
+    };
+  });
   await page.goto(`${origin}/tests/finishing-fixture.html`);
   const snapshot = () => page.evaluate(() => window.finishingFixture.snapshot());
   await page.getByLabel("Add photos or videos", {exact:true}).setInputFiles(video);
@@ -77,6 +112,8 @@ try {
   await page.getByLabel("Saved narration", {exact:true}).selectOption("00000000-0000-0000-0000-000000000001");
   await page.getByLabel("Narration starts at (seconds)", {exact:true}).fill("5");
   await expect(page.getByRole("button", {name:"Export MP4", exact:true})).toBeEnabled();
+  receipt.beforeExport = await snapshot();
+  receipt.phase = "mixed-audio-caption-export";
   await page.getByRole("button", {name:"Export MP4", exact:true}).click();
   await expect(page.getByRole("link", {name:/Download MP4/})).toBeVisible({timeout:30000});
   const download = page.waitForEvent("download"); await page.getByRole("link", {name:/Download MP4/}).click();
@@ -208,5 +245,29 @@ try {
   await expect(page.getByRole("region",{name:"Completed editing copy",exact:true})).toHaveCount(0);await expect(page.getByRole("button",{name:"Create editing copy",exact:true})).toBeEnabled();assert.deepEqual((await snapshot()).draft,proxyDraft);
   receipt.checks.push("Canceling large-file preparation leaves the original and current draft unchanged and exposes no partial copy");
   assert.deepEqual(receipt.errors,[]);assert.deepEqual(receipt.externalRequests,[]);receipt.status="pass";
-} catch(error){receipt.status="fail";receipt.failure=String(error.stack??error);throw error;}
+} catch(error){
+  receipt.status="fail";receipt.failure=String(error.stack??error);
+  if (page && !page.isClosed()) {
+    try {
+      receipt.failureUI = await page.evaluate(() => ({
+        visibilityState: document.visibilityState,
+        statuses: [...document.querySelectorAll('[role="status"]')].map(node => node.textContent),
+        progress: [...document.querySelectorAll("progress")].map(node => ({value: node.value, max: node.max})),
+        fixture: window.finishingFixture?.snapshot(),
+        clockRefusals: window.exportClockRefusals ?? [],
+        audioEvents: window.finishingAudioEvents ?? [],
+        audioContexts: (window.finishingAudioContexts ?? []).map(audio => ({
+          state: audio.state, currentTime: audio.currentTime, sampleRate: audio.sampleRate,
+          baseLatency: audio.baseLatency, outputLatency: audio.outputLatency,
+          outputTimestamp: audio.getOutputTimestamp?.(),
+        })),
+        body: document.body.innerText,
+      }));
+      await writeFile(join(artifacts, "failure-dom.html"), await page.content());
+      await page.screenshot({path: join(artifacts, "failure.png"), fullPage: true, timeout: 5000});
+      receipt.failureArtifacts = ["failure-dom.html", "failure.png"];
+    } catch(captureError) {receipt.failureCaptureError = String(captureError);}
+  }
+  throw error;
+}
 finally{if(browser)await browser.close();if(server)await new Promise(done=>server.close(done));await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));console.log(JSON.stringify({status:receipt.status,artifacts,checks:receipt.checks}));}
