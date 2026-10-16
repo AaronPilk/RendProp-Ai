@@ -97,6 +97,16 @@ final class ClipAPI:APIClient {
  static let shared=AIConsent();var isGranted=true;var revocationRevision:UInt64=0
  func revokeAndGrant(){isGranted=false;revocationRevision+=1;isGranted=true}
 }
+// Closed permission doubles, not a processor grant or storage implementation.
+// The extracted production predicate must reject changed revision/permission;
+// run-property-video-processors.py tests the real scope, lifecycle and HTTP code.
+struct PropertyVideoProcessorSnapshot:Sendable {}
+struct PropertyVideoJobContext:Sendable {}
+enum PropertyVideoProcessorFailure:Error {case permissionRequired}
+@MainActor final class PropertyVideoProcessorConsent {
+ static let shared=PropertyVideoProcessorConsent();var revision:UInt64=0;var permissionIsCurrent=true
+ func permits(_ snapshot:PropertyVideoProcessorSnapshot,context:PropertyVideoJobContext)->Bool{permissionIsCurrent}
+}
 @MainActor enum WorkspaceContext {static var selectedOrgID:UUID?=UUID()}
 @MainActor final class AuthStore {
  static let shared=AuthStore();var userID:String?="synthetic-owner";var syncSessionRevision:UInt64=1;var isSignedIn=true
@@ -232,6 +242,18 @@ final class ClosedVideoProtocol:URLProtocol {
   do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx,requireCurrent:dispatchGuard);preconditionFailure("preparation revocation must reject paid dispatch")}catch{checks+=1}
   UIImage.onPreparation=nil
   check(clip.posts==0 && !PendingReelRequest.exists(ctx),"revocation during preparation permits no paid POST")
+  let processorGuard=ReelReceiptHarness.generationGuard(auth:auth,model:model,listingID:ctx.listingID,targetServerID:ctx.serverListingID,processorPermission:.init(),processorContext:.init())
+  try processorGuard()
+  check(clip.posts==0,"unchanged frozen processor permission admits preparation without dispatch")
+  UIImage.onPreparation={DispatchQueue.main.sync {MainActor.assumeIsolated {PropertyVideoProcessorConsent.shared.revision+=1}}}
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx,requireCurrent:processorGuard);preconditionFailure("processor preparation revocation must reject paid dispatch")}catch{checks+=1}
+  UIImage.onPreparation=nil
+  check(clip.posts==0 && !PendingReelRequest.exists(ctx),"processor revocation during preparation permits no paid POST")
+  let permissionGuard=ReelReceiptHarness.generationGuard(auth:auth,model:model,listingID:ctx.listingID,targetServerID:ctx.serverListingID,processorPermission:.init(),processorContext:.init())
+  UIImage.onPreparation={DispatchQueue.main.sync {MainActor.assumeIsolated {PropertyVideoProcessorConsent.shared.permissionIsCurrent=false}}}
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx,requireCurrent:permissionGuard);preconditionFailure("withdrawn frozen permission must reject paid dispatch")}catch{checks+=1}
+  UIImage.onPreparation=nil;PropertyVideoProcessorConsent.shared.permissionIsCurrent=true
+  check(clip.posts==0 && !PendingReelRequest.exists(ctx),"withdrawn frozen processor permission permits no paid POST")
   do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx);preconditionFailure("poll failure must surface")}catch{checks+=1}
   let staysDownPolls=clip.polls
   check(clip.posts==1&&staysDownPolls>=1&&clip.throwPolls==99-staysDownPolls,"one accepted submit; every poll while the connection stayed down was a status poll")

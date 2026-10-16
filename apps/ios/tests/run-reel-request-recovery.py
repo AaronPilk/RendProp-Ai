@@ -54,6 +54,7 @@ receipt = {'passed': False, 'start_source_sha256': hashes(), 'compiles': [], 'ru
     'Nonempty synthetic bytes test retention; video decoding or generation quality is not certified.',
     'OriginalPhotoMotion.render is a closed boundary here; the separate simulator AVFoundation renderer gate proves actual encoding. This gate executes actual refusal/retry routing, exact saved JPEG/shape inputs and acknowledgement fences.',
     'PhotoVersionHistory is a closed persisted-review boundary here; the separate history gate executes its real file rules. This gate proves preparation invokes review before a paid dispatch.',
+    'Processor permission storage and scope are closed doubles here. Only the actual extracted preparation predicate and frozen permission/revision bindings execute; run-property-video-processors.py separately tests the real processor lifecycle and HTTP authority.',
     'VideoPreparedSourcePolicy is a closed ImageIO boundary because this fixture uses synthetic image bytes. Its refusal hook proves the actual preparation propagates refusal before paid dispatch; run-capture-orientation.py separately executes real JPEG decoding and the pixel floor.',
     'Only retrieveClip Date()/five-second sleep boundaries use a deterministic fixture clock; the extracted retry, identity and deadline decisions execute unchanged. Production timing and OS suspension are not certified.']}
 
@@ -124,10 +125,12 @@ try:
             extracted = extracted.replace('Date()', 'ReelPollClock.now()').replace('try await Task.sleep(nanoseconds: 5_000_000_000)', 'try await ReelPollClock.pause(nanoseconds: 5_000_000_000)')
             receipt['poll_clock_boundary'] = {'production_sleep_nanoseconds': 5_000_000_000, 'date_reads': 4, 'fixture': 'ReelPollClock'}
         actual += extracted + '\n'
-    actual += '''    static func generationGuard(auth: AuthStore, model: GuardModel, listingID: UUID, targetServerID: UUID?) -> (@MainActor @Sendable () throws -> Void) {
+    actual += '''    static func generationGuard(auth: AuthStore, model: GuardModel, listingID: UUID, targetServerID: UUID?, processorPermission: PropertyVideoProcessorSnapshot? = nil, processorContext: PropertyVideoJobContext? = nil) -> (@MainActor @Sendable () throws -> Void) {
         let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
         let reelWorkspace = WorkspaceContext.selectedOrgID
         let reelConsentRevision = AIConsent.shared.revocationRevision
+        let frozenProcessorRevision = PropertyVideoProcessorConsent.shared.revision
+        let frozenProcessorPermission = processorPermission, frozenProcessorContext = processorContext
 ''' + block(source, '                let requireCurrent: @MainActor @Sendable () throws -> Void = {') + '\nreturn requireCurrent\n}\n}\n'
     actual = actual.replace('import CryptoKit\n', 'import CryptoKit\n' + review_helpers, 1)
     actual += '''@MainActor final class VideoDispatchHarness {
@@ -178,7 +181,9 @@ try:
         ('negative-receipt-lower-bound', actual.replace('(1...VideoSelectionCapacity.maximumPhotos).contains(request.photoNumber)', 'request.photoNumber <= VideoSelectionCapacity.maximumPhotos'), 'invalid photo receipt cannot resume'),
         ('negative-early-download-ack', actual.replace('if clearReceiptOnDownload { pending?.clear() }', 'pending?.clear()'), 'temporary successful download keeps request'),
         ('negative-no-pre-dispatch-marker', actual.replace('try submission.save()', '// omitted pre-dispatch marker'), 'durable operation marker exists before POST'),
-        ('negative-preparation-consent', actual.replace(block(actual, '                    guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision else {'), '// omitted captured preparation permission'), 'revocation during preparation permits no paid POST'),
+        ('negative-preparation-consent', actual.replace('guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision,\n                          PropertyVideoProcessorConsent.shared.revision == frozenProcessorRevision else {', 'guard PropertyVideoProcessorConsent.shared.revision == frozenProcessorRevision else {'), 'revocation during preparation permits no paid POST'),
+        ('negative-preparation-processor-revision', actual.replace('guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision,\n                          PropertyVideoProcessorConsent.shared.revision == frozenProcessorRevision else {', 'guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision else {'), 'processor revocation during preparation permits no paid POST'),
+        ('negative-preparation-processor-permission', actual.replace(block(actual, '                    if let permission = frozenProcessorPermission, let context = frozenProcessorContext {'), '// omitted captured processor permission'), 'withdrawn frozen processor permission permits no paid POST'),
         ('negative-preparation-review', actual.replace('        try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL)', '        // omitted persisted review admission'), 'unreviewed preparation calls persisted review before paid dispatch'),
         ('negative-dispatch-consent', actual.replace(block(actual, '            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consentRevision else {'), '// omitted dispatch permission fence'), 'token refresh revocation must reject'),
         ('negative-dispatch-workspace', actual.replace('guard WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }', '// omitted dispatch workspace fence'), 'token refresh workspace switch must reject'),
