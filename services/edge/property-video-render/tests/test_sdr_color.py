@@ -60,23 +60,27 @@ class SDRColor(unittest.TestCase):
         self.assertAlmostEqual(float(facts["format"]["duration"]), 5, places=3)
         return video
 
+    def matches_reference(self, path, reference):
+        video = self.canonical(path)
+        frames = [product.run([shutil.which("ffmpeg"), "-v", "error", "-i", str(p), "-frames:v", "1",
+                              "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"], timeout=20).stdout
+                  for p in [path, reference]]
+        self.assertEqual(len(frames[0]), 1920 * 1080 * 3)
+        self.assertEqual(len(frames[0]), len(frames[1]))
+        mae = sum(abs(a-b) for a, b in zip(*frames)) / len(frames[0])
+        self.assertLessEqual(mae, 2, "canonical output must match explicit full color conversion within encode rounding")
+        return video, mae
+
     def test_known_sdr_converts_primaries_transfer_matrix_and_keeps_native_timing(self):
         for name, source in self.sources.items():
             output = product.compose([source], self.root / (name + "-actual"), composition_profile="steady-v2-cfr24")
-            video = self.canonical(output["master"])
             reference = self.root / (name + "-reference.mp4")
             product.run([shutil.which("ffmpeg"), "-v", "error", "-nostdin", "-y", "-i", str(source),
                          "-vf", "colorspace=all=bt709:range=tv:format=yuv420p", "-an", "-t", "5",
                          "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-maxrate", "24M",
                          "-bufsize", "48M", "-threads", "2", "-pix_fmt", "yuv420p", "-color_primaries", "bt709",
                          "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv", str(reference)], timeout=45)
-            frames = [product.run([shutil.which("ffmpeg"), "-v", "error", "-i", str(p), "-frames:v", "1",
-                                  "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"], timeout=20).stdout
-                      for p in [output["master"], reference]]
-            self.assertEqual(len(frames[0]), 1920 * 1080 * 3)
-            self.assertEqual(len(frames[0]), len(frames[1]))
-            mae = sum(abs(a-b) for a, b in zip(*frames)) / len(frames[0])
-            self.assertLessEqual(mae, 2, "canonical output must match explicit full color conversion within encode rounding")
+            video, mae = self.matches_reference(output["master"], reference)
             self.rows.append({"case": name, "facts": video, "referenceRGB_MAE": mae,
                               "masterSHA256": hashlib.sha256(output["master"].read_bytes()).hexdigest()})
         # No invented input metadata, new policy for partial/untagged sources,
@@ -91,7 +95,8 @@ class SDRColor(unittest.TestCase):
         for color_range in [None, "tv", "pc"]:
             self.assertEqual(product.sdr_colorspace_conversion({"color_space": "bt709", "color_transfer": "bt709", "color_primaries": "bt709", "color_range": color_range}), "")
         # Compile the actual product without its one conversion admission line.
-        # The same metadata oracle must refuse both non709 encoded outputs.
+        # Some FFmpeg versions honor output tags without converting primaries.
+        # Both positive and omitted paths use the same metadata AND pixel oracle.
         source = (CONTAINER / "compose.py").read_text()
         anchor = "        filters = sdr_colorspace_conversion(video) + filters\n"
         self.assertEqual(source.count(anchor), 1)
@@ -101,8 +106,9 @@ class SDRColor(unittest.TestCase):
             exec(compile(source.replace(anchor, "", 1), str(CONTAINER / "compose.py"), "exec"), module.__dict__)
             for name in ["bt601", "bt2020-sdr"]:
                 output = module.compose([self.sources[name]], self.root / (name + "-omitted"), composition_profile="steady-v2-cfr24")
-                with self.assertRaisesRegex(AssertionError, "fully converted"):
-                    self.canonical(output["master"])
-                self.rows.append({"case": name + "-compiled-omission", "expectedMetadataOracleRefusal": True})
+                with self.assertRaisesRegex(AssertionError, "fully converted|explicit full color conversion") as refusal:
+                    self.matches_reference(output["master"], self.root / (name + "-reference.mp4"))
+                self.rows.append({"case": name + "-compiled-omission", "expectedCanonicalColorOracleRefusal": True,
+                                  "oracle": str(refusal.exception)})
         finally:
             del sys.modules[module.__name__]
