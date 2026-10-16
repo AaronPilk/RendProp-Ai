@@ -7,8 +7,8 @@ let handler=realHandler;
 const sources=Array.from({length:100},(_,i)=>({photo_id:'selected-'+i,photo_asset_id:id(100+i),photo_version_id:'exact-staged-'+i,photo_provenance_id:null,motion:'push_in'}));
 const body={operation_id:operation,listing_id:listing,expected_org_id:org,purpose:'listing',aspect:'16:9',sources,allow_original_photo_fallback:true};
 const audioBytes=new Uint8Array([0,0,0,16,102,116,121,112,77,52,65,32,0,0,0,0]);const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',audioBytes)),x=>x.toString(16).padStart(2,'0')).join('');
-async function invoke(path='',method='POST',requestBody:any=body,options:{guest?:boolean;consent?:boolean;changed?:boolean;foreign?:boolean;storage?:'missing'|'changed'|'unknown';service?:boolean;binary?:boolean;replay?:boolean;capacity?:boolean;closed?:boolean;resume?:boolean;expired?:boolean;cpu?:boolean;cpuRecoveryCount?:number;certifiedFallback?:boolean;qualityProfile?:string;jobProfile?:string;qualityRetry?:'ready'|'unconfirmed'|'active'|'revoked';qualityResumeRefused?:boolean;delivery?:boolean;deliveryRefused?:boolean;submitRefused?:boolean;missingResult?:boolean;composePause?:'ready'|'uncertain'|'used'|'revoked';composeRefused?:boolean}={}){
- let resumed=false;const old=fetch,rpcs:{name:string;args:any}[]=[],requests:string[]=[],puts:Request[]=[],h:{exists:boolean}={exists:options.storage!=='missing'};const j={id:job,operation_id:operation,actor_id:actor,org_id:org,library_org_id:org,listing_id:listing,source_count:100,manifest_sha256:'a'.repeat(64),state:options.resume||options.cpu||options.certifiedFallback||options.qualityRetry||options.delivery||options.submitRefused||options.missingResult||options.composePause?'failed':'queued',quality_profile:options.jobProfile??'legacy',deadline:new Date(Date.now()+(options.expired?-1000:3600000)).toISOString(),manifest:body,result:null,...(options.composePause?{compose_attempts:3,message:'Video assembly was interrupted. Saved work will resume.'}:{})};const a={id:audio,actor_id:actor,org_id:org,library_org_id:org,listing_id:listing,state:'reserved',upload_until:new Date(Date.now()+300000).toISOString(),storage_key:`presenter-private/${org}/${actor}/${listing}/narration/${operation}.m4a`,bytes:audioBytes.length,sha256:digest,mime:'audio/mp4'};
+async function invoke(path='',method='POST',requestBody:any=body,options:{guest?:boolean;consent?:boolean;changed?:boolean;foreign?:boolean;storage?:'missing'|'changed'|'unknown';service?:boolean;binary?:boolean;replay?:boolean;capacity?:boolean;closed?:boolean;resume?:boolean;expired?:boolean;cpu?:boolean;cpuRecoveryCount?:number;certifiedFallback?:boolean;qualityProfile?:string;jobProfile?:string;qualityRetry?:'ready'|'unconfirmed'|'active'|'revoked';qualityResumeRefused?:boolean;delivery?:boolean;deliveryRefused?:boolean;submitRefused?:boolean;missingResult?:boolean;composePause?:'ready'|'uncertain'|'used'|'revoked';composeRefused?:boolean;processorMetadata?:Record<string,unknown>}={}){
+ let resumed=false;const old=fetch,rpcs:{name:string;args:any}[]=[],requests:string[]=[],puts:Request[]=[],h:{exists:boolean}={exists:options.storage!=='missing'};const j={id:job,operation_id:operation,actor_id:actor,org_id:org,library_org_id:org,listing_id:listing,source_count:100,manifest_sha256:'a'.repeat(64),state:options.resume||options.cpu||options.certifiedFallback||options.qualityRetry||options.delivery||options.submitRefused||options.missingResult||options.composePause?'failed':'queued',quality_profile:options.jobProfile??'legacy',deadline:new Date(Date.now()+(options.expired?-1000:3600000)).toISOString(),manifest:body,result:null,...options.processorMetadata,...(options.composePause?{compose_attempts:3,message:'Video assembly was interrupted. Saved work will resume.'}:{})};const a={id:audio,actor_id:actor,org_id:org,library_org_id:org,listing_id:listing,state:'reserved',upload_until:new Date(Date.now()+300000).toISOString(),storage_key:`presenter-private/${org}/${actor}/${listing}/narration/${operation}.m4a`,bytes:audioBytes.length,sha256:digest,mime:'audio/mp4'};
  globalThis.fetch=async(raw,init)=>{const req=new Request(raw,init),url=new URL(req.url);requests.push(req.method+' '+url.pathname+url.search);const response=(x:unknown,status=200)=>Response.json(x,{status});
  if(url.hostname==='jobs-db.fixture.invalid'){
   if(url.pathname==='/auth/v1/user')return response({id:actor,is_anonymous:options.guest===true});
@@ -118,4 +118,30 @@ Deno.test('uncertain upload used cycle expired authority and stale assembly repl
  const revoked=await invoke(job,'GET',null,{composePause:'revoked'});assertEquals(revoked.status,404);
  const stale=await invoke(job+'/resume','POST',{}, {composePause:'ready',composeRefused:true});assertEquals(stale.status,409);assert(!stale.rpcs.some(x=>x.name==='property_video_job_enqueue'||x.name==='property_video_job_admit'));
  const noConsent=await invoke(job+'/resume','POST',{}, {composePause:'ready',consent:false});assertEquals(noConsent.status,403);assert(!noConsent.rpcs.some(x=>x.name==='property_video_job_resume'));
+});
+
+
+Deno.test('actual read and cancel project immutable saved processor metadata without current-selector or admission calls',async()=>{
+ const stored={token:'property-video-jobs-v2',disclosure_revision:'fixture-kie-copy-r1',processors:['kie'],recorded_at:'2026-10-16T12:34:56+00:00'};
+ for(const profile of ['kie-kling3-4k-steady-v1','fal-kling3-4k-steady-v2']){
+  const metadata={consent_revision:'property-video-jobs-v2',processor_consent:stored,quality_profile:profile};
+  const r=await invoke(job,'GET',null,{consent:false,processorMetadata:metadata});assertEquals(r.status,200);
+  for(const key of Object.keys(metadata))assertEquals(r.body[key],metadata[key as keyof typeof metadata]);
+  assert(!r.rpcs.some(x=>/admit|quality_profile|processor_consent|resume/.test(x.name)));
+  assert(!r.requests.some(x=>/ai_routes|app_config|ai-video|providers/.test(x)));
+  const cancelled=await invoke(job+'/cancel','POST',{}, {consent:false,processorMetadata:metadata});assertEquals(cancelled.status,200);
+  assertEquals(cancelled.body.processor_consent,stored);assertEquals(cancelled.body.quality_profile,profile);
+ }
+ const legacy=await invoke(job,'GET',null,{processorMetadata:{consent_revision:'property-video-jobs-v1',processor_consent:null,quality_profile:'legacy'}});
+ assertEquals(legacy.status,200);assertEquals(legacy.body.consent_revision,'property-video-jobs-v1');assertEquals(legacy.body.processor_consent,null);
+ const old=await invoke(job,'GET',null,{processorMetadata:{consent_revision:undefined,processor_consent:undefined,quality_profile:undefined}});
+ assertEquals(old.status,200);for(const key of ['consent_revision','processor_consent','quality_profile'])assert(!(key in old.body));
+});
+Deno.test('partial unknown or malformed processor metadata cannot leak extra fields or strand a saved status read',async()=>{
+ const record={token:'property-video-jobs-v2',disclosure_revision:'fixture-kie-copy-r1',processors:['kie'],recorded_at:'2026-10-16T12:34:56Z'};
+ for(const value of [{...record,private_credential:'MUST_NOT_PROJECT'}, {...record,processors:['kie','kie']}, {...record,recorded_at:'not-a-date'}, {...record,disclosure_revision:'bad revision'},42,[]]){
+  const r=await invoke(job,'GET',null,{consent:false,processorMetadata:{consent_revision:'property-video-jobs-v2',processor_consent:value,quality_profile:'future-profile'}});
+  assertEquals(r.status,200);assertEquals(r.body.processor_consent,null);assertEquals(r.body.quality_profile,'future-profile');
+  assert(!JSON.stringify(r.body).includes('MUST_NOT_PROJECT'));assert(!r.rpcs.some(x=>/admit|resume|processor_consent|quality_profile/.test(x.name)));
+ }
 });
