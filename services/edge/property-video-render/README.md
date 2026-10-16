@@ -34,18 +34,26 @@ fabricates success or retries a billable supplier POST.
   and timed spoken words are carried into encoded pixels. 30fps rounds native
   0.28/0.18s overlaps to 8/5 frames; the backend receives measured final duration.
   This is option parity, not a claim of pixel-identical native typography.
-- `motion_qc.py` (`temporal-motion-v1`) measures walking-cadence bob, sway,
-  roll, travel and repeated frames in final-frame pixels; `extract_frames`
-  returns it when the task carries the closed `temporal_qc` key. The
-  three-still drift QC cannot see motion.
+- The inactive `steady-v2-cfr24` composition profile preserves measured native
+  24fps inputs and exact transition frame counts. Existing jobs keep their
+  frozen 30fps behavior. Cadence correction does not remove generated camera bob.
+- `motion_qc.py` (`temporal-motion-v2`) is diagnostic-only. It measures bob,
+  sway, zoom pulsing, roll, symmetric travel excursions and repeated frames in
+  final-frame pixels. Optional `extract_frames.temporal_qc` requests return a
+  separate measurement; existing requests keep their receipt shape. Metrics
+  must be finite and complete. Thresholds are provisional diagnostic limits,
+  not proof of property fidelity, visual acceptance or publication permission.
 - `smooth_finish.py` steadies one native-24fps AI shot: v1 framing, then one
   rigid similarity warp per frame along a smoothed camera path and one static
   zoom solved so no frame leaves real source pixels (capped at 1.04, never past
   the source resolution; weaker correction instead of borders). It returns the
   measured edge trim, largest shift/rotation and QC before and after. Slow
-  horizon roll, travel and parallax sway are reported, not hidden. Not wired
-  into `compose` here; it needs a 24fps composition. About 2x the per-shot CPU
-  of the 30fps encode and ~110 MiB more peak memory.
+  horizon roll, travel and parallax sway are reported, not hidden. Undersized
+  inputs are refused before encoding. This experimental utility is not wired
+  into `compose` or publication. Its pipe reads/writes share real wall-clock
+  deadlines and private child processes are killed and reaped on failure.
+  Measure hosted throughput before enabling it for large jobs: the existing
+  20-minute controller watchdog has not been changed for a stabilized profile.
 - Narration is retained at full speed, padded after its actual duration, never
   truncated to fit. Approved CC0 tracks start Off, loop/trim to final length,
   play at 0.18 and duck to 0.07 during narration. Output is limited below clipping.
@@ -75,8 +83,9 @@ interceptor, streaming signed upload and API receipts.
 
 ## Root-owned activation
 
-The checked-in service is disabled. No image or account resource was deployed.
-Do not alter another account Container application. New service name:
+Repository defaults are disabled; deployed state is recorded in the root-owned
+release receipts. Source changes alone do not activate a profile. Do not alter
+another account Container application. Dedicated service name:
 `rendprop-property-video-render`.
 
 1. Build the dedicated Docker image locally or through trusted CI; retain the
