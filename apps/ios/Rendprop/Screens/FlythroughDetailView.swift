@@ -289,12 +289,6 @@ private struct ListingToolboxGrid: View {
                             icon: "airplane.departure", gradient: RPGradient.aerial, dimmed: true)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("detail.aerialComingSoon")
-            ListingToolButtonTile(
-                card: ListingToolCard(title: "Share everything",
-                                      sub: sample ? createFirst : (hasAnythingToShare ? "On this iPhone · photos · videos · one ZIP" : "Add photos or a tour first"),
-                                      icon: "shippingbox.fill", gradient: RPGradient.share, dimmed: sample || !hasAnythingToShare),
-                disabled: sample || !hasAnythingToShare, accessibilityID: "detail.sharePackage", action: sharePackage
-            )
             // One entry for plans and measurements, and one for room tours.
             // Only the explicit TestFlight lab creates either destination.
 #if SPATIAL_CAPTURE_LAB
@@ -321,6 +315,16 @@ private struct ListingToolboxGrid: View {
                 .accessibilityIdentifier("detail.spatialComingSoon")
 #endif
         }
+    }
+
+    /// The section places sharing after every tool as one full-width row.
+    var sharePackageTile: ListingToolButtonTile {
+        ListingToolButtonTile(
+            card: ListingToolCard(title: "Share everything",
+                                  sub: sample ? createFirst : (hasAnythingToShare ? "On this iPhone · photos · videos · one ZIP" : "Add photos or a tour first"),
+                                  icon: "shippingbox.fill", gradient: RPGradient.share, dimmed: sample || !hasAnythingToShare),
+            disabled: sample || !hasAnythingToShare, accessibilityID: "detail.sharePackage", action: sharePackage
+        )
     }
 }
 
@@ -391,6 +395,7 @@ private struct ListingToolboxSection: View {
                 .accessibilityHint("Checks the request already submitted. Does not generate a new aerial.")
                 .accessibilityIdentifier("detail.resumeAerial")
             }
+            grid.sharePackageTile
         }
     }
 }
