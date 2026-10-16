@@ -193,20 +193,33 @@ class MediaProcessDeadline(unittest.TestCase):
                 while not pid.endswith(b"\n"):
                     pid += process.read_exact(1)
                 process.finish()
-        self.assert_reaped(process, start)
         # A reparented zombie is already dead and awaits its OS reaper; it
         # cannot retain descriptors or consume CPU. No running child survives.
-        if Path("/proc").exists():
-            # The production slim image deliberately has no procps package.
-            status = Path(f"/proc/{int(pid)}/stat")
-            try:
-                state = status.read_text().rsplit(") ", 1)[1].split()[0]
-            except (FileNotFoundError, ProcessLookupError):
-                state = None  # the OS reaped it between opening and reading
-            self.assertIn(state, (None, "Z"))
-        else:
-            result = subprocess.run(["ps", "-o", "stat=", "-p", str(int(pid))], capture_output=True, timeout=1)
-            self.assertTrue(not result.stdout.strip() or result.stdout.strip().startswith(b"Z"), result.stdout)
+        # Group SIGKILL and reaping the already-exited direct child do not
+        # synchronize the descendant's final /proc transition. Observe death
+        # within the SAME two-second budget; a live survivor still fails.
+        deadline = start + 2
+        state = "unknown"
+        while True:
+            if Path("/proc").exists():
+                # The production slim image deliberately has no procps package.
+                status = Path(f"/proc/{int(pid)}/stat")
+                try:
+                    state = status.read_text().rsplit(") ", 1)[1].split()[0]
+                except (FileNotFoundError, ProcessLookupError):
+                    state = None  # the OS reaped it between opening and reading
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                result = subprocess.run(["ps", "-o", "stat=", "-p", str(int(pid))], capture_output=True, timeout=remaining)
+                state = result.stdout.strip().decode()[:1] or None
+            remaining = deadline - time.monotonic()
+            if state in (None, "Z") or remaining <= 0:
+                break
+            time.sleep(min(.01, remaining))
+        self.assertIn(state, (None, "Z"))
+        self.assert_reaped(process, start)
 
     def test_child_with_closed_pipes_still_has_a_bounded_wait(self):
         start = time.monotonic()

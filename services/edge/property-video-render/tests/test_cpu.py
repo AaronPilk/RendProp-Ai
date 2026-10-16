@@ -260,7 +260,7 @@ class SteadyCadence(unittest.TestCase):
         self.assertEqual([hashlib.sha256(c.read_bytes()).hexdigest()for c in clips],before)
 
     def test_actual24_transitions_caption_pixels_music_voice_and_canvases(self):
-        fonts=[Path('/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf'),Path('/System/Library/Fonts/Supplemental/Arial Bold.ttf')]
+        fonts=[Path('/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf'),Path('/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf'),Path('/System/Library/Fonts/Supplemental/Arial Bold.ttf')]
         font=next((p for p in fonts if p.is_file()),None);self.assertIsNotNone(font)
         for aspect,file in [('16:9','landscape'),('9:16','portrait')]:
             for transition,overlap in [('cut',0),('dissolve',6),('whip',4)]:
