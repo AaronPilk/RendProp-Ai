@@ -15,7 +15,8 @@
 // our R2 and is the difference between "a client's living room lives on a
 // vendor's CDN forever" and "it doesn't".
 
-import type { RouteStep } from "../router.ts";
+import { paramsOf, type RouteStep } from "../router.ts";
+import { OWNER_RAIL_MOTION_PROFILE, OWNER_RAIL_ROUTE_ID, OWNER_RAIL_NEGATIVE_PROMPT, OWNER_RAIL_CFG_SCALE } from "../property-motion-profile.ts";
 import type { DoneState, ErrorClass, GenerateInput, JobRef, JobState, ProviderAdapter, ProviderDeliveryIssue } from "./types.ts";
 import {
   BUDGETS,
@@ -108,6 +109,15 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
   const model = falEndpoint(step.model);
   const extra = input.extra ?? {};
   const kling4K = model === "fal-ai/kling-video/v3/4k/image-to-video";
+  const ownerMotion = extra.owner_motion_profile;
+  const ownerRouteProfile = paramsOf(step)?.owner_motion_profile;
+  const markedMotion = ownerMotion !== undefined || ownerRouteProfile !== undefined || step.route_id === OWNER_RAIL_ROUTE_ID;
+  if (markedMotion && (ownerMotion !== OWNER_RAIL_MOTION_PROFILE || !kling4K ||
+      step.provider !== PROVIDER || step.route_id !== OWNER_RAIL_ROUTE_ID ||
+      ownerRouteProfile !== OWNER_RAIL_MOTION_PROFILE || step.unit !== "second" || step.unit_cents !== 42 ||
+      ["negative_prompt", "cfg_scale", "end_image_url", "generate_audio", "sound"].some(key => extra[key] !== undefined))) {
+    throw new ProviderError(PROVIDER, "validation", "The owner motion comparison recipe is unavailable.", 400, true);
+  }
   if (input.framing === "preserve_photo" && (input.task !== "video.reel_clip" ||
       (!model.endsWith("bytedance/seedance/v1/pro/fast/image-to-video") && !kling4K))) {
     throw new ProviderError(PROVIDER, "validation", "This model cannot preserve photo framing.", 400, true);
@@ -123,7 +133,8 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
         typeof input.image_url !== "string" || !/^(https:\/\/|data:image\/(jpeg|png|webp);base64,)/.test(input.image_url)) {
       throw new ProviderError(PROVIDER, "validation", "Kling4K comparison requires a priced five-second silent photo-preserving shot.", 400, true);
     }
-    return { prompt: input.prompt, start_image_url: input.image_url, duration: "5", generate_audio: false };
+    return { prompt: input.prompt, start_image_url: input.image_url, duration: "5", generate_audio: false,
+      ...(ownerMotion === OWNER_RAIL_MOTION_PROFILE ? { negative_prompt: OWNER_RAIL_NEGATIVE_PROMPT, cfg_scale: OWNER_RAIL_CFG_SCALE } : {}) };
   }
   // Seedance 1.0 Pro Fast image-to-video — the reel and the grounded aerial.
   if (model.endsWith("bytedance/seedance/v1/pro/fast/image-to-video")) {

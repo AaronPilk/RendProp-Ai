@@ -240,6 +240,7 @@ import { createBriaAdapter } from "./bria.ts";
 import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservation.ts";
 import { recoverVideoOperation, retainVideoSubmission } from "./operation-recovery.ts";
 import { ownerQaReelStep, prepareOwnerQaReelInput } from "./owner-reel-qa.ts";
+import { OWNER_RAIL_MOTION_PROFILE } from "../_shared/property-motion-profile.ts";
 import {PROPERTY_VIDEO_QUALITY_PROFILE,PROPERTY_VIDEO_STEADY_PROFILE,isPropertyVideoQualityProfile,currentPropertyVideoQualityProfile,propertyVideoQualityProfile,propertyVideoQualitySteps,type PropertyVideoQualityProfile} from "./property-video-quality.ts";
 import { buildPhotoPreservingReelPrompt, buildPropertyCanvasReelPrompt,buildSteadyPropertyReelPrompt, parseReelFraming, reelFramingSteps } from "./reel-framing.ts";
 import { probeMP4Video } from "./mp4video.ts";
@@ -1103,7 +1104,7 @@ const eraseHandler = createEraseHandler({
 export async function propertyVideoRecipeQuote(actor:string,org:string,listing:string,aspect:'16:9'|'9:16',count:number,savedProfile?:PropertyVideoQualityProfile){
  const ent=await entitlementForCharge(org),task='video.reel_clip';
  const profile=savedProfile===undefined?await currentPropertyVideoQualityProfile():propertyVideoQualityProfile(savedProfile);
- const owner=profile==='legacy'?await ownerQaReelStep({actorId:actor,orgId:org,listingId:listing,seconds:5,framing:'preserve_photo'}):null;
+  const owner=profile==='legacy'?await ownerQaReelStep({actorId:actor,orgId:org,listingId:listing,seconds:5,framing:'preserve_photo',aspect}):null;
  const candidates=isPropertyVideoQualityProfile(profile)?await propertyVideoQualitySteps(ent.plan):owner?[owner]:await resolveChain(task,{plan:ent.plan,needs:['i2v','1080p','5s'],carries_customer_media:true},legacyVideoStep(task,MODEL_I2V,'second',APP_AI_UNIT_CENTS.seedance_per_s,['i2v','1080p','5s','16:9','9:16']));
  const steps=reelFramingSteps(candidates,'preserve_photo');assert(steps.length>0,503,'No supported property-video quality route is currently available.');
  const input={task,seconds:5,resolution:'1080p',aspect,framing:'preserve_photo',extra:{...(owner?paramsOf(owner)??{}:{}),property_video_target_aspect:aspect}};
@@ -1564,10 +1565,11 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       const task = "video.reel_clip";
       const routerOn = await routerEnabled();
       const reelAspect = body.aspect === "16:9" || body.aspect === "9:16" ? body.aspect : null;
-      const ownerQaStep = savedQualityProfile==="legacy"?await ownerQaReelStep({ actorId: user.id, orgId,
-        listingId: body.listing_id ?? reelListingId, seconds: secs, framing }):null;
+      let ownerQaStep: Awaited<ReturnType<typeof ownerQaReelStep>> = null;
       let candidateSteps:RouteStep[];
-      try{candidateSteps = isPropertyVideoQualityProfile(savedQualityProfile)?await propertyVideoQualitySteps(plan):ownerQaStep ? [ownerQaStep] : await resolveChain(
+      try{ownerQaStep = savedQualityProfile==="legacy"?await ownerQaReelStep({ actorId: user.id, orgId,
+        listingId: body.listing_id ?? reelListingId, seconds: secs, framing, aspect: reelAspect }):null;
+      candidateSteps = isPropertyVideoQualityProfile(savedQualityProfile)?await propertyVideoQualitySteps(plan):ownerQaStep ? [ownerQaStep] : await resolveChain(
         task,
         {
           plan,
@@ -1594,7 +1596,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         resolution: "1080p",
         ...(reelAspect ? { aspect: reelAspect } : {}),
         ...(framing ? { framing } : {}),
-        ...((ownerQaStep?.model === "kling-3.0/video" || worker?.targetAspect) ? { extra: { ...(ownerQaStep?paramsOf(ownerQaStep)??{}:{}), ...(worker?.targetAspect?{property_video_target_aspect:worker.targetAspect}:{}),...(isPropertyVideoQualityProfile(savedQualityProfile)?{property_video_quality_profile:savedQualityProfile}:{}) } } : {}),
+        ...((ownerQaStep?.model === "kling-3.0/video" || ownerQaStep?.provider === "fal" && paramsOf(ownerQaStep)?.owner_motion_profile === OWNER_RAIL_MOTION_PROFILE || worker?.targetAspect) ? { extra: { ...(ownerQaStep?paramsOf(ownerQaStep)??{}:{}), ...(worker?.targetAspect?{property_video_target_aspect:worker.targetAspect}:{}),...(isPropertyVideoQualityProfile(savedQualityProfile)?{property_video_quality_profile:savedQualityProfile}:{}) } } : {}),
       };
       // A priced hold precedes one POST. Definitive refusal releases it;
       // transport ambiguity retains it without another provider attempt.
@@ -1625,8 +1627,10 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
                 authorize: async () => {
                   const liveOrg = await contentOrgForUser(user.id, orgId, body.listing_id ?? reelListingId ?? undefined, true);
                   const live = await ownerQaReelStep({ actorId: user.id, orgId: liveOrg,
-                    listingId: body.listing_id ?? reelListingId, seconds: secs, framing });
-                  return live?.provider === step.provider && live?.model === step.model;
+                    listingId: body.listing_id ?? reelListingId, seconds: secs, framing, aspect: reelAspect });
+                  return live?.provider === step.provider && live?.model === step.model &&
+                    (paramsOf(step)?.owner_motion_profile === undefined || live?.route_id === step.route_id &&
+                      paramsOf(live)?.owner_motion_profile === paramsOf(step)?.owner_motion_profile);
                 },
                 register: async (key, bytes) => {
                   const registered = await adminClient().rpc("register_private_ai_output", {

@@ -5,6 +5,7 @@ import { adminClient } from "../_shared/supabase.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import type { GenerateInput } from "../_shared/providers/types.ts";
 import { decodeDataUrl, ProviderError } from "../_shared/providers/common.ts";
+import { OWNER_RAIL_MOTION_PROFILE, OWNER_RAIL_ROUTE_ID } from "../_shared/property-motion-profile.ts";
 
 export const OWNER_REEL_QA_KEY = "owner_reel_provider_qa";
 export const KIE_REEL_QA_MODEL = "bytedance/v1-pro-fast-image-to-video";
@@ -19,7 +20,7 @@ function canonicalUuid(value: unknown): string | null {
 }
 
 export async function ownerQaReelStep(
-  args: { actorId: string; orgId: string; listingId?: string | null; seconds: number; framing?: "preserve_photo" },
+  args: { actorId: string; orgId: string; listingId?: string | null; seconds: number; framing?: "preserve_photo"; aspect?: string | null },
   db = adminClient(),
   now = new Date(),
 ): Promise<RouteStep | null> {
@@ -28,36 +29,50 @@ export async function ownerQaReelStep(
   // Foundation UUID.uuidString is uppercase; Postgres UUID text is lowercase.
   // Compare the validated UUID identity, never case-sensitive presentation.
   const actorId = canonicalUuid(args.actorId), orgId = canonicalUuid(args.orgId), listingId = canonicalUuid(args.listingId);
-  if (!actorId || !orgId || !listingId || args.seconds !== 5) return null;
+  if (!actorId || !orgId || !listingId) return null;
   const { data, error } = await db.from("app_config").select("value")
     .eq("key", OWNER_REEL_QA_KEY).maybeSingle();
   if (error || !data?.value || typeof data.value !== "object" || Array.isArray(data.value)) return null;
   const grant = data.value as Record<string, unknown>;
+  // A marked, enabled grant for this exact owner/home must never silently
+  // become ordinary generation when invalid or expired. Disable it or restore
+  // the prior unmarked grant to resume normal routing after the comparison.
+  const scopedMotion = grant.enabled === true && grant.motion_profile !== undefined &&
+    canonicalUuid(grant.actor_id) === actorId && canonicalUuid(grant.org_id) === orgId &&
+    canonicalUuid(grant.listing_id) === listingId;
+  const refuse = (): null => {
+    if (scopedMotion) throw new ProviderError("fal", "validation", "The owner motion comparison grant is unavailable.", 0, true);
+    return null;
+  };
   const falKling = grant.provider === "fal" && grant.model === FAL_KLING_4K_REEL_QA_MODEL;
   const kie = grant.provider === "kie" && (grant.model === KIE_REEL_QA_MODEL || grant.model === KIE_KLING_REEL_QA_MODEL);
   if (grant.enabled !== true || canonicalUuid(grant.actor_id) !== actorId || canonicalUuid(grant.org_id) !== orgId ||
       canonicalUuid(grant.listing_id) !== listingId || (!kie && !falKling) ||
-      grant.consent !== (falKling ? OWNER_FAL_REEL_QA_CONSENT : OWNER_REEL_QA_CONSENT) || canonicalUuid(grant.changed_by) !== actorId) return null;
+      grant.consent !== (falKling ? OWNER_FAL_REEL_QA_CONSENT : OWNER_REEL_QA_CONSENT) || canonicalUuid(grant.changed_by) !== actorId) return refuse();
+  if (args.seconds !== 5) return refuse();
   const kling = grant.model === KIE_KLING_REEL_QA_MODEL || falKling;
-  if (kling && (args.framing !== "preserve_photo" || !["pro", "4K"].includes(String(grant.mode)) || grant.sound !== false)) return null;
-  if (falKling && grant.mode !== "4K") return null;
+  if (kling && (args.framing !== "preserve_photo" || !["pro", "4K"].includes(String(grant.mode)) || grant.sound !== false)) return refuse();
+  if (falKling && grant.mode !== "4K") return refuse();
+  if (grant.motion_profile !== undefined && (grant.motion_profile !== OWNER_RAIL_MOTION_PROFILE || !falKling ||
+      !["16:9", "9:16"].includes(String(args.aspect)))) return refuse();
   const fourK = kling && grant.mode === "4K";
   const start = typeof grant.created_at === "string" ? Date.parse(grant.created_at) : NaN;
   const end = typeof grant.expires_at === "string" ? Date.parse(grant.expires_at) : NaN;
   const clock = now.getTime();
   if (![start, end, clock].every(Number.isFinite) || start > clock || end <= clock ||
-      end <= start || end - start > MAX_QA_WINDOW_MS) return null;
+      end <= start || end - start > MAX_QA_WINDOW_MS) return refuse();
   const admin = await db.from("profiles").select("is_admin").eq("id", actorId).maybeSingle();
-  if (admin.error || admin.data?.is_admin !== true) return null;
+  if (admin.error || admin.data?.is_admin !== true) return refuse();
   if (falKling) {
     // Exact native4K endpoint, $0.42/s with or without native audio. We request
     // no audio and deliver1080 only after the actual native-pixel/QC gates.
     // https://fal.ai/models/fal-ai/kling-video/v3/4k/image-to-video
     return {
-      route_id: "owner-qa-fal-kling3-4k-20261015", task: "video.reel_clip",
+      route_id: scopedMotion ? OWNER_RAIL_ROUTE_ID : "owner-qa-fal-kling3-4k-20261015", task: "video.reel_clip",
       provider: "fal", model: FAL_KLING_4K_REEL_QA_MODEL, unit: "second", unit_cents: 42,
       capabilities: ["i2v", "1080p", "5s"], max_latency_s: 900, min_plan: "free",
       same_model_as: "kling_3_pro", privacy_tier: "retained_30d", enabled: true,
+      ...(scopedMotion ? { params: { owner_motion_profile: OWNER_RAIL_MOTION_PROFILE } } : {}),
     };
   }
   // Published 2026-10-12: 36 credits/$0.18 for 1080p/5 s. Do not use the

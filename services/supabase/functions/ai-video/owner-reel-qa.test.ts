@@ -5,6 +5,7 @@ import { ownerQaReelStep, prepareOwnerQaReelInput, OWNER_REEL_QA_KEY, KIE_REEL_Q
 import { ProviderError } from "../_shared/providers/common.ts";
 import type { GenerateInput } from "../_shared/providers/types.ts";
 import { submitReservedVideo } from "./cost-reservation.ts";
+import { falInput } from "../_shared/providers/fal.ts";
 
 // The actual server helper and priced dispatch are imported. The extracted
 // routing fragment is production text; only DB, authentication and provider
@@ -66,10 +67,14 @@ Deno.test("owner reel QA accepts only its exact current server grant and fresh a
 
 Deno.test("owner reel QA fails closed for malformed identity, duration, grant, consent and clock", async () => {
   const requestChanges = [{ actorId: "not-an-actor" }, { orgId: "not-an-org" },
-    { listingId: null }, { listingId: "invalid" }, { seconds: 6 }, { seconds: 0 }, { seconds: NaN }];
+    { listingId: null }, { listingId: "invalid" }];
   for (const change of requestChanges) {
     const f = db(); assertEquals(await ownerQaReelStep({ ...args, ...change }, f.client, NOW), null);
     assertEquals(f.calls.length, 0, "Invalid request reached grant DB");
+  }
+  for (const seconds of [6, 0, NaN]) {
+    const f = db(); assertEquals(await ownerQaReelStep({ ...args, seconds }, f.client, NOW), null);
+    assertEquals(f.calls.length, 1, "The grant must be read so a marked comparison cannot silently use ordinary duration routing");
   }
   const changes: Array<Record<string, unknown>> = [
     { enabled: false }, { enabled: "true" }, { actor_id: OTHER }, { org_id: OTHER },
@@ -323,8 +328,8 @@ Deno.test("compiled staging controls expose registration, fresh authorization an
   console.log("OWNER_QA_STAGING_COMPILED_CONTROLS=5");
 });
 
-async function providerCallbackFixture() {
-  const source = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+async function providerCallbackFixture(mutate: (source: string) => string = source => source) {
+  const source = mutate(await Deno.readTextFile(new URL("./index.ts", import.meta.url)));
   const start = source.indexOf("            const providerInput = ownerQaStep ? await prepareOwnerQaReelInput(");
   const last = "return await adapterFor(step.provider).submit(step, providerInput);";
   const end = source.indexOf(last, start) + last.length;
@@ -332,11 +337,12 @@ async function providerCallbackFixture() {
   const module = await import(encode(`
     import {prepareOwnerQaReelInput,ownerQaReelStep as realOwnerQaReelStep} from ${JSON.stringify(new URL("./owner-reel-qa.ts", import.meta.url).href)};
     import {assert} from ${JSON.stringify(new URL("../_shared/http.ts", import.meta.url).href)};
+    import {paramsOf} from ${JSON.stringify(new URL("../_shared/router.ts", import.meta.url).href)};
     export async function run(options:any, database:any, input:any, now:Date) {
       const events:any[]=[],user={id:${JSON.stringify(ACTOR)}},orgId=${JSON.stringify(ORG)};
       const body={listing_id:${JSON.stringify(LISTING)}},reelListingId=null,secs=5;
-      const genInput=input,framing=input.framing,R2_BUCKET_RENDERS="renders",ownerQaStep=options.normal?null:{};
-      const step={provider:options.normal||options.fal4K?"fal":"kie",model:options.normal?"normal-model":options.fal4K?${JSON.stringify(FAL_KLING_4K_REEL_QA_MODEL)}:${JSON.stringify(KIE_REEL_QA_MODEL)}};
+      const genInput=input,framing=input.framing,reelAspect=input.aspect??null,R2_BUCKET_RENDERS="renders",ownerQaStep=options.normal?null:{};
+      const step=options.step??{provider:options.normal||options.fal4K?"fal":"kie",model:options.normal?"normal-model":options.fal4K?${JSON.stringify(FAL_KLING_4K_REEL_QA_MODEL)}:${JSON.stringify(KIE_REEL_QA_MODEL)}};
       const contentOrgForUser=async(actor:any,org:any,listing:any,write:any)=>{events.push({kind:"content_auth",actor,org,listing,write});if(options.revokedAccess)throw Error("content access revoked");return org;};
       const ownerQaReelStep=async(args:any)=>{events.push({kind:"grant_auth",args});return await realOwnerQaReelStep(args,database,now);};
       const adminClient=()=>({rpc:async(name:any,args:any)=>{events.push({kind:"inventory",name,args});return {data:{ok:!options.inventoryError,key:options.inventoryWrongKey?"wrong-key":args.p_key},error:options.inventoryError?{}:null};}});
@@ -498,4 +504,125 @@ Deno.test("actual whole-recipe preflight selects the same scoped FAL4K210c shot 
   const quote=await module.run(selected,count,aspect);assertEquals([quote.provider,quote.model,quote.source_count,quote.reel_cents],["fal",FAL_KLING_4K_REEL_QA_MODEL,count,210*count]);assert(quote.qc_cents>0&&quote.estimated_cents>=quote.reel_cents+quote.qc_cents);
  }
  const ordinary=await module.run(null,20,"16:9");assertEquals([ordinary.provider,ordinary.model,ordinary.reel_cents],["fal","bytedance/seedance/v1/pro/fast/image-to-video",486]);
+});
+
+const railGrant = { ...grant, provider: "fal", model: FAL_KLING_4K_REEL_QA_MODEL, mode: "4K", sound: false,
+  consent: OWNER_FAL_REEL_QA_CONSENT, motion_profile: "property-rail-negative-v1" };
+const railArgs = { ...args, framing: "preserve_photo" as const, aspect: "16:9" };
+
+Deno.test("negative-motion profile is exact server grant only, separately identified, with unchanged price/privacy", async () => {
+  const old = await ownerQaReelStep(railArgs, db({ value: { ...railGrant, motion_profile: undefined } }).client, NOW);
+  const marked = await ownerQaReelStep(railArgs, db({ value: railGrant }).client, NOW); assert(old && marked);
+  assertEquals(marked.route_id, "owner-qa-fal-kling3-4k-rail-negative-v1");
+  assertEquals(paramsOf(marked), { owner_motion_profile: "property-rail-negative-v1" });
+  const { route_id: _newId, params: _params, ...newRest } = marked as RouteStep & { params: unknown };
+  const { route_id: _oldId, ...oldRest } = old;
+  assertEquals(newRest, oldRest, "Generation5s,42c/s, model, privacy and capability authority stay exact");
+  for (const value of [null, false, "unknown-profile", 1]) {
+    await assertRejects(() => ownerQaReelStep(railArgs, db({ value: { ...railGrant, motion_profile: value } }).client, NOW), ProviderError);
+  }
+  for (const change of [{ model: KIE_KLING_REEL_QA_MODEL }, { provider: "kie" }, { mode: "pro" }, { sound: true },
+    { consent: OWNER_REEL_QA_CONSENT }, { changed_by: OTHER }, { expires_at: NOW.toISOString() }]) {
+    await assertRejects(() => ownerQaReelStep(railArgs, db({ value: { ...railGrant, ...change } }).client, NOW), ProviderError);
+  }
+  for (const change of [{ seconds: 6 }, { framing: undefined }, { aspect: undefined }, { aspect: "1:1" }]) {
+    await assertRejects(() => ownerQaReelStep({ ...railArgs, ...change }, db({ value: railGrant }).client, NOW), ProviderError);
+  }
+  await assertRejects(() => ownerQaReelStep(railArgs, db({ value: railGrant, admin: false }).client, NOW), ProviderError);
+  assertEquals(await ownerQaReelStep(railArgs, db({ value: { ...railGrant, actor_id: OTHER } }).client, NOW), null,
+    "Another owner's grant must not affect normal routing");
+  assertEquals(await ownerQaReelStep(railArgs, db({ value: { ...railGrant, enabled: false } }).client, NOW), null);
+  const helperSource = await Deno.readTextFile(new URL("./owner-reel-qa.ts", import.meta.url));
+  const markerGuard = "grant.motion_profile !== OWNER_RAIL_MOTION_PROFILE";
+  assertEquals(helperSource.split(markerGuard).length, 2);
+  const defective = await import(encode(absoluteImports(helperSource.replace(markerGuard, "false"))));
+  assert(await defective.ownerQaReelStep(railArgs, db({ value: { ...railGrant, motion_profile: "unknown" } }).client, NOW),
+    "Compiled removal must expose acceptance of an unknown server profile");
+  const run = await routingFixture();
+  await assertRejects(() => run({ body: { framing: "preserve_photo" } }, db({ value: { ...railGrant, motion_profile: "unknown" } }).client, NOW), ProviderError);
+  const source = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  const resolve = source.indexOf('try{ownerQaStep ='); const refund = source.indexOf('}catch(error){await refundGenerateCharge(charge);throw error;}', resolve);
+  assert(resolve > 0 && refund > resolve, "A pre-dispatch grant refusal must retain the normal allowance refund path");
+});
+
+async function actualGenerationInput(step: RouteStep | null, body: Record<string, unknown>, mutate: (s: string) => string = s => s) {
+  const source = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  const start = source.indexOf("      const genInput: GenerateInput =", source.indexOf('seg[0] === "reel-clip"'));
+  const end = source.indexOf("      // A priced hold precedes", start); assert(start > 0 && end > start);
+  const module = await import(encode(`
+    import {paramsOf} from ${JSON.stringify(new URL("../_shared/router.ts", import.meta.url).href)};
+    import {isPropertyVideoQualityProfile} from ${JSON.stringify(new URL("./property-video-quality.ts", import.meta.url).href)};
+    import {OWNER_RAIL_MOTION_PROFILE} from ${JSON.stringify(new URL("../_shared/property-motion-profile.ts", import.meta.url).href)};
+    type GenerateInput=any;
+    export function run(ownerQaStep:any,body:any){
+      const task="video.reel_clip",reelText="same2cm-positive-prompt",imageUrl="data:image/jpeg;base64,U0FNRQ==",secs=5;
+      const worker=undefined,savedQualityProfile="legacy",reelAspect=body.aspect??"16:9",framing="preserve_photo";
+      ${mutate(source.slice(start, end))}
+      return genInput;
+    }
+  `));
+  return module.run(step, body) as GenerateInput;
+}
+
+Deno.test("actual input bridge ignores every client motion/control claim and hashes the server recipe", async () => {
+  const marked = await ownerQaReelStep(railArgs, db({ value: railGrant }).client, NOW); assert(marked);
+  const old = await ownerQaReelStep(railArgs, db({ value: { ...railGrant, motion_profile: undefined } }).client, NOW); assert(old);
+  const body = { motion_profile: "property-rail-negative-v1", provider: "fal", cfg_scale: 999,
+    negative_prompt: "client must never reach vendor", end_image_url: "https://client.invalid/end",
+    extra: { owner_motion_profile: "property-rail-negative-v1", cfg_scale: 999 } };
+  const positive = await actualGenerationInput(marked, body);
+  assertEquals(positive.extra, { owner_motion_profile: "property-rail-negative-v1" });
+  assertEquals(falInput(marked, positive).cfg_scale, 0.5, "Real grant and actual handler bridge reach the fixed adapter recipe");
+  const oldInput = await actualGenerationInput(old, body); const ordinary = await actualGenerationInput(null, body);
+  assertEquals(oldInput, ordinary); assertEquals(oldInput.extra, undefined);
+  const hash = async (value: unknown) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value))))).map(x => x.toString(16).padStart(2, "0")).join("");
+  assert(await hash(positive) !== await hash(oldInput), "Same-key different recipe must have a different reservation input hash");
+  const broken = await actualGenerationInput(marked, {}, text => text.replace('ownerQaStep?.provider === "fal" && paramsOf(ownerQaStep)?.owner_motion_profile === OWNER_RAIL_MOTION_PROFILE', 'false'));
+  assertEquals(broken.extra, undefined, "Compiled omission exposes the lost profile instead of a positive passing by construction");
+  let refused = false; try { falInput(marked, broken); } catch (error) { refused = error instanceof ProviderError; }
+  assert(refused, "A lost marker on the trusted marked route must fail before provider transport");
+});
+
+Deno.test("marked profile must remain exact at both source authorization reads before one provider POST", async () => {
+  const selected = await ownerQaReelStep(railArgs, db({ value: railGrant }).client, NOW); assert(selected);
+  const run = await providerCallbackFixture();
+  const value = { ...input, aspect: "16:9" as const, framing: "preserve_photo" as const,
+    extra: { owner_motion_profile: "property-rail-negative-v1" } };
+  const accepted = await run({ step: selected }, db({ value: railGrant }).client, value, NOW);
+  assertEquals(accepted.events.filter(x => x.kind === "POST").length, 1);
+  for (const changed of [{ ...railGrant, motion_profile: undefined }, { ...railGrant, motion_profile: "unknown" },
+    { ...railGrant, enabled: false }, { ...railGrant, sound: true }]) {
+    await assertRejects(() => run({ step: selected }, db({ value: changed }).client, value, NOW), ProviderError);
+  }
+  let reads = 0;
+  const changedDuringPrepare = { from(table: string) {
+    const current = table === "app_config" && ++reads > 1 ? { ...railGrant, motion_profile: undefined } : railGrant;
+    return db({ value: current }).client.from(table);
+  } } as ReturnType<typeof db>["client"];
+  await assertRejects(() => run({ step: selected }, changedDuringPrepare, value, NOW), ProviderError);
+  assertEquals(reads, 2, "Grant changed after upload must be rejected on the second authorization read");
+  const needle = '(paramsOf(step)?.owner_motion_profile === undefined || live?.route_id === step.route_id &&\n                      paramsOf(live)?.owner_motion_profile === paramsOf(step)?.owner_motion_profile)';
+  const defective = await providerCallbackFixture(text => { assertEquals(text.split(needle).length, 2); return text.replace(needle, 'true'); });
+  const leaked = await defective({ step: selected }, db({ value: { ...railGrant, motion_profile: undefined } }).client, value, NOW);
+  assert(leaked.events.some(x => x.kind === "POST"), "Compiled removal must expose the exact recipe revalidation failure");
+});
+
+Deno.test("marked FAL comparison uses normal two210c holds, exact input hash and separate route metadata", async () => {
+  const step = await ownerQaReelStep(railArgs, db({ value: railGrant }).client, NOW); assert(step);
+  const gen = await actualGenerationInput(step, {}); const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  let posts = 0;
+  await submitReservedVideo({ actorId: ACTOR, orgId: ORG, listingId: LISTING, key: "one-fresh-comparison-op", feature: "reel", steps: [step], input: gen, seconds: 5,
+    allowance: { monthlyWindowStart: "2026-10-01T00:00:00Z", burstWindowStart: "2026-10-12T20:00:00Z" } }, {
+    rpc: async (name, values) => { calls.push({ name, args: values });
+      if (name === "app_video_cost_reserve_v2" || name === "serving_cost_reserve") return { data: { reserved: true }, error: null };
+      if (name === "serving_cost_finish") return { data: { finished: true }, error: null };
+      assertEquals(name, "app_video_cost_settle"); return { data: { settled: true }, error: null };
+    },
+    submit: async selected => { posts++; return { step: selected, value: { id: "one-accepted-rail-receipt" }, latency_ms: 1 }; },
+  });
+  assertEquals(posts, 1); assertEquals(calls.filter(x => /reserve/.test(x.name)).map(x => x.args.p_hold_cents), [210, 210]);
+  assertEquals(calls[0].args.p_units, 5); assertEquals(calls[0].args.p_unit_cost_cents, 42);
+  assertEquals((calls[0].args.p_meta as Record<string, unknown>).route_id, "owner-qa-fal-kling3-4k-rail-negative-v1");
+  assertEquals(Object.keys(calls[0].args.p_meta as object).sort(), ["price_estimated", "route_id", "task", "unit"]);
+  assertEquals(calls.at(-1)?.name, "app_video_cost_settle");
 });
