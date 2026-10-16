@@ -136,7 +136,7 @@ export async function buildKit(snapshot: KitSnapshot, selectedIds: string[], opt
   const total = selected.reduce((sum, item) => sum + (item.originalUrl ? 2 : 1), 0);
   const read = async (url: string, expiresAt: string, label: string, kind: "photo" | "video") => {
     (await check())(); const verified = mediaURL(url, workspace.org.id, snapshot.listing.id, expiresAt, Date.now(), workspace.user.id);
-    const response = await (options.fetcher ?? fetch)(verified, { credentials: "omit", referrerPolicy: "no-referrer", redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]) });
+    const response = await (options.fetcher ?? fetch)(verified, { cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer", redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]) });
     try { (await check())(); }
     catch (error) { void response.body?.cancel().catch(() => {}); throw error; }
     if (!response.ok || !response.body) throw new Error(`${label} could not download. Refresh the kit and try again. No incomplete kit was downloaded.`);
