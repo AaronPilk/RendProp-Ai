@@ -21,7 +21,14 @@ from decimal import Decimal, InvalidOperation
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 TABLES = ("ledger", "serving", "video", "photo_scope", "video_scope", "spatial", "other_journals")
+# Schema 2 adds the service-only provider attempt journal (migration
+# 20261016192846). A schema-1 snapshot predates it and is reported as
+# "not exported", never as zero attempts.
+SCHEMA_TABLES = {1: TABLES, 2: TABLES + ("provider_attempts",)}
 ZERO = Decimal("0")
+ATTEMPT_OUTCOMES = ("intent", "hit", "no_record", "http_error", "invalid_response", "transport_unknown")
+ATTEMPT_UNKNOWN_OUTCOMES = ("intent", "transport_unknown")
+ATTEMPT_PRICED_OUTCOMES = ("hit", "no_record")
 
 
 def unpriced_usage(value):
@@ -162,17 +169,88 @@ def unique(rows):
     return list(found.values())
 
 
+def provider_attempt_journal(attempts, ledger_by_attempt):
+    """Attempt journal projection: unknown outcomes keep no amount; estimates never
+    become consumption; a priced attempt the ledger does not retain is listed."""
+    if attempts is None:
+        return {"exported": False, "detail": "schema-1 snapshot predates provider_attempt_receipts; attempt coverage is unknown, not zero"}
+    by_outcome = {outcome: 0 for outcome in ATTEMPT_OUTCOMES}
+    unknown, refused, priced, missing_ledger, estimate_total, missing_total = [], [], [], [], ZERO, ZERO
+    for row in attempts:
+        outcome = row.get("outcome")
+        if outcome not in ATTEMPT_OUTCOMES:
+            raise ValueError("Unknown provider attempt outcome")
+        if row.get("actual_cents") is not None:
+            raise ValueError("Provider attempt journal cannot carry an actual invoice amount")
+        by_outcome[outcome] += 1
+        line = {"attempt": scope(row["id"]), "account": scope(row.get("billing_org_id") or row.get("org_id")), "library": scope(row.get("org_id")),
+                "provider": token(row.get("provider")), "stage": token(row.get("stage")), "model": token(row.get("model")), "outcome": outcome,
+                "http_status": row.get("http_status") if isinstance(row.get("http_status"), int) and not isinstance(row.get("http_status"), bool) else None,
+                "supplier_request_id": request_id(row.get("provider_request_id")), "created_at": row.get("created_at"), "terminal_at": row.get("terminal_at"),
+                "invoice_verified": False}
+        if outcome in ATTEMPT_UNKNOWN_OUTCOMES:
+            if row.get("estimated_cents") is not None:
+                raise ValueError("Unknown attempt outcome cannot carry an estimate")
+            unknown.append({**line, "estimated_cents": None, "amount": "unknown"})
+            continue
+        if outcome in ATTEMPT_PRICED_OUTCOMES:
+            amount = money(row.get("estimated_cents"))
+            if amount <= ZERO or row.get("price_basis") != "configured_catalog_estimate_not_invoice":
+                raise ValueError("Priced attempt needs a positive configured estimate")
+            # A metadata ID alone is not cross-library accounting authority.
+            # Keep a mismatched candidate visible, but never let it hide this
+            # journal's missing consumption row or move money between accounts.
+            identity = (row.get("org_id"), row.get("provider"), row.get("model"))
+            retained, mismatched = [], []
+            for candidate in ledger_by_attempt.get(row["id"], []):
+                declared_stage = (candidate.get("meta") or {}).get("stage")
+                matches = (all(isinstance(value, str) and value for value in identity)
+                           and (candidate.get("org_id"), candidate.get("provider"), candidate.get("model")) == identity
+                           and (declared_stage is None or declared_stage == row.get("stage")))
+                (retained if matches else mismatched).append(candidate)
+            entry = {**line, "estimated_cents": cents(amount), "price_basis": "configured_catalog_estimate_not_invoice",
+                     "ledger_status": token(row.get("ledger_status")), "retained_ledger_ids": [r["id"] for r in retained],
+                     "mismatched_ledger_ids": [r["id"] for r in mismatched]}
+            priced.append(entry)
+            estimate_total += amount
+            if not retained:
+                missing_ledger.append(entry)
+                missing_total += amount
+            continue
+        if row.get("estimated_cents") is not None:
+            raise ValueError("Refused or invalid attempt cannot carry an estimate")
+        refused.append({**line, "estimated_cents": None, "amount": "no recorded charge; a supplier may still bill an answered refusal"})
+    return {"exported": True, "rows": len(attempts), "by_outcome": by_outcome,
+            "unknown_outcome_attempts": unknown, "unknown_outcome_cents": None,
+            "refused_or_invalid_attempts": refused,
+            "priced_attempt_estimate_cents_not_added_to_ledger_total": cents(estimate_total),
+            "priced_attempts_without_retained_ledger_row": missing_ledger,
+            "priced_attempts_without_retained_ledger_cents": cents(missing_total),
+            "priced_attempts": priced,
+            "detail": "intent = durable pre-dispatch intent without a confirmed terminal outcome; it does not prove supplier dispatch. transport_unknown = reply lost. Neither is free nor priced. Estimates are configured catalog amounts; the ledger row (meta.provider_attempt_id) is the consumption record, and a priced attempt without one is a reconciliation item."}
+
+
 def accounting_report(snapshot, events=(), spool=()):
-    if snapshot.get("schema") != 1 or snapshot.get("currency") != "USD":
+    schema = snapshot.get("schema")
+    if schema not in SCHEMA_TABLES or snapshot.get("currency") != "USD":
         raise ValueError("Unsupported accounting snapshot/currency")
     if snapshot.get("authority", {}).get("bypass_rls") is not True:
         raise ValueError("Owner accounting export requires verified all-account read authority")
-    for name in TABLES:
+    for name in SCHEMA_TABLES[schema]:
         rows = snapshot.get(name)
         if not isinstance(rows, list) or len(rows) != snapshot.get("counts", {}).get(name) or len(rows) > snapshot.get("max_rows_per_table", 0):
             raise ValueError("Incomplete/bounded snapshot: " + name)
     ledger = unique(snapshot["ledger"])
     serving, videos = unique(snapshot["serving"]), unique(snapshot["video"])
+    attempts = unique(snapshot["provider_attempts"]) if schema >= 2 else None
+    hold_keys = defaultdict(list)
+    for hold in serving:
+        hold_keys[(hold.get("org_id"), hold.get("request_key"), hold.get("stage"), hold.get("provider"), hold.get("model"))].append(hold)
+    ledger_by_attempt = defaultdict(list)
+    for row in ledger:
+        attempt_id = (row.get("meta") or {}).get("provider_attempt_id")
+        if attempt_id:
+            ledger_by_attempt[attempt_id].append(row)
     ids = {r["id"] for r in ledger}
     idempotency = {r["idempotency_key"] for r in ledger if r.get("idempotency_key")}
     aliases, checks = {}, {}
@@ -207,7 +285,7 @@ def accounting_report(snapshot, events=(), spool=()):
             linked_tariffs[hold_links[hold["id"]]["id"]].add(token(hold.get("tariff_version")) or "unknown")
 
     lines, totals, group = [], defaultdict(lambda: ZERO), defaultdict(lambda: ZERO)
-    provider_groups = defaultdict(list)
+    provider_groups, attempt_groups = defaultdict(list), defaultdict(list)
     for row in ledger:
         meta = row.get("meta") or {}
         related = aliases.get((row.get("org_id"), meta.get("request_key")), {})
@@ -222,6 +300,14 @@ def accounting_report(snapshot, events=(), spool=()):
         job = row.get("job_id") or related.get("job_id")
         failed = row.get("job_state") == "failed" or related.get("job_state") == "failed" or meta.get("failed") is True or meta.get("outcome") in ("failed", "refused") or meta.get("verdict") in ("fail", "regen")
         stage = token(meta.get("stage"))
+        # A writer that records in `finally` books the attempt even when the
+        # reply was lost — or when funding refused before any dispatch. The
+        # amount stays recorded (never discounted); the context is disclosed,
+        # and an attempt key with no serving hold is a possible never-sent call.
+        uncertain = meta.get("outcome") == "uncertain"
+        attempt_key = (row.get("org_id"), meta.get("request_key"), meta.get("stage"), row.get("provider"), row.get("model"))
+        has_attempt_key = bool(meta.get("request_key") and meta.get("stage"))
+        no_hold = has_attempt_key and not hold_keys.get(attempt_key) and not (meta.get("app_video_reservation_id") in by_receipt or meta.get("erase_job_id") or meta.get("provider_attempt_id"))
         line = {"ledger_id": row["id"], "created_at": row.get("created_at"),
                 "account": scope(row.get("billing_org_id") or row.get("org_id")), "library": scope(row.get("org_id")),
                 "listing": scope(listing), "job": scope(job), "feature": token(row.get("feature")),
@@ -230,6 +316,8 @@ def accounting_report(snapshot, events=(), spool=()):
                 "recorded_cents": cents(amount), "cost_basis": kind, "supplier_request_ids": supplier_ids,
                 "stage": stage, "retry": "retry" in (stage or "") or meta.get("attempt") == "retry",
                 "failed_or_refused_context": failed,
+                "uncertain_dispatch_context": uncertain,
+                "recorded_without_matching_attempt_hold": uncertain and no_hold,
                 "tariff_versions": sorted(linked_tariffs[row["id"]] | {v for v in [token(meta.get("tariff")), token(meta.get("price_version"))] if v}),
                 "price_recorded_at": row.get("created_at"), "price_effective_date": None, "invoice_verified": False}
         usage = meta.get("provider_usage")
@@ -242,10 +330,16 @@ def accounting_report(snapshot, events=(), spool=()):
         totals[kind + "_cents"] += amount
         if failed:
             totals["recorded_in_failed_or_refused_context_cents"] += amount
+        if uncertain:
+            totals["recorded_in_uncertain_dispatch_context_cents"] += amount
+        if uncertain and no_hold:
+            totals["recorded_without_matching_attempt_hold_cents"] += amount
         for dimension in ("account", "library", "listing", "job", "feature", "provider", "cost_basis"):
             group[(dimension, line[dimension] or "unknown")] += amount
         for ident in supplier_ids:
             provider_groups[(line["provider"], line["model"], ident, line["feature"])].append(row["id"])
+        if has_attempt_key:
+            attempt_groups[attempt_key].append(row["id"])
 
     holds = []
     for row in serving:
@@ -314,6 +408,10 @@ def accounting_report(snapshot, events=(), spool=()):
             "cross_journal_overlaps_not_added_twice": overlap,
             "settled_receipts_without_retained_ledger": tombstones,
             "possible_duplicate_supplier_ids": [{"provider": k[0], "model": k[1], "supplier_request_id": k[2], "feature": k[3], "ledger_ids": v} for k, v in provider_groups.items() if len(v) > 1],
+            # Edge receipts carry no idempotency key; a lost reply plus a retried
+            # write yields two rows with one attempt identity. Flagged, never netted.
+            "possible_duplicate_attempt_rows": [{"library": scope(k[0]), "request_key": scope(k[1]), "stage": token(k[2]), "provider": token(k[3]), "model": token(k[4]), "ledger_ids": v} for k, v in sorted(attempt_groups.items(), key=lambda kv: kv[1]) if len(v) > 1],
+            "provider_attempt_journal": provider_attempt_journal(attempts, ledger_by_attempt),
             "pending_spool_not_added_to_ledger": spool_lines,
             "external_events_separate_from_consumption": external,
             "provider_credit_funding_cents": cents(sum((money(e["amount_cents"]) for e in external if e["kind"] == "provider_credit_funding"), ZERO)),
@@ -322,7 +420,7 @@ def accounting_report(snapshot, events=(), spool=()):
             "spatial_cost_rollups_not_added_to_ledger": [{"job": scope(r["id"]), "status": token(r.get("status")), "reported_cents": cents(money(r["cost_cents"])), "invoice_verified": False} for r in snapshot["spatial"]],
             "other_accounting_journals_not_added_to_ledger": [{"kind": token(r["kind"]), "job": scope(r["id"]), "account": scope(r.get("org_id")), "listing": scope(r.get("listing_id")), "state": token(r.get("state")), "priced_cents": cents(money(r["priced_cents"])), "held_cents": cents(money(r["held_cents"])), "charged_cents": cents(money(r["charged_cents"])) if r.get("charged_cents") is not None else None, "ledger_id": r.get("ledger_id"), "supplier_request_id": request_id(r.get("supplier_request_id")), "price_version": token(r.get("price_version")), "has_billing_reference": r.get("has_billing_reference") is True} for r in snapshot["other_journals"]],
             "unpriced_usage": unpriced_usage(snapshot.get("unpriced_usage", {})),
-            "coverage": {"source_rows": snapshot["counts"], "unique_ledger_rows": len(ledger), "serving_rows_reconciled_to_ledger": len(hold_links), "ledger_rows_without_listing": sum(x["listing"] == "unknown" for x in lines), "ledger_rows_without_supplier_id": sum(not x["supplier_request_ids"] for x in lines), "ledger_rows_without_tariff": sum(not x["tariff_versions"] for x in lines), "supplier_invoice_reconciliation": "not supplied; no recorded cost labeled invoice verified", "spool_visibility": "supplied local spool only; other running workers unknown", "infrastructure": "vendor invoices/account telemetry not automatically imported", "hold_total_scope": "unreconciled serving/app-video holds; presenter/erase journals and spatial rollups separate to prevent duplicate summation", "failed_context": "current job/source state or retained ledger refusal flag; resumed jobs can change context without changing any recorded cost", "history": "account deletion can remove ledger rows; retained reservation tombstones are reported separately"}}
+            "coverage": {"source_rows": snapshot["counts"], "unique_ledger_rows": len(ledger), "serving_rows_reconciled_to_ledger": len(hold_links), "ledger_rows_without_listing": sum(x["listing"] == "unknown" for x in lines), "ledger_rows_without_supplier_id": sum(not x["supplier_request_ids"] for x in lines), "ledger_rows_without_tariff": sum(not x["tariff_versions"] for x in lines), "supplier_invoice_reconciliation": "not supplied; no recorded cost labeled invoice verified", "spool_visibility": "supplied local spool only; other running workers unknown", "infrastructure": "vendor invoices/account telemetry not automatically imported", "hold_total_scope": "unreconciled serving/app-video holds; presenter/erase journals and spatial rollups separate to prevent duplicate summation", "failed_context": "current job/source state or retained ledger refusal flag; resumed jobs can change context without changing any recorded cost", "uncertain_dispatch_context": "ledger rows whose writer recorded outcome=uncertain (lost reply, or a funding refusal before dispatch when the writer books in finally); amounts stay recorded, rows without any matching serving hold are listed as possibly never dispatched", "provider_attempt_journal": "schema-2 snapshots export provider_attempt_receipts; unknown outcomes carry no amount and are never zero", "history": "account deletion can remove ledger rows; retained reservation tombstones are reported separately"}}
 
 
 def private_write(path, body):
@@ -377,7 +475,7 @@ def main():
     private_write(args.out / "report.private.json", json.dumps(report, indent=2) + "\n")
     import io
     text = io.StringIO()
-    columns = ("ledger_id", "created_at", "account", "library", "listing", "job", "provider", "model", "feature", "units", "unit_cost_cents", "recorded_cents", "cost_basis", "stage", "retry", "failed_or_refused_context", "supplier_request_ids", "tariff_versions", "price_effective_date", "invoice_verified")
+    columns = ("ledger_id", "created_at", "account", "library", "listing", "job", "provider", "model", "feature", "units", "unit_cost_cents", "recorded_cents", "cost_basis", "stage", "retry", "failed_or_refused_context", "uncertain_dispatch_context", "recorded_without_matching_attempt_hold", "supplier_request_ids", "tariff_versions", "price_effective_date", "invoice_verified")
     writer = csv.DictWriter(text, fieldnames=columns, extrasaction="ignore")
     writer.writeheader()
     for row in report["ledger"]:

@@ -10,8 +10,16 @@ Execute the SQL through the authenticated Supabase MCP `execute_sql` against the
 
 ```sh
 python3 tools/audit/api_cost_report.py --snapshot /private/snapshot.json --events /private/owner-events.json --out /private/new-cost-report
-python3 -m unittest discover -s tools/audit -p test_api_cost_report.py
+python3 -m unittest discover -s tools/audit -p "test_api_cost_*.py"
+# Disposable real-PostgreSQL proof of the export path (owned cluster, every migration, no network):
+python3 tools/audit/api_cost_report_pg.py --evidence-dir "/Volumes/Rendprop Files/Builds/Active/<build>-api-cost-report-pg"
 ```
+
+Snapshot **schema 2** (2026-10-16) adds the service-only `provider_attempt_receipts`
+journal (migration `20261016192846`, live as history `20261016202008`). The report
+still accepts schema-1 snapshots and reports that journal as *not exported*,
+never as zero attempts. Schema 2 also carries the ledger meta keys
+`provider_attempt_id`, `result`, `price_basis`, `billing_reconciled` and `erase_job_id`.
 
 Alternatively, `--collect-project <20-letter-project-ref>` performs one call to Supabase's [read-only query endpoint](https://supabase.com/docs/reference/api/v1-read-only-query). It reads a Management API credential from the environment-variable NAME selected by `--token-env` (default `SUPABASE_ACCESS_TOKEN`). No credential is accepted in argv. The read-only endpoint is experimental and requires database-read permission; missing permissions fail without retry or a write-endpoint fallback. The live audit used MCP; this collector has closed transport tests, not a claimed live transport acceptance. Local CLI `db query --linked` was unsuitable on this machine (missing link, then IPv6 unavailable); those first-red diagnostics are retained privately.
 
@@ -32,6 +40,11 @@ Every array has a matching database count and a50,000-row bound. An incomplete s
 | Supplier invoice | Separately supplied invoice evidence | Comparison only; never added again to ledger |
 | Fixed infrastructure invoice | Separate platform/hosting/storage/compute bill | Separate infrastructure section |
 | Spatial/presenter/erase rollup | Other authoritative product journals, potentially overlapping ledger/holds | Reported separately; not blindly added |
+| Provider attempt — `intent` / `transport_unknown` | A durable pre-dispatch intent without a confirmed terminal outcome (not proof of supplier dispatch), or a lost reply | **Unknown amount; never zero, never priced.** Listed under `provider_attempt_journal.unknown_outcome_attempts` |
+| Provider attempt — `hit` / `no_record` estimate | Configured catalog amount recorded by `provider_attempt_finish` | Never added; the ledger row carrying `meta.provider_attempt_id` is the consumption record. A priced attempt with no retained ledger row matching its organization/provider/model (and declared stage, when present) is listed as a reconciliation item; mismatched IDs remain in `mismatched_ledger_ids` |
+| Provider attempt — `http_error` / `invalid_response` | Answered refusal or unusable reply | No recorded charge; a supplier may still bill an answered call. Listed, not priced |
+| Ledger row with `meta.outcome = uncertain` | A writer that books in `finally` (Studio edit-plan/captions) recorded the attempt after a lost reply — or after a funding refusal before any dispatch | Stays in the total (never discounted); disclosed as `uncertain_dispatch_context`. With no matching serving hold it is also `recorded_without_matching_attempt_hold` (possibly never dispatched) |
+| Two ledger rows with one attempt identity | Same org/request_key/stage/provider/model (edge receipts carry no idempotency key) | Both stay in the total; listed under `possible_duplicate_attempt_rows` for investigation |
 
 Serving rows reconcile by immutable ledger ID, or one exact org/request-key/stage/provider/model match. A null `ledger_id` alone does not imply missing spend. Matching app-video/serving holds are not added twice; a larger unmatched reserve retains its excess. Account-deletion video receipt tombstones with missing ledger rows are disclosed separately. No supplier refund, discount, failed-call cost or actual invoice amount is invented. `price_recorded_at` is the recorded row time; the report leaves the tariff's effective date unknown rather than mislabeling that timestamp as a verified price date.
 
@@ -45,10 +58,10 @@ Serving rows reconcile by immutable ledger ID, or one exact org/request-key/stag
 | Ask AI: Anthropic/OpenAI | `coach/index.ts`, ledger | Provider usage evidence can exist, while recorded charge is explicitly route-catalog estimate. No automatic supplier-invoice evidence. |
 | Copy, fairness, planning, room vision, QC | `ai-copy`, `property-video-plan`, `ai-video` QC, `ai-photo/photo-qc-runner`, Studio edit-plan production | Copy retries and each answered judge have separate stages. Photo judge records a complete token bound and usage metadata; strict parse/refusal remains paid. Legacy pipeline uses usage-derived rates. Price versions/IDs are incomplete historically. |
 | Studio captions: OpenAI; speech: ElevenLabs/OpenAI routes | `studio/media-analysis-production.ts`, `ai-voice/index.ts`, providers | Metered duration/characters and configured rate estimates; request IDs and supplier tier/discounts not universal. On-device Apple speech is distinct and has no app-provider ledger charge. |
-| Studio presenter/Higgsfield | `studio/presenter-execution.ts`, `studio_presenter_jobs` | Independent immutable quote/held/charged/billing-reference journal, exported separately. Not central-ledger coverage merely because a provider appears in the catalog. Current live audit had zero presenter jobs. |
+| Studio presenter/Higgsfield | `studio/presenter-execution.ts`, `studio_presenter_jobs` | Independent immutable quote/held/charged/billing-reference journal, exported separately. Not central-ledger coverage merely because a provider appears in the catalog. The retained historical audit had zero presenter jobs; that is not a current live observation. |
 | Higgsfield routed generation | `_shared/providers/higgsfield.ts`, funded route contract | Adapter exists; eligibility/consent/pricing still required. Enabled catalog entries are not evidence that a call occurred. No live spending probe made by this audit. |
 | WorldLabs | Catalog seed/probe; absent from `_shared/providers/index.ts` registry | A configured route is not an implemented generation adapter. Do not report invented usage/zero-price success. |
-| Property records: RentCast | `property/index.ts`, `_shared/property/rentcast.ts` | Cache hits do not rebuy; answered misses/hits log modelled unit cost. Exceptions/uncertain supplier billing have no durable per-call receipt; no invoice integration. No property-lookup rows existed in the audited ledger. |
+| Property records: RentCast | `property/index.ts` (property28), `_shared/property/rentcast.ts`; `provider_attempt_receipts` via `provider_attempt_begin/finish` | Cache hits do not rebuy. Since property28 every dispatch has a durable intent and a typed terminal outcome (hit/no_record priced at the configured 7¢ estimate; http_error/invalid_response/transport_unknown unpriced). The `x-request-id` lives only on the receipt, not the ledger row. The ledger row's `billing_org_id` comes from `library_billing_org(org_id)` while the receipt's comes from `library_access(actor, org)`; for a Team member they can differ (code read, not exercised). No invoice integration. |
 | Nearby/location/maps | Native MapKit/CLGeocoder; `tour-host/src/nearby-places.ts` OpenStreetMap/Overpass | No app cost ledger or provider invoice import. Do not infer an actual invoice of zero. No paid Google Places request was found in these routes. |
 | Music | Native bundled catalog; Studio uploaded/licensed assets; CPU `music_catalog.py` | No per-use generative-music provider call found on these paths. Licensing/fixed acquisition costs are external infrastructure/content expenses, not fabricated API consumption. |
 | Python render/enhance | `pipeline/cost_ledger.py`, `cost_spool.py`, `worker/db.py` | Stable keys, bounded retries, persistent spool and degraded stop preserve failed ledger writes. Only supplied local spool is visible here; other running hosts' spools are unknown. |
@@ -56,7 +69,7 @@ Serving rows reconcile by immutable ledger ID, or one exact org/request-key/stag
 | R2, uploads, storage, egress, Stream, Images, Workers/DO, public hosting | R2 helpers, media budgets, `metering`, worker Stream storage estimate | Financial budgets plus `owner_testing_media_usage` and `media_serving_usage` count conservative authority requests/admitted bytes, not supplier dollars. The owner and general-product counters are exported separately under `unpriced_usage`; no tariff is invented and they never increase ledger totals. Stream storage is estimated once despite recurring cost; delivery watch metrics are not actual billed egress. Images transforms, request/storage tiers, CPU, fixed plans, bandwidth and domain bills require external account-level invoice/usage import. |
 | Supabase DB/Auth/Edge/backups; Resend email; Apple membership/commissions | Supabase platform; `notify/email.ts`; external supplier statements | No all-app dollar journal or fixed-cost invoice import. Provider API health does not establish billing completeness. |
 
-The existing admin provider inventory contains legacy example models/prices and presence-based coverage claims. It is not the price source for this report. Actual selected ledger models, persisted route/tariff versions and explicit unknowns are authoritative for this export. No customer-facing admin runtime was changed in this lane.
+The existing admin provider inventory contains legacy example models/prices and presence-based coverage claims. It is not the price source for this report. Actual selected ledger models, persisted route/tariff versions and explicit unknowns are authoritative for this export. This candidate additively changes the admin spend response; no hosted deployment is claimed by the source patch or this offline verification.
 
 ## Functional test blockers versus accounting
 

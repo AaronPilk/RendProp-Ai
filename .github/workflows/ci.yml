@@ -1844,7 +1844,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 tools/audit/test_api_cost_report.py -v 2>&1 | tee "$RUNNER_TEMP/rendprop-api-cost-report-unit.log"
+          python3 -m unittest discover -s tools/audit -p 'test_api_cost*.py' -v 2>&1 | tee "$RUNNER_TEMP/rendprop-api-cost-report-unit.log"
+      - name: Cost export preserves real attempt journals and billing attribution
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 tools/audit/api_cost_report_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-api-cost-report-pg"
       - name: Retain actual background authority and privacy receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1886,6 +1893,8 @@ jobs:
             ${{ runner.temp }}/rendprop-property-static-compose-repair-pg/**
             ${{ runner.temp }}/rendprop-video-submission-receipts-pg/**
             ${{ runner.temp }}/rendprop-api-cost-report-unit.log
+            ${{ runner.temp }}/rendprop-api-cost-report-pg/receipt.json
+            ${{ runner.temp }}/rendprop-api-cost-report-pg/*.log
           if-no-files-found: warn
 
   python-worker:

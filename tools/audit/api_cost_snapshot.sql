@@ -8,9 +8,9 @@ ledger as(
   j.listing_id,j.status as job_state,
   coalesce((select jsonb_object_agg(k,v) from jsonb_each(l.meta) m(k,v)
    where k=any(array['request_key','request_id','provider_request_id','stage','task','route_id',
-    'tariff','price_version','cost_basis','price_estimated','outcome','failed','attempt','attempts',
+    'tariff','price_version','cost_basis','price_basis','price_estimated','billing_reconciled','outcome','result','failed','attempt','attempts',
     'input_tokens','output_tokens','provider_usage','photo_check_id','evidence_id',
-    'app_video_reservation_id','kind','verdict','quality_profile'])),'{}') as meta
+    'app_video_reservation_id','provider_attempt_id','erase_job_id','kind','verdict','quality_profile'])),'{}') as meta
  from public.cost_ledger l left join public.render_jobs j on j.id=l.job_id
  order by l.created_at,l.id limit(select n+1 from limits)
 ),
@@ -43,6 +43,16 @@ spatial as(
  select id,org_id,listing_id,status,cost_cents::text,max_cost_cents::text,created_at
  from public.spatial_jobs order by created_at,id limit(select n+1 from limits)
 ),
+-- Service-only provider attempt journal (migration 20261016192846). An
+-- unresolved intent or lost transport is an unknown outcome with no amount;
+-- a priced hit/no_record is a configured catalog estimate, never an invoice.
+-- No address, payload, URL or credential lives on this table.
+provider_attempts as(
+ select id,actor_id,org_id,billing_org_id,provider,stage,model,outcome,http_status,
+  provider_request_id::text,estimated_cents::text,price_basis,ledger_status,actual_cents::text,
+  created_at,terminal_at
+ from public.provider_attempt_receipts order by created_at,id limit(select n+1 from limits)
+),
 other_journals as(
  select 'presenter' as kind,id::text as id,org_id,listing_id,state,
   price_version,quote_cents::text as priced_cents,held_cents::text as held_cents,
@@ -62,7 +72,7 @@ other_journals as(
  left join public.video_erase_batches b on b.id=j.batch_id
  order by created_at,id limit(select n+1 from limits)
 )
-select jsonb_build_object('schema',1,'currency','USD','exported_at',now(),
+select jsonb_build_object('schema',2,'currency','USD','exported_at',now(),
  'authority',jsonb_build_object('database_role',current_user,
   'bypass_rls',coalesce((select rolbypassrls or rolsuper from pg_catalog.pg_roles where rolname=current_user),false)),
  'max_rows_per_table',(select n from limits),
@@ -72,6 +82,7 @@ select jsonb_build_object('schema',1,'currency','USD','exported_at',now(),
   'photo_scope',(select count(*)from public.photo_edit_evidence e left join public.photo_quality_checks q on q.evidence_id=e.id),
   'video_scope',(select count(*)from public.property_video_job_sources),
   'spatial',(select count(*)from public.spatial_jobs),
+  'provider_attempts',(select count(*)from public.provider_attempt_receipts),
   'other_journals',(select count(*)from public.studio_presenter_jobs)+(select count(*)from public.video_erase_jobs)+(select count(*)from public.video_erase_stages)),
  'ledger',coalesce((select jsonb_agg(ledger)from ledger),'[]'),
  'serving',coalesce((select jsonb_agg(serving)from serving),'[]'),
@@ -79,6 +90,7 @@ select jsonb_build_object('schema',1,'currency','USD','exported_at',now(),
  'photo_scope',coalesce((select jsonb_agg(photo_scope)from photo_scope),'[]'),
  'video_scope',coalesce((select jsonb_agg(video_scope)from video_scope),'[]'),
  'spatial',coalesce((select jsonb_agg(spatial)from spatial),'[]'),
+ 'provider_attempts',coalesce((select jsonb_agg(provider_attempts)from provider_attempts),'[]'),
  'other_journals',coalesce((select jsonb_agg(other_journals)from other_journals),'[]'),
  'unpriced_usage',jsonb_build_object(
   'metering_watch_ms',(select coalesce(sum(watch_ms),0)::text from public.metering),

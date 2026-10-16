@@ -102,6 +102,40 @@ Source: `public.cost_ledger` (read with the service role AFTER the admin check).
 * `truncated` is `true` if the window held more ledger rows than the read cap
   (50 000); the totals are then a lower bound for that window.
 
+#### Additive fields (admin42 candidate, 2026-10-16) — ignore if absent
+
+Existing fields and their meanings are unchanged; a client that decodes only
+the fields above keeps working.
+
+* `by_billing_org` — same shape as `by_org`, but keyed by **who pays**:
+  `cost_ledger.billing_org_id` (stamped by the `z_team_billing_liability`
+  trigger; a Team member's library bills to the team org, and an anonymised
+  deleted-account row keeps its billing org after `org_id` is nulled), falling
+  back to `org_id` for rows written before the column existed. `by_org` stays
+  the workspace view.
+* `attribution` — `{ by_org, by_billing_org, rows_billed_outside_workspace }`,
+  the one-line meaning of each view and how many rows differ between them.
+* `ledger_rows_unreadable_amount` — rows in the window whose `total_cents`
+  was not a finite number; they are skipped and counted, never treated as 0.
+* `unreconciled` — liability the ledger total cannot see, for the same window.
+  **Nothing in it is added to `total_cents`, priced from a tariff, or netted.**
+  * `serving_holds.groups[]` — `serving_cost_reservations` grouped by
+    `{ state, budget_source, linked_to_ledger }` with `rows` and `hold_cents`;
+    `open_rows_not_linked_to_ledger` / `open_hold_cents_not_linked_to_ledger`;
+    `released_rejected_rows` (journal-confirmed releases, count only). A hold
+    is linked by `ledger_id` only for exact single-match ceiling settlements,
+    so an unlinked `succeeded` funding hold is a reconciliation item, not proof
+    of a missing charge.
+  * `app_video_holds` — `unsettled_rows` / `unsettled_hold_cents` (no ledger
+    row, not released), `settled_rows`, `released_rejected_rows`.
+  * `provider_attempts` — `provider_attempt_receipts` (property lookups):
+    `by_outcome`, `unknown_outcome_rows` (`intent` + `transport_unknown`),
+    `unknown_outcome_cents: null` (unknown is never 0), `estimated_rows` /
+    `estimated_cents` (configured catalog estimates on hit/no_record, never an
+    invoice) and `estimated_rows_not_recorded_in_ledger` /
+    `estimated_cents_not_recorded_in_ledger`.
+  * every block carries its own `truncated` flag (same 50 000-row read cap).
+
 ### The `coverage` object — read this before believing `total_cents`
 
 `total_cents` is **the ledger's number, not the invoice**. The console must

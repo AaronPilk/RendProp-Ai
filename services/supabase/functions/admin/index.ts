@@ -87,6 +87,16 @@ import { APP_AI_UNIT_CENTS } from "../_shared/ledger.ts";
 import { probeAll } from "./probe.ts";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { handleFunnel } from "./funnel.ts";
+import {
+  aggregateLedger,
+  bump,
+  summarizeUnreconciled,
+  type AppVideoHoldRow,
+  type Bucket,
+  type LedgerRow,
+  type ProviderAttemptRow,
+  type ServingHoldRow,
+} from "./spend-summary.ts";
 
 // A console refresh is a handful of aggregate queries; 60/min per admin is
 // generous for a human and still bounds an accidental poll loop.
@@ -745,22 +755,12 @@ async function pageAll<T>(
   return { rows, truncated: true };
 }
 
-interface LedgerRow {
-  id: string;
-  org_id: string | null;
-  provider: string | null;
-  feature: string | null;
-  model: string | null;
-  total_cents: number | string | null;
-  created_at: string;
-}
-
 function readLedgerSince(db: SupabaseClient, sinceIso: string) {
   return pageAll<LedgerRow>(
     (from, to) =>
       db
         .from("cost_ledger")
-        .select("id, org_id, provider, feature, model, total_cents, created_at")
+        .select("id, org_id, billing_org_id, provider, feature, model, total_cents, created_at")
         .gte("created_at", sinceIso)
         .order("id", { ascending: true })
         .range(from, to),
@@ -768,16 +768,46 @@ function readLedgerSince(db: SupabaseClient, sinceIso: string) {
   );
 }
 
-interface Bucket {
-  total: number;
-  rows: number;
+// The three journals that can hold supplier liability WITHOUT a ledger row.
+// Read with the same paging/truncation discipline as the ledger; the summary
+// never prices them and never adds them to total_cents.
+function readServingHoldsSince(db: SupabaseClient, sinceIso: string) {
+  return pageAll<ServingHoldRow>(
+    (from, to) =>
+      db
+        .from("serving_cost_reservations")
+        .select("id, org_id, billing_org_id, state, budget_source, ledger_id, hold_cents, created_at")
+        .gte("created_at", sinceIso)
+        .order("id", { ascending: true })
+        .range(from, to),
+    "Serving holds",
+  );
 }
 
-function bump(map: Map<string, Bucket>, key: string, cents: number): void {
-  const b = map.get(key) ?? { total: 0, rows: 0 };
-  b.total += cents;
-  b.rows += 1;
-  map.set(key, b);
+function readAppVideoHoldsSince(db: SupabaseClient, sinceIso: string) {
+  return pageAll<AppVideoHoldRow>(
+    (from, to) =>
+      db
+        .from("app_video_cost_reservations")
+        .select("id, hold_cents, cost_ledger_id, released_at, created_at")
+        .gte("created_at", sinceIso)
+        .order("id", { ascending: true })
+        .range(from, to),
+    "App video holds",
+  );
+}
+
+function readProviderAttemptsSince(db: SupabaseClient, sinceIso: string) {
+  return pageAll<ProviderAttemptRow>(
+    (from, to) =>
+      db
+        .from("provider_attempt_receipts")
+        .select("id, provider, outcome, estimated_cents, ledger_status, created_at")
+        .gte("created_at", sinceIso)
+        .order("id", { ascending: true })
+        .range(from, to),
+    "Provider attempts",
+  );
 }
 
 function share(part: number, whole: number): number {
@@ -822,29 +852,33 @@ async function handleSpend(req: Request): Promise<Response> {
   const fromIso = from.toISOString();
   const db = adminClient();
 
-  const [{ rows, truncated }, coverage] = await Promise.all([
+  const [{ rows, truncated }, coverage, serving, video, attempts] = await Promise.all([
     readLedgerSince(db, fromIso),
     buildCoverage(db),
+    readServingHoldsSince(db, fromIso),
+    readAppVideoHoldsSince(db, fromIso),
+    readProviderAttemptsSince(db, fromIso),
   ]);
 
-  const byProvider = new Map<string, Bucket>();
-  const byFeature = new Map<string, Bucket>();
-  const byOrg = new Map<string, Bucket>();
-  let total = 0;
+  // Pure aggregation (admin/spend-summary.ts): workspace view (`by_org`,
+  // cost_ledger.org_id) AND paying-account view (`by_billing_org`,
+  // cost_ledger.billing_org_id, falling back to org_id for legacy rows).
+  const agg = aggregateLedger(rows);
+  const { byProvider, byFeature, byOrg, byBillingOrg } = agg;
+  const total = agg.total;
 
-  for (const r of rows) {
-    const cents = Number(r.total_cents ?? 0);
-    if (!Number.isFinite(cents)) continue;
-    total += cents;
-    bump(byProvider, r.provider ?? "unknown", cents);
-    bump(byFeature, r.feature ?? "unknown", cents);
-    bump(byOrg, r.org_id ?? "", cents); // "" == unattributed (org_id is nullable)
-  }
-  total = round4(total);
+  const unreconciled = summarizeUnreconciled({
+    serving: serving.rows,
+    servingTruncated: serving.truncated,
+    video: video.rows,
+    videoTruncated: video.truncated,
+    attempts: attempts.rows,
+    attemptsTruncated: attempts.truncated,
+  });
 
   // Org names for the ids we actually saw. Org-level only: id + name + plan,
   // never a member.
-  const orgIds = [...byOrg.keys()].filter((k) => k !== "");
+  const orgIds = [...new Set([...byOrg.keys(), ...byBillingOrg.keys()])].filter((k) => k !== "");
   const orgMeta = new Map<string, { name: string; plan: string | null }>();
   for (let i = 0; i < orgIds.length; i += 200) {
     const chunk = orgIds.slice(i, i + 200);
@@ -858,6 +892,18 @@ async function handleSpend(req: Request): Promise<Response> {
   const sortDesc = <T extends { total_cents: number }>(a: T[]): T[] =>
     a.sort((x, y) => y.total_cents - x.total_cents);
 
+  const orgBuckets = (map: Map<string, Bucket>) =>
+    sortDesc(
+      [...map.entries()].map(([id, b]) => ({
+        org_id: id === "" ? null : id,
+        org_name: id === "" ? "(unattributed)" : (orgMeta.get(id)?.name ?? "(deleted workspace)"),
+        plan: id === "" ? null : (orgMeta.get(id)?.plan ?? null),
+        total_cents: round4(b.total),
+        rows: b.rows,
+        share: share(b.total, total),
+      })),
+    );
+
   return json({
     window: win,
     from: fromIso,
@@ -865,6 +911,7 @@ async function handleSpend(req: Request): Promise<Response> {
     generated_at: nowIso(),
     total_cents: total,
     ledger_rows: rows.length,
+    ledger_rows_unreadable_amount: agg.unreadableRows,
     truncated,
     by_provider: sortDesc(
       [...byProvider.entries()].map(([key, b]) => ({
@@ -884,16 +931,20 @@ async function handleSpend(req: Request): Promise<Response> {
         share: share(b.total, total),
       })),
     ),
-    by_org: sortDesc(
-      [...byOrg.entries()].map(([id, b]) => ({
-        org_id: id === "" ? null : id,
-        org_name: id === "" ? "(unattributed)" : (orgMeta.get(id)?.name ?? "(deleted workspace)"),
-        plan: id === "" ? null : (orgMeta.get(id)?.plan ?? null),
-        total_cents: round4(b.total),
-        rows: b.rows,
-        share: share(b.total, total),
-      })),
-    ),
+    // Workspace the call ran in (cost_ledger.org_id) — unchanged contract.
+    by_org: orgBuckets(byOrg),
+    // Account that pays for it (cost_ledger.billing_org_id → org_id). A Team
+    // member's library bills to the team org; an anonymised deleted-account
+    // row keeps its billing org after org_id is nulled.
+    by_billing_org: orgBuckets(byBillingOrg),
+    attribution: {
+      by_org: "workspace: cost_ledger.org_id",
+      by_billing_org: "paying account: cost_ledger.billing_org_id, falling back to org_id for rows stamped before the column existed",
+      rows_billed_outside_workspace: agg.billedElsewhereRows,
+    },
+    // Liability the ledger total cannot see (same window). Never added to
+    // total_cents; unknown outcomes carry no amount.
+    unreconciled,
     coverage,
   });
 }
