@@ -106,6 +106,50 @@ class ProviderAttemptJournalTests(unittest.TestCase):
             self.assertEqual(journal["priced_attempts_without_retained_ledger_row"], [])
             self.assertEqual(r["totals"]["recorded_ledger_cents"], "7.0000")
 
+    def test_same_library_attempt_cannot_reconcile_ledger_billed_to_another_account(self):
+        f = fixture()
+        f["provider_attempts"] = [attempt(id="attempt-hit", outcome="hit", http_status=200,
+            estimated_cents="7", price_basis="configured_catalog_estimate_not_invoice", ledger_status="recorded")]
+        f["ledger"] = [ledger(billing_org_id="another-team")]
+        r = accounting_report(counted(f)); journal = r["provider_attempt_journal"]
+        entry = journal["priced_attempts"][0]
+        self.assertEqual(entry["retained_ledger_ids"], [])
+        self.assertEqual(entry["mismatched_ledger_ids"], ["line1"])
+        self.assertEqual(journal["priced_attempts_without_retained_ledger_row"], [entry])
+        self.assertEqual(journal["priced_attempts_without_retained_ledger_cents"], "7.0000")
+        self.assertNotEqual(entry["account"], r["ledger"][0]["account"])
+        self.assertEqual(r["totals"]["recorded_ledger_cents"], "7.0000", "stored money is not moved or discounted")
+
+    def test_legacy_billing_fallback_is_independent_on_each_side(self):
+        for attempt_billing, ledger_billing in [(None, None), (None, "org1"), ("org1", None), ("org1", "org1"), ("team1", "team1"), ("missing", "missing")]:
+            with self.subTest(attempt_billing=attempt_billing, ledger_billing=ledger_billing):
+                f = fixture()
+                row = attempt(id="attempt-hit", outcome="hit", http_status=200, estimated_cents="7",
+                    price_basis="configured_catalog_estimate_not_invoice", ledger_status="recorded", billing_org_id=attempt_billing)
+                line = ledger(billing_org_id=ledger_billing)
+                if attempt_billing == "missing": del row["billing_org_id"]
+                if ledger_billing == "missing": del line["billing_org_id"]
+                f["provider_attempts"], f["ledger"] = [row], [line]
+                r = accounting_report(counted(f)); journal = r["provider_attempt_journal"]
+                self.assertEqual(journal["priced_attempts"][0]["retained_ledger_ids"], ["line1"])
+                self.assertEqual(journal["priced_attempts"][0]["mismatched_ledger_ids"], [])
+                self.assertEqual(journal["priced_attempts_without_retained_ledger_row"], [])
+                self.assertEqual(journal["priced_attempts"][0]["account"], r["ledger"][0]["account"])
+                self.assertEqual(r["totals"]["recorded_ledger_cents"], "7.0000")
+
+    def test_one_legacy_null_billing_identity_cannot_override_the_other_stored_account(self):
+        for attempt_billing, ledger_billing in [(None, "team1"), ("team1", None)]:
+            with self.subTest(attempt_billing=attempt_billing, ledger_billing=ledger_billing):
+                f = fixture()
+                f["provider_attempts"] = [attempt(id="attempt-hit", outcome="hit", http_status=200, estimated_cents="7",
+                    price_basis="configured_catalog_estimate_not_invoice", ledger_status="recorded", billing_org_id=attempt_billing)]
+                f["ledger"] = [ledger(billing_org_id=ledger_billing)]
+                r = accounting_report(counted(f)); journal = r["provider_attempt_journal"]
+                self.assertEqual(journal["priced_attempts"][0]["retained_ledger_ids"], [])
+                self.assertEqual(journal["priced_attempts"][0]["mismatched_ledger_ids"], ["line1"])
+                self.assertEqual(journal["priced_attempts_without_retained_ledger_cents"], "7.0000")
+                self.assertEqual(r["totals"]["recorded_ledger_cents"], "7.0000")
+
     def test_refused_attempts_carry_no_charge_and_malformed_journals_refuse(self):
         f = fixture()
         f["provider_attempts"] = [attempt(id="a-err", outcome="http_error", http_status=500, terminal_at="2026-10-16T00:00:03Z")]

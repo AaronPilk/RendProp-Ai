@@ -197,15 +197,20 @@ def provider_attempt_journal(attempts, ledger_by_attempt):
             amount = money(row.get("estimated_cents"))
             if amount <= ZERO or row.get("price_basis") != "configured_catalog_estimate_not_invoice":
                 raise ValueError("Priced attempt needs a positive configured estimate")
-            # A metadata ID alone is not cross-library accounting authority.
+            # A metadata ID alone is not cross-library/paying-account authority.
             # Keep a mismatched candidate visible, but never let it hide this
             # journal's missing consumption row or move money between accounts.
             identity = (row.get("org_id"), row.get("provider"), row.get("model"))
+            # Legacy rows independently fall back to their own workspace. An
+            # explicit stored payer must never be borrowed from the other row.
+            billing_identity = row.get("billing_org_id") or row.get("org_id")
             retained, mismatched = [], []
             for candidate in ledger_by_attempt.get(row["id"], []):
                 declared_stage = (candidate.get("meta") or {}).get("stage")
                 matches = (all(isinstance(value, str) and value for value in identity)
                            and (candidate.get("org_id"), candidate.get("provider"), candidate.get("model")) == identity
+                           and isinstance(billing_identity, str) and bool(billing_identity)
+                           and (candidate.get("billing_org_id") or candidate.get("org_id")) == billing_identity
                            and (declared_stage is None or declared_stage == row.get("stage")))
                 (retained if matches else mismatched).append(candidate)
             entry = {**line, "estimated_cents": cents(amount), "price_basis": "configured_catalog_estimate_not_invoice",
