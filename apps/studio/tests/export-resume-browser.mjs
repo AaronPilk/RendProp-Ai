@@ -28,7 +28,7 @@ import {exportLocalVideo,exportFormats} from ${JSON.stringify(join(root, "src/ed
 import {inspectFile} from ${JSON.stringify(join(root, "src/editor/media.ts"))};
 import {validateDraft} from ${JSON.stringify(join(root, "src/editor/model.ts"))};
 let sources=[],voice,narrated=false,url,exportController,decodeIndex=0;
-const fixture=window.fixture={ready:false,error:null,result:null,trace:[],exporting:false,decodeDelays:[],revision:1,configure:value=>{narrated=value;},cancel:()=>exportController?.abort(new Error("Fixture export cancelled")),
+const fixture=window.fixture={ready:false,error:null,result:null,trace:[],exporting:false,decodeDelays:[],revision:1,configure:(value,photoClockControl=false)=>{narrated=value;fixture.photoClockControl=photoClockControl;},cancel:()=>exportController?.abort(new Error("Fixture export cancelled")),
   delayDecode:async(signal,kind)=>{
     const index=decodeIndex++,delay=fixture.decodeDelays[index]??0;
     log("decode.start",{index,kind,delay});
@@ -126,7 +126,7 @@ document.querySelector("#run").onclick=async()=>{
   fixture.error=null;fixture.errorName=null;fixture.errorCause=null;fixture.result=null;fixture.trace=[];fixture.previousClockRead=undefined;fixture.clockWait=undefined;fixture.resources=[];fixture.tracks=[];fixture.exporting=true;fixture.revision=1;decodeIndex=0;exportController=new AbortController();document.querySelector("#download").hidden=true;
   if(url)URL.revokeObjectURL(url);
   try{
-    const draft=validateDraft({schema:1,id:"resume-regression",revision:1,ratio:"9:16",title:"",audio:"original",clips:sources.map((local,index)=>({id:"clip-"+index,source:local.source,start:0,end:index===1?4:.5,speed:index===1?2:1,caption:"",focusX:.5,focusY:.5,transition:index===1?"dissolve":index===2?"whip":"cut"})),...(narrated?{narration:{resultId:"10000000-0000-4000-8000-000000000001",label:"Synthetic narration",offset:.15,volume:1,wordCaptions:false,words:[]}}:{})});
+    const draft=validateDraft({schema:1,id:"resume-regression",revision:1,ratio:"9:16",title:"",audio:"original",clips:sources.map((local,index)=>({id:"clip-"+index,source:local.source,start:0,end:index===1?(fixture.photoClockControl?2:4):.5,speed:index===1?(fixture.photoClockControl?1:2):1,caption:"",focusX:.5,focusY:.5,transition:index===1?"dissolve":index===2?"whip":"cut"})),...(narrated?{narration:{resultId:"10000000-0000-4000-8000-000000000001",label:"Synthetic narration",offset:.15,volume:1,wordCaptions:false,words:[]}}:{})});
     const result=await exportLocalVideo({draft,media:new Map(sources.map((local,index)=>["clip-"+index,local])),narrationBlob:narrated?voice:undefined,format:exportFormats().find(format=>format.extension==="mp4"),signal:exportController.signal,currentDraft:()=>({...draft,revision:fixture.revision}),onProgress:()=>{}});
     url=URL.createObjectURL(result.blob);const download=document.querySelector("#download");download.href=url;download.hidden=false;fixture.result={duration:result.duration,bytes:result.blob.size};
   }catch(error){fixture.error=error.message;fixture.errorName=error.name;fixture.errorCause=error.cause;}finally{fixture.exporting=false;}
@@ -254,8 +254,13 @@ document.querySelector("#run").onclick=async()=>{
     const png = await page.evaluate(() => ["#77509c", "red"].map(color => { const canvas = document.createElement("canvas"); canvas.width = 800; canvas.height = 450; const ctx = canvas.getContext("2d"); ctx.fillStyle = color; ctx.fillRect(0, 0, 800, 450); return canvas.toDataURL().split(",")[1]; }));
     await page.locator("#sources").setInputFiles([{ name: "opening.png", mimeType: "image/png", buffer: Buffer.from(png[0], "base64") }, { name: "original.mp4", mimeType: "video/mp4", buffer: await readFile(source) }, { name: "closing.png", mimeType: "image/png", buffer: Buffer.from(png[1], "base64") }]);
     await page.locator("#voice").setInputFiles(narration); await expect.poll(() => page.evaluate(() => window.fixture.ready)).toBe(true);
+    // Isolate the historical photo-clock control from live 2x audio decoding:
+    // its first two source seconds play at 1x through the real buffered-original
+    // path, retaining the same two-second video span and three-second timeline.
+    // Every other variant keeps the complete four-second source at 2x, including
+    // the fixed/cadence/late-frame audio, timing, transition and cleanup oracles.
     for (const narrated of [true, false]) {
-      await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant }); await page.locator("#run").click();
+      await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated, variant === "clock-baseline"); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant }); await page.locator("#run").click();
       let attempt;
       try {
         const outcome = () => page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending"));
@@ -308,6 +313,8 @@ document.querySelector("#run").onclick=async()=>{
         assert(Number.isFinite(avDurationGap) && avDurationGap <= 2 / 30,
           `Audio and picture stream durations must agree within two frames: ${avDurationGap}s`);
       }
+      assert.equal(trace.find(event => event.event === "play.call")?.rate, variant === "clock-baseline" ? 1 : 2,
+        "Only the photo-clock negative control uses 1x; all other exports must exercise actual 2x playback");
       assert.equal(trace.filter(event => event.event === "resume.return").length, 2);
       assert(trace.filter(event => event.event === "resume.return").every(event => event.state === "recording"));
       if (["cadence-baseline", "late-frames"].includes(variant)) {
