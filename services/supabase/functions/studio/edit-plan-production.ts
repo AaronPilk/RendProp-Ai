@@ -15,7 +15,7 @@ const MAX_PROVIDER_BYTES = 64 * 1024;
  * a smaller hard ceiling. The generic adapter buffers the entire response, so
  * this endpoint reads its tiny text-only response through a bounded reader.
  * No SDK retries, chain failover, model tools, media blocks or arbitrary URLs. */
-export async function generateEditPlanText(step: RouteStep, system: string, turn: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<string> {
+export async function generateEditPlanText(step: RouteStep, system: string, turn: string, fetcher: typeof fetch = fetch, signal?: AbortSignal, onFetchAttempt?: () => void): Promise<string> {
   const params = { ...paramsOf(step), max_output_tokens: EDIT_PLAN_LIMITS.tokens };
   let url: string, headers: Record<string, string>, body: Record<string, unknown>;
   if (step.provider === "anthropic") {
@@ -38,7 +38,12 @@ export async function generateEditPlanText(step: RouteStep, system: string, turn
   }
   let response: Response;
   signal?.throwIfAborted();
-  try { response = await fetcher(url, { method: "POST", headers, body: JSON.stringify(body), redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) }); }
+  try {
+    const init: RequestInit = { method: "POST", headers, body: JSON.stringify(body), redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) };
+    init.signal?.throwIfAborted();
+    onFetchAttempt?.();
+    response = await fetcher(url, init);
+  }
   catch { throw new HttpError(502, "The editing request did not finish. No automatic retry was started."); }
   if (!response.ok) { await response.body?.cancel(); throw new HttpError(502, "The editing service could not return an edit. No automatic retry was started."); }
   if (Number(response.headers.get("content-length")) > MAX_PROVIDER_BYTES) { await response.body?.cancel(); throw new HttpError(502, "The editing service returned too much data."); }
@@ -73,6 +78,8 @@ export async function generateEditPlanText(step: RouteStep, system: string, turn
 export function editPlanProduction(context: StudioContext, task: "copy.edit_plan" | "copy.prompt_enhancement" = EDIT_PLAN_TASK): EditPlanDependencies {
   const { admin, userId, orgId } = context;
   let requestKey: string | null = null;
+  // Per-request transport evidence, not confirmation of supplier acceptance.
+  let fetchAttempted = false;
   const limit = () => Number(Deno.env.get("STUDIO_EDIT_PLANNER_MAX_ESTIMATED_CENTS") ?? "0");
   const enabled = () => Deno.env.get("STUDIO_EDIT_PLANNER_ENABLED") === "true" && Number.isFinite(limit()) && limit() > 0 && limit() <= 10;
   return {
@@ -115,13 +122,14 @@ export function editPlanProduction(context: StudioContext, task: "copy.edit_plan
       assert(await bump(`edit-plan:request:${orgId}:${userId}:${requestId}`, 1, 86400), 409, "This request was already submitted. Your current edit is preserved; send a new message only if you want a separate attempt.");
     },
     async generate(step, system, turn, signal) {
+      fetchAttempted = false;
       const started = Date.now();
       try {
         assert(requestKey, 503, "The editing request has no budget reservation.");
         const funding: FundingContext = {actorId:userId, orgId, requestKey, rpc:(name,args)=>admin.rpc(name,args)};
         await beginFundingOperation(funding, task, {system,turn});
         const pricedStep = {...step, params:{...paramsOf(step), max_output_tokens:EDIT_PLAN_LIMITS.tokens}};
-        const result = await fundedAttempt(funding, task, step, {system,turn}, textAttemptQuote(pricedStep, system, turn, EDIT_PLAN_LIMITS.tokens), () => generateEditPlanText(step, system, turn, fetch, signal));
+        const result = await fundedAttempt(funding, task, step, {system,turn}, textAttemptQuote(pricedStep, system, turn, EDIT_PLAN_LIMITS.tokens), () => generateEditPlanText(step, system, turn, fetch, signal, () => { fetchAttempted = true; }));
         await reportOutcome(step, { ok: true, latency_ms: Date.now() - started });
         return result;
       } catch (error) {
@@ -130,6 +138,7 @@ export function editPlanProduction(context: StudioContext, task: "copy.edit_plan
       }
     },
     async record(step, outcome) {
+      if (!fetchAttempted) return;
       await recordRoutedAiCost(admin, { orgId, feature: "copy_assist", step, meta: { kind: task === EDIT_PLAN_TASK ? "edit_plan" : "prompt_enhancement", attempts: 1, outcome, price_estimated: true, request_key: requestKey, stage: task } });
     },
     async spaceType(listingId) {
