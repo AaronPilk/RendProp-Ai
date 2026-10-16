@@ -588,7 +588,7 @@ export function createStudioServices(
 
       }, readTimeoutMs, "Loading all of your listings timed out. Check your connection and retry.", () => controller.abort())
         .then(result => { assertWorkspace(read, controller.signal); read.mapped = true; return result; })
-        .catch(error => { read.mappingError = error; throw error; })
+        .catch(error => { if (read.listings === flight) read.mappingError = error; throw error; })
         .finally(() => {
           flight.settled = true;
           read.signal?.removeEventListener("abort", abort);
@@ -599,7 +599,14 @@ export function createStudioServices(
     const flight = read.listings;
     flight.waiters++;
     try { const result = await waitFor(flight.promise, signal); assertWorkspace(read, signal); return result; }
-    finally { if (--flight.waiters === 0 && !flight.settled) flight.controller.abort(); }
+    finally {
+      if (--flight.waiters === 0 && !flight.settled) {
+        // Detach abandoned work before abort dispatch. A new active caller must
+        // create its own flight, and the old rejection cannot poison that read.
+        if (read.listings === flight) read.listings = undefined;
+        flight.controller.abort();
+      }
+    }
   }
 
   async function requestScope(actor: {version:number;userId:string}, selected: string, expectedLibrary: string | undefined, signal?: AbortSignal, expectedListing?: string) {

@@ -214,3 +214,35 @@ test("same actor token refresh during typed media mapping uses the fresh token w
 test("typed media without a workspace never starts directory, mapping or media transport",async()=>{
  const f=fixture();try{await f.services.ready();await assert.rejects(f.services.listMedia(ORG,LISTING));assert.equal(f.seen.length,0);}finally{f.services.dispose();}
 });
+
+test("an abandoned mapping flight cannot cancel or poison a fresh read in the same workspace",async()=>{
+ const f=fixture();try{await f.open();const gates=f.gates(),refresh=f.services.loadWorkspace(undefined,LIBRARY);await gates.directoryStarted;gates.directory.resolve(json(f.directory()));await refresh;
+  const caller=new AbortController(),cancelled=f.services.listMedia(ORG,LISTING,caller.signal),handled=assert.rejects(cancelled,error=>error instanceof Error&&error.name==="AbortError");await gates.mappingStarted;
+  const abandoned=f.seen.filter(row=>row.path.endsWith("/listings")).at(-1)!;caller.abort();await handled;assert.equal(abandoned.wire.signal?.aborted,true);
+  f.clearGates();let freshError:unknown;const fresh=f.services.listListings(LIBRARY).catch(error=>{freshError=error;return[];});await tick();
+  const startedBeforeOldReply=f.seen.filter(row=>row.path.endsWith("/listings")).length;
+  // A late response from the cancelled flight contains no listing. It must
+  // neither remove the newly mapped listing nor cache its abort as authority.
+  gates.mapping.resolve(json(f.page([])));const rows=await fresh;await tick();
+  assert.equal(freshError,undefined,"An active read must not inherit another caller's AbortError");assert.equal(startedBeforeOldReply,3);assert.equal(rows[0].id,LISTING);
+  await f.services.listMedia(ORG,LISTING);assert.equal(f.seen.filter(row=>row.path.endsWith("/media")).length,1);assert.equal(f.actions().length,0);
+ }finally{f.services.dispose();}
+});
+
+test("cancelling one mapping waiter keeps another active waiter and its single transport alive",async()=>{
+ const f=fixture();try{await f.open();const gates=f.gates(),refresh=f.services.loadWorkspace(undefined,LIBRARY);await gates.directoryStarted;gates.directory.resolve(json(f.directory()));await refresh;
+  const caller=new AbortController(),cancelled=f.services.listMedia(ORG,LISTING,caller.signal),handled=assert.rejects(cancelled,error=>error instanceof Error&&error.name==="AbortError");await gates.mappingStarted;
+  const kept=f.services.listListings(LIBRARY);await tick();const shared=f.seen.filter(row=>row.path.endsWith("/listings")).at(-1)!;
+  caller.abort();await handled;assert.equal(shared.wire.signal?.aborted,false);gates.mapping.resolve(json(f.page()));assert.equal((await kept)[0].id,LISTING);
+  assert.equal(f.seen.filter(row=>row.path.endsWith("/listings")).length,2);assert.equal(f.actions().length,0);
+ }finally{f.services.dispose();}
+});
+
+test("a genuine current mapping transport failure stays visible and never retries a mutation",async()=>{
+ const f=fixture();try{await f.open();const gates=f.gates(),refresh=f.services.loadWorkspace(undefined,LIBRARY);await gates.directoryStarted;gates.directory.resolve(json(f.directory()));await refresh;
+  const first=f.services.listMedia(ORG,LISTING),handled=assert.rejects(first,error=>error instanceof Error&&"code"in error&&error.code==="network");await gates.mappingStarted;
+  gates.mapping.reject(new TypeError("Synthetic current transport failure"));await handled;
+  const mappings=f.seen.filter(row=>row.path.endsWith("/listings")).length;await assert.rejects(f.services.listMedia(ORG,LISTING),error=>error instanceof Error&&"code"in error&&error.code==="network");
+  assert.equal(f.seen.filter(row=>row.path.endsWith("/listings")).length,mappings);assert.equal(f.seen.filter(row=>row.path.endsWith("/media")).length,0);assert.equal(f.actions().length,0);
+ }finally{f.services.dispose();}
+});
