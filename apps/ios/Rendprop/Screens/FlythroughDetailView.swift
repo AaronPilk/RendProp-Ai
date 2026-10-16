@@ -15888,16 +15888,20 @@ private struct PropertyVideoProcessorPermissionCard: View {
                     Text(PropertyVideoProcessorContract.title).font(.rpTitle).foregroundStyle(Theme.ink)
                     Text(PropertyVideoProcessorContract.body).font(.rpBody).foregroundStyle(Theme.inkDim)
                     HStack {
-                        Link("Privacy", destination: URL(string: "https://rendprop.com/privacy")!)
+                        Link(destination: URL(string: "https://rendprop.com/privacy")!) {
+                            Text("Privacy").frame(minHeight: 44).contentShape(Rectangle())
+                        }
                         Spacer()
-                        Link("Kie terms", destination: URL(string: "https://kie.ai/terms-of-use")!)
+                        Link(destination: URL(string: "https://kie.ai/terms-of-use")!) {
+                            Text("Kie terms").frame(minHeight: 44).contentShape(Rectangle())
+                        }
                     }.font(.rpCaption)
                     PrimaryButton(title: PropertyVideoProcessorContract.allowLabel, systemImage: "checkmark") { consent.allow() }
                         .accessibilityIdentifier("video.processor.allow")
                     SecondaryButton(title: PropertyVideoProcessorContract.declineLabel, systemImage: "xmark") { consent.decline() }
                         .accessibilityIdentifier("video.processor.decline")
                 }.padding(24).frame(maxWidth: 440)
-            }.fixedSize(horizontal: false, vertical: true)
+            }
         }.accessibilityIdentifier("video.processor.disclosure")
     }
 }
