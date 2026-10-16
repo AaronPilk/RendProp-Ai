@@ -199,8 +199,9 @@ Deno.serve(async (req) => {
     };
 
     // Explicit photo-family intent is isolated from legacy whole-gallery PATCH.
-    if (seg.length === 2 && seg[1] === "photo-selection") {
-      assert(req.method === "GET" || req.method === "PATCH", 405, "Use GET or PATCH for a photo selection.");
+    if ((seg.length === 2 || seg.length === 3 && seg[2] === "abandon") && seg[1] === "photo-selection") {
+      const abandon = seg.length === 3;
+      assert(abandon ? req.method === "POST" : req.method === "GET" || req.method === "PATCH", 405, "Use the explicit photo selection method.");
       assert(scope && requested !== undefined && requested === scope.library_org_id, 409, "Choose this home's current library before selecting photos.");
       const selectionScope = { orgId: scope.org_id, libraryOrgId: scope.library_org_id, listingId: id.toLowerCase() };
       let value;
@@ -210,7 +211,7 @@ Deno.serve(async (req) => {
         value = await readPhotoSelection(adminClient(), selectionScope, user.id, query.get("operation_id"));
       } else {
         await assertNotDeleting(user.id);
-        value = await changePhotoSelection(adminClient(), selectionScope, user.id, await readJsonLimited<Record<string, unknown>>(req, 16384), req.headers.get("Idempotency-Key"));
+        value = await changePhotoSelection(adminClient(), selectionScope, user.id, await readJsonLimited<Record<string, unknown>>(req, 16384), req.headers.get("Idempotency-Key"), abandon);
       }
       const current = await listingLibraryScope(adminClient(), user.id, id);
       assert(current.org_id === selectionScope.orgId && current.library_org_id === selectionScope.libraryOrgId, 503, "This home's library changed during the photo request.");

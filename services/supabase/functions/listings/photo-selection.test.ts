@@ -52,6 +52,7 @@ const intent = () => ({
 const body = () => ({ operation_id: OP, ...intent() });
 type Options = {
   method?: string;
+  abandon?: boolean;
   query?: string;
   header?: string | null;
   key?: string | null;
@@ -102,8 +103,9 @@ async function invoke(value: Row = body(), o: Options = {}) {
     }
     const name = url.pathname.split("/").at(-1)!;
     if (
-      name === "native_gallery_selection_snapshot" ||
-      name === "native_gallery_selection_change"
+      name === "native_gallery_selection_snapshot_v2" ||
+      name === "native_gallery_selection_change_v2" ||
+      name === "native_gallery_selection_abandon"
     ) {
       const args = await req.json();
       calls.push({ name, args });
@@ -128,15 +130,28 @@ async function invoke(value: Row = body(), o: Options = {}) {
           bytes: 1024,
           storage_key: KEY,
         }],
-        operation: name === "native_gallery_selection_change"
+        operation_status:
+          name !== "native_gallery_selection_snapshot_v2" || o.operation
+            ? "accepted"
+            : args.p_operation
+            ? "not_found"
+            : null,
+        abandoned_operation: null,
+        operation: name !== "native_gallery_selection_snapshot_v2"
           ? {
             operation_id: OP,
             request: args.p_request,
             result: { gallery_asset_ids: [ASSET], main_photo_key: null },
           }
           : o.operation ?? null,
-        ...(name === "native_gallery_selection_change"
-          ? { ok: true, replayed: o.replayed ?? false }
+        ...(name !== "native_gallery_selection_snapshot_v2"
+          ? {
+            ok: true,
+            replayed: o.replayed ?? false,
+            ...(name === "native_gallery_selection_abandon"
+              ? { abandoned: false }
+              : {}),
+          }
           : {}),
         ...o.reply,
       };
@@ -151,8 +166,8 @@ async function invoke(value: Row = body(), o: Options = {}) {
     const r = await handler(
       new Request(
         `https://edge.fixture.invalid/listings/${LISTING}/photo-selection${
-          o.query ?? ""
-        }`,
+          o.abandon ? "/abandon" : ""
+        }${o.query ?? ""}`,
         {
           method,
           headers: {
@@ -180,7 +195,7 @@ Deno.test("actual dedicated photo choice derives physical scope and sends one ex
   assertEquals(r.status, 200);
   assertEquals(r.cache, "private, no-store");
   assertEquals(r.calls, [{
-    name: "native_gallery_selection_change",
+    name: "native_gallery_selection_change_v2",
     args: {
       p_actor: USER,
       p_org: ORG,
@@ -198,7 +213,7 @@ Deno.test("actual authoritative read is private and carries only requested recei
     assertEquals(r.status, 200);
     assertEquals(r.cache, "private, no-store");
     assertEquals(r.calls[0].args.p_operation, q ? OP : null);
-    assertEquals(r.calls[0].name, "native_gallery_selection_snapshot");
+    assertEquals(r.calls[0].name, "native_gallery_selection_snapshot_v2");
   }
 });
 Deno.test("actual operation replay returns current snapshot and immutable old receipt", async () => {
@@ -382,4 +397,180 @@ Deno.test("actual unselect receipt must prove family absence while preserving ot
   });
   assertEquals(good.status, 200);
   assertEquals(good.calls.length, 1);
+});
+
+Deno.test("optional false cover field preserves the exact five-key legacy intent", async () => {
+  const r = await invoke({ ...body(), promote_cover: false });
+  assertEquals(r.status, 200);
+  assertEquals(r.calls[0].args.p_request, intent());
+});
+Deno.test("explicit star accepts only cover-only receipt and retains raw null gallery", async () => {
+  for (const gallery of [[ASSET], null]) {
+    const choice = {
+      ...body(),
+      expected_selection: { gallery_asset_ids: gallery, main_photo_key: null },
+      promote_cover: true,
+    };
+    const { operation_id: _, ...request } = choice;
+    const r = await invoke(choice, {
+      reply: {
+        gallery_asset_ids: gallery,
+        main_photo_key: KEY,
+        operation: {
+          operation_id: OP,
+          request,
+          result: { gallery_asset_ids: gallery, main_photo_key: KEY },
+        },
+      },
+    });
+    assertEquals(r.status, 200);
+    assertEquals(r.calls[0].args.p_request, request);
+    for (const mutated of [[], [ASSET, OTHER]]) {
+      const bad = await invoke(choice, {
+        reply: {
+          operation: {
+            operation_id: OP,
+            request,
+            result: { gallery_asset_ids: mutated, main_photo_key: KEY },
+          },
+        },
+      });
+      assertEquals(bad.status, 503);
+    }
+  }
+});
+Deno.test("star cannot smuggle unknown fields or removal/follow intent", async () => {
+  for (
+    const patch of [
+      { promote_cover: "true" },
+      { promote_cover: null },
+      { promote_cover: true, target: null },
+      { promote_cover: true, follow_family_cover: true },
+      { promote_cover: true, cover_key: KEY },
+    ]
+  ) {
+    const r = await invoke({ ...body(), ...patch });
+    assertEquals(r.status, 400);
+    assertEquals(r.calls, []);
+  }
+});
+Deno.test("explicit abandon uses one scoped RPC and accepted legacy receipt wins unchanged", async () => {
+  const r = await invoke(body(), { method: "POST", abandon: true });
+  assertEquals(r.status, 200);
+  assertEquals(r.body.abandoned, false);
+  assertEquals(r.body.operation_status, "accepted");
+  assertEquals(r.calls.length, 1);
+  assertEquals(r.calls[0].name, "native_gallery_selection_abandon");
+  assertEquals(r.body.operation, {
+    operation_id: OP,
+    request: intent(),
+    result: { gallery_asset_ids: [ASSET], main_photo_key: null },
+  });
+});
+const abandonedReply = () => ({
+  operation_status: "abandoned",
+  operation: null,
+  abandoned: true,
+  abandoned_operation: { operation_id: OP, request: intent() },
+});
+Deno.test("abandon acknowledgement proves exact frozen request while returning current state", async () => {
+  const r = await invoke(body(), {
+    method: "POST",
+    abandon: true,
+    reply: {
+      ...abandonedReply(),
+      gallery_asset_ids: [],
+      effective_asset_ids: [],
+      gallery_assets: [],
+    },
+  });
+  assertEquals(r.status, 200);
+  assertEquals(r.body.gallery_asset_ids, []);
+  assertEquals(r.body.abandoned, true);
+  for (
+    const reply of [
+      { ...abandonedReply(), abandoned: false },
+      {
+        ...abandonedReply(),
+        abandoned_operation: { operation_id: OTHER, request: intent() },
+      },
+      {
+        ...abandonedReply(),
+        abandoned_operation: {
+          operation_id: OP,
+          request: { ...intent(), reviewed: true },
+        },
+      },
+      { ...abandonedReply(), operation_status: undefined },
+      {
+        ...abandonedReply(),
+        operation: {
+          operation_id: OP,
+          request: intent(),
+          result: { gallery_asset_ids: [], main_photo_key: null },
+        },
+      },
+    ]
+  ) {
+    const bad = await invoke(body(), { method: "POST", abandon: true, reply });
+    assertEquals(bad.status, 503);
+    assertEquals(bad.calls.length, 1);
+  }
+  const patch = await invoke(body(), { reply: abandonedReply() });
+  assertEquals(patch.status, 503);
+});
+Deno.test("status GET distinguishes absence from tombstone and missing status stays unconfirmed", async () => {
+  const absent = await invoke({}, {
+    method: "GET",
+    query: `?operation_id=${OP}`,
+  });
+  assertEquals(absent.status, 200);
+  assertEquals(absent.body.operation_status, "not_found");
+  const abandoned = await invoke({}, {
+    method: "GET",
+    query: `?operation_id=${OP}`,
+    reply: abandonedReply(),
+  });
+  assertEquals(abandoned.status, 200);
+  const missing = await invoke({}, {
+    method: "GET",
+    query: `?operation_id=${OP}`,
+    reply: { operation_status: undefined },
+  });
+  assertEquals(missing.status, 503);
+  const wrong = await invoke({}, {
+    method: "GET",
+    query: `?operation_id=${OP}`,
+    reply: {
+      ...abandonedReply(),
+      abandoned_operation: { operation_id: OTHER, request: intent() },
+    },
+  });
+  assertEquals(wrong.status, 503);
+});
+Deno.test("abandon lost reply never retries and mapping change refuses confirmation", async () => {
+  const lost = await invoke(body(), {
+    method: "POST",
+    abandon: true,
+    transportLoss: true,
+  });
+  assertEquals(lost.status, 503);
+  assertEquals(lost.calls.length, 1);
+  const drift = await invoke(body(), {
+    method: "POST",
+    abandon: true,
+    scopeChanges: true,
+  });
+  assertEquals(drift.status, 503);
+  assertEquals(drift.calls.length, 1);
+  for (
+    const o of [{ method: "POST" }, { method: "PATCH", abandon: true }, {
+      method: "GET",
+      abandon: true,
+    }]
+  ) {
+    const r = await invoke(body(), o);
+    assertEquals(r.status, 405);
+    assertEquals(r.calls, []);
+  }
 });

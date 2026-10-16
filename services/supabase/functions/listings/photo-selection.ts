@@ -37,13 +37,23 @@ function ids(value: unknown, nullable = false): string[] | null {
 }
 function request(value: unknown): Row {
   assert(
-    exact(value, [
+    (exact(value, [
       "family_asset_ids",
       "target",
       "expected_selection",
       "follow_family_cover",
       "reviewed",
-    ]),
+    ]) ||
+      exact(value, [
+        "family_asset_ids",
+        "target",
+        "expected_selection",
+        "follow_family_cover",
+        "reviewed",
+        "promote_cover",
+      ])) &&
+      (!Object.hasOwn(value, "promote_cover") ||
+        typeof value.promote_cover === "boolean"),
     400,
     "Send only the saved family photo choice.",
   );
@@ -96,12 +106,19 @@ function request(value: unknown): Row {
       400,
       "Removing exposure does not approve an edit or choose a cover.",
     );}
+  assert(
+    value.promote_cover !== true ||
+      target !== null && value.follow_family_cover === false,
+    400,
+    "Promote only a selected target with an explicit cover intent.",
+  );
   return {
     family_asset_ids: family,
     target,
     expected_selection: { gallery_asset_ids: expected, main_photo_key: cover },
     follow_family_cover: value.follow_family_cover,
     reviewed: value.reviewed,
+    ...(value.promote_cover === true ? { promote_cover: true } : {}),
   };
 }
 function checkedSnapshot(value: unknown, scope: Scope, actor: string): Row {
@@ -150,6 +167,35 @@ function checkedSnapshot(value: unknown, scope: Scope, actor: string): Row {
       seen.add(raw.asset_id as string);
     }
     assert(Object.hasOwn(value, "operation"), 400, "receipt");
+    assert(
+      Object.hasOwn(value, "operation_status") &&
+        Object.hasOwn(value, "abandoned_operation"),
+      400,
+      "operation state",
+    );
+    if (value.operation_status === "accepted") {
+      assert(
+        value.operation !== null && value.abandoned_operation === null,
+        400,
+        "accepted state",
+      );
+    } else if (value.operation_status === "abandoned") {
+      assert(
+        value.operation === null &&
+          exact(value.abandoned_operation, ["operation_id", "request"]) &&
+          typeof value.abandoned_operation.operation_id === "string" &&
+          UUID.test(value.abandoned_operation.operation_id),
+        400,
+        "abandoned state",
+      );
+      request(value.abandoned_operation.request);
+    } else {assert(
+        (value.operation_status === null ||
+          value.operation_status === "not_found") &&
+          value.operation === null && value.abandoned_operation === null,
+        400,
+        "unknown state",
+      );}
     if (value.operation !== null) {
       assert(
         exact(value.operation, ["operation_id", "request", "result"]) &&
@@ -164,19 +210,33 @@ function checkedSnapshot(value: unknown, scope: Scope, actor: string): Row {
         400,
         "receipt result",
       );
-      const resultIds = ids(value.operation.result.gallery_asset_ids)!;
+      const resultIds = ids(
+        value.operation.result.gallery_asset_ids,
+        accepted.promote_cover === true,
+      );
       const family = accepted.family_asset_ids as string[];
       const target = accepted.target as Row | null;
       const chosen = target?.asset_id as string | undefined;
       assert(
-        resultIds.filter((id) => family.includes(id)).length ===
-            (chosen ? 1 : 0) &&
-          (chosen === undefined || resultIds.includes(chosen)),
+        accepted.promote_cover === true && resultIds === null ||
+          resultIds !== null && resultIds.filter((id) =>
+                family.includes(id)
+              ).length ===
+              (chosen ? 1 : 0) &&
+            (chosen === undefined || resultIds.includes(chosen)),
         400,
         "receipt family effect",
       );
       const expected = accepted.expected_selection as Row;
-      if (expected.gallery_asset_ids !== null) {
+      if (accepted.promote_cover === true) {
+        assert(
+          JSON.stringify(resultIds) ===
+              JSON.stringify(expected.gallery_asset_ids) &&
+            propertyGalleryKey(value.operation.result.main_photo_key, scope),
+          400,
+          "receipt cover-only effect",
+        );
+      } else if (expected.gallery_asset_ids !== null) {
         const ordered: string[] = [];
         let inserted = false;
         for (const id of expected.gallery_asset_ids as string[]) {
@@ -201,7 +261,7 @@ function checkedSnapshot(value: unknown, scope: Scope, actor: string): Row {
         400,
         "receipt cover",
       );
-      if (!accepted.follow_family_cover) {
+      if (!accepted.follow_family_cover && accepted.promote_cover !== true) {
         assert(
           chosen
             ? cover === expected.main_photo_key
@@ -255,7 +315,7 @@ export async function readPhotoSelection(
     "Keep a valid photo operation identity.",
   );
   const value = checkedSnapshot(
-    await call(admin, "native_gallery_selection_snapshot", {
+    await call(admin, "native_gallery_selection_snapshot_v2", {
       p_actor: actor,
       p_org: scope.orgId,
       p_library: scope.libraryOrgId,
@@ -273,6 +333,25 @@ export async function readPhotoSelection(
       "This receipt belongs to another operation.",
     );
   }
+  if (operation !== null) {
+    assert(
+      value.operation_status !== null,
+      503,
+      "The saved photo operation state is unknown.",
+    );
+    if (value.operation_status === "abandoned") {
+      assert(
+        object(value.abandoned_operation) &&
+          value.abandoned_operation.operation_id === operation.toLowerCase(),
+        503,
+        "This abandonment belongs to another operation.",
+      );
+    }
+  } else {assert(
+      value.operation_status === null,
+      503,
+      "Unexpected saved operation state.",
+    );}
   return value;
 }
 export async function changePhotoSelection(
@@ -281,16 +360,27 @@ export async function changePhotoSelection(
   actor: string,
   body: Row,
   key: string | null,
+  abandon = false,
 ): Promise<Row> {
   assert(
-    exact(body, [
+    (exact(body, [
       "operation_id",
       "family_asset_ids",
       "target",
       "expected_selection",
       "follow_family_cover",
       "reviewed",
-    ]) && typeof body.operation_id === "string" && UUID.test(body.operation_id),
+    ]) ||
+      exact(body, [
+        "operation_id",
+        "family_asset_ids",
+        "target",
+        "expected_selection",
+        "follow_family_cover",
+        "reviewed",
+        "promote_cover",
+      ])) &&
+      typeof body.operation_id === "string" && UUID.test(body.operation_id),
     400,
     "Send the saved photo operation only.",
   );
@@ -303,32 +393,46 @@ export async function changePhotoSelection(
   const { operation_id: _, ...raw } = body;
   const intent = request(raw);
   const value = checkedSnapshot(
-    await call(admin, "native_gallery_selection_change", {
-      p_actor: actor,
-      p_org: scope.orgId,
-      p_library: scope.libraryOrgId,
-      p_listing: scope.listingId,
-      p_operation: operation,
-      p_request: intent,
-    }),
+    await call(
+      admin,
+      abandon
+        ? "native_gallery_selection_abandon"
+        : "native_gallery_selection_change_v2",
+      {
+        p_actor: actor,
+        p_org: scope.orgId,
+        p_library: scope.libraryOrgId,
+        p_listing: scope.listingId,
+        p_operation: operation,
+        p_request: intent,
+      },
+    ),
     scope,
     actor,
   );
+  const receipt = value.operation_status === "abandoned"
+    ? value.abandoned_operation
+    : value.operation;
   assert(
     value.ok === true && typeof value.replayed === "boolean" &&
-      object(value.operation) && value.operation.operation_id === operation,
+      (abandon
+        ? typeof value.abandoned === "boolean" &&
+          value.abandoned === (value.operation_status === "abandoned")
+        : value.operation_status === "accepted") &&
+      object(receipt) && receipt.operation_id === operation,
     503,
     "The saved photo operation could not be confirmed.",
   );
   let acknowledged: Row;
   try {
-    acknowledged = request(value.operation.request);
+    acknowledged = request(receipt.request);
   } catch {
     throw new HttpError(503, "The saved photo intent could not be confirmed.");
   }
   assert(
     JSON.stringify(acknowledged) === JSON.stringify(intent) &&
-      exact(value.operation.result, ["gallery_asset_ids", "main_photo_key"]),
+      (value.operation_status === "abandoned" ||
+        exact(receipt.result, ["gallery_asset_ids", "main_photo_key"])),
     503,
     "This reply does not match the saved photo intent.",
   );
