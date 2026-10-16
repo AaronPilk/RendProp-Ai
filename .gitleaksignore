@@ -130,3 +130,10 @@ f8f30f58f7a4ad42109c02e62f689c9379931d55:services/supabase/tests/property_video_
 # no issuer/audience/role/expiry, and a literal non-signature "signature_secret".
 # It is never used for authentication; keep all other JWT/secret scanning active.
 1a622455b7386fbbc1008ccac9d500bf3fb31a51:tools/audit/test_api_cost_report.py:jwt:116
+
+# Exact offline fixture false positives reviewed2026-10-16. The Swift value is
+# an isolated local-preferences namespace; the TS row contains synthetic media
+# storage references and repeated digest characters, with stubbed I/O. Neither
+# is an authentication credential. Keep every other file/rule/fingerprint active.
+791022e0e4c450edc8a0a662d4d41a572a4eb861:apps/ios/tests/PropertyVideoProcessorTests.swift:generic-api-key:14
+2209a45f017b298414823476ec78f6a123263926:services/supabase/functions/property-video-worker/kie-profile-actions.test.ts:generic-api-key:38
