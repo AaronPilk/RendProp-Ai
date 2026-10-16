@@ -54,7 +54,8 @@ snapshot_lines = [line.strip() for line in block(view, 'private func generateWit
 assert len(snapshot_lines) == 2
 entry += '\n' + '\n'.join(snapshot_lines) + '\n snapshotSpy.capture(voiceover, captionStyle: captionStyle)\n}\n'
 parts += [entry]
-disappear = block(view, '.onDisappear')
+# Select narration's existing cleanup, separately from processor withdrawal.
+disappear = block(view, '.onDisappear {\n            // Execution belongs to the app queue.')
 parts += ['func disappear() ' + disappear[disappear.index('{'):]]
 mode_change = block(view, '.onChange(of: voiceMode)')
 parts += ['func changeVoiceMode(_ mode: VoiceMode) { voiceMode = mode\n' + mode_change[mode_change.index('mode in') + len('mode in'):]]
@@ -128,6 +129,8 @@ extension View {
  func tap() { if !isDisabled { action() } }
 }
 struct Voiceover: Equatable { let id: String; var transcript = "" }
+struct ClosedProcessorSnapshot {}
+struct ClosedProcessorContext {}
 enum CaptionStyle { case standard, off }
 @MainActor final class ClosedPlayer { var pauses = 0; func pause() { pauses += 1 } }
 @MainActor final class ClosedRecorder {
@@ -209,6 +212,13 @@ enum VideoPhotoFramingReader {
  let reelPhotos = [ClosedPhoto(id: "first", enhancedURL: URL(fileURLWithPath: "/closed/first.jpg")), ClosedPhoto(id: "second", enhancedURL: URL(fileURLWithPath: "/closed/second.jpg"))]
  static let captionsOffNote = "Captions are off — Speech Recognition is turned off in Settings."
  static let scriptCharacterCap = 1000
+ // Processor authorization is a closed boundary in this narration-only gate;
+ // run-property-video-processors.py executes the real permission lifecycle.
+ let preparedProcessorPermission: ClosedProcessorSnapshot? = nil
+ let preparedProcessorContext: ClosedProcessorContext? = nil
+ let preparedProcessorRevision: UInt64 = 0
+ func requirePreparedProcessor() throws {}
+ func authorizeVideoPreparation(_ action: () -> Void) { action() }
  func stopAndTranscribe() { recorder.isRecording = false; isTranscribing = true }
  func loadVoices() { catalogueLoads += 1 }
 '''
@@ -240,6 +250,7 @@ receipt = {'passed': False, 'start_source_sha256': before, 'unchanged_behavior':
            'reviewed_baseline_sha256': reviewed_baseline_sha256, 'git_history_required': False, 'runs': [],
            'limitations': ['Actual source-derived readiness, Create button wiring, complete generate framing flow, permission callback and pre-paid generateWithSession guard/snapshot execute.',
                            'The paid generation remainder is replaced at the first selected-photo read by a counter; no upload, plan, enqueue, microphone, TTS, auth, UIKit or provider runs.',
+                           'Processor preparation authorization and its frozen values are inert closed boundaries here; this gate does not prove processor consent or paid admission.',
                            'Foundation/UI-value boundaries are closed; this is not physical UI or media quality acceptance.']}
 try:
     cache = out / 'module-cache'; cache.mkdir()
