@@ -2,7 +2,9 @@
 
 This is a remaining-work test plan against the 72 owner-checklist rows, not a completion receipt or permission to spend, publish, purchase, or contact someone. Root operates the phone/browser and records each actual result. Preserve existing accepted media and historical provider receipts.
 
-Use the owner's existing **Sold home at 855 Central Ave, unit 1120, Saint Petersburg, FL 33701** for the main photo → video → website workflow. Before acting, record its exact account, library, local listing ID, cloud listing ID, current gallery/order/cover, chosen photo versions, video job/output, website URL and design. An address alone is not identity. The similarly addressed **OWNER VIDEO QA** private fixture is a different record; never publish it. Use that fixture only for the isolated local-toggle check below.
+**Latest owner steering:** finish implementation and integrated checklist checks first. Stop further manual or paid quality tests with the existing portrait photos. The owner will then create a NEW house with landscape photos for the final photo → edits → video → website workflow. Automated orientation regressions remain. The old Sold home retains historical evidence only; its walking-like video remains rejected. Do not repeat unchanged UI checks merely for a new build number.
+
+For the future new house, Before acting, record its exact account, library, local listing ID, cloud listing ID, current gallery/order/cover, chosen photo versions, video job/output, website URL and design. An address alone is not identity. The similarly addressed **OWNER VIDEO QA** private fixture is a different record; never publish it. Use that fixture only for the isolated local-toggle check below.
 
 ## 1. Enter the home as a consumer
 
@@ -14,7 +16,7 @@ Install AVAILABLE normal TestFlight **1.0.5(87)** and confirm its installed vers
 
 On a fresh owner-approved house, Get Started must open the address form. Explain capture before asking for media: hold the phone horizontally for listing photos; use 0.5× when needed to fit the room, keep the phone level and include the room without unnecessary distortion. Portrait photos are for social delivery. For an empty house, edit/stage the photos before choosing them for the video.
 
-For this existing Sold-home test, use the owner's supplied property photos. Do not require recapture or fabricate additional views. When an authorized import is available, select a first ordered batch and a later batch: the first batch must remain first, the second must append, and the total photo count/order must agree in Photos, AI Photo Studio and a **new** video picker, including after reopening and changing devices. More than 15 photos and partial-upload recovery need actual evidence; existing 14-photo completion does not close those checks. Do not reorder an admitted video job. (A02, P01, P12, P14, P16)
+Wait for that new landscape-photo house; do not use the old portrait set for this acceptance. When its authorized import is available, select a first ordered batch and a later batch: the first batch must remain first, the second must append, and the total photo count/order must agree in Photos, AI Photo Studio and a **new** video picker, including after reopening and changing devices. More than 15 photos and partial-upload recovery need actual evidence; existing 14-photo completion does not close those checks. Do not reorder an admitted video job. (A02, P01, P12, P14, P16)
 
 ## 3. Review and edit a single photo, then retain bulk editing
 
@@ -26,23 +28,23 @@ Use an already reviewed result now. For an authorized actual edit, choose one re
 
 **Version gate:** AVAILABLE internal87 (source1eb0fbe) has the old local-only selection behavior. Adapter13c0ee1 has passed source/compiled tests and the normal unsigned build, but is not deployed/delivered. Do not run the new cloud test until the two reviewed migrations, listings function and a normal signed adapter build are verified. Never force bulk sync or flip an internal import flag.
 
-For the old87 local-only rehearsal, use private **OWNER VIDEO QA**: local ID `c7dd6330-c515-464b-b1c5-b2caa9b89169`, cloud ID `c621b8df-f6d4-8200-a126-ed6df1efd8ca`. First confirm no public/share URL, no pending operation and a fresh gallery/cover baseline. Remove/reopen/re-add the same selected non-cover version once. Only this older local rehearsal expects the cloud snapshot to remain unchanged; it does not establish true cloud selection.
+Do not repeat the old87 local-only rehearsal: it cannot establish true cloud selection. The private OWNER VIDEO QA fixture remains available for future narrowly scoped state/recovery checks, separate from manual photo-quality testing.
 
-For the later delivered adapter, begin on that same private fixture. Record its exact fresh account/library/physical owner/listing, mapped version bytes, gallery/order and cover. **Unselect** must remove only that family from the actual cloud gallery; reopen and refresh must retain that result. **Use on listing** for the same retained version must restore only that family. All original/edit bytes, unrelated families/order and unrelated cover stay unchanged. A cover change is an explicit separate action; a cover chosen later in Studio must be preserved. Unknown or pending mappings show a neutral state and cannot be treated as selection authority.
+For the later delivered adapter, begin on an exact owner-approved private fixture (not an address match). Record its exact fresh account/library/physical owner/listing, mapped version bytes, gallery/order and cover. **Unselect** must remove only that family from the actual cloud gallery; reopen and refresh must retain that result. **Use on listing** for the same retained version must restore only that family. All original/edit bytes, unrelated families/order and unrelated cover stay unchanged. A cover change is an explicit separate action; a cover chosen later in Studio must be preserved. Unknown or pending mappings show a neutral state and cannot be treated as selection authority.
 
 If a reply is lost, check the saved operation by read-only refresh; never automatically resend a mutation. Close an unaccepted request only through confirmed server abandonment. After private acceptance, test Original replacing the edited selection and buyer-site propagation on the exact authorized home. No publication or unrelated data change is implied. Never replace the whole gallery to make this pass. (P07–P08)
 
 ## 5. Build the video recipe without starting paid work
 
-Return to the Sold home → Make a video → **Listing**. Expect landscape16:9, guidance before the photo grid, saved reviewed photo versions, upload order preserved, and simple automatic motion. Tap two photos in a different order: badges must show shot1/2 in tap order without rearranging the grid. Clear those test choices afterward.
+After implementation checks, open the NEW landscape-photo home → Make a video → **Listing**. Expect landscape16:9, guidance before the photo grid, saved reviewed photo versions, upload order preserved, and simple automatic motion. Tap two photos in a different order: badges must show shot1/2 in tap order without rearranging the grid. Clear those test choices afterward.
 
-Inspect framing: portrait inputs must honestly show the crop; originals stay unchanged. Advanced settings are optional. Voice Off must hide spoken-word captions; it must not require words for each shot. Music starts Off. Motion should be varied automatically, without asking the realtor to edit each shot. Inspect the branded framing buttons. Social uses9:16; inspect its framing separately and recommend portrait sources instead of silently severe cropping. (V01–V07, P12, P16)
+Inspect framing of the new landscape sources; originals stay unchanged. Keep portrait crop regressions automated without repeating manual tests on the old set. Advanced settings are optional. Voice Off must hide spoken-word captions; it must not require words for each shot. Music starts Off. Motion should be varied automatically, without asking the realtor to edit each shot. Inspect the branded framing buttons. Social uses9:16; inspect its framing separately and recommend portrait sources instead of silently severe cropping. (V01–V07, P12, P16)
 
 **Stop before Create:** paid video testing is paused. Kie is selected as the future primary provider but is not active. Its final frozen migration, recovery/accounting and quality acceptance are not yet proved. Inactive24fps/temporal diagnostics are not a smooth-video success. Do not restart an old request, regenerate the whole house, or add credits based on stale messages. (O04, V18–V19)
 
 ## 6. Review the existing result; later complete one accepted job
 
-Open the existing 14-photo/70-second Sold-home result through **Review**. It must open that exact house/job. Play the whole video at normal speed and compare chosen rooms/versions/order; check source fidelity, smooth varied movement, crop, transitions and honest Original fallbacks. The existing result is technically delivered/playable but **owner-rejected for walking-like motion**. Keep that failure recorded; do not republish or relabel it accepted.
+The existing14-photo/70-second Sold-home result has already proved technical playback and exact Review navigation; do not repeat it for visual quality. On the NEW house, verify Review opens its exact private house/job, then compare chosen rooms/versions/order, source fidelity, smooth varied movement, crop, transitions and honest Original fallbacks. The existing result is technically delivered/playable but **owner-rejected for walking-like motion**. Keep that failure recorded; do not republish or relabel it accepted.
 
 After a separately approved new quality test becomes available, finish the same consumer flow: one Create → visible **Check status** spinner/last-checked/error response → leave/lock/reopen → exact completion notification/banner → Review the same private output. Verify actual voice/music balance and chosen settings, save/share its real master, and explicitly publish only an owner-accepted Listing result. Cancel/recovery/account changes must retain accepted work and never cause an automatic second provider POST or publication. Social playback is a separate destination result, not a Listing success. (V03–V12, V16, W02)
 
@@ -52,7 +54,7 @@ Open Drone-style walkthrough. The capture guide must explain slow, steady moveme
 
 ## 8. Choose a website and test the genuine $25 property purchase
 
-On the exact Sold home, open **Website design** below the contact card. Expect Classic → Signature Estate → Coastal Luxe → Luxury website upgrade. Preview uses that home's already published URL; it does not publish a private draft, submit an enquiry, unlock premium or prove a purchase.
+On the exact authorized house, open **Website design** below the contact card. Expect Classic → Signature Estate → Coastal Luxe → Luxury website upgrade. Preview uses that home's already published URL; it does not publish a private draft, submit an enquiry, unlock premium or prove a purchase.
 
 Capture the **actual native premium offer** with its navigation title and StoreKit price for Apple's review screenshot. There is no supported direct premium deep link. Scroll through the real page; do not manufacture a Simulator price or use a website-preview screenshot. If the page says **Luxury purchases are being prepared**, retain the message and diagnose actual product/environment/state instead of faking an offer.
 
@@ -62,7 +64,7 @@ Expected Sandbox UI says the test purchase is recorded and does **not** change t
 
 ## 9. Inspect the real buyer website on the phone
 
-Use the existing authorized Sold-home URL: Home → Gallery → Location/Nearby → Contact, then both premium **previews**. The selected photo-based video leads with Play; the recorded tour is secondary. Check full-screen gallery next/previous/swipe/count, loading/failure states, mobile menu/contact controls, Signature typography, distinct luxury appearance, restrained motion/glass, accessibility and actual hero/gallery loading/detail. Nearby must show real places/attribution, with truthful empty/error states. Disclosures remain compact and reachable.
+After the new home has an accepted video and explicitly authorized publication, use its exact URL: Home → Gallery → Location/Nearby → Contact, then both premium **previews**. The selected photo-based video leads with Play; the recorded tour is secondary. Check full-screen gallery next/previous/swipe/count, loading/failure states, mobile menu/contact controls, Signature typography, distinct luxury appearance, restrained motion/glass, accessibility and actual hero/gallery loading/detail. Nearby must show real places/attribution, with truthful empty/error states. Disclosures remain compact and reachable.
 
 Do not publish the private QA fixture or change entitlement to make a premium preview pass. The shared14-photo video's owner motion failure remains a failure in every design. A later accepted replacement must be explicitly published and verified on the **same** home. (W01–W06, W09–W10)
 
@@ -84,13 +86,13 @@ Complete actual two-batch upload, large-library (>50 photos), multipart Files ex
 
 Record pass/fail/blocked with build, exact house/job/asset/version and evidence for each step. Do not mark the72-row checklist complete from this sequence. Keep normal paid-account/member/invite isolation, complete supplier/QC/infrastructure cost reconciliation and final pricing audit open where evidence is missing; owner sponsorship is not ordinary-user billing proof. Preserve backups/release evidence while testing.
 
-The fresh Apple feedback read16:40UTC succeeds: same three build82 submissions and zero submitted crash reports sinceOctober14. This does not prove crash-free operation. No reply, marking or deletion occurred; retain the earlier timeout/404 separately.
+The fresh Apple feedback read18:52UTC succeeds: same three build82 submissions and zero submitted crash reports sinceOctober14. This does not prove crash-free operation. No reply, marking or deletion occurred; retain the earlier timeout/404 separately.
 
 Root's current exact-source CI, remaining consumer/quality/purchase/export acceptance and final Codex/Claude audit must finish before release. **Last**, remake Rendprop for Realtors onboarding from literal final app screens and URL pages in this logical order, with capture/edit/video/website best practices and no duration cap. Verify its final resource build on the phone, then submit only the accepted normal candidate. Bars/Restaurants and future3D/floor/CMA work do not enter this walkthrough. (O02–O03, O08–O10, R01–R08)
 
 ## Source and evidence used
 
-- The72-row owner checklist: `docs/handoff/OWNER-REQUEST-CHECKLIST-20261014.md`. Use its current checkpoint and exact receipts; historical Studio43/44 and failed CI checkpoints do not supersede Studio46 and c46's16/16 result.
+- The72-row owner checklist: `docs/handoff/OWNER-REQUEST-CHECKLIST-20261014.md`. Use its current checkpoint and exact receipts; historical Studio43/44 and c46 CI do not supersede Studio46 or the latest current-source CI status.
 - Native offer: `apps/ios/Rendprop/Screens/WebsiteDesignPickerView.swift`.
 - `/Volumes/Rendprop Files/Builds/Active/build86-native-cloud-selection-scope/READONLY-CONTRACT-AND-QA-PLAN.json` and `MINIMAL-TRUE-CLOUD-ACCEPTANCE-PROPOSAL.json`.
 - `/Volumes/Rendprop Files/Builds/Active/build86-luxury-iap-readiness/FINAL-READONLY-READINESS.json` and `NORMAL86-PREMIUM-OFFER-NAVIGATION.json`.
