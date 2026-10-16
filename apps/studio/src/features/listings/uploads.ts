@@ -16,6 +16,8 @@ export type UploadOptions = {
   onProgress?: (loaded: number, total: number) => void;
   metadata?: { duration_s?: number; width?: number; height?: number };
   resume?: UploadJournal; onJournal?: (journal: UploadJournal) => void;
+  /** Bind a prepared-copy receipt before any PUT. Replays reuse the same asset. */
+  onReserved?: (assetId: string) => Promise<void>;
 };
 const VIDEO = new Map([["mp4", "video/mp4"], ["mov", "video/quicktime"], ["m4v", "video/x-m4v"]]);
 const PHOTO = new Map([["jpg", "image/jpeg"], ["jpeg", "image/jpeg"], ["png", "image/png"], ["webp", "image/webp"], ["heic", "image/heic"], ["heif", "image/heif"]]);
@@ -98,6 +100,8 @@ export async function uploadListingAsset(services: StudioServices, options: Uplo
   if (journal.assetId && journal.assetId !== current.assetId) throw new Error("The resumed upload returned a different file. Reopen this property.");
   journal = { ...journal, assetId: current.assetId, storageKey: current.storageKey };
   persist();
+  await options.onReserved?.(current.assetId);
+  assertActor();
   if (!current.uploaded) {
     if (current.mode === "single") {
       await services.upload(current.putURL!, file, { orgId, signal, contentType, onProgress });

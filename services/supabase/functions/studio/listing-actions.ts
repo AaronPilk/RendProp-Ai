@@ -2,6 +2,7 @@ import { requireContentWrite } from "../_shared/library-access.ts";
 import { assert, HttpError, json, pathSegments, readJsonLimited } from "../_shared/http.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 import { gallerySelectionRequest } from "./gallery-selection.ts";
+import { galleryCopyRequest } from "./gallery-copy.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Row = Record<string, unknown>;
@@ -103,6 +104,7 @@ async function editGallery(body: Row, listingId: string, context: ListingActionC
 /** Adds existing verified media to the native listing. The browser never chooses storage keys or disclosure state. */
 export async function handleListingActions(req: Request, context: ListingActionContext): Promise<Response | null> {
   const segments = pathSegments(req, "studio");
+  if(segments.length===1&&segments[0]==="photo-copy")return await galleryCopyRequest(req,context);
   if (segments.length !== 1 || !["photos", "floorplan"].includes(segments[0])) return null;
   if(req.method==="GET"&&segments[0]==="photos"){
     const query=new URL(req.url).searchParams,listing=query.get("listing_id");
