@@ -126,7 +126,7 @@ document.querySelector("#run").onclick=async()=>{
   fixture.error=null;fixture.errorName=null;fixture.errorCause=null;fixture.result=null;fixture.trace=[];fixture.previousClockRead=undefined;fixture.clockWait=undefined;fixture.resources=[];fixture.tracks=[];fixture.exporting=true;fixture.revision=1;decodeIndex=0;exportController=new AbortController();document.querySelector("#download").hidden=true;
   if(url)URL.revokeObjectURL(url);
   try{
-    const draft=validateDraft({schema:1,id:"resume-regression",revision:1,ratio:"9:16",title:"",audio:"original",clips:sources.map((local,index)=>({id:"clip-"+index,source:local.source,start:0,end:index===1?(fixture.photoClockControl?2:4):.5,speed:index===1?(fixture.photoClockControl?1:2):1,caption:"",focusX:.5,focusY:.5,transition:index===1?"dissolve":index===2?"whip":"cut"})),...(narrated?{narration:{resultId:"10000000-0000-4000-8000-000000000001",label:"Synthetic narration",offset:.15,volume:1,wordCaptions:false,words:[]}}:{})});
+    const draft=validateDraft({schema:1,id:"resume-regression",revision:1,ratio:"9:16",title:"",audio:fixture.muteStaleLookahead?"muted":"original",clips:sources.map((local,index)=>({id:"clip-"+index,source:local.source,start:0,end:index===1?(fixture.photoClockControl?2:4):.5,speed:index===1?(fixture.photoClockControl?1:2):1,caption:"",focusX:.5,focusY:.5,transition:index===1?"dissolve":index===2?"whip":"cut"})),...(narrated?{narration:{resultId:"10000000-0000-4000-8000-000000000001",label:"Synthetic narration",offset:.15,volume:1,wordCaptions:false,words:[]}}:{})});
     const result=await exportLocalVideo({draft,media:new Map(sources.map((local,index)=>["clip-"+index,local])),narrationBlob:narrated?voice:undefined,format:exportFormats().find(format=>format.extension==="mp4"),signal:exportController.signal,currentDraft:()=>({...draft,revision:fixture.revision}),onProgress:()=>{}});
     url=URL.createObjectURL(result.blob);const download=document.querySelector("#download");download.href=url;download.hidden=false;fixture.result={duration:result.duration,bytes:result.blob.size};
   }catch(error){fixture.error=error.message;fixture.errorName=error.name;fixture.errorCause=error.cause;}finally{fixture.exporting=false;}
@@ -395,6 +395,11 @@ document.querySelector("#run").onclick=async()=>{
       for (const scenario of ["late-successor", "abort-initial-successor", "stale-during-lookahead", "failed-initial-successor"]) {
         await page.evaluate(scenario => {
           window.fixture.configure(false);
+          // This case tests revision admission and pending-decoder cleanup, not
+          // audio capture. Keep its real media, timers and RecordingClock while
+          // excluding an unrelated cold Web Audio startup refusal before index2.
+          // The MP4 variants and interruption test above retain all audio guards.
+          window.fixture.muteStaleLookahead = scenario === "stale-during-lookahead";
           window.fixture.decodeDelays = scenario === "abort-initial-successor" ? [0, 5000] : scenario === "failed-initial-successor" ? [] : [0, 0, 5000];
           window.fixture.decodeErrorIndex = scenario === "failed-initial-successor" ? 1 : undefined;
           window.fixture.staleDecodeIndex = scenario === "stale-during-lookahead" ? 2 : undefined;
@@ -415,6 +420,11 @@ document.querySelector("#run").onclick=async()=>{
         if (scenario === "abort-initial-successor") assert.match(evidence.error, /Fixture export cancelled/);
         if (scenario === "stale-during-lookahead") {
           assert.match(evidence.error, /changed/i);
+          const clockReads = evidence.trace.filter(event => event.event === "clip.clock.read");
+          assert(clockReads.length > 0 && clockReads.every(event => event.diagnostics.audioState === null),
+            "Only this revision-cleanup case must use an explicitly muted draft with the real recording clock");
+          assert(!evidence.trace.some(event => event.event === "audio.statechange"),
+            "The stale-lookahead case must not start an unrelated audio capture context");
           assert.equal(evidence.revision, 2, "The actual currentDraft revision must change exactly once");
           const changed = evidence.trace.filter(event => event.event === "revision.changed");
           assert.equal(changed.length, 1, "Exactly one source-side lookahead invalidation must execute");

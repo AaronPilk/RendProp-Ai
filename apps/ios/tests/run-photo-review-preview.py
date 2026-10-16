@@ -48,8 +48,16 @@ var audioError: String?
 task=block(review,'.task(id: viewed.id) {'); task=task[task.index('{'):]
 change=block(review,'.onChange(of: showOriginal) {'); change=change[change.index('{'):].replace('{ showing in','{',1)
 methods='\n'.join(block(review,x).replace('private func','func',1) for x in ['private func clearAndDismiss()','private func chooseVersion(','private func isRetainedSource('])
-actual+='''@MainActor final class PhotoReviewHarness {
+actual+='''// The decode/privacy fixture takes the local branch. Cloud selection has
+// separate actual-source gates; this closed read boundary only supplies the
+// new view dependency and never performs a request or changes a selection.
+@MainActor final class PhotoReviewCloudReadBoundary {
+func refreshCloudPhotoSelection(listingID: UUID) async throws {}
+}
+@MainActor final class PhotoReviewHarness {
 let photo=EnhancedPhoto(id:"photo",enhancedURL:URL(fileURLWithPath:"/local/edited.jpg"),originalURL:URL(fileURLWithPath:"/local/original.jpg"))
+let model=PhotoReviewCloudReadBoundary()
+var isCloudListing=false;var photoListingID:UUID?;var selectionError:String?
 var selectedVersion: EnhancedPhoto?; var viewed: EnhancedPhoto { selectedVersion ?? photo }
 var enhanced:UIImage?;var original:UIImage?;var imageLoadComplete=false;var selectedForListing=false
 var selectionWorkID:UUID?
