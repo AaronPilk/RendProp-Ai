@@ -600,10 +600,11 @@ export function createStudioServices(
     finally { if (--flight.waiters === 0 && !flight.settled) flight.controller.abort(); }
   }
 
-  async function requestScope(actor: {version:number;userId:string}, selected: string, expectedLibrary: string | undefined, signal?: AbortSignal) {
+  async function requestScope(actor: {version:number;userId:string}, selected: string, expectedLibrary: string | undefined, signal?: AbortSignal, expectedListing?: string) {
     const read = workspaceRead;
+    const denied = expectedListing ? "Load this workspace before opening its media." : "Load this workspace before making changes.";
     if (!read || read.version !== actor.version)
-      throw new StudioError("membership-required", "Load this workspace before making changes.");
+      throw new StudioError("membership-required", denied);
     const library = expectedLibrary !== undefined ? uuid(expectedLibrary, "selected library") : read.target;
     const pending = read.pending;
     assertWorkspace(read, signal);
@@ -615,13 +616,16 @@ export function createStudioServices(
     // A directory response alone cannot authorize an adopted listing's storage org.
     // App and waiting actions join the same paginated listing read for this generation.
     if (read.mappingError) throw read.mappingError;
-    if (read.listings || !read.mapped && (pending || expectedLibrary !== undefined))
+    if (read.listings || !read.mapped && (pending || expectedLibrary !== undefined || expectedListing !== undefined))
       await listingRead(read, actor, target!, signal);
     const current = () => {
       assertWorkspace(read, signal);
+      const listingScope = expectedListing === undefined ? undefined : listingScopes.get(expectedListing);
       if (read.target !== target || !memberships.some(m => m.orgId === target) ||
-        !(selected === target || [...listingScopes.values()].some(s => s.orgId === selected && s.libraryOrgId === target)))
-        throw new StudioError("membership-required", "Load this workspace before making changes.");
+        !(expectedListing === undefined
+          ? selected === target || [...listingScopes.values()].some(s => s.orgId === selected && s.libraryOrgId === target)
+          : listingScope?.orgId === selected && listingScope.libraryOrgId === target))
+        throw new StudioError("membership-required", denied);
     };
     current();
     return current;
@@ -804,12 +808,11 @@ export function createStudioServices(
       const actor = await identity(signal);
       const selected = uuid(orgId, "selected organization");
       const listing = uuid(listingId, "selected listing");
-      if (!memberships.some(m => m.orgId === selected) && !(listingScopes.get(listing)?.orgId === selected && memberships.some(m => m.orgId === listingScopes.get(listing)?.libraryOrgId)))
-        throw new StudioError(
-          "membership-required",
-          "Load this workspace before opening its media.",
-        );
       const page = mediaOffset(offset);
+      // Focus/timer refresh clears these caches while the fresh directory and
+      // listing map are loading. Join that generation, then fence this exact
+      // listing before and after transport rather than using a stale org hint.
+      const scopeCurrent = await requestScope(actor, selected, undefined, signal, listing);
       const query = new URLSearchParams({
         org_id: selected,
         listing_id: listing,
@@ -820,7 +823,11 @@ export function createStudioServices(
         actor.version,
         signal,
         selected,
+        undefined,
+        undefined,
+        scopeCurrent,
       );
+      scopeCurrent();
       return decodeMedia(result, selected, listing, page, actor.userId);
     },
     dispose() {

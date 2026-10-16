@@ -22,15 +22,17 @@ function fixture(){
  const me=(target=selected)=>({user:{id:current.user.id,email:null,name:null,avatar_url:null},org:{id:target,name:"Library",space_type:"real_estate",handle:null},billing:{org_id:LIBRARY,content_org_id:target,serving_org_id:LIBRARY,role:"owner",can_manage_subscription:true},plan:"free",plan_raw:"free",trial_ends_at:null,plan_expires_at:null,usage:{listings:1,leads:0,leads_new:0,renders:0}});
  const row=(library=selected)=>({id:LISTING,org_id:ORG,library_org_id:library,space_type:"real_estate",address:"Synthetic only",tagline:null,details:{},status:"draft",created_at:"2026-10-16T00:00:00Z",deleted_at:null,main_photo_key:null,beds:null,baths:null,sqft:null,price_cents:null});
  const page=(rows=[row()])=>({actor_id:current.user.id,listings:rows,total:rows.length,next_offset:null});
- const seen:Array<{path:string;method:string;body:any;headers:Headers;wire:RequestInit}>=[];
- let directoryGate:ReturnType<typeof deferred<Response>>|undefined,mappingGate:ReturnType<typeof deferred<Response>>|undefined;
- let directoryStarted=deferred<void>(),mappingStarted=deferred<void>(),uploaded=false,complete=false,operation:string|undefined;
+ const seen:Array<{path:string;query:URLSearchParams;method:string;body:any;headers:Headers;wire:RequestInit}>=[];
+ let directoryGate:ReturnType<typeof deferred<Response>>|undefined,mappingGate:ReturnType<typeof deferred<Response>>|undefined,mediaGate:ReturnType<typeof deferred<Response>>|undefined;
+ let directoryStarted=deferred<void>(),mappingStarted=deferred<void>(),mediaStarted=deferred<void>(),uploaded=false,complete=false,operation:string|undefined;
+ const media=(org=ORG,listing=LISTING)=>({org_id:org,listing_id:listing,photos:[],videos:[],next_offset:null,unavailable_count:0});
  function copy(){const exp=Math.floor(Date.now()/1000)+590,payload={v:1,actor:ACTOR,org:ORG,listing:LISTING,bucket:"renders",key,exp};return{schema:1,actor_id:ACTOR,org_id:ORG,library_org_id:LIBRARY,listing_id:LISTING,operation_id:operation,source:{asset_id:SOURCE,key,bytes:PHOTO.length,sha256:SHA,mime:"image/jpeg",kind:"original",provenance:null},destination_asset_id:uploaded?DEST:null,complete,photo:complete?{id:DEST,listing_id:LISTING}:null,download:complete?null:{url:`https://rendprop.com/private-media/${Buffer.from(JSON.stringify(payload)).toString("base64url")}.${"f".repeat(64)}`,expires_at:new Date(exp*1000).toISOString()}};}
  const services=createStudioServices({supabaseUrl:"https://closed-refresh.supabase.co",publishableKey:"sb_publishable_OFFLINE_FIXTURE_NOT_A_REAL_KEY",redirectTo:"http://localhost:5173/"},{auth,fetch:async(input,options={})=>{
-  const url=new URL(String(input)),body=typeof options.body==="string"?JSON.parse(options.body):null,headers=new Headers(options.headers),method=options.method??"GET";seen.push({path:url.pathname,method,body,headers,wire:options});
+  const url=new URL(String(input)),body=typeof options.body==="string"?JSON.parse(options.body):null,headers=new Headers(options.headers),method=options.method??"GET";seen.push({path:url.pathname,query:url.searchParams,method,body,headers,wire:options});
   if(url.pathname==="/functions/v1/me/workspaces"){directoryStarted.resolve();return directoryGate?.promise??json(directory());}
   if(url.pathname==="/functions/v1/me"){selected=headers.get("X-Org-Id")!;return json(me());}
   if(url.pathname==="/functions/v1/listings"){mappingStarted.resolve();return mappingGate?.promise??json(page());}
+  if(url.pathname==="/functions/v1/studio/media"){mediaStarted.resolve();return mediaGate?.promise??json(media(url.searchParams.get("org_id")!,url.searchParams.get("listing_id")!));}
   if(url.pathname==="/functions/v1/studio/photo-copy"){operation??=body.operation_id;assert.equal(body.operation_id,operation);if(body.action==="bind")uploaded=true;if(body.action==="finish")complete=true;return json(copy());}
   if(url.pathname==="/functions/v1/uploads"||url.pathname.endsWith("/renew"))return json({asset_id:DEST,storage_key:destinationKey,mode:"single",uploaded,put_url:putURL});
   if(url.pathname.endsWith("/complete")){uploaded=true;return json({id:DEST,storage_key:destinationKey,listing_id:LISTING,uploaded:true});}
@@ -39,11 +41,12 @@ function fixture(){
   throw Error(`Unexpected closed transport ${url.pathname}`);
  }});
  const storageMap=new Map<string,string>(),storage={getItem:(k:string)=>storageMap.get(k)??null,setItem:(k:string,v:string)=>void storageMap.set(k,v),removeItem:(k:string)=>void storageMap.delete(k)}as Storage;
- return{services,seen,storage,storageMap,directory,me,page,row,copy,
+ return{services,seen,storage,storageMap,directory,me,page,row,copy,media,
   scope:{actor:ACTOR,org:ORG,library:LIBRARY,listing:LISTING},
   async open(){await services.loadWorkspace(undefined,LIBRARY);await services.listListings(LIBRARY);},
   gates(){directoryStarted=deferred();mappingStarted=deferred();directoryGate=deferred();mappingGate=deferred();return{directory:directoryGate,mapping:mappingGate,directoryStarted:directoryStarted.promise,mappingStarted:mappingStarted.promise};},
   clearGates(){directoryGate=undefined;mappingGate=undefined;},
+  holdMedia(){mediaStarted=deferred();mediaGate=deferred();return{response:mediaGate,started:mediaStarted.promise};},
   emit(user:string,token?:string){current=session(user,token);callback(user===ACTOR&&token?"TOKEN_REFRESHED":"SIGNED_IN",current);},
   actions(){return seen.filter(r=>r.method!=="GET");},
  };
@@ -133,4 +136,81 @@ test("a completed upload cannot finish the old-library copy after a same-actor l
 
 test("a synchronous account switch from upload progress cannot dispatch PUT using an earlier authority check",async()=>{
  const f=fixture();try{await f.open();await assert.rejects(f.services.upload(putURL,new Blob([PHOTO]),{orgId:ORG,expectedLibraryOrgId:LIBRARY,onProgress:loaded=>{if(loaded===0){f.emit(OTHER_ACTOR);f.emit(ACTOR);}}}));assert.equal(f.actions().length,0);}finally{f.services.dispose();}
+});
+
+test("typed media joins the fresh directory and exact adopted-listing mapping before its first GET",async()=>{
+ const f=fixture();let gates:ReturnType<typeof f.gates>|undefined;try{
+  await f.open();gates=f.gates();const refresh=f.services.loadWorkspace(undefined,LIBRARY);void refresh.catch(()=>{});await gates.directoryStarted;
+  let outcome:unknown;const pending=f.services.listMedia(ORG,LISTING,undefined,50).then(value=>{outcome=value;return value;},error=>{outcome=error;throw error;});void pending.catch(()=>{});
+  await tick();assert.equal(outcome,undefined,"A temporary cleared membership cache must wait, not become a media alert");assert.equal(f.seen.filter(r=>r.path.endsWith("/media")).length,0);
+  gates.directory.resolve(json(f.directory()));await refresh;await gates.mappingStarted;
+  const appRead=f.services.listListings(LIBRARY);await tick();assert.equal(f.seen.filter(r=>r.path.endsWith("/media")).length,0,"Directory membership alone cannot authorize an adopted listing");
+  gates.mapping.resolve(json(f.page()));const result=await pending;await appRead;
+  assert.equal(result.orgId,ORG);assert.equal(result.listingId,LISTING);assert.equal(f.seen.filter(r=>r.path.endsWith("/listings")).length,2,"The typed read and App share one fresh mapping read");
+  const reads=f.seen.filter(r=>r.path.endsWith("/media"));assert.equal(reads.length,1);assert.equal(reads[0].method,"GET");assert.equal(reads[0].headers.get("X-Org-Id"),ORG);assert.equal(reads[0].query.get("org_id"),ORG);assert.equal(reads[0].query.get("listing_id"),LISTING);assert.equal(reads[0].query.get("offset"),"50");assert.equal(reads[0].wire.credentials,"omit");assert.equal(f.actions().length,0);
+ }finally{gates?.directory.resolve(json(f.directory()));gates?.mapping.resolve(json(f.page()));f.services.dispose();}
+});
+
+test("typed media also fills a fresh completed directory's mapping gap instead of trusting old routing hints",async()=>{
+ const f=fixture();let gates:ReturnType<typeof f.gates>|undefined;try{
+  await f.open();gates=f.gates();const refresh=f.services.loadWorkspace(undefined,LIBRARY);void refresh.catch(()=>{});await gates.directoryStarted;gates.directory.resolve(json(f.directory()));await refresh;
+  let outcome:unknown;const pending=f.services.listMedia(ORG,LISTING).then(value=>{outcome=value;return value;},error=>{outcome=error;throw error;});void pending.catch(()=>{});
+  await tick();assert.equal(outcome,undefined,"The completed directory still requires a fresh exact-listing map");await gates.mappingStarted;assert.equal(f.seen.filter(r=>r.path.endsWith("/media")).length,0);
+  gates.mapping.resolve(json(f.page()));assert.equal((await pending).listingId,LISTING);
+ }finally{gates?.directory.resolve(json(f.directory()));gates?.mapping.resolve(json(f.page()));f.services.dispose();}
+});
+
+test("aborting one typed media waiter leaves another waiter and App's fresh mapping intact",async()=>{
+ const f=fixture();try{await f.open();const gates=f.gates(),refresh=f.services.loadWorkspace(undefined,LIBRARY);await gates.directoryStarted;
+  const cancelled=new AbortController(),stopped=assert.rejects(f.services.listMedia(ORG,LISTING,cancelled.signal),e=>e instanceof Error&&e.name==="AbortError"),pending=f.services.listMedia(ORG,LISTING);
+  gates.directory.resolve(json(f.directory()));await refresh;await gates.mappingStarted;const appRead=f.services.listListings(LIBRARY);cancelled.abort();await stopped;await tick();assert.equal(f.seen.filter(r=>r.path.endsWith("/media")).length,0);
+  gates.mapping.resolve(json(f.page()));assert.equal((await pending).listingId,LISTING);await appRead;assert.equal(f.seen.filter(r=>r.path.endsWith("/media")).length,1);assert.equal(f.seen.filter(r=>r.path.endsWith("/listings")).length,2);
+ }finally{f.services.dispose();}
+});
+
+for(const fault of["directory-failure","mapping-failure","malformed-actor","mapping-removed","other-listing-same-org","other-org-same-listing","library-switched","actor-returned","superseded","caller-abort","read-abort"]as const)test(`typed media fresh ${fault} refuses before its GET`,async()=>{
+ const f=fixture();try{await f.open();const gates=f.gates(),readController=new AbortController(),refresh=f.services.loadWorkspace(readController.signal,LIBRARY);const refreshHandled=refresh.catch(()=>{});await gates.directoryStarted;
+  const caller=new AbortController();let error:unknown;const pending=f.services.listMedia(ORG,LISTING,caller.signal).catch(reason=>{error=reason;});await tick();assert.equal(f.seen.filter(r=>r.path.endsWith("/media")).length,0);
+  if(fault==="directory-failure")gates.directory.resolve(json({},503));
+  else if(fault==="actor-returned"){f.emit(OTHER_ACTOR);f.emit(ACTOR);gates.directory.resolve(json(f.directory()));}
+  else if(fault==="superseded"||fault==="library-switched"){
+   f.clearGates();await f.services.loadWorkspace(undefined,fault==="library-switched"?OTHER_LIBRARY:LIBRARY);gates.directory.resolve(json(f.directory()));
+  }else if(fault==="read-abort"){readController.abort();gates.directory.resolve(json(f.directory()));}
+  else{
+   gates.directory.resolve(json(f.directory()));await refresh;
+   // Failures in the old implementation occur before the mapping read starts.
+   // Positive tests above prove the real barrier starts; these assert it stays closed.
+   await tick();if(fault==="caller-abort")caller.abort();
+   const rows=fault==="mapping-removed"?[]:[fault==="other-listing-same-org"?{...f.row(),id:"30000000-0000-4000-8000-000000000002"}:fault==="other-org-same-listing"?{...f.row(),org_id:OTHER_LIBRARY}:f.row()];
+   gates.mapping.resolve(fault==="mapping-failure"?json({},403):json(fault==="malformed-actor"?{...f.page(),actor_id:OTHER_ACTOR}:f.page(rows)));
+  }
+  await Promise.all([pending,refreshHandled]);assert(error instanceof Error);assert.equal(f.seen.filter(r=>r.path.endsWith("/media")).length,0);assert.equal(f.actions().length,0);
+ }finally{f.services.dispose();}
+});
+
+for(const replacement of["refresh","library-switch","actor-returned","caller-abort"]as const)test(`typed media rejects its late response after ${replacement}`,async()=>{
+ const f=fixture();try{await f.open();const held=f.holdMedia(),caller=new AbortController();const pending=assert.rejects(f.services.listMedia(ORG,LISTING,caller.signal));await held.started;
+  if(replacement==="caller-abort")caller.abort();
+  else if(replacement==="actor-returned"){f.emit(OTHER_ACTOR);f.emit(ACTOR);}
+  else await f.services.loadWorkspace(undefined,replacement==="library-switch"?OTHER_LIBRARY:LIBRARY);
+  held.response.resolve(json(f.media()));await pending;assert.equal(f.seen.filter(r=>r.path.endsWith("/media")).length,1);assert.equal(f.actions().length,0);
+ }finally{f.services.dispose();}
+});
+
+test("typed media accepts only its exact mapped listing even when the storage org is a direct membership",async()=>{
+ const f=fixture();try{await f.services.loadWorkspace(undefined,LIBRARY);await f.services.listListings(LIBRARY);
+  await assert.rejects(f.services.listMedia(LIBRARY,LISTING));assert.equal(f.seen.filter(r=>r.path.endsWith("/media")).length,0,"Membership must not authorize the same ID under a different storage org");
+  await assert.rejects(f.services.listMedia(ORG,"30000000-0000-4000-8000-000000000002"));assert.equal(f.seen.filter(r=>r.path.endsWith("/media")).length,0,"Another listing's physical org is not an exact-listing mapping");
+ }finally{f.services.dispose();}
+});
+
+test("same actor token refresh during typed media mapping uses the fresh token without restarting reads",async()=>{
+ const f=fixture();try{await f.open();const gates=f.gates(),refresh=f.services.loadWorkspace(undefined,LIBRARY);await gates.directoryStarted;
+  const pending=f.services.listMedia(ORG,LISTING);gates.directory.resolve(json(f.directory()));await refresh;await gates.mappingStarted;f.emit(ACTOR,"new-typed-media-token");gates.mapping.resolve(json(f.page()));await pending;
+  const reads=f.seen.filter(r=>r.path.endsWith("/media"));assert.equal(reads.length,1);assert.equal(reads[0].headers.get("Authorization"),"Bearer new-typed-media-token");assert.equal(f.seen.filter(r=>r.path.endsWith("/listings")).length,2);
+ }finally{f.services.dispose();}
+});
+
+test("typed media without a workspace never starts directory, mapping or media transport",async()=>{
+ const f=fixture();try{await f.services.ready();await assert.rejects(f.services.listMedia(ORG,LISTING));assert.equal(f.seen.length,0);}finally{f.services.dispose();}
 });

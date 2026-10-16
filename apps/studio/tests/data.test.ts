@@ -1196,12 +1196,13 @@ test("a forbidden explicit library preference never falls back or calls me",asyn
   })});await assert.rejects(services.loadWorkspace(undefined,OTHER_ORG),code("membership-required"));assert.equal(meReads,0);
   const own=await services.loadWorkspace();assert.equal(own.org.id,ORG);assert.equal(own.canSwitchAgentLibraries,false);services.dispose();
 });
-test("legacy own-agent rows retain true org for media, grouping stays private and refresh revokes routing hints",async()=>{
+test("legacy own-agent rows retain true org for media, and typed refresh replaces routing hints with a fresh exact map",async()=>{
   const seen:Array<{path:string;org:string|null}>=[];
   const legacy={...listingDTO(OTHER_ORG),library_org_id:ORG};
+  let listingPresent=true;
   const services=createStudioServices(config,{auth:mockAuth().auth,fetch:fakeFetch((url,options)=>{
     seen.push({path:url.pathname,org:new Headers(options.headers).get("X-Org-Id")});
-    if(url.pathname.endsWith("/listings"))return libraryPage([legacy]);
+    if(url.pathname.endsWith("/listings"))return libraryPage(listingPresent?[legacy]:[]);
     if(url.pathname.endsWith("/studio/media"))return json({org_id:OTHER_ORG,listing_id:LISTING,photos:[],videos:[],next_offset:null,unavailable_count:0});
     return fixtureResponse(url);
   })});
@@ -1211,7 +1212,10 @@ test("legacy own-agent rows retain true org for media, grouping stays private an
   assert.equal(canEditListing(scoped,rows[0]),true);assert.equal(canEditListing({...scoped,memberships:scoped.memberships.map(m=>({...m,canWrite:false}))},rows[0]),false);
   await services.listMedia(rows[0].orgId,rows[0].id);assert.equal(seen.at(-1)?.org,OTHER_ORG);
   await services.loadWorkspace();const calls=seen.length;
-  await assert.rejects(services.listMedia(OTHER_ORG,LISTING),code("membership-required"));assert.equal(seen.length,calls);services.dispose();
+  await assert.rejects(services.api("/functions/v1/studio/probe",{orgId:OTHER_ORG}),code("membership-required"));assert.equal(seen.length,calls,"Generic unannotated requests still cannot use revoked routing hints");
+  await services.listMedia(OTHER_ORG,LISTING);assert.deepEqual(seen.slice(calls),[{path:"/functions/v1/listings",org:ORG},{path:"/functions/v1/studio/media",org:OTHER_ORG}]);
+  listingPresent=false;await services.loadWorkspace();const beforeRemovedRead=seen.length;
+  await assert.rejects(services.listMedia(OTHER_ORG,LISTING),code("membership-required"));assert.deepEqual(seen.slice(beforeRemovedRead),[{path:"/functions/v1/listings",org:ORG}],"A removed listing cannot reach media transport");services.dispose();
 });
 test("purchase root, viewed library and serving grant decode independently without alias authority",()=>{
   const directory=directoryDTO(USER,OTHER_ORG,true);directory.workspaces[1].billing_org_id=FOREIGN_ORG;
