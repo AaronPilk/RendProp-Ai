@@ -284,7 +284,9 @@ final class AppModel: ObservableObject {
         pendingPublish.removeAll()
         // Published compliance originals belong to the previous account's org.
         publishedOriginalAssets.removeAll()
-        publishedGalleryAssets.removeAll()
+        cloudPhotoStates.removeAll()
+        cloudPhotoNotices.removeAll()
+        cloudPhotoReadGeneration.removeAll()
         // The business type was synced to the OLD org; the new one has not
         // heard it. This re-sends it once the new session has settled.
         Self.markSpaceTypeOutOfSync()
@@ -1306,29 +1308,20 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Every gallery photo already uploaded, memoised by
-    /// `<relative path>|<bytes>` the same way `publishedOriginalAssets` is. An
-    /// edit rewrites the file (new path, new size), so a changed photo misses
-    /// the memo and re-uploads, which is the behaviour we want.
-    private var publishedGalleryAssets: [String: String] = [:]
-
-    /// Put this listing's photos on its public tour page.
-    ///
-    /// THE DEFECT, in the owner's words: "It doesn't show any of the pictures."
-    /// The tour host renders `tour.gallery` (player.ts `galleryItems`), the
-    /// server now emits it from `role:"gallery"` uploads — and this is the only
-    /// thing that ever creates one. Without this call the gallery is an empty
-    /// array on every tour ever published.
-    ///
-    /// BEST EFFORT, NOT SILENT. A publish must not fail because a photo did not
-    /// upload — but "the gallery is empty and nobody knows why" was the defect,
-    /// so a photo that does not make it is reported on the listing's own
-    /// `lastError` line (Home card + detail banner) with the count and the
-    /// server's reason, and "Publish again" is the retry: the memo skips what
-    /// already landed. Bounded to the newest 40 and to photos under the
-    /// ceiling. Sequential on purpose: seventeen concurrent multi-megabyte
-    /// PUTs from a phone on cellular is how you turn a working publish into a
-    /// stall.
+    private let photoCloudJournal = PhotoCloudSelectionJournal(directory:
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
+    private lazy var photoCloudCoordinator = PhotoCloudSelectionCoordinator(store: photoCloudJournal)
+    private struct CloudPhotoState {
+        let revision: UInt64
+        let physicalOrgID: UUID?
+        let projection: PhotoCloudSelectionProjection
+    }
+    @Published private var cloudPhotoStates: [UUID: CloudPhotoState] = [:]
+    @Published private var cloudPhotoNotices: [UUID: String] = [:]
+    private var cloudPhotoReadGeneration: [UUID: UUID] = [:]
+    private var cloudPhotoMutationInFlight: Set<UUID> = []
+    // Retained for the old removal coordinator's drain boundary. Automatic
+    // gallery work can no longer upload, append, replace or change a cover.
     private var gallerySyncInFlight: Set<UUID> = []
     private var gallerySyncPending: Set<UUID> = []
     private let galleryMutationFence = PhotoGalleryMutationFence()
@@ -1340,132 +1333,303 @@ final class AppModel: ObservableObject {
 
     func endPhotoGalleryRemoval(listingID: UUID, serverID: UUID) {
         galleryMutationFence.releaseRemoval(listingID)
-        if gallerySyncPending.remove(listingID) != nil {
-            Task { [weak self] in
-                await self?.syncGalleryPhotos(listingLocalID: listingID, listingServerID: serverID)
-            }
-        }
+        gallerySyncPending.remove(listingID)
+        // No queued bulk pass may resurrect a removed family now or later.
     }
 
-    func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async {
-        guard Config.useLiveBackend else { return }
-        guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }
-        guard let listing = listings.first(where: { $0.id == listingLocalID }), !listing.isSample,
-              listing.serverID == listingServerID else { return }
-        if galleryMutationFence.blocksSync(listingLocalID) || gallerySyncInFlight.contains(listingLocalID) {
-            gallerySyncPending.insert(listingLocalID); return
+    func cloudPhotoProjection(for listingID: UUID) -> PhotoCloudSelectionProjection? {
+        guard let state = cloudPhotoStates[listingID], let listing = listings.first(where: { $0.id == listingID }),
+              listing.serverID == state.projection.identity.serverListingID,
+              listing.serverOrgID == state.physicalOrgID, listing.cloudUnavailable != true,
+              AuthStore.shared.syncSessionRevision == state.revision,
+              AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == state.projection.identity.actorID,
+              WorkspaceContext.selectedOrgID == state.projection.identity.libraryOrgID else { return nil }
+        return state.projection
+    }
+
+    func cloudPhotoNotice(for listingID: UUID) -> String? {
+        guard cloudPhotoProjection(for: listingID) != nil else { return nil }
+        return cloudPhotoNotices[listingID]
+    }
+
+    private func cloudPhotoIdentity(_ id: UUID) throws -> (PhotoCloudSelectionIdentity, CloudMediaAccessContext, UUID?) {
+        guard Config.useLiveBackend, let listing = listings.first(where: { $0.id == id }), !listing.isSample,
+              listing.cloudUnavailable != true, let server = listing.serverID,
+              let library = WorkspaceContext.selectedOrgID else { throw PhotoCloudSelectionFailure.identityChanged }
+        let context = try CloudMediaAccessContext.capture(orgID: library)
+        return (.init(actorID: context.actorID, libraryOrgID: library, localListingID: id, serverListingID: server), context, listing.serverOrgID)
+    }
+
+    private func requireCloudPhotoIdentity(_ identity: PhotoCloudSelectionIdentity, context: CloudMediaAccessContext,
+                                           physicalOrgID: UUID?, generation: UUID) throws {
+        try Task.checkCancellation(); try context.check()
+        guard cloudPhotoReadGeneration[identity.localListingID] == generation,
+              let current = listings.first(where: { $0.id == identity.localListingID }), !current.isSample,
+              current.cloudUnavailable != true, current.serverID == identity.serverListingID,
+              current.serverOrgID == physicalOrgID else { throw PhotoCloudSelectionFailure.identityChanged }
+    }
+
+    private func cloudPhotoCatalog(identity: PhotoCloudSelectionIdentity, physicalOrgID: UUID?, requireIdentity: @MainActor () throws -> Void) async throws -> [PhotoCloudLocalVersion] {
+        let directory = EnhancedPhoto.directory(for: identity.localListingID)
+        try requireIdentity()
+        let index = try PhotoVersionHistory.load(directory: directory)
+        var facts: [PhotoCloudLocalVersion] = []
+        for version in index.versions.values.sorted(by: { $0.id < $1.id }) {
+            let file = directory.appendingPathComponent(version.imageFile)
+            let measured = try await Task.detached(priority: .userInitiated) { () throws -> (String, Int64) in
+                let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+                guard values.isRegularFile == true, values.isSymbolicLink != true,
+                      let size = values.fileSize, size > 0, size <= 128 * 1024 * 1024,
+                      let digest = DirectUploader.sha256(of: file), FileStore.fileSize(file) == Int64(size) else {
+                    throw PhotoCloudSelectionFailure.unmapped
+                }
+                return (digest, Int64(size))
+            }.value
+            try requireIdentity()
+            let known = try await CloudPhotoReferences.shared.galleryAssetID(fileURL: file,
+                ownerID: identity.actorID, orgID: identity.libraryOrgID, listingID: identity.serverListingID,
+                physicalOrgID: physicalOrgID)
+            try requireIdentity()
+            facts.append(.init(id: version.id, familyID: version.familyID, imageFile: version.imageFile,
+                sha256: measured.0, bytes: measured.1, knownAssetID: known, historyComplete: version.sourceHistoryKnown))
         }
-        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
-        let workspace = WorkspaceContext.selectedOrgID
-        func requireIdentity() throws {
-            try Task.checkCancellation()
-            guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
-                  WorkspaceContext.selectedOrgID == workspace,
-                  listings.first(where: { $0.id == listingLocalID })?.serverID == listingServerID
-            else { throw CloudSyncError.identityChanged }
-        }
-        gallerySyncInFlight.insert(listingLocalID)
-        galleryMutationFence.syncDidStart(listingLocalID)
-        defer {
-            gallerySyncInFlight.remove(listingLocalID)
-            galleryMutationFence.syncDidFinish(listingLocalID)
-            if !galleryMutationFence.blocksSync(listingLocalID), gallerySyncPending.remove(listingLocalID) != nil {
-                Task { [weak self] in
-                    await self?.syncGalleryPhotos(listingLocalID: listingLocalID, listingServerID: listingServerID)
+        // A later local edit/removal cannot be accepted as the earlier catalog.
+        let current = try PhotoVersionHistory.load(directory: directory)
+        guard current.versions == index.versions, current.current == index.current,
+              current.listingSelections == index.listingSelections, current.excludedListingFamilies == index.excludedListingFamilies,
+              current.hiddenFamilies == index.hiddenFamilies, current.familyOrder == index.familyOrder,
+              current.importOrder == index.importOrder else { throw PhotoCloudSelectionFailure.changed }
+        return facts
+    }
+
+    @discardableResult func refreshCloudPhotoSelection(listingID: UUID) async throws -> PhotoCloudSelectionProjection {
+        guard !cloudPhotoMutationInFlight.contains(listingID) else { throw PhotoCloudSelectionFailure.busy }
+        let (identity, context, physical) = try cloudPhotoIdentity(listingID)
+        guard let selectionAPI = api as? any ListingPhotoCloudSelectionAPI else { throw PhotoCloudSelectionFailure.identityChanged }
+        let generation = UUID(); cloudPhotoReadGeneration[listingID] = generation
+        cloudPhotoStates.removeValue(forKey: listingID)
+        func check() throws { try self.requireCloudPhotoIdentity(identity, context: context, physicalOrgID: physical, generation: generation) }
+        let projection = try await photoCloudCoordinator.refresh(identity: identity, physicalOrgID: physical, api: selectionAPI,
+            catalog: { try await self.cloudPhotoCatalog(identity: identity, physicalOrgID: physical, requireIdentity: check) },
+            requireIdentity: check)
+        try requireCloudPhotoIdentity(identity, context: context, physicalOrgID: physical, generation: generation)
+        cloudPhotoStates[listingID] = .init(revision: context.revision, physicalOrgID: physical, projection: projection)
+        return projection
+    }
+
+    @discardableResult func changeCloudPhotoSelection(listingID: UUID, versionID: String, selecting: Bool,
+                                                      followFamilyCover: Bool = false, reviewed: Bool, promoteCover: Bool = false, requireEmptyCover: Bool = false) async throws -> PhotoCloudSelectionProjection {
+        guard cloudPhotoMutationInFlight.insert(listingID).inserted else { throw PhotoCloudSelectionFailure.busy }
+        defer { cloudPhotoMutationInFlight.remove(listingID) }
+        let (identity, context, physical) = try cloudPhotoIdentity(listingID)
+        guard let selectionAPI = api as? any ListingPhotoCloudSelectionAPI else { throw PhotoCloudSelectionFailure.identityChanged }
+        let generation = UUID(); cloudPhotoReadGeneration[listingID] = generation
+        cloudPhotoStates.removeValue(forKey: listingID)
+        func check() throws { try self.requireCloudPhotoIdentity(identity, context: context, physicalOrgID: physical, generation: generation) }
+        let projection = try await photoCloudCoordinator.change(identity: identity, physicalOrgID: physical,
+            versionID: versionID, selecting: selecting, followFamilyCover: followFamilyCover, reviewed: reviewed, promoteCover: promoteCover, requireEmptyCover: requireEmptyCover, api: selectionAPI,
+            catalog: { try await self.cloudPhotoCatalog(identity: identity, physicalOrgID: physical, requireIdentity: check) },
+            prepare: { measured, org in
+                try check()
+                let directory = EnhancedPhoto.directory(for: listingID)
+                let index = try PhotoVersionHistory.load(directory: directory)
+                guard let version = index.versions[versionID], version.imageFile == measured.imageFile,
+                      (!version.needsStagingReview || reviewed), (!version.needsCustomReview || reviewed) else { throw PhotoVersionHistory.Failure.reviewRequired }
+                let file = directory.appendingPathComponent(version.imageFile)
+                guard DirectUploader.sha256(of: file) == measured.sha256, FileStore.fileSize(file) == measured.bytes else {
+                    throw PhotoCloudSelectionFailure.changed
                 }
-            }
-        }
-        let mainPath = listing.mainPhotoRelPath
-        func selectedPhotos() throws -> [EnhancedPhoto] {
-            let saved = try EnhancedPhoto.loadForListing(listingID: listingLocalID)
-            let main = saved.first { FileStore.relativePath(for: $0.enhancedURL) == mainPath }
-            return Array(((main.map { [$0] } ?? []) + saved.filter { $0.id != main?.id }).prefix(40))
-        }
-        var selectedAssets: [String] = []
-        var mainAsset: String?
-        var originals: [(PhotoGalleryDisclosure.RetainedOriginal, URL, URL)] = []
-        do {
-            if listing.cloudImported == true,
-               let actorID = owner.flatMap(UUID.init(uuidString:)), let libraryID = workspace,
-               try PhotoListingRemovalCoordinator.hasPending(directory: EnhancedPhoto.directory(for: listingLocalID),
-                    localListingID: listingLocalID, serverListingID: listingServerID,
-                    actorID: actorID, libraryOrgID: libraryID) {
-                throw PhotoListingRemovalJournal.Failure.pendingOperation
-            }
-            let photos = try selectedPhotos()
-            if let mainPath, !photos.contains(where: { FileStore.relativePath(for: $0.enhancedURL) == mainPath }) {
-                throw PhotoVersionHistory.Failure.coverNotSelected
-            }
-            for photo in photos {
-                try requireIdentity()
-                let url = photo.enhancedURL
-                let bytes = FileStore.fileSize(url)
-                guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { throw PhotoVersionHistory.Failure.missingImage }
-                let version = photo.savedVersion
-                let original = try version.flatMap {
-                    try PhotoGalleryDisclosure.retainedOriginal(version: $0, imageURL: url,
-                        sourceURL: photo.originalURL, maxBytes: Self.maxPublishedPhotoBytes)
-                }
-                let originalDigest = original.map { "|original-sha256:\($0.sha256)" } ?? ""
-                let memo = "\(owner ?? "guest")|\(workspace?.uuidString ?? "none")|\(listingServerID)|\(FileStore.relativePath(for: url))|\(bytes)\(originalDigest)"
-                let asset: String
-                if let cached = publishedGalleryAssets[memo] { asset = cached }
-                else {
-                    asset = try await UploadManager.shared.uploadGalleryPhoto(fileURL: url, listingID: listingServerID)
-                    try requireIdentity()
-                    publishedGalleryAssets[memo] = asset
-                }
-                if let actorUUID = owner.flatMap(UUID.init(uuidString:)), let library = workspace,
-                   let galleryID = UUID(uuidString: asset) {
-                    try await CloudPhotoReferences.shared.saveGalleryAssetID(assetID: galleryID,
-                        fileURL: url, ownerID: actorUUID, orgID: library, listingID: listingServerID,
-                        physicalOrgID: listing.serverOrgID)
-                    try requireIdentity()
-                }
-                selectedAssets.append(asset)
-                if let original {
-                    try PhotoGalleryDisclosure.requireUnchanged(original, imageURL: url,
-                        sourceURL: photo.originalURL, maxBytes: Self.maxPublishedPhotoBytes)
-                    originals.append((original, url, photo.originalURL))
-                }
-                if let version, version.edit != "capture" && version.edit != "legacy" && original == nil {
-                    guard let provenanceID = version.provenanceID, version.provenanceRecorded else {
+                let source = version.originalFile.map { directory.appendingPathComponent($0) } ?? file
+                let retainedOriginal = try PhotoGalleryDisclosure.retainedOriginal(version: version,
+                    imageURL: file, sourceURL: source, maxBytes: Self.maxPublishedPhotoBytes)
+                if version.edit != "capture", version.edit != "legacy", retainedOriginal == nil {
+                    guard version.provenanceRecorded, version.provenanceID != nil else {
                         throw AIImagePrep.error("This edited photo's disclosure hasn't been saved. Keep the earlier version selected and retry its AI edit.")
                     }
-                    try await api.attachProvenanceMedia(provenanceID: provenanceID, originalAssetID: nil, alteredAssetID: asset)
-                    try requireIdentity()
                 }
-                if FileStore.relativePath(for: url) == mainPath { mainAsset = asset }
-            }
-            try requireIdentity()
-            for (original, imageURL, sourceURL) in originals {
-                try PhotoGalleryDisclosure.requireUnchanged(original, imageURL: imageURL,
-                    sourceURL: sourceURL, maxBytes: Self.maxPublishedPhotoBytes)
-            }
-            // An older upload pass must never replace a newer local selection.
-            guard try selectedPhotos().map(\.id) == photos.map(\.id),
-                  listings.first(where: { $0.id == listingLocalID })?.mainPhotoRelPath == mainPath else {
-                gallerySyncPending.insert(listingLocalID); return
-            }
-            // A cloud-imported project may have photos that are not on this
-            // phone. Preserve its cloud gallery rather than replacing it with
-            // an incomplete local directory.
-            if listing.cloudImported == true {
-                if !selectedAssets.isEmpty {
-                    try await api.addListingPhotos(serverID: listingServerID, assetIDs: selectedAssets, mainAssetID: mainAsset)
+                let asset = try await UploadManager.shared.uploadGalleryPhoto(fileURL: file, listingID: identity.serverListingID)
+                try check()
+                guard let galleryID = UUID(uuidString: asset), DirectUploader.sha256(of: file) == measured.sha256,
+                      FileStore.fileSize(file) == measured.bytes else { throw PhotoCloudSelectionFailure.changed }
+                if let retainedOriginal {
+                    try PhotoGalleryDisclosure.requireUnchanged(retainedOriginal, imageURL: file,
+                        sourceURL: source, maxBytes: Self.maxPublishedPhotoBytes)
                 }
+                if version.edit != "capture", version.edit != "legacy", retainedOriginal == nil {
+                    guard version.provenanceRecorded, let provenance = version.provenanceID else { throw PhotoCloudSelectionFailure.unmapped }
+                    try await self.api.attachProvenanceMedia(provenanceID: provenance, originalAssetID: nil, alteredAssetID: asset)
+                    try check()
+                }
+                try await CloudPhotoReferences.shared.saveGalleryAssetID(assetID: galleryID, fileURL: file,
+                    ownerID: identity.actorID, orgID: identity.libraryOrgID, listingID: identity.serverListingID, physicalOrgID: org)
+                try check()
+            }, requireIdentity: check)
+        try check()
+        cloudPhotoStates[listingID] = .init(revision: context.revision, physicalOrgID: physical, projection: projection)
+        return projection
+    }
+
+    @discardableResult func abandonCloudPhotoSelection(listingID: UUID) async throws -> PhotoCloudSelectionProjection {
+        guard cloudPhotoMutationInFlight.insert(listingID).inserted else { throw PhotoCloudSelectionFailure.busy }
+        defer { cloudPhotoMutationInFlight.remove(listingID) }
+        let (identity, context, physical) = try cloudPhotoIdentity(listingID)
+        guard let selectionAPI = api as? any ListingPhotoCloudSelectionAPI else { throw PhotoCloudSelectionFailure.identityChanged }
+        let generation = UUID(); cloudPhotoReadGeneration[listingID] = generation
+        cloudPhotoStates.removeValue(forKey: listingID)
+        func check() throws { try self.requireCloudPhotoIdentity(identity, context: context, physicalOrgID: physical, generation: generation) }
+        let projection = try await photoCloudCoordinator.abandon(identity: identity, physicalOrgID: physical, api: selectionAPI,
+            catalog: { try await self.cloudPhotoCatalog(identity: identity, physicalOrgID: physical, requireIdentity: check) }, requireIdentity: check)
+        try check()
+        cloudPhotoStates[listingID] = .init(revision: context.revision, physicalOrgID: physical, projection: projection)
+        return projection
+    }
+
+    /// Explicit gallery deletion removes exposure before the caller hides local
+    /// history. A pending/unknown mapping never becomes permission to hide it.
+    func prepareCloudPhotoHide(listingID: UUID, versionID: String) async throws -> PhotoCloudSelectionProjection {
+        var projection = try await refreshCloudPhotoSelection(listingID: listingID)
+        guard !projection.pending else { throw PhotoCloudSelectionFailure.pending }
+        guard let version = projection.versions.first(where: { $0.id == versionID }),
+              projection.mutableFamilyIDs.contains(version.familyID) else { throw PhotoCloudSelectionFailure.unmapped }
+        if projection.versions.contains(where: { $0.familyID == version.familyID && projection.selectedVersionIDs.contains($0.id) }) {
+            _ = try await changeCloudPhotoSelection(listingID: listingID, versionID: versionID, selecting: false, reviewed: false)
+            projection = try await refreshCloudPhotoSelection(listingID: listingID)
+        }
+        guard !projection.pending else { throw PhotoCloudSelectionFailure.pending }
+        guard projection.mutableFamilyIDs.contains(version.familyID),
+              !projection.versions.contains(where: { $0.familyID == version.familyID && projection.selectedVersionIDs.contains($0.id) }) else {
+            throw PhotoCloudSelectionFailure.changed
+        }
+        return projection
+    }
+
+    @discardableResult func makeCloudPhotoCover(listingID: UUID, versionID: String, reviewed: Bool) async throws -> PhotoCloudSelectionProjection {
+        var projection = try await refreshCloudPhotoSelection(listingID: listingID)
+        guard let version = projection.versions.first(where: { $0.id == versionID }),
+              projection.mutableFamilyIDs.contains(version.familyID) else { throw PhotoCloudSelectionFailure.unmapped }
+        if !projection.selectedVersionIDs.contains(versionID) {
+            let follow = projection.versions.contains { $0.familyID == version.familyID && projection.coverVersionIDs.contains($0.id) }
+            projection = try await changeCloudPhotoSelection(listingID: listingID, versionID: versionID, selecting: true,
+                followFamilyCover: follow, reviewed: reviewed)
+            // Acknowledging Use does not acknowledge the separate cover step.
+            guard projection.selectedVersionIDs.contains(versionID) else { throw PhotoCloudSelectionFailure.changed }
+        }
+        if projection.coverVersionIDs.contains(versionID) { return projection }
+        return try await changeCloudPhotoSelection(listingID: listingID, versionID: versionID, selecting: true,
+            reviewed: reviewed, promoteCover: true)
+    }
+
+    /// Only an explicit initial publication can start this persisted ordered
+    /// family queue. Automatic refresh can confirm a prior receipt, never send
+    /// its next request or replace the gallery from a directory enumeration.
+    private func publishInitialPhotoChoicesIfNeeded(listingID: UUID) async throws {
+        guard Config.useLiveBackend else { return }
+        let (identity, context, physical) = try cloudPhotoIdentity(listingID)
+        func check() throws {
+            try context.check(); try Task.checkCancellation()
+            guard let current = listings.first(where: { $0.id == listingID }), current.serverID == identity.serverListingID,
+                  current.serverOrgID == physical, current.cloudUnavailable != true else { throw PhotoCloudSelectionFailure.identityChanged }
+        }
+        try check()
+        let saved = try photoCloudJournal.initialIntent(identity)
+        guard saved != nil || (listings.first(where: { $0.id == listingID })?.serverShareURL == nil
+            && listings.first(where: { $0.id == listingID })?.cloudImported != true) else { return }
+        if saved == nil {
+            let directory = EnhancedPhoto.directory(for: listingID)
+            let selected = try PhotoVersionHistory.publicationVersions(directory: directory) ?? []
+            if selected.isEmpty { return }
+            let catalog = try await cloudPhotoCatalog(identity: identity, physicalOrgID: physical, requireIdentity: check)
+            try check()
+            let targets = try selected.map { version -> PhotoCloudLocalVersion in
+                guard !version.needsStagingReview, !version.needsCustomReview,
+                      let measured = catalog.first(where: { $0.id == version.id }) else { throw PhotoVersionHistory.Failure.reviewRequired }
+                return measured
+            }
+            let initial = try await refreshCloudPhotoSelection(listingID: listingID)
+            try check()
+            guard !initial.pending else { throw PhotoCloudSelectionFailure.pending }
+            let main = listings.first(where: { $0.id == listingID })?.mainPhotoRelPath
+            let cover = main.flatMap { path in targets.first(where: { $0.imageFile == FileStore.url(fromRelativePath: path).lastPathComponent }) }
+            if main != nil, cover == nil { throw PhotoVersionHistory.Failure.coverNotSelected }
+            _ = try photoCloudJournal.beginInitial(.init(identity: identity, versions: targets,
+                coverVersionID: cover?.id, initialCoverWasEmpty: initial.snapshot.mainPhotoKey == nil))
+            cloudPhotoNotices.removeValue(forKey: listingID)
+        }
+        while let intent = try photoCloudJournal.initialIntent(identity),
+              let next = intent.versions.dropFirst(intent.completedVersionIDs.count).first {
+            let projection = try await refreshCloudPhotoSelection(listingID: listingID)
+            try check()
+            guard let currentIntent = try photoCloudJournal.initialIntent(identity) else { throw PhotoCloudSelectionFailure.changed }
+            // Reconciliation can have already recorded this accepted family.
+            // Never restore its historical target over a later Studio choice.
+            if currentIntent.completedVersionIDs.count != intent.completedVersionIDs.count { continue }
+            guard !projection.pending else { throw PhotoCloudSelectionFailure.pending }
+            guard let measured = projection.versions.first(where: { $0.id == next.id }),
+                  measured.familyID == next.familyID, measured.imageFile == next.imageFile,
+                  measured.sha256 == next.sha256, measured.bytes == next.bytes else { throw PhotoCloudSelectionFailure.changed }
+            let selectedFamily = projection.versions.filter { $0.familyID == next.familyID && projection.selectedVersionIDs.contains($0.id) }
+            if projection.selectedVersionIDs.contains(next.id), selectedFamily.count == 1 {
+                try photoCloudJournal.confirmInitialCurrent(identity, version: measured)
             } else {
-                try await api.selectListingPhotos(serverID: listingServerID, galleryAssetIDs: selectedAssets, mainAssetID: mainAsset)
+                _ = try await changeCloudPhotoSelection(listingID: listingID, versionID: next.id, selecting: true, reviewed: false)
             }
-            try requireIdentity()
+            try check()
+        }
+        if let intent = try photoCloudJournal.initialIntent(identity), let coverID = intent.coverVersionID, !intent.coverFinished {
+            let projection = try await refreshCloudPhotoSelection(listingID: listingID)
+            try check()
+            guard let currentIntent = try photoCloudJournal.initialIntent(identity), !projection.pending else { throw PhotoCloudSelectionFailure.pending }
+            if !currentIntent.coverFinished {
+                guard let captured = intent.versions.first(where: { $0.id == coverID }),
+                      let measured = projection.versions.first(where: { $0.id == coverID }),
+                      measured.familyID == captured.familyID, measured.imageFile == captured.imageFile,
+                      measured.sha256 == captured.sha256, measured.bytes == captured.bytes else { throw PhotoCloudSelectionFailure.changed }
+                if projection.coverVersionIDs.contains(coverID) {
+                    try photoCloudJournal.confirmInitialCover(identity, version: measured, preserved: false)
+                } else if !intent.initialCoverWasEmpty || projection.snapshot.mainPhotoKey != nil
+                    || !projection.selectedVersionIDs.contains(coverID)
+                    || projection.versions.filter({ $0.familyID == captured.familyID && projection.selectedVersionIDs.contains($0.id) }).count != 1 {
+                    try photoCloudJournal.confirmInitialCover(identity, version: measured, preserved: true)
+                } else {
+                    do {
+                        _ = try await changeCloudPhotoSelection(listingID: listingID, versionID: coverID, selecting: true, reviewed: false, promoteCover: true, requireEmptyCover: true)
+                    } catch {
+                        let coverChanged = (error as? PhotoCloudSelectionFailure) == .coverNoLongerEmpty
+                        let casChanged = (error as? APIError).map { $0.status == 409 && $0.code == "gallery_selection_changed" } == true
+                        guard coverChanged || casChanged else { throw error }
+                        // No second cover request. A newer cover or selection
+                        // remains authoritative after this definite CAS refusal.
+                        _ = try await refreshCloudPhotoSelection(listingID: listingID)
+                        try check()
+                        try photoCloudJournal.confirmInitialCover(identity, version: measured, preserved: true)
+                    }
+                }
+            }
+        }
+        if try photoCloudJournal.initialIntent(identity)?.coverWasPreserved == true {
+            cloudPhotoNotices[listingID] = "The listing’s existing cover setting was preserved. Choose a star in Photos to change it."
+        }
+        try photoCloudJournal.finishInitial(identity)
+    }
+
+    /// Automatic callers can refresh only. Publication is an explicit family
+    /// intent; opening Photos, a later edit, cover staging or republish cannot
+    /// overwrite another device's gallery, upload a photo, or mutate its cover.
+    func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async {
+        guard let listing = listings.first(where: { $0.id == listingLocalID }),
+              listing.serverID == listingServerID else { return }
+        do {
+            _ = try await refreshCloudPhotoSelection(listingID: listingLocalID)
             if listings.first(where: { $0.id == listingLocalID })?.lastError?.hasPrefix(Self.photoSyncErrorPrefix) == true {
                 setLastError(nil, for: listingLocalID)
             }
-        } catch is CancellationError { return }
+        }
+        catch is CancellationError { return }
         catch CloudSyncError.identityChanged { return }
+        catch PhotoCloudSelectionFailure.identityChanged { return }
         catch {
-            noteUploadProblem(Self.photoSyncErrorPrefix + " Your saved versions are safe. Open Photos to retry. "
-                              + Self.userMessage(for: error), listingLocalID: listingLocalID, error: error)
+            noteUploadProblem(Self.photoSyncErrorPrefix + " Refresh Photos to check its cloud selection. " + Self.userMessage(for: error),
+                listingLocalID: listingLocalID, error: error)
         }
     }
 
@@ -1511,6 +1675,7 @@ final class AppModel: ObservableObject {
         do {
             // 1. Adopt (or create) the server listing identity.
             let serverID = try await ensureServerListing(listing)
+            try await publishInitialPhotoChoicesIfNeeded(listingID: id)
             try await syncClientContactBeforePublish(id, requireClient: listing.spaceType == .realEstate && RealEstateRoleStore.current.isProducer)
 
             // 1b. The publish screen's answer to "List this tour on Google",
@@ -1672,6 +1837,8 @@ final class AppModel: ObservableObject {
             setLastError(nil, for: id) // Sync below restores any current problem; stale retry copy cannot block itself.
             try await syncClientContactBeforePublish(id, requireClient: listing.spaceType == .realEstate && RealEstateRoleStore.current.isProducer)
             await syncListing(id)
+            try requireCurrent()
+            try await publishInitialPhotoChoicesIfNeeded(listingID: id)
             try requireCurrent()
             await syncGalleryPhotos(listingLocalID: id, listingServerID: serverID)
             try requireCurrent()

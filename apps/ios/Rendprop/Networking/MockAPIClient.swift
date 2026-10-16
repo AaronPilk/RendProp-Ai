@@ -100,8 +100,6 @@ actor MockAPIClient: APIClient {
                                republishedRenders: trashed.hadPublishedTour ? 1 : 0, cancelledClientDeliveries: 0)
     }
 
-    func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws {}
-    func addListingPhotos(serverID: UUID, assetIDs: [String], mainAssetID: String?) async throws {}
 
     // MARK: - Uploads
 

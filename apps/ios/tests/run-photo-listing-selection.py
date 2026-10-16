@@ -23,7 +23,7 @@ def block(text, anchor):
 
 review = block(view, 'struct PhotoCompareView: View {')
 button = block(review, '@ViewBuilder private var useOnListingButton: some View {')
-for required in ['PrimaryButton(title:', 'action: changeListingSelection)', 'isDisabled: listingSelectionDisabled', 'selectedForListing ? "Unselect" : "Use on listing"', 'isCompact: true', '"Remove this photo from listing"', '.disabled(listingSelectionDisabled)', 'minHeight: 44', 'photoVersion.useOnListing']:
+for required in ['PrimaryButton(title:', 'action: changeListingSelection)', 'isDisabled: listingSelectionDisabled', 'publicationSelected ? "Unselect" : "Use on listing"', 'isCompact: true', '"Remove this photo from listing"', '.disabled(listingSelectionDisabled)', 'minHeight: 44', 'photoVersion.useOnListing']:
     assert required in button, required
 save = block(review, 'private var savePhotoButton: some View {')
 for required in ['SecondaryButton(title: "Save photo"', 'isDisabled: savePhotoDisabled', '.disabled(savePhotoDisabled)', 'minHeight: 44', 'photoVersion.download']:
@@ -59,6 +59,14 @@ struct Listing { var id: UUID; var mainPhotoRelPath: String?; var serverShareURL
     var imageContext: Context? = Context(isCurrent: true)
     var selectedForListing = true; var requestedCover = false; var dismissed = false
     var selectionWorkID: UUID?
+    var isCloudListing: Bool { false }
+    var cloudSelectionKnown: Bool { false }
+    var cloudCoverRequested: Bool { false }
+    var publicationSelected: Bool { selectedForListing }
+    struct Projection { var versions: [PhotoVersionHistory.Version] = []; var coverVersionIDs: Set<String> = [] }
+    var cloudProjection: Projection? { nil }
+    var confirmCloudCoverFollow = false
+    func beginCloudSelection(followCover: Bool) { fatalError("cloud path belongs to the actual typed transport/coordinator proof") }
     var enhanced: Data?; var original: Data?; var selectionError: String?
     var stagingReview = PhotoVersionHistory.StagingReview()
     var customReview = PhotoVersionHistory.CustomReview()
@@ -127,7 +135,7 @@ __ACTUAL__
 '''
 variants = [('actual', actual, history, None),
     ('stale-context', actual.replace('guard imageContext?.isCurrent == true else { clearAndDismiss(); return }', 'guard true else { clearAndDismiss(); return }'), history, 'stale account cannot modify a listing selection'),
-    ('removal-needs-decode', actual.replace('if selectedForListing { return false }', 'if selectedForListing { return true }'), history, 'selected photo can be removed without decoded pixels or new review'),
+    ('removal-needs-decode', actual.replace('if publicationSelected && !cloudCoverRequested { return false }', 'if publicationSelected && !cloudCoverRequested { return true }'), history, 'selected photo can be removed without decoded pixels or new review'),
     ('edit-reincludes', actual, history.replace('index.excludedListingFamilies?.insert(version.familyID)', '// dropped exclusion'), 'later automatic edit must not undo explicit listing removal'),
     ('nil-gallery', actual, history.replace('index.listingSelections?.removeValue(forKey: version.familyID)', 'index.listingSelections = nil'), 'last removal keeps an explicit empty gallery selection'),
     ('cross-family-cover', actual.replace('return PhotoFamilyPager.family(of: viewed, index: index, directory: directory) == initial', 'return true'), history, 'swiping never carries initial cover intent to another family')]

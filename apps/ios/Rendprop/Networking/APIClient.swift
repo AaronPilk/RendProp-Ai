@@ -848,10 +848,6 @@ protocol APIClient: Sendable {
     func updateListing(_ listing: Listing) async throws -> Listing
     /// Saves only measurements, conditional on the exact cached wire value.
     func updateMeasurements(_ listing: Listing) async throws -> Listing
-    /// Select uploaded gallery versions and a main image; nil gallery preserves
-    /// a cloud listing's existing selection, while [] explicitly hides its gallery.
-    func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws
-    func addListingPhotos(serverID: UUID, assetIDs: [String], mainAssetID: String?) async throws
     /// DELETE `listings/<serverID>` — soft-deletes and unpublishes its tours.
     /// Build 58: the server keeps the listing restorable for 30 days.
     func deleteListing(serverID: UUID) async throws

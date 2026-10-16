@@ -655,7 +655,7 @@ final class PushManager: ObservableObject {
     }
 }
 
-// MARK: - "Your reel is ready" (build 61)
+// MARK: - "Your video is ready" (build 61)
 
 /// A local banner when a reel finishes while the app is not in front — the
 /// agent asked to be able to leave the screen while clips generate
@@ -679,7 +679,7 @@ enum ReelCompletionNotice {
                       PushManager.shared.localDataErasureRevision == erasureRevision,
                       UIApplication.shared.applicationState != .active else { return }
                 let content = UNMutableNotificationContent()
-                content.title = success ? "Your reel is ready" : "Your reel couldn't be made"
+                content.title = success ? "Your video is ready" : "Your video couldn't be made"
                 content.body = success
                     ? "Open Rendprop to watch it and share it."
                     : "Open Rendprop to see what happened. Finished clips are kept on this phone."

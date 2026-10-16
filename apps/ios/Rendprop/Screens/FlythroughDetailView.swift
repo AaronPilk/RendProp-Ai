@@ -929,6 +929,11 @@ struct FlythroughDetailView: View {
                 if !currentListing.isSample && listingFactsNeedReview {
                     ListingFactsReviewCard { showListingFactsReview = true }
                 }
+                if let notice = model.cloudPhotoNotice(for: listing.id) {
+                    Text(notice).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("listing.photoCoverPreserved")
+                }
                 toolboxSection
                 tourSection
                 if let smoothing = tour?.motionSmoothing {
@@ -1966,6 +1971,19 @@ struct FlythroughDetailView: View {
                     in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
+    private func filePhotoPublicationLabel(_ item: ListingMediaItem) -> String? {
+        guard let current = model.listings.first(where: { $0.id == listing.id }), current.serverID != nil else {
+            return item.publicationLabel
+        }
+        let id = String(item.id.dropFirst("photo-".count))
+        return model.cloudPhotoProjection(for: listing.id)?.label(versionID: id) ?? "Check listing selection"
+    }
+    private func filePhotoPublicationKnown(_ item: ListingMediaItem) -> Bool {
+        let label = filePhotoPublicationLabel(item)
+        return label == "Selected for listing" || label == "Another version on listing"
+            || (model.listings.first(where: { $0.id == listing.id })?.serverID == nil
+                && label != nil && label != "Not selected for listing")
+    }
     private func filePhotoCell(_ item: ListingMediaItem) -> some View {
         Button { openFile(item) } label: {
             VStack(alignment: .leading, spacing: 6) {
@@ -1978,15 +1996,15 @@ struct FlythroughDetailView: View {
                     .lineLimit(1).minimumScaleFactor(0.8)
                 // Reserve the status line so adjacent thumbnails keep their
                 // top edges aligned when the selected version is a predecessor.
-                Label(item.publicationLabel ?? "Selection unavailable", systemImage: item.publicationLabel == nil ? "exclamationmark.circle" : "checkmark.circle.fill")
+                Label(filePhotoPublicationLabel(item) ?? "Selection unavailable", systemImage: filePhotoPublicationKnown(item) ? "checkmark.circle.fill" : "circle")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(item.publicationLabel == nil || item.publicationLabel == "Not selected for listing" ? Theme.inkDim : Theme.good)
+                    .foregroundStyle(filePhotoPublicationKnown(item) ? Theme.good : Theme.inkDim)
                     .lineLimit(1).minimumScaleFactor(0.75)
             }
         }
         .buttonStyle(ScalePressStyle())
         .accessibilityLabel(Text("Photo. \(item.dateLabel). Opens before and after."))
-        .accessibilityValue(item.publicationLabel ?? "Selection unavailable")
+        .accessibilityValue(filePhotoPublicationLabel(item) ?? "Selection unavailable")
         .accessibilityIdentifier("listing.filePhoto.\(item.id)")
         // Keep the save action outside the label AND outside the open button's
         // accessibility modifiers, so VoiceOver does not call Save an opener.
@@ -2162,6 +2180,8 @@ struct FlythroughDetailView: View {
         let since = force ? nil : filesStamp
         filesTask?.cancel()
         filesTask = Task {
+            if live.serverID != nil { _ = try? await model.refreshCloudPhotoSelection(listingID: live.id) }
+            guard !Task.isCancelled, expectedScope == presentationScope, hasCurrentPresentationContext else { return }
             guard let scan = await ListingMediaItem.scan(request, since: since) else { return }
             guard !Task.isCancelled, expectedScope == presentationScope,
                   hasCurrentPresentationContext else { return }
@@ -3833,11 +3853,11 @@ struct ListingMediaItem: Identifiable, Hashable, Sendable {
     /// now looking for it is thinking "the moving photo" and "the flyover", and
     /// the possessive matters more than it looks: the complaint that started this
     /// section was "I don't have any of the photos or videos I made saved", and
-    /// "Your reel" answers it in two words where "Reel" does not.
+    /// "Your video" covers both listing and social-media deliveries.
     var title: String {
         switch kind {
         case .tour:       return "Your walkthrough tour"
-        case .reel:       return "Your reel"
+        case .reel:       return "Your video"
         case .aerial:     return "Your flyover opening"
         case .motionClip: return "Moving photo"
         case .photo:      return "Your photo"
@@ -3851,8 +3871,8 @@ struct ListingMediaItem: Identifiable, Hashable, Sendable {
     var blurb: String {
         switch kind {
         case .tour:       return "The tour people scroll through"
-        case .reel:       return "Post it to Instagram, TikTok or YouTube"
-        case .aerial:     return "The flyover that opens your reel"
+        case .reel:       return "Watch, save or share your finished video"
+        case .aerial:     return "The flyover that opens your video"
         case .motionClip: return "One photo, turned into video"
         case .photo:      return "Edited in AI Photo Studio"
         case .floorPlan:  return "A 3D scan you can spin around"
@@ -4896,7 +4916,17 @@ struct PhotoStudioView: View {
         model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath
     }
     private func isMain(_ p: EnhancedPhoto) -> Bool {
-        mainRelPath == FileStore.relativePath(for: p.enhancedURL)
+        if model.listings.first(where: { $0.id == listing.id })?.serverID != nil {
+            return model.cloudPhotoProjection(for: listing.id)?.coverVersionIDs.contains(p.id) == true
+        }
+        return mainRelPath == FileStore.relativePath(for: p.enhancedURL)
+    }
+    private var isCloudPhotoListing: Bool { model.listings.first(where: { $0.id == listing.id })?.serverID != nil }
+    private func listingPhotoSelected(_ id: String) -> Bool {
+        isCloudPhotoListing ? model.cloudPhotoProjection(for: listing.id)?.selectedVersionIDs.contains(id) == true : selectedPhotoIDs.contains(id)
+    }
+    private func listingPhotoLabel(_ id: String) -> String? {
+        isCloudPhotoListing ? (model.cloudPhotoProjection(for: listing.id)?.label(versionID: id) ?? "Check listing selection") : publicationLabels[id]
     }
 
     // `aerialClipURLs` moved OUT of this screen with the reel card. The aerial
@@ -4921,6 +4951,22 @@ struct PhotoStudioView: View {
     }
 
     private func setMain(_ p: EnhancedPhoto) {
+        if isCloudPhotoListing {
+            if p.savedVersion?.needsStagingReview == true || p.savedVersion?.needsCustomReview == true {
+                compare = PhotoComparePresentation(photo: p, requestedCover: true)
+                return
+            }
+            let context = NativeMediaExportContext()
+            galleryRetrying = true
+            Task { @MainActor in
+                defer { galleryRetrying = false }
+                do {
+                    _ = try await model.makeCloudPhotoCover(listingID: listing.id, versionID: p.id, reviewed: false)
+                    if context.isCurrent { Haptics.success() }
+                } catch { if context.isCurrent { photoSaveError = error.localizedDescription } }
+            }
+            return
+        }
         do {
             let directory = p.enhancedURL.deletingLastPathComponent()
             try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
@@ -5629,7 +5675,7 @@ struct PhotoStudioView: View {
         LazyVGrid(columns: columns, spacing: 12) {
             ForEach(libraryPhotos) { p in
                 VStack(alignment: .leading, spacing: 5) {
-                    photoCell(p, selectedForListing: selectedPhotoIDs.contains(p.id))
+                    photoCell(p, selectedForListing: listingPhotoSelected(p.id))
                     if entry == .photos && libraryKind == .staged, let style = p.savedVersion?.style, !style.isEmpty {
                         Text(style.capitalized).font(.rpCaption).foregroundStyle(Theme.inkDim)
                     }
@@ -5657,7 +5703,7 @@ struct PhotoStudioView: View {
             if batchEdit == nil {
                 Button { compare = PhotoComparePresentation(photo: p) } label: {
                     thumb(p, selectedForListing: entry == .photos && selectedForListing,
-                          publicationLabel: entry == .photos ? publicationLabels[p.id] : nil)
+                          publicationLabel: entry == .photos ? listingPhotoLabel(p.id) : nil)
                         .overlay { busyOverlay(p) }
                 }
                     .buttonStyle(ScalePressStyle())
@@ -5665,7 +5711,7 @@ struct PhotoStudioView: View {
                                              ? "Photo — the AI is working on this one"
                                              : "Photo — opens before-and-after compare"))
                     .accessibilityValue(entry == .photos
-                                        ? (publicationLabels[p.id] ?? "Selection unavailable") : "")
+                                        ? (listingPhotoLabel(p.id) ?? "Selection unavailable") : "")
                     .accessibilityIdentifier("photos.version.\(p.id)")
                     .contextMenu { photoMenu(p) }
                 if !busyPhotoIDs.contains(p.id), entry != .photos || libraryKind == .original { wandButton(p) }
@@ -6229,7 +6275,7 @@ struct PhotoStudioView: View {
                 }
                 .buttonStyle(ScalePressStyle())
                 .padding(8)
-                .disabled(isProcessing || isCover)
+                .disabled(isProcessing || galleryRetrying || isCover)
                 .accessibilityLabel(Text(isCover ? "This is the cover photo"
                                                  : "Make this the cover photo"))
                 .accessibilityIdentifier("photos.cover.\(p.id)")
@@ -7002,6 +7048,11 @@ struct PhotoStudioView: View {
     }
 
     private func delete(_ p: EnhancedPhoto) {
+        if isCloudPhotoListing {
+            guard !galleryRetrying else { return }
+            Task { await deleteCloudPhoto(p) }
+            return
+        }
         do {
             try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
                 priorFile: p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent, directory: dir)
@@ -7017,6 +7068,21 @@ struct PhotoStudioView: View {
             }
         } catch { photoSaveError = error.localizedDescription }
     }
+    @MainActor private func deleteCloudPhoto(_ p: EnhancedPhoto) async {
+        guard !galleryRetrying, let server = model.listings.first(where: { $0.id == listing.id })?.serverID else { return }
+        let context = NativeMediaExportContext()
+        galleryRetrying = true
+        defer { galleryRetrying = false }
+        do {
+            _ = try await model.prepareCloudPhotoHide(listingID: listing.id, versionID: p.id)
+            guard context.isCurrent, model.listings.first(where: { $0.id == listing.id })?.serverID == server else {
+                throw PhotoCloudSelectionFailure.identityChanged
+            }
+            try PhotoVersionHistory.hide(id: p.id, directory: dir)
+            loadExisting()
+        } catch { if context.isCurrent { photoSaveError = error.localizedDescription } }
+    }
+
 }
 
 /// Deterministic "pro real-estate" look — brighten shadows, recover highlights,
@@ -7120,8 +7186,8 @@ private struct PhotoPublicationBadges: View {
             }
             if let publicationLabel {
                 PhotoPublicationBadge(title: publicationLabel,
-                    icon: publicationLabel == "Not selected for listing" ? "circle" : "checkmark.circle.fill",
-                    color: publicationLabel == "Not selected for listing" ? Theme.inkDim : Theme.good)
+                    icon: selectedForListing || publicationLabel == "Another version on listing" ? "checkmark.circle.fill" : "circle",
+                    color: selectedForListing || publicationLabel == "Another version on listing" ? Theme.good : Theme.inkDim)
                     .accessibilityIdentifier(selectedForListing ? "photos.listingSelected.\(photoID)" : "photos.listingVersion.\(photoID)")
             }
         }.padding(8).allowsHitTesting(false)
@@ -7264,6 +7330,7 @@ struct PhotoCompareView: View {
     @State private var imageContext: NativeMediaExportContext?
     @State private var selectionError: String?
     @State private var selectedForListing = false
+    @State private var confirmCloudCoverFollow = false
     @State private var selectionWorkID: UUID?
     @State private var imageLoadComplete = false
     @State private var stagingReview = PhotoVersionHistory.StagingReview()
@@ -7280,6 +7347,15 @@ struct PhotoCompareView: View {
     @State private var singleEditJobID: UUID?
 
     private var viewed: EnhancedPhoto { selectedVersion ?? photo }
+    private var photoListingID: UUID? { UUID(uuidString: viewed.enhancedURL.deletingLastPathComponent().lastPathComponent) }
+    private var isCloudListing: Bool { photoListingID.flatMap { id in model.listings.first(where: { $0.id == id })?.serverID } != nil }
+    private var cloudProjection: PhotoCloudSelectionProjection? { photoListingID.flatMap { model.cloudPhotoProjection(for: $0) } }
+    private var publicationSelected: Bool { isCloudListing ? cloudProjection?.selectedVersionIDs.contains(viewed.id) == true : selectedForListing }
+    private var cloudCoverRequested: Bool { isCloudListing && requestedCoverForViewed }
+    private var cloudSelectionKnown: Bool {
+        guard isCloudListing, let family = viewed.savedVersion?.familyID, let cloudProjection else { return false }
+        return cloudProjection.mutableFamilyIDs.contains(family) && !cloudProjection.pending
+    }
     private var needsStagingReview: Bool {
         viewed.savedVersion?.effects.contains("stage") == true && viewed.savedVersion?.stagingReviewed != true
     }
@@ -7354,12 +7430,19 @@ struct PhotoCompareView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(showOriginal ? sourceTitle : viewed.savedVersion?.visibleLabel ?? choiceTitle(viewed))
                             .font(.headline).foregroundStyle(Theme.ink)
-                        if selectedForListing, !showOriginal {
+                        if publicationSelected, !showOriginal {
                             Label("Selected for listing", systemImage: "checkmark.circle.fill")
                                 .font(.caption).foregroundStyle(Theme.good)
                         }
                     }
                     reviewDetails
+                    if isCloudListing, cloudProjection?.pending == true {
+                        SecondaryButton(title: "Discard saved photo choice", systemImage: "xmark.circle", isDisabled: selectionWorkID != nil, isCompact: true) {
+                            abandonSavedCloudSelection()
+                        }
+                        Text("Only a request that never started can be discarded. A completed choice is kept and refreshed.")
+                            .font(.caption).foregroundStyle(Theme.inkDim)
+                    }
                 }
                 .padding(16)
                 .frame(maxWidth: 760)
@@ -7410,12 +7493,22 @@ struct PhotoCompareView: View {
         .alert("Photo action needs attention", isPresented: Binding(get: { selectionError != nil }, set: { if !$0 { selectionError = nil } })) {
             Button("OK") { selectionError = nil }
         } message: { Text(selectionError ?? "") }
+        .confirmationDialog("Use this version as the listing cover too?", isPresented: $confirmCloudCoverFollow, titleVisibility: .visible) {
+            Button("Use version and keep it as cover") { beginCloudSelection(followCover: true) }
+            Button("Cancel", role: .cancel) {}
+        }
         .task(id: viewed.id) {
             let context = NativeMediaExportContext()
             imageContext = context
-            let directory = viewed.enhancedURL.deletingLastPathComponent()
-            selectedForListing = (try? PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)) == true
             let target = viewed
+            let directory = target.enhancedURL.deletingLastPathComponent()
+            selectedForListing = !isCloudListing && (try? PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)) == true
+            if isCloudListing, let listingID = photoListingID {
+                do { _ = try await model.refreshCloudPhotoSelection(listingID: listingID) }
+                catch is CancellationError { return }
+                catch { if context.isCurrent, viewed.id == target.id { selectionError = error.localizedDescription } }
+            }
+            guard context.isCurrent, viewed.id == target.id, !Task.isCancelled else { return }
             stagingReview = PhotoVersionHistory.StagingReview()
             customReview = PhotoVersionHistory.CustomReview()
             enhanced = nil; original = nil; imageLoadComplete = false
@@ -7759,21 +7852,22 @@ struct PhotoCompareView: View {
 
     @ViewBuilder private var useOnListingButton: some View {
         if !showOriginal, viewed.savedVersion != nil {
-            PrimaryButton(title: selectionWorkID != nil ? "Removing…" : selectedForListing ? "Unselect" : "Use on listing",
-                          systemImage: selectedForListing ? "minus.circle" : "checkmark.circle",
+            PrimaryButton(title: selectionWorkID != nil ? "Checking…" : isCloudListing && !cloudSelectionKnown ? "Check selection" : cloudCoverRequested ? "Use as cover" : publicationSelected ? "Unselect" : "Use on listing",
+                          systemImage: publicationSelected ? "minus.circle" : "checkmark.circle",
                           isDisabled: listingSelectionDisabled, isCompact: true, action: changeListingSelection)
             .frame(minHeight: 44)
             .accessibilityIdentifier("photoVersion.useOnListing")
-            .accessibilityLabel(selectedForListing ? "Remove this photo from listing" : "Use this version on listing")
-            .accessibilityHint(selectedForListing ? "Keeps every original and saved edit in Photos." : "Selects this reviewed version for the listing gallery.")
+            .accessibilityLabel(isCloudListing && !cloudSelectionKnown ? "Refresh listing photo selection" : cloudCoverRequested ? "Use this version as the listing cover" : publicationSelected ? "Remove this photo from listing" : "Use this version on listing")
+            .accessibilityHint(publicationSelected ? "Keeps every original and saved edit in Photos." : "Checks this home’s current cloud selection before changing it.")
             .disabled(listingSelectionDisabled)
         }
     }
 
     private var listingSelectionDisabled: Bool {
         guard imageContext?.isCurrent == true, selectionWorkID == nil else { return true }
+        if isCloudListing && !cloudSelectionKnown { return false } // Refresh only, never an ambiguous mutation.
         // Removing exposure does not require decoded pixels or a new approval.
-        if selectedForListing { return false }
+        if publicationSelected && !cloudCoverRequested { return false }
         return enhanced == nil
             || ((viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview)
                 && (original == nil || viewed.originalURL == viewed.enhancedURL
@@ -7787,6 +7881,15 @@ struct PhotoCompareView: View {
         do {
             let directory = viewed.enhancedURL.deletingLastPathComponent()
             guard let listingID = UUID(uuidString: directory.lastPathComponent) else { return }
+            if model.listings.first(where: { $0.id == listingID })?.serverID != nil {
+                if cloudCoverRequested { beginCloudSelection(followCover: false) }
+                else if cloudSelectionKnown, !publicationSelected,
+                   let family = viewed.savedVersion?.familyID,
+                   cloudProjection?.versions.contains(where: { $0.familyID == family && cloudProjection?.coverVersionIDs.contains($0.id) == true }) == true {
+                    confirmCloudCoverFollow = true
+                } else { beginCloudSelection(followCover: false) }
+                return
+            }
             try PhotoVersionHistory.trackExisting(id: viewed.id, imageFile: viewed.enhancedURL.lastPathComponent,
                 priorFile: viewed.originalURL == viewed.enhancedURL ? nil : viewed.originalURL.lastPathComponent, directory: directory)
             let currentSelection = try PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)
@@ -7798,12 +7901,6 @@ struct PhotoCompareView: View {
             let familyWasMain = try PhotoVersionHistory.familyContains(id: viewed.id,
                 imageFile: priorMain.map { FileStore.url(fromRelativePath: $0).lastPathComponent }, directory: directory)
             if currentSelection {
-                if let listing = model.listings.first(where: { $0.id == listingID }),
-                   listing.cloudImported == true, let serverID = listing.serverID {
-                    beginCloudListingRemoval(listingID: listingID, serverID: serverID,
-                        directory: directory, versionID: viewed.id)
-                    return
-                }
                 try PhotoVersionHistory.removeFromPublication(id: viewed.id, directory: directory)
                 if familyWasMain {
                     let replacement = try PhotoVersionHistory.availableCoverVersion(directory: directory)
@@ -7829,47 +7926,43 @@ struct PhotoCompareView: View {
         } catch { selectionError = error.localizedDescription }
     }
 
-    private func beginCloudListingRemoval(listingID: UUID, serverID: UUID, directory: URL, versionID: String) {
-        guard let api = model.api as? any ListingGalleryRemovalAPI,
-              let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
-              let library = WorkspaceContext.selectedOrgID, let context = imageContext, context.isCurrent else {
-            selectionError = "Sign in and refresh this home's cloud photos before removing a selection."
-            return
-        }
+    private func beginCloudSelection(followCover: Bool) {
+        guard let listingID = photoListingID, let context = imageContext, context.isCurrent,
+              selectionWorkID == nil else { return }
+        let versionID = viewed.id, wasSelected = publicationSelected, known = cloudSelectionKnown
         let work = UUID(); selectionWorkID = work
-        Task {
+        Task { @MainActor in
             defer { if selectionWorkID == work { selectionWorkID = nil } }
-            @MainActor func requireIdentity() throws {
-                guard context.isCurrent, imageContext?.isCurrent == true, selectionWorkID == work,
-                      viewed.id == versionID,
-                      model.listings.first(where: { $0.id == listingID })?.serverID == serverID
-                else { throw CloudSyncError.identityChanged }
-            }
             do {
-                try await model.beginPhotoGalleryRemoval(listingID: listingID)
-                defer { model.endPhotoGalleryRemoval(listingID: listingID, serverID: serverID) }
-                try requireIdentity()
-                let confirmed = try await PhotoListingRemovalCoordinator.remove(versionID: versionID,
-                    directory: directory, localListingID: listingID, serverListingID: serverID,
-                    actorID: owner, libraryOrgID: library, api: api, requireIdentity: requireIdentity)
-                try requireIdentity()
-                guard try PhotoVersionHistory.load(directory: directory).isSelectedForListing(versionID) else {
-                    try PhotoListingRemovalCoordinator.finish(confirmed)
-                    throw PhotoVersionHistory.Failure.changedVersion
+                guard context.isCurrent, viewed.id == versionID else { throw PhotoCloudSelectionFailure.identityChanged }
+                if !known {
+                    _ = try await model.refreshCloudPhotoSelection(listingID: listingID)
+                    return
                 }
-                let cover = model.listings.first(where: { $0.id == listingID })?.mainPhotoRelPath
-                let wasCover = try PhotoVersionHistory.familyContains(id: versionID,
-                    imageFile: cover.map { FileStore.url(fromRelativePath: $0).lastPathComponent }, directory: directory)
-                try PhotoVersionHistory.removeFromPublication(id: versionID, directory: directory)
-                if wasCover {
-                    let replacement = try PhotoVersionHistory.availableCoverVersion(directory: directory)
-                    model.setMainPhoto(replacement.map { FileStore.relativePath(for: directory.appendingPathComponent($0.imageFile)) }, for: listingID)
+                if !wasSelected || cloudCoverRequested {
+                    guard !needsStagingReview || stagingReview.isComplete else { throw PhotoVersionHistory.Failure.reviewRequired }
+                    guard !needsCustomReview || customReview.isComplete else { throw PhotoVersionHistory.Failure.customReviewRequired }
                 }
-                selectedForListing = false
-                try PhotoListingRemovalCoordinator.finish(confirmed)
-            } catch {
-                if context.isCurrent, selectionWorkID == work { selectionError = error.localizedDescription }
-            }
+                let reviewed = (!needsStagingReview || stagingReview.isComplete) && (!needsCustomReview || customReview.isComplete)
+                if cloudCoverRequested {
+                    _ = try await model.makeCloudPhotoCover(listingID: listingID, versionID: versionID, reviewed: reviewed)
+                } else {
+                    _ = try await model.changeCloudPhotoSelection(listingID: listingID, versionID: versionID,
+                        selecting: !wasSelected, followFamilyCover: followCover, reviewed: reviewed)
+                }
+                guard context.isCurrent, viewed.id == versionID else { throw PhotoCloudSelectionFailure.identityChanged }
+            } catch { if context.isCurrent, selectionWorkID == work { selectionError = error.localizedDescription } }
+        }
+    }
+
+    private func abandonSavedCloudSelection() {
+        guard let listingID = photoListingID, let context = imageContext, context.isCurrent,
+              selectionWorkID == nil, cloudProjection?.pending == true else { return }
+        let work = UUID(); selectionWorkID = work
+        Task { @MainActor in
+            defer { if selectionWorkID == work { selectionWorkID = nil } }
+            do { _ = try await model.abandonCloudPhotoSelection(listingID: listingID) }
+            catch { if context.isCurrent, selectionWorkID == work { selectionError = error.localizedDescription } }
         }
     }
 

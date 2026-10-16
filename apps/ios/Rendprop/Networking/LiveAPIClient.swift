@@ -43,7 +43,7 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 /// via `.convertFromSnakeCase`) and map to the app's models, and we build write
 /// bodies as explicit snake_case dictionaries (mirrors the AI/ clients' style),
 /// so the app models never have to match the DB column names.
-final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI, ListingGalleryRemovalAPI {
+final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI, ListingGalleryRemovalAPI, ListingPhotoCloudSelectionAPI {
     private let base: URL
     private let session: URLSession
     /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
@@ -189,7 +189,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
     /// first (never sends a token we know is expired), and on a 401 forces ONE
     /// refresh + retry; a 401 after that means the session is dead → sign out.
     @MainActor private func execute(_ req: URLRequest, session: URLSession? = nil,
-                                    beforeSend: (@MainActor () throws -> Void)? = nil) async throws -> Data {
+                                    beforeSend: (@MainActor () throws -> Void)? = nil,
+                                    replayAuthenticationAfter401: Bool = true) async throws -> Data {
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         // The request can have been assembled before a hop to this actor. Its
         // old bearer identifies the intended account; refresh may replace an
@@ -218,7 +219,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         if (200..<300).contains(http.statusCode) { return data }
 
-        if http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
+        if http.statusCode == 401, replayAuthenticationAfter401, Config.enableAuth, AuthStore.shared.isSignedIn {
             let refreshed = await AuthStore.shared.forceRefresh()
             guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
             if refreshed, let fresh = await AuthStore.validAccessToken() {
@@ -678,16 +679,66 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
                                cancelledClientDeliveries: dto.cancelledClientDeliveries ?? 0)
     }
 
-    func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws {
-        var body: [String: Any] = ["main_photo_asset_id": mainAssetID.map { $0 as Any } ?? NSNull()]
-        if let galleryAssetIDs { body["gallery_asset_ids"] = galleryAssetIDs }
-        _ = try await execute(makeRequest(url: url(["listings", serverID.uuidString]), method: "PATCH", json: body))
+    @MainActor func photoCloudSelection(identity: PhotoCloudSelectionIdentity, physicalOrgID: UUID?,
+                                         operationID: UUID?) async throws -> PhotoCloudSelectionSnapshot {
+        let context = try CloudMediaAccessContext.capture(orgID: identity.libraryOrgID)
+        guard context.actorID == identity.actorID, context.selectedLibraryID == identity.libraryOrgID else {
+            throw PhotoCloudSelectionFailure.identityChanged
+        }
+        let query = operationID.map { [URLQueryItem(name: "operation_id", value: $0.uuidString.lowercased())] } ?? []
+        var request = makeRequest(url: url(["listings", identity.serverListingID.uuidString.lowercased(), "photo-selection"], query: query))
+        request.setValue(identity.libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try context.check()
+        let snapshot: PhotoCloudSelectionSnapshot = try decodeExact(data)
+        try snapshot.validate(identity: identity, physicalOrgID: physicalOrgID, operationID: operationID)
+        guard operationID != nil || snapshot.operation == nil else { throw PhotoCloudSelectionFailure.invalidReply }
+        return snapshot
     }
 
-    func addListingPhotos(serverID: UUID, assetIDs: [String], mainAssetID: String?) async throws {
-        var body: [String: Any] = ["gallery_add_asset_ids": assetIDs]
-        if let mainAssetID { body["main_photo_asset_id"] = mainAssetID }
-        _ = try await execute(makeRequest(url: url(["listings", serverID.uuidString]), method: "PATCH", json: body))
+    @MainActor func changePhotoCloudSelection(_ operation: PhotoCloudSelectionOperation) async throws -> PhotoCloudSelectionSnapshot {
+        try operation.validate()
+        let identity = operation.identity
+        let context = try CloudMediaAccessContext.capture(orgID: identity.libraryOrgID)
+        guard context.actorID == identity.actorID, context.selectedLibraryID == identity.libraryOrgID else {
+            throw PhotoCloudSelectionFailure.identityChanged
+        }
+        var request = makeRequest(url: url(["listings", identity.serverListingID.uuidString.lowercased(), "photo-selection"]),
+            method: "PATCH", json: try operation.request.body(operationID: operation.operationID),
+            idempotency: .key("photo-selection:" + operation.operationID.uuidString.lowercased()))
+        request.setValue(identity.libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        // A dispatch may have committed even if its reply is lost. This route
+        // never refreshes credentials and resends a mutation automatically.
+        let data = try await execute(request, beforeSend: { try context.check() }, replayAuthenticationAfter401: false)
+        try context.check()
+        let snapshot: PhotoCloudSelectionSnapshot = try decodeExact(data)
+        try snapshot.validate(identity: identity, physicalOrgID: operation.physicalOrgID, operationID: operation.operationID)
+        guard snapshot.ok == true, snapshot.replayed != nil, let receipt = snapshot.operation,
+              receipt.request == operation.request else { throw PhotoCloudSelectionFailure.invalidReply }
+        return snapshot
+    }
+
+    @MainActor func abandonPhotoCloudSelection(_ operation: PhotoCloudSelectionOperation) async throws -> PhotoCloudSelectionSnapshot {
+        try operation.validate()
+        let identity = operation.identity
+        let context = try CloudMediaAccessContext.capture(orgID: identity.libraryOrgID)
+        guard context.actorID == identity.actorID, context.selectedLibraryID == identity.libraryOrgID else { throw PhotoCloudSelectionFailure.identityChanged }
+        var request = makeRequest(url: url(["listings", identity.serverListingID.uuidString.lowercased(), "photo-selection", "abandon"]),
+            method: "POST", json: try operation.request.body(operationID: operation.operationID),
+            idempotency: .key("photo-selection:" + operation.operationID.uuidString.lowercased()))
+        request.setValue(identity.libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() }, replayAuthenticationAfter401: false)
+        try context.check()
+        let reply: PhotoCloudSelectionSnapshot = try decodeExact(data)
+        try reply.validate(identity: identity, physicalOrgID: operation.physicalOrgID, operationID: operation.operationID)
+        guard reply.ok == true, reply.replayed != nil, let closed = reply.abandoned else { throw PhotoCloudSelectionFailure.invalidReply }
+        if closed {
+            guard reply.operationStatus == "abandoned", let receipt = reply.abandonedOperation,
+                  receipt.operationID == operation.operationID, receipt.request == operation.request else { throw PhotoCloudSelectionFailure.invalidReply }
+        } else {
+            guard reply.operationStatus == "accepted", let receipt = reply.operation, receipt.request == operation.request else { throw PhotoCloudSelectionFailure.invalidReply }
+        }
+        return reply
     }
 
     private struct GallerySelectionWire: Decodable {

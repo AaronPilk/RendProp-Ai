@@ -213,6 +213,8 @@
 		FED82E1F66D3CB2C5DD4E488 /* FloorMeasurementWorksheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F69A3C103308AE1EF4B97DC /* FloorMeasurementWorksheetView.swift */; };
 		FEF26406D0DDF4AB9DA7A6B1 /* GuidedPanoramaPreviewStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 646471F4A387AB5B73A5F8BE /* GuidedPanoramaPreviewStore.swift */; };
 		FFDE430BDCDF2D536BE7BBCD /* HomeListingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DB70E1D3371927DB43F686D /* HomeListingsView.swift */; };
+		9F0DD8658AAE842367D62F33 /* PhotoCloudSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98273E27B58A678CF2D7CC66 /* PhotoCloudSelection.swift */; };
+		35871D32E6AD66813821EB96 /* PhotoCloudSelectionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A608547BBD6D9437745DAC /* PhotoCloudSelectionCoordinator.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -436,6 +438,8 @@
 		F902EC3FAE3CB781FA5E5A0F /* CoachView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachView.swift; sourceTree = "<group>"; };
 		FB2296848CBE319882226D1C /* ReviewPrompter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewPrompter.swift; sourceTree = "<group>"; };
 		FCFC63BFC51CC5B643E6ACC9 /* BuildFourteenShots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildFourteenShots.swift; sourceTree = "<group>"; };
+		98273E27B58A678CF2D7CC66 /* PhotoCloudSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCloudSelection.swift; sourceTree = "<group>"; };
+		86A608547BBD6D9437745DAC /* PhotoCloudSelectionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCloudSelectionCoordinator.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -825,6 +829,8 @@
 				0B4DB87176E2BFCB568DEB9F /* PhotoGalleryMutationFence.swift */,
 				9E0CC3870E91F45BE36FDB13 /* PhotoImportSequence.swift */,
 				823442AA53E8A5FC676D6B06 /* PhotoLibraryPicker.swift */,
+				98273E27B58A678CF2D7CC66 /* PhotoCloudSelection.swift */,
+				86A608547BBD6D9437745DAC /* PhotoCloudSelectionCoordinator.swift */,
 				420E938AC4FA6E8C0C1A9C23 /* PhotoListingRemoval.swift */,
 				07559744A706CA66DFFE9C14 /* PhotoListingRemovalCoordinator.swift */,
 				14CE0EB4617F2167404EE011 /* PhotoPendingEdit.swift */,
@@ -1142,6 +1148,8 @@
 				94C74DF5C3D7F3D8737B8E7C /* PhotoGalleryMutationFence.swift in Sources */,
 				0E4C07055BD091154DAC45EC /* PhotoImportSequence.swift in Sources */,
 				99BFF6E3C5002D70E71089B0 /* PhotoLibraryPicker.swift in Sources */,
+				9F0DD8658AAE842367D62F33 /* PhotoCloudSelection.swift in Sources */,
+				35871D32E6AD66813821EB96 /* PhotoCloudSelectionCoordinator.swift in Sources */,
 				5A6FD743FDCA37DB7AC504DF /* PhotoListingRemoval.swift in Sources */,
 				06EC6BF26B6B332185D762D2 /* PhotoListingRemovalCoordinator.swift in Sources */,
 				031371349F8D8D52357A6603 /* PhotoPendingEdit.swift in Sources */,

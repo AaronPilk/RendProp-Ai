@@ -52,7 +52,7 @@ final class ReelWorkQueue: ObservableObject {
     func job(for listing: Listing) -> ReelWorkJob {
         let scope = ReelWorkJob.Scope.current(listingID: listing.id)
         if let existing = jobs.first(where: { $0.scope == scope }) { return existing }
-        let job = ReelWorkJob(scope: scope, title: listing.address.isEmpty ? "Your reel" : listing.address)
+        let job = ReelWorkJob(scope: scope, title: listing.address.isEmpty ? "Your video" : listing.address)
         jobs.append(job)
         observations[job.id] = job.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
