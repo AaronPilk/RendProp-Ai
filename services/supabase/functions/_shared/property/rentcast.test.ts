@@ -57,8 +57,9 @@ Deno.test("actual RentCast deadline abort is recorded as transport unknown witho
   const nativeTimeout = globalThis.setTimeout;
   let deadlines = 0, aborted = false;
   globalThis.setTimeout = ((callback: Parameters<typeof setTimeout>[0], delay?: number, ...args: unknown[]) => {
+    assertEquals(args.length, 0, "The provider deadline uses a zero-argument abort callback");
     if (delay === 12_000) deadlines++;
-    return nativeTimeout(callback, delay === 12_000 ? 0 : delay, ...args);
+    return nativeTimeout(callback, delay === 12_000 ? 0 : delay);
   }) as typeof setTimeout;
   try {
     const r = await closed((input, init) => new Promise((_resolve, reject) => {
@@ -77,8 +78,9 @@ Deno.test("RentCast deadline covers a stalled body after successful headers with
   let deadlines = 0, aborted = false, body: ReadableStreamDefaultController<Uint8Array> | undefined;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
   globalThis.setTimeout = ((callback: Parameters<typeof setTimeout>[0], delay?: number, ...args: unknown[]) => {
+    assertEquals(args.length, 0, "The provider deadline uses a zero-argument abort callback");
     if (delay === 12_000) deadlines++;
-    return nativeTimeout(callback, delay === 12_000 ? 0 : delay, ...args);
+    return nativeTimeout(callback, delay === 12_000 ? 0 : delay);
   }) as typeof setTimeout;
   try {
     const r = await closed(async (input, init) => {
