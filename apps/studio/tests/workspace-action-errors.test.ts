@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript-parser";
 import { decodeListingState, EMPTY_STATE } from "../src/features/listings/model";
+import { confirmsGallerySelection, UnconfirmedGallerySelection } from "../src/features/listings/gallery-selection";
 
 // Execute the actual component's refresh/action closures. No copied error-state
 // implementation, DOM shim, production credentials, or network is involved.
@@ -19,11 +20,11 @@ function harness(){
  const context={
   useCallback:(fn:unknown)=>fn,
   workspace:{org:{id:org},libraryOrgId:org,user:{id:"10000000-0000-4000-8000-000000000001"}},listing:{id:listing},galleryScope:{},
-  load:{current:null},action:{current:null},alive:{current:true},canWrite:true,EMPTY_STATE,decodeListingState,
+  load:{current:null},action:{current:null},alive:{current:true},uncertainSelection:{current:null},actionErrorOwner:{current:null},confirmsGallerySelection,UnconfirmedGallerySelection,canWrite:true,EMPTY_STATE,decodeListingState,
   services:{api:async()=>{if(failRead)throw Error("Workspace read failed");return{org_id:org,listing_id:listing,assets:[],jobs:[],renders:[],photos:[],chapters:[],next_offset:null};},listMedia:async()=>({photos:[],videos:[],nextOffset:null,unavailableCount:0})},
   readGallerySelection:async()=>null,message:(reason:unknown)=>reason instanceof Error?reason.message:"Failed",
   setState:()=>{ui.states++;},setMedia:()=>{},setSelection:()=>{},setLoading:(v:boolean)=>{ui.loading=v;},setLoadFailed:(v:boolean)=>{ui.loadFailed=v;},
-  setActionError:(v:string)=>{ui.actionError=v;},setReadError:(v:string)=>{ui.readError=v;},setNotice:(v:string)=>{ui.notice=v;},setBusy:(v:string)=>{ui.busy=v;},setUploadingName:(v:string)=>{ui.uploadingName=v;},
+  setActionError:(v:string|((previous:string)=>string))=>{ui.actionError=typeof v==="function"?v(ui.actionError):v;},setReadError:(v:string)=>{ui.readError=v;},setNotice:(v:string)=>{ui.notice=v;},setBusy:(v:string)=>{ui.busy=v;},setUploadingName:(v:string)=>{ui.uploadingName=v;},
  };
  const program=ts.transpileModule(`${refreshSource}\n${runSource}\nreturn {refresh,run};`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
  const actual=new Function(...Object.keys(context),program)(...Object.values(context))as{refresh:()=>Promise<void>;run:(name:string,fn:(signal:AbortSignal)=>Promise<void>)=>Promise<void>};

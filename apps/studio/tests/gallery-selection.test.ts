@@ -1,5 +1,6 @@
 import test from'node:test';import assert from'node:assert/strict';
-import{changeListingSelection,decodeGallerySelection,selectionExpected}from'../src/features/listings/gallery-selection';
+import{changeListingSelection,confirmsGallerySelection,decodeGallerySelection,selectionExpected,UnconfirmedGallerySelection}from'../src/features/listings/gallery-selection';
+import{StudioError}from'../src/data/config';
 import type{StudioServices}from'../src/data/services';
 const actor='10000000-0000-4000-8000-000000000001',org='20000000-0000-4000-8000-000000000002',listing='30000000-0000-4000-8000-000000000003',photo='40000000-0000-4000-8000-000000000004',asset='50000000-0000-4000-8000-000000000005',unknown='60000000-0000-4000-8000-000000000006';
 const scope={actor,org,library:org,listing};const snapshot=()=>({schema:1 as const,actor_id:actor,org_id:org,library_org_id:org,listing_id:listing,gallery_asset_ids:[]as string[]|null,main_photo_key:null,effective_asset_ids:[]as string[],photo_order:[photo],photos:[{photo_id:photo,asset_id:asset,selected:false,can_use:true,review_required:false}]});
@@ -11,3 +12,43 @@ test('changed selection cover and photo order refuse before any PATCH',async()=>
 test('account change during fresh check cannot mutate old property',async()=>{const f=fixture(async(change:()=>void)=>{change();return snapshot();});await assert.rejects(()=>changeListingSelection(f.services,scope,snapshot(),{action:'use_cover',photo_id:photo,reviewed:true}),/account changed/);assert.equal(f.calls.length,1);});
 test('reorder preserves exact requested order and never constructs replacement selection',async()=>{const reply={...snapshot(),ok:true,action:'reorder_selected',photo_id:null};const f=fixture(snapshot(),reply);await changeListingSelection(f.services,scope,snapshot(),{action:'reorder_selected',expected_order:[photo],photo_ids:[photo]});assert.deepEqual(f.calls[1].options.body,{listing_id:listing,action:'reorder_selected',expected_order:[photo],photo_ids:[photo],expected_selection:{gallery_asset_ids:[],main_photo_key:null}});assert.equal('gallery_asset_ids'in f.calls[1].options.body,false);});
 test('lost reply does not retry choose new request or call blind listing replacement',async()=>{const f=fixture();const original=f.services.api;f.services.api=async(path,options)=>{if(options.method==='PATCH'){f.calls.push({path,options});throw new Error('Unknown reply');}return await original(path,options);};await assert.rejects(()=>changeListingSelection(f.services,scope,snapshot(),{action:'use',photo_id:photo,reviewed:true}),/Unknown reply/);assert.equal(f.calls.filter(c=>c.options.method==='PATCH').length,1);assert.equal(f.calls.every(c=>c.path.includes('/studio/photos')),true);});
+
+function ambiguousFixture(before:any,after:any){const f=fixture();let reads=0;f.services.api=async(path,options)=>{f.calls.push({path,options});if(options.method==='PATCH')throw new StudioError('network','Closed lost reply');return reads++===0?before:after;};return f;}
+test('ambiguous cover reply reconciles only the exact captured cover key and selected family',async()=>{
+ const before=snapshot(),key=`renders/${org}/${listing}/gallery-${asset}.jpg`,after={...before,gallery_asset_ids:[asset],effective_asset_ids:[asset],main_photo_key:key,photos:[{...before.photos[0],selected:true}]};
+ const f=ambiguousFixture(before,after);assert.equal((await changeListingSelection(f.services,scope,before,{action:'use_cover',photo_id:photo,reviewed:true},undefined,key)).main_photo_key,key);assert.equal(f.calls.filter(c=>c.options.method==='PATCH').length,1);
+ for(const capture of[undefined,'renders/a-different-version.jpg']){const denied=ambiguousFixture(before,after);await assert.rejects(changeListingSelection(denied.services,scope,before,{action:'use_cover',photo_id:photo,reviewed:true},undefined,capture),UnconfirmedGallerySelection);assert.equal(denied.calls.filter(c=>c.options.method==='PATCH').length,1);}
+});
+test('ambiguous reorder confirms exact order with unknown selected IDs anchored',async()=>{
+ const second='40000000-0000-4000-8000-000000000007',secondAsset='50000000-0000-4000-8000-000000000008';
+ const before={...snapshot(),gallery_asset_ids:[unknown,asset,secondAsset],effective_asset_ids:[asset,secondAsset],photo_order:[photo,second],photos:[{...snapshot().photos[0],selected:true},{photo_id:second,asset_id:secondAsset,selected:true,can_use:true,review_required:false}]};
+ const after={...before,gallery_asset_ids:[unknown,secondAsset,asset],effective_asset_ids:[secondAsset,asset],photo_order:[second,photo],photos:[before.photos[1],before.photos[0]]};
+ const f=ambiguousFixture(before,after),result=await changeListingSelection(f.services,scope,before,{action:'reorder_selected',expected_order:[photo,second],photo_ids:[second,photo]});assert.deepEqual(result.gallery_asset_ids,[unknown,secondAsset,asset]);assert.equal(f.calls.filter(c=>c.options.method==='PATCH').length,1);
+});
+test('ambiguous reorder deduplicates asset families the same way as the authoritative server',async()=>{
+ const alias='40000000-0000-4000-8000-000000000007',other='40000000-0000-4000-8000-000000000008',otherAsset='50000000-0000-4000-8000-000000000009';
+ const before={...snapshot(),gallery_asset_ids:[asset,otherAsset],effective_asset_ids:[asset,otherAsset],photo_order:[photo,alias,other],photos:[{...snapshot().photos[0],selected:true},{photo_id:alias,asset_id:asset,selected:true,can_use:true,review_required:false},{photo_id:other,asset_id:otherAsset,selected:true,can_use:true,review_required:false}]};
+ const after={...before,photo_order:[alias,photo,other],photos:[before.photos[1],before.photos[0],before.photos[2]]};const f=ambiguousFixture(before,after);
+ assert.deepEqual((await changeListingSelection(f.services,scope,before,{action:'reorder_selected',expected_order:before.photo_order,photo_ids:after.photo_order})).gallery_asset_ids,[asset,otherAsset]);assert.equal(f.calls.filter(c=>c.options.method==='PATCH').length,1);
+});
+test('ambiguous Use preserves rawNULL freeze semantics and all previous effective photos',async()=>{
+ const before={...snapshot(),gallery_asset_ids:null,effective_asset_ids:[unknown]},after={...snapshot(),gallery_asset_ids:[unknown,asset],effective_asset_ids:[asset],photos:[{...snapshot().photos[0],selected:true}]};
+ const f=ambiguousFixture(before,after);assert.deepEqual((await changeListingSelection(f.services,scope,before,{action:'use',photo_id:photo,reviewed:false})).gallery_asset_ids,[unknown,asset]);
+});
+test('pending confirmation is immutable and cannot clear after a family or scope change',async()=>{
+ const before=snapshot(),f=ambiguousFixture(before,before);let pending:UnconfirmedGallerySelection|undefined;
+ try{await changeListingSelection(f.services,scope,before,{action:'use',photo_id:photo,reviewed:false});}catch(error){assert(error instanceof UnconfirmedGallerySelection);pending=error;}
+ assert(pending);assert(Object.isFrozen(pending.confirmation));assert(Object.isFrozen(pending.confirmation.scope));assert(Object.isFrozen(pending.confirmation.gallery));assert(Object.isFrozen(pending.confirmation.order));
+ const valid={...before,gallery_asset_ids:[asset],effective_asset_ids:[asset],photos:[{...before.photos[0],selected:true}]};assert(confirmsGallerySelection(pending,valid,f.services,scope));
+ assert(!confirmsGallerySelection(pending,{...valid,photos:[{...valid.photos[0],asset_id:unknown}]},f.services,scope));assert(!confirmsGallerySelection(pending,valid,f.services,{...scope,library:unknown}));
+});
+test('ambiguous Use cannot confirm an unmapped or missing photo from an unchanged empty selection',async()=>{
+ const missing={...snapshot(),photos:[{...snapshot().photos[0],asset_id:null,can_use:false}]};
+ for(const [before,id]of[[missing,photo],[snapshot(),unknown]]as const){const f=ambiguousFixture(before,before);await assert.rejects(changeListingSelection(f.services,scope,before,{action:'use',photo_id:id,reviewed:false}),UnconfirmedGallerySelection);assert.equal(f.calls.filter(c=>c.options.method==='PATCH').length,1);}
+});
+test('ambiguous Use cannot borrow eligibility from an alias row or assume an unconfirmed edit was reviewed',async()=>{
+ const alias='40000000-0000-4000-8000-000000000007',before={...snapshot(),photos:[...snapshot().photos,{...snapshot().photos[0],photo_id:alias}],photo_order:[photo,alias]};
+ for(const fault of['alias-eligible','new-review-required']as const){const after={...before,gallery_asset_ids:[asset],effective_asset_ids:[asset],photos:before.photos.map(p=>({...p,selected:true,...p.photo_id===photo?(fault==='alias-eligible'?{can_use:false}:{review_required:true}):{}}))};
+  const f=ambiguousFixture(before,after);await assert.rejects(changeListingSelection(f.services,scope,before,{action:'use',photo_id:photo,reviewed:false}),UnconfirmedGallerySelection);assert.equal(f.calls.filter(c=>c.options.method==='PATCH').length,1);
+ }
+});

@@ -116,6 +116,8 @@ export type StudioRequestOptions = {
   orgId: string;
   /** Local authority fence only; never sent in a header or request body. */
   expectedLibraryOrgId?: string;
+  /** Exact listing fence for scoped reads/actions; never sent on the wire. */
+  expectedListingId?: string;
   method?: "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
   binary?: Blob;
   body?: unknown;
@@ -647,7 +649,8 @@ export function createStudioServices(
         throw new StudioError("request-size", "Choose a bounded project upload part.");
       const selected = uuid(options.orgId, "selected organization");
       const actor = await identity(options.signal);
-      const scopeCurrent = await requestScope(actor, selected, options.expectedLibraryOrgId, options.signal);
+      const expectedListing = options.expectedListingId === undefined ? undefined : uuid(options.expectedListingId, "selected listing");
+      const scopeCurrent = await requestScope(actor, selected, options.expectedLibraryOrgId, options.signal, expectedListing);
       if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 600_000))
         throw new StudioError("configuration", "The request timeout is invalid.");
       if (options.maxResponseBytes !== undefined && (!Number.isSafeInteger(options.maxResponseBytes) || options.maxResponseBytes < 1 || options.maxResponseBytes > (path === "/functions/v1/ai-photo-v2" && options.method === "POST" && options.photoQualityProtocol === "retained-operation-v1" ? PHOTO_OUTPUT_WIRE_BYTES : 32 * 1024 * 1024)))
