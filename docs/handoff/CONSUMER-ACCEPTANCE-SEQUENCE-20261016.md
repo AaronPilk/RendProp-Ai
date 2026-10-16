@@ -6,7 +6,7 @@ Use the owner's existing **Sold home at 855 Central Ave, unit 1120, Saint Peters
 
 ## 1. Enter the home as a consumer
 
-Open normal TestFlight **1.0.5(86)** → Home → Listings → the exact Sold home. Confirm Manage listing details is first, Photos / AI Photo Studio / Make a video are easy to find, and the recorded walkthrough is visibly optional. The latest source also places Share everything last across both toolbox columns; installed86 does not yet include that change. Inspect the changed controls at normal and largest text sizes: labels fit, images retain their proportions, and actions remain reachable. Keep System appearance selected.
+Install AVAILABLE normal TestFlight **1.0.5(87)** and confirm its installed version, then open → Home → Listings → the exact Sold home. Confirm Manage listing details is first, Photos / AI Photo Studio / Make a video are easy to find, and the recorded walkthrough is visibly optional. Internal87 includes the balanced toolbox and Share everything last across both columns; prior installed86 does not include that change. Inspect the changed controls at normal and largest text sizes: labels fit, images retain their proportions, and actions remain reachable. Keep System appearance selected.
 
 **Already observed:** physical86 installation, Leads layout, first→second photo/count, correct second-photo Edit sheet and manually chosen shot numbers. **Still open:** remaining changed controls and complete workflow. If Mirroring says “iPhone in Use” or cannot capture the screen, stop phone input until the owner reconnects; Simulator proof does not become physical proof. (A01–A09, R02–R03)
 

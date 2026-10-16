@@ -41,3 +41,7 @@ Before handoff, address these concrete points:
 Return source/migration/operator-script hashes, each relevant executed test and deliberate-defect result, remaining FAL inventory, exact secrets NAMES, rollout order and limits. Existing [official Kie documentation](https://docs.kie.ai/) distinguishes a successful task creation from completed output and documents checking response-body codes; pin the exact model page/wire evidence too. Paid canaries remain paused pending a separately bounded plan after this review.
 
 The detailed read-only gate receipt is on the connected drive at `/Volumes/Rendprop Files/Builds/Active/build86-kie-activation-independent-review/READONLY-ACTIVATION-GATES.json`, SHA256 `6e45be352827cf33c36799e48f92a21e1a977a3e67fbc0f8491c336dfdff54f3`. It records draft observations, not a completed runtime audit.
+
+## Latest follow-up — October16,13:20EDT
+
+Continue with `CLAUDE-KIE-CLOSEOUT-20261016.md`. It reconciles the owner-supplied activation audit against the newer mutable G draft and specifies the remaining closeout. The original scope and no-spend/no-live-action boundaries remain.
