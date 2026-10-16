@@ -13,22 +13,26 @@ from pathlib import Path
 from compose import QualityError, run
 
 
-def transition_frames(name):
+def transition_frames(name, fps=30):
+    if fps not in {24,30}:
+        raise QualityError("unsupported_composition_cadence")
     if name not in {"cut", "dissolve", "whip"}:
         raise QualityError("unsupported_transition")
-    return {"cut": 0, "dissolve": 8, "whip": 5}[name]
+    return ({"cut":0,"dissolve":6,"whip":4} if fps==24 else {"cut": 0, "dissolve": 8, "whip": 5})[name]
 
 
-def encode_args():
-    return ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-maxrate", "24M", "-bufsize", "48M", "-threads", "2", "-pix_fmt", "yuv420p",
+def encode_args(fps=30):
+    args = ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-maxrate", "24M", "-bufsize", "48M", "-threads", "2", "-pix_fmt", "yuv420p",
             "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-movflags", "+faststart"]
+    # Exact24fps segment durations must not round to the default1ms movie clock.
+    return args + (["-movie_timescale", "24000"] if fps == 24 else [])
 
 
-def timeline(clips, directory, name):
-    frames = transition_frames(name)
+def timeline(clips, directory, name, *, fps=30):
+    frames = transition_frames(name, fps)
     if not frames or len(clips) == 1:
         return clips, 5.0 * len(clips), [5.0 * i for i in range(len(clips))]
-    duration = frames / 30.0
+    duration = frames / float(fps)
     segments = []
     for i, clip in enumerate(clips):
         # Incoming/outgoing parts are in the transition; never duplicate them.
@@ -36,16 +40,23 @@ def timeline(clips, directory, name):
         end = 5.0 - (duration if i < len(clips) - 1 else 0)
         body = directory / f"body-{i:03d}.mp4"
         run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", str(start), "-i", str(clip),
-             "-an", "-t", str(end - start), "-vf", "setpts=PTS-STARTPTS,fps=30,setsar=1", *encode_args(), str(body)])
+             "-an", "-t", str(end - start), "-vf", f"setpts=PTS-STARTPTS,fps={fps},setsar=1", *encode_args(fps), str(body)])
         segments.append(body)
         if i < len(clips) - 1:
             bridge = directory / f"transition-{i:03d}.mp4"
             effect = "fade" if name == "dissolve" else "slideleft"
-            filters = (f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,fps=30,settb=1/30[a];"
-                       f"[1:v]trim=duration={duration},setpts=PTS-STARTPTS,fps=30,settb=1/30[b];"
-                       f"[a][b]xfade=transition={effect}:duration={duration}:offset=0,fps=30,format=yuv420p[v]")
+            filters = (f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,fps={fps},settb=1/{fps}[a];"
+                       f"[1:v]trim=duration={duration},setpts=PTS-STARTPTS,fps={fps},settb=1/{fps}[b];"
+                       f"[a][b]xfade=transition={effect}:duration={duration}:offset=0,fps={fps},format=yuv420p[v]")
+            if fps == 24:
+                # xfade needs an EOF look-ahead sample. Supply one guard sample
+                # after the real bridge, then encode only its exact frame count.
+                filters = (f"[0:v]trim=end_frame={frames},setpts=PTS-STARTPTS,settb=1/24,tpad=stop_mode=clone:stop=1[a];"
+                           f"[1:v]trim=end_frame={frames},setpts=PTS-STARTPTS,settb=1/24,tpad=stop_mode=clone:stop=1[b];"
+                           f"[a][b]xfade=transition={effect}:duration={duration}:offset=0,fps=24,format=yuv420p[v]")
+            length = ["-frames:v", str(frames)] if fps == 24 else ["-t", str(duration)]
             run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", str(5.0 - duration), "-i", str(clip),
-                 "-i", str(clips[i + 1]), "-filter_complex_threads", "1", "-filter_complex", filters, "-map", "[v]", "-an", "-t", str(duration), *encode_args(), str(bridge)])
+                 "-i", str(clips[i + 1]), "-filter_complex_threads", "1", "-filter_complex", filters, "-map", "[v]", "-an", *length, *encode_args(fps), str(bridge)])
             segments.append(bridge)
     return segments, 5.0 * len(clips) - duration * (len(clips) - 1), [(5.0 - duration) * i for i in range(len(clips))]
 
@@ -63,7 +74,7 @@ def text_value(raw, max_length=250):
     return " ".join(raw.split())
 
 
-def overlay(source, directory, width, height, presentation, starts, elapsed, words):
+def overlay(source, directory, width, height, presentation, starts, elapsed, words, *, fps=30):
     title = presentation.get("title_card")
     labels = presentation.get("shot_labels", [])
     style = presentation.get("shot_caption_style", "off")
@@ -125,5 +136,5 @@ def overlay(source, directory, width, height, presentation, starts, elapsed, wor
     script = directory / "overlays.txt"
     script.write_text(",".join(filters))
     run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(source),
-         "-an", "-filter_script:v", str(script), *encode_args(), str(output)], timeout=1200)
+         "-an", "-filter_script:v", str(script), *encode_args(fps), str(output)], timeout=1200)
     return output

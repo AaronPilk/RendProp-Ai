@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { parseReelFraming, reelStepPreservesPhoto, reelFramingSteps, buildPhotoPreservingReelPrompt } from "./reel-framing.ts";
+import { parseReelFraming, reelStepPreservesPhoto, reelFramingSteps, buildPhotoPreservingReelPrompt,buildPropertyCanvasReelPrompt,buildSteadyPropertyReelPrompt } from "./reel-framing.ts";
 import { HttpError } from "../_shared/http.ts";
 import { ProviderError } from "../_shared/providers/common.ts";
 import { falInput, falAdapter, FAL_OBJECT_LIFECYCLE_HEADER, FAL_OBJECT_LIFECYCLE_VALUE } from "../_shared/providers/fal.ts";
@@ -177,4 +177,23 @@ Deno.test("FAL native4K reserves exactly210c in both funding authorities before 
  const mutant=await import(encode(imports(source.replace(needle,'quote = {cents: 45,version:TARIFF_VERSION};'),"./cost-reservation.ts")));
  const wrong=funded();await mutant.submitReservedVideo({...options,steps:[fal4K],input:fal4KInput},wrong.deps);
  assertEquals(wrong.calls.find(x=>x.name==="serving_cost_reserve")?.args.p_hold_cents,45,"Independent oracle detects a compiled underfunded4K serving hold");
+});
+
+Deno.test("prospective steady prompts use closed motorized moves and preserve property and v1 bytes",async()=>{
+ const {assertFairHousing,GUARDRAILS}=await import('../_shared/fairhousing.ts');
+ const expected=['forward-right slider','straight forward microdolly','rightward motorized slider','straight backward microdolly'];
+ for(const [i,motion]of(['fly_through','push_in','side_glide','pull_back']as const).entries())for(const aspect of['16:9','9:16']as const){
+  const text=buildSteadyPropertyReelPrompt('home',motion,aspect);
+  for(const term of[expected[i],'five-second','constant speed','constant height','fixed orientation','fixed focal length','Preserve the property geometry','every object unchanged and stationary','entire supplied photograph at its original aspect ratio and composition','delivery canvas will be cropped separately'])assert(text.includes(term),term);
+  assert(!/1080|native|16:9|9:16/.test(text),'Generation preserves the supplied photo; canvas geometry is a compositor contract');
+  assertEquals(text,buildSteadyPropertyReelPrompt('home',motion,aspect==='16:9'?'9:16':'16:9'));
+  assert(!/drone|walk|travers|connected rooms/i.test(text));
+  assert(text.endsWith(GUARDRAILS));assert(text.length<2500);
+  // This property-specific camera clause also passes the real free-text guard;
+  // server-appended immutable compliance locks are not user instructions.
+  assertFairHousing(text.slice(0,-GUARDRAILS.length),'Camera motion','real_estate');
+ }
+ assertThrows(()=>assertFairHousing('Create a take with no new surfaces, text or people','Camera motion','real_estate'),HttpError);
+ // The v1 exported builders retain their exact reviewed snapshot below.
+ assertEquals(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(buildPropertyCanvasReelPrompt('home','fly_through','16:9'))).then(b=>Array.from(new Uint8Array(b),v=>v.toString(16).padStart(2,'0')).join('')),'928e9af7c13b4ca1dfed1d85b078e4e69ca01c462190dfc6c9a11c34b2089842');
 });

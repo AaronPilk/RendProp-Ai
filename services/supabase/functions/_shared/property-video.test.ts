@@ -34,11 +34,11 @@ Deno.test('private source is checked against actual retained bytes before dispat
 Deno.test('inline/source/object/version/provenance substitution never reaches paid dispatch',async()=>{
  for(const kind of ['inline','object','etag','head','provenance','scope']as const){const f=await inputFixture(kind);await assertRejects(()=>f.result,HttpError);assertEquals(f.counts().paidDispatches,0);if(['inline','provenance','scope'].includes(kind))assertEquals(f.counts().reads,0);}
 });
-function outputFixture(o:{width?:number;height?:number;seconds?:number;changed?:boolean;receipt?:boolean}={}){
- const f=propertyMP4Fixture({width:o.width??1920,height:o.height??1080,seconds:o.seconds??15,fps:30}),key=`renders/${org}/${listing}/finished.mp4`;
+function outputFixture(o:{width?:number;height?:number;seconds?:number;changed?:boolean;receipt?:boolean;fps?:number;masterProfile?:string}={}){
+ const f=propertyMP4Fixture({width:o.width??1920,height:o.height??1080,seconds:o.seconds??15,fps:o.fps??30}),key=`renders/${org}/${listing}/finished.mp4`;
  let writes=0,heads=0;
- const deps:PropertyVideoDeps={rpc:async(name,args)=>{if(name==='property_owned_upload')return{error:null,data:{actor_id:actor,org_id:org,listing_id:listing,asset_id:asset,bucket:'renders',storage_key:key,bytes:f.total,etag:'"fixture-version"',content_type:'video/mp4'}};
- if(name==='background_video_delivery')return{error:null,data:null};
+ const deps:PropertyVideoDeps={rpc:async(name,args)=>{if(name==='property_owned_upload')return{error:null,data:{actor_id:actor,org_id:org,listing_id:listing,asset_id:asset,bucket:'renders',storage_key:key,bytes:f.total,etag:'"fixture-version"',content_type:'video/mp4',...(o.masterProfile?{sha256:'a'.repeat(64)}:{})}};
+ if(name==='background_video_delivery')return{error:null,data:o.masterProfile?{kind:'registered_background_video',asset_id:asset,bytes:f.total,sha256:'a'.repeat(64),quality_profile:o.masterProfile}:null};
  writes++;assertEquals(args.p_width,o.width??1920);assertEquals(args.p_height,o.height??1080);return{error:null,data:{attested:o.receipt!==false}};},
  head:async()=>({exists:true,bytes:f.total,etag:o.changed&&++heads>1?'"changed"':'"fixture-version"',contentType:'video/mp4'}),sign:async()=>`https://video.fixture.invalid/${key}`,fetch:async(url,init)=>{assertEquals(new Headers((init as RequestInit)?.headers).get('if-match'),'"fixture-version"');return f.fetch(String(url),init!);}};
  return{result:()=>attestPropertyVideo(actor,listing,asset,deps),writes:()=>writes};
@@ -95,4 +95,9 @@ Deno.test('public projection refuses foreign video/poster,wrong dimensions,missi
 });
 Deno.test('pre-migration projection is closed basic; unexpected SQL failure never grants premium',async()=>{
  assertEquals((await project(null)).result,{listing_video:null,website_theme:'basic'});assertEquals((await project(null,{code:'PGRST202',message:'absent'})).result,{listing_video:null,website_theme:'basic'});await assertRejects(()=>project(null,{message:'private database failure'}),HttpError);
+});
+
+Deno.test('publication selects24 only from the exact registered steady-v2 source receipt',async()=>{
+ const f=outputFixture({fps:24,masterProfile:'fal-kling3-4k-steady-v2'}),r=await f.result();assertEquals([r.width,r.height,r.fps],[1920,1080,24]);assertEquals(f.writes(),1);
+ for(const o of[{fps:30,masterProfile:'fal-kling3-4k-steady-v2'},{fps:24,masterProfile:'invented'},{fps:24,masterProfile:'fal-kling3-4k-v1'}]){const f=outputFixture(o);await assertRejects(f.result,HttpError);assertEquals(f.writes(),0);}
 });

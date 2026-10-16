@@ -5,6 +5,7 @@ assert(start>0&&end>start);let state:any;
 (globalThis as any).__propertyVideoPollFixture=()=>state;
 const prefix=`
 import{HttpError,assert}from ${JSON.stringify(new URL('../_shared/http.ts',import.meta.url).href)};
+const PROPERTY_VIDEO_STEADY_PROFILE="fal-kling3-4k-steady-v2";
 const f=()=>globalThis.__propertyVideoPollFixture();
 const R2_BUCKET_RENDERS='closed-renders';
 const callAI=async(_ctx,method,path)=>{f().methods.push(method);if(method!=='GET')throw Error('No supplier POST permitted');f().events.push('status');return f().response;};
@@ -21,7 +22,7 @@ const fail=async(_ctx,code,ambiguous=false)=>{f().fail.push({code,ambiguous});};
 const{poll,propertyVideoPollDiagnostic}=await import('data:application/typescript,'+encodeURIComponent(prefix+engine.slice(start,end)));
 const ctx=()=>({job:{id:'owned-job',actor_id:'owned-actor',org_id:'owned-org',library_org_id:'selected-library',listing_id:'owned-listing',manifest:{aspect:'9:16'}},source:{attempt_id:'attempt',lease_token:'lease',request_key:'same-operation',asset_id:'same-source',source:{},photo_provenance_id:null,receipt:{request_id:'accepted-request',status_url:'https://private-receipt.invalid/status?job=SECRET'}}});
 function reset(){state={response:{status:200,value:{status:'completed',persisted:true,asset_key:'owned-clip'}},owned:true,paid:true,probeError:null,facts:{width:1080,height:1920,duration_s:5,fps:30},methods:[],events:[],rpcs:[],fail:[],diagnostics:[]};}
-async function run(){const old=console.warn;console.warn=(text:string)=>state.diagnostics.push(JSON.parse(text));try{await poll(ctx());}finally{console.warn=old;}}
+async function run(profile?:string){const old=console.warn;console.warn=(text:string)=>state.diagnostics.push(JSON.parse(text));try{const c=ctx();(c.job as any).quality_profile=profile;await poll(c);}finally{console.warn=old;}}
 Deno.test('retained completed clip checks exact owner and paid receipt before strict provider profile then advances only current source',async()=>{
  reset();await run();assertEquals(state.fail,[]);assertEquals(state.diagnostics,[]);assertEquals(state.methods,['GET']);
  assert(state.events.indexOf('private_ai_outputs')<state.events.indexOf('probe'));assert(state.events.indexOf('app_video_cost_reservations')<state.events.indexOf('probe'));assert(state.events.indexOf('scope')>state.events.indexOf('probe'));
@@ -54,4 +55,11 @@ Deno.test('completed403 result-read recovery retains exact attempt and never req
 Deno.test('dual404 alone records a paid-missing decision without dispatch persist quality fallback or publication',async()=>{
  reset();state.response={status:200,value:{status:'processing',delivery_issue:{phase:'status_and_result_read',provider:'fal',provider_state:'unavailable',provider_status:404,result_status:404,reason:'not_found'}}};await run();assertEquals(state.methods,['GET']);assertEquals(state.fail,[]);assertEquals(state.events,['status']);assertEquals(state.rpcs,[{name:'property_video_job_result_missing',args:{p_job:'owned-job',p_lease:'lease',p_attempt:'attempt'}}]);
  for(const change of[{result_status:503},{provider_status:200},{provider:'kie'},{provider_state:'completed'},{reason:'unknown'}]){reset();state.response={status:200,value:{status:'processing',delivery_issue:{phase:'status_and_result_read',provider:'fal',provider_state:'unavailable',provider_status:404,result_status:404,reason:'not_found',...change}}};await run();assertEquals(state.rpcs.map((r:any)=>r.name),['property_video_job_poll_release']);assertEquals(state.methods,['GET']);}
+});
+
+Deno.test('steady-v2 admits only actual native24 cadence while v1 preserves its30 acceptance',async()=>{
+ reset();await run('fal-kling3-4k-steady-v2');assertEquals(state.fail,[{code:'source_video_unverifiable',ambiguous:false}]);assert(!state.events.includes('bytes'));
+ reset();state.facts.fps=24;await run('fal-kling3-4k-steady-v2');assertEquals(state.fail,[]);assert(state.rpcs.some((r:any)=>r.name==='property_video_job_clip'));
+ for(const duration_s of[119/24,122/24]){reset();state.facts={...state.facts,fps:24,duration_s};await run('fal-kling3-4k-steady-v2');assertEquals(state.fail,[{code:'source_video_unverifiable',ambiguous:false}]);assert(!state.events.includes('bytes'));}
+ reset();await run('fal-kling3-4k-v1');assertEquals(state.fail,[]);
 });

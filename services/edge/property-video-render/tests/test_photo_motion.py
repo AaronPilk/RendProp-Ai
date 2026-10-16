@@ -49,6 +49,13 @@ class ActualPhotoMotion(unittest.TestCase):
   with self.assertRaises(QualityError):motion_filter(1280,720,1920,1080,'push_in')
   with self.assertRaises(QualityError):motion_filter(1080,1920,1920,1080,'push_in')
   with self.assertRaises(QualityError):motion_filter(2560,1440,1920,1080,'customer-filter')
+ def test_explicit24_adequate_photo_motion_preserves_source_and_native_bounds(self):
+  source=self.root/'source.jpg';before=source.read_bytes();clip=self.root/'steady24-photo.mp4'
+  encode_photo_motion(source,clip,'16:9','side_glide',fps=24);facts=probe(clip)
+  video=next(s for s in facts['streams']if s['codec_type']=='video');self.assertEqual((video['avg_frame_rate'],video['nb_frames']),('24/1','120'))
+  self.assertAlmostEqual(float(facts['format']['duration']),5,places=2);self.assertEqual(source.read_bytes(),before)
+  self.assertNotEqual(self.frame(clip,.03)[1],self.frame(clip,4.9)[1])
+  with self.assertRaisesRegex(QualityError,'original_photo_lacks_1080_pixels'):motion_filter(896,1195,1920,1080,'push_in',fps=24)
  def test_actual_listing_legitimate_captions_still_no_title_or_mark(self):
   value=task();value['presentation']={'transition':'cut','shot_caption_style':'lowerThird','shot_labels':['ACCURATE SCENE LABEL'],'spoken_captions':True,'title_card':None};validate_task(value)
   branded={**value,'presentation':{**value['presentation'],'title_card':{'title':'Agent logo','subtitle':'','watermark':'Rendprop'}}}

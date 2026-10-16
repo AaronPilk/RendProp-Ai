@@ -46,3 +46,15 @@ export function buildPropertyCanvasReelPrompt(sceneNoun:string,motion:typeof REE
   .replace('Begin with the entire supplied photograph at its original aspect ratio and composition.',`Deliver one native1080p ${aspect} shot. Begin with the photographed scene fitted into that canvas using restrained framing/cropping only.`)
   .replace('Retain the wide scene, including the pictured ceiling, floor and side edges; do not force landscape or portrait framing. The delivery canvas will be added separately.','Keep the visible property readable and its features unchanged. Do not extend the image borders, outpaint, invent space, stretch pixels, add blurred panels or black bars.');
 }
+
+/** Prospective saved steady-v2 jobs only; v1 strings above are immutable. */
+export function buildSteadyPropertyReelPrompt(sceneNoun:string,motion:typeof REEL_PRESETS[number],_aspect:'16:9'|'9:16'):string{
+ const move={
+  fly_through:"A shallow forward-right slider translation within this photographed viewpoint",
+  push_in:"A shallow straight forward microdolly translation",
+  side_glide:"A short rightward motorized slider translation",
+  pull_back:"A shallow straight backward microdolly translation without revealing new image edges",
+ }[motion];
+ return `One continuous five-second motorized slider take of this exact photographed ${sceneNoun}. ${move}. Maintain very slow constant speed, constant height, a level horizon, fixed orientation and fixed focal length. No bobbing, sway, shake, orbit, speed ramp or zoom. Stay inside the visible scene; reveal no unseen sides or connected spaces. `+
+  "Begin with the entire supplied photograph at its original aspect ratio and composition. Preserve the photographed field of view; the delivery canvas will be cropped separately. Preserve the property geometry, proportions, straight lines, doors, windows, fixtures, finishes, colors, furniture and every object unchanged and stationary. Do not extend image borders, outpaint, stretch pixels or add blurred panels or black bars. "+GUARDRAILS;
+}

@@ -462,6 +462,7 @@ function sampleTimes(
   mediaTicks: number,
   composedStart?: number,
   retainedProvider = false,
+  composedFPS:24|30=30,
 ): { count: number; fps: number } {
   const b = one(samples, "stts"), entries = table(v, b, 8);
   let count = 0, ticks = 0, fps = 0;
@@ -485,7 +486,7 @@ function sampleTimes(
   if (composed) {
     need(
       count <= (retainedProvider ? Math.floor(5.1 * fps) : 15000) &&
-        (retainedProvider ? [24,30].includes(fps) : fps === 30) && composedStart >= 0 &&
+        (retainedProvider ? [24,30].includes(fps) : fps === composedFPS) && composedStart >= 0 &&
         composedStart % frameTicks === 0,
     );
     for (let i = 0; i < entries; i++) {
@@ -586,7 +587,7 @@ function sampleExtents(
     need(spans[i].start >= spans[i - 1].end);
   }
 }
-function movie(bytes: Uint8Array, mdats: Span[], composed: boolean, retainedProvider = false): MP4Video {
+function movie(bytes: Uint8Array, mdats: Span[], composed: boolean, retainedProvider = false, composedFPS:24|30=30): MP4Video {
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
     root = header(v, 0);
   need(root.type === "moov" && root.size === bytes.length);
@@ -645,6 +646,7 @@ function movie(bytes: Uint8Array, mdats: Span[], composed: boolean, retainedProv
       mediaClock.ticks,
       composedStart,
       retainedProvider && type === "vide",
+      composedFPS,
     );
     sampleExtents(v, samples, times.count, mdats);
     // Data references must name this file, never an external video URL.
@@ -667,7 +669,7 @@ function movie(bytes: Uint8Array, mdats: Span[], composed: boolean, retainedProv
         Math.abs(tkhd.seconds - timeline.seconds) <= 0.15,
     );
     editList(v, trackBoxes, timeline.scale, tkhd.seconds, mediaClock.ticks);
-    if(retainedProvider)need(info.fps===null||info.fps===times.fps);
+    if(retainedProvider||composed&&composedFPS===24)need(info.fps===null||info.fps===times.fps);
     result = {
       duration_s: timeline.seconds,
       billable_s: Math.max(timeline.seconds, mediaClock.seconds, tkhd.seconds),
@@ -692,8 +694,10 @@ export function probeMP4Video(url: string, fetcher: Fetch): Promise<MP4Video> {
 export function probeComposedMP4Video(
   url: string,
   fetcher: Fetch,
+  expectedFPS:24|30=30,
 ): Promise<MP4Video> {
-  return probe(url, fetcher, true);
+  need(expectedFPS===24||expectedFPS===30);
+  return probe(url, fetcher, true, false, expectedFPS);
 }
 
 /** Only after a generated clip has its exact paid receipt, owned private output
@@ -709,6 +713,7 @@ async function probe(
   fetcher: Fetch,
   composed: boolean,
   retainedProvider = false,
+  composedFPS:24|30=30,
 ): Promise<MP4Video> {
   try {
     const parsed = new URL(url);
@@ -835,7 +840,7 @@ async function probe(
       offset += h.size;
     }
     need(offset === total && moov !== null && mdats.length > 0);
-    return movie(moov, mdats, composed, retainedProvider);
+    return movie(moov, mdats, composed, retainedProvider, composedFPS);
   } catch (error) {
     if (error instanceof HttpError) throw error;
     unavailable();

@@ -31,3 +31,9 @@ Deno.test('ordinary byte parser remains256MiB; larger parsed admission needs exp
  let refused=false;try{deliveryBytes(new Request('https://fixture.invalid?bytes='+bytes));}catch{refused=true;}assertEquals(refused,true);
  assertEquals(deliveryBytes(new Request('https://fixture.invalid?bytes='+REGISTERED_BACKGROUND_BYTES),REGISTERED_BACKGROUND_BYTES),REGISTERED_BACKGROUND_BYTES);
 });
+Deno.test('saved steady-v2 receipt preserves exact registered delivery authority without accepting arbitrary profile fields',async()=>{
+ const steady={...bound,quality_profile:'fal-kling3-4k-steady-v2'}as const;
+ const run=(data:unknown)=>backgroundObjectLimits({rpc:()=>Promise.resolve({data,error:null})},{orgId:org,listingId:listing,actorId:actor},{[key]:'renders'},bytes,key);
+ assertEquals(await run(steady),{[key]:steady});assertEquals(await run(bound),{[key]:bound});
+ for(const data of[{...steady,quality_profile:null},{...steady,quality_profile:'fal-kling3-4k-v1'},{...steady,quality_profile:'customer24'},{...steady,extra:true},{...steady,bytes:1}])await assertRejects(()=>run(data),HttpError);
+});

@@ -122,7 +122,7 @@ async function routingFixture() {
     import type {RouteStep} from ${JSON.stringify(new URL("../_shared/router.ts", import.meta.url).href)};
     import {parseReelFraming,reelFramingSteps} from ${JSON.stringify(new URL("./reel-framing.ts", import.meta.url).href)};
     import {ownerQaReelStep as realOwnerQaReelStep} from ${JSON.stringify(new URL("./owner-reel-qa.ts", import.meta.url).href)};
-    import {PROPERTY_VIDEO_QUALITY_PROFILE,propertyVideoQualitySteps,propertyVideoQualityProfile} from ${JSON.stringify(new URL("./property-video-quality.ts", import.meta.url).href)};
+    import {PROPERTY_VIDEO_QUALITY_PROFILE,isPropertyVideoQualityProfile,propertyVideoQualitySteps,propertyVideoQualityProfile} from ${JSON.stringify(new URL("./property-video-quality.ts", import.meta.url).href)};
     export async function run(options:any, database:any, now:Date) {
       const events:string[]=[];
       const user={id:options.actor??${JSON.stringify(ACTOR)}};
@@ -479,6 +479,7 @@ Deno.test("actual whole-recipe preflight selects the same scoped FAL4K210c shot 
   import {reelFramingSteps} from ${JSON.stringify(new URL("./reel-framing.ts",import.meta.url).href)};
   import {driftRubric} from ${JSON.stringify(new URL("../_shared/drift.ts",import.meta.url).href)};
   import {DRIFT_SOURCE_EXTRA_INPUT_TOKENS} from ${JSON.stringify(new URL("./drift-input.ts",import.meta.url).href)};
+  import {isPropertyVideoQualityProfile} from ${JSON.stringify(new URL("./property-video-quality.ts",import.meta.url).href)};
   const DRIFT_MAX_TOKENS=400,MODEL_I2V="bytedance/seedance/v1/pro/fast/image-to-video",APP_AI_UNIT_CENTS={seedance_per_s:4.86};
   let selected:any=null;
   const PROPERTY_VIDEO_QUALITY_PROFILE="fal-kling3-4k-v1",currentPropertyVideoQualityProfile=async()=>"legacy",propertyVideoQualityProfile=(value:any)=>value;

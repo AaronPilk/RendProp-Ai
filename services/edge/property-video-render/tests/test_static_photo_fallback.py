@@ -76,6 +76,16 @@ class StaticSavedPhoto(unittest.TestCase):
                     self.assertEqual(decoded.returncode, 0)
                     self.assertEqual(source.read_bytes(), before, 'saved master bytes remain exact')
 
+    def test_explicit24_static_fallback_keeps_exact_selected_pixels_and_both_canvases(self):
+        source=self.source((896,1195));before=source.read_bytes()
+        for aspect,w,h in [('16:9',1920,1080),('9:16',1080,1920)]:
+            clip=self.root/('steady24-'+aspect.replace(':','-')+'.mp4')
+            encode_static_saved_photo(source,clip,aspect,fps=24);video=probe(clip)['streams'][0]
+            self.assertEqual((video['width'],video['height'],video['avg_frame_rate'],video['nb_frames']),(w,h,'24/1','120'))
+            first=self.frame(clip,.03,w,h);last=self.frame(clip,4.9,w,h)
+            self.assertEqual(self.red_bounds(first),self.red_bounds(last));self.assertLess(max(ImageStat.Stat(ImageChops.difference(first,last)).mean),1)
+            self.assertEqual(source.read_bytes(),before)
+
     def test_thumbnail_junk_and_fake4k_canvas_refused_while_motion_guard_stays_strict(self):
         for dims in [(160,120),(480,640),(400,2000)]:
             with self.assertRaisesRegex(QualityError,'saved_photo_crop_too_small'):

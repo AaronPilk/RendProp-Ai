@@ -136,10 +136,10 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {ownerQaReelStep as actualOwnerQaReelStep,prepareOwnerQaReelInput} from ${
     JSON.stringify(new URL("./owner-reel-qa.ts", import.meta.url).href)
   };
-    import {parseReelFraming,reelFramingSteps,buildPhotoPreservingReelPrompt,buildPropertyCanvasReelPrompt} from ${
+    import {parseReelFraming,reelFramingSteps,buildPhotoPreservingReelPrompt,buildPropertyCanvasReelPrompt,buildSteadyPropertyReelPrompt} from ${
     JSON.stringify(new URL("./reel-framing.ts", import.meta.url).href)
   };
-    import {PROPERTY_VIDEO_QUALITY_PROFILE,propertyVideoQualityProfile,propertyVideoQualitySteps as actualPropertyVideoQualitySteps} from ${JSON.stringify(new URL("./property-video-quality.ts", import.meta.url).href)};
+    import {PROPERTY_VIDEO_QUALITY_PROFILE,PROPERTY_VIDEO_STEADY_PROFILE,isPropertyVideoQualityProfile,propertyVideoQualityProfile,propertyVideoQualitySteps as actualPropertyVideoQualitySteps} from ${JSON.stringify(new URL("./property-video-quality.ts", import.meta.url).href)};
     import {paramsOf} from ${
     JSON.stringify(new URL("../_shared/router.ts", import.meta.url).href)
   };

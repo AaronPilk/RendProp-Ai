@@ -752,3 +752,11 @@ Deno.test("retained provider profile rejects gaps duplicates hidden tails off-gr
  await rejects(()=>probeRetainedProviderMP4Video(URL,variable.fetch),400);
  for(const options of[{fps:25,seconds:5},{fps:60,seconds:5},{fps:24,seconds:6},{timings:[[60,512],[61,513]]as[number,number][]},{fps:24,seconds:5,fragment:true},{fps:24,seconds:5,duplicateVideo:true}])await rejects(()=>probeRetainedProviderMP4Video(URL,fixture(options).fetch),400);
 });
+
+Deno.test("composed24 is an explicit strict profile, never a new uploaded/default timing allowance",async()=>{
+ const f=fixture({fps:24,seconds:10,width:1920,height:1080});equal((await probeComposedMP4Video(URL,f.fetch,24)).fps,24);
+ await rejects(()=>probeComposedMP4Video(URL,fixture({fps:24,seconds:10}).fetch),400);
+ await rejects(()=>probeComposedMP4Video(URL,fixture({fps:30,seconds:10}).fetch,24),400);
+ for(const options of[{fps:24,seconds:5,editMediaTime:2000,compositionOffsets:[[1,2000],[1,1000],[118,2000]]},{fps:24,seconds:5,editMediaTime:2000,compositionOffsets:[[120,3000]]},{fps:24,seconds:120060/24000,timings:[[60,1000],[60,1001]]}])await rejects(()=>probeComposedMP4Video(URL,fixture(options as any).fetch,24),400);
+ const old=composedFixture();equal((await probeComposedMP4Video(URL,old.fetch)).fps,30);
+});

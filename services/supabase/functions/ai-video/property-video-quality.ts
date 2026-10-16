@@ -3,13 +3,15 @@ import {adminClient} from "../_shared/supabase.ts";
 import {resolveRoute,type RouteContext,type RouteStep} from "../_shared/router.ts";
 
 export const PROPERTY_VIDEO_QUALITY_PROFILE="fal-kling3-4k-v1" as const;
+export const PROPERTY_VIDEO_STEADY_PROFILE="fal-kling3-4k-steady-v2" as const;
 export const PROPERTY_VIDEO_QUALITY_TASK="video.property_reel_clip";
 export const PROPERTY_VIDEO_QUALITY_MODEL="fal-ai/kling-video/v3/4k/image-to-video";
-export type PropertyVideoQualityProfile="legacy"|typeof PROPERTY_VIDEO_QUALITY_PROFILE;
+export type PropertyVideoQualityProfile="legacy"|typeof PROPERTY_VIDEO_QUALITY_PROFILE|typeof PROPERTY_VIDEO_STEADY_PROFILE;
+export const isPropertyVideoQualityProfile=(value:PropertyVideoQualityProfile)=>value!=="legacy";
 /** Only saved server job metadata enters this parser, never the public body. */
 export function propertyVideoQualityProfile(value:unknown):PropertyVideoQualityProfile{
  if(value===undefined||value===null)return "legacy";
- assert(value==="legacy"||value===PROPERTY_VIDEO_QUALITY_PROFILE,409,"The saved video quality profile is unavailable.");
+ assert(value==="legacy"||value===PROPERTY_VIDEO_QUALITY_PROFILE||value===PROPERTY_VIDEO_STEADY_PROFILE,409,"The saved video quality profile is unavailable.");
  return value;
 }
 export async function currentPropertyVideoQualityProfile():Promise<PropertyVideoQualityProfile>{

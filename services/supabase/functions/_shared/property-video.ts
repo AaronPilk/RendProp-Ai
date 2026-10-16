@@ -66,12 +66,13 @@ export async function attestPropertyVideo(actor:string,listing:string,asset:stri
    &&typeof c.sha256==='string'&&/^[a-f0-9]{64}$/.test(c.sha256)&&master.sha256===c.sha256,409,'The registered property video receipt changed.');
   assert(same(await deps.head(c.bucket,c.storage_key,signal),c),409,'The finalized video changed. Upload it again.');
   const signed=await deps.sign(c.bucket,c.storage_key,300);
+  assert(!master||master.quality_profile===undefined||master.quality_profile==='fal-kling3-4k-steady-v2',409,'The saved composition profile is unavailable.');
   const info=await (master?probeComposedMP4Video:probeMP4Video)(signed,async(url,init)=>{
    assert(url===signed&&init.method==='GET'&&init.redirect==='error',503,'Unexpected property video read.');
    const h=new Headers(init.headers);h.set('If-Match',c.etag);
    const response=await deps.fetch(url,{...init,headers:h,signal:AbortSignal.any([signal,...(init.signal?[init.signal]:[])])});
    assert(response.headers.get('etag')===c.etag&&new RegExp(`^bytes \\d+-\\d+/${c.bytes}$`).test(response.headers.get('content-range')??''),409,'The video changed during verification.');return response;
-  });
+  },master?.quality_profile==='fal-kling3-4k-steady-v2'?24:30);
   assert(info.width>=1920&&info.height>=1080&&info.width*9===info.height*16&&info.width<=7680&&info.height<=4320&&info.duration_s<=600,400,'The listing video must be landscape16:9 at1080p or higher.');
   assert(same(await deps.head(c.bucket,c.storage_key,signal),c),409,'The finalized video changed. Upload it again.');
   const {data,error}=await deps.rpc('record_property_video_attestation',{p_actor:actor,p_listing:listing,p_asset:asset,p_etag:c.etag,p_bytes:c.bytes,p_width:info.width,p_height:info.height,p_duration:info.duration_s});if(error)throwRpc(error.message);

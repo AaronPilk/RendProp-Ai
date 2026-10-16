@@ -212,4 +212,124 @@ class ActualFFmpeg(unittest.TestCase):
                 self.assertGreater(whites,5)
 
 
+class SteadyCadence(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp=tempfile.TemporaryDirectory();cls.root=Path(cls.tmp.name)
+        for offset in [0,128]:
+            # Synthetic eight-bit frame numbers. Enlarging this generated test
+            # pattern is not a claim about customer source detail.
+            pattern=f"geq=lum='if(gt(bitand(N+{offset},pow(2,floor(X/24))),0),235,16)':cb=128:cr=128,scale=1920:1080:flags=neighbor"
+            run([shutil.which('ffmpeg'),'-v','error','-f','lavfi','-i','nullsrc=s=192x108:r=24:d=5',
+                 '-vf',pattern,'-frames:v','120','-an','-c:v','libx264','-preset','ultrafast','-threads','2',str(cls.root/f'numbered-{offset}.mp4')])
+        for aspect,size in [('landscape','1920x1080'),('portrait','1080x1920')]:
+            run([shutil.which('ffmpeg'),'-v','error','-f','lavfi','-i',f'color=c=blue:s={size}:r=24:d=5',
+                 '-an','-c:v','libx264','-preset','ultrafast','-threads','2',str(cls.root/f'{aspect}.mp4')])
+        run([shutil.which('ffmpeg'),'-v','error','-i',str(cls.root/'landscape.mp4'),'-vf','fps=30',
+             '-c:v','libx264','-preset','ultrafast','-threads','2',str(cls.root/'native30.mp4')])
+        for name,hz,seconds in [('music',200,3),('voice',1000,2)]:
+            run([shutil.which('ffmpeg'),'-v','error','-f','lavfi','-i',f'sine=frequency={hz}:duration={seconds}:sample_rate=48000',str(cls.root/f'{name}.wav')])
+        cls.music=MusicSource('synthetic',cls.root/'music.wav',hashlib.sha256((cls.root/'music.wav').read_bytes()).hexdigest(),'test-only','Synthetic')
+
+    @classmethod
+    def tearDownClass(cls):cls.tmp.cleanup()
+
+    def measured(self,result,frames):
+        from compose import require_cfr24
+        require_cfr24(result['master'],result['facts'],exact_frames={frames})
+        self.assertEqual(next(s for s in result['facts']['streams']if s['codec_type']=='video')['avg_frame_rate'],'24/1')
+        print('STEADY_V2_ACTUAL '+json.dumps({'width':result['width'],'height':result['height'],'duration_s':result['duration_s'],'frames':frames,'fps':24,'audio':any(s['codec_type']=='audio'for s in result['facts']['streams'])}))
+        run([shutil.which('ffmpeg'),'-v','error','-nostdin','-xerror','-err_detect','explode','-i',str(result['master']),'-f','null','-'])
+
+    def frame_numbers(self,path):
+        raw=run([shutil.which('ffmpeg'),'-v','error','-i',str(path),'-vf','scale=8:1:flags=neighbor,format=gray',
+                 '-fps_mode','passthrough','-f','rawvideo','-']).stdout
+        self.assertEqual(len(raw)%8,0)
+        return [sum((1<<j)for j,value in enumerate(raw[i:i+8])if value>128)for i in range(0,len(raw),8)]
+
+    def test_actual_numbered24_frames_once_and_v1_thirty_unchanged(self):
+        clips=[self.root/'numbered-0.mp4',self.root/'numbered-128.mp4']
+        before=[hashlib.sha256(c.read_bytes()).hexdigest()for c in clips]
+        result=compose(clips,self.root/'numbered24',composition_profile='steady-v2-cfr24',test_fast=True)
+        self.measured(result,240)
+        expected=list(range(120))+list(range(128,248))
+        self.assertEqual(self.frame_numbers(result['master']),expected,'Every native24frame must survive once; no periodic duplication')
+        legacy=compose(clips,self.root/'legacy30',test_fast=True)
+        self.assertEqual(next(s for s in legacy['facts']['streams']if s['codec_type']=='video')['avg_frame_rate'],'30/1')
+        old=self.frame_numbers(legacy['master']);self.assertEqual(len(old),300);self.assertEqual(len(old)-len(set(old)),60)
+        self.assertEqual([hashlib.sha256(c.read_bytes()).hexdigest()for c in clips],before)
+
+    def test_actual24_transitions_caption_pixels_music_voice_and_canvases(self):
+        fonts=[Path('/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf'),Path('/System/Library/Fonts/Supplemental/Arial Bold.ttf')]
+        font=next((p for p in fonts if p.is_file()),None);self.assertIsNotNone(font)
+        for aspect,file in [('16:9','landscape'),('9:16','portrait')]:
+            for transition,overlap in [('cut',0),('dissolve',6),('whip',4)]:
+                source=self.root/f'{file}.mp4';directory=self.root/f'{file}-{transition}'
+                presentation={'transition':transition,'shot_caption_style':'lowerThird','spoken_captions':True,'shot_labels':['ROOM ONE','ROOM TWO']}
+                with patch.dict(os.environ,{'RENDER_FONT':str(font)}):
+                    result=compose([source,source],directory,aspect=aspect,narration=self.root/'voice.wav',music=self.music,
+                                   presentation=presentation,words=[{'text':'Verified room','start':.2,'end':1.2}],test_fast=True,composition_profile='steady-v2-cfr24')
+                self.measured(result,240-overlap)
+                self.assertAlmostEqual(result['duration_s'],(240-overlap)/24,places=6)
+                self.assertEqual((result['width'],result['height']),(1920,1080)if aspect=='16:9'else(1080,1920))
+                pixels=run([shutil.which('ffmpeg'),'-v','error','-ss','0.8','-i',str(result['master']),'-frames:v','1','-vf','scale=192:108','-f','rawvideo','-pix_fmt','rgb24','-']).stdout
+                self.assertGreater(sum(min(pixels[i:i+3])>180 for i in range(0,len(pixels),3)),5,'Text must reach actual pixels')
+                def volume(at,hz):
+                    log=run([shutil.which('ffmpeg'),'-hide_banner','-ss',str(at),'-t','0.5','-i',str(result['master']),'-vn',
+                             '-af',f'bandpass=f={hz}:width_type=h:w=20,volumedetect','-f','null','-']).stderr.decode()
+                    return float(re.search(r'mean_volume: ([-\d.]+) dB',log).group(1))
+                self.assertGreater(volume(.5,1000),-40)
+                self.assertLess(volume(.5,200),volume(3.5,200)-5)
+                self.assertGreater(volume(result['duration_s']-.7,200),-70)
+
+    def test_native121st_endpoint_sample_trims_only_outside_five_second_window(self):
+        source=self.root/'numbered121.mp4'
+        pattern="geq=lum='if(gt(bitand(N,pow(2,floor(X/24))),0),235,16)':cb=128:cr=128,scale=1920:1080:flags=neighbor"
+        run([shutil.which('ffmpeg'),'-v','error','-f','lavfi','-i','nullsrc=s=192x108:r=24:d=5.05',
+             '-vf',pattern,'-frames:v','121','-an','-c:v','libx264','-preset','ultrafast','-threads','2',str(source)])
+        before=hashlib.sha256(source.read_bytes()).hexdigest()
+        result=compose([source],self.root/'endpoint24',composition_profile='steady-v2-cfr24',test_fast=True)
+        self.measured(result,120)
+        self.assertEqual(self.frame_numbers(result['master']),list(range(120)))
+        self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(),before)
+
+    def test_transition_boundaries_keep_exact_real_bodies_and_bounded_bridge(self):
+        from presentation import timeline
+        from compose import require_cfr24
+        sources=[self.root/'numbered-0.mp4',self.root/'numbered-128.mp4']
+        before=[hashlib.sha256(p.read_bytes()).hexdigest()for p in sources]
+        for name,frames in [('dissolve',6),('whip',4)]:
+            directory=self.root/('boundary-'+name);directory.mkdir()
+            parts,duration,_=timeline(sources,directory,name,fps=24)
+            self.assertEqual(len(parts),3);self.assertEqual(duration,(240-frames)/24)
+            self.assertEqual(self.frame_numbers(parts[0]),list(range(120-frames)))
+            self.assertEqual(self.frame_numbers(parts[2]),list(range(128+frames,248)))
+            require_cfr24(parts[1],probe(parts[1]),exact_frames={frames})
+            self.assertEqual(self.frame_numbers(parts[1])[0],120-frames)
+            raw=run([shutil.which('ffmpeg'),'-v','error','-i',str(parts[1]),'-vf','scale=256:144,format=gray',
+                     '-fps_mode','passthrough','-f','rawvideo','-']).stdout
+            size=256*144;self.assertEqual(len(raw),size*frames)
+            self.assertEqual(len({hashlib.sha256(raw[i:i+size]).digest()for i in range(0,len(raw),size)}),frames,
+                             'The EOF look-ahead must not add a repeated encoded transition frame')
+        self.assertEqual([hashlib.sha256(p.read_bytes()).hexdigest()for p in sources],before)
+
+    def test_mixed_or_variable_cadence_and_forged_profiles_refuse(self):
+        from compose import require_cfr24
+        with self.assertRaisesRegex(QualityError,'steady_v2_requires_native_cfr24'):
+            compose([self.root/'landscape.mp4',self.root/'native30.mp4'],self.root/'mixed',composition_profile='steady-v2-cfr24',test_fast=True)
+        with self.assertRaisesRegex(QualityError,'unsupported_composition_profile'):
+            compose([self.root/'landscape.mp4'],self.root/'fake',composition_profile='customer24',test_fast=True)
+        facts=probe(self.root/'landscape.mp4')
+        real=run
+        for points in [[0,1000,1000],[0,1000,3000]]:
+            packets={'packets':[{'pts':v,'duration':1000}for v in points]}
+            altered=json.loads(json.dumps(facts));altered['streams'][0]['time_base']='1/24000'
+            with patch('compose.run',return_value=subprocess.CompletedProcess([],0,json.dumps(packets).encode(),b'')):
+                with self.assertRaisesRegex(QualityError,'steady_v2_requires_native_cfr24'):
+                    require_cfr24(self.root/'landscape.mp4',altered)
+        value=task();value['composition_profile']='steady-v2-cfr24';validate_task(value)
+        for wrong in [24,30,True,'fal-kling3-4k-v1','customer24']:
+            with self.assertRaises(QualityError):validate_task({**value,'composition_profile':wrong})
+
+
 if __name__=='__main__':unittest.main()

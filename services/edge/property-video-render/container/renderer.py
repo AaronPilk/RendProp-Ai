@@ -12,7 +12,7 @@ from capabilities import download, upload, digest
 from prepare_image import prepare_image, normalize_full_resolution, MAX_SOURCE_BYTES
 from photo_motion import encode_photo_motion, encode_static_saved_photo
 from photo_quality import validate_photo_task, prepare_photo_quality, upload_photo_quality
-from compose import MusicSource, QualityError, compose, probe, run
+from compose import MusicSource, QualityError, compose, composition_fps, probe, run
 from music_catalog import validate_music
 
 MAX_INPUT_BYTES = 8 * 1024 * 1024 * 1024
@@ -65,8 +65,9 @@ def validate_task(task):
         if set(task) - {"state", "action", "job_id", "attempt_id", "lease_token", "source", "clip", "expires_at"}:
             raise ValueError("closed_cpu_task")
     else:
-        if set(task) - {"state", "action", "job_id", "lease_token", "manifest_sha256", "purpose", "aspect", "sources", "narration", "music", "presentation", "output", "expires_at"}:
+        if set(task) - {"state", "action", "job_id", "lease_token", "manifest_sha256", "purpose", "aspect", "composition_profile", "sources", "narration", "music", "presentation", "output", "expires_at"}:
             raise ValueError("closed_cpu_task")
+        composition_fps(task.get("composition_profile"))
         sha = task["manifest_sha256"]
         if len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
             raise ValueError("manifest_required")
@@ -134,6 +135,7 @@ def extract(task, directory, hosts):
 
 
 def compose_task(task, directory, hosts):
+    fps = composition_fps(task.get("composition_profile"))
     clips = []
     for i, source in enumerate(task["sources"]):
         expiry(task["expires_at"])
@@ -145,14 +147,14 @@ def compose_task(task, directory, hosts):
             normalize_full_resolution(photo, normalized)
             photo.unlink()
             try:
-                encode_photo_motion(normalized, clip, task["aspect"], source["motion"])
+                encode_photo_motion(normalized, clip, task["aspect"], source["motion"], **({"fps":24} if fps==24 else {}))
             except QualityError as error:
                 # Selected saved photos may be smaller than the final canvas.
                 # Keep their exact content as a static resized still; this is
                 # never used for AI clips or other motion/decoder failures.
                 if str(error) != "original_photo_lacks_1080_pixels":
                     raise
-                encode_static_saved_photo(normalized, clip, task["aspect"])
+                encode_static_saved_photo(normalized, clip, task["aspect"], **({"fps":24} if fps==24 else {}))
             normalized.unlink()
         elif source["motion_kind"] == "ai":
             download(source, clip, hosts)
@@ -172,11 +174,12 @@ def compose_task(task, directory, hosts):
         music = MusicSource(selection["track_id"], path, selection["asset_sha256"], "CC0-1.0", track["credit"])
     result = compose(clips, directory / "output", aspect=task["aspect"], narration=narration,
                      music=music, music_gain=.18, duck_gain=.07,
-                     presentation=task.get("presentation"), words=(task.get("narration") or {}).get("words", []), discard_inputs=True)
+                     presentation=task.get("presentation"), words=(task.get("narration") or {}).get("words", []), discard_inputs=True, composition_profile=task.get("composition_profile"))
     output = task["output"]
     receipt = {"job_id": task["job_id"], "lease_token": task["lease_token"], "manifest_sha256": task["manifest_sha256"],
             "asset_id": output["asset_id"], "poster_asset_id": output["poster_asset_id"],
             "width": result["width"], "height": result["height"], "duration_s": result["duration_s"],
+            **({"fps":24} if fps==24 else {}),
             "bytes": result["master"].stat().st_size, "sha256": digest(result["master"]),
             "poster_bytes": result["poster"].stat().st_size, "poster_sha256": digest(result["poster"])}
     return {"receipt": receipt, "master": result["master"], "poster": result["poster"]}
