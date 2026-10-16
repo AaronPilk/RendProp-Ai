@@ -11,16 +11,160 @@ import math
 import os
 import platform
 import random
+import re
 import shutil
+import stat
 import struct
 import subprocess
 import sys
 import tempfile
+import time
+
+
+_FAILURE_FILE_LIMIT = 16 * 1024 * 1024
+_FINAL_EXPORT = re.compile(r'tour-[0-9A-Fa-f]{8}\.mp4\Z')
+
+
+def _fixture_stat(root, path, *, directory=False):
+    """Only the gate's owned fixture tree is eligible for private evidence."""
+    assert root.is_absolute() and root.name.startswith('rendprop-render-concurrency-hd-')
+    parts = path.relative_to(root).parts
+    assert '..' not in parts
+    current = root
+    for index, part in enumerate(('', *parts)):
+        if part:
+            current /= part
+        info = current.lstat()
+        assert info.st_uid == os.getuid() and not stat.S_ISLNK(info.st_mode), 'Unowned or symlink fixture path'
+        is_directory = index < len(parts) or directory
+        assert (stat.S_ISDIR(info.st_mode) if is_directory else stat.S_ISREG(info.st_mode)), 'Unexpected fixture type'
+    return info
+
+
+def _final_exports(root, destination):
+    assert destination.parent == root, 'Export destination must be a direct fixture child'
+    _fixture_stat(root, destination, directory=True)
+    renders = destination / 'renders'
+    if not renders.exists() and not renders.is_symlink():
+        return set()
+    _fixture_stat(root, renders, directory=True)
+    entries = list(renders.iterdir())
+    assert len(entries) <= 64, 'Unexpected number of fixture render files'
+    return {entry.name for entry in entries if _FINAL_EXPORT.fullmatch(entry.name)}
+
+
+def _export_evidence_context(root, source, destination):
+    # Called only with the known generated input and exact native destination,
+    # before export; never infer customer media from command-line arguments.
+    try:
+        assert source.parent == root, 'Input must be a generated fixture directly under the root'
+        info = _fixture_stat(root, source)
+        root_info = _fixture_stat(root, root, directory=True)
+        return {'root': root, 'source': source, 'destination': destination,
+                'sourceIdentity': (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns),
+                'rootIdentity': (root_info.st_dev, root_info.st_ino),
+                'before': _final_exports(root, destination)}
+    except Exception as error:
+        # Evidence eligibility must not change whether the export is tested.
+        return {'error': f'{type(error).__name__}: {str(error)[:400]}'}
+
+
+def _read_fixture(root, path, identity=None):
+    info = _fixture_stat(root, path)
+    assert info.st_nlink == 1 and 0 < info.st_size <= _FAILURE_FILE_LIMIT, 'Fixture exceeds 16 MiB or is not a single owned file'
+    if identity is not None:
+        assert (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) == identity, 'Input changed during export'
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), 'rb') as handle:
+        opened = os.fstat(handle.fileno())
+        assert (opened.st_dev, opened.st_ino) == (info.st_dev, info.st_ino), 'Fixture changed before read'
+        data = handle.read(_FAILURE_FILE_LIMIT + 1)
+        finished = os.fstat(handle.fileno())
+    assert len(data) == info.st_size and (finished.st_size, finished.st_mtime_ns) == (info.st_size, info.st_mtime_ns), 'Fixture changed during read'
+    return data
+
+
+def _retain_export_failure(label, context, ffprobe):
+    assert re.fullmatch(r'[a-z0-9-]+', label), 'Unexpected evidence label'
+    assert 'error' not in context, context.get('error')
+    root, source, destination = (context[key] for key in ('root', 'source', 'destination'))
+    info = _fixture_stat(root, root, directory=True)
+    assert (info.st_dev, info.st_ino) == context['rootIdentity'], 'Fixture root changed'
+    added = _final_exports(root, destination) - context['before']
+    assert len(added) == 1, 'Expected exactly one newly created final export'
+    output = destination / 'renders' / added.pop()
+    # Validate both files before retaining either; no unrelated or partial movie.
+    files = [('input', source, _read_fixture(root, source, context['sourceIdentity'])),
+             ('output', output, _read_fixture(root, output))]
+    evidence = root / 'failure-evidence'
+    evidence.mkdir(mode=0o700, exist_ok=True)
+    _fixture_stat(root, evidence, directory=True)
+    record = {'label': label, 'status': 'retained', 'syntheticOnly': True,
+              'fileLimitBytes': _FAILURE_FILE_LIMIT, 'probeWallLimitSeconds': 30,
+              'videoPacketLimit': 120, 'files': []}
+    for kind, original, data in files:
+        copy = evidence / f'{label}-{kind}.mp4'
+        with os.fdopen(os.open(copy, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'wb') as handle:
+            handle.write(data)
+        copy.chmod(0o400)
+        record['files'].append({'kind': kind, 'original': str(original.relative_to(root)),
+                               'path': str(copy), 'bytes': len(data),
+                               'sha256': hashlib.sha256(data).hexdigest()})
+    # One shared deadline for both probes. Restrict fields and packets rather
+    # than collecting arbitrary tags or an unbounded frame dump.
+    deadline = time.monotonic() + 30
+    for item in record['files']:
+        try:
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, 'Failure evidence probe deadline exhausted'
+            probe = subprocess.run([str(ffprobe), '-v', 'error', '-select_streams', 'v:0',
+                '-read_intervals', '%+#120', '-show_packets', '-show_streams', '-show_format',
+                '-show_entries', 'stream=codec_type,codec_name,width,height,r_frame_rate,avg_frame_rate,time_base,start_time,duration,nb_frames:format=duration,size:packet=pts_time,dts_time,duration_time,flags',
+                '-of', 'json', item['path']], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, timeout=remaining)
+            assert probe.returncode == 0, f'ffprobe exit {probe.returncode}: {probe.stderr[:400]}'
+            assert len(probe.stdout) <= 128 * 1024, 'Unexpected probe output size'
+            raw = json.loads(probe.stdout)
+            assert len(raw.get('packets', [])) <= 120, 'Video packet limit exceeded'
+            # ffprobe may include nested tags/disposition despite show_entries.
+            # Persist only the declared timing/geometry fields, never those tags.
+            stream_keys = 'codec_type codec_name width height r_frame_rate avg_frame_rate time_base start_time duration nb_frames'.split()
+            packet_keys = 'pts_time dts_time duration_time flags'.split()
+            facts = {'streams': [{key: row[key] for key in stream_keys if key in row}
+                                  for row in raw.get('streams', [])],
+                     'format': {key: raw.get('format', {})[key] for key in ('duration', 'size') if key in raw.get('format', {})},
+                     'packets': [{key: row[key] for key in packet_keys if key in row}
+                                 for row in raw.get('packets', [])]}
+            item['probe'] = facts
+            item['packetSampleMayBeTruncated'] = len(facts.get('packets', [])) == 120
+        except Exception as error:
+            item['probeError'] = f'{type(error).__name__}: {str(error)[:400]}'
+    manifest = evidence / f'{label}.json'
+    with os.fdopen(os.open(manifest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'w') as handle:
+        json.dump(record, handle, indent=2)
+    return record
+
+
+def _record_export_failure(receipt, label, context, ffprobe):
+    try:
+        evidence = _retain_export_failure(label, context, ffprobe)
+    except Exception as error:
+        evidence = {'label': label, 'status': 'refused', 'error': f'{type(error).__name__}: {str(error)[:400]}'}
+    receipt.setdefault('failureEvidence', []).append(evidence)
+
+
+def _require_exit(label, returncode, expected, log, receipt, context=None, ffprobe=None):
+    if expected == 'failure':
+        assert returncode != 0, f'{label} unexpectedly passed'
+    elif returncode != expected:
+        failure = AssertionError(f'{label}: exit{returncode}; {log}')
+        if context is not None:
+            _record_export_failure(receipt, label, context, ffprobe)
+        raise failure
 
 
 def main():
     root = Path(__file__).resolve().parents[2]
-    out = Path(tempfile.mkdtemp(prefix='rendprop-render-concurrency-hd-'))
+    out = Path(tempfile.mkdtemp(prefix='rendprop-render-concurrency-hd-')).resolve()
     print(f'EVIDENCE: {out}', flush=True)
     engine = root / 'apps/ios/Rendprop/Render/RenderEngine.swift'
     sources = [engine, root / 'tests/phase1/RenderQualityRuntimeTests.swift',
@@ -38,17 +182,21 @@ def main():
     assert architecture in ['arm64', 'x86_64'], f'Unsupported macOS architecture: {architecture}'
     env = {**os.environ, 'LC_ALL': 'C', 'RENDER_QUALITY_FIXTURE_ROOT': str(out)}
 
-    def run(label, args, *, extra_env=None, expected=0):
-        result = subprocess.run(list(map(str, args)), cwd=root, env={**env, **(extra_env or {})}, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=150)
+    def run(label, args, *, extra_env=None, expected=0, actual_export=None):
+        context = (_export_evidence_context(out, *actual_export)
+                   if actual_export is not None and expected != 'failure' else None)
+        try:
+            result = subprocess.run(list(map(str, args)), cwd=root, env={**env, **(extra_env or {})}, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=150)
+        except subprocess.TimeoutExpired:
+            if context is not None:
+                _record_export_failure(receipt, label, context, ffprobe)
+            raise
         log = out / f'{label}.log'
         log.write_text(result.stdout)
         receipt['commands'].append({'name': label, 'exit': result.returncode, 'log': str(log),
                                     'sha256': hashlib.sha256(log.read_bytes()).hexdigest()})
-        if expected == 'failure':
-            assert result.returncode != 0, f'{label} unexpectedly passed'
-        else:
-            assert result.returncode == expected, f'{label}: exit{result.returncode}; {log}'
+        _require_exit(label, result.returncode, expected, log, receipt, context, ffprobe)
         print(f'{label}: exit={result.returncode}', flush=True)
         return result.stdout
 
@@ -105,7 +253,7 @@ def main():
             destination.mkdir()
             output_receipt = destination / 'output.json'
             run('native-' + name, [executable, clip, output_receipt, wanted_width, wanted_height],
-                extra_env={'RENDER_FIXTURE_DIRECTORY': str(destination)})
+                extra_env={'RENDER_FIXTURE_DIRECTORY': str(destination)}, actual_export=(clip, destination))
             native_output = Path(json.loads(output_receipt.read_text())['path'])
             # AVFoundation's existing identity-composition path retimes the45
             # input frames onto the1/60 grid without synthesizing15 extra
@@ -141,7 +289,7 @@ def main():
             destination.mkdir()
             output_receipt = destination / 'output.json'
             run('motion-' + name, [executable, clip, output_receipt, 640, 360, expected_motion],
-                extra_env={'RENDER_FIXTURE_DIRECTORY': str(destination)})
+                extra_env={'RENDER_FIXTURE_DIRECTORY': str(destination)}, actual_export=(clip, destination))
             diagnostic = json.loads(output_receipt.read_text())
             verify(Path(diagnostic['path']), (640, 360), 'motion-' + name,
                    45 if expected_motion == 'unavailable' else 60)
@@ -187,7 +335,7 @@ def main():
         receipt['negativeControl'] = 'Actual legacy1280 output rejected by HD dimensions assertion'
         legacy_receipt = destination / 'legacy-output.json'
         run('legacy-timing-baseline', [mutant_bin, out / 'hd-input.mp4', legacy_receipt, 1280, 720],
-            extra_env={'RENDER_FIXTURE_DIRECTORY': str(destination)})
+            extra_env={'RENDER_FIXTURE_DIRECTORY': str(destination)}, actual_export=(out / 'hd-input.mp4', destination))
         legacy_output = Path(json.loads(legacy_receipt.read_text())['path'])
         old_pts = verify(legacy_output, (1280, 720), 'legacy-timing-baseline', 45, False)
         hd = next(row for row in receipt['outputs'] if row['label'] == 'native-hd')

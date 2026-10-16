@@ -29,7 +29,7 @@ import AVFoundation
         }
         let writtenDuration = try await result.load(.duration).seconds
         guard output.speedFactor == 1.5, abs(writtenDuration - duration / 1.5) < 0.04 else {
-            fatalError("retiming/duration contract changed")
+            fatalError("retiming/duration contract changed: speedFactor=\(output.speedFactor), writtenDuration=\(writtenDuration), sourceDuration=\(duration), expectedDuration=\(duration / 1.5), absoluteDelta=\(abs(writtenDuration - duration / 1.5)), declaredOutputDuration=\(output.durationS)")
         }
         guard ["applied", "steady", "unavailable"].contains(output.motionSmoothing),
               output.stabilized == (output.motionSmoothing == "applied") else {

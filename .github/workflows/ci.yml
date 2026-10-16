@@ -1097,6 +1097,7 @@ jobs:
             ${{ runner.temp }}/rendprop-render-concurrency-hd-*/receipt.json
             ${{ runner.temp }}/rendprop-render-concurrency-hd-*/*.log
             ${{ runner.temp }}/rendprop-render-concurrency-hd-*/**/*.json
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/failure-evidence/*.mp4
             ${{ runner.temp }}/rendprop-render-review-fences-*/receipt.json
             ${{ runner.temp }}/rendprop-render-review-fences-*/*.log
           retention-days: 7
