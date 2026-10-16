@@ -3,46 +3,89 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
-import argparse, hashlib, json, os, shutil, subprocess, tempfile, time, signal
+import argparse, datetime, hashlib, json, os, shutil, subprocess, sys, tempfile, time, signal
+
+os.umask(0o077)
 
 ROOT = Path(__file__).resolve().parents[3]
 SQL = ROOT / "services/supabase"
 p = argparse.ArgumentParser()
 p.add_argument("--evidence-dir", type=Path, required=True)
-OUT = p.parse_args().evidence_dir
+OUT = p.parse_args().evidence_dir.resolve()
 OUT.mkdir(parents=True, exist_ok=False)
 OUT.chmod(0o700)
-EXTERNAL = Path("/Volumes/Rendprop Files/Builds/Active")
-assert EXTERNAL.is_dir(), "External evidence drive is required"
-DATA = Path(tempfile.mkdtemp(prefix="provider-receipt-owned-pg-", dir=EXTERNAL))
+EXTERNAL = Path("/Volumes/Rendprop Files")
+DEADLINE = time.monotonic() + 600
+
+
+def reserve():
+    if sys.platform == "darwin":
+        assert EXTERNAL.is_mount(), "External evidence volume must be mounted"
+        assert OUT.is_relative_to(EXTERNAL), "Keep local database evidence on the external volume"
+        assert shutil.disk_usage(Path.home()).free >= 3 * 1024**3, "Preserve internal3GiB reserve"
+        assert shutil.disk_usage(EXTERNAL).free >= 8 * 1024**3, "Preserve external8GiB reserve"
+    else:
+        assert shutil.disk_usage(OUT).free >= 1024**3, "Preserve isolated CI evidence reserve"
+    assert time.monotonic() < DEADLINE, "Whole proof deadline"
+
+
+reserve()
+ENV = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "TZ": "UTC", "PGOPTIONS": "-c statement_timeout=30000 -c lock_timeout=15000"}
+pg_config = shutil.which("pg_config", path=ENV["PATH"])
+if pg_config:
+    bindir = subprocess.check_output([pg_config, "--bindir"], text=True, env=ENV, timeout=10).strip()
+    assert Path(bindir).is_absolute() and Path(bindir).is_dir(), "PostgreSQL tool directory is required"
+    ENV["PATH"] = bindir + os.pathsep + ENV["PATH"]
+tool = lambda name: shutil.which(name, path=ENV["PATH"])
+assert all(tool(name) for name in ["initdb", "pg_ctl", "createdb", "psql"]), "PostgreSQL tools must already be installed"
+DATA = Path(tempfile.mkdtemp(prefix="provider-receipt-owned-pg-", dir=OUT))
 SOCK = Path(tempfile.mkdtemp(prefix="provider-receipt-sock-", dir="/tmp"))
 MIG = SQL / "migrations/20261016192846_provider_attempt_receipts.sql"
 FIX = SQL / "tests/provider_attempt_receipts.sql"
 MIGRATIONS = sorted((SQL / "migrations").glob("*.sql"))
 SOURCES = [*MIGRATIONS, SQL / "tests/ci-bootstrap.sql", FIX, Path(__file__).resolve()]
 hashes = lambda: {str(f.relative_to(ROOT)): hashlib.sha256(f.read_bytes()).hexdigest() for f in SOURCES}
-r = {"passed": False, "sourceHashes": hashes(), "commands": [], "controls": [], "races": [], "networkCalls": 0, "providerCalls": 0}
-ENV = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LC_ALL": "C", "PGOPTIONS": "-c statement_timeout=30000 -c lock_timeout=15000"}
-tool = lambda name: shutil.which(name) or str(Path("/opt/homebrew/opt/postgresql@17/bin") / name)
+r = {"passed": False, "startedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(), "sourceHashes": hashes(), "commands": [], "controls": [], "races": [], "networkCalls": 0, "providerCalls": 0, "runtime": {"platform": sys.platform, "python": sys.version, "postgresTools": {name: tool(name) for name in ["initdb", "pg_ctl", "createdb", "psql"]}, "proofDeadlineSeconds": 600}}
 started = False
 def terminate(_signal, _frame):
     raise SystemExit("Stopped by outer resource/wall guard")
 signal.signal(signal.SIGTERM, terminate)
 
 
-def reserve():
-    assert shutil.disk_usage(ROOT).free >= 3 * 1024**3, "Preserve internal3GiB reserve"
-    assert shutil.disk_usage(EXTERNAL).free >= 8 * 1024**3, "Preserve external8GiB reserve"
-
-
 def run(name, command, body=None, refuses=None):
-    if name != "stop": reserve()
-    c = subprocess.run([str(x) for x in command], input=body, text=True, env=ENV, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
+    reserve()
+    child = subprocess.Popen([str(x) for x in command], stdin=subprocess.PIPE, text=True, env=ENV, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        end = time.monotonic() + 120
+        while True:
+            try:
+                output, _ = child.communicate(input=body, timeout=.5)
+                break
+            except subprocess.TimeoutExpired:
+                body = None
+                reserve()
+                assert time.monotonic() < end, "Command deadline"
+    except BaseException as failure:
+        child.kill()
+        try:
+            output, _ = child.communicate(timeout=5)
+        except subprocess.TimeoutExpired as drain:
+            # A descendant may still own a pipe. Do not let diagnostic output
+            # prevent the exact owned-cluster cleanup in the outer finally.
+            output = drain.output or ""
+            if isinstance(output, bytes): output = output.decode("utf-8", "replace")
+            for pipe in [child.stdin, child.stdout, child.stderr]:
+                if pipe is not None: pipe.close()
+            child.wait(timeout=5)
+        f = OUT / (name + ".log")
+        f.write_text(output)
+        r["commands"].append({"name": name, "exit": child.returncode, "failure": type(failure).__name__, "logSHA256": hashlib.sha256(f.read_bytes()).hexdigest()})
+        raise
     f = OUT / (name + ".log")
-    f.write_text(c.stdout)
-    r["commands"].append({"name": name, "exit": c.returncode, "logSHA256": hashlib.sha256(f.read_bytes()).hexdigest()})
-    assert (c.returncode and refuses in c.stdout) if refuses else c.returncode == 0, (name, c.stdout[-4000:])
-    return c.stdout
+    f.write_text(output)
+    r["commands"].append({"name": name, "exit": child.returncode, "logSHA256": hashlib.sha256(f.read_bytes()).hexdigest()})
+    assert (child.returncode and refuses in output) if refuses else child.returncode == 0, (name, output[-4000:])
+    return output
 
 
 try:
@@ -52,6 +95,7 @@ try:
     conn = ["-h", SOCK, "-p", "55629", "-U", "postgres"]
     run("createdb", [tool("createdb"), *conn, "provider_receipts"])
     PSQL = [tool("psql"), "-X", "--no-password", *conn, "-d", "provider_receipts", "-v", "ON_ERROR_STOP=1"]
+    assert run("owned-cluster-identity", [*PSQL, "-Atq", "-c", "select current_setting('data_directory'),current_setting('listen_addresses')"]).strip() == str(DATA) + "|"
     run("bootstrap", [*PSQL, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
     catalog = """select jsonb_build_object('functions',(select md5(string_agg(jsonb_build_array(p.oid::regprocedure::text,md5(p.prosrc),pg_get_userbyid(p.proowner),p.prosecdef,p.provolatile,p.proconfig,p.proacl::text)::text,E'\n'order by p.oid::regprocedure::text))from pg_proc p where p.pronamespace='public'::regnamespace and p.prokind in('f','p')and p.proname not in('provider_attempt_begin','provider_attempt_finish')),'constraints',(select md5(string_agg(conrelid::regclass||':'||conname||':'||pg_get_constraintdef(c.oid),E'\n'order by conrelid::regclass::text,conname))from pg_constraint c join pg_class t on t.oid=c.conrelid where c.connamespace='public'::regnamespace and t.relname<>'provider_attempt_receipts'),'config',(select md5(string_agg(to_jsonb(t)::text,E'\n'order by key))from app_config t),'routes',(select md5(string_agg(to_jsonb(t)::text,E'\n'order by id))from ai_routes t));"""
     for migration in MIGRATIONS:
@@ -104,7 +148,22 @@ try:
     r['passed'] = True
     print(json.dumps({'passed': True, 'fresh': r['fresh'], 'replay': r['replay'], 'compiledControls': len(r['controls']), 'races': r['races']}))
 finally:
-    if started: run("stop", [tool("pg_ctl"), "-D", DATA, "-m", "immediate", "-w", "stop"])
+    # Cleanup must still run after a deadline or reserve refusal, and may only
+    # stop this driver's newly owned data directory/socket.
+    cleanup_error = None
+    if started or (DATA / "postmaster.pid").exists():
+        try:
+            stop = subprocess.run([tool("pg_ctl"), "-D", str(DATA), "-m", "immediate", "-w", "stop"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ENV, timeout=30)
+            (OUT / "stop.log").write_text(stop.stdout)
+            r["ownedClusterStopped"] = stop.returncode == 0
+            if stop.returncode: cleanup_error = "Owned PostgreSQL cleanup failed"
+        except BaseException as error:
+            r["ownedClusterStopped"] = False
+            cleanup_error = "Owned PostgreSQL cleanup failed: " + type(error).__name__
+    if cleanup_error: r["passed"] = False
+    r["finishedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     (OUT / 'receipt.json').write_text(json.dumps(r, indent=2) + '\n')
-    shutil.rmtree(DATA, ignore_errors=True)
-    shutil.rmtree(SOCK, ignore_errors=True)
+    if r.get("ownedClusterStopped") or not started and not (DATA / "postmaster.pid").exists():
+        shutil.rmtree(DATA)
+        shutil.rmtree(SOCK, ignore_errors=True)
+    if cleanup_error: raise RuntimeError(cleanup_error)

@@ -1604,6 +1604,13 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/native_photo_family_selection_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-native-photo-selection-pg"
+      - name: Property lookup receipts retain unknown costs and serialize supplier dispatch
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/provider_attempt_receipts_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-provider-attempt-receipts-pg"
       - name: Exact-byte gallery copies retain source history and serialize completion
         timeout-minutes: 10
         run: |
@@ -1771,6 +1778,7 @@ jobs:
             ${{ runner.temp }}/rendprop-property-video-pg/**
             ${{ runner.temp }}/rendprop-property-video-abandon-pg/**
             ${{ runner.temp }}/rendprop-studio-gallery-order-pg/**
+            ${{ runner.temp }}/rendprop-provider-attempt-receipts-pg/**
             ${{ runner.temp }}/rendprop-gallery-source-copy-pg/**
             ${{ runner.temp }}/rendprop-direct-property-source-pg/**
             ${{ runner.temp }}/rendprop-property-steady-v2-pg/**
