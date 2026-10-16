@@ -39,7 +39,7 @@ body = 'import Foundation\n' + body.replace('private(set)', '').replace('private
 body += '\n' + block(push.read_text(), 'enum ReelCompletionNotice {')
 reel_view = screen[screen.index('struct ReelStudioView:'):screen.index('// MARK: Sections', screen.index('struct ReelStudioView:'))]
 cleanup = block(reel_view, '        .onDisappear {')
-body += '\n@MainActor final class ReelPresentationHarness {\nlet job: ReelWorkJob; let work: ReelWorkJob; let connection = ClosedConnection(); var player: ClosedPlayer? { get { work.player } set { work.setPlaybackPlayer(newValue) } }; var voPlayer: ClosedPlayer? = ClosedPlayer(); var musicPreviewPlayer:ClosedPlayer?; let recorder = ClosedRecorder()\ninit(job: ReelWorkJob) { self.job = job; self.work = job; job.isPresented = true; job.setPlaybackPlayer(ClosedPlayer()) }\nfunc onDisappearCleanup() ' + cleanup[cleanup.index('{'):] + '\n}\n'
+body += '\n@MainActor final class ReelPresentationHarness {\nlet job: ReelWorkJob; let work: ReelWorkJob; let connection = ClosedConnection(); var voicePermissionID: UUID?; var requestingVoicePermission: Bool = false; var player: ClosedPlayer? { get { work.player } set { work.setPlaybackPlayer(newValue) } }; var voPlayer: ClosedPlayer? = ClosedPlayer(); var musicPreviewPlayer:ClosedPlayer?; let recorder = ClosedRecorder()\ninit(job: ReelWorkJob) { self.job = job; self.work = job; job.isPresented = true; job.setPlaybackPlayer(ClosedPlayer()) }\nfunc onDisappearCleanup() ' + cleanup[cleanup.index('{'):] + '\n}\n'
 assert '@ObservedObject private var work: ReelWorkJob' in reel_view
 assert '@State private var workTask' not in reel_view
 assert 'workTask?.cancel()' not in cleanup and 'endBackgroundHold()' not in cleanup
