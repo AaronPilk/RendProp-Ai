@@ -119,6 +119,11 @@ enum FileStore {
  var assets:[UUID:CaptureAsset]=[:]; var tours:[UUID:RenderedTour]=[:]; var renders:[UUID:Render]=[:]
  var uploadedRenderAssets:[UUID:UploadedRenderAsset]=[:]; var pendingPublish:[UUID]=[]
  var publishedOriginalAssets:[String:String]=[:]; var publishedGalleryAssets:[String:String]=[:]
+ // These metadata methods only retire caches; payload behavior stays inert.
+ struct CloudPhotoState {}
+ var cloudPhotoStates:[UUID:CloudPhotoState]=[:]
+ var cloudPhotoNotices:[UUID:String]=[:]
+ var cloudPhotoReadGeneration:[UUID:UUID]=[:]
  var hasLoaded=false; var isRestoring=false; var syncInFlight:Set<UUID>=[]; var publishInFlight:Set<UUID>=[]
  var clientContactSyncInFlight:Set<UUID>=[]
  var cloudRefreshTask:Task<Void,Never>?; var cloudRefreshOperation:UUID?

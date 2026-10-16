@@ -104,6 +104,12 @@ if not args.inject_fault:
     app_path = ROOT / 'apps/ios/Rendprop/RendpropApp.swift'
     detail_path = ROOT / 'apps/ios/Rendprop/Screens/FlythroughDetailView.swift'
     app = app_path.read_text(); detail = detail_path.read_text()
+    if 'private var publishedGalleryAssets:' not in app:
+        current_spec = importlib.util.spec_from_file_location('current_gallery_contract', module_path.with_name('current_contract.py'))
+        current = importlib.util.module_from_spec(current_spec); current_spec.loader.exec_module(current)
+        current.run_current(output / 'actual-current-local-reader', 'migration')
+        print('Legacy local-reader migration and current no-publication boundary:', output, flush=True)
+        sys.exit(0)
     replacements = {
         '__ENHANCED_PHOTO__': module.block(detail, 'struct EnhancedPhoto: Identifiable'),
         '__PHOTO_LOAD__': module.block(detail, '    nonisolated static func loadForListing('),

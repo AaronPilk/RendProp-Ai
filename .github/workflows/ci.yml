@@ -196,6 +196,32 @@ jobs:
         run: python3 apps/ios/tests/run-photo-review-edit.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-review-edit"
       - name: Photo family browsing preserves upload order and exact version/edit identity
         run: python3 apps/ios/tests/run-photo-family-pager.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-family-pager"
+      - name: Exact cloud photo family choices and durable typed transport
+        run: python3 apps/ios/tests/run-photo-cloud-selection.py --output-dir "$RUNNER_TEMP/rendprop-photo-cloud-selection"
+      - name: Initial photo publication queue preserves current cloud choices and cover
+        run: python3 apps/ios/tests/run-photo-cloud-initial-publication.py --output-dir "$RUNNER_TEMP/rendprop-photo-cloud-initial"
+      - name: Automatic photo callbacks cannot upload or overwrite cloud selection
+        run: python3 apps/ios/tests/run-photo-cloud-automatic-sync.py --output-dir "$RUNNER_TEMP/rendprop-photo-cloud-automatic"
+      - name: Local photo selection retains version review and removal controls
+        run: python3 apps/ios/tests/run-photo-listing-selection.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-local-selection"
+      - name: Retain exact cloud selection and local selection evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-photo-selection-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-photo-cloud-selection/receipt.json
+            ${{ runner.temp }}/rendprop-photo-cloud-selection/*.log
+            ${{ runner.temp }}/rendprop-photo-cloud-selection/*.swift
+            ${{ runner.temp }}/rendprop-photo-cloud-initial/receipt.json
+            ${{ runner.temp }}/rendprop-photo-cloud-initial/*.log
+            ${{ runner.temp }}/rendprop-photo-cloud-initial/*.swift
+            ${{ runner.temp }}/rendprop-photo-cloud-automatic/receipt.json
+            ${{ runner.temp }}/rendprop-photo-cloud-automatic/*/*.log
+            ${{ runner.temp }}/rendprop-photo-cloud-automatic/*/*.swift
+            ${{ runner.temp }}/rendprop-photo-local-selection/receipt.json
+            ${{ runner.temp }}/rendprop-photo-local-selection/*/*.log
+            ${{ runner.temp }}/rendprop-photo-local-selection/*/*.swift
       - name: Branded quick-start video stays within two minutes with a readable transcript
         run: |
           if ! command -v ffprobe >/dev/null; then
@@ -454,6 +480,10 @@ jobs:
             ${{ github.workspace }}/reel-whole-scene-framing-evidence/*.log
             /tmp/rendprop-gallery-sync-fixture-*/receipt.json
             /tmp/rendprop-gallery-sync-fixture-*/*.log
+            /tmp/rendprop-gallery-sync-fixture-*/*.swift
+            /tmp/rendprop-photo-reconciliation-*/actual-current-local-reader/receipt.json
+            /tmp/rendprop-photo-reconciliation-*/actual-current-local-reader/*.log
+            /tmp/rendprop-photo-reconciliation-*/actual-current-local-reader/*.swift
             /tmp/rendprop-floor-outline-controls-*/receipt.json
             /tmp/rendprop-floor-outline-controls-*/*.log
             /tmp/rendprop-outline-editor-*/receipt.json

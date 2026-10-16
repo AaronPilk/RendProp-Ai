@@ -29,10 +29,19 @@ def removal_fence(source):
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--inject-fault',choices=['clear-unrelated','stale-selection','ignore-provenance','removal-overtaken'])
+    parser.add_argument('--output-dir',type=Path)
     args=parser.parse_args()
-    out=Path(tempfile.mkdtemp(prefix='rendprop-gallery-sync-fixture-',dir='/tmp'))
+    out=args.output_dir or Path(tempfile.mkdtemp(prefix='rendprop-gallery-sync-fixture-',dir='/tmp'))
+    if args.output_dir:out.mkdir(parents=True,exist_ok=False)
     fixtures=out/'isolated-documents';fixtures.mkdir()
     app=APP.read_text();detail=DETAIL.read_text()
+    if 'private var publishedGalleryAssets:' not in app:
+        assert args.inject_fault != 'removal-overtaken', 'Legacy append drain no longer exists; current central no-write fence is exercised by run-photo-cloud-automatic-sync.py'
+        import importlib.util
+        module_spec=importlib.util.spec_from_file_location('current_gallery_contract',Path(__file__).with_name('current_contract.py'))
+        current=importlib.util.module_from_spec(module_spec);module_spec.loader.exec_module(current)
+        current.run_current(out,'sync',args.inject_fault)
+        print('Current read-only/explicit preparation evidence:',out,flush=True);return
     sync=block(app,'    func syncGalleryPhotos(listingLocalID:')
     actual_sync=sync
     if args.inject_fault=='clear-unrelated':

@@ -25,6 +25,13 @@ paths = [
 sha = lambda value: hashlib.sha256(value).hexdigest()
 before = {p: sha((ROOT / p).read_bytes()) for p in paths}
 app = (ROOT / paths[0]).read_text(); detail = (ROOT / paths[1]).read_text()
+if 'private var publishedGalleryAssets:' not in app:
+    current_spec = importlib.util.spec_from_file_location('current_gallery_contract', fixture_module.with_name('current_contract.py'))
+    current = importlib.util.module_from_spec(current_spec); current_spec.loader.exec_module(current)
+    for label in ['positive', 'old-original-guard', 'ignore-original-effects', 'ignore-original-parent', 'ignore-original-sha', 'spoof-original-exemption', 'changed-original-history']:
+        current.run_current(out / label, 'original', None if label == 'positive' else label)
+    print('Current retained-original certification and explicit preparation evidence:', out, flush=True)
+    raise SystemExit(0)
 sync = module.block(app, '    func syncGalleryPhotos(listingLocalID:')
 helper = (ROOT / paths[5]).read_text()
 replacements = {
