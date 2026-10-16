@@ -9,7 +9,7 @@
 // (#7C3AED light / #9B6DFF dark — the app's Theme.accent), automatic
 // light/dark via prefers-color-scheme.
 
-const EFFECTIVE_DATE = "October 8, 2026";
+const EFFECTIVE_DATE = "October 16, 2026";
 // Prospective 90-day hosting grace was approved by the owner on October 6.
 // Deploy only with matching retention/read/export contracts; the legal draft
 // and handoff separate tested behavior from account-specific provider evidence.
@@ -179,7 +179,13 @@ ownership to us — ever. You give us only the narrow permission we need to run 
 to store, process, enhance, and deliver your content so your tours and pages work, including
 passing it to the processing providers listed in our <a href="/privacy">Privacy Policy</a>.</p>
 <p><b>Rendprop never uses your content for our own marketing and never uses it to train AI
-models without your written consent.</b> Delete your content and that permission ends with it.</p>
+models without your written consent.</b> Delete your content and Rendprop's permission ends with it;
+provider-held copies and limited retained records are explained in our Privacy Policy.</p>
+<p><b>Optional Kie photo-to-video processing requires separate permission.</b> Before selected
+photos and camera-motion instructions can be sent to Kie (kie.ai), Rendprop shows its processing
+terms and asks you to allow it. Kie's terms permit submitted content to be used to operate and
+improve its services and do not expressly rule out AI model training. You can decline, or turn off
+future AI processing in Settings. Withdrawal cannot recall work a provider already accepted.</p>
 
 <h2><span class="num">5.</span>AI-generated content</h2>
 <p>Some Rendprop features generate or alter imagery with AI — for example virtual staging,
@@ -360,6 +366,7 @@ also depend on the provider's applicable terms and the account settings for that
   <tr role="row"><td role="cell">Bria</td><td role="cell">Requested video masking and object removal</td><td role="cell">Selected video clips, masks and instructions when that feature is enabled and requested</td></tr>
   <tr role="row"><td role="cell">cdnjs and jsDelivr</td><td role="cell">Player software delivery on public tour pages</td><td role="cell">Network request information, including the viewer's IP address, when the browser loads player software from these services</td></tr>
   <tr role="row"><td role="cell">Google&nbsp;Gemini</td><td role="cell">Photo editing, video analysis, and writing assistance</td><td role="cell">Selected photos or video, sampled frames, and text inputs for those features</td></tr>
+  <tr role="row" id="kie-video-processing"><td role="cell">Kie (kie.ai)</td><td role="cell">Optional photo-to-video clips after separate explicit permission</td><td role="cell">The selected property photos through a temporary download link, and camera-motion instructions</td></tr>
   <tr role="row"><td role="cell">fal.ai</td><td role="cell">AI image and video editing, generation, and upscaling, using the selected model</td><td role="cell">Photos, video, and prompts for those features, including exterior photos used for aerial intros</td></tr>
   <tr role="row"><td role="cell">Anthropic</td><td role="cell">Chat and writing assistance, planning, and quality checks on AI output</td><td role="cell">User text, chat history and project context; source photos and frames from generated clips for quality checks</td></tr>
   <tr role="row"><td role="cell">OpenAI</td><td role="cell">Chat and writing assistance, planning, quality checks on AI output, and photo editing</td><td role="cell">User text, chat history and project context; source photos and generated-clip frames for quality checks; photos and edit inputs for photo editing</td></tr>
@@ -375,6 +382,15 @@ products, while paid-service terms provide different protections. Bria's video r
 not expire by default unless a different retention policy is configured. An expiring Rendprop
 download link does not prove that a provider has erased its copy. Review the AI disclosure
 before submitting personal or confidential content.</p>
+<p>Kie photo-to-video processing is optional and is not covered by an earlier AI permission.
+The separate in-app permission names Kie, explains what is sent and records the disclosure version
+you accepted. <a href="https://kie.ai/terms-of-use" rel="noopener noreferrer">Kie's terms</a>
+permit submitted content to be used to operate and improve its services; they do not expressly
+rule out AI model training. Its <a href="https://docs.kie.ai/1973359m0" rel="noopener noreferrer">API documentation</a>
+states that generated media is kept for 14 days and request logs for two months. It does not state
+how long fetched input photos are retained. Rendprop saves completed results separately; a short
+Rendprop download-link lifetime is not evidence that Kie deleted its copy. You can decline this
+processing or withdraw permission for future requests in Settings; already accepted work may finish.</p>
 
 <h2><span class="num">4.</span>Analytics, crash reports, and ads</h2>
 <p>All of this is <b>first-party</b>: our own code, sending to our own servers, read only by us.

@@ -1,0 +1,23 @@
+{
+  "token": "property-video-jobs-v2",
+  "disclosure_revision": "rendprop-property-video-kie-20261016-r1",
+  "processors": [
+    "kie"
+  ],
+  "profiles": [
+    "kie-kling3-4k-steady-v1"
+  ],
+  "title": "Allow Kie to make your video clips?",
+  "body": "Rendprop may send the property photos you select and camera-motion instructions to Kie (kie.ai). Kie’s terms allow submitted content to be used to operate and improve its services, and do not expressly rule out AI model training. Choose Allow only if you agree to that processing. Your saved originals stay unchanged.",
+  "allow_label": "Allow and continue",
+  "decline_label": "Not now",
+  "privacy_url": "https://rendprop.com/privacy",
+  "provider_terms_url": "https://kie.ai/terms-of-use",
+  "copy_sha256": "11d500972be541f0c34f1ccd96f1a2d79d15c9827a4a010e934ca6b534f9ef9c",
+  "publication_state": "draft_not_published",
+  "source_checked": "2026-10-16",
+  "source_urls": [
+    "https://kie.ai/terms-of-use",
+    "https://docs.kie.ai/1973359m0"
+  ]
+}

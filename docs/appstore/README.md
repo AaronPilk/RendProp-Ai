@@ -1,5 +1,14 @@
 # App Store listing and review assets
 
+**October 16 working state:** the last verified public version is 1.0.4 (74),
+and internal TestFlight 1.0.5 (87) is available. The next photo-first candidate
+and Kie permission integration are unfinished; no new App Store submission or
+release is authorized. Use the [current local workflow draft](photo-first-review-draft-20261016.md)
+and the [owner checklist](../handoff/OWNER-REQUEST-CHECKLIST-20261014.md).
+The dates and build claims below are historical. The machine-uploaded metadata
+has not been replaced by this draft and must be reconciled with the accepted
+binary before any future upload.
+
 This directory contains the listing copy, review notes and screenshot recipes.
 Reconciled on 2 October 2026 for the regular 1.0.3 App Store release.
 **6 October delivery:** internal TestFlight **1.0.4 (46)** is available to the

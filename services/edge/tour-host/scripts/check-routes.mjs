@@ -621,7 +621,7 @@ async function main() {
   expect(/Starter, Pro and Team, each\s+billed monthly\./.test(terms.body),
     "[/terms] §6 must say every plan bills monthly (2026-10-09: no annual plans are sold)");
   expect(!/yearly|annual/i.test(terms.body.replace(/changefreq/g, "")), "[/terms] must not offer a yearly or annual plan");
-  expect(terms.body.includes("Effective October 8, 2026"), "[/terms] proposed notice revision date");
+  expect(terms.body.includes("Effective October 16, 2026"), "[/terms] proposed notice revision date");
   ok("terms reflect the launch plan line-up");
 
   // ── safeUrl scheme allowlist (audit P1 re-open) ──────────────────────────
