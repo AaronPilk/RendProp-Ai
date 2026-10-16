@@ -10,7 +10,37 @@ publishes automatically. The separate service-only worker is the sole dispatcher
 All client routes require a fresh named-user JWT. Listing routes check current
 write access and the selected library; jobs return physical `org_id` separately
 from logical `selected_library_org_id`. Creating/resuming work additionally
-requires `x-rendprop-ai-consent: property-video-jobs-v1`.
+requires an AI processing permission header:
+
+- `x-rendprop-ai-consent: property-video-jobs-v1`: the original permission.
+  Creates legacy/FAL work only; resumes only a job saved under v1.
+- `x-rendprop-ai-consent: property-video-jobs-v2` with
+  `x-rendprop-ai-consent-disclosure: <disclosure_revision>` (1-200 visible
+  ASCII): the user allowed the listed processors of the CURRENT published
+  disclosure (`GET /processor-consent`). Required to create a native-4K Kie
+  video, accepted for any other create, persisted on the job and immutable.
+  Resume needs only the v2 token and accepts it for any job.
+- Anything else: 403 `consent_required`.
+
+Processor-permission refusals are fast and clear; SQL
+(`property_video_job_admit_v2`) re-enforces every rule at admission:
+
+- Create, native-4K recipe without v2, or any v2 naming a stale revision: 403
+  `processor_consent_required` `{error, code, operation_id, listing_id,
+  selected_library_org_id, processor_consent:{token, disclosure_revision,
+  processors}}` (show that disclosure, then retry with its revision).
+- Create needing that check while no disclosure is published: 403
+  `processor_disclosure_unpublished` (same context fields).
+- Resume with v1 for a job saved under v2: 403 `processor_consent_required`
+  `{error, code, job_id, required_consent:"property-video-jobs-v2"}`.
+- Optional owner-only `x-rendprop-quality-test-grant: <uuid>` on create
+  (malformed: 400). SQL checks the exact grant scope (actor, listing, ordered
+  sources, operation, expiry, budget) and the recipe is quoted with the saved
+  native-4K profile; without the header the global selector decides, unchanged.
+  Every paid Kie clip re-checks the grant and consumes one create per attempt.
+- `GET /property-video-jobs/processor-consent`: 200 `{token,
+  disclosure_revision, processors, profiles}` (no-store), or 404
+  `processor_disclosure_unpublished`.
 
 - `POST /property-video-jobs`: frozen `JobInput`, header
   `Idempotency-Key: property-video:<operation_id>`. Returns202 full `JobReply`.

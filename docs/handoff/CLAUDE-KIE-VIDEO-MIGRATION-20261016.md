@@ -45,3 +45,23 @@ The detailed read-only gate receipt is on the connected drive at `/Volumes/Rendp
 ## Latest follow-up — October16,13:20EDT
 
 Continue with `CLAUDE-KIE-CLOSEOUT-20261016.md`. It reconciles the owner-supplied activation audit against the newer mutable G draft and specifies the remaining closeout. The original scope and no-spend/no-live-action boundaries remain.
+
+## Current private2160 harmonization — October16,2026
+
+The owner/Codex native-source decision is now implemented in the separate offline harmonization copy:
+short side≥2160 AND≥8,000,000pixels, with native24fps CFR,120/121frames and5±0.1seconds unchanged.
+CanonicalJSON, TS mirror, SQL and reviewed operator identities agree. Source-auto aspect, faithful crop,
+no upscale, generic1080p delivery and frozen historicalFAL recovery remain unchanged. This is not an exact
+3840×2160 canvas rule;2160×3704 satisfies geometry alone.
+
+Actual offline tests reject1080-high8MP panoramas and the earlier2032/1952-short-side synthetic inputs,
+and accept genuine3840×2160/2160×3840 geometry. The golden is regenerated from actual181-migration
+PostgreSQL output; the prior1080 candidate/snapshots/receipts remain preserved historical evidence.
+Root's21:31:36Z read-only precheck found no deployed/admitted Kie identity. No accepted identity is rewritten.
+No real Kie4K output has been accepted by this server path, and the floor does not prove smooth motion,
+fidelity, final delivery or provider parity. Paid generation remains paused and production remains unactivated.
+
+Exact private source and retained proof receipts are under
+`/Volumes/Rendprop Files/Builds/Active/build87-kie-2160-harmonization/implementation`.
+The earlier assignment and follow-ups above remain historical instructions; this section updates only their
+native-pixel interpretation and does not authorize paid generation, deployment, legal publication or release.

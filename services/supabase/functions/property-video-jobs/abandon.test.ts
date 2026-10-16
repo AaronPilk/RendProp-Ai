@@ -29,7 +29,7 @@ async function invoke(path:string,requestBody:unknown,server:Server,options:Opti
     if(name==='property_video_operation_lookup')return response(closure());
     // Discard tombstones only an operation the server never accepted or refused.
     if(name==='property_video_operation_abandon'){if(server.operation==='open')server.operation='abandoned';return response(closure());}
-    if(name==='property_video_job_admit'){if(server.admission==='discarded')return response({message:'RP409: This saved video request was discarded before the server accepted it. Start a new video instead.',code:'P0001'},400);server.operation='accepted';return response({accepted:true,job:j});}
+    if(name==='property_video_job_admit_v2'){assertEquals([args.p_consent,args.p_test_grant],[{token:'property-video-jobs-v1'},null]);if(server.admission==='discarded')return response({message:'RP409: This saved video request was discarded before the server accepted it. Start a new video instead.',code:'P0001'},400);server.operation='accepted';return response({accepted:true,job:j});}
     if(name==='property_video_job_enqueue'||name==='property_video_job_scope')return response(j);
     if(name==='studio_presenter_media_visibility')return response(Object.fromEntries(['assets','renders','keys'].map(k=>[k,Object.fromEntries((args['p_'+k]??[]).map((v:string)=>[v,true]))])));
     throw Error('Unexpected closed RPC '+name);
@@ -45,7 +45,7 @@ async function invoke(path:string,requestBody:unknown,server:Server,options:Opti
 }
 const discard=(server:Server,options:Options={},path=`operations/${operation}/abandon`,requestBody:unknown={listing_id:listing,expected_org_id:org})=>invoke(path,requestBody,server,options);
 const enqueue=(server:Server)=>invoke('',body,server,{key:'property-video:'+operation,consent:true});
-const noWork=(rpcs:{name:string}[])=>!rpcs.some(x=>['property_video_job_admit','property_video_job_enqueue','property_video_job_cancel','property_video_job_cancel_all','org_entitlement'].includes(x.name));
+const noWork=(rpcs:{name:string}[])=>!rpcs.some(x=>['property_video_job_admit','property_video_job_admit_v2','property_video_job_enqueue','property_video_job_cancel','property_video_job_cancel_all','org_entitlement'].includes(x.name));
 
 Deno.test('discard of an unseen operation closes it durably without consent, quote, admission or media reads',async()=>{
  const server:Server={operation:'open'},r=await discard(server);
@@ -97,7 +97,7 @@ Deno.test('a delayed enqueue of a discarded operation is refused before quote or
 Deno.test('an admission that loses the race to a discard is a conflict, never a job',async()=>{
  const r=await enqueue({operation:'open',admission:'discarded'});
  assertEquals(r.status,409);assert(String(r.body.error).includes('discarded'));assertEquals(r.body.job_id,undefined);
- assert(r.rpcs.some(x=>x.name==='property_video_job_admit'),'the pre-check passed and the database fence decided');
+ assert(r.rpcs.some(x=>x.name==='property_video_job_admit_v2'),'the pre-check passed and the database fence decided');
  // The normal open path is unchanged: the same request admits one job.
  const accepted=await enqueue({operation:'open'});assertEquals(accepted.status,202);assertEquals(accepted.body.job_id,job);
 });

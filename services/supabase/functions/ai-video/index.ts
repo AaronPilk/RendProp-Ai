@@ -241,7 +241,8 @@ import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservatio
 import { recoverVideoOperation, retainVideoSubmission } from "./operation-recovery.ts";
 import { ownerQaReelStep, prepareOwnerQaReelInput } from "./owner-reel-qa.ts";
 import { OWNER_RAIL_MOTION_PROFILE } from "../_shared/property-motion-profile.ts";
-import {PROPERTY_VIDEO_QUALITY_PROFILE,PROPERTY_VIDEO_STEADY_PROFILE,isPropertyVideoQualityProfile,currentPropertyVideoQualityProfile,propertyVideoQualityProfile,propertyVideoQualitySteps,type PropertyVideoQualityProfile} from "./property-video-quality.ts";
+import {PROPERTY_VIDEO_QUALITY_PROFILE,PROPERTY_VIDEO_STEADY_PROFILE,isPropertyVideoQualityProfile,currentPropertyVideoQualityProfile,propertyVideoQualityProfile,propertyVideoQualitySteps,assertKiePropertyDispatchScope,kiePropertyExtra,kiePropertyPricedBasis,kiePropertyProviderInput,readPinnedRoute,samePinnedKieDispatch,type PropertyVideoQualityProfile} from "./property-video-quality.ts";
+import {KIE_PROPERTY_IDENTITY,KIE_PROPERTY_ROUTE_ID,kiePropertyPromptPinned} from "../_shared/property-video-kie.ts";
 import { buildPhotoPreservingReelPrompt, buildPropertyCanvasReelPrompt,buildSteadyPropertyReelPrompt, parseReelFraming, reelFramingSteps } from "./reel-framing.ts";
 import { probeMP4Video } from "./mp4video.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
@@ -1105,16 +1106,22 @@ export async function propertyVideoRecipeQuote(actor:string,org:string,listing:s
  const ent=await entitlementForCharge(org),task='video.reel_clip';
  const profile=savedProfile===undefined?await currentPropertyVideoQualityProfile():propertyVideoQualityProfile(savedProfile);
   const owner=profile==='legacy'?await ownerQaReelStep({actorId:actor,orgId:org,listingId:listing,seconds:5,framing:'preserve_photo',aspect}):null;
- const candidates=isPropertyVideoQualityProfile(profile)?await propertyVideoQualitySteps(ent.plan):owner?[owner]:await resolveChain(task,{plan:ent.plan,needs:['i2v','1080p','5s'],carries_customer_media:true},legacyVideoStep(task,MODEL_I2V,'second',APP_AI_UNIT_CENTS.seedance_per_s,['i2v','1080p','5s','16:9','9:16']));
+ const candidates=isPropertyVideoQualityProfile(profile)?await propertyVideoQualitySteps(ent.plan,undefined,profile):owner?[owner]:await resolveChain(task,{plan:ent.plan,needs:['i2v','1080p','5s'],carries_customer_media:true},legacyVideoStep(task,MODEL_I2V,'second',APP_AI_UNIT_CENTS.seedance_per_s,['i2v','1080p','5s','16:9','9:16']));
  const steps=reelFramingSteps(candidates,'preserve_photo');assert(steps.length>0,503,'No supported property-video quality route is currently available.');
- const input={task,seconds:5,resolution:'1080p',aspect,framing:'preserve_photo',extra:{...(owner?paramsOf(owner)??{}:{}),property_video_target_aspect:aspect}};
+ // Typed profile literal (compile-checked against PropertyVideoQualityProfile).
+ const kie=profile==='kie-kling3-4k-steady-v1';
+ const input={task,seconds:5,resolution:'1080p',aspect,framing:'preserve_photo',extra:kie?kiePropertyExtra(aspect):{...(owner?paramsOf(owner)??{}:{}),property_video_target_aspect:aspect}};
  const step=steps[0],catalog=routeCatalogQuote(step,input),verified=ceilingVerifiedQuote(step,input,catalog);assert(catalog&&verified,503,'The complete video recipe could not be priced safely.');
  const perShot=Math.max(catalog.cents,verified.cents),rubric=driftRubric({kind:'reel',sceneNoun:'property',motionText:'X'.repeat(2000)}),judgeSteps=await driftChain(ent.plan);
+ if(kie)assert(perShot===kiePropertyPricedBasis(1).attempt_cents,503,'The native-4K video recipe could not be priced exactly.');
  const quotes=judgeSteps.map(s=>textAttemptQuote(s,rubric,'',DRIFT_MAX_TOKENS,true,visionInputTokenBound(4,new TextEncoder().encode(rubric).length)+DRIFT_SOURCE_EXTRA_INPUT_TOKENS));assert(quotes.length&&quotes.every(q=>q&&Number.isFinite(q.cents)&&q.cents>0),503,'The complete video quality review could not be priced safely.');
  const perQC=2*quotes.reduce((total,q)=>total+q!.cents,0),estimated=Math.ceil((perShot+perQC)*count*10000)/10000;
- return{quality_profile:profile,source_count:count,estimated_cents:estimated,reel_cents:perShot*count,qc_cents:perQC*count,planning_cents:0,narration_cents:0,provider:step.provider,model:step.model,basis:'current_catalog_and_documented_bounds',atomic_reservation:false};
+ return{quality_profile:profile,source_count:count,estimated_cents:estimated,reel_cents:perShot*count,qc_cents:perQC*count,planning_cents:0,narration_cents:0,provider:step.provider,model:step.model,basis:'current_catalog_and_documented_bounds',atomic_reservation:false,...(kie?{priced_basis:kiePropertyPricedBasis(count)}:{})};
 }
-export interface AiVideoWorkerScope {user:PaidAiCaller;listing:string;targetAspect?:'16:9'|'9:16';qualityProfile?:PropertyVideoQualityProfile;accepted?:(receipt:{request_id:string;status_url:string;response_url:string;model_id:string;seconds:number})=>Promise<void>;authorize:()=>Promise<void>;provenance:(args:ProvenanceArgs)=>Promise<ProvenanceResult>}
+/** kieDispatchAuthority: the worker's per-dispatch Kie supplier authority (SQL
+ * property_video_kie_dispatch_authority for this job, lease and attempt). The
+ * native-4K Kie profile refuses without it; no other profile ever calls it. */
+export interface AiVideoWorkerScope {user:PaidAiCaller;listing:string;targetAspect?:'16:9'|'9:16';qualityProfile?:PropertyVideoQualityProfile;qualityIdentity?:unknown;accepted?:(receipt:{request_id:string;status_url:string;response_url:string;model_id:string;seconds:number})=>Promise<void>;authorize:()=>Promise<void>;kieDispatchAuthority?:()=>Promise<unknown>;provenance:(args:ProvenanceArgs)=>Promise<ProvenanceResult>}
 export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Promise<Response> {
   if (req.method === "OPTIONS") return handleOptions();
 
@@ -1447,9 +1454,17 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       const body = await readJson<ReelBody>(req);
       const framing = parseReelFraming(body.framing);
       const savedQualityProfile=worker?propertyVideoQualityProfile(worker.qualityProfile):"legacy";
+      // Kie profile: our vendor account cannot take this clip right now (secret
+      // unset, key rejected or blocked, out of credits). HTTP 402 is what the
+      // worker files as a resumable capacity pause, never a terminal source failure.
+      const KIE_VENDOR_NOT_READY="The native-4K video service is not ready to accept this clip. Nothing was charged; resume this video later.";
       let secs = Math.round(Number(body.seconds ?? 5));
       if (!Number.isFinite(secs)) secs = 5;
       secs = Math.min(12, Math.max(2, secs)); // Seedance duration range 2–12 s
+      // Native-4K Kie profile (typed literal): the job's frozen identity and the
+      // one closed worker recipe are checked before any read, allowance or hold.
+      if(savedQualityProfile==="kie-kling3-4k-steady-v1")assertKiePropertyDispatchScope(worker,{aspect:body.aspect,seconds:secs,framing,presetVersion:body.preset_version,
+        customPrompt:body.prompt,assetId:body.asset_id,sourceAssetId:body.source_asset_id});
 
       let imageUrl: string;
       let assetSpace: string | null = null;
@@ -1529,7 +1544,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         assert(body.aspect === "9:16" || body.aspect === "16:9", 400, "Choose portrait or landscape.");
         assert(secs === 5, 400, "These camera presets use five-second shots.");
       }
-      const reelText = savedQualityProfile===PROPERTY_VIDEO_STEADY_PROFILE && worker?.targetAspect
+      const reelText = savedQualityProfile===PROPERTY_VIDEO_STEADY_PROFILE && worker?.targetAspect || savedQualityProfile==="kie-kling3-4k-steady-v1" && worker?.targetAspect
         ? buildSteadyPropertyReelPrompt(SCENE_NOUN[space],shotMotion as typeof REEL_PRESETS[number],worker.targetAspect)
         : presetVersion === 1
         ? framing === "preserve_photo"
@@ -1542,6 +1557,20 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       // words on the unchanged guarded-user path — so the 202 and the provenance
       // row report no motion rather than one we never sent.
       const chosenMotion: ReelMotion | null = userMotion ? null : shotMotion;
+      // Native-4K Kie profile: only the exact reviewed steady prompt the frozen
+      // identity pins (template SHA-256 per motion, allowed scene nouns), and a
+      // configured provider secret, before any storage read, allowance or hold.
+      // An unset secret is our account, not this recipe: 402 (resumable pause).
+      if(savedQualityProfile==="kie-kling3-4k-steady-v1"){
+        assert(KIE_PROPERTY_IDENTITY.prompt_scene_nouns.includes(SCENE_NOUN[space])&&await kiePropertyPromptPinned(reelText,shotMotion),503,
+          "The reviewed native-4K camera prompt is unavailable. No generation was sent.");
+        if(!Deno.env.get("KIE_API_KEY")?.trim()){console.error("ai-video reel submit refused before dispatch",{provider:"kie",reason:"provider_not_configured"});throw new HttpError(402,KIE_VENDOR_NOT_READY,"upstream");}
+        // Require the closed authority capability before any work. Its consuming
+        // call belongs at the final prospective POST boundary after all preflight,
+        // allowance and reservation checks, so a refused preparation spends none.
+        if(!worker?.kieDispatchAuthority)throw new HttpError(503,"The native-4K dispatch authority is unavailable. No generation was sent.");
+
+      }
 
       await assertVideoReceiptSigningReady();
       assert(!reelListingId || !body.listing_id || reelListingId === body.listing_id,400,"Choose a source from this listing.");
@@ -1569,7 +1598,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       let candidateSteps:RouteStep[];
       try{ownerQaStep = savedQualityProfile==="legacy"?await ownerQaReelStep({ actorId: user.id, orgId,
         listingId: body.listing_id ?? reelListingId, seconds: secs, framing, aspect: reelAspect }):null;
-      candidateSteps = isPropertyVideoQualityProfile(savedQualityProfile)?await propertyVideoQualitySteps(plan):ownerQaStep ? [ownerQaStep] : await resolveChain(
+      candidateSteps = isPropertyVideoQualityProfile(savedQualityProfile)?await propertyVideoQualitySteps(plan,undefined,savedQualityProfile):ownerQaStep ? [ownerQaStep] : await resolveChain(
         task,
         {
           plan,
@@ -1596,11 +1625,14 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         resolution: "1080p",
         ...(reelAspect ? { aspect: reelAspect } : {}),
         ...(framing ? { framing } : {}),
-        ...((ownerQaStep?.model === "kling-3.0/video" || ownerQaStep?.provider === "fal" && paramsOf(ownerQaStep)?.owner_motion_profile === OWNER_RAIL_MOTION_PROFILE || worker?.targetAspect) ? { extra: { ...(ownerQaStep?paramsOf(ownerQaStep)??{}:{}), ...(worker?.targetAspect?{property_video_target_aspect:worker.targetAspect}:{}),...(isPropertyVideoQualityProfile(savedQualityProfile)?{property_video_quality_profile:savedQualityProfile}:{}) } } : {}),
+        ...((ownerQaStep?.model === "kling-3.0/video" || ownerQaStep?.provider === "fal" && paramsOf(ownerQaStep)?.owner_motion_profile === OWNER_RAIL_MOTION_PROFILE || worker?.targetAspect) ? { extra: { ...(ownerQaStep?paramsOf(ownerQaStep)??{}:savedQualityProfile==="kie-kling3-4k-steady-v1"?paramsOf(steps[0])??{}:{}), ...(worker?.targetAspect?{property_video_target_aspect:worker.targetAspect}:{}),...(isPropertyVideoQualityProfile(savedQualityProfile)?{property_video_quality_profile:savedQualityProfile}:{}) } } : {}),
       };
       // A priced hold precedes one POST. Definitive refusal releases it;
       // transport ambiguity retains it without another provider attempt.
       let attempt: ChainResult<JobRef>;
+      // Preserve a definitive local authority refusal only after the existing
+      // reservation path confirms release. Unknown RPC replies remain fenced.
+      let kieAuthorityRefusal: HttpError | null = null;
       try {
         attempt = await submitReservedVideo({
           actorId: user.id, orgId, key: requiredIdempotencyKey(req),
@@ -1617,10 +1649,35 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
           rpc,
           submit: (selected) => runChain(task, [selected], async (step) => {
           try {
-            if(worker)await worker.authorize();
+            // Kie profile: a scope that ended (cancelled job, lost lease, account
+            // switch) is a definite refusal before dispatch, so the hold is released.
+            if(worker){if(savedQualityProfile==="kie-kling3-4k-steady-v1"){try{await worker.authorize();}catch{throw new ProviderError(step.provider,"validation","The admitted clip scope ended before dispatch.",0,true);}}
+              else await worker.authorize();}
             if(isPropertyVideoQualityProfile(savedQualityProfile)){
-              try{const fresh=(await propertyVideoQualitySteps(plan))[0];if(fresh.route_id!==step.route_id||fresh.model!==step.model||fresh.unit_cents!==step.unit_cents)throw Error("Changed property quality route");}
-              catch{throw new ProviderError("fal","validation","The saved property quality route changed before dispatch.",0,true);}
+              // Kie: the pinned row re-read by id must equal the reserved step and the frozen identity.
+              try{if(savedQualityProfile==="kie-kling3-4k-steady-v1"){if(!samePinnedKieDispatch(await readPinnedRoute(KIE_PROPERTY_ROUTE_ID),step,worker?.qualityIdentity))throw Error("Changed Kie property identity");}
+                else{const fresh=(await propertyVideoQualitySteps(plan,undefined,savedQualityProfile))[0];if(fresh.route_id!==step.route_id||fresh.model!==step.model||fresh.unit_cents!==step.unit_cents)throw Error("Changed property quality route");}}
+              catch{throw new ProviderError(step.provider,"validation","The saved property quality route changed before dispatch.",0,true);}
+            }
+            // Kie accepts URLs only: the exact verified owned object, re-checked
+            // and presigned for this one POST. Never the inline data URL.
+            if(savedQualityProfile==="kie-kling3-4k-steady-v1"){
+              const adapter=adapterFor(step.provider);
+              const prepared=await kiePropertyProviderInput(genInput,propertySource?.location,{
+                head:(bucket,key)=>headObject(bucket==='uploads'?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS,key,AbortSignal.timeout(15000)),
+                sign:(bucket,key,seconds)=>presignGet(bucket==='uploads'?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS,key,seconds),
+              });
+              try{await worker!.kieDispatchAuthority!();}
+              catch(error){
+                if(error instanceof HttpError&&[400,403,409].includes(error.status)){
+                  kieAuthorityRefusal=error;
+                  throw new ProviderError("kie","validation","The scoped video authority refused before dispatch.",0,true);
+                }
+                // A lost authority reply may have committed its grant-use receipt.
+                // Never send, re-authorize, or label it as provider acceptance.
+                throw error;
+              }
+              return await adapter.submit(step,prepared);
             }
             const providerInput = ownerQaStep ? await prepareOwnerQaReelInput(
               { actorId: user.id, orgId, listingId: String(body.listing_id ?? reelListingId), provider: step.provider === "fal" ? "fal" : "kie" }, genInput, {
@@ -1663,7 +1720,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
                   httpStatus <= 599
                 ? httpStatus
                 : null,
-              reason: known?.message === "FAL_KEY function secret is not set"
+              reason: known?.message === "FAL_KEY function secret is not set" || known?.message === "KIE_API_KEY function secret is not set"
                 ? "provider_not_configured"
                 : "submission_failed",
             });
@@ -1673,6 +1730,13 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         });
       } catch (e) {
         if (!(e instanceof VideoDispatchUnconfirmed)) await refundGenerateCharge(charge);
+        if(kieAuthorityRefusal&&!(e instanceof VideoDispatchUnconfirmed))throw kieAuthorityRefusal;
+        // Kie profile: a definite createTask refusal about OUR vendor account
+        // (401/403 key rejected or blocked, 402 out of credits). submitReservedVideo
+        // rethrows a refusal only after the hold's release was confirmed (else
+        // VideoDispatchUnconfirmed), so 402 is a resumable pause for the worker.
+        // 429 and every recipe, media or ambiguous outcome keep their status.
+        if(savedQualityProfile==="kie-kling3-4k-steady-v1"&&e instanceof HttpError&&e.details?.provider==="kie"&&e.details?.dispatch_rejected===true&&[401,402,403].includes(e.details?.provider_status as number))throw new HttpError(402,KIE_VENDOR_NOT_READY,"upstream",e.details);
         throw e;
       }
       const step = attempt.step;

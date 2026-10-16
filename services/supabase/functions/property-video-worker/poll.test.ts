@@ -6,6 +6,7 @@ assert(start>0&&end>start);let state:any;
 const prefix=`
 import{HttpError,assert}from ${JSON.stringify(new URL('../_shared/http.ts',import.meta.url).href)};
 const PROPERTY_VIDEO_STEADY_PROFILE="fal-kling3-4k-steady-v2";
+import{KIE_PROPERTY_PROFILE,kieProperty4KFacts}from ${JSON.stringify(new URL('../_shared/property-video-kie.ts',import.meta.url).href)};
 const f=()=>globalThis.__propertyVideoPollFixture();
 const R2_BUCKET_RENDERS='closed-renders';
 const callAI=async(_ctx,method,path)=>{f().methods.push(method);if(method!=='GET')throw Error('No supplier POST permitted');f().events.push('status');return f().response;};

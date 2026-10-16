@@ -493,7 +493,15 @@ export async function persistResult(
   if (buf.byteLength > MAX_PERSIST_BYTES) {
     throw new ProviderError(provider, "upstream", `${provider} result exceeds the ${Math.round(MAX_PERSIST_BYTES / 1e6)} MB edge limit`);
   }
-  const mime = res.headers.get("content-type")?.split(";")[0].trim() || state.mime;
+  const upstream = res.headers.get("content-type")?.split(";")[0].trim();
+  // Kie's file host can label the MP4 its adapter identified as a generic binary
+  // (or a case variant), which the property worker's exact video/mp4 check would
+  // re-poll until the job deadline. Only for that Kie MP4: store video/mp4. Any
+  // other upstream type is stored as-is (the worker then refuses it once), and
+  // every other provider keeps the previous rule exactly.
+  const genericKieMp4 = provider === "kie" && state.mime === "video/mp4" &&
+    (!upstream || ["application/octet-stream", "binary/octet-stream", "video/mp4"].includes(upstream.toLowerCase()));
+  const mime = genericKieMp4 ? "video/mp4" : upstream || state.mime;
   await beforeWrite?.({ key: r2Key, bytes: buf.byteLength });
   return await putBytes(R2_BUCKET_RENDERS, r2Key, buf, mime, immutable);
 }

@@ -1,7 +1,12 @@
 import { assert,HttpError,throwRpc } from './http.ts';
 import { driftLineageKey } from './drift.ts';
 import { probeComposedMP4Video,probeMP4Video } from '../ai-video/mp4video.ts';
+import { KIE_PROPERTY_PROFILE } from './property-video-kie.ts';
 const UUID=/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+/** Registered steady masters (FAL steady-v2 and Kie native 4K) compose at native 24 fps CFR. */
+const CFR24_MASTER_PROFILES:readonly unknown[]=['fal-kling3-4k-steady-v2',KIE_PROPERTY_PROFILE];
+/** The exact owned object whose bytes were verified; never returned to a client. */
+export type PropertySourceLocation={bucket:'uploads'|'renders';storage_key:string;etag:string;bytes:number;content_type:string};
 type Rpc=(name:string,args:Record<string,unknown>)=>PromiseLike<{data:unknown;error:{message:string}|null}>;
 type Head={exists:boolean;bytes:number|null;etag:string|null;contentType:string|null};
 export type PropertyVideoDeps={rpc:Rpc;head:(bucket:string,key:string,signal:AbortSignal)=>Promise<Head>;
@@ -46,7 +51,8 @@ export async function verifyPropertyVideoInput(actor:string,listing:string,asset
  catch(error){await reader.cancel();throw error;}
  const bytes=new Uint8Array(total);let at=0;for(const part of chunks){bytes.set(part,at);at+=part.length;}
  assert(total===c.bytes&&await hex(bytes)===digest&&same(await deps.head(c.bucket,c.storage_key,signal),c),409,'The saved photo changed during verification.');
- return {asset,listing,photoProvenance,sha256:digest,qcHash:await driftLineageKey(base64),org:c.org_id};
+ const location:PropertySourceLocation={bucket:c.bucket as PropertySourceLocation['bucket'],storage_key:c.storage_key,etag:c.etag,bytes:c.bytes,content_type:c.content_type};
+ return {asset,listing,photoProvenance,sha256:digest,qcHash:await driftLineageKey(base64),org:c.org_id,location};
  }catch(error){if(error instanceof HttpError)throw error;throw new HttpError(503,'The saved video source could not be verified. No generation was submitted.');}
 }
 /** Reuse the bounded real MP4 metadata parser; completion metadata supplied by
@@ -66,13 +72,14 @@ export async function attestPropertyVideo(actor:string,listing:string,asset:stri
    &&typeof c.sha256==='string'&&/^[a-f0-9]{64}$/.test(c.sha256)&&master.sha256===c.sha256,409,'The registered property video receipt changed.');
   assert(same(await deps.head(c.bucket,c.storage_key,signal),c),409,'The finalized video changed. Upload it again.');
   const signed=await deps.sign(c.bucket,c.storage_key,300);
-  assert(!master||master.quality_profile===undefined||master.quality_profile==='fal-kling3-4k-steady-v2',409,'The saved composition profile is unavailable.');
+  const cfr24=!!master&&CFR24_MASTER_PROFILES.includes(master.quality_profile);
+  assert(!master||master.quality_profile===undefined||cfr24,409,'The saved composition profile is unavailable.');
   const info=await (master?probeComposedMP4Video:probeMP4Video)(signed,async(url,init)=>{
    assert(url===signed&&init.method==='GET'&&init.redirect==='error',503,'Unexpected property video read.');
    const h=new Headers(init.headers);h.set('If-Match',c.etag);
    const response=await deps.fetch(url,{...init,headers:h,signal:AbortSignal.any([signal,...(init.signal?[init.signal]:[])])});
    assert(response.headers.get('etag')===c.etag&&new RegExp(`^bytes \\d+-\\d+/${c.bytes}$`).test(response.headers.get('content-range')??''),409,'The video changed during verification.');return response;
-  },master?.quality_profile==='fal-kling3-4k-steady-v2'?24:30);
+  },cfr24?24:30);
   assert(info.width>=1920&&info.height>=1080&&info.width*9===info.height*16&&info.width<=7680&&info.height<=4320&&info.duration_s<=600,400,'The listing video must be landscape16:9 at1080p or higher.');
   assert(same(await deps.head(c.bucket,c.storage_key,signal),c),409,'The finalized video changed. Upload it again.');
   const {data,error}=await deps.rpc('record_property_video_attestation',{p_actor:actor,p_listing:listing,p_asset:asset,p_etag:c.etag,p_bytes:c.bytes,p_width:info.width,p_height:info.height,p_duration:info.duration_s});if(error)throwRpc(error.message);

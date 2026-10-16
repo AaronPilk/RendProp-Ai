@@ -1327,17 +1327,122 @@ where note = 'legacy'
 -- Contract §3: every reseller row stays OFF until its commercial terms are
 -- confirmed, and until then it assumes the WORST data posture — which is also
 -- what keeps customer media off it if somebody enables it early.
+--
+-- ONE exception, where the owner's acceptance of the terms is recorded rather
+-- than assumed: the exact pinned Kie property row
+-- 7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21 (task video.property_reel_clip_kie, kie,
+-- kling-3.0/video, trains_by_default, params exactly {"kie_mode":"4K","sound":false})
+-- may be ON
+--   * activated: while app_config.property_video_quality is EXACTLY the
+--     acknowledged selector docs/handoff/KIE-ACTIVATION.sql writes (enabled
+--     true, profile kie-kling3-4k-steady-v1, vendor_content_license
+--     kie-terms-2025-08-01-section-3-owner-accepted: Kie Terms section 3) AND
+--     the activation that script records in
+--     app_config.property_video_quality_kie_activation is current (not rolled
+--     back) and attests the published processor disclosure that names Kie
+--     (processor_disclosure: 1-200 visible ASCII characters) with the same
+--     acknowledgement. The selector or the row set by hand is not an
+--     activation; or
+--   * draining: while the selector does not select Kie by the rule
+--     property_video_quality_profile() applies, extra keys included (after
+--     the default docs/handoff/KIE-ROLLBACK.sql restored the previous
+--     selector, under a new-admission hold, or after an owner-test window:
+--     nothing new is admitted on Kie), and a saved kie-kling3-4k-steady-v1
+--     job may still need this row: not cancelled, before its 24 h deadline
+--     (set at admission, never extended), and in a state from which Kie work
+--     can still be granted (queued, generating, quality_review, composing:
+--     the worker scope test of property_video_job_scope) or resumed by the
+--     owner (failed: a capacity, quality or CPU pause, resumable only before
+--     the deadline; the owner's resume quote reads this row). ready,
+--     cancelled and needs_reconciliation are final: no function moves a job
+--     out of them (an uncertain dispatch is only reconciled, never sent
+--     again). Unsent clips and resume quotes need this row ON; with the row
+--     OFF they refuse before any provider request; or
+--   * owner-test window: while the selector does not select Kie (the global
+--     production default is unchanged) and at least one owner-only quality-test
+--     grant (property_video_kie_test_grants, created by
+--     docs/handoff/KIE-OWNER-TEST-GRANT.sql, which opens the window) can still
+--     create: not revoked, not expired and creates_used < max_creates.
+--     property_video_kie_dispatch_authority re-checks that grant's exact scope
+--     and consumes one create before every paid Kie create; revocation,
+--     expiry and usage are one-way, so a window never reopens by itself.
+-- The drain therefore ends by the last Kie admission's deadline at the latest,
+-- and a window by its grant's expiry (72 h after creation at the latest); from
+-- then on this is red until the row is OFF (docs/handoff/KIE-ROUTE-OFF.sql, or
+-- KIE-REVOKE-TEST-GRANT.sql -v route_off=on). Any other enabled kie/higgsfield
+-- row, this row with other params or a weaker tier, or this row ON with none of
+-- the three conditions fails. These branches and their red states are proven
+-- on disposable copies by services/supabase/tests/property_video_kie_profile_pg.py.
 insert into _inv(name, pass, note)
 select 'every kie / higgsfield row is disabled and assumes trains_by_default',
-       count(*) = 0,
-       coalesce(string_agg(format('%s/%s/%s enabled=%s tier=%s', task, provider, model, enabled, privacy_tier), '; '),
-                'all reseller rows disabled + worst-case tier')
-from ai_routes
-where provider in ('kie','higgsfield')
-  and (enabled or privacy_tier is distinct from 'trains_by_default');
+       count(*) filter (where not allowed) = 0,
+       coalesce(string_agg(format('%s/%s/%s enabled=%s tier=%s params=%s', task, provider, model, enabled,
+                                  privacy_tier, coalesce(params::text, 'null')), '; ') filter (where not allowed),
+                case when bool_or(enabled)
+                     then format('pinned Kie row ON (%s); every other reseller row disabled + worst-case tier',
+                                 case when bool_or(activated)
+                                      then format('owner-acknowledged Kie selector, recorded activation, processor disclosure %s', max(disclosure))
+                                      when max(draining) > 0
+                                      then format('%s admitted Kie job(s) draining', max(draining))
+                                           || case when max(test_grants) > 0
+                                                   then format(', %s owner quality-test grant(s) can still create', max(test_grants))
+                                                   else '' end
+                                      else format('owner-test window: %s owner quality-test grant(s) can still create', max(test_grants)) end)
+                     else 'all reseller rows disabled + worst-case tier' end)
+from (
+  select r.task, r.provider, r.model, r.enabled, r.privacy_tier, r.params, g.activated, g.disclosure, g.draining, g.test_grants,
+         coalesce(r.privacy_tier = 'trains_by_default'
+                  and (not r.enabled
+                       or (r.id = '7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21'::uuid
+                           and r.task = 'video.property_reel_clip_kie' and r.provider = 'kie'
+                           and r.model = 'kling-3.0/video'
+                           and r.params = '{"kie_mode":"4K","sound":false}'::jsonb
+                           and (g.activated
+                                or (g.draining > 0 and not g.selects_kie)
+                                or (g.test_grants > 0 and not g.selects_kie)))), false) as allowed
+    from ai_routes r,
+         (select k.acknowledged, k.selects_kie, k.acknowledged and k.disclosure is not null as activated, k.disclosure, k.draining, k.test_grants
+            from (select exists (select 1 from app_config
+                                  where key = 'property_video_quality'
+                                    and value = '{"enabled":true,"profile":"kie-kling3-4k-steady-v1","vendor_content_license":"kie-terms-2025-08-01-section-3-owner-accepted"}'::jsonb)
+                           as acknowledged,
+                         -- What property_video_quality_profile() itself accepts as Kie
+                         -- (extra keys allowed): the drain and the owner-test window
+                         -- count only while the selector does not select Kie.
+                         exists (select 1 from app_config
+                                  where key = 'property_video_quality'
+                                    and value->'enabled' = 'true'::jsonb
+                                    and value->>'profile' = 'kie-kling3-4k-steady-v1'
+                                    and value->'vendor_content_license' = '"kie-terms-2025-08-01-section-3-owner-accepted"'::jsonb)
+                           as selects_kie,
+                         (select value->>'processor_disclosure' from app_config
+                           where key = 'property_video_quality_kie_activation'
+                             and jsonb_typeof(value) = 'object'
+                             and value->'profile' = '"kie-kling3-4k-steady-v1"'::jsonb
+                             and value->'route_id' = '"7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21"'::jsonb
+                             and value->'vendor_content_license' = '"kie-terms-2025-08-01-section-3-owner-accepted"'::jsonb
+                             and jsonb_typeof(value->'processor_disclosure') = 'string'
+                             and value->>'processor_disclosure' ~ '^[!-~]{1,200}$'
+                             and jsonb_typeof(value->'activated_at') = 'string'
+                             and value->'rolled_back_at' = 'null'::jsonb) as disclosure,
+                         (select count(*) from property_video_jobs
+                           where quality_profile = 'kie-kling3-4k-steady-v1'
+                             and state in ('queued','generating','quality_review','composing','failed')
+                             and cancelled_at is null and deadline > now()) as draining,
+                         -- Owner-only quality-test grants that can still create.
+                         (select count(*) from property_video_kie_test_grants
+                           where revoked_at is null and expires_at > now() and creates_used < max_creates) as test_grants) k) g
+   where r.provider in ('kie','higgsfield')
+) s;
 
 -- The resell relationship is RECORDED, not implied: a failover between two
 -- steps sharing a family key buys a different queue, not a different model.
+-- One exact exception: pinned row 7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21 is the
+-- owner-chosen Kie primary for NEW property jobs (kie-kling3-4k-steady-v1). Its
+-- dedicated task video.property_reel_clip_kie has no FAL failover by design, so
+-- its FAL twin is the same-family row of the historical FAL property task
+-- video.property_reel_clip; the family is still recorded. Every other reseller
+-- row keeps the same-task rule.
 insert into _inv(name, pass, note)
 select 'every reseller step shares same_model_as with a fal step in the same task',
        count(*) filter (where twin = 0) = 0 and count(*) >= 4,
@@ -1348,8 +1453,11 @@ select 'every reseller step shares same_model_as with a fal step in the same tas
 from (
   select r.task, r.provider, r.model,
          (select count(*) from ai_routes f
-           where f.task = r.task and f.provider = 'fal'
-             and f.same_model_as = r.same_model_as) as twin
+           where f.provider = 'fal' and f.same_model_as = r.same_model_as
+             and (f.task = r.task
+                  or (r.id = '7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21'::uuid
+                      and r.task = 'video.property_reel_clip_kie'
+                      and f.task = 'video.property_reel_clip'))) as twin
     from ai_routes r
    where r.provider in ('kie','higgsfield') and r.same_model_as is not null
 ) s;
@@ -1379,12 +1487,15 @@ where table_schema = 'public' and table_name = 'ai_routes'
 -- additive — so it must stay legal. 0030 seeds two Astra writing routes and
 -- 0034 adds the agent-reel writing route. The two bounded Studio text tasks
 -- added by 20260924235553 also carry params. The two isolated Pro photo seats
--- added by 20261015074002 require their exact 4K image knob. Require all seven:
--- arbitrary replacements, duplicate tasks or larger Studio budgets cannot pass.
+-- added by 20261015074002 require their exact 4K image knob. The pinned Kie
+-- property seat added by 20261016100000 carries exactly its frozen-identity
+-- knobs (kie_mode 4K, sound false), which property-video-quality.ts requires
+-- key-for-key before any generation. Require all eight: arbitrary
+-- replacements, duplicate tasks or larger Studio budgets cannot pass.
 -- This inventory change does not alter the three Astra paid-plan/headroom rules.
 insert into _inv(name, pass, note)
-select 'only the three explicit Astra, two bounded Studio text and two isolated Pro photo seats carry params',
-       count(*) filter (where params is not null) = 7
+select 'only the three explicit Astra, two bounded Studio text, two isolated Pro photo and the pinned Kie property seats carry params',
+       count(*) filter (where params is not null) = 8
    and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
                         and position = 1 and task = 'copy.shotlist') = 1
    and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
@@ -1414,7 +1525,11 @@ select 'only the three explicit Astra, two bounded Studio text and two isolated 
    and count(*) filter (where id = 'c43f188c-faf0-46c8-a646-ea71b8481202'::uuid
                         and task = 'photo.quality_declutter' and position = 1
                         and provider = 'gemini' and model = 'gemini-3-pro-image'
-                        and params = '{"image_size":"4K"}'::jsonb) = 1,
+                        and params = '{"image_size":"4K"}'::jsonb) = 1
+   and count(*) filter (where id = '7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21'::uuid
+                        and task = 'video.property_reel_clip_kie' and position = 1
+                        and provider = 'kie' and model = 'kling-3.0/video'
+                        and params = '{"kie_mode":"4K","sound":false}'::jsonb) = 1,
        format('%s row(s) with params: %s', count(*) filter (where params is not null),
               coalesce(string_agg(format('%s/%s', task, model), ', ')
                        filter (where params is not null), 'none'))
@@ -1441,7 +1556,10 @@ where params is not null and jsonb_typeof(params) <> 'object';
 -- knob can be seeded before the deploy that reads it — but a row full of keys
 -- nothing reads is almost always a typo, and it is worth seeing here. The
 -- image-size exception is limited to the two exact isolated Pro route rows;
--- it is not a general permission to add image_size to another route.
+-- it is not a general permission to add image_size to another route. Likewise
+-- kie_mode/sound are recognised only on the exact pinned Kie property row with
+-- exactly its frozen-identity params (property-video-quality.ts reads both
+-- keys and refuses on any difference); no other route may carry them.
 insert into _inv(name, pass, note)
 select 'every seeded params key is one an adapter actually reads',
        count(*) = 0,
@@ -1451,7 +1569,10 @@ where r.params is not null and k not in ('effort', 'max_output_tokens')
   and not (k = 'image_size' and r.provider = 'gemini' and r.model = 'gemini-3-pro-image'
            and r.params = '{"image_size":"4K"}'::jsonb
            and ((r.id = 'c43f188c-faf0-46c8-a646-ea71b8481201'::uuid and r.task = 'photo.quality_stage')
-             or (r.id = 'c43f188c-faf0-46c8-a646-ea71b8481202'::uuid and r.task = 'photo.quality_declutter')));
+             or (r.id = 'c43f188c-faf0-46c8-a646-ea71b8481202'::uuid and r.task = 'photo.quality_declutter')))
+  and not (k in ('kie_mode', 'sound') and r.id = '7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21'::uuid
+           and r.task = 'video.property_reel_clip_kie' and r.provider = 'kie' and r.model = 'kling-3.0/video'
+           and r.params = '{"kie_mode":"4K","sound":false}'::jsonb);
 
 -- 0030: and it is gated to PAYING plans. min_plan is the only working plan
 -- lever — router.ts's defaultPolicyFor() is dead code, so the cheapest-policy
