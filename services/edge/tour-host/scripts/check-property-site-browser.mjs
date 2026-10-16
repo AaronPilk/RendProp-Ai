@@ -37,7 +37,7 @@ function fixture() {
   t.listing_video = { url: "/media/master.mp4", poster_url: "/posters/poster.svg", width: 1920, height: 1080, duration_s: 30, disclosure: "Synthetic photo-based video.", branding_policy: "unbranded" };
   t.video_url = t.scrub_url = "/media/recorded.mp4"; t.hls_url = null; t.duration_s = 30; t.chapters = [];
   t.staged = false; t.altered_media = []; t.floorplan_url = null; t.published_at = "2026-10-01T00:00:00Z";
-  t.agent_card = { name: "Synthetic Contact", brokerage: "Example Realty", phone: "5550100100", email: "contact@example.invalid" };
+  t.agent_card = { name: "Synthetic Contact", brokerage: "Example Realty", phone: "5550100100", email: "contact@example.invalid", website: "https://contact.example.invalid", instagram: "synthetic-agent", twitter: "synthetic-agent" };
   t.cta = { mode: "lead_form", label: "Request a showing", url: null, secondary: [], lead_fields: ["name", "phone", "email", "message"] };
   return t;
 }
@@ -142,8 +142,22 @@ try {
       const ratio = await contrast(selector); measurements.push({ theme, selector, ratio });
       check(ratio >= 4.5, `${theme}: ${selector} text meets 4.5:1 contrast (${ratio.toFixed(2)})`);
     }
-    const social = await page.locator(".agent .social a").first().boundingBox();
-    check(social.height >= 24, theme + ": Contact links meet the 24px target size");
+    const checkContactTargets = async (pageName) => {
+      for (const selector of [".agent .who .bk a[href^='tel:']", ".agent .social a"]) {
+        const targets = await page.locator(selector).all();
+        check(targets.length > 0, theme + ": " + pageName + " exercises " + selector);
+        for (const target of targets) {
+          const box = await target.boundingBox();
+          const fontSize = await target.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+          measurements.push({ theme, pageName, selector, label: await target.innerText(), ...box, fontSize });
+          check(box && box.height >= 44 && box.width >= 44, theme + ": " + pageName + " phone and contact links have 44px touch targets (" + selector + ")");
+          check(fontSize <= 14 && box.height <= 52, theme + ": " + pageName + " contact targets keep compact text and spacing");
+          check(box.x >= 0 && box.x + box.width <= 390, theme + ": " + pageName + " contact targets fit the phone viewport");
+        }
+      }
+      check(await page.locator(".agent .social a[href^='mailto:']").count() === 1 && await page.locator(".agent .social a").filter({ hasText: /^Website$/ }).count() === 1, theme + ": " + pageName + " explicitly exercises Email and Website");
+    };
+    await checkContactTargets("Home");
     await page.goto(origin + "/property/synthetic-site?page=location", { waitUntil: "networkidle" });
     const attribution = await contrast(".lp-fine a"); measurements.push({ theme, selector: ".lp-fine a", ratio: attribution });
     check(attribution >= 4.5, `${theme}: map attribution link meets 4.5:1 contrast (${attribution.toFixed(2)})`);
@@ -151,6 +165,8 @@ try {
     await page.screenshot({ path: join(evidence, theme + "-mobile-location.png") });
     await page.goto(origin + "/property/synthetic-site?page=contact", { waitUntil: "networkidle" });
     check(await page.getByRole("region", { name: "Contact the listing agent" }).locator("#leadform").count() === 1, theme + ": Contact card and form sit in a named landmark");
+    await checkContactTargets("Contact");
+    await page.screenshot({ path: join(evidence, theme + "-mobile-contact.png") });
     await context.close();
   }
 

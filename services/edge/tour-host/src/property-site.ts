@@ -80,6 +80,7 @@ export const PROPERTY_SITE_CSS = `
   .property-site .agent .avatar { width:72px; height:72px; background:#eee9f1; }
   .property-site .agent .who .nm { font-size:20px; }
   .property-site .agent .who .bk { font-size:13px; }
+  .property-site .agent .who .bk a { display:inline-flex; align-items:center; min-height:44px; min-width:44px; }
   .property-site .field input,.property-site .field textarea { background:#faf9f7; color:#17171c; border-color:#cfcbd3; border-radius:4px; font-size:16px; }
   .property-site .field .err { color:#9d2020; }
   .property-site .formmsg { color:#862020; background:#fff0f0; }
@@ -106,7 +107,7 @@ export const PROPERTY_SITE_CSS = `
   .property-site #property-photo-modal .property-photo-all { display:inline-block; margin-right:18px; }
   /* WCAG AA text contrast on the shared contact card, form and attribution. */
   .property-site .agent .avatar { color:var(--accent-3); }
-  .property-site .agent .social a { color:var(--accent-3); display:inline-flex; align-items:center; min-height:24px; }
+  .property-site .agent .social a { color:var(--accent-3); display:inline-flex; align-items:center; justify-content:center; min-height:44px; min-width:44px; }
   .property-site .field .lbl .opt { opacity:1; }
   .property-site .lp-fine a { color:var(--accent-3); }
   .property-site .property-location-visual svg { display:block; width:30px; height:30px; }
