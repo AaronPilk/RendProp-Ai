@@ -900,20 +900,11 @@ async function handleSpend(req: Request): Promise<Response> {
 
 // ── coverage: what the ledger number does and does NOT include ───────────────
 //
-// This is the honest part of /admin/spend. `total_cents` is the LEDGER's number,
-// not the invoice. Two named sources are missing today (docs/handoff/E-network.md
-// §2, finding F-E-15): ai-photo and ai-video make billable Gemini and fal calls
-// and never write a cost_ledger row, so every in-app AI generation is invisible
-// here AND to the per-org monthly COGS ceiling inside log_job_cost(). Stream
-// DELIVERY — the one cost that scales with views — is metered per view in
-// `metering` and likewise never priced into the ledger.
-//
-// `represented` is probed against the data, not asserted in prose, so coverage
-// heals itself the moment those writers land:
-//   • app AI has no render job, so an org-scoped ledger row with job_id IS NULL
-//     can only have come from an app-AI ledger write (E-network.md §2 says
-//     logCost() cannot be used as-is precisely because it requires a job_id).
-//   • stream delivery would arrive as feature = 'stream_deliver'.
+// total_cents is internal priced ledger accounting, not a supplier invoice.
+// These two presence probes cannot prove that every call, failed attempt,
+// serving operation or recurring infrastructure charge has been recorded.
+// Keep missing whole-app accounting and invoice reconciliation explicit even
+// when both categories contain rows; estimates can exceed or understate bills.
 
 interface CoverageSource {
   key: string;
@@ -935,55 +926,56 @@ async function buildCoverage(db: SupabaseClient): Promise<Record<string, unknown
   const sources: CoverageSource[] = [
     {
       key: "worker_pipeline",
-      label: "Worker render pipeline — declutter, restage, hero clip, QC",
+      label: "Worker AI pipeline — priced successful-call receipts",
       represented: true,
-      detail:
-        "services/pipeline writes one cost_ledger row per metered provider call through log_job_cost(), which also enforces the per-job cap and the per-org monthly COGS ceiling.",
+      detail: "The legacy pipeline writes priced provider receipts with a durable retry spool. Failed or uncertain attempts and their retained holds still need exact receipt reconciliation.",
       reference: "services/pipeline/cost_ledger.py",
     },
     {
       key: "worker_infra",
-      label: "Worker infrastructure — server encode compute and Stream storage",
+      label: "Worker infrastructure — partial estimates",
       represented: true,
-      detail:
-        "services/worker/infra_costs.py logs feature=render and feature=stream_store. The render number is a configurable per-minute ESTIMATE, not a vendor bill.",
+      detail: "The legacy worker records configurable encode estimates and the first month of Stream storage at publish. This does not cover all CPU attempts, recurring storage or supplier bills.",
       reference: "services/worker/infra_costs.py",
     },
     {
-      key: "app_ai_photo",
-      label: "In-app AI photo edits (POST /ai-photo)",
+      key: "app_api_ledger",
+      label: "App/API priced ledger receipts",
       represented: appAiLogged,
       detail: appAiLogged
-        ? "Org-scoped ledger rows with no render job are present, so app AI photo spend is now being recorded."
-        : "The ai-photo edge function never writes a cost_ledger row, so every Photo Studio edit is missing from the total above and from the per-org monthly COGS ceiling. Real provider spend is HIGHER than this number. Size the gap from GET /admin/usage photo_edits_used x 3.9c.",
-      reference: "docs/handoff/E-network.md §2 (finding F-E-15)",
-    },
-    {
-      key: "app_ai_video",
-      label: "In-app AI video — reel clips, aerials, Topaz drone renders (POST /ai-video)",
-      represented: appAiLogged,
-      detail: appAiLogged
-        ? "Org-scoped ledger rows with no render job are present, so app AI video spend is now being recorded."
-        : "The ai-video edge function never writes a cost_ledger row. These are the expensive taps (aerial $0.80, Topaz up to $14.40) and none of them appear above. Size the gap from GET /admin/usage reels/aerials/drone counters x the unit prices in GET /admin/providers.",
-      reference: "docs/handoff/E-network.md §2 (finding F-E-15)",
+        ? "Some app/API receipts without a render job are present. This broad presence check does not prove complete photo, video, helper or failed-call accounting."
+        : "No app/API ledger receipt was confirmed by this read. Missing or unreadable rows do not prove that no provider cost was incurred.",
+      reference: "services/supabase/functions/_shared/ledger.ts",
     },
     {
       key: "stream_delivery",
-      label: "Cloudflare Stream delivery — the cost that scales with views",
+      label: "Cloudflare Stream delivery — priced ledger presence",
       represented: deliveryLogged,
       detail: deliveryLogged
-        ? "feature=stream_deliver rows are present, so watched-minute delivery is priced into the ledger."
-        : "Views are metered in the `metering` table (watched minutes per render per day) but never priced into cost_ledger, so delivery spend does not appear above.",
-      reference: "docs/AI-COST-MODEL.md §3 ($0.001 per watched minute)",
+        ? "Some stream_deliver ledger rows exist. Their presence does not reconcile every view or the supplier delivery bill."
+        : "No stream_deliver ledger row was confirmed. Watch/request/byte counters remain usage evidence and are not a supplier invoice.",
+      reference: "tools/audit/API-COST-ACCOUNTING.md",
+    },
+    {
+      key: "unmetered_external_usage",
+      label: "Other external calls, serving and recurring infrastructure",
+      represented: false,
+      detail: "Complete accounting is still missing for uncertain property lookups, email attempts, Images transformations, CPU attempts, R2 operations/storage, and Supabase/hosting usage. Existing quotas and partial counters are not total costs.",
+      reference: "tools/audit/API-COST-ACCOUNTING.md",
+    },
+    {
+      key: "supplier_reconciliation",
+      label: "Supplier invoices and historical reconciliation",
+      represented: false,
+      detail: "Supplier usage/billing evidence is not automatically reconciled here. Catalog estimates, complete-price bounds, usage counts and funding top-ups must stay separate from invoiced consumption; account deletion can also remove ledger history.",
+      reference: "tools/audit/API-COST-ACCOUNTING.md",
     },
   ];
 
   const missing = sources.filter((s) => !s.represented);
   return {
-    complete: missing.length === 0,
-    headline: missing.length === 0
-      ? "Every known spend source writes to the ledger — this total is complete."
-      : `Incomplete: ${missing.length} spend source(s) never reach the ledger, so real provider spend is HIGHER than the total shown.`,
+    complete: false,
+    headline: "Incomplete accounting: recorded estimates and usage evidence are not the whole-app supplier bill.",
     represented_count: sources.length - missing.length,
     missing_count: missing.length,
     sources,

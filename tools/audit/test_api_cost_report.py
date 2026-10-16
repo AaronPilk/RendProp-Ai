@@ -43,6 +43,100 @@ class AccountingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Conflicting"):
             accounting_report(counted(f))
 
+    def test_catalog_estimate_keeps_observed_attempt_usage_separate(self):
+        f = fixture()
+        f["ledger"][0]["feature"] = "coach"
+        f["ledger"][0]["meta"] = {
+            "cost_basis": "route_catalog_estimate_not_supplier_invoice",
+            "provider_usage": [
+                {"stage": "coach.chat:0", "provider": "anthropic", "model": "haiku",
+                 "catalog_estimate_cents": "2.1", "counts_status": "provider_reported",
+                 "input_tokens": 20, "output_tokens": 5, "cache_read_input_tokens": 3,
+                 "cache_creation_input_tokens": 4, "supplier_invoice_verified": False,
+                 "prompt": "CUSTOMER_SECRET", "url": "https://signed.private/secret"},
+                {"stage": "coach.chat:1", "provider": "openai", "model": "mini",
+                 "catalog_estimate_cents": "1", "counts_status": "unavailable"},
+            ],
+        }
+        r = accounting_report(counted(f)); line = r["ledger"][0]
+        self.assertEqual(line["cost_basis"], "catalog_estimate")
+        self.assertEqual(line["provider_usage"], {})
+        self.assertEqual(line["provider_attempt_usage"], [
+            {"stage": "coach.chat:0", "provider": "anthropic", "model": "haiku",
+             "catalog_estimate_cents": "2.1000", "counts_status": "provider_reported",
+             "input_tokens": "20", "output_tokens": "5", "cache_read_input_tokens": "3",
+             "cache_creation_input_tokens": "4", "invoice_verified": False},
+            {"stage": "coach.chat:1", "provider": "openai", "model": "mini",
+             "catalog_estimate_cents": "1.0000", "counts_status": "unavailable", "invoice_verified": False},
+        ])
+        self.assertEqual(r["totals"]["recorded_ledger_cents"], "0.1000")
+        self.assertFalse(line["invoice_verified"])
+        self.assertNotIn("CUSTOMER_SECRET", json.dumps(r))
+        self.assertNotIn("signed.private", json.dumps(r))
+
+    def test_explicit_estimate_beats_usage_presence_and_missing_counts_stay_unknown(self):
+        cases = [
+            ({"cost_basis": "route_catalog_estimate_not_supplier_invoice", "provider_usage": [{"counts_status": "unavailable"}]}, "catalog_estimate"),
+            ({"cost_basis": "configured_per_call_estimate", "provider_usage": {"inputTokens": 20, "outputTokens": 5}}, "catalog_estimate"),
+            ({"price_estimated": True, "input_tokens": 20}, "catalog_estimate"),
+            ({"cost_basis": "route_output_image_estimate_input_tokens_unmodeled", "input_tokens": 20}, "catalog_estimate"),
+            ({"provider_usage": [{"counts_status": "unavailable"}]}, "unclassified_recorded_cost"),
+            ({"cost_basis": "published_complete_input_output_bound", "price_estimated": True, "provider_usage": [{"input_tokens": 20}]}, "published_bound"),
+            ({"cost_basis": "provider_reported_tokens_standard_rate_estimate", "input_tokens": 20, "output_tokens": 5}, "usage_priced_estimate"),
+            ({"cost_basis": "provider_reported_tokens_standard_rate_estimate", "price_estimated": True, "input_tokens": 20, "output_tokens": 5}, "usage_priced_estimate"),
+        ]
+        for meta, expected in cases:
+            with self.subTest(meta=meta):
+                f = fixture(); f["ledger"][0]["meta"] = meta
+                r = accounting_report(counted(f))
+                self.assertEqual(r["ledger"][0]["cost_basis"], expected)
+                self.assertEqual(r["totals"]["recorded_ledger_cents"], "0.1000")
+
+    def test_attempt_usage_is_bounded_and_cannot_claim_invoice_or_copy_unsafe_fields(self):
+        f = fixture()
+        f["ledger"][0]["meta"] = {"provider_usage": [{
+            "stage": "https://signed.private/secret", "provider": "CUSTOMER SECRET",
+            "model": "haiku", "input_tokens": 10, "output_tokens": True,
+            "counts_status": "provider_reported", "supplier_invoice_verified": True,
+            "script": "CUSTOMER_SECRET", "email": "person@example.com",
+        }]}
+        r = accounting_report(counted(f)); attempts = r["ledger"][0]["provider_attempt_usage"]
+        self.assertEqual(attempts, [{"model": "haiku", "input_tokens": "10", "counts_status": "provider_reported", "invoice_verified": False}])
+        self.assertNotIn("CUSTOMER_SECRET", json.dumps(r))
+        self.assertNotIn("signed.private", json.dumps(r))
+        self.assertNotIn("person@example.com", json.dumps(r))
+        f["ledger"][0]["meta"]["provider_usage"] *= 65
+        with self.assertRaisesRegex(ValueError, "attempt usage"):
+            accounting_report(counted(f))
+        for invalid in ("NaN", -1, float("inf")):
+            f["ledger"][0]["meta"]["provider_usage"] = [{"catalog_estimate_cents": invalid}]
+            with self.assertRaises(ValueError): accounting_report(counted(f))
+
+    def test_attempt_identity_rejects_email_and_capabilities_but_keeps_usage_and_model_names(self):
+        jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwZXJzb25AZXhhbXBsZS5jb20ifQ.c2lnbmF0dXJlX3NlY3JldA"
+        unsafe = ["person@example.com", jwt, "https://signed.private/media?token=secret",
+                  "sb_secret_synthetic_not_a_real_key", "sk-synthetic_not_a_real_key"]
+        for value in unsafe:
+            for field in ("stage", "provider", "model"):
+                with self.subTest(value=value, field=field):
+                    f = fixture()
+                    f["ledger"][0]["meta"] = {"cost_basis": "route_catalog_estimate_not_supplier_invoice",
+                        "provider_usage": [{field: value, "input_tokens": 10, "counts_status": "provider_reported"}]}
+                    r = accounting_report(counted(f))
+                    self.assertNotIn(value, json.dumps(r))
+                    self.assertEqual(r["ledger"][0]["provider_attempt_usage"], [{"input_tokens": "10", "counts_status": "provider_reported", "invoice_verified": False}])
+                    self.assertEqual(r["totals"]["recorded_ledger_cents"], "0.1000")
+        f = fixture()
+        f["ledger"][0]["meta"] = {"provider_usage": [
+            {"stage": "coach.chat:0", "provider": "anthropic", "model": "claude-3.5-sonnet"},
+            {"stage": "photo.stage:1", "provider": "fal", "model": "fal-ai/flux-pro/kontext"},
+            {"stage": "video.reel:0", "provider": "kie", "model": "kling/v2.5-turbo/image-to-video"},
+            {"stage": "coach.chat:1", "provider": "openai", "model": "gpt-5-mini:2026-10-01"},
+        ]}
+        attempts = accounting_report(counted(f))["ledger"][0]["provider_attempt_usage"]
+        self.assertEqual([x["model"] for x in attempts], [x["model"] for x in f["ledger"][0]["meta"]["provider_usage"]])
+        self.assertTrue(all(x["provider"] and x["stage"] for x in attempts))
+
     def test_missing_direct_link_uses_exact_five_field_match(self):
         f = fixture(); f["serving"] = [hold()]
         r = accounting_report(counted(f))

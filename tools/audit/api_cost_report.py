@@ -72,6 +72,59 @@ def scope(value):
     return "unknown" if not value else "scope-" + hashlib.sha256(str(value).encode()).hexdigest()[:20]
 
 
+USAGE_COUNT_KEYS = ("inputTokens", "outputTokens", "input_tokens", "output_tokens",
+                    "cacheReadInputTokens", "cacheCreationInputTokens",
+                    "cache_read_input_tokens", "cache_creation_input_tokens")
+MAX_USAGE_ATTEMPTS = 64
+
+
+def usage_counts(value):
+    """Project numeric counts only; presence is evidence, never an invoice."""
+    if not isinstance(value, dict):
+        return {}
+    return {key: str(count) for key, count in value.items()
+            if key in USAGE_COUNT_KEYS and isinstance(count, (int, float))
+            and not isinstance(count, bool) and money(count) >= ZERO}
+
+
+ATTEMPT_PROVIDERS = frozenset({"anthropic", "openai", "gemini", "fal", "kie", "higgsfield",
+                               "elevenlabs", "bria", "apple", "rendprop", "rentcast",
+                               "modal", "cloudflare", "worldlabs"})
+
+
+def attempt_identity(key, value):
+    """Attempt metadata is not authority to export an email, URL or capability."""
+    if not isinstance(value, str) or "@" in value or "://" in value:
+        return None
+    if value.startswith(("eyJ", "sb_secret_", "sb_publishable_", "sk-", "sk_", "rk_live_", "rk_test_")):
+        return None
+    if key == "provider":
+        return value if value in ATTEMPT_PROVIDERS else None
+    pattern = r"[a-z][a-z0-9_.:-]{0,127}" if key == "stage" else r"[A-Za-z0-9][A-Za-z0-9_./:-]{0,159}"
+    return value if re.fullmatch(pattern, value) else None
+
+
+def attempt_usage(value):
+    """Keep closed, bounded per-attempt evidence without copying supplier prose."""
+    if not isinstance(value, list):
+        return []
+    if len(value) > MAX_USAGE_ATTEMPTS or any(not isinstance(item, dict) for item in value):
+        raise ValueError("Invalid or oversized provider attempt usage")
+    result = []
+    for item in value:
+        row = {key: valid for key in ("stage", "provider", "model")
+               if (valid := attempt_identity(key, item.get(key))) is not None}
+        row.update(usage_counts(item))
+        if item.get("counts_status") in ("provider_reported", "unavailable"):
+            row["counts_status"] = item["counts_status"]
+        if item.get("catalog_estimate_cents") is not None:
+            row["catalog_estimate_cents"] = cents(money(item["catalog_estimate_cents"]))
+        # Imported metadata cannot assert supplier-invoice reconciliation.
+        row["invoice_verified"] = False
+        result.append(row)
+    return result
+
+
 def basis(row):
     meta = row.get("meta") or {}
     label = str(meta.get("cost_basis") or "")
@@ -79,10 +132,20 @@ def basis(row):
         return "infrastructure_estimate"
     if "bound" in label:
         return "published_bound"
-    if "token" in label or meta.get("provider_usage") or "input_tokens" in meta:
-        return "usage_priced_estimate"
-    if meta.get("price_estimated") is True or "estimate" in label:
+    # Observed tokens can accompany a flat catalog estimate. Respect the
+    # declared calculation basis before inspecting the available usage evidence.
+    if "estimate" in label and ("token" not in label or "unmodeled" in label):
         return "catalog_estimate"
+    if "token" in label:
+        return "usage_priced_estimate"
+    if meta.get("price_estimated") is True:
+        return "catalog_estimate"
+    usage = meta.get("provider_usage")
+    has_counts = bool(usage_counts(meta) or usage_counts(usage))
+    if isinstance(usage, list):
+        has_counts = has_counts or any(usage_counts(item) for item in usage)
+    if has_counts:
+        return "usage_priced_estimate"
     return "unclassified_recorded_cost"
 
 
@@ -172,7 +235,8 @@ def accounting_report(snapshot, events=(), spool=()):
         usage = meta.get("provider_usage")
         usage_items = dict(usage) if isinstance(usage, dict) else {}
         usage_items.update({k: meta[k] for k in ("input_tokens", "output_tokens") if k in meta})
-        line["provider_usage"] = {k: str(v) for k, v in usage_items.items() if k in ("inputTokens", "outputTokens", "input_tokens", "output_tokens", "cacheReadInputTokens", "cacheCreationInputTokens") and isinstance(v, (int, float)) and not isinstance(v, bool) and money(v) >= ZERO}
+        line["provider_usage"] = usage_counts(usage_items)
+        line["provider_attempt_usage"] = attempt_usage(usage)
         lines.append(line)
         totals["recorded_ledger_cents"] += amount
         totals[kind + "_cents"] += amount
