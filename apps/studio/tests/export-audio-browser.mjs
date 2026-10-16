@@ -38,12 +38,51 @@ try{
  execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","color=c=blue:s=640x360:r=30:d=3","-an","-c:v","libx264","-pix_fmt","yuv420p",silent]);
  browser=await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});const context=await browser.newContext({viewport:{width:1000,height:800},serviceWorkers:"block"});
  await context.route("**/*",route=>{const u=new URL(route.request().url());if(u.origin===origin&&route.request().method()==="GET"||u.protocol==="blob:")return route.continue();receipt.externalRequests.push(u.href);return route.abort();});
+ // Test-only, passive lifecycle evidence. Native nodes/promises and their
+ // return values remain unchanged; bounded facts are retained only on failure.
+ await context.addInitScript(()=>{
+  const events=[],contexts=new Map(),tracks=new Map();let dropped=0;
+  const record=(event,audio,track)=>{
+   if(events.length>=128){dropped++;return;}
+   events.push({event,wallMs:performance.now(),visibility:document.visibilityState,
+    ...(audio?{contextId:contexts.get(audio),state:audio.state,currentTime:audio.currentTime}:{}),
+    ...(track?{trackKind:track.kind,readyState:track.readyState,muted:track.muted,enabled:track.enabled}:{})});
+  };
+  const observe=audio=>{
+   if(contexts.has(audio))return;
+   contexts.set(audio,contexts.size+1);record("context-observed",audio);
+   audio.addEventListener("statechange",()=>record("context-statechange",audio));
+  };
+  const destination=AudioContext.prototype.createMediaStreamDestination;
+  AudioContext.prototype.createMediaStreamDestination=function(...args){
+   const node=Reflect.apply(destination,this,args);observe(this);record("destination-created",this);
+   for(const track of node.stream.getTracks()){
+    tracks.set(track,this);record("destination-track-observed",this,track);
+    for(const event of ["mute","unmute","ended"])track.addEventListener(event,()=>record(`destination-track-${event}`,this,track));
+   }
+   return node;
+  };
+  for(const method of ["resume","close"]){
+   const original=AudioContext.prototype[method];
+   AudioContext.prototype[method]=function(...args){
+    observe(this);record(`context-${method}-requested`,this);
+    const result=Reflect.apply(original,this,args);
+    result.then(()=>record(`context-${method}-resolved`,this),()=>record(`context-${method}-rejected`,this));
+    return result;
+   };
+  }
+  document.addEventListener("visibilitychange",()=>record("document-visibilitychange"));
+  window.audioExportDiagnostics=()=>({events:[...events],dropped,visibility:document.visibilityState,
+   contexts:[...contexts].map(([audio,contextId])=>({contextId,state:audio.state,currentTime:audio.currentTime})),
+   tracks:[...tracks].map(([track,audio])=>({contextId:contexts.get(audio),kind:track.kind,readyState:track.readyState,muted:track.muted,enabled:track.enabled}))});
+ });
  page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(15000);
  const run=async(name,config,{refused=false,silentAudio=false,cancelled=false}={})=>{
   await page.goto(`${origin}/tests/export-audio-fixture.html`);await page.getByLabel("Synthetic source").setInputFiles(silentAudio?silent:tone);
   await page.evaluate(config=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,playResolutionDelayMs:0,...config},config);
   await page.getByRole("button",{name:"Export fixture",exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result)).not.toBeNull();
   const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error,cause:result.cause};receipt.cases.push(record);
+  if(!result.ok)record.lifecycle=await page.evaluate(()=>window.audioExportDiagnostics());
   if(config.stall||config.hiccup||config.playResolutionDelayMs)assert(result.injected,"Forced playback fixture not injected");
   if(cancelled){assert.equal(result.ok,false);assert.match(result.error,/Synthetic export cancelled/);assert.equal(result.base64,undefined);return;}
   if(refused){
