@@ -16,7 +16,7 @@ final class AIConsent {static let shared=AIConsent();var isGranted=true;var revo
 struct ClosedListing {let id:UUID;let serverID:UUID?;var cloudUnavailable:Bool?=nil}
 final class AppModel {var listings:[ClosedListing]=[]}
 final class ReelWorkJob {
- struct Scope {var isCurrent=true};var scope=Scope();let id=UUID();var running=false
+ struct Scope {var isCurrent=true;var owner=AuthStore.shared.userID;var workspace=WorkspaceContext.selectedOrgID};var scope=Scope();let id=UUID();var running=false
  var serverJob:PropertyVideoSavedJob?;var followUp:(()->Void)?
  func afterCurrentOperation(_ action:@escaping()->Void){followUp=action}
  func finishFirstEnqueue(){running=false;let next=followUp;followUp=nil;next?()}
@@ -24,6 +24,12 @@ final class ReelWorkJob {
 @MainActor final class UIApplication {enum State {case active,inactive};static let shared=UIApplication();var applicationState=State.active}
 protocol PropertyVideoJobsAPI {}
 struct ClosedJobsAPI:PropertyVideoJobsAPI {}
+enum FileStore {static let documents=FileManager.default.temporaryDirectory.appendingPathComponent("closed-property-jobs-fixture")}
+@MainActor final class LiveAPIClient {
+ init?() {}
+ func propertyVideoOperation(_ saved:PropertyVideoSavedJob,abandon:Bool)async throws->PropertyVideoOperationLookup{throw PropertyVideoProcessorFailure.operationPending}
+ func cancelPropertyVideoJob(_ saved:PropertyVideoSavedJob)async throws->PropertyVideoJobReply{throw PropertyVideoProcessorFailure.operationPending}
+}
 @MainActor enum PropertyVideoJobHTTP {static func stopOwnedJobs(_ intent:PropertyVideoCancellationIntent)async throws{}}
 
 @MainActor @main struct PropertyVideoJobTests {

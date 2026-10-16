@@ -10426,6 +10426,13 @@ struct ReelStudioView: View {
     private let reviewingExistingJob: Bool
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var processorConsent = PropertyVideoProcessorConsent.shared
+    @State private var preparingProcessor = false
+    @State private var preparedProcessorContext: PropertyVideoJobContext?
+    @State private var preparedProcessorPermission: PropertyVideoProcessorSnapshot?
+    @State private var preparedSessionRevision: UInt64?
+    @State private var preparedBaseRevision: UInt64?
+    @State private var preparedProcessorRevision: UInt64?
     @Environment(\.dismiss) private var dismiss
     let listing: Listing
     let photos: [EnhancedPhoto]
@@ -10649,7 +10656,7 @@ struct ReelStudioView: View {
                 }
                 .padding()
             }
-            .disabled(connection.isWaiting || nativeSetupBusy)
+            .disabled(connection.isWaiting || nativeSetupBusy || preparingProcessor)
             .background(Theme.bg)
             .navigationTitle("Make a video")
             .navigationBarTitleDisplayMode(.inline)
@@ -10767,10 +10774,18 @@ struct ReelStudioView: View {
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showReelPhotos = false } } }
             }.environmentObject(model)
         }
+        .overlay {
+            if processorConsent.askingContext?.localListingID == listing.id {
+                PropertyVideoProcessorPermissionCard(consent: processorConsent)
+            }
+        }
+        .onDisappear {
+            if processorConsent.askingContext?.localListingID == listing.id { processorConsent.decline() }
+        }
         .aiConsentGate()
         .paywallHost(managesLifecycle: false)
         .task {
-            if await AIConsent.shared.ensureGranted() == false { dismiss() }
+            if !reviewingExistingJob, work.serverJob == nil, await AIConsent.shared.ensureGranted() == false { dismiss() }
         }
     }
 
@@ -11652,13 +11667,13 @@ struct ReelStudioView: View {
             if work.serverJob?.reply != nil {
                 serverStatusControls
             }
-            if work.serverJob?.wasRefusedBeforeAdmission == true {
+            if work.serverJob?.mayReplaceAfterResolution == true, work.serverJob?.reply == nil {
                 PrimaryButton(title: "Edit photos and setup", systemImage: "photo.on.rectangle") {
                     resetToSetup()
                 }
                 .accessibilityIdentifier("video.server.editRefused")
             } else if work.serverJob?.reply?.isTerminal == true {
-                if work.serverJob?.reply?.mayResume == true {
+                if work.serverJob?.reply?.mayResume == true && work.serverJob?.reply?.resumeConsentToken != nil && work.serverJob?.stopRequested != true {
                     PrimaryButton(title: "Resume saved video", systemImage: "play.fill") {
                         Task { await PropertyVideoJobRunner.shared.resume(work) }
                     }
@@ -11666,9 +11681,10 @@ struct ReelStudioView: View {
                     Text("Uses the same photos and finished clips. Your current plan is checked before more clips start.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 }
-                SecondaryButton(title: "Back to video setup", systemImage: "slider.horizontal.3") {
-                    resetToSetup()
+                if work.serverJob?.reply?.mayResume == true && work.serverJob?.reply?.resumeConsentToken == nil {
+                    Text(PropertyVideoProcessorFailure.unknownSavedAuthority.localizedDescription).font(.rpCaption).foregroundStyle(Theme.inkDim)
                 }
+                SecondaryButton(title: "Back to video setup", systemImage: "slider.horizontal.3") { resetToSetup() }
             } else {
                 PrimaryButton(title: "Check saved job", systemImage: "arrow.clockwise") {
                     phase = .generating; PropertyVideoJobRunner.shared.checkNow(work)
@@ -12371,11 +12387,12 @@ struct ReelStudioView: View {
     /// point is that the agent fixes the two words the model got wrong.
     private func runScriptWriter() {
         guard !scriptInFlight else { return }
-        connection.run { runScriptWriterWithSession() }
+        connection.run { authorizeVideoPreparation { runScriptWriterWithSession() } }
     }
 
     private func runScriptWriterWithSession() {
         guard !scriptInFlight else { return }
+        do { try requirePreparedProcessor() } catch { voiceError = error.localizedDescription; return }
         scriptInFlight = true
         voiceError = nil
         voiceNote = nil
@@ -12384,6 +12401,9 @@ struct ReelStudioView: View {
         // Everything the request needs is read HERE, on the main actor, into
         // plain Sendable values. The Task below never reaches back into the
         // model or the view for anything.
+        let permission = preparedProcessorPermission, permissionContext = preparedProcessorContext
+        let baseEpoch = AIConsent.shared.revocationRevision, processorEpoch = processorConsent.revision
+        let sessionEpoch = auth.syncSessionRevision
         let api = model.api
         let live = model.listings.first(where: { $0.id == listing.id }) ?? listing
         let request = Self.scriptRequest(for: live, space: space,
@@ -12406,6 +12426,7 @@ struct ReelStudioView: View {
                 // `generateAIVoice` resolves it one tap later in this same
                 // flow, so this adds no side effect the voiceover path doesn't
                 // already have.
+                try requireProcessorPreparation(permission, context: permissionContext, baseEpoch: baseEpoch, processorEpoch: processorEpoch, sessionEpoch: sessionEpoch)
                 var req = request
                 // Only ever an UPGRADE on what `scriptRequest` already read off
                 // the listing: a nil answer here (offline, signed out, listing
@@ -12413,6 +12434,7 @@ struct ReelStudioView: View {
                 if !isSample, let resolved = await model.serverListingIDForCompliance(listingID) {
                     req.listingServerID = resolved
                 }
+                try requireProcessorPreparation(permission, context: permissionContext, baseEpoch: baseEpoch, processorEpoch: processorEpoch, sessionEpoch: sessionEpoch)
                 let result = try await api.aiCopyScript(req)
                 let filled = Self.filledAddress(result.script, address: address,
                                                 fallbackNoun: noun)
@@ -12564,11 +12586,12 @@ struct ReelStudioView: View {
     /// would fail identically, so the server's message is shown to re-word.
     private func generateAIVoice() {
         guard !ttsInFlight else { return }
-        connection.run { generateAIVoiceWithSession() }
+        connection.run { authorizeVideoPreparation { generateAIVoiceWithSession() } }
     }
 
     private func generateAIVoiceWithSession() {
         guard !ttsInFlight else { return }
+        do { try requirePreparedProcessor() } catch { voiceError = error.localizedDescription; return }
         let script = aiScript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard script.count >= 2 else { voiceError = "Type a short script first."; return }
         let voiceID = selectedVoiceID
@@ -12578,6 +12601,9 @@ struct ReelStudioView: View {
         let isSample = listing.isSample
         let key = UUID().uuidString               // one idempotency key per tap
         let actor = auth.userID, epoch = auth.syncSessionRevision
+        let permission = preparedProcessorPermission, permissionContext = preparedProcessorContext
+        let baseEpoch = AIConsent.shared.revocationRevision, processorEpoch = processorConsent.revision
+        let sessionEpoch = epoch
         ttsInFlight = true
         voiceError = nil
         voiceNote = nil
@@ -12586,6 +12612,7 @@ struct ReelStudioView: View {
                 let serverID: UUID? = isSample ? nil
                     : await model.serverListingIDForCompliance(listingID)
                 guard auth.userID == actor, auth.syncSessionRevision == epoch else { throw CloudSyncError.identityChanged }
+                try requireProcessorPreparation(permission, context: permissionContext, baseEpoch: baseEpoch, processorEpoch: processorEpoch, sessionEpoch: sessionEpoch)
                 let result = try await api.aiVoiceTTS(text: script, voiceID: voiceID,
                                                       listingServerID: serverID,
                                                       label: "Reel voiceover",
@@ -13200,6 +13227,49 @@ struct ReelStudioView: View {
         }
     }
 
+    /// Disclosure resolution happens before the paid planner, script writer or
+    /// voice generator. Only an exact unpublished response selects legacy v1.
+    private func authorizeVideoPreparation(_ action: @escaping () -> Void) {
+        guard !preparingProcessor else { return }
+        preparingProcessor = true
+        Task { @MainActor in
+            defer { preparingProcessor = false }
+            do {
+                guard await AIConsent.shared.ensureGranted() else { throw PropertyVideoProcessorFailure.declined }
+                let baseEpoch = AIConsent.shared.revocationRevision, processorEpoch = processorConsent.revision
+                let sessionEpoch = auth.syncSessionRevision
+                if listing.isSample {
+                    preparedProcessorContext = nil; preparedProcessorPermission = nil
+                } else {
+                    guard let actor = auth.userID.flatMap(UUID.init(uuidString:)), auth.isIdentified,
+                          let org = WorkspaceContext.selectedOrgID, let api = model.api as? PropertyVideoJobsAPI,
+                          let server = await model.serverListingIDForCompliance(listing.id) else { throw PropertyVideoJobStore.Failure.identityChanged }
+                    let context = PropertyVideoJobContext(localListingID: listing.id, listingID: server, actorID: actor, orgID: org)
+                    let contract = try await api.propertyVideoProcessorContract(context: context)
+                    guard context.isCurrent, auth.syncSessionRevision == sessionEpoch, AIConsent.shared.revocationRevision == baseEpoch, processorConsent.revision == processorEpoch else { throw PropertyVideoJobStore.Failure.identityChanged }
+                    let permission: PropertyVideoProcessorSnapshot?
+                    if let contract { permission = try await processorConsent.ensure(contract, context: context) } else { permission = nil }
+                    guard work.isPresented, context.isCurrent, auth.syncSessionRevision == sessionEpoch, AIConsent.shared.revocationRevision == baseEpoch, processorConsent.revision == processorEpoch else { throw PropertyVideoJobStore.Failure.identityChanged }
+                    preparedProcessorContext = context; preparedProcessorPermission = permission
+                }
+                preparedSessionRevision = sessionEpoch; preparedBaseRevision = baseEpoch; preparedProcessorRevision = processorEpoch
+                try requirePreparedProcessor()
+                action()
+            } catch {
+                savedPhotoError = error.localizedDescription; voiceError = error.localizedDescription
+            }
+        }
+    }
+    private func requirePreparedProcessor() throws {
+        guard let base = preparedBaseRevision, let processor = preparedProcessorRevision, preparedSessionRevision == auth.syncSessionRevision else { throw PropertyVideoProcessorFailure.permissionRequired }
+        try requireProcessorPreparation(preparedProcessorPermission, context: preparedProcessorContext, baseEpoch: base, processorEpoch: processor, sessionEpoch: preparedSessionRevision!)
+    }
+    private func requireProcessorPreparation(_ permission: PropertyVideoProcessorSnapshot?, context: PropertyVideoJobContext?, baseEpoch: UInt64, processorEpoch: UInt64, sessionEpoch: UInt64) throws {
+        guard auth.syncSessionRevision == sessionEpoch, AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == baseEpoch, processorConsent.revision == processorEpoch,
+              listing.isSample || (context?.isCurrent == true && model.listings.contains(where: { $0.id == listing.id && $0.serverID == context?.listingID && $0.cloudUnavailable != true })) else { throw PropertyVideoJobStore.Failure.identityChanged }
+        if let permission, let context { guard processorConsent.permits(permission, context: context) else { throw PropertyVideoProcessorFailure.permissionRequired } }
+    }
+
     // MARK: Generate (sequential clips → on-device stitch)
 
     private var framingSelectionKey: String {
@@ -13233,13 +13303,17 @@ struct ReelStudioView: View {
                 showFramingReview = true
                 return
             }
-            connection.run { generateWithSession() }
+            connection.run { authorizeVideoPreparation { generateWithSession() } }
         }
     }
 
     private func generateWithSession() {
         let model = self.model, auth = self.auth
         guard phase == .setup, canGenerate else { return }
+        do { try requirePreparedProcessor() } catch { savedPhotoError = error.localizedDescription; return }
+        let frozenProcessorPermission = preparedProcessorPermission
+        let frozenProcessorContext = preparedProcessorContext
+        let frozenProcessorRevision = preparedProcessorRevision
         musicPreviewPlayer?.pause(); voPlayer?.pause()
         let chosen = selected.compactMap { id in reelPhotos.first { $0.id == id } }
         do {
@@ -13317,8 +13391,10 @@ struct ReelStudioView: View {
                     serverListingID: targetServerID, owner: $0, workspace: reelWorkspace) }
                 let requireCurrent: @MainActor @Sendable () throws -> Void = {
                     try Task.checkCancellation()
-                    guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision else {
-                        throw CancellationError()
+                    guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision,
+                          PropertyVideoProcessorConsent.shared.revision == frozenProcessorRevision else { throw CancellationError() }
+                    if let permission = frozenProcessorPermission, let context = frozenProcessorContext {
+                        guard PropertyVideoProcessorConsent.shared.permits(permission, context: context) else { throw PropertyVideoProcessorFailure.permissionRequired }
                     }
                     guard auth.userID == reelActor, auth.syncSessionRevision == reelRevision,
                           WorkspaceContext.selectedOrgID == reelWorkspace,
@@ -13428,7 +13504,7 @@ struct ReelStudioView: View {
                         request.narrationWords = captionStyle.enabled ? voiceover.words.map { .init(text: $0.text, start: $0.start, end: $0.end) } : nil
                         try requireCurrent()
                     }
-                    let saved = PropertyVideoSavedJob(context: context, request: request, createdAt: Date())
+                    let saved = PropertyVideoSavedJob(context: context, request: request, createdAt: Date(), processorPermission: frozenProcessorPermission)
                     try PropertyVideoJobStore.start(saved, documents: FileStore.documents) // Persist before enqueue.
                     work.serverJob = saved
                     statusText = "Sending your saved video recipe…"
@@ -15798,5 +15874,30 @@ enum FloorPlanRenderer {
         case .stairs: return "Stairs"
         @unknown default: return ""
         }
+    }
+}
+
+
+private struct PropertyVideoProcessorPermissionCard: View {
+    @ObservedObject var consent: PropertyVideoProcessorConsent
+    var body: some View {
+        ZStack {
+            Theme.bg.opacity(0.97).ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(PropertyVideoProcessorContract.title).font(.rpTitle).foregroundStyle(Theme.ink)
+                    Text(PropertyVideoProcessorContract.body).font(.rpBody).foregroundStyle(Theme.inkDim)
+                    HStack {
+                        Link("Privacy", destination: URL(string: "https://rendprop.com/privacy")!)
+                        Spacer()
+                        Link("Kie terms", destination: URL(string: "https://kie.ai/terms-of-use")!)
+                    }.font(.rpCaption)
+                    PrimaryButton(title: PropertyVideoProcessorContract.allowLabel, systemImage: "checkmark") { consent.allow() }
+                        .accessibilityIdentifier("video.processor.allow")
+                    SecondaryButton(title: PropertyVideoProcessorContract.declineLabel, systemImage: "xmark") { consent.decline() }
+                        .accessibilityIdentifier("video.processor.decline")
+                }.padding(24).frame(maxWidth: 440)
+            }.fixedSize(horizontal: false, vertical: true)
+        }.accessibilityIdentifier("video.processor.disclosure")
     }
 }

@@ -409,6 +409,10 @@ struct SettingsView: View {
                         Haptics.selection()
                     }
                 }
+                Button("Turn off Kie video permission", role: .destructive) {
+                    PropertyVideoProcessorConsent.shared.revoke()
+                    Haptics.selection()
+                }
                 if isDeletingAccount {
                     HStack {
                         Text("Deleting account…").foregroundStyle(Theme.inkDim)

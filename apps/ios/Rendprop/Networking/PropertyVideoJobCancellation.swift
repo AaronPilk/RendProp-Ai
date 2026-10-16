@@ -14,6 +14,7 @@ struct PropertyVideoCancellationIntent: Codable, Equatable, Sendable {
     static let shared = PropertyVideoJobCancellation()
     private var inFlight: [UUID: Task<Void, Error>] = [:]
     private var observedRevocation: UInt64 = 0
+    private var savedStopsInFlight: [UUID: (id: UUID, task: Task<Void, Never>)] = [:]
     private static func key(_ actor: UUID) -> String { "property-video.cancel-intent." + actor.uuidString.lowercased() }
     private static func queue(actorID: UUID, defaults: UserDefaults) throws -> [PropertyVideoCancellationIntent] {
         guard let data = defaults.data(forKey: key(actorID)) else { return [] }
@@ -63,7 +64,49 @@ struct PropertyVideoCancellationIntent: Codable, Equatable, Sendable {
     }
     func retryPending() {
         guard AuthStore.shared.isIdentified, let actor = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return }
-        Task { try? await self.acknowledgePending(actorID: actor) }
+        Task { try? await self.acknowledgePending(actorID: actor); await self.acknowledgeSavedStops(actorID: actor) }
+    }
+    /// Supplementary withdrawal stops only saved v2 operations. A legacy FAL/v1
+    /// request never enters this journal merely because Kie was turned off.
+    func processorWasRevoked() {
+        guard AuthStore.shared.isIdentified, let actor = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return }
+        do { try PropertyVideoJobStore.requestStop(actorID: actor, documents: FileStore.documents, processorOnly: true) }
+        catch { return } // Nothing is retired; a later explicit retry remains safe.
+        Task { await self.acknowledgeSavedStops(actorID: actor) }
+    }
+    func acknowledgeSavedStops(actorID: UUID) async {
+        if let existing = savedStopsInFlight[actorID] { await existing.task.value; return }
+        let identity = UUID()
+        let task = Task { @MainActor in
+            await self.processSavedStops(actorID: actorID)
+            if self.savedStopsInFlight[actorID]?.id == identity { self.savedStopsInFlight[actorID] = nil }
+        }
+        savedStopsInFlight[actorID] = (identity, task)
+        await task.value
+    }
+    private func processSavedStops(actorID: UUID) async {
+        guard let api = LiveAPIClient(), let savedJobs = try? PropertyVideoJobStore.actorJobs(actorID: actorID, documents: FileStore.documents) else { return }
+        for var saved in savedJobs where saved.stopRequested == true && saved.context.hasCurrentIdentity && saved.abandoned == nil && !saved.wasRefusedBeforeAdmission {
+            if let reply = saved.reply, reply.isTerminal && !reply.mayResume { continue }
+            do {
+                if saved.reply == nil {
+                    var lookup = try await api.propertyVideoOperation(saved, abandon: false)
+                    if lookup.job == nil && !lookup.operationClosed { lookup = try await api.propertyVideoOperation(saved, abandon: true) }
+                    if let job = lookup.job { saved.reply = try job.checked(request: saved.request) }
+                    else if let closure = lookup.abandonment { saved.abandoned = closure }
+                    else if lookup.operationClosed && lookup.closedReason == "capacity_refused" {
+                        saved.capacityRefusal = .init(operationID: saved.request.operationID, listingID: saved.request.listingID,
+                            selectedLibraryOrgID: saved.request.expectedOrgID, status: 402, code: "capacity_refused", operationClosed: true,
+                            message: "This saved request was closed before video generation.", observedAt: Date())
+                    } else { throw PropertyVideoProcessorFailure.operationPending }
+                    try PropertyVideoJobStore.save(saved, documents: FileStore.documents)
+                }
+                if saved.reply != nil {
+                    saved.reply = try await api.cancelPropertyVideoJob(saved)
+                    try PropertyVideoJobStore.save(saved, documents: FileStore.documents)
+                }
+            } catch { continue } // Keep the exact stop for GET/cancel after loss.
+        }
     }
     func consentWasRevoked() {
         // A new install with no grant is not a revocation. Only an explicit
@@ -72,7 +115,10 @@ struct PropertyVideoCancellationIntent: Codable, Equatable, Sendable {
         guard !AIConsent.shared.isGranted, revision > observedRevocation else { return }
         observedRevocation = revision
         guard AuthStore.shared.isIdentified, let actor = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return }
-        do { _ = try Self.record(actorID: actor, reason: "ai_consent_revoked") } catch { return }
-        Task { try? await self.acknowledgePending(actorID: actor) }
+        do {
+            _ = try Self.record(actorID: actor, reason: "ai_consent_revoked")
+            try PropertyVideoJobStore.requestStop(actorID: actor, documents: FileStore.documents)
+        } catch { return }
+        Task { try? await self.acknowledgePending(actorID: actor); await self.acknowledgeSavedStops(actorID: actor) }
     }
 }

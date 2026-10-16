@@ -5074,6 +5074,8 @@ final class AIConsent: ObservableObject {
         revocationRevision &+= 1
         UserDefaults.standard.set(false, forKey: Self.storageKey)
         isGranted = false
+        PropertyVideoProcessorConsent.shared.revoke()
+        PropertyVideoJobCancellation.shared.consentWasRevoked()
     }
 
     private func finish(_ value: Bool) {

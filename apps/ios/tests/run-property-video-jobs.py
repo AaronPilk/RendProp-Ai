@@ -8,7 +8,7 @@ p = argparse.ArgumentParser(); p.add_argument('--evidence-dir', type=Path); args
 out = (args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-property-video-jobs-'))).resolve()
 out.mkdir(parents=True, exist_ok=True)
 core = [ROOT / x for x in ['apps/ios/Rendprop/Render/VideoAspectChoice.swift', 'apps/ios/Rendprop/Render/VideoMusicContract.swift',
-    'apps/ios/Rendprop/Render/VideoMusicCatalog.swift', 'apps/ios/Rendprop/Models/ListingVideo.swift', 'apps/ios/Rendprop/Render/PropertyVideoJob.swift', 'apps/ios/Rendprop/Render/PropertyVideoAdmission.swift', 'apps/ios/Rendprop/Networking/PropertyVideoJobCancellation.swift']]
+    'apps/ios/Rendprop/Render/VideoMusicCatalog.swift', 'apps/ios/Rendprop/Models/ListingVideo.swift', 'apps/ios/Rendprop/Render/PropertyVideoProcessorConsent.swift', 'apps/ios/Rendprop/Render/PropertyVideoJob.swift', 'apps/ios/Rendprop/Render/PropertyVideoAdmission.swift', 'apps/ios/Rendprop/Networking/PropertyVideoJobCancellation.swift']]
 fixture = ROOT / 'apps/ios/tests/PropertyVideoJobTests.swift'
 bindings = core + [fixture, Path(__file__), *[ROOT / x for x in ['apps/ios/Rendprop/Networking/PropertyVideoJobsAPI.swift',
     'apps/ios/Rendprop/Networking/PropertyVideoNarrationUpload.swift', 'apps/ios/Rendprop/Render/PropertyVideoJobRunner.swift',
@@ -45,7 +45,10 @@ assert 'status == 402, code == "capacity_refused"' in network and 'PropertyVideo
 assert 'request.operationID.uuidString.lowercased()' in network and 'case .accepted(let job): return job' in network
 assert 'if saved.wasRefusedBeforeAdmission' in runner_source and 'rejected.capacityRefusal = refusal' in runner_source
 assert 'previous.mayResume' in network and 'action: "resume"' in network
-assert 'saved.reply?.mayResume == true, resuming.insert(work.id).inserted' in runner_source
+resume = block(runner_source, 'func resume(_ work: ReelWorkJob)')
+assert 'resuming.insert(work.id).inserted' in resume and 'saved.reply?.mayResume == true' in resume
+assert resume.index('resuming.insert(work.id).inserted') < resume.index('PropertyVideoJobStore.load(') < resume.index('saved.reply?.mayResume == true') < resume.index('watch.api.resumePropertyVideoJob(saved)')
+assert resume.index('guard saved.stopRequested != true else') < resume.index('watch.api.resumePropertyVideoJob(saved)')
 assert 'work.serverJob?.reply?.mayResume == true' in view and 'video.server.resume' in view
 
 download = network[network.index('static func download('):]

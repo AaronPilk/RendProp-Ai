@@ -20,23 +20,34 @@ import AVFoundation
 
     private func requireCurrent(_ watch: Watch) throws {
         try Task.checkCancellation()
-        guard watch.context.isCurrent, AuthStore.shared.syncSessionRevision == watch.revision,
+        guard watch.context.hasCurrentIdentity, AuthStore.shared.syncSessionRevision == watch.revision,
               AIConsent.shared.revocationRevision == watch.consentRevision,
-              watch.work.scope.isCurrent,
+              watch.work.scope.owner.flatMap(UUID.init(uuidString:)) == watch.context.actorID,
+              watch.work.scope.workspace == watch.context.orgID,
               watch.model.listings.contains(where: { $0.id == watch.context.localListingID && $0.serverID == watch.context.listingID && $0.cloudUnavailable != true }) else {
             throw PropertyVideoJobStore.Failure.identityChanged
         }
+    }
+    /// A new explicit read/cancel may reattach the same durable actor/library
+    /// after renewal or withdrawal. Existing in-flight work keeps its old epoch.
+    private func readWatch(_ old: Watch) throws -> Watch {
+        let current = Watch(work: old.work, model: old.model, api: old.api, context: old.context,
+            revision: AuthStore.shared.syncSessionRevision, consentRevision: AIConsent.shared.revocationRevision)
+        try requireCurrent(current)
+        watches[old.work.id] = current
+        return current
     }
     func enqueue(_ saved: PropertyVideoSavedJob, work: ReelWorkJob, model: AppModel, api: PropertyVideoJobsAPI) async throws {
         let watch = Watch(work: work, model: model, api: api, context: saved.context,
             revision: AuthStore.shared.syncSessionRevision, consentRevision: AIConsent.shared.revocationRevision)
         try requireCurrent(watch)
+        guard saved.stopRequested != true, saved.abandoned == nil else { throw PropertyVideoProcessorFailure.operationPending }
         watches[work.id] = watch
         work.adoptServerJob(saved)
         // The caller saved the exact operation before this POST. An uncertain
-        // transport result remains saved and is retried only with the same ID.
+        // transport result remains saved; recovery reads this exact operation.
         let reply: PropertyVideoJobReply
-        do { reply = try await api.enqueuePropertyVideo(saved.request, context: saved.context) }
+        do { reply = try await api.enqueuePropertyVideo(saved) }
         catch let refusal as PropertyVideoCapacityRefusal {
             try requireCurrent(watch)
             guard saved.reply == nil, refusal.provesNoAdmission(for: saved.request) else { throw PropertyVideoJobStore.Failure.invalidReceipt }
@@ -82,7 +93,8 @@ import AVFoundation
         }
     }
     func resumeForeground() {
-        for watch in watches.values where watch.context.isCurrent {
+        for old in Array(watches.values) where old.context.hasCurrentIdentity {
+            guard let watch = try? readWatch(old) else { continue }
             if let previous = tasks[watch.work.id] {
                 Task { [weak self] in await previous.value; self?.schedule(watch) }
             } else { schedule(watch) }
@@ -92,19 +104,35 @@ import AVFoundation
         for task in tasks.values { task.cancel() }
     }
     func checkNow(_ work: ReelWorkJob) {
-        guard let watch = watches[work.id], watch.context.isCurrent else { return }
+        guard let old = watches[work.id], let watch = try? readWatch(old) else { return }
         work.isCheckingServerStatus = true
         work.serverStatusCheckNote = nil
-        // An active watcher performs the next status read. Reuse it instead
-        // of racing another poll or interrupting a ready-video download.
-        schedule(watch)
+        // Preserve a current download. A stale watcher is cancelled and fully
+        // retires before the fresh identity-only read starts.
+        if let previous = tasks[work.id], old.revision != watch.revision || old.consentRevision != watch.consentRevision {
+            previous.cancel()
+            Task { [weak self] in await previous.value; self?.schedule(watch) }
+        } else { schedule(watch) }
     }
     func resume(_ work: ReelWorkJob) async {
-        guard let watch = watches[work.id], let saved = work.serverJob,
-              saved.reply?.mayResume == true, resuming.insert(work.id).inserted else { return }
+        guard let old = watches[work.id], let watch = try? readWatch(old),
+              resuming.insert(work.id).inserted else { return }
         defer { resuming.remove(work.id) }
         do {
             try requireCurrent(watch)
+            guard let saved = try PropertyVideoJobStore.load(context: watch.context, documents: FileStore.documents),
+                  saved.request == work.serverJob?.request, saved.reply?.mayResume == true else { throw PropertyVideoProcessorFailure.operationPending }
+            guard saved.stopRequested != true else { throw PropertyVideoProcessorFailure.operationPending }
+            guard await AIConsent.shared.ensureGranted() else { throw PropertyVideoProcessorFailure.declined }
+            try requireCurrent(watch)
+            if saved.reply?.resumeConsentToken == "property-video-jobs-v2" {
+                _ = try await PropertyVideoProcessorConsent.shared.ensure(.known, context: saved.context)
+                try requireCurrent(watch)
+            } else if saved.reply?.resumeConsentToken != "property-video-jobs-v1" {
+                throw PropertyVideoProcessorFailure.unknownSavedAuthority
+            }
+            guard let current = try PropertyVideoJobStore.load(context: saved.context, documents: FileStore.documents),
+                  current.request == saved.request, current.stopRequested != true else { throw PropertyVideoProcessorFailure.operationPending }
             work.phase = .generating; work.failure = nil
             work.statusText = "Resuming this saved video. Finished clips will be reused."
             let reply = try await watch.api.resumePropertyVideoJob(saved)
@@ -116,38 +144,68 @@ import AVFoundation
                 work.phase = .failed; work.failure = AIFailure(PropertyVideoStopped(message: reply.message ?? "This saved video still needs attention."), title: "Couldn't resume the saved video")
             } else { work.adoptServerJob(updated); schedule(watch) }
         } catch {
-            guard watch.context.isCurrent else { return }
+            guard watch.context.hasCurrentIdentity else { return }
             work.phase = .failed; work.failure = AIFailure(error, title: "Couldn't resume the saved video")
         }
     }
     func cancel(_ work: ReelWorkJob) async {
-        guard let watch = watches[work.id], let saved = work.serverJob else { return }
+        guard let old = watches[work.id], let watch = try? readWatch(old),
+              let saved = try? PropertyVideoJobStore.load(context: watch.context, documents: FileStore.documents),
+              saved.request == work.serverJob?.request else { return }
         if saved.wasRefusedBeforeAdmission {
             work.phase = .failed; work.statusText = "This operation was closed before video generation. Edit the setup instead."
             return
         }
         do {
             try requireCurrent(watch)
-            guard saved.reply != nil else {
-                // Resolve an uncertain enqueue with its same operation before
-                // cancellation. Never forget work that may already be paid.
-                try await enqueue(saved, work: work, model: watch.model, api: watch.api)
-                return await cancel(work)
+            var stopped = saved
+            stopped.stopRequested = true
+            try PropertyVideoJobStore.save(stopped, documents: FileStore.documents)
+            work.serverJob = stopped
+            if stopped.reply == nil {
+                // GET first; only an explicit abandon resolves an unaccepted
+                // operation. An accepted winner is cancelled below, never replayed.
+                stopped = try await reconcile(stopped, watch: watch, abandon: true)
+                if stopped.abandoned != nil || stopped.wasRefusedBeforeAdmission {
+                    tasks[work.id]?.cancel(); work.phase = .failed
+                    work.statusText = "This saved request was closed before video generation."
+                    work.failure = AIFailure(PropertyVideoStopped(message: work.statusText), title: "Video request closed")
+                    return
+                }
             }
-            let reply = try await watch.api.cancelPropertyVideoJob(saved)
+            let reply = try await watch.api.cancelPropertyVideoJob(stopped)
             try requireCurrent(watch)
-            var updated = saved; updated.reply = reply
+            var updated = stopped; updated.reply = try reply.checked(request: stopped.request, previous: stopped.reply)
             try PropertyVideoJobStore.save(updated, documents: FileStore.documents)
             work.serverJob = updated
-            if reply.state == "ready" { schedule(watch); return }
+            if reply.state == "ready" { try await retainReady(updated, watch: watch); return }
             tasks[work.id]?.cancel(); work.phase = .failed
             work.failure = AIFailure(PropertyVideoStopped(), title: "Video stopped")
             work.statusText = "Future clip requests were stopped. Work already dispatched may still be charged."
         } catch { work.failure = AIFailure(error, title: "Couldn't confirm cancellation") }
     }
+    private func reconcile(_ saved: PropertyVideoSavedJob, watch: Watch, abandon: Bool) async throws -> PropertyVideoSavedJob {
+        var current = saved
+        var lookup = try await watch.api.propertyVideoOperation(current, abandon: false).checked(request: current.request)
+        try requireCurrent(watch)
+        if lookup.job == nil, !lookup.operationClosed, abandon {
+            lookup = try await watch.api.propertyVideoOperation(current, abandon: true).checked(request: current.request)
+            try requireCurrent(watch)
+        }
+        if let job = lookup.job { current.reply = try job.checked(request: current.request, previous: current.reply) }
+        else if let closure = lookup.abandonment { current.abandoned = closure }
+        else if lookup.operationClosed, lookup.closedReason == "capacity_refused" {
+            current.capacityRefusal = .init(operationID: current.request.operationID, listingID: current.request.listingID,
+                selectedLibraryOrgID: current.request.expectedOrgID, status: 402, code: "capacity_refused", operationClosed: true,
+                message: "This saved video was not admitted. Edit the setup or check your plan.", observedAt: Date())
+        } else { throw PropertyVideoProcessorFailure.operationPending }
+        try PropertyVideoJobStore.save(current, documents: FileStore.documents)
+        watch.work.serverJob = current
+        return current
+    }
     private func schedule(_ watch: Watch) {
         guard tasks[watch.work.id] == nil, UIApplication.shared.applicationState == .active else { return }
-        guard watch.work.serverJob?.wasRefusedBeforeAdmission != true else { return }
+        guard watch.work.serverJob?.wasRefusedBeforeAdmission != true, watch.work.serverJob?.abandoned == nil else { return }
         // The first enqueue is owned by work.task. Reopen/resume must not race
         // it with another POST while its acknowledgment is still being retained.
         if watch.work.running && watch.work.serverJob?.reply == nil {
@@ -163,11 +221,9 @@ import AVFoundation
             do {
                 try requireCurrent(watch)
                 guard var saved = try PropertyVideoJobStore.load(context: watch.context, documents: FileStore.documents) else { return }
-                if saved.reply == nil {
-                    let reply = try await watch.api.enqueuePropertyVideo(saved.request, context: saved.context)
-                    try requireCurrent(watch)
-                    saved.reply = reply; try PropertyVideoJobStore.save(saved, documents: FileStore.documents)
-                }
+                if saved.stopRequested == true { await cancel(watch.work); return }
+                if saved.reply == nil { saved = try await reconcile(saved, watch: watch, abandon: false) }
+                guard saved.reply != nil else { throw PropertyVideoProcessorFailure.operationPending }
                 while UIApplication.shared.applicationState == .active {
                     try requireCurrent(watch)
                     let reply = try await watch.api.propertyVideoJob(saved)
@@ -194,7 +250,7 @@ import AVFoundation
                 }
             } catch is CancellationError { return }
             catch let refusal as PropertyVideoCapacityRefusal {
-                guard watch.context.isCurrent,
+                guard watch.context.hasCurrentIdentity,
                       var rejected = try? PropertyVideoJobStore.load(context: watch.context, documents: FileStore.documents),
                       rejected.reply == nil, refusal.provesNoAdmission(for: rejected.request) else { return }
                 rejected.capacityRefusal = refusal
@@ -204,7 +260,7 @@ import AVFoundation
                 watch.work.failure = AIFailure(refusal, title: "Adjust your video setup")
             }
             catch {
-                guard watch.context.isCurrent else { return }
+                guard watch.context.hasCurrentIdentity else { return }
                 // Network loss only pauses local status checks. The server job
                 // continues; Check status/reopen reads the same operation.
                 watch.work.statusText = "Your request is saved. Reopen or check status to reconnect; rendering continues after server acceptance."

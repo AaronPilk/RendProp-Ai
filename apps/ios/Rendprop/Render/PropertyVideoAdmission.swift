@@ -8,13 +8,14 @@ struct PropertyVideoOperationLookup: Decodable, Sendable {
     let selectedLibraryOrgID: UUID
     let operationClosed: Bool
     let job: PropertyVideoJobReply?
+    let closedReason: String?
     enum CodingKeys: String, CodingKey {
         case operationID = "operation_id", listingID = "listing_id"
-        case selectedLibraryOrgID = "selected_library_org_id", operationClosed = "operation_closed", job
+        case selectedLibraryOrgID = "selected_library_org_id", operationClosed = "operation_closed", job, closedReason = "closed_reason"
     }
-    init(operationID: UUID, listingID: UUID, selectedLibraryOrgID: UUID, operationClosed: Bool, job: PropertyVideoJobReply?) {
+    init(operationID: UUID, listingID: UUID, selectedLibraryOrgID: UUID, operationClosed: Bool, job: PropertyVideoJobReply?, closedReason: String? = nil) {
         self.operationID = operationID; self.listingID = listingID; self.selectedLibraryOrgID = selectedLibraryOrgID
-        self.operationClosed = operationClosed; self.job = job
+        self.operationClosed = operationClosed; self.job = job; self.closedReason = closedReason
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -23,6 +24,7 @@ struct PropertyVideoOperationLookup: Decodable, Sendable {
         listingID = try c.decode(UUID.self, forKey: .listingID)
         selectedLibraryOrgID = try c.decode(UUID.self, forKey: .selectedLibraryOrgID)
         operationClosed = try c.decodeIfPresent(Bool.self, forKey: .operationClosed) ?? false
+        closedReason = try c.decodeIfPresent(String.self, forKey: .closedReason)
         job = try c.decodeIfPresent(PropertyVideoJobReply.self, forKey: .job)
     }
 }
@@ -56,5 +58,24 @@ enum PropertyVideoAdmissionResolution {
         return .refused(.init(operationID: request.operationID, listingID: request.listingID,
             selectedLibraryOrgID: request.expectedOrgID, status: status, code: "capacity_refused", operationClosed: true,
             message: message, observedAt: Date()))
+    }
+}
+
+struct PropertyVideoOperationClosure: Codable, Equatable, Sendable {
+    let operationID: UUID; let listingID: UUID; let selectedLibraryOrgID: UUID; let closedReason: String
+    func matches(_ request: PropertyVideoJobRequest) -> Bool {
+        operationID == request.operationID && listingID == request.listingID && selectedLibraryOrgID == request.expectedOrgID && closedReason == "abandoned"
+    }
+}
+extension PropertyVideoOperationLookup {
+    func checked(request: PropertyVideoJobRequest) throws -> Self {
+        guard operationID == request.operationID, listingID == request.listingID, selectedLibraryOrgID == request.expectedOrgID,
+              !operationClosed || job == nil, !operationClosed || ["abandoned", "capacity_refused"].contains(closedReason ?? "") else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+        if let job { _ = try job.checked(request: request) }
+        return self
+    }
+    var abandonment: PropertyVideoOperationClosure? {
+        guard operationClosed, job == nil, closedReason == "abandoned" else { return nil }
+        return .init(operationID: operationID, listingID: listingID, selectedLibraryOrgID: selectedLibraryOrgID, closedReason: "abandoned")
     }
 }

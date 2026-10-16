@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A971FA081CC64C9696047202 /* PropertyVideoProcessorConsent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A971FA081CC64C9696047201 /* PropertyVideoProcessorConsent.swift */; };
 		01F54113FDC488CED897BA47 /* AdoptionLocalBindings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FC81293CC3E71CD2EA10C9B /* AdoptionLocalBindings.swift */; };
 		026910B2B29D3ADC6C240F5C /* WebsiteDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6B2905E2D118E903B5ECB13 /* WebsiteDesign.swift */; };
 		02F19376A9CB330823DBD0A4 /* AdminCohortsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50A3FBBCA2E71A45901C2031 /* AdminCohortsView.swift */; };
@@ -228,6 +229,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A971FA081CC64C9696047201 /* PropertyVideoProcessorConsent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertyVideoProcessorConsent.swift; sourceTree = "<group>"; };
 		018491D467DE946745CF3D0F /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		02954448AB4C0E6C31A1EB68 /* ListingWebsiteVideo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListingWebsiteVideo.swift; sourceTree = "<group>"; };
 		02D51287A22F2AD3561389FF /* NotificationPrefs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPrefs.swift; sourceTree = "<group>"; };
@@ -667,6 +669,7 @@
 				21911CFEA39C15A90BA5A31E /* ListingVideoPreparation.swift */,
 				725F0A325F76324B496B1C9F /* PropertyVideoAdmission.swift */,
 				38D23F02CB887373DA381A69 /* PropertyVideoJob.swift */,
+				A971FA081CC64C9696047201 /* PropertyVideoProcessorConsent.swift */,
 				A0939A116BE1B99CE259E249 /* PropertyVideoJobRunner.swift */,
 				D9A093F8185613CB9555AB83 /* PropertyVideoPlanner.swift */,
 				8C47DEE16BD416E9B71887B8 /* ReelComposer.swift */,
@@ -1166,6 +1169,7 @@
 				A0D7247D6BA5D1243C928816 /* Products.swift in Sources */,
 				04C737605A08C42B4B37DB53 /* PropertyVideoAdmission.swift in Sources */,
 				E419A838255AC2E18172747F /* PropertyVideoJob.swift in Sources */,
+				A971FA081CC64C9696047202 /* PropertyVideoProcessorConsent.swift in Sources */,
 				5F0474CDD5211E4AA26F2035 /* PropertyVideoJobCancellation.swift in Sources */,
 				0668EF9562773CEB658B10FE /* PropertyVideoJobRunner.swift in Sources */,
 				17B79CB918264A33DD4FF9CC /* PropertyVideoJobsAPI.swift in Sources */,
