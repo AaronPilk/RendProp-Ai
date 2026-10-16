@@ -1509,6 +1509,16 @@ enum UserFacingError {
 // the signed-in org). All leads from Settings/Profile; one listing's leads from
 // the detail screen. Lives in this in-target file (new-file rule).
 
+private struct LeadsListMargin: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 17.0, *) {
+            content.contentMargins(.top, 8, for: .scrollContent)
+        } else {
+            content
+        }
+    }
+}
+
 struct LeadsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -1587,6 +1597,7 @@ struct LeadsView: View {
             content
         }
         .listStyle(.insetGrouped)
+        .modifier(LeadsListMargin())
         .scrollContentBackground(.hidden)
         .background(Theme.bg)
         .navigationTitle("Leads")
