@@ -35,10 +35,30 @@ export interface PropertyProvider {
    *  is SKIPPED, never attempted — an unconfigured key must not read as a
    *  failed lookup to the agent. */
   configured(): boolean;
-  /** Cents billed per successful call, for the ledger. Modelled, like every
-   *  other unit price in this codebase — confirm against the first invoice. */
+  /** Configured per-call catalog estimate for the ledger, never a confirmed
+   *  supplier charge. Reconcile against invoice evidence separately. */
   readonly unitCents: number;
-  lookup(address: string): Promise<PropertyFacts | null>;
+  lookup(address: string): Promise<PropertyLookupResponse>;
+}
+
+/** Transport facts are separate from the modeled price and property content. */
+export interface PropertyLookupResponse {
+  facts: PropertyFacts | null;
+  status: number | null;
+  requestId: string | null;
+}
+export class PropertyLookupFailure extends Error {
+  constructor(readonly outcome: "http_error" | "invalid_response" | "transport_unknown", readonly status: number | null, readonly requestId: string | null = null) {
+    super(outcome === "http_error" ? "The property records provider could not answer this lookup." :
+      outcome === "invalid_response" ? "The property records provider returned an unreadable answer." :
+      "The property records lookup outcome could not be confirmed.");
+    this.name = "PropertyLookupFailure";
+  }
+}
+/** Only an opaque UUID from the request-ID header is retained; never a URL,
+ * arbitrary provider text, credential-shaped value or customer payload. */
+export function propertyRequestId(value: string | null): string | null {
+  return value !== null && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value) ? value.toLowerCase() : null;
 }
 
 /** Number, or null. Providers send "", "N/A", and strings-that-are-numbers. */

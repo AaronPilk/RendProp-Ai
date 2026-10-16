@@ -722,29 +722,6 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── STORE ── the mp3 goes to R2; the app gets a short-lived signed GET.
-        // Own prefix so an R2 lifecycle rule can expire voiceovers without
-        // touching listing media.
-        assertVoiceWriteWindow(storage);
-        const key = storage.key;
-        const putUrl = await presignPut({
-          bucket: R2_BUCKET_UPLOADS,
-          key,
-          expiresIn: 300,
-          contentType: OUTPUT_MIME,
-        });
-        const put = await fetch(putUrl, {
-          method: "PUT",
-          headers: { "content-type": OUTPUT_MIME },
-          body: audioBuf,
-          signal: AbortSignal.timeout(120_000),
-        });
-        if (!put.ok) {
-          const detail = await put.text().catch(() => "");
-          throw new HttpError(502, `Storing the voiceover failed (R2 ${put.status}): ${detail.slice(0, 200)}`, "upstream");
-        }
-        const audioUrl = await privateMediaUrl({actor:user.id,org:charge.orgId,listing:body.listing_id??null,bucket:"uploads",key},AUDIO_URL_TTL_SECONDS);
-
         // ── DURATION ── measured, estimated or absent, and always labelled.
         let durationS = 0;
         let durationSource: "alignment" | "bitrate_estimate" | "last_word" | "unknown" = "unknown";
@@ -767,10 +744,10 @@ Deno.serve(async (req) => {
         // unit means, so a 400-character script is 0.4 × 22¢ = 8.8¢ instead of
         // the 0¢ it used to be (see the COST VISIBILITY note in the header).
         //
-        // Best effort and never throws (see _shared/ledger.ts): `audioUrl` is
-        // already in hand and a ledger blip must not destroy a result the caller
-        // has paid for. Reached only on success, so a failure above — which the
-        // catch below refunds — writes no row and nothing is double-counted.
+        // Book the validated supplier response before storage/signing. A later
+        // storage failure may return an app allowance, but cannot undo this
+        // modeled supplier cost or its existing succeeded liability hold.
+        // Best effort and never throws; ledger failure must not destroy audio.
         //
         // `meta` is a durable row every member of the org can read under the
         // org-ledger RLS policy, so it carries only bounded, closed-vocabulary
@@ -787,12 +764,36 @@ Deno.serve(async (req) => {
           meta: {
             request_key: funding.requestKey,
             stage: "voice.tts",
+            cost_basis: "route_catalog_estimate_not_supplier_invoice",
             voice_id: voiceId, // VOICE_ID_RE-validated above: [A-Za-z0-9_-]{1,64}
             characters: text.length,
             duration_s: durationS,
             duration_source: durationSource,
           },
         });
+
+        // ── STORE ── the mp3 goes to R2; the app gets a short-lived signed GET.
+        // Own prefix so an R2 lifecycle rule can expire voiceovers without
+        // touching listing media.
+        assertVoiceWriteWindow(storage);
+        const key = storage.key;
+        const putUrl = await presignPut({
+          bucket: R2_BUCKET_UPLOADS,
+          key,
+          expiresIn: 300,
+          contentType: OUTPUT_MIME,
+        });
+        const put = await fetch(putUrl, {
+          method: "PUT",
+          headers: { "content-type": OUTPUT_MIME },
+          body: audioBuf,
+          signal: AbortSignal.timeout(120_000),
+        });
+        if (!put.ok) {
+          const detail = await put.text().catch(() => "");
+          throw new HttpError(502, `Storing the voiceover failed (R2 ${put.status}): ${detail.slice(0, 200)}`, "upstream");
+        }
+        const audioUrl = await privateMediaUrl({actor:user.id,org:charge.orgId,listing:body.listing_id??null,bucket:"uploads",key},AUDIO_URL_TTL_SECONDS);
 
         // ── PROVENANCE ── AI-generated audio, so the tour must be able to
         // disclose it. `kind` is "other": migration 0012's check constraint
@@ -847,7 +848,9 @@ Deno.serve(async (req) => {
           },
         });
       } catch (err) {
-        // The voiceover did not happen: hand the allowance back (audit F-E-16).
+        // Return the app allowance on an unsuccessful delivery (audit F-E-16).
+        // This does not refund a validated supplier response, its booked
+        // estimate, or the durable liability hold.
         //
         // This catch spans the provenance write too, which is safe ONLY because
         // recordProvenance() is documented and implemented as never-throwing

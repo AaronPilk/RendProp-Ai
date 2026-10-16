@@ -1,7 +1,7 @@
 // Actual POST handler and unchanged private-media signer/authority. Auth,
 // funding, provider, ledger/history and R2 transports are closed doubles: no
 // paid request, customer account, object write or production key is used.
-import { assert, assertEquals, assertRejects } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals, assertRejects, assertMatch } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { HttpError } from "../_shared/http.ts";
 // Supabase configuration is captured at module initialization. Bind only inert
 // fixture values before importing the real funding module, then restore env.
@@ -44,7 +44,7 @@ async function fixture(oldTTL=false,oldCost=false){
       const ELEVENLABS_MODEL_ID=state.model,TARIFF_VERSION="closed-fixture",R2_BUCKET_UPLOADS="closed-uploads",voicesCache=null;
       const handleOptions=()=>new Response(null,{status:204}),requireElevenLabs=()=>{},elevenHeaders=()=>({"xi-api-key":"inert-fixture"});
       const getUser=async()=>({id:${JSON.stringify(actor)},is_anonymous:false});
-      const userClient=()=>({}),adminClient=()=>({rpc:state.rpc,from(table:string){assert(table==="cost_ledger",500,"Unexpected ledger table");return{async insert(row:any){state.ledgers++;state.ledger=row;return{error:null};}};}});
+      const userClient=()=>({}),adminClient=()=>({rpc:state.rpc,from(table:string){assert(table==="cost_ledger",500,"Unexpected ledger table");return{async insert(row:any){state.ledgers++;state.ledger=row;return{error:state.ledgerFailure?{message:"closed ledger unavailable"}:null};}};}});
       const listingSpaceType=async()=>"real_estate",voiceNameFor=async()=>"Synthetic Voice";
       const orgForUser=async()=>${JSON.stringify(org)},preferredOrg=()=>${JSON.stringify(org)},durableRateLimit=async()=>true,fetchVoices=async()=>[];
       const guardTTS=async()=>{state.charges++;return{orgId:${JSON.stringify(org)},plan:"team"};};
@@ -60,7 +60,7 @@ async function fixture(oldTTL=false,oldCost=false){
           return Response.json({audio_base64:btoa("SYNTHETIC-MP3-BYTES"),alignment:{characters:["H","e","l","l","o"],character_start_times_seconds:[0,.1,.2,.3,.4],character_end_times_seconds:[.1,.2,.3,.4,.5]}});
         }
         assert(url==="https://closed-storage.invalid/voice.mp3"&&init.method==="PUT",500,"Unexpected network boundary");
-        state.puts++;state.bytes=new Uint8Array(init.body);return new Response(null,{status:200});
+        state.puts++;state.bytes=new Uint8Array(init.body);return new Response(null,{status:state.storageFailure?503:200});
       };
       const recordProvenance=async()=>({id:${JSON.stringify(result)},recorded:true,disclosure:"AI generated narration"});
       const saveSharedVoice=async(_a:any,_b:any,row:any)=>{state.saved=row;return ${JSON.stringify(result)};};
@@ -68,12 +68,12 @@ async function fixture(oldTTL=false,oldCost=false){
     }
   `));
   const state={charges:0,refunds:0,fundedAttempts:0,providerCalls:0,puts:0,ledgers:0,bytes:new Uint8Array(),saved:null as any,
-    model:"eleven_multilingual_v2",unit:"1k_chars",unitCents:22,budget:100,quote:null as any,ledger:null as any,holds:[] as number[],rpc:null as any};
+    model:"eleven_multilingual_v2",unit:"1k_chars",unitCents:22,budget:100,storageFailure:false,ledgerFailure:false,quote:null as any,ledger:null as any,holds:[] as number[],finishes:[] as string[],rpc:null as any};
   state.rpc=async(name:string,args:any)=>{
     if(name==="serving_mode")return{data:"funded",error:null};
     if(name==="org_has_internal_testing_grant"||name==="org_has_private_internal_testing")return{data:false,error:null};
     if(name==="serving_cost_reserve"){state.holds.push(args.p_hold_cents);return args.p_hold_cents>state.budget?{data:null,error:{message:"RP402: This attempt exceeds the shared funded serving allowance"}}:{data:{reserved:true},error:null};}
-    if(name==="serving_cost_finish")return{data:{finished:true},error:null};
+    if(name==="serving_cost_finish"){state.finishes.push(args.p_state);return{data:{finished:true},error:null};}
     if(name==="serving_operation_no_dispatch")return{data:{aborted:true},error:null};
     throw Error("Unexpected funding RPC "+name);
   };
@@ -148,4 +148,21 @@ Deno.test("voice pricing keeps unknown models and invalid catalog units or price
 Deno.test("compiled old 0.008 hold wrongly admits the same insufficient budget and underreserves the actual ledger",()=>setup(async()=>{
   const f=await fixture(false,true);f.state.budget=1;assertEquals((await f.run("x".repeat(63))).status,200);
   assertEquals(f.state.providerCalls,1);assertEquals(f.state.ledger.total_cents,1.386);assert(f.state.holds[0]<f.state.ledger.total_cents);
+}));
+
+Deno.test("validated voice is booked once before a downstream storage refusal; quota refund is not supplier refund",()=>setup(async()=>{
+  const f=await fixture();f.state.storageFailure=true;const response=await f.run("x".repeat(63));
+  assertEquals(response.status,502);const body=await response.json();assertMatch(body.error,/Storing the voiceover failed/);
+  assertEquals([f.state.providerCalls,f.state.puts,f.state.ledgers,f.state.refunds],[1,1,1,1]);
+  assertEquals(f.state.finishes,["succeeded"],"Validated supplier response retains its succeeded hold despite later storage failure");
+  assertEquals(f.state.ledger.total_cents,1.386,"Only the existing63characters/1000 ×22c catalog estimate is booked");
+  assertEquals(f.state.ledger.meta.cost_basis,"route_catalog_estimate_not_supplier_invoice");
+  assertEquals(f.state.ledger.meta.stage,"voice.tts");assertEquals(f.state.ledger.meta.request_key,"synthetic-voice-request");
+  assertEquals(f.state.saved,null);assertEquals(body.audio_url,undefined);
+}));
+
+Deno.test("voice ledger outage cannot destroy or regenerate validated audio or release its succeeded hold",()=>setup(async()=>{
+  const f=await fixture();f.state.ledgerFailure=true;const response=await f.run();assertEquals(response.status,200);
+  assertEquals([f.state.providerCalls,f.state.puts,f.state.ledgers,f.state.refunds],[1,1,1,0]);
+  assertEquals(f.state.finishes,["succeeded"]);assertEquals((await response.json()).shared_result_id,result);
 }));
