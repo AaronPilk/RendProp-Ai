@@ -21,4 +21,25 @@ struct ShareSheet: View {
     var body: some View { EmptyView() }
 }
 
+// Compile-only dependencies for the coordinator sheet. Renderer checks do not
+// render or tap this UI; the normal app build verifies the real design system.
+enum Theme {
+    static let spacing: CGFloat = 16
+    static let accent = Color.purple
+    static let accentSoft = Color.clear
+    static let ink = Color.primary
+    static let inkDim = Color.secondary
+    static let bg = Color.clear
+    static let bad = Color.red
+}
+struct PrimaryButton: View {
+    let title: String
+    var systemImage: String? = nil
+    var isDisabled = false
+    var isCompact = false
+    let action: () -> Void
+    var body: some View { EmptyView() }
+}
+extension View { func card() -> some View { self } }
+
 extension Notification.Name { static let rendpropWorkspaceChanged = Notification.Name("testWorkspaceChanged") }
