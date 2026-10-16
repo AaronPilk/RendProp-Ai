@@ -533,135 +533,11 @@ struct PhotoExportSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            Group {
                 if coordinatorPackage {
-                    Section("One organized listing ZIP") {
-                        Text("Originals · Decluttered · Staged · MLS · Zillow · Instagram · Videos")
-                            .font(.headline).accessibilityIdentifier("export.coordinatorFolders")
-                        Text("Every eligible saved photo version stays separate. Full saved masters and retained sources keep their stored bytes. Delivery aspect presets use centered crops: MLS/Zillow folders 4:3, Instagram feed 4:5, stories 9:16. These are presets, not platform rules. Pending staging has no platform copies.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text("The README and matching text files name each edit, disclose cropping and report actual pixel dimensions. Low-resolution sources are flagged. Check the photos and your platform's rules before publishing.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        ForEach(packageNotes, id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
-                        if !extras.isEmpty { Text(extras.map(\.name).joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("export.packageExtras") }
-                    }
+                    coordinatorPackageContent
                 } else {
-                Section {
-                    if let preview {
-                        Image(uiImage: preview).resizable().scaledToFit().frame(maxHeight: 240)
-                            .frame(maxWidth: .infinity).accessibilityLabel("Export preview of the first photo")
-                    }
-                    Text(wholeListing
-                         ? "Export the whole listing — \(photos.count) photo\(photos.count == 1 ? "" : "s") and \(extras.count) more file\(extras.count == 1 ? "" : "s")"
-                         : (photos.count == 1 ? "Export this photo" : "Export \(photos.count) photos"))
-                        .font(.headline)
-                    if wholeListing {
-                        Text(extras.map(\.name).joined(separator: " · "))
-                            .font(.caption).foregroundStyle(.secondary)
-                            .accessibilityIdentifier("export.packageExtras")
-                    }
-                    if !original, versions.contains(where: { $0?.needsCustomReview == true }) {
-                        Text("A selected custom edit still needs comparison. Open Photo versions, compare it with its source and complete the checks before downloading the edited copy. You can still export its earlier source.")
-                            .font(.caption).foregroundStyle(.orange)
-                    }
-                    Picker("Destination", selection: $destination) {
-                        ForEach(PhotoExportRenderer.Destination.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    Picker("Version", selection: $original) {
-                        Text("Selected photos · JPEG copies").tag(false)
-                        if hasSources { Text(verifiedOriginals ? "Retained originals" : "Earlier source files").tag(true) }
-                    }
-                } footer: {
-                    Text(original
-                         ? (verifiedOriginals ? "The files retained before Rendprop's enhancement. No crop or label is added. Imports may already contain edits made elsewhere."
-                            : "Older files have no complete edit history. These earlier sources may already contain AI edits; verify them before publishing.")
-                         : "Selected photos download as JPEG (.jpg) copies at full available resolution. AI output resolution may be lower than your capture. Stored photos and originals are never changed.")
-                }
-                if !original {
-                    Section("Framing") {
-                        LabeledContent(photos.count == 1 ? "Level" : "Level all selected photos",
-                                       value: String(format: "%+.1f°", levelDegrees))
-                        Slider(value: $levelDegrees, in: -5...5, step: 0.1) { Text("Level adjustment") }
-                            .accessibilityValue(String(format: "%+.1f degrees", levelDegrees))
-                        if levelDegrees != 0 { Button("Reset level") { levelDegrees = 0 } }
-                        Text("Manual rotation trims the edges of the JPEG copy. It does not correct perspective, widen the view or recover parts of the room outside the photo. Originals stay unchanged.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Picker("Aspect ratio", selection: $aspect) {
-                            ForEach(PhotoExportLayout.Aspect.allCases) { Text($0.title).tag($0) }
-                        }
-                        if aspect != .original {
-                            Picker("Frame", selection: $framing) {
-                                ForEach(PhotoExportLayout.Framing.allCases) { Text($0.rawValue).tag($0) }
-                            }
-                            Text(framing == .fit ? "Keeps the entire photo and adds white borders."
-                                 : "Center crop trims the edges. Check the preview before sharing.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    Section("Disclosure") {
-                        if destination == .mls {
-                            Text("Clean, unbranded photos with matching disclosure text files. Add those captions in your MLS; requirements differ between MLSs.")
-                        } else {
-                            Toggle("Show edit label on photo", isOn: $includeLabel)
-                            Text("Matching disclosure text files are included. On-photo labels describe recorded edits, including virtual staging and decluttering.")
-                        }
-                        if versions.contains(where: { $0?.originalVerified == true }) {
-                            Toggle("Include retained originals and every saved version", isOn: $includeOriginals)
-                            Text("Verified retained originals and every saved version keep their exact bytes and original format, which may be HEIC or PNG. The current JPEG delivery copy is included too. Unreviewed custom edits are withheld. Turn this off for current JPEG copies only. Imported sources may contain edits made before Rendprop.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Button("Copy disclosure captions") {
-                            guard currentContext else { error = "Your account or workspace changed. Reopen the photo to export it."; return }
-                            UIPasteboard.general.string = photos.enumerated().map { offset, photo in
-                                "Photo \(offset + 1): " + (photo.savedVersion?.caption ?? "Edit history is unavailable. Verify edits and the unaltered source before publishing.")
-                            }.joined(separator: "\n\n")
-                        }
-                        if versions.contains(where: { $0 == nil || $0?.sourceHistoryKnown == false }) {
-                            Text("Some older photos have unverified edit history. Check their sources and add accurate disclosures before publishing.")
-                                .foregroundStyle(.orange)
-                        }
-                        Text("Your MLS or advertising platform may require additional wording, original photos or separate disclosures. Check its rules before uploading.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                if canArchive {
-                    Section("Deliver as") {
-                        Picker("Deliver as", selection: $asArchive) {
-                            Text("One ZIP file").tag(true)
-                            Text("Separate files").tag(false)
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("export.deliverAs")
-                        Text(asArchive
-                             ? (wholeListing
-                                ? "One ZIP with eligible photo versions, videos and listing details saved on this iPhone, plus disclosure notes and a README. Cloud-only files are not included. It opens on any Mac, PC or phone."
-                                : "One ZIP with eligible saved photo versions, their disclosure notes and a README. Unreviewed custom edits are withheld. It opens on any Mac, PC or phone.")
-                             : (wholeListing
-                                ? "Eligible photos, retained sources, disclosure notes, videos and listing details saved on this iPhone are shared as separate files. Cloud-only files are not included. Better for AirDrop to another iPhone."
-                                : "Each photo, original, other version and disclosure note is shared as its own file. Better for AirDrop to another iPhone."))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                }
-                Section {
-                    Button { start(saveToPhotos: false) } label: {
-                        Label(coordinatorPackage || asArchive && canArchive ? "Share one ZIP file" : (wholeListing ? "Share all files · Save to Files" : (original ? "Share or save source files" : "Download JPEGs · Share or save to Files")),
-                              systemImage: "square.and.arrow.up")
-                    }
-                    .accessibilityIdentifier("export.share")
-                    if !coordinatorPackage && !photos.isEmpty {
-                        Button { start(saveToPhotos: true) } label: { Label("Save to Photos", systemImage: "square.and.arrow.down") }
-                    }
-                    Text(coordinatorPackage ? "Send this ZIP to your coordinator, office or client. Stored listing files stay unchanged." : asArchive && canArchive
-                         ? "The ZIP keeps the .jpg files and matching disclosure captions together for MLS uploads. Saving to Photos adds the images to your camera roll instead."
-                         : "For MLS uploads, choose Share or save to Files to keep the .jpg files and matching disclosure captions. Saving to Photos adds images to your camera roll.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if working { ProgressView(wholeListing ? "Preparing listing package…" : "Preparing photos…") }
-                    if saved {
-                        Label("Saved to Photos", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                        if !original { Text("Copy the disclosure captions above when you upload. Photos does not carry the text files into your listing.").font(.caption) }
-                    }
-                    if let error { Text(error).foregroundStyle(.red).font(.footnote) }
+                    photoExportForm
                 }
             }
             .disabled(working)
@@ -690,6 +566,243 @@ struct PhotoExportSheet: View {
                 preview = nil
             }
         }
+    }
+
+    private var photoExportForm: some View {
+        Form {
+            Section {
+                if let preview {
+                    Image(uiImage: preview).resizable().scaledToFit().frame(maxHeight: 240)
+                        .frame(maxWidth: .infinity).accessibilityLabel("Export preview of the first photo")
+                }
+                Text(wholeListing
+                     ? "Export the whole listing — \(photos.count) photo\(photos.count == 1 ? "" : "s") and \(extras.count) more file\(extras.count == 1 ? "" : "s")"
+                     : (photos.count == 1 ? "Export this photo" : "Export \(photos.count) photos"))
+                    .font(.headline)
+                if wholeListing {
+                    Text(extras.map(\.name).joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("export.packageExtras")
+                }
+                if !original, versions.contains(where: { $0?.needsCustomReview == true }) {
+                    Text("A selected custom edit still needs comparison. Open Photo versions, compare it with its source and complete the checks before downloading the edited copy. You can still export its earlier source.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                Picker("Destination", selection: $destination) {
+                    ForEach(PhotoExportRenderer.Destination.allCases) { Text($0.rawValue).tag($0) }
+                }
+                Picker("Version", selection: $original) {
+                    Text("Selected photos · JPEG copies").tag(false)
+                    if hasSources { Text(verifiedOriginals ? "Retained originals" : "Earlier source files").tag(true) }
+                }
+            } footer: {
+                Text(original
+                     ? (verifiedOriginals ? "The files retained before Rendprop's enhancement. No crop or label is added. Imports may already contain edits made elsewhere."
+                        : "Older files have no complete edit history. These earlier sources may already contain AI edits; verify them before publishing.")
+                     : "Selected photos download as JPEG (.jpg) copies at full available resolution. AI output resolution may be lower than your capture. Stored photos and originals are never changed.")
+            }
+            if !original {
+                Section("Framing") {
+                    LabeledContent(photos.count == 1 ? "Level" : "Level all selected photos",
+                                   value: String(format: "%+.1f°", levelDegrees))
+                    Slider(value: $levelDegrees, in: -5...5, step: 0.1) { Text("Level adjustment") }
+                        .accessibilityValue(String(format: "%+.1f degrees", levelDegrees))
+                    if levelDegrees != 0 { Button("Reset level") { levelDegrees = 0 } }
+                    Text("Manual rotation trims the edges of the JPEG copy. It does not correct perspective, widen the view or recover parts of the room outside the photo. Originals stay unchanged.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Picker("Aspect ratio", selection: $aspect) {
+                        ForEach(PhotoExportLayout.Aspect.allCases) { Text($0.title).tag($0) }
+                    }
+                    if aspect != .original {
+                        Picker("Frame", selection: $framing) {
+                            ForEach(PhotoExportLayout.Framing.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        Text(framing == .fit ? "Keeps the entire photo and adds white borders."
+                             : "Center crop trims the edges. Check the preview before sharing.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Section("Disclosure") {
+                    if destination == .mls {
+                        Text("Clean, unbranded photos with matching disclosure text files. Add those captions in your MLS; requirements differ between MLSs.")
+                    } else {
+                        Toggle("Show edit label on photo", isOn: $includeLabel)
+                        Text("Matching disclosure text files are included. On-photo labels describe recorded edits, including virtual staging and decluttering.")
+                    }
+                    if versions.contains(where: { $0?.originalVerified == true }) {
+                        Toggle("Include retained originals and every saved version", isOn: $includeOriginals)
+                        Text("Verified retained originals and every saved version keep their exact bytes and original format, which may be HEIC or PNG. The current JPEG delivery copy is included too. Unreviewed custom edits are withheld. Turn this off for current JPEG copies only. Imported sources may contain edits made before Rendprop.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Button("Copy disclosure captions") {
+                        guard currentContext else { error = "Your account or workspace changed. Reopen the photo to export it."; return }
+                        UIPasteboard.general.string = photos.enumerated().map { offset, photo in
+                            "Photo \(offset + 1): " + (photo.savedVersion?.caption ?? "Edit history is unavailable. Verify edits and the unaltered source before publishing.")
+                        }.joined(separator: "\n\n")
+                    }
+                    if versions.contains(where: { $0 == nil || $0?.sourceHistoryKnown == false }) {
+                        Text("Some older photos have unverified edit history. Check their sources and add accurate disclosures before publishing.")
+                            .foregroundStyle(.orange)
+                    }
+                    Text("Your MLS or advertising platform may require additional wording, original photos or separate disclosures. Check its rules before uploading.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if canArchive {
+                Section("Deliver as") {
+                    Picker("Deliver as", selection: $asArchive) {
+                        Text("One ZIP file").tag(true)
+                        Text("Separate files").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("export.deliverAs")
+                    Text(asArchive
+                         ? (wholeListing
+                            ? "One ZIP with eligible photo versions, videos and listing details saved on this iPhone, plus disclosure notes and a README. Cloud-only files are not included. It opens on any Mac, PC or phone."
+                            : "One ZIP with eligible saved photo versions, their disclosure notes and a README. Unreviewed custom edits are withheld. It opens on any Mac, PC or phone.")
+                         : (wholeListing
+                            ? "Eligible photos, retained sources, disclosure notes, videos and listing details saved on this iPhone are shared as separate files. Cloud-only files are not included. Better for AirDrop to another iPhone."
+                            : "Each photo, original, other version and disclosure note is shared as its own file. Better for AirDrop to another iPhone."))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            Section {
+                Button { start(saveToPhotos: false) } label: {
+                    Label(coordinatorPackage || asArchive && canArchive ? "Share one ZIP file" : (wholeListing ? "Share all files · Save to Files" : (original ? "Share or save source files" : "Download JPEGs · Share or save to Files")),
+                          systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("export.share")
+                if !coordinatorPackage && !photos.isEmpty {
+                    Button { start(saveToPhotos: true) } label: { Label("Save to Photos", systemImage: "square.and.arrow.down") }
+                }
+                Text(coordinatorPackage ? "Send this ZIP to your coordinator, office or client. Stored listing files stay unchanged." : asArchive && canArchive
+                     ? "The ZIP keeps the .jpg files and matching disclosure captions together for MLS uploads. Saving to Photos adds the images to your camera roll instead."
+                     : "For MLS uploads, choose Share or save to Files to keep the .jpg files and matching disclosure captions. Saving to Photos adds images to your camera roll.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if working { ProgressView(wholeListing ? "Preparing listing package…" : "Preparing photos…") }
+                if saved {
+                    Label("Saved to Photos", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    if !original { Text("Copy the disclosure captions above when you upload. Photos does not carry the text files into your listing.").font(.caption) }
+                }
+                if let error { Text(error).foregroundStyle(.red).font(.footnote) }
+            }
+        }
+    }
+
+    private var coordinatorPackageContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.spacing) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "shippingbox.fill")
+                        .font(.title2)
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 44, height: 44)
+                        .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Listing package").font(.headline).foregroundStyle(Theme.ink)
+                        if !archiveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                           archiveName != "Rendprop" {
+                            Text(archiveName).font(.subheadline).foregroundStyle(Theme.inkDim)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text("One organized ZIP of files saved on this iPhone.")
+                            .font(.footnote).foregroundStyle(Theme.inkDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card()
+
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("What's included").font(.headline).foregroundStyle(Theme.ink)
+                        .accessibilityIdentifier("export.coordinatorFolders")
+                    if !photos.isEmpty {
+                        coordinatorMaterial("Photos & saved versions", "Originals and eligible saved edits", icon: "photo.stack")
+                        coordinatorMaterial("Listing & social copies", "MLS, Zillow and Instagram presets", icon: "rectangle.on.rectangle")
+                    }
+                    if !extras.isEmpty {
+                        coordinatorMaterial("Saved listing files", "\(extras.count) additional file\(extras.count == 1 ? "" : "s")", icon: "folder")
+                    }
+                    coordinatorMaterial("Disclosure notes", "README and recorded edit information", icon: "doc.text")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card()
+
+                Text("Originals stay unchanged. Delivery copies crop edges; review edits before publishing.")
+                .font(.footnote).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Every eligible saved photo version stays separate. Full saved masters and retained sources keep their stored bytes. Delivery aspect presets use centered crops: MLS/Zillow folders 4:3, Instagram feed 4:5, stories 9:16. These are presets, not platform rules. Pending staging has no platform copies.")
+                        Text("The README and matching text files name each edit, disclose cropping and report actual pixel dimensions. Low-resolution sources are flagged. Check the photos and your platform's rules before publishing.")
+                        Text("Pending staging is preview-only, with no listing or social copies. Unreviewed custom edits are withheld.")
+                    }
+                    .font(.footnote).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+                } label: {
+                    Text("Formats & disclosures").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                }
+                .tint(Theme.accent)
+                .accessibilityIdentifier("export.formatsDetails")
+                .card()
+
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if !extras.isEmpty {
+                            Text(extras.map(\.name).joined(separator: "\n"))
+                                .textSelection(.enabled)
+                                .accessibilityIdentifier("export.packageExtras")
+                        }
+                        ForEach(packageNotes, id: \.self) { Text($0).textSelection(.enabled) }
+                    }
+                    .font(.footnote).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+                } label: {
+                    Text("Files & review notes").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                }
+                .tint(Theme.accent)
+                .accessibilityIdentifier("export.fileDetails")
+                .card()
+            }
+            .padding(Theme.spacing)
+        }
+        .background(Theme.bg)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 8) {
+                if let error {
+                    Text(error).font(.footnote).foregroundStyle(Theme.bad)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if working { ProgressView("Preparing listing package…").font(.footnote) }
+                PrimaryButton(title: "Share ZIP", systemImage: "square.and.arrow.up", isDisabled: working, isCompact: true) {
+                    start(saveToPhotos: false)
+                }
+                .accessibilityIdentifier("export.share")
+            }
+            .padding(.horizontal, Theme.spacing).padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(Theme.bg)
+            .overlay(alignment: .top) { Divider() }
+        }
+    }
+
+    private func coordinatorMaterial(_ title: String, _ detail: String, icon: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon).foregroundStyle(Theme.accent)
+                .frame(width: 24).frame(minHeight: 24)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                Text(detail).font(.footnote).foregroundStyle(Theme.inkDim)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     @MainActor private func updatePreview() async {

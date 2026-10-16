@@ -48,6 +48,15 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         assertTiles(sample: false, hasCapture: false)
         let share = app.buttons["detail.sharePackage"]; scrollTo(share)
         XCTAssertFalse(share.isEnabled, "An empty listing has nothing to package")
+        attach("detail-empty-balanced-toolbox")
+        let tags = app.buttons["detail.roomTags"]
+        scrollTo(tags); tags.tap()
+        let help = app.alerts["Add a walkthrough first"]
+        XCTAssertTrue(help.waitForExistence(timeout: 5), app.debugDescription)
+        let prerequisite = help.staticTexts.matching(NSPredicate(format: "label == %@",
+            "Record or upload a drone-style walkthrough before tagging rooms or areas. Tags follow that video's timeline. A photo-based listing video or sample tour doesn't add walkthrough footage.")).firstMatch
+        XCTAssertTrue(prerequisite.exists, help.debugDescription)
+        help.buttons["Cancel"].tap() // Inspect the prerequisite only; never open capture/upload.
         XCTAssertFalse(element("detail.rerenderTour").exists)
         XCTAssertFalse(element("detail.rerenderUnavailable").exists)
         openLink("detail.photos", title: "Photos")
@@ -80,9 +89,19 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         let rerender = app.buttons["detail.rerenderTour"]
         scrollTo(rerender)
         XCTAssertTrue(rerender.isEnabled)
-        XCTAssertEqual(rerender.frame.minY, aerial.frame.minY, accuracy: 2,
-            "Aerial intro must sit beside Re-render fly-through")
-        XCTAssertLessThan(rerender.frame.minX, aerial.frame.minX)
+#if SPATIAL_CAPTURE_LAB
+        let lastMainTool = app.buttons["detail.spatialLab"]
+#else
+        let lastMainTool = element("detail.spatialComingSoon")
+#endif
+        XCTAssertTrue(lastMainTool.exists && lastMainTool.frame.height > 0, app.debugDescription)
+        XCTAssertGreaterThanOrEqual(rerender.frame.minY, lastMainTool.frame.maxY,
+            "Re-render follows the balanced main toolbox rows")
+        let share = app.buttons["detail.sharePackage"]
+        scrollTo(share)
+        XCTAssertEqual(rerender.frame.width, share.frame.width, accuracy: 2,
+            "Walkthrough re-render and sharing use full-width rows")
+        XCTAssertGreaterThan(share.frame.minY, rerender.frame.maxY, "Sharing remains the last toolbox action")
         XCTAssertFalse(element("detail.rerenderUnavailable").exists)
         attach("detail-rich-toolbox")
 
@@ -105,10 +124,11 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         scrollTo(firstPhoto)
         XCTAssertTrue(firstPhoto.exists, "Reel must receive the detail listing's local photos")
         // The presenting detail remains in the accessibility tree behind the
-        // cover and has the same title. Match the actual Reel clips control,
+        // cover and has the same title. Match the actual video clips control,
         // whose existing subtitle distinguishes it from the toolbox tile.
+        openVideoOptions()
         let aerialClips = app.buttons.matching(NSPredicate(format:
-            "label CONTAINS %@ AND label CONTAINS %@", "Aerial intro", "Opens the reel"))
+            "label CONTAINS %@ AND label CONTAINS %@", "Aerial intro", "Opens the video"))
         XCTAssertEqual(aerialClips.count, 1, "Reel must receive exactly one local aerial clip")
         let reelAerial = aerialClips.firstMatch
         scrollTo(reelAerial)
@@ -124,15 +144,36 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         let video = app.buttons["detail.reelStudio"]
         scrollTo(video); video.tap()
         XCTAssertTrue(app.navigationBars["Make a video"].waitForExistence(timeout: 15), app.debugDescription)
-        let choice = app.buttons["video.purpose.\(purpose)"]
+        let title: String
+        switch purpose {
+        case "social_media": title = "Social media"
+        case "listing": title = "Listing"
+        default: XCTFail("Unsupported video purpose: \(purpose)"); return
+        }
+        // SwiftUI inherits the chooser identifier into its cards. Match the
+        // visible purpose and still require one card and the configured screen.
+        let choices = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title + ","))
+        let choice = choices.firstMatch
         XCTAssertTrue(choice.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(choices.count, 1, app.debugDescription)
         scrollTo(choice); XCTAssertTrue(choice.isHittable); choice.tap()
         XCTAssertFalse(element("video.purposeChooser").exists)
+        XCTAssertTrue(element("video.deliveryFormat").exists, app.debugDescription)
+    }
+
+    private func openVideoOptions() {
+        let optional = app.staticTexts["Optional · voice, music and style"]
+        scrollTo(optional); XCTAssertTrue(optional.isHittable); optional.tap()
+        let automatic = app.buttons.matching(NSPredicate(format:
+            "label BEGINSWITH %@", "Automatic · choose for each photo")).firstMatch
+        XCTAssertTrue(automatic.waitForExistence(timeout: 5), app.debugDescription)
+        scrollTo(automatic)
+        XCTAssertTrue(automatic.isEnabled && automatic.isHittable, app.debugDescription)
     }
 
     func testMissingSourceIsAPlainUnavailableCardEvenWithLocalTour() {
         launch("missing-source")
-        assertTiles(sample: false, hasCapture: true) // Existing room-tag gate is asset presence.
+        assertTiles(sample: false, hasCapture: true) // The missing raw file must not unlock a timeline.
         let unavailable = element("detail.rerenderUnavailable")
         scrollTo(unavailable)
         XCTAssertTrue(unavailable.exists)
@@ -147,7 +188,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         scrollTo(element("detail.rerenderUnavailable"))
         XCTAssertTrue(element("detail.rerenderUnavailable").exists)
         XCTAssertFalse(element("detail.rerenderTour").exists)
-        XCTAssertFalse(app.buttons["detail.roomTags"].isEnabled)
+        XCTAssertTrue(app.buttons["detail.roomTags"].isEnabled, "A missing walkthrough explains its prerequisite on tap")
         openLink("listing.clientContact", title: "Listing contact")
         back(from: "Listing contact")
     }
@@ -167,8 +208,13 @@ final class DetailMetadataRegressionUITests: XCTestCase {
     func testReelCameraPresetsAndPhotoZIPDeliveryChoice() {
         launch("rich")
         openVideo(purpose: "social_media")
-        for move in ["fly_through", "push_in", "side_glide", "pull_back"] {
-            let button = app.buttons["reel.motion.\(move)"]; scrollTo(button)
+        openVideoOptions()
+        for title in ["Fly-through", "Slow push-in", "Side glide", "Pull-back"] {
+            // The enclosing Optional group overrides child accessibility IDs.
+            let buttons = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title))
+            let button = buttons.firstMatch
+            scrollTo(button)
+            XCTAssertEqual(buttons.count, 1, app.debugDescription)
             XCTAssertTrue(button.exists && button.isEnabled, app.debugDescription)
             button.tap(); XCTAssertTrue(button.isSelected)
         }
@@ -196,37 +242,42 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         let share = app.buttons["detail.sharePackage"]
         scrollTo(share)
         XCTAssertTrue(share.isEnabled, app.debugDescription)
+        attach("detail-rich-balanced-toolbox")
         share.tap()
         XCTAssertTrue(app.navigationBars["Share everything"].waitForExistence(timeout: 15), app.debugDescription)
-        let extras = app.staticTexts["export.packageExtras"]
-        revealActive(extras)
+        let primary = app.buttons["export.share"]
+        XCTAssertEqual(app.buttons.matching(identifier: "export.share").count, 1)
+        XCTAssertEqual(primary.label, "Share ZIP")
+        XCTAssertTrue(primary.isEnabled && primary.isHittable, app.debugDescription)
+        XCTAssertGreaterThanOrEqual(primary.frame.height, 44)
+        attach("listing-package-overview")
+
+        let files = app.staticTexts["Files & review notes"]
+        revealCoordinatorContent(files); files.tap()
+        // SwiftUI inherits the disclosure identifier into its children; locate
+        // the material by its exact expected names, not the overridden child ID.
+        let extras = app.staticTexts.matching(NSPredicate(format:
+            "label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@",
+            "walkthrough-tour.mp4", "listing-details.txt", "aerial-intro.mp4")).firstMatch
+        XCTAssertTrue(extras.waitForExistence(timeout: 5), app.debugDescription)
+        revealCoordinatorContent(extras)
         XCTAssertTrue(extras.label.contains("walkthrough-tour.mp4"), extras.label)
         XCTAssertTrue(extras.label.contains("listing-details.txt"), extras.label)
         XCTAssertTrue(extras.label.contains("aerial-intro.mp4"), extras.label)
-        let allVersions = app.switches["Include retained originals and every saved version"]
-        revealActive(allVersions)
-        XCTAssertTrue(allVersions.exists, "A reviewed staged photo must offer its retained original and complete version history")
-        XCTAssertEqual(allVersions.value as? String, "1", "Whole-listing export must include saved versions by default")
-        // SwiftUI exposes the labeled row and its UISwitch as nested Switch
-        // elements. The row center is the text label; tap the actual control.
-        let versionControl = allVersions.switches.firstMatch
-        XCTAssertTrue(versionControl.exists && versionControl.isHittable, app.debugDescription)
-        versionControl.tap()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", "0"), object: allVersions)], timeout: 5), .completed)
-        versionControl.tap()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", "1"), object: allVersions)], timeout: 5), .completed)
-        let delivery = app.segmentedControls["export.deliverAs"]
-        revealActive(delivery)
-        XCTAssertEqual(delivery.buttons.count, 2)
-        XCTAssertTrue(delivery.buttons["One ZIP file"].isSelected, app.debugDescription)
-        delivery.buttons["Separate files"].tap()
-        XCTAssertTrue(delivery.buttons["Separate files"].isSelected)
-        delivery.buttons["One ZIP file"].tap()
-        revealActive(app.buttons["export.share"])
-        XCTAssertTrue(app.buttons["export.share"].isEnabled, app.debugDescription)
-        attach("build60-whole-listing-default-zip")
+        attach("listing-package-files")
+        revealCoordinatorContent(files); files.tap()
+
+        let formats = app.staticTexts["Formats & disclosures"]
+        revealCoordinatorContent(formats); formats.tap()
+        let masters = app.staticTexts.matching(NSPredicate(format:
+            "label CONTAINS %@", "Full saved masters and retained sources keep their stored bytes.")).firstMatch
+        XCTAssertTrue(masters.waitForExistence(timeout: 5), app.debugDescription)
+        let pending = app.staticTexts["Pending staging is preview-only, with no listing or social copies. Unreviewed custom edits are withheld."]
+        XCTAssertTrue(pending.waitForExistence(timeout: 5), app.debugDescription)
+        revealCoordinatorContent(pending)
+        attach("listing-package-disclosures")
+        XCTAssertTrue(primary.isEnabled && primary.isHittable, "The single share action remains reachable while details are open")
+        // Inspect only: package rendering and the system share action are not invoked.
     }
 
     func testRepublishSameLinkAndRecentlyDeletedNavigation() {
@@ -273,7 +324,8 @@ final class DetailMetadataRegressionUITests: XCTestCase {
             let tile = app.buttons[id]
             scrollTo(tile)
             XCTAssertTrue(tile.exists, "Missing \(id): \(app.debugDescription)")
-            XCTAssertEqual(tile.isEnabled, !sample && (id != "detail.roomTags" || hasCapture), id)
+            // Missing walkthroughs explain their prerequisite on tap; samples stay disabled.
+            XCTAssertEqual(tile.isEnabled, !sample, id)
         }
         // Coming soon cards are present in every state, sample or not, and are
         // never buttons — the same oracle Home's showroom test applies.
@@ -380,6 +432,28 @@ final class DetailMetadataRegressionUITests: XCTestCase {
 
     private func element(_ id: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
+    }
+
+    /// The coordinator sheet has a fixed footer; scroll only its content.
+    private func revealCoordinatorContent(_ target: XCUIElement) {
+        let primary = app.buttons["export.share"]
+        for _ in 0..<24 {
+            let top = app.navigationBars["Share everything"].frame.maxY + 12
+            let bottom = primary.frame.minY - 12
+            let span = bottom - top
+            guard span >= 100, top > 0, bottom < app.frame.maxY else {
+                XCTFail("No usable coordinator content viewport: \(app.debugDescription)")
+                return
+            }
+            if target.exists, target.isHittable, target.frame.minY >= top, target.frame.maxY <= bottom { return }
+            let upward = !target.exists || target.frame.minY >= top
+            let high = top + span * 0.25, low = top + span * 0.80
+            app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: app.frame.midX, dy: upward ? low : high))
+                .press(forDuration: 0.01, thenDragTo: app.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: app.frame.midX, dy: upward ? high : low)))
+        }
+        XCTFail("Coordinator detail did not enter its content viewport: \(target.identifier) \(app.debugDescription)")
     }
 
     private func revealActive(_ element: XCUIElement) {

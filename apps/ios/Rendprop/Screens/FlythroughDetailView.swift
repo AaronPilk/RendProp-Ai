@@ -271,20 +271,8 @@ private struct ListingToolboxGrid: View {
                                       icon: "mappin.and.ellipse", gradient: RPGradient.rooms, dimmed: !canTagRooms || sample),
                 disabled: sample, accessibilityID: "detail.roomTags", action: openRoomTagger
             )
-            if !sample, hasPublishedTour {
-                if let asset, canRerender {
-                    ListingToolLinkTile(
-                        card: ListingToolCard(title: "Re-render fly-through", sub: "New render · new sharing link",
-                                              icon: "arrow.clockwise", gradient: RPGradient.drone),
-                        disabled: false, accessibilityID: "detail.rerenderTour",
-                        destination: { AnyView(ReviewSubmitView(listing: destinationListing(), asset: asset)) }
-                    )
-                } else {
-                    ListingToolUnavailableTile()
-                }
-            }
-            // The aerial sits beside the fly-through tools it feeds (build 60;
-            // TestFlight 59: "Aerial intro needs to be next to re-render").
+            // Main tools keep four paired rows. The optional re-render action
+            // follows the grid so an existing walkthrough never leaves an orphan.
             ListingToolCard(title: "Aerial intro", sub: "Coming soon",
                             icon: "airplane.departure", gradient: RPGradient.aerial, dimmed: true)
                 .accessibilityElement(children: .combine)
@@ -314,6 +302,22 @@ private struct ListingToolboxGrid: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("detail.spatialComingSoon")
 #endif
+        }
+    }
+
+    /// Optional walkthrough actions stay full-width after the paired tools.
+    @ViewBuilder var rerenderTile: some View {
+        if !sample, hasPublishedTour {
+            if let asset, canRerender {
+                ListingToolLinkTile(
+                    card: ListingToolCard(title: "Re-render fly-through", sub: "New render · new sharing link",
+                                          icon: "arrow.clockwise", gradient: RPGradient.drone),
+                    disabled: false, accessibilityID: "detail.rerenderTour",
+                    destination: { AnyView(ReviewSubmitView(listing: destinationListing(), asset: asset)) }
+                )
+            } else {
+                ListingToolUnavailableTile()
+            }
         }
     }
 
@@ -387,6 +391,7 @@ private struct ListingToolboxSection: View {
             Text("TOOLBOX").font(.rpKicker).foregroundStyle(Theme.inkDim)
                 .frame(maxWidth: .infinity, alignment: .leading)
             grid
+            grid.rerenderTile
             if let resumeAerial {
                 Button(action: resumeAerial) {
                     Label("Resume earlier aerial", systemImage: "arrow.clockwise")
@@ -480,10 +485,15 @@ struct DetailMetadataRegressionHost: View {
             video = try await Self.makeSyntheticVideo(listingID: value.id)
         }
         if hasCapture, let video {
-            let source = name == "missing-source"
-                ? FileStore.recordingsDir.appendingPathComponent("missing-fixture-\(value.id).mp4") : video
+            let source: URL
+            if name == "missing-source" {
+                source = FileStore.recordingsDir.appendingPathComponent("missing-fixture-\(value.id).mp4")
+            } else {
+                source = try await Self.makeSyntheticVideo(listingID: value.id, rawRecording: true)
+            }
+            let sourceBytes = name == "missing-source" ? FileStore.fileSize(video) : FileStore.fileSize(source)
             model.assets[value.id] = CaptureAsset(localURL: source, durationS: 2, fps: 10,
-                                                 width: 64, height: 64, bytes: FileStore.fileSize(video))
+                                                 width: 64, height: 64, bytes: sourceBytes)
         }
         if hasTour, let video {
             model.tours[value.id] = AppModel.RenderedTour(url: video, durationS: 2, speedFactor: 1.25)
@@ -550,9 +560,11 @@ struct DetailMetadataRegressionHost: View {
 
     /// Procedural silent video: no camera, microphone, bundled house footage or
     /// remote asset. It exercises real AVFoundation/PlayerWebView metadata.
-    @MainActor private static func makeSyntheticVideo(listingID: UUID) async throws -> URL {
-        let url = FileStore.recordingsDir.appendingPathComponent("metadata-fixture-\(listingID).mp4")
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+    @MainActor private static func makeSyntheticVideo(listingID: UUID, rawRecording: Bool = false) async throws -> URL {
+        // A recorded source and its rendered tour have separate identities.
+        let name = rawRecording ? "walkthrough-metadata-fixture-\(listingID).mov" : "metadata-fixture-\(listingID).mp4"
+        let url = FileStore.recordingsDir.appendingPathComponent(name)
+        let writer = try AVAssetWriter(outputURL: url, fileType: rawRecording ? .mov : .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64
         ])
