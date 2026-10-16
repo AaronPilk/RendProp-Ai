@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import math
 import shutil
-import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
 import motion_qc
+from process_deadline import BoundedProcess, ProcessDeadlineError
 
 PROFILE = "smooth-v2"
 FPS = 24
@@ -44,7 +45,19 @@ def _rotation(angle):
 
 def corrections(path, strength=1.0, seconds=None, fps=FPS):
     """Per frame (k, phi, D): output = frame(c + (k/Z) R(phi)(u - c) + D)."""
-    sigma = (STABILIZE_SECONDS if seconds is None else seconds) * fps
+    keys = ("log_scale", "angle", "x", "y")
+    if (not isinstance(path, dict) or any(key not in path or not isinstance(path[key], np.ndarray)
+                                        or path[key].ndim != 1 or not np.isfinite(path[key]).all() for key in keys)
+            or len({path[key].size for key in keys}) != 1 or not 3 <= path["x"].size <= motion_qc.MAX_ANALYSIS_FRAMES
+            or isinstance(strength, bool) or not isinstance(strength, (int, float)) or not math.isfinite(strength)
+            or not 0 <= strength <= 1):
+        raise FinishError("finite_camera_path_required")
+    smoothing = STABILIZE_SECONDS if seconds is None else seconds
+    if (isinstance(fps, bool) or not isinstance(fps, (int, float)) or not math.isfinite(fps) or not 0 < fps <= 120
+            or isinstance(smoothing, bool) or not isinstance(smoothing, (int, float))
+            or not math.isfinite(smoothing) or not 0 <= smoothing <= 5):
+        raise FinishError("bounded_smoothing_required")
+    sigma = smoothing * fps
     target = {key: motion_qc.gaussian_smooth(path[key], sigma) for key in ("log_scale", "angle", "x", "y")}
     frames = []
     for t in range(path["x"].size):
@@ -66,6 +79,9 @@ def required_zoom(frames, width, height, cover_width, cover_height, margin=EDGE_
     corners = [np.array([sx * half[0], sy * half[1]]) for sx in (-1, 1) for sy in (-1, 1)]
     zoom = 1.0
     for k, phi, offset in frames:
+        if (not math.isfinite(k) or k <= 0 or not math.isfinite(phi)
+                or np.asarray(offset).shape != (2,) or not np.isfinite(offset).all()):
+            raise FinishError("finite_warp_required")
         rotation = _rotation(phi)
         for corner in corners:
             rotated = k * (rotation @ corner)
@@ -122,14 +138,22 @@ def _affine(matrix, translation):
 def render(source: Path, output: Path, aspect, finish, source_width, source_height, *, frames=FRAMES, fps=FPS, test_fast=False):
     """Decode at the zoomed working size, warp each YUV plane, encode at native cadence."""
     width, height = motion_qc.framing(aspect)
+    if (type(source_width) is not int or type(source_height) is not int
+            or source_width < width or source_height < height):
+        raise FinishError("source_lacks_native_framing_pixels")
     encode_tail = ["-an", "-frames:v", str(frames), "-c:v", "libx264", "-preset", "ultrafast" if test_fast else "medium",
                    "-crf", "18", "-maxrate", "24M", "-bufsize", "48M", "-threads", "2", "-pix_fmt", "yuv420p",
                    "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-movflags", "+faststart", str(output)]
     if finish["strength"] == 0 and finish["zoom"] == 1.0:
         # Nothing to correct within real pixels: v1 framing, native cadence, no warp.
-        subprocess.run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(source), "-map", "0:v:0",
-                        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,format=yuv420p",
-                        *encode_tail], check=True, capture_output=True, timeout=600)
+        try:
+            with BoundedProcess([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(source), "-map", "0:v:0",
+                                 "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,format=yuv420p",
+                                 *encode_tail], timeout=600) as encoder:
+                if encoder.finish() != 0:
+                    raise FinishError("finish_render_failed: " + encoder.stderr.decode(errors="replace")[:300])
+        except ProcessDeadlineError as error:
+            raise FinishError("finish_render_deadline_exceeded") from error
         return {"work_width": width, "work_height": height}
     cover = max(width / source_width, height / source_height)
     cover_width, cover_height = source_width * cover, source_height * cover
@@ -162,37 +186,29 @@ def render(source: Path, output: Path, aspect, finish, source_width, source_heig
               "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{width}x{height}", "-r", str(fps), "-i", "-", *encode_tail]
     luma_size, chroma_size = work_width * work_height, (work_width // 2) * (work_height // 2)
     out_chroma = (width // 2, height // 2)
-    reader = subprocess.Popen(decode, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    writer = subprocess.Popen(encode, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     written = 0
+    deadline = time.monotonic() + 600
     try:
-        for luma_coefficients, chroma_coefficients in plans:
-            data = reader.stdout.read(luma_size + 2 * chroma_size)
-            if len(data) < luma_size + 2 * chroma_size:
-                break
-            y = Image.frombuffer("L", (work_width, work_height), data[:luma_size], "raw", "L", 0, 1)
-            u = Image.frombuffer("L", (work_width // 2, work_height // 2), data[luma_size:luma_size + chroma_size], "raw", "L", 0, 1)
-            v = Image.frombuffer("L", (work_width // 2, work_height // 2), data[luma_size + chroma_size:], "raw", "L", 0, 1)
-            writer.stdin.write(y.transform((width, height), Image.Transform.AFFINE, luma_coefficients, Image.Resampling.BICUBIC, fillcolor=0).tobytes())
-            writer.stdin.write(u.transform(out_chroma, Image.Transform.AFFINE, chroma_coefficients, Image.Resampling.BICUBIC, fillcolor=128).tobytes())
-            writer.stdin.write(v.transform(out_chroma, Image.Transform.AFFINE, chroma_coefficients, Image.Resampling.BICUBIC, fillcolor=128).tobytes())
-            written += 1
-    except BrokenPipeError:
-        pass  # the encoder exited; its status and message are reported below
-    finally:
-        reader.stdout.close()
-        reader_error = reader.stderr.read()
-        reader.stderr.close()
-        reader_code = reader.wait(timeout=120)
-        try:
-            writer.stdin.close()
-        except BrokenPipeError:
-            pass
-        writer_error = writer.stderr.read()
-        writer.stderr.close()
-        writer_code = writer.wait(timeout=600)
-    if reader_code != 0 or writer_code != 0 or written != frames:
-        raise FinishError("finish_render_failed: " + (reader_error + writer_error).decode(errors="replace")[:300])
+        with BoundedProcess(decode, timeout=600, deadline=deadline, read_stdout=True) as reader, \
+                BoundedProcess(encode, timeout=600, deadline=deadline, write_stdin=True) as writer:
+            for luma_coefficients, chroma_coefficients in plans:
+                data = reader.read_exact(luma_size + 2 * chroma_size)
+                if len(data) < luma_size + 2 * chroma_size:
+                    break
+                y = Image.frombuffer("L", (work_width, work_height), data[:luma_size], "raw", "L", 0, 1)
+                u = Image.frombuffer("L", (work_width // 2, work_height // 2), data[luma_size:luma_size + chroma_size], "raw", "L", 0, 1)
+                v = Image.frombuffer("L", (work_width // 2, work_height // 2), data[luma_size + chroma_size:], "raw", "L", 0, 1)
+                writer.write(y.transform((width, height), Image.Transform.AFFINE, luma_coefficients, Image.Resampling.BICUBIC, fillcolor=0).tobytes())
+                writer.write(u.transform(out_chroma, Image.Transform.AFFINE, chroma_coefficients, Image.Resampling.BICUBIC, fillcolor=128).tobytes())
+                writer.write(v.transform(out_chroma, Image.Transform.AFFINE, chroma_coefficients, Image.Resampling.BICUBIC, fillcolor=128).tobytes())
+                written += 1
+            reader_code, writer_code = reader.finish(), writer.finish()
+            if reader_code != 0 or writer_code != 0 or written != frames:
+                raise FinishError("finish_render_failed: " + (reader.stderr + writer.stderr).decode(errors="replace")[:300])
+    except ProcessDeadlineError as error:
+        raise FinishError("finish_render_deadline_exceeded") from error
+    except BrokenPipeError as error:
+        raise FinishError("finish_encoder_closed") from error
     return {"work_width": work_width, "work_height": work_height}
 
 
@@ -205,6 +221,8 @@ def finish_shot(source: Path, output: Path, aspect="16:9", *, test_fast=False):
     if int(stream.get("nb_read_packets") or 0) < FRAMES:
         raise FinishError("too_few_source_frames")
     source_width, source_height = int(stream["width"]), int(stream["height"])
+    if source_width < width or source_height < height:
+        raise FinishError("source_lacks_native_framing_pixels")
     steps = motion_qc.measure_steps(source, aspect, max_frames=FRAMES)
     before, path, _ = motion_qc.summarize(steps, FPS, aspect)
     cover = max(width / source_width, height / source_height)

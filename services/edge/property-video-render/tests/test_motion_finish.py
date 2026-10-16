@@ -46,7 +46,7 @@ def texture(width, height, seed):
     return image.filter(ImageFilter.GaussianBlur(.6))
 
 
-def shot(path, size, *, pan=0.0, bob=0.0, roll_wobble_deg=0.0, roll_drift_deg=0.0, zoom=0.0, retime=None, seed=7, frames=121):
+def shot(path, size, *, pan=0.0, bob=0.0, roll_wobble_deg=0.0, roll_drift_deg=0.0, zoom=0.0, zoom_wobble=0.0, freeze_frames=0, retime=None, seed=7, frames=121):
     """Source pixels: pan per frame, 3 Hz bob amplitude, roll wobble/drift, push-in fraction."""
     width, height = size
     canvas = texture(int(width * 1.5), int(height * 1.5), seed)
@@ -57,9 +57,9 @@ def shot(path, size, *, pan=0.0, bob=0.0, roll_wobble_deg=0.0, roll_drift_deg=0.
     args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p", str(path)]
     encoder = subprocess.Popen(args, stdin=subprocess.PIPE)
     for t in range(frames):
-        scale = 1 + zoom * t / (frames - 1)
+        scale = (1 + zoom * t / (frames - 1)) * math.exp(zoom_wobble * math.sin(2 * math.pi * 3 * t / 24))
         angle = math.radians(roll_wobble_deg) * math.sin(2 * math.pi * 3 * t / 24 + 1) + math.radians(roll_drift_deg) * t / (frames - 1)
-        cx = canvas_width / 2 + pan * t
+        cx = canvas_width / 2 + pan * max(0, t - freeze_frames)
         cy = canvas_height / 2 + bob * math.sin(2 * math.pi * 3 * t / 24)
         a, b, d, e = math.cos(angle) / scale, -math.sin(angle) / scale, math.sin(angle) / scale, math.cos(angle) / scale
         frame = canvas.transform((width, height), Image.Transform.AFFINE,
@@ -260,9 +260,9 @@ class V1Unchanged(unittest.TestCase):
             validate_task({**compose_task, "temporal_qc": {"profile": "temporal-motion-v1", "aspect": "16:9"}})
         extract = {"action": "extract_frames", "job_id": job, "attempt_id": job, "lease_token": lease, "clip": {}, "expires_at": expires}
         validate_task(extract)
-        validate_task({**extract, "temporal_qc": {"profile": "temporal-motion-v1", "aspect": "9:16"}})
-        for bad in [{"profile": "temporal-motion-v2", "aspect": "16:9"}, {"profile": "temporal-motion-v1", "aspect": "4:3"},
-                    {"profile": "temporal-motion-v1", "aspect": "16:9", "limits": {}}, "temporal-motion-v1"]:
+        validate_task({**extract, "temporal_qc": {"profile": "temporal-motion-v2", "aspect": "9:16"}})
+        for bad in [{"profile": "temporal-motion-v1", "aspect": "16:9"}, {"profile": "temporal-motion-v2", "aspect": "4:3"},
+                    {"profile": "temporal-motion-v2", "aspect": "16:9", "limits": {}}, "temporal-motion-v2"]:
             with self.assertRaises(ValueError):
                 validate_task({**extract, "temporal_qc": bad})
 

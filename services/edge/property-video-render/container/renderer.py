@@ -66,7 +66,7 @@ def validate_task(task):
             raise ValueError("closed_cpu_task")
         temporal = task.get("temporal_qc")
         if temporal is not None and (not isinstance(temporal, dict) or set(temporal) != {"profile", "aspect"}
-                                     or temporal["profile"] != "temporal-motion-v1" or temporal["aspect"] not in {"16:9", "9:16"}):
+                                     or temporal["profile"] != "temporal-motion-v2" or temporal["aspect"] not in {"16:9", "9:16"}):
             raise ValueError("closed_temporal_qc_required")
     else:
         if set(task) - {"state", "action", "job_id", "lease_token", "manifest_sha256", "purpose", "aspect", "composition_profile", "sources", "narration", "music", "presentation", "output", "expires_at"}:

@@ -1,6 +1,6 @@
 """Temporal motion QC: what a viewer sees in the final property-video frame.
 
-Profile temporal-motion-v1 is read-only. It measures walking-cadence bob,
+Profile temporal-motion-v2 is diagnostic-only. It measures walking-cadence bob,
 shake, horizon roll, travel and duplicated frames in pixels of the final
 1920x1080 (or 1080x1920) frame, after the same scale + centre crop the composer
 applies, never on the provider's uncropped frame. Motion per frame step comes
@@ -20,8 +20,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from process_deadline import BoundedProcess, ProcessDeadlineError
 
-PROFILE = "temporal-motion-v1"
+PROFILE = "temporal-motion-v2"
+MAX_ANALYSIS_FRAMES = 1200
 ANALYSIS_DOWNSCALE = 2      # analyse at half output resolution
 TILE = 128                  # analysis pixels per tile side (256 final pixels)
 WHITEN = .6                 # partial phase whitening; measured 0.03-0.05 px tile error
@@ -41,6 +43,10 @@ FINISHED_LIMITS = {
     "cadence_acf": .4,         # walking rhythm: periodic 1.5-6 Hz motion...
     "cadence_min_pp_px": .6,   # ...only counts when it is also visible
     "roll_wobble_pp_deg": .08,
+    # Provisional pixel-equivalent diagnostic limit, not human acceptance:
+    # .0011 x 1101px (half the final-frame diagonal) ~= 1.21px edge motion,
+    # matching the existing 1.2px translation-span limit on both canvases.
+    "zoom_pump_pp_pct": .11,
     "roll_drift_deg": 1.0,     # horizon tilt accumulated over the shot
     "duplicate_ratio": .01,
     "zoom_pct": 40.0,          # beyond this a push-in reads as walking into the room
@@ -70,38 +76,50 @@ def probe_stream(path: Path):
 
 
 def native_fps(stream) -> float:
-    num, den = (int(v) for v in stream["avg_frame_rate"].split("/"))
-    if not den or not num:
-        num, den = (int(v) for v in stream["r_frame_rate"].split("/"))
-    if not den or not num:
-        raise MotionError("frame_rate_unknown")
-    return num / den
+    try:
+        num, den = (int(v) for v in stream["avg_frame_rate"].split("/"))
+        if not den or not num:
+            num, den = (int(v) for v in stream["r_frame_rate"].split("/"))
+        if den <= 0 or not 0 < num / den <= 120:
+            raise ValueError()
+        return num / den
+    except (KeyError, TypeError, ValueError, ZeroDivisionError) as error:
+        raise MotionError("bounded_frame_rate_required") from error
 
 
 def framed_gray_frames(path: Path, width: int, height: int, max_frames: int | None = None):
     """Yields the final framing at half resolution as uint8 grey frames."""
+    if max_frames is not None and (isinstance(max_frames, bool) or not isinstance(max_frames, int)
+                                    or not 9 <= max_frames <= MAX_ANALYSIS_FRAMES):
+        raise MotionError("bounded_analysis_frames_required")
     w, h = width // ANALYSIS_DOWNSCALE, height // ANALYSIS_DOWNSCALE
     filters = (f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
                f"scale={w}:{h}:flags=area,format=gray")
     args = [shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", str(path),
             "-map", "0:v:0", "-an", "-vf", filters]
-    if max_frames:
-        args += ["-frames:v", str(max_frames)]
+    # One extra frame detects an unbounded input instead of silently declaring
+    # a truncated prefix smooth. Explicit prefix measurements are labelled by
+    # their requested frame count and retain their existing meaning.
+    args += ["-frames:v", str(max_frames or MAX_ANALYSIS_FRAMES + 1)]
     args += ["-f", "rawvideo", "-pix_fmt", "gray", "-"]
-    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     size = w * h
     try:
-        while True:
-            data = process.stdout.read(size)
-            if len(data) < size:
-                break
-            yield np.frombuffer(data, np.uint8).reshape(h, w)
-    finally:
-        process.stdout.close()
-        error = process.stderr.read()
-        process.stderr.close()
-        if process.wait(timeout=120) != 0:
-            raise MotionError("decode_failed: " + error.decode(errors="replace")[:200])
+        with BoundedProcess(args, timeout=120, read_stdout=True) as process:
+            count = 0
+            while True:
+                data = process.read_exact(size)
+                if not data:
+                    break
+                if len(data) != size:
+                    raise MotionError("partial_decoded_frame")
+                count += 1
+                if count > MAX_ANALYSIS_FRAMES:
+                    raise MotionError("bounded_analysis_frames_required")
+                yield np.frombuffer(data, np.uint8).reshape(h, w)
+            if process.finish() != 0:
+                raise MotionError("decode_failed: " + process.stderr.decode(errors="replace")[:200])
+    except ProcessDeadlineError as error:
+        raise MotionError("motion_decode_deadline_exceeded") from error
 
 
 def tile_centres(height, width):
@@ -239,6 +257,18 @@ def gaussian_smooth(series, sigma):
 def camera_path(steps):
     """Exact composition of per-step similarities about the centre: log-scale, angle, translation."""
     n = len(steps)
+    if not 8 <= n < MAX_ANALYSIS_FRAMES:
+        raise MotionError("bounded_motion_steps_required")
+    for step in steps:
+        if not isinstance(step, dict) or not isinstance(step.get("valid"), bool):
+            raise MotionError("closed_motion_step_required")
+        fields = {"valid", "mad", "dx", "dy", "rot", "scale", "inliers"} if step["valid"] else {"valid", "mad"}
+        if set(step) != fields or any(isinstance(step[key], bool) or not isinstance(step[key], (int, float))
+                                     or not math.isfinite(step[key]) for key in fields - {"valid"}):
+            raise MotionError("finite_motion_step_required")
+        if step["mad"] < 0 or step["valid"] and (step["scale"] <= -1 or not isinstance(step["inliers"], int)
+                                                 or step["inliers"] < MIN_INLIERS):
+            raise MotionError("bounded_motion_step_required")
     valid = np.array([s["valid"] for s in steps])
     keys = ("dx", "dy", "rot", "scale")
     series = {}
@@ -287,6 +317,8 @@ def _cadence(residual, fps):
 
 def summarize(steps, fps, aspect="16:9"):
     width, height = framing(aspect)
+    if isinstance(fps, bool) or not isinstance(fps, (int, float)) or not math.isfinite(fps) or not 0 < fps <= 120:
+        raise MotionError("bounded_frame_rate_required")
     path = camera_path(steps)
     sigma = SMOOTH_SECONDS * fps
     smooth = {key: gaussian_smooth(path[key], sigma) for key in ("x", "y", "angle", "log_scale")}
@@ -298,8 +330,9 @@ def summarize(steps, fps, aspect="16:9"):
     moving = [s for s in steps if s["valid"]]
     still = [s for s in moving if s["mad"] < DUPLICATE_MAD and math.hypot(s["dx"], s["dy"]) < .1
              and abs(s["scale"]) < 2e-4 and abs(s["rot"]) < 2e-4]
-    typical_mad = float(np.median([s["mad"] for s in steps])) if steps else 0.0
-    static_shot = typical_mad < DUPLICATE_MAD
+    # A majority-frozen AI shot is not an entirely static Original. Textureless
+    # true stills may have no phase fit; unchanged pixels still identify them.
+    static_shot = all(s["mad"] < DUPLICATE_MAD and (not s["valid"] or s in still) for s in steps)
     diagonal = math.hypot(width, height) / 2
     speed = (np.hypot(np.diff(smooth["x"]), np.diff(smooth["y"])) + diagonal * np.abs(np.diff(smooth["log_scale"])))
     middle = speed[int(.1 * speed.size): max(int(.1 * speed.size) + 1, int(.9 * speed.size))]
@@ -315,6 +348,10 @@ def summarize(steps, fps, aspect="16:9"):
         "roll_span_deg": round(math.degrees(float(smooth["angle"].max() - smooth["angle"].min())), 3),
         "zoom_pump_pp_pct": round(100 * _span(els), 3),
         "zoom_pct": round(100 * (math.exp(float(path["log_scale"][-1])) - 1), 2),
+        # A pull-back and a return-to-start move must not cancel the evidence.
+        "zoom_excursion_pct": round(100 * math.expm1(float(np.ptp(path["log_scale"]))), 2),
+        "pan_excursion_pct": round(100 * math.hypot(float(np.ptp(path["x"])) / width,
+                                                   float(np.ptp(path["y"])) / height), 2),
         "pan_x_pct": round(100 * float(path["x"][-1]) / width, 2),
         "pan_y_pct": round(100 * float(path["y"][-1]) / height, 2),
         "speed_px_per_frame": round(mean_speed, 3),
@@ -326,9 +363,38 @@ def summarize(steps, fps, aspect="16:9"):
 
 
 def verdict(metrics, limits=FINISHED_LIMITS):
-    """Closed reasons a finished shot is not smooth enough to publish."""
+    """Diagnostic verdict; never a substitute for property fidelity or publication authority."""
+    fields = {"profile", "fps", "steps", "frame", "invalid_ratio", "bob_pp_px", "bob_rms_px", "sway_pp_px", "sway_rms_px",
+              "cadence_acf", "cadence_hz", "roll_wobble_pp_deg", "roll_drift_deg", "roll_span_deg", "zoom_pump_pp_pct",
+              "zoom_pct", "zoom_excursion_pct", "pan_excursion_pct", "pan_x_pct", "pan_y_pct", "speed_px_per_frame",
+              "speed_cv", "duplicate_ratio", "static_shot"}
+    numeric = fields - {"profile", "frame", "static_shot", "cadence_hz"}
+    malformed = (not isinstance(metrics, dict) or set(metrics) != fields)
+    if not malformed:
+        malformed = (metrics["profile"] != PROFILE or metrics["frame"] not in ([1920, 1080], [1080, 1920])
+                     or not isinstance(metrics["frame"], list) or any(type(value) is not int for value in metrics["frame"])
+                     or not isinstance(metrics["static_shot"], bool)
+                     or any(isinstance(metrics[key], bool) or not isinstance(metrics[key], (int, float))
+                            or not math.isfinite(metrics[key]) for key in numeric)
+                     or isinstance(metrics["steps"], bool) or not isinstance(metrics["steps"], int)
+                     or not 8 <= metrics["steps"] < MAX_ANALYSIS_FRAMES or not 0 < metrics["fps"] <= 120)
+    if not malformed:
+        nonnegative = numeric - {"zoom_pct", "roll_drift_deg", "pan_x_pct", "pan_y_pct"}
+        hz = metrics["cadence_hz"]
+        malformed = (any(metrics[key] < 0 for key in nonnegative)
+                     or any(not 0 <= metrics[key] <= 1 for key in ("invalid_ratio", "duplicate_ratio", "cadence_acf"))
+                     or metrics["zoom_pct"] <= -100
+                     or hz is None and metrics["cadence_acf"] > 0
+                     or hz is not None and (isinstance(hz, bool) or not isinstance(hz, (int, float))
+                                            or not math.isfinite(hz) or not 0 < hz <= metrics["fps"] / 2))
+    if malformed:
+        return {"profile": PROFILE, "pass": False, "reasons": ["invalid_metrics"]}
+    if (not isinstance(limits, dict) or set(limits) != set(FINISHED_LIMITS)
+            or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                   or not math.isfinite(value) or value < 0 for value in limits.values())):
+        return {"profile": PROFILE, "pass": False, "reasons": ["invalid_limits"]}
     reasons = []
-    if metrics["invalid_ratio"] > limits["invalid_ratio"]:
+    if not metrics["static_shot"] and metrics["invalid_ratio"] > limits["invalid_ratio"]:
         reasons.append("unmeasurable")
     if metrics["bob_pp_px"] > limits["bob_pp_px"]:
         reasons.append("vertical_bob")
@@ -339,11 +405,14 @@ def verdict(metrics, limits=FINISHED_LIMITS):
         reasons.append("walking_cadence")
     if metrics["roll_wobble_pp_deg"] > limits["roll_wobble_pp_deg"]:
         reasons.append("roll_wobble")
-    if abs(metrics["roll_drift_deg"]) > limits["roll_drift_deg"]:
+    if metrics["zoom_pump_pp_pct"] > limits["zoom_pump_pp_pct"]:
+        reasons.append("zoom_pumping")
+    if max(abs(metrics["roll_drift_deg"]), metrics["roll_span_deg"]) > limits["roll_drift_deg"]:
         reasons.append("horizon_roll")
     if metrics["duplicate_ratio"] > limits["duplicate_ratio"]:
         reasons.append("duplicate_frames")
-    if metrics["zoom_pct"] > limits["zoom_pct"] or math.hypot(metrics["pan_x_pct"], metrics["pan_y_pct"]) > limits["pan_pct"]:
+    if (max(abs(metrics["zoom_pct"]), metrics["zoom_excursion_pct"]) > limits["zoom_pct"]
+            or max(math.hypot(metrics["pan_x_pct"], metrics["pan_y_pct"]), metrics["pan_excursion_pct"]) > limits["pan_pct"]):
         reasons.append("walk_through_travel")
     return {"profile": PROFILE, "pass": not reasons, "reasons": reasons}
 
