@@ -21,6 +21,7 @@ const project=(job:any)=>{const value=structuredClone(job);delete value.input;de
 const services={getSnapshot:()=>({status:"signed-in",identityVersion,identity:{userId:who,isAnonymous:false}}),api:async(path:string,options:any={})=>{
  const url=new URL(path,"https://fixture.invalid"),body=options.body;persisted.calls.push({path:url.pathname,query:url.search,method:options.method??"GET",body,consent:options.aiConsent,key:options.idempotencyKey,actor:who,binary:options.binary?.size??null});save();
  if(options.orgId!==org)throw Error("Fixture wrong library");
+ if(url.pathname.endsWith("/property-video-jobs/processor-consent"))throw new StudioError("processor_disclosure_unpublished","Fixture unpublished disclosure",404);
  if(url.pathname.endsWith("/property-video-jobs/sources")){const captured=who,rows=sources();if(holdSources){holdSources=false;await new Promise<void>(resolve=>held.push(resolve));}const offset=Number(url.searchParams.get("offset")??0);return{listing_id:listing,org_id:org,selected_library_org_id:org,selected_count:rows.length,sources:rows.slice(offset,offset+100).map(row=>({...row,preview_url:row.preview_url.replace(/NEVER/,'')})),next_offset:offset+100<rows.length?offset+100:null,actor:captured};}
  if(url.pathname.endsWith('/property-video-jobs/sources/prepare')){
   if(options.idempotencyKey!==`property-video-source:${body.operation_id}`)throw Error('Fixture preparation operation missing');

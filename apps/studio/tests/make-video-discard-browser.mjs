@@ -96,15 +96,15 @@ try{
  assert.equal(posts(state,op).length,1,'discarded operation was never sent again');assert.equal(state.jobs.filter(item=>item.operation_id===op).length,0);
  receipt.checks.push('After discard: changed photos, chosen order, saved new version and new music create one new operation; discarded operation never re-sent');
 
- // 6. Discarded elsewhere (another tab/device): this tab's resume gets 409, resolves the same operation, and unlocks.
+ // 6. Discarded elsewhere: GET-first resume resolves the exact closure before another paid POST.
  await page.evaluate(()=>window.videoFixture.ready());await button('Refresh videos').click();await expect(page.getByRole('region',{name:'Current property video'})).toContainText('1920×1080');
  await button('Clear selection').click();await photo(6).check();await consent().check();
  await page.evaluate(()=>window.videoFixture.failNextSubmit());await button('Create video').click();await expect(page.getByRole('alert')).toContainText('network failure');
  state=await snapshot();const op2=posts(state).at(-1).body.operation_id;assert.notEqual(op2,op);
  await page.evaluate(id=>window.videoFixture.discardElsewhere(id),op2);await button('Resume same saved request').click();
  await expect(discarded()).toBeVisible();await expect(button('Create video')).toBeVisible();
- state=await snapshot();assert.equal(state.jobs.filter(item=>item.operation_id===op2).length,0);assert.equal(posts(state,op2).length,2);
- receipt.checks.push('Stale tab resume of a request discarded elsewhere: 409 is resolved against the same operation, no job, recipe unlocked');
+ state=await snapshot();assert.equal(state.jobs.filter(item=>item.operation_id===op2).length,0);assert.equal(posts(state,op2).length,1,'GET-first recovery discovers the exact abandoned operation before a second paid POST');assert.ok(state.calls.some(c=>c.method==='GET'&&c.query.includes(`operation_id=${op2}`)));
+ receipt.checks.push('Stale tab resume of a request discarded elsewhere: exact operation GET resolves the closure before another POST, no job, recipe unlocked');
 
  // 7. A delayed POST that the server accepted just before the discard: the job is kept, shown and cancellable normally.
  await button('Clear selection').click();await photo(7).check();await consent().check();

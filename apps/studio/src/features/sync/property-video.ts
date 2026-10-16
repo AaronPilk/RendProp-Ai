@@ -1,5 +1,6 @@
 import type {StudioServices} from "../../data/services";
 import {privateMediaCapability} from "../../data/private-media";
+import {CONSENT_V1,decodeVideoPermission,permissionForSavedJob,retainVideoPermissionMetadata,sameVideoPermission,videoPermissionHeaders,type VideoPermission,type VideoPermissionMetadata} from "./processor-consent";
 
 export type VideoScope={actor:string;org:string;library:string;listing:string;identityVersion:number};
 export type VideoMotion="fly_through"|"push_in"|"side_glide"|"pull_back";
@@ -11,7 +12,7 @@ export type FinishedSource={photo_asset_id:string;photo_version_id:string;photo_
 export type VideoPresentation={transition:"cut"|"dissolve"|"whip";shot_caption_style:"off"|"lowerThird"|"punchCard"|"highlightBox";spoken_captions:boolean;title_card:{title:string;subtitle:string;watermark:string}|null;shot_labels:(string|null)[]};
 export type VideoInput={operation_id:string;listing_id:string;expected_org_id:string;purpose:VideoPurpose;aspect:"16:9"|"9:16";sources:FrozenSource[];narration_result_id:string|null;narration_asset_id:string|null;narration_words:{text:string;start:number;end:number}[];music:VideoMusic|null;presentation:VideoPresentation;allow_original_photo_fallback:boolean};
 export type VideoState="queued"|"generating"|"quality_review"|"composing"|"ready"|"cancelled"|"failed"|"needs_reconciliation";
-export type VideoJob={job_id:string;operation_id:string;listing_id:string;org_id:string;selected_library_org_id:string;source_count:number;manifest_sha256:string;state:VideoState;completed_sources:number;message?:string;resume_available?:boolean;result:{asset_id:string;poster_asset_id:string;download_url:string;width:number;height:number;duration_s:number;bytes:number;sha256:string;branding_policy:"unbranded"|"social";sources:FinishedSource[];original_photo_count:number;music:unknown|null}|null};
+export type VideoJob=VideoPermissionMetadata&{job_id:string;operation_id:string;listing_id:string;org_id:string;selected_library_org_id:string;source_count:number;manifest_sha256:string;state:VideoState;completed_sources:number;message?:string;resume_available?:boolean;result:{asset_id:string;poster_asset_id:string;download_url:string;width:number;height:number;duration_s:number;bytes:number;sha256:string;branding_policy:"unbranded"|"social";sources:FinishedSource[];original_photo_count:number;music:unknown|null}|null};
 export type VideoMusic={track_id:"calm"|"upbeat"|"cinematic";asset_sha256:string;license_id:"CC0-1.0";license_evidence_sha256:string;gain:.18;duck_gain:.07};
 const UUID=/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const HEX=/^[a-f0-9]{64}$/;
@@ -74,11 +75,12 @@ export function decodeJob(raw:unknown,scope:VideoScope,expectedOperation?:string
   result={...r,sources:refs} as VideoJob["result"];
  }
  if(j.state==="ready"&&!result)throw Error("The finished video receipt is missing. Refresh before reviewing or publishing.");
- return{job_id:j.job_id as string,operation_id:j.operation_id as string,listing_id:scope.listing,org_id:scope.org,selected_library_org_id:scope.library,source_count:count,manifest_sha256:j.manifest_sha256 as string,state:j.state as VideoState,completed_sources:completed,...(typeof j.message==="string"?{message:j.message.slice(0,1000)}:{}),...(j.resume_available===true?{resume_available:true}:{}),result};
+ return{...retainVideoPermissionMetadata(j),job_id:j.job_id as string,operation_id:j.operation_id as string,listing_id:scope.listing,org_id:scope.org,selected_library_org_id:scope.library,source_count:count,manifest_sha256:j.manifest_sha256 as string,state:j.state as VideoState,completed_sources:completed,...(typeof j.message==="string"?{message:j.message.slice(0,1000)}:{}),...(j.resume_available===true?{resume_available:true}:{}),result};
 }
-export async function resumeVideo(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,job:VideoJob,signal?:AbortSignal):Promise<VideoJob>{
+export async function resumeVideo(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,job:VideoJob,signal?:AbortSignal,legacyEndpointConfirmed=false):Promise<VideoJob>{
  assertVideoScope(services,scope,signal);const checked=decodeJob(job,scope);if(checked.resume_available!==true)throw Error("This saved video is not available to resume.");
- const reply=decodeJob(await services.api(`/functions/v1/property-video-jobs/${checked.job_id}/resume`,{orgId:scope.library,method:"POST",body:{},aiConsent:"property-video-jobs-v1",signal}),scope,checked.operation_id);
+ const permission=permissionForSavedJob(checked,legacyEndpointConfirmed);if(!permission)throw Error("This saved video’s original AI permission could not be verified. Refresh its status or cancel it; no paid resume was sent.");
+ const reply=decodeJob(await services.api(`/functions/v1/property-video-jobs/${checked.job_id}/resume`,{orgId:scope.library,expectedLibraryOrgId:scope.library,expectedListingId:scope.listing,method:"POST",body:{},...videoPermissionHeaders(permission),signal}),scope,checked.operation_id);
  assertVideoScope(services,scope,signal);if(reply.job_id!==checked.job_id||reply.completed_sources<checked.completed_sources)throw Error("The resumed video was not confirmed for the same saved work.");return reply;
 }
 
@@ -99,13 +101,20 @@ export async function planVideoSources(services:Pick<StudioServices,"api"|"getSn
  return planned.map(p=>p.source);
 }
 export type VideoPreparation={photosComplete?:boolean;framingReviewed?:boolean;planned:boolean;voiceComplete:boolean;automatic:boolean;camera:string;voice:"off"|"own"|"ai";voiceID:string;script:string};
-export type VideoJournal={schema:1;actor:string;org:string;library:string;listing:string;input:VideoInput;job_id?:string;preparation?:VideoPreparation;publication?:{id:string;job_id:string;asset_id:string};};
-export function saveVideoJournal(storage:Pick<Storage,"setItem">,scope:VideoScope,value:VideoJournal):void {if(value.actor!==scope.actor||value.org!==scope.org||value.library!==scope.library||value.listing!==scope.listing)throw Error("Video recovery belongs to another account.");storage.setItem(videoScopeKey(scope),JSON.stringify(value));}
+export type VideoJournal={permission?:VideoPermission;schema:1;actor:string;org:string;library:string;listing:string;input:VideoInput;job_id?:string;preparation?:VideoPreparation;publication?:{id:string;job_id:string;asset_id:string};};
+export function saveVideoJournal(storage:Pick<Storage,"setItem">&Partial<Pick<Storage,"getItem">>,scope:VideoScope,value:VideoJournal):void {
+ if(value.actor!==scope.actor||value.org!==scope.org||value.library!==scope.library||value.listing!==scope.listing)throw Error("Video recovery belongs to another account.");
+ if(value.permission!==undefined)decodeVideoPermission(value.permission);
+ const raw=storage.getItem?.(videoScopeKey(scope));
+ if(raw){const prior=readVideoJournal({getItem:()=>raw},scope);if(prior?.input.operation_id===value.input.operation_id&&!sameVideoPermission(prior.permission,value.permission))throw Error("A saved video operation keeps its original AI permission. Recover or discard that request before changing processors.");}
+ storage.setItem(videoScopeKey(scope),JSON.stringify(value));
+}
 export function readVideoJournal(storage:Pick<Storage,"getItem">,scope:VideoScope):VideoJournal|null {
  const raw=storage.getItem(videoScopeKey(scope));if(!raw)return null;
  try{const j=object(JSON.parse(raw)),input=object(j.input);if(j.schema!==1||j.actor!==scope.actor||j.org!==scope.org||j.library!==scope.library||j.listing!==scope.listing||input.listing_id!==scope.listing||input.expected_org_id!==scope.library||!UUID.test(String(input.operation_id))||!Array.isArray(input.sources)||input.sources.length<1||input.sources.length>100)throw Error();
   // Recovered manifests carry source identities/options, never media URLs/keys.
   for(const s of input.sources){const r=object(s);if(Object.keys(r).some(k=>!["photo_id","photo_asset_id","photo_version_id","photo_provenance_id","motion"].includes(k)))throw Error();id(r.photo_asset_id);text(r.photo_id);text(r.photo_version_id);nullableID(r.photo_provenance_id);}
+  if(j.permission!==undefined)j.permission=decodeVideoPermission(j.permission);
   if(j.job_id!==undefined)id(j.job_id);if(j.publication!==undefined){const p=object(j.publication);id(p.id);id(p.job_id);id(p.asset_id);}
   if(j.preparation!==undefined){const p=object(j.preparation);if(p.framingReviewed!==undefined&&typeof p.framingReviewed!=="boolean"||p.photosComplete!==undefined&&typeof p.photosComplete!=="boolean"||typeof p.planned!=="boolean"||typeof p.voiceComplete!=="boolean"||typeof p.automatic!=="boolean"||!["off","own","ai"].includes(String(p.voice))||!["automatic","fly_through","push_in","side_glide","pull_back"].includes(String(p.camera))||typeof p.voiceID!=="string"||p.voiceID.length>100||typeof p.script!=="string"||p.script.length>1000)throw Error();}
   return j as VideoJournal;
@@ -113,7 +122,7 @@ export function readVideoJournal(storage:Pick<Storage,"getItem">,scope:VideoScop
 }
 export async function enqueueVideo(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,journal:VideoJournal,storage:Pick<Storage,"setItem">,signal?:AbortSignal):Promise<VideoJob>{
  assertVideoScope(services,scope,signal);saveVideoJournal(storage,scope,journal);
- const raw=await services.api("/functions/v1/property-video-jobs",{method:"POST",orgId:scope.library,body:journal.input,idempotencyKey:`property-video:${journal.input.operation_id}`,aiConsent:"property-video-jobs-v1",signal,timeoutMs:90_000});
+ const raw=await services.api("/functions/v1/property-video-jobs",{method:"POST",orgId:scope.library,body:journal.input,idempotencyKey:`property-video:${journal.input.operation_id}`,...videoPermissionHeaders(journal.permission??{token:CONSENT_V1}),expectedLibraryOrgId:scope.library,expectedListingId:scope.listing,signal,timeoutMs:90_000});
  assertVideoScope(services,scope,signal);const job=decodeJob(raw,scope,journal.input.operation_id);saveVideoJournal(storage,scope,{...journal,job_id:job.job_id});return job;
 }
 // A closed operation can never start a job: either a durable capacity refusal
@@ -124,7 +133,8 @@ export type VideoClosure="capacity_refused"|"abandoned";
 // capacity-refusal and open-operation shapes are unchanged.
 export type VideoOperation={job:VideoJob|null;closed:boolean;abandoned?:true};
 export function videoClosure(operation:VideoOperation):VideoClosure|null{return operation.closed?(operation.abandoned?"abandoned":"capacity_refused"):null;}
-function decodeOperation(rawValue:unknown,scope:VideoScope,journal:VideoJournal):VideoOperation{
+export type VideoOperationReference={input:{operation_id:string};job_id?:string};
+function decodeOperation(rawValue:unknown,scope:VideoScope,journal:VideoOperationReference):VideoOperation{
  const raw=object(rawValue);
  const job=raw.job===null?null:decodeJob(raw.job,scope,journal.input.operation_id);
  if(raw.operation_closed===true){
@@ -136,18 +146,19 @@ function decodeOperation(rawValue:unknown,scope:VideoScope,journal:VideoJournal)
  if(raw.closed_reason!=null)throw Error("The saved request's server state is incomplete. Refresh this property before changing it.");
  return{job,closed:false};
 }
-export async function inspectVideoOperation(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,journal:VideoJournal,signal?:AbortSignal):Promise<VideoOperation>{
+export async function inspectVideoOperation(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,journal:VideoOperationReference,signal?:AbortSignal):Promise<VideoOperation>{
  assertVideoScope(services,scope,signal);
- const raw=await services.api(`/functions/v1/property-video-jobs?operation_id=${journal.input.operation_id}&listing_id=${scope.listing}&expected_org_id=${scope.library}`,{orgId:scope.library,signal});
+ id(journal.input.operation_id);
+ const raw=await services.api(`/functions/v1/property-video-jobs?operation_id=${journal.input.operation_id}&listing_id=${scope.listing}&expected_org_id=${scope.library}`,{orgId:scope.library,expectedLibraryOrgId:scope.library,expectedListingId:scope.listing,signal});
  assertVideoScope(services,scope,signal);
  return decodeOperation(raw,scope,journal);
 }
 /** C2: the server resolves this exact unaccepted request. An accepted job comes back untouched; only an unseen operation is closed for good. */
-export async function abandonVideoOperation(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,journal:VideoJournal,signal?:AbortSignal):Promise<VideoOperation>{
+export async function abandonVideoOperation(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,journal:VideoOperationReference,signal?:AbortSignal):Promise<VideoOperation>{
  assertVideoScope(services,scope,signal);
  if(journal.job_id)throw Error("This request already has a server video. Cancel or recover that video instead.");
  const operation=id(journal.input.operation_id);
- const raw=object(await services.api(`/functions/v1/property-video-jobs/operations/${operation}/abandon`,{method:"POST",orgId:scope.library,body:{listing_id:scope.listing,expected_org_id:scope.library},idempotencyKey:`property-video-abandon:${operation}`,signal}));
+ const raw=object(await services.api(`/functions/v1/property-video-jobs/operations/${operation}/abandon`,{method:"POST",orgId:scope.library,body:{listing_id:scope.listing,expected_org_id:scope.library},idempotencyKey:`property-video-abandon:${operation}`,expectedLibraryOrgId:scope.library,expectedListingId:scope.listing,signal}));
  assertVideoScope(services,scope,signal);
  if(raw.operation_id!==operation||raw.listing_id!==scope.listing||raw.selected_library_org_id!==scope.library)throw Error("The discard reply belongs to another request. Your saved request is unchanged.");
  const outcome=decodeOperation(raw,scope,journal);

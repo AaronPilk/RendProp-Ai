@@ -96,7 +96,7 @@ test("optional catalog remains Off by default and pins licensed bytes/evidence",
 });
 
  test("only explicit server-authorized partial video resume keeps the same completed work",async()=>{
- const paused=decodeJob({...queued(),state:"failed",resume_available:true,completed_sources:1},scope);
+ const paused=decodeJob({...queued(),consent_revision:"property-video-jobs-v1",processor_consent:null,quality_profile:"legacy",state:"failed",resume_available:true,completed_sources:1},scope);
  let calls=0;const resumed=await resumeVideo(service(async(path,options)=>{calls++;assert.equal(path,`/functions/v1/property-video-jobs/${jobID}/resume`);assert.equal(options.method,"POST");assert.equal(options.aiConsent,"property-video-jobs-v1");assert.deepEqual(options.body,{});return{...queued(),state:"queued",completed_sources:1};}),scope,paused);
  assert.equal(resumed.job_id,jobID);assert.equal(calls,1);
  await assert.rejects(()=>resumeVideo(service(async()=>{throw Error("must not send");}),scope,decodeJob({...queued(),state:"failed"},scope)),/not available/);

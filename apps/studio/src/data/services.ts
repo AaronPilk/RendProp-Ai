@@ -124,7 +124,8 @@ export type StudioRequestOptions = {
   signal?: AbortSignal;
   idempotencyKey?: string;
   photoQualityProtocol?: "retained-operation-v1";
-  aiConsent?: "property-video-jobs-v1" | "property-video-plan-v1";
+  aiConsent?: "property-video-jobs-v1" | "property-video-jobs-v2" | "property-video-plan-v1";
+  aiConsentDisclosure?: string;
   timeoutMs?: number;
   maxResponseBytes?: number;
 };
@@ -423,6 +424,7 @@ export function createStudioServices(
             if (options?.binary) headers["Content-Type"] = "application/octet-stream";
             if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
             if (options?.aiConsent) headers["X-Rendprop-AI-Consent"] = options.aiConsent;
+            if (options?.aiConsentDisclosure) headers["X-Rendprop-AI-Consent-Disclosure"] = options.aiConsentDisclosure;
             if (options?.photoQualityProtocol) headers["X-Rendprop-Photo-Quality-Protocol"] = options.photoQualityProtocol;
             const response = await fetcher(`${config.supabaseUrl}${path}`, {
               method,
@@ -455,7 +457,16 @@ export function createStudioServices(
               let failureCode="request-failed";let failureDetails:Record<string,unknown>|undefined;
               // Existing Edge Functions return user-facing HttpError messages. Never
               // echo provider/5xx bodies or URLs, which may contain signed capabilities.
-              if ([400, 402, 409, 413, 422].includes(response.status)) {
+              const savedVideoAction = method === "POST" && (path === "/functions/v1/property-video-jobs" || /^\/functions\/v1\/property-video-jobs\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}\/resume$/.test(path));
+              const processorFailure = response.status === 403 && savedVideoAction || response.status === 404 && method === "GET" && path === "/functions/v1/property-video-jobs/processor-consent";
+              if (processorFailure) {
+                try {
+                  const detail = await boundedJson(response, controller.signal, 8192) as { code?: unknown };
+                  if (detail.code === "processor_disclosure_unpublished") { failureCode = detail.code; message = "The AI processor disclosure is not published yet. Your saved work is unchanged."; }
+                  else if (response.status === 403 && detail.code === "processor_consent_required") { failureCode = detail.code; message = "This video requires its reviewed AI processor permission. Recover the saved request before changing its permission."; }
+                  else if (response.status === 403 && detail.code === "consent_required") { failureCode = detail.code; message = "Allow AI processing before starting this saved video action."; }
+                } catch { /* An unrecognized or unreadable403 remains an access error. */ }
+              } else if ([400, 402, 409, 413, 422].includes(response.status)) {
                 try {
                   const detail = await boundedJson(response, controller.signal, 8192) as { error?: unknown; code?: unknown; [key:string]:unknown };
                   if (["photo_quality_pending","photo_quality_hold","photo_quality_closed","photo_quality_refused","photo_clarification_required","unsupported_edit"].includes(String(detail.code))) failureCode=String(detail.code);
@@ -672,10 +683,12 @@ export function createStudioServices(
         throw new StudioError("configuration", "The response limit is invalid.");
       if (options.idempotencyKey && !/^[a-zA-Z0-9:_-]{1,128}$/.test(options.idempotencyKey))
         throw new StudioError("request-key", "The action identifier is invalid.");
-      if (options.aiConsent && !(options.method === "POST" &&
-        ((path === "/functions/v1/property-video-jobs" || /^\/functions\/v1\/property-video-jobs\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}\/resume$/.test(path)) && options.aiConsent === "property-video-jobs-v1" ||
-         path === "/functions/v1/property-video-plan" && options.aiConsent === "property-video-plan-v1")))
+      const videoConsentAction = options.method === "POST" && (path === "/functions/v1/property-video-jobs" || /^\/functions\/v1\/property-video-jobs\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}\/resume$/.test(path));
+      if (options.aiConsent && !(videoConsentAction && ["property-video-jobs-v1", "property-video-jobs-v2"].includes(options.aiConsent) ||
+        options.method === "POST" && path === "/functions/v1/property-video-plan" && options.aiConsent === "property-video-plan-v1"))
         throw new StudioError("request-consent", "Confirm AI processing for this saved-photo video action.");
+      if (options.aiConsent === "property-video-jobs-v2" ? !videoConsentAction || typeof options.aiConsentDisclosure !== "string" || !/^[!-~]{1,200}$/.test(options.aiConsentDisclosure) : options.aiConsentDisclosure !== undefined)
+        throw new StudioError("request-consent", "Keep the exact reviewed processor disclosure with this saved video action.");
       if (options.body !== undefined && new TextEncoder().encode(JSON.stringify(options.body)).byteLength > 32 * 1024 * 1024)
         throw new StudioError("request-size", "This request is too large. Choose a smaller image.");
       if (options.body !== undefined && (!options.method || options.method === "GET"))
