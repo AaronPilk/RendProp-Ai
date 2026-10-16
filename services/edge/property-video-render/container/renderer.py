@@ -62,8 +62,12 @@ def validate_task(task):
             raise ValueError("bounded_owned_photo_required")
     elif task["action"] == "extract_frames":
         uuid_value(task["attempt_id"])
-        if set(task) - {"state", "action", "job_id", "attempt_id", "lease_token", "source", "clip", "expires_at"}:
+        if set(task) - {"state", "action", "job_id", "attempt_id", "lease_token", "source", "clip", "expires_at", "temporal_qc"}:
             raise ValueError("closed_cpu_task")
+        temporal = task.get("temporal_qc")
+        if temporal is not None and (not isinstance(temporal, dict) or set(temporal) != {"profile", "aspect"}
+                                     or temporal["profile"] != "temporal-motion-v1" or temporal["aspect"] not in {"16:9", "9:16"}):
+            raise ValueError("closed_temporal_qc_required")
     else:
         if set(task) - {"state", "action", "job_id", "lease_token", "manifest_sha256", "purpose", "aspect", "composition_profile", "sources", "narration", "music", "presentation", "output", "expires_at"}:
             raise ValueError("closed_cpu_task")
@@ -130,8 +134,14 @@ def extract(task, directory, hosts):
         if image.stat().st_size > 384 * 1024:
             raise QualityError("bounded_qc_frame")
         frames.append({"image_b64": base64.b64encode(image.read_bytes()).decode(), "mime": "image/jpeg"})
-    return {"job_id": task["job_id"], "attempt_id": task["attempt_id"], "lease_token": task["lease_token"],
-            "frames": frames, "clip_sha256": sha, "width": video["width"], "height": video["height"], "duration_s": duration}
+    result = {"job_id": task["job_id"], "attempt_id": task["attempt_id"], "lease_token": task["lease_token"],
+              "frames": frames, "clip_sha256": sha, "width": video["width"], "height": video["height"], "duration_s": duration}
+    if task.get("temporal_qc"):
+        # Measured in the final framing. The worker decides: walking bob can be
+        # steadied by smooth_finish; travel, horizon roll and repeated frames cannot.
+        from motion_qc import measure
+        result["temporal"] = measure(clip, task["temporal_qc"]["aspect"])
+    return result
 
 
 def compose_task(task, directory, hosts):
