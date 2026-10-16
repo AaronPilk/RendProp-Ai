@@ -41,16 +41,25 @@ try:
  signatures=['public.property_video_quality_profile()','public.property_video_quality_freeze()','public.property_video_job_admit(uuid,jsonb,numeric,text)','public.paid_quality_processing_budget(uuid)','public.property_video_job_audio_preflight(uuid,uuid,text,text,numeric,integer)','public.background_video_delivery(uuid,uuid,uuid,text,bigint)']
  targets=','.join("'%s'::regprocedure"%s for s in signatures)
  catalog_query="""with f as(select p.oid,p.oid::regprocedure::text signature,md5(p.prosrc)body,pg_get_userbyid(p.proowner)owner,p.prosecdef,p.provolatile,p.proconfig,p.proacl::text acl from pg_proc p where p.pronamespace='public'::regnamespace and p.prokind in('f','p'))select jsonb_build_object('target_metadata',(select jsonb_object_agg(signature,to_jsonb(f)-'oid'-'body')from f where oid in(TARGETS)),'other_functions',(select md5(string_agg((to_jsonb(f)-'oid')::text,E'\n'order by signature))from f where oid not in(TARGETS)),'other_constraints',(select md5(string_agg(conrelid::regclass||':'||conname||':'||pg_get_constraintdef(oid),E'\n'order by conrelid::regclass::text,conname))from pg_constraint where connamespace='public'::regnamespace and conname<>'property_video_quality_profile_check'),'profile_default',(select column_default from information_schema.columns where table_schema='public'and table_name='property_video_jobs'and column_name='quality_profile'),'config',(select md5(string_agg(to_jsonb(t)::text,E'\n'order by key))from app_config t),'routes',(select md5(string_agg(to_jsonb(t)::text,E'\n'order by id))from ai_routes t));""".replace('TARGETS',targets)
+ # Own migration must preserve its immediate predecessor's unrelated catalog.
+ # Later additive migrations legitimately add other functions/constraints.
  for m in MIGRATIONS:
   if m==MIG:boundary=json.loads(run('before-own-boundary',[*PSQL,'-Atq','-c',catalog_query]).strip())
   run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
- actual=json.loads(run('after-own-boundary',[*PSQL,'-Atq','-c',catalog_query]).strip());assert actual==boundary,('unrelated/default/config/route/security drift',boundary,actual)
- r['boundaryPreservation']=actual;r['migrationCount']=len(MIGRATIONS)
+  if m==MIG:
+   actual=json.loads(run('after-own-boundary',[*PSQL,'-Atq','-c',catalog_query]).strip());assert actual==boundary,('unrelated/default/config/route/security drift',boundary,actual)
+ # Replay/control restoration is checked against the complete final schema,
+ # including the owned function bodies and profile constraint as well.
+ other_functions="where oid not in("+targets+")";other_constraints="and conname<>'property_video_quality_profile_check'"
+ assert catalog_query.count(other_functions)==1 and catalog_query.count(other_constraints)==1
+ final_catalog_query=catalog_query.replace(other_functions,'').replace(other_constraints,'').replace("'other_functions'","'all_functions'").replace("'other_constraints'","'all_constraints'")
+ final_boundary=json.loads(run('whole-final-boundary',[*PSQL,'-Atq','-c',final_catalog_query]).strip())
+ r['boundaryPreservation']=actual;r['wholeFinalCatalog']=final_boundary;r['migrationCount']=len(MIGRATIONS)
  legacy='begin;\n'+seed+'\n'+(SQL/'tests/property_video_quality_profile.sql').read_text()
  run('unchanged-v1-regression',[*PSQL,'-Atq'],legacy)
 
  for stage in ['fresh','replay']:
-  if stage=='replay':run('replay-own-migration',[*PSQL,'-q','-1','-f',MIG]);assert json.loads(run('own-replay-boundary',[*PSQL,'-Atq','-c',catalog_query]).strip())==boundary
+  if stage=='replay':run('replay-own-migration',[*PSQL,'-q','-1','-f',MIG]);assert json.loads(run('own-replay-boundary',[*PSQL,'-Atq','-c',final_catalog_query]).strip())==final_boundary
   out=run(stage+'-actual-profile',[*PSQL,'-Atq'],fixture)
   rows=[json.loads(line)for line in out.splitlines()if line.startswith('{')and'assertions'in line];assert len(rows)==1 and rows[0]['passed'];r[stage]=rows[0]
  for label,signature,anchor,replacement,oracle in [
@@ -65,7 +74,9 @@ try:
   original=run('read-'+label,[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%signature]);assert original.count(anchor)==1,(label,'source anchor')
   run('compile-'+label,[*PSQL,'-Atq'],original.replace(anchor,replacement,1))
   run('negative-'+label,[*PSQL,'-Atq'],fixture,refuses=oracle)
-  run('restore-'+label,[*PSQL,'-Atq'],original);r['controls'].append({'name':label,'compiledActualSQL':True,'unsafeMutationDetected':True})
+  run('restore-'+label,[*PSQL,'-Atq'],original)
+  assert json.loads(run('restored-catalog-'+label,[*PSQL,'-Atq','-c',final_catalog_query]).strip())==final_boundary,'Restored control changed final catalog'
+  r['controls'].append({'name':label,'compiledActualSQL':True,'unsafeMutationDetected':True})
  # Same real ordinaryStarter receipt fixture; no funding/grant on any host.
  paid="set role service_role;select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'race-quality-original','race-quality-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');reset role;"
  setup='begin;'+seed+paid+"update app_config set value=jsonb_set(value,'{enabled}','true')where key='property_video_jobs';update app_config set value='{\"enabled\":true,\"profile\":\"fal-kling3-4k-steady-v2\"}'where key='property_video_quality';create table public.steady_v2_race_fixture as select jsonb_set(jsonb_set(m,'{sources}',jsonb_build_array(m#>'{sources,0}',m#>'{sources,1}')),'{presentation,shot_labels}','[null,null]')m from bm;grant select on public.steady_v2_race_fixture to service_role;commit;"
