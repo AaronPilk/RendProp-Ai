@@ -1,3 +1,5 @@
+> CURRENT DELIVERY UPDATE October17 09:01 EDT: owner explicitly authorized internalTestFlight88 despite newer integrationCI failures. ONE upload succeeded; Apple VALID, existing internalgroupmembership true, IN_BETA_TESTING, AVAILABLE for1.0.5(88), buildID73f712da-db4e-4e50-8fa0-05430b0bd15c at13:00:56UTC. Root FINAL-INTERNAL-DELIVERY-RECEIPT.json SHAb85a12e27f45d55e59bf044ccca0bf15cefced10f5802df29744a8707037ace0 under external build88-normal-delivery-final-fecbfa0. No groupPOST or AppStoreattach/submit/release; public74 and unattacheddraft unchanged. DO NOTreupload/rebuild/reexport. This supersedes historicaluploadHOLD below; CIred and remainingquality/phone/purchase/onboarding gates remain.
+
 # Current Claude takeover — October17, 2026, 08:07 EDT
 
 The owner has about7% of the weekly Codex window remaining and full Claude usage. Continue the existing checklist from this exact state. Do not start over, re-import obsolete branches, repeat completed suites, or treat this as a new app build.
