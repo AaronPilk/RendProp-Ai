@@ -28,21 +28,23 @@ const widenedWorker=await H.compileWorker(H.once(H.ACTUAL_POLL,"kie&&out.value.r
 
 type Routed={make:(deps:unknown)=>H.RoutedStatus};
 function wire(resultUrl:string,media:{bytes:Uint8Array;type:string|null;declaredLength?:number}):H.KieWire{return{posts:[],polls:0,downloads:0,record:()=>H.kieSuccess(resultUrl),cdn:()=>media};}
-async function chain(o:{routed:Routed;engine:H.Worker;provider:"kie"|"fal";profile:string|undefined;resultUrl:string;media:{bytes:Uint8Array;type:string|null;declaredLength?:number}}){
- H.r2Store.clear();const journal=new Map<string,H.JournalRow>();const w=wire(o.resultUrl,o.media);
+async function chain(o:{routed:Routed;engine:H.Worker;provider:"kie"|"fal";profile:string|undefined;resultUrl:string;media:{bytes:Uint8Array;type:string|null;declaredLength?:number};paid?:H.PaymentDouble;job?:Record<string,unknown>}){
+ H.r2Store.clear();const journal=new Map<string,H.JournalRow>();const w=wire(o.resultUrl,o.media);const paid=o.paid??H.payment();
  const falPoll={poll:async()=>({status:"done",result_url:o.resultUrl,mime:/\.png(\?|$)/i.test(o.resultUrl)?"image/png":"video/mp4"})};
- const routed=o.routed.make({admin:H.journalAdmin(journal),adapter:(p:string)=>p==="kie"?kieAdapter:falPoll,head:r2.headObject,bucket:r2.R2_BUCKET_RENDERS,persist:common.persistResult,sign:(scope:{key:string},seconds:number)=>`https://private-media.fixture.invalid/${scope.key}?ttl=${seconds}`});
+ const routed=o.routed.make({admin:H.journalAdmin(journal,paid),adapter:(p:string)=>p==="kie"?kieAdapter:falPoll,head:r2.headObject,bucket:r2.R2_BUCKET_RENDERS,persist:common.persistResult,sign:(scope:{key:string},seconds:number)=>`https://private-media.fixture.invalid/${scope.key}?ttl=${seconds}`});
  const statuses:{status:number;value:Record<string,unknown>}[]=[];
- const status=async()=>{let r:Response;try{r=await routed(H.ORG,H.JOBS[o.provider]);}catch(e){r=respondError(e);}const out={status:r.status,value:await r.json()};statuses.push(out);return out;};
+ const status=async()=>{let r:Response;try{r=await routed(H.ORG,o.job??H.JOBS[o.provider]);}catch(e){r=respondError(e);}const out={status:r.status,value:await r.json()};statuses.push(out);return out;};
  const row=()=>{const rows=[...journal.values()];return rows.length===1?{storage_key:rows[0].storage_key,bytes:rows[0].bytes}:null;};
  const ctx=H.ctxFor(o.profile,"16:9");await H.seedSourcePhoto(ctx);
  const{s}=await H.withTransport(w,()=>H.runWorker({status,row,paid:{provider_request_id:H.TASK_ID,model:o.provider==="kie"?KIE_PROPERTY_MODEL:H.JOBS.fal.m}},async()=>{await o.engine.poll(ctx);}));
  const objects=[...H.r2Store.keys()].filter(k=>k.includes("/completed-video/"));
- return{s,w,journal,objects,status:statuses[0]};
+ return{s,w,journal,objects,status:statuses[0],paid};
 }
 const PNG=`https://${H.CDN_HOST}/kie/${H.TASK_ID}.png`,MP4=`https://${H.CDN_HOST}/kie/${H.TASK_ID}.mp4`;
 const tiny={bytes:new Uint8Array(4096),type:"video/mp4"};
 const OVER_LIMIT={bytes:new Uint8Array(64),type:"video/mp4",declaredLength:100*MiB+1};
+// The one read the Kie branch makes: this receipt's accepted payment, by the signed owner and admission key.
+const KIE_PAYMENT_READ={columns:"provider_request_id,cost_ledger_id,settled_at,released_at",filters:{org_id:H.ORG,actor_id:H.USER,provider:"kie",model:KIE_PROPERTY_MODEL,idempotency_key:"same-operation"},limit:2};
 function terminalUnretainable(r:Awaited<ReturnType<typeof chain>>,label:string,downloads:number){
  assertEquals(r.status.status,200,label);
  assertEquals(r.status.value,{status:"failed",error:"The generated result cannot be retained as a video.",error_class:"upstream",provider:"kie",failure_phase:"persistence",result_unretainable:true},label);
@@ -50,10 +52,12 @@ function terminalUnretainable(r:Awaited<ReturnType<typeof chain>>,label:string,d
  assertEquals(r.s.rpcs,[],label+": no poll release, no commit");assertEquals(r.s.diagnostics,[],label);
  assertEquals(r.s.events,["status"],label+": decided from the status alone");
  assertEquals([r.w.polls,r.w.downloads,r.objects.length,r.journal.size],[1,downloads,0,0],label+": nothing retained or journaled");
+ assertEquals(r.paid.reads,[KIE_PAYMENT_READ],label+": terminal only after one exact read of the settled payment");
 }
-function stalled(r:Awaited<ReturnType<typeof chain>>,label:string){
+function stalled(r:Awaited<ReturnType<typeof chain>>,label:string,paymentReads?:number){
  assertEquals(r.status.status,503,label);assertEquals(r.status.value.retry_existing_job,true,label);assertEquals(r.status.value.failure_phase,"persistence",label);
  H.released(r.s,label,"status_response");assertEquals([r.objects.length,r.journal.size],[0,0],label);
+ if(paymentReads!==undefined)assertEquals(r.paid.reads.length,paymentReads,label+": payment reads");
 }
 
 Deno.test("Kie image-extension result: terminal failed at the status, before any download; the worker fails the attempt once (no poll release)",async()=>{
@@ -71,8 +75,9 @@ Deno.test("Kie result over the 100 MiB persist limit: refused on its declared si
 });
 Deno.test("control: FAL keeps the retryable 503 and the worker's poll-release loop for both shapes; legacy and v1/steady profiles unchanged",async()=>{
  for(const profile of[undefined,"legacy",PROPERTY_VIDEO_QUALITY_PROFILE,PROPERTY_VIDEO_STEADY_PROFILE]){
-  const png=await chain({routed:actualRouted,engine:worker,provider:"fal",profile,resultUrl:"https://fal.media/files/fixture-result.png",media:tiny});stalled(png,`FAL .png ${profile}`);
-  const over=await chain({routed:actualRouted,engine:worker,provider:"fal",profile,resultUrl:"https://fal.media/files/fixture-result.mp4",media:OVER_LIMIT});stalled(over,`FAL over limit ${profile}`);
+  // A settled FAL payment is present, and is never read: the Kie branch is the only reader.
+  const png=await chain({routed:actualRouted,engine:worker,provider:"fal",profile,resultUrl:"https://fal.media/files/fixture-result.png",media:tiny});stalled(png,`FAL .png ${profile}`,0);
+  const over=await chain({routed:actualRouted,engine:worker,provider:"fal",profile,resultUrl:"https://fal.media/files/fixture-result.mp4",media:OVER_LIMIT});stalled(over,`FAL over limit ${profile}`,0);
   // Pre-K3 and actual FAL decisions are identical.
   const before=await chain({routed:preK3Routed,engine:preK3Worker,provider:"fal",profile,resultUrl:"https://fal.media/files/fixture-result.png",media:tiny});
   assertEquals([before.status,H.decision(before.s)],[png.status,H.decision(png.s)],`FAL unchanged ${profile}`);
@@ -95,7 +100,42 @@ Deno.test("compiled defect controls: without the K3 status branch a Kie image or
   const{s}=await H.runWorker({status:async()=>forged,row:()=>null,paid:null},async()=>{await engine.poll(ctx);});
   assertEquals(s.fail,[{code,ambiguous:false}]);
  }
- console.log("KIE_UNRETAINABLE_COMPILED_CONTROLS=3");
+ // 4. The K3 branch without its payment gate (as first written): a still-held payment is answered
+ // terminal, the worker fails the attempt and never polls again, so the expired-token recovery that
+ // books a held acceptance never runs; the hold is stranded, neither booked nor released.
+ const ungated=await H.compileRoutedStatus(H.once(H.ROUTED_STATUS_SOURCE,"      if (paid) {","      if (true) {"));
+ const stranded=await chain({routed:ungated,engine:worker,provider:"kie",profile:KIE_PROPERTY_PROFILE,resultUrl:PNG,media:tiny,paid:H.payment([H.HELD_PAYMENT])});
+ assertEquals([stranded.status.value.status,stranded.s.fail,stranded.s.rpcs],["failed",[{code:"source_video_unverifiable",ambiguous:false}],[]],"control: the ungated branch strands a held payment");
+ console.log("KIE_UNRETAINABLE_COMPILED_CONTROLS=4");
+});
+
+// ---- the payment gate: terminal only once this receipt's accepted payment is booked ----
+Deno.test("a Kie unretainable result whose accepted payment is still a held reservation (settlement failed after acceptance) keeps the retryable 503 and the worker's poll release; once that payment is settled the same receipt is terminal",async()=>{
+ for(const[label,resultUrl,media,downloads]of[[".png",PNG,tiny,0],["100 MiB + 1",MP4,OVER_LIMIT,1]] as const){
+  const held=await chain({routed:actualRouted,engine:worker,provider:"kie",profile:KIE_PROPERTY_PROFILE,resultUrl,media,paid:H.payment([H.HELD_PAYMENT])});
+  stalled(held,label+" held",1);assertEquals(held.paid.reads,[KIE_PAYMENT_READ],label+" held: the same exact read");
+  // The settlement recovery (an expired-token poll, paidRoutedReceiptMatches(routed,true)) books the hold; the next poll is terminal.
+  const settled=await chain({routed:actualRouted,engine:worker,provider:"kie",profile:KIE_PROPERTY_PROFILE,resultUrl,media,paid:H.payment([H.SETTLED_PAYMENT])});
+  terminalUnretainable(settled,label+" settled",downloads);
+ }
+});
+Deno.test("only one settled, unreleased payment row for this exact receipt makes it terminal: released, another request id, a partial tuple, no row, two rows and a read error each keep the retryable 503",async()=>{
+ const RELEASED={provider_request_id:null,cost_ledger_id:null,settled_at:null,released_at:"2026-10-17T00:00:02.000Z"};
+ const cases:[string,H.PaymentRow[]|Error][]=[["released",[RELEASED]],["another request id",[{...H.SETTLED_PAYMENT,provider_request_id:"kie-another-task"}]],
+  ["no ledger row",[{...H.SETTLED_PAYMENT,cost_ledger_id:null}]],["no settlement time",[{...H.SETTLED_PAYMENT,settled_at:null}]],["an unparseable settlement time",[{...H.SETTLED_PAYMENT,settled_at:"not-a-time"}]],
+  ["no row",[]],["two rows",[H.SETTLED_PAYMENT,H.SETTLED_PAYMENT]],["a read error",new Error("permission denied for table app_video_cost_reservations")]];
+ for(const[label,rows]of cases){
+  const r=await chain({routed:actualRouted,engine:worker,provider:"kie",profile:KIE_PROPERTY_PROFILE,resultUrl:PNG,media:tiny,paid:H.payment(rows)});
+  stalled(r,label,1);
+ }
+ // A thrown read (transport) is the same "not yet", even with a settled row behind it.
+ stalled(await chain({routed:actualRouted,engine:worker,provider:"kie",profile:KIE_PROPERTY_PROFILE,resultUrl:PNG,media:tiny,paid:H.payment([H.SETTLED_PAYMENT],true)}),"a thrown read",1);
+});
+Deno.test("a receipt signed without an admission key reads the payment by its exact provider request id",async()=>{
+ const{a:_admission,...unkeyed}=H.JOBS.kie;
+ const r=await chain({routed:actualRouted,engine:worker,provider:"kie",profile:KIE_PROPERTY_PROFILE,resultUrl:PNG,media:tiny,job:unkeyed});
+ assertEquals(r.status.value.status,"failed");assertEquals(r.s.fail,[{code:"source_video_unverifiable",ambiguous:false}]);
+ assertEquals(r.paid.reads,[{...KIE_PAYMENT_READ,filters:{org_id:H.ORG,actor_id:H.USER,provider:"kie",model:KIE_PROPERTY_MODEL,provider_request_id:H.TASK_ID}}]);
 });
 
 // ---- unit: persistResult and the routed-output journal name the unretainable shapes ----

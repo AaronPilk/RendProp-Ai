@@ -151,9 +151,28 @@ export async function compileRoutedStatus(body:string=ROUTED_STATUS_SOURCE):Prom
 `))as {make:(deps:unknown)=>RoutedStatus};
 }
 export type JournalRow={org_id:string;user_id:string;listing_id:string;bucket:string;storage_key:string;bytes:number};
-export function journalAdmin(rows:Map<string,JournalRow>){
+/** The accepted payment (app_video_cost_reservations) of the receipt, as routedStatus reads it. */
+export type PaymentRow={provider_request_id:string|null;cost_ledger_id:string|null;settled_at:string|null;released_at:string|null};
+/** Settled once at acceptance: the normal state of a paid receipt. */
+export const SETTLED_PAYMENT:PaymentRow={provider_request_id:TASK_ID,cost_ledger_id:"a0000000-0000-4000-8000-0000000000da",settled_at:"2026-10-17T00:00:01.000Z",released_at:null};
+/** Accepted, but app_video_cost_settle failed after acceptance: the priced hold is retained, nothing is booked yet. */
+export const HELD_PAYMENT:PaymentRow={provider_request_id:null,cost_ledger_id:null,settled_at:null,released_at:null};
+/** rows: what the read answers (an Error answers {error}); throws: the read itself throws (transport). */
+export interface PaymentDouble{rows:PaymentRow[]|Error;throws?:boolean;reads:{columns:string;filters:Record<string,unknown>;limit:number}[]}
+export const payment=(rows:PaymentRow[]|Error=[SETTLED_PAYMENT],throws=false):PaymentDouble=>({rows,throws,reads:[]});
+export function journalAdmin(rows:Map<string,JournalRow>,paid:PaymentDouble=payment()){
  return{
-  from:(table:string)=>{assertEquals(table,"private_ai_outputs");let keys:string[]=[];
+  from:(table:string)=>{
+   if(table==="app_video_cost_reservations"){
+    // Records the exact lookup identity; answers the configured rows (or a read error).
+    const read={columns:"",filters:{} as Record<string,unknown>,limit:0};
+    // deno-lint-ignore no-explicit-any
+    const q:any={select:(columns:string)=>{read.columns=columns;return q;},eq:(k:string,v:unknown)=>{assert(!(k in read.filters),"one filter per column");read.filters[k]=v;return q;},
+     limit:async(n:number)=>{read.limit=n;paid.reads.push(read);if(paid.throws)throw new TypeError("payment read transport failure");
+      return paid.rows instanceof Error?{data:null,error:{message:paid.rows.message}}:{data:paid.rows.slice(0,n),error:null};}};
+    return q;
+   }
+   assertEquals(table,"private_ai_outputs");let keys:string[]=[];
    // deno-lint-ignore no-explicit-any
    const q:any={select:()=>q,eq:()=>q,is:()=>q,in:(_k:string,v:string[])=>{keys=v;return q;},limit:async()=>({error:null,data:[...rows.values()].filter(r=>keys.includes(r.storage_key))})};return q;},
   rpc:async(name:string,args:Record<string,unknown>)=>{assertEquals(name,"register_private_ai_output");const key=String(args.p_key),prior=rows.get(key);
@@ -161,9 +180,10 @@ export function journalAdmin(rows:Map<string,JournalRow>){
    if(!prior)rows.set(key,{org_id:ORG,user_id:USER,listing_id:LISTING,bucket:"renders",storage_key:key,bytes:Number(args.p_bytes)});return{data:{ok:true,key},error:null};},
  };
 }
+// o/usr/a: the owner and admission key every new receipt is signed with (ctxFor's request_key).
 export const JOBS={
- kie:{p:"kie",m:KIE_PROPERTY_MODEL,i:TASK_ID,u:KIE_RECORD_URL,usr:USER,l:LISTING,k:"video.reel_clip",t:"2026-10-17T00:00:00.000Z"},
- fal:{p:"fal",m:"fal-ai/kling-video/v3/4k/image-to-video",i:TASK_ID,u:"https://queue.fal.run/fixture",usr:USER,l:LISTING,k:"video.reel_clip",t:"2026-10-17T00:00:00.000Z"},
+ kie:{p:"kie",m:KIE_PROPERTY_MODEL,i:TASK_ID,u:KIE_RECORD_URL,o:ORG,usr:USER,l:LISTING,a:"same-operation",k:"video.reel_clip",t:"2026-10-17T00:00:00.000Z"},
+ fal:{p:"fal",m:"fal-ai/kling-video/v3/4k/image-to-video",i:TASK_ID,u:"https://queue.fal.run/fixture",o:ORG,usr:USER,l:LISTING,a:"same-operation",k:"video.reel_clip",t:"2026-10-17T00:00:00.000Z"},
 };
 
 // ---- the worker: poll, quality and action compiled from engine.ts ----
