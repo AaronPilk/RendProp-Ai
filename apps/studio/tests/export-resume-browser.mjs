@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
 import { startNativeTraceObserver, NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
+import { startNodeSchedulingProbe, startPageSchedulingProbe, stopPageSchedulingProbe } from "./scheduling-probe.mjs";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
 const onlyFixed=process.argv.slice(2).includes('--only-fixed');
@@ -277,6 +278,13 @@ document.querySelector("#run").onclick=async()=>{
       const attemptName = `${variant}-${narrated ? "narrated" : "original"}`;
       const nativeTrace = ["cadence-baseline", "late-frames"].includes(variant) ? await startNativeTraceObserver({ context, page, artifacts, syncId: `${attemptName}-before-click`,
         rawFileName: `native-trace-${attemptName}.raw.private.json`, sourceHashes, limits: NATIVE_TRACE_EXPORT_LIMITS }) : undefined;
+      // Scheduling probes for every attempt: a worker inside the renderer and
+      // a worker_thread in this Node process record how late they woke. A gap
+      // that lines up with a clock refusal says every thread stopped; a worker
+      // that kept running while the clocks froze says only the media/audio
+      // pipeline stopped. Neither touches the export or any oracle.
+      const nodeProbe = startNodeSchedulingProbe();
+      const schedulingProbe = { page: await startPageSchedulingProbe(page), node: nodeProbe.facts };
       await page.locator("#run").click();
       let attempt;
       try {
@@ -290,10 +298,12 @@ document.querySelector("#run").onclick=async()=>{
         // baseline may classify a fully evidenced refusal as a detected fault;
         // every current-exporter variant must finish and pass its media oracles.
         if (nativeTrace) await nativeTrace.finish();
+        schedulingProbe.page = await stopPageSchedulingProbe(page, schedulingProbe.page);
+        schedulingProbe.node = await nodeProbe.stop();
         attempt = await page.evaluate(() => ({ error: window.fixture.error, errorName: window.fixture.errorName, errorCause: window.fixture.errorCause, result: window.fixture.result,
           trace: window.fixture.trace, downloadHidden: document.querySelector("#download").hidden,
           tracks: window.fixture.tracks.map(track => track.readyState) }));
-        attempt = { ...attempt, variant, narrated, ...(nativeTrace ? { nativeTrace: nativeTrace.facts } : {}) };
+        attempt = { ...attempt, variant, narrated, schedulingProbe, ...(nativeTrace ? { nativeTrace: nativeTrace.facts } : {}) };
         receipt.attempts.push(attempt); await persist();
       }
       if (variant === "baseline" && attempt.error) {

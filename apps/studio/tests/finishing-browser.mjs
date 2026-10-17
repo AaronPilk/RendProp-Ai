@@ -11,8 +11,9 @@ import {build} from "vite";
 import {chromium, expect} from "@playwright/test";
 import {fixedAACTailWindow, fixedPCMWindow, measureTonePCM, requireAudibleFadeOut} from "./finishing-audio-probe.mjs";
 import {startNativeTraceObserver, NATIVE_TRACE_EXPORT_LIMITS} from "./native-trace-observer.mjs";
+import {startNodeSchedulingProbe, startPageSchedulingProbe, stopPageSchedulingProbe} from "./scheduling-probe.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-finishing-")), dist = join(artifacts, "dist");
-const sourceHashes = Object.fromEntries(await Promise.all(["tests/finishing-browser.mjs", "tests/native-trace-observer.mjs",
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/finishing-browser.mjs", "tests/native-trace-observer.mjs", "tests/scheduling-probe.mjs",
   ...["export", "recording-clock", "media", "finishing", "music"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
 const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", sourceHashes, checks: [], errors: [], externalRequests: [], status: "running"};
 let browser, server, page;
@@ -124,10 +125,21 @@ try {
   const nativeTrace = await startNativeTraceObserver({context, page, artifacts, syncId: "finishing-export-before-click",
     rawFileName: "native-trace-finishing-export.raw.private.json", sourceHashes, limits: NATIVE_TRACE_EXPORT_LIMITS,
     onFacts: facts => {receipt.nativeTrace = facts;}});
+  // Scheduling probes for the same window: a worker inside the renderer and a
+  // worker_thread inside this Node process each record how late they woke.
+  // A gap that lines up with a clock refusal says every thread stopped; a
+  // worker that kept running while the audio clock froze says only the audio
+  // pipeline stopped. Neither touches the export or any oracle.
+  const nodeProbe = startNodeSchedulingProbe();
+  receipt.schedulingProbe = {page: await startPageSchedulingProbe(page), node: nodeProbe.facts};
   try {
     await page.getByRole("button", {name:"Export MP4", exact:true}).click();
     await expect(page.getByRole("link", {name:/Download MP4/})).toBeVisible({timeout:30000});
-  } finally {await nativeTrace.finish();}
+  } finally {
+    await nativeTrace.finish();
+    receipt.schedulingProbe.page = await stopPageSchedulingProbe(page, receipt.schedulingProbe.page);
+    receipt.schedulingProbe.node = await nodeProbe.stop();
+  }
   const download = page.waitForEvent("download"); await page.getByRole("link", {name:/Download MP4/}).click();
   const output=join(artifacts,"music-captions-mix.mp4"); await (await download).saveAs(output);
   const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_entries","stream=codec_name,codec_type,start_time,duration,sample_rate:format=duration","-of","json",output],{encoding:"utf8"}));
