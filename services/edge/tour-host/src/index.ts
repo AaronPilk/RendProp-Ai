@@ -45,7 +45,8 @@ import { handleRecipientConfirmation } from "./recipient-confirmation";
 import { propertyPage } from "./property-site";
 import { propertyAddressPath } from "./property-seo";
 import { previewWebsiteTheme } from "./property-design";
-import { isPublicLocation, lookupNearbyPlaces } from "./nearby-places";
+import { isPublicLocation, lookupNearbyPlaces, peekNearbyPlaces, type NearbyPlacesResult } from "./nearby-places";
+import { renderNearbyMap } from "./nearby-map";
 
 const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
 
@@ -299,7 +300,7 @@ async function handleTour(
   const renderOpts = { embed, unbranded, origin: url.origin, page, publicBase, previewTheme, addressUrls: !demo };
 
   /** Render + (on `/u/`) refuse to serve anything that trips the self-check. */
-  const finish = (tour: Tour): Response => {
+  const finish = (tour: Tour, nearby: NearbyPlacesResult | null = null): Response => {
     if (previewTheme && (tour.space_type || "real_estate") !== "real_estate") return notFound();
     // Resolve the address only after the normal current-publication/hosting
     // authority has admitted this tour. Old short links keep working; an old
@@ -318,7 +319,7 @@ async function handleTour(
       functionsBase(env),
       env.SUPABASE_ANON_KEY || "",
       env.TURNSTILE_SITE_KEY || "",
-      renderOpts,
+      nearby ? { ...renderOpts, nearby } : renderOpts,
     );
     if (unbranded) {
       // Fail CLOSED. An MLS unbranded field must never receive a page with
@@ -355,7 +356,13 @@ async function handleTour(
   if (upstream.kind === "error") return upstreamError(upstream.status);
   if (!isTour(upstream.value)) return upstreamError();
   try {
-    return finish(upstream.value);
+    // Already-cached neighbourhood places become static markup on the Location
+    // page (map + list, no script needed). Cache-only: never a provider call,
+    // lease or budget charge, and bounded so storage cannot delay the HTML.
+    const nearby = page === "location" && !embed && !unbranded && (upstream.value.space_type || "real_estate") === "real_estate"
+      ? await peekNearbyPlaces({ space_type: "real_estate", published_at: String(upstream.value.published_at || ""), listing: { lat: typeof upstream.value.listing?.lat === "number" ? upstream.value.listing.lat : null, lng: typeof upstream.value.listing?.lng === "number" ? upstream.value.listing.lng : null } }, env)
+      : null;
+    return finish(upstream.value, nearby);
   } catch {
     // A malformed nested field is an invalid upstream response, not a missing
     // published tour. Never render its raw JSON/error text into the public page.
@@ -412,7 +419,11 @@ async function handleNearbyPlaces(slug: string, req: Request, url: URL, env: Env
   if (upstream.kind === "not-found") return reply(404, { status: "unavailable", places: [] });
   if (upstream.kind === "error") return reply(upstream.status, { status: "unavailable", places: [] });
   if (!isPublicLocation(upstream.value) || upstream.value.slug !== slug) return reply(404, { status: "unavailable", places: [] });
-  return reply(200, { ...await lookupNearbyPlaces(upstream.value, env), license_url: "https://www.openstreetmap.org/copyright" });
+  const result = await lookupNearbyPlaces(upstream.value, env);
+  // The map is drawn here, from the same places and the same coarsened origin,
+  // so the page never needs coordinates, tiles or a map script of its own.
+  const map = renderNearbyMap(result, upstream.value.listing);
+  return reply(200, { ...result, ...(map ? { map_html: map } : {}), license_url: "https://www.openstreetmap.org/copyright" });
 }
 
 /** Static marketing and fresh, opt-in customer child sitemaps. Customer
