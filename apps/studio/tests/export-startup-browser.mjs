@@ -8,14 +8,15 @@ import {execFileSync} from "node:child_process";
 import {build} from "vite";
 import {chromium, expect} from "@playwright/test";
 import {startNativeTraceObserver} from "./native-trace-observer.mjs";
+import {collectRunnerFacts} from "./runner-facts.mjs";
 
 const mode = process.argv[2] ?? "actual";
 assert(["actual", "--before", "--fault=omit-readiness"].includes(mode));
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-startup-"));
 const paths = ["src/editor/export.ts", "src/editor/recording-clock.ts", "src/editor/media.ts", "src/editor/model.ts",
-  "tests/export-startup-fixture.ts", "tests/export-startup-fixture.html", "tests/export-startup-browser.mjs", "tests/native-trace-observer.mjs"];
+  "tests/export-startup-fixture.ts", "tests/export-startup-fixture.html", "tests/export-startup-browser.mjs", "tests/native-trace-observer.mjs", "tests/runner-facts.mjs"];
 const hashes = async () => Object.fromEntries(await Promise.all(paths.map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = {status: "running", mode, sourceHashes: await hashes(), cases: [], checks: [], externalRequests: [], errors: [],
+const receipt = {status: "running", mode, sourceHashes: await hashes(), runnerFacts: collectRunnerFacts(), cases: [], checks: [], externalRequests: [], errors: [],
   proof: "Native Web Audio/canvas/MediaRecorder and decoded PCM. Explicit startup currentTime observation hold; real native time retained independently. No claim to reproduce the underlying hosted browser/device cause."};
 let browser, server, page, mutated = false;
 let nativeTraceOwner;

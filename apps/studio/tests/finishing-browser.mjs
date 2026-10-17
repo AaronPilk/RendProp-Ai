@@ -12,10 +12,11 @@ import {chromium, expect} from "@playwright/test";
 import {fixedAACTailWindow, fixedPCMWindow, measureTonePCM, requireAudibleFadeOut} from "./finishing-audio-probe.mjs";
 import {startNativeTraceObserver, NATIVE_TRACE_EXPORT_LIMITS} from "./native-trace-observer.mjs";
 import {startNodeSchedulingProbe, startPageSchedulingProbe, stopPageSchedulingProbe} from "./scheduling-probe.mjs";
+import {collectRunnerFacts, quickLoad} from "./runner-facts.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-finishing-")), dist = join(artifacts, "dist");
-const sourceHashes = Object.fromEntries(await Promise.all(["tests/finishing-browser.mjs", "tests/native-trace-observer.mjs", "tests/scheduling-probe.mjs",
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/finishing-browser.mjs", "tests/native-trace-observer.mjs", "tests/scheduling-probe.mjs", "tests/runner-facts.mjs",
   ...["export", "recording-clock", "media", "finishing", "music"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", sourceHashes, checks: [], errors: [], externalRequests: [], status: "running"};
+const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", sourceHashes, runnerFacts: collectRunnerFacts(), checks: [], errors: [], externalRequests: [], status: "running"};
 let browser, server, page;
 // Retain the actual clock guard's cause without changing its readings,
 // scheduling, thresholds or error. A missing download alone cannot explain a
@@ -156,6 +157,7 @@ try {
   await expect(page.getByRole("button", {name:"Export MP4", exact:true})).toBeEnabled();
   receipt.beforeExport = await snapshot();
   receipt.phase = "mixed-audio-caption-export";
+  receipt.loadBeforeExport = quickLoad();
   // Passive native webaudio trace around the one guarded export, as the
   // startup suite already records. It owns no clock, source or oracle, cannot
   // turn a refusal into a download, and its raw bytes stay local (0600). Its
