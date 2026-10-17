@@ -119,7 +119,7 @@ export async function handleListingActions(req: Request, context: ListingActionC
   await context.authorizeListing(listingId);
   await requireContentWrite(context.admin, context.userId, context.orgId, listingId);
   if (req.method === "PATCH") {
-    if(["use","use_cover","reorder_selected"].includes(String(body.action)))return await gallerySelectionRequest(context,listingId,body);
+    if(["use","use_cover","remove","reorder_selected"].includes(String(body.action)))return await gallerySelectionRequest(context,listingId,body,req.headers.get("Idempotency-Key"));
     return await editGallery(body, listingId, context);
   }
   assert(typeof assetId === "string" && UUID.test(assetId), 400, "Choose an uploaded photo.");

@@ -3,9 +3,10 @@ import type { StudioPhoto } from "../../data/contracts";
 import type { GalleryPhoto } from "./model";
 import {orientationLabel,type PhotoOrientation} from "../sync/video-framing";
 
-export default function GalleryPhotoCard({ photo, preview, index, count, isCover, busy, canWrite, selectionReady, selected, usable, reviewRequired, orientation='unknown', onGeometry, onPrepare, onUse, onSaveCaption, onCover, onMove }: {
+export default function GalleryPhotoCard({ photo, preview, index, count, isCover, busy, canWrite, selectionReady, selected, usable, reviewRequired, orientation='unknown', onGeometry, onPrepare, onUse, onRemove, onSaveCaption, onCover, onMove }: {
   photo: GalleryPhoto; preview?: StudioPhoto; index: number; count: number; isCover: boolean; busy: boolean; canWrite: boolean;
   selectionReady:boolean;selected:boolean;usable:boolean;reviewRequired:boolean;onUse:(reviewed:boolean)=>void;
+  onRemove:()=>void;
   onSaveCaption: (caption: string, expected: string | null) => Promise<boolean>;
   onCover: (reviewed:boolean) => void; onMove: (direction: -1 | 1) => void;
   onPrepare?:()=>void;
@@ -31,7 +32,7 @@ export default function GalleryPhotoCard({ photo, preview, index, count, isCover
         {changedElsewhere && <p role="alert" className="lw-error">The caption changed on another device. Your text is still here.<button type="button" disabled={busy} onClick={() => setEdit({ text: photo.caption ?? "", expected: photo.caption })}>Use latest caption</button><button type="button" disabled={busy} onClick={() => setEdit({ ...edit, expected: photo.caption })}>Keep my text and review again</button></p>}
         <div className="lw-photo-actions"><button className="primary" disabled={busy || !canWrite || changedElsewhere}>Save caption</button><button type="button" disabled={busy} onClick={() => setEdit(null)}>Cancel</button></div>
       </form> : <button disabled={busy || !canWrite} onClick={() => setEdit({ text: photo.caption ?? "", expected: photo.caption })}>Edit caption</button>}
-      <div className="lw-photo-actions"><button disabled={busy||!canWrite||selected||!canUse} onClick={()=>onUse(reviewed)}>{selected?"Selected for listing":"Use on listing"}</button><button disabled={busy || !canWrite || isCover||!canUse} onClick={()=>onCover(reviewed)}>{isCover ? "Cover photo" : "Use as cover"}</button><button aria-label={`Move photo ${index + 1} earlier`} disabled={busy || !canWrite ||!selectionReady|| index === 0 || count > 500} onClick={() => onMove(-1)}>← Earlier</button><button aria-label={`Move photo ${index + 1} later`} disabled={busy || !canWrite ||!selectionReady|| index === count - 1 || count > 500} onClick={() => onMove(1)}>Later →</button></div>
+      <div className="lw-photo-actions">{selected?<button type="button" disabled={busy||!canWrite||!selectionReady} onClick={onRemove}>Remove from listing</button>:<button type="button" disabled={busy||!canWrite||!canUse} onClick={()=>onUse(reviewed)}>Use on listing</button>}<button disabled={busy || !canWrite || isCover||!canUse} onClick={()=>onCover(reviewed)}>{isCover ? "Cover photo" : "Use as cover"}</button><button aria-label={`Move photo ${index + 1} earlier`} disabled={busy || !canWrite ||!selectionReady|| index === 0 || count > 500} onClick={() => onMove(-1)}>← Earlier</button><button aria-label={`Move photo ${index + 1} later`} disabled={busy || !canWrite ||!selectionReady|| index === count - 1 || count > 500} onClick={() => onMove(1)}>Later →</button></div>
     </div>
   </article>;
 }

@@ -114,6 +114,52 @@ do $$declare f record;r jsonb;s jsonb;before_row jsonb;before_budget jsonb;befor
  update orgs set deleted_at=null where id=f.org;
  perform pg_temp.ok((select count(*)=4+1 from photos where listing_id=f.listing),'selection changes retain all saved photos and disclosures');
 end$$;
+-- Studio unselect delegates to the shared authority; legacy NULL must retain
+-- the current projection's mapped order without discarding hidden anchors.
+do $$declare f record;r jsonb;s jsonb;expected uuid[];key text;edit_key text;op uuid:=gen_random_uuid();before_photos jsonb;before_assets jsonb;before_history jsonb;before_row jsonb;begin
+ select *into f from bf;
+ update photos set sort=case id when f.photo_ids[2]then 0 when f.photo_ids[1]then 1 when f.photo_ids[3]then 2 when f.photo_ids[4]then 3 else 4 end where listing_id=f.listing;
+ key:='renders/'||f.org||'/'||f.listing||'/gallery-'||f.ids[1]||'.jpg';
+ edit_key:='renders/'||f.org||'/'||f.listing||'/gallery-'||f.ids[3]||'.jpg';
+ select jsonb_agg(to_jsonb(p)order by id)into before_photos from photos p where listing_id=f.listing;
+ select jsonb_agg(to_jsonb(a)order by id)into before_assets from capture_assets a where listing_id=f.listing;
+ select jsonb_agg(to_jsonb(m)order by id)into before_history from media_provenance m where listing_id=f.listing;
+ update listings set gallery_asset_ids=null,main_photo_key=key where id=f.listing;
+ expected:=f.ids[1:100];expected[1]:=f.ids[2];expected[2]:=f.ids[1];expected:=array_remove(expected,f.ids[3]);
+ r:=remove_listing_gallery(f.actor,f.org,f.listing,op,array[f.ids[3]],null,key);
+ perform pg_temp.ok(r->'gallery_asset_ids'=to_jsonb(expected),'legacy unselect preserves modern mapped order and all hidden anchors');
+ perform pg_temp.ok(r->>'main_photo_key'=key,'removing edited member retains unrelated original cover');
+ perform pg_temp.ok(r#>>'{gallery_remove,operation_id}'=op::text and r#>>'{gallery_remove,actor_id}'=f.actor::text and r#>'{gallery_remove,replayed}'='false'::jsonb and r#>'{gallery_remove,requested_asset_ids}'=to_jsonb(array[f.ids[3]])and r#>'{gallery_remove,removed_asset_ids}'=to_jsonb(array[f.ids[3]]),'shared authority returns immutable exact edited-member removal receipt');
+ perform pg_temp.ok((select jsonb_agg(to_jsonb(p)order by id)=before_photos from photos p where listing_id=f.listing)and(select jsonb_agg(to_jsonb(a)order by id)=before_assets from capture_assets a where listing_id=f.listing)and(select jsonb_agg(to_jsonb(m)order by id)=before_history from media_provenance m where listing_id=f.listing),'unselect retains every original edit photo order asset and provenance row');
+ s:=studio_gallery_selection_snapshot(f.actor,f.org,f.listing);
+ perform pg_temp.ok(exists(select 1 from jsonb_array_elements(s->'photos')p where p->>'photo_id'=f.photo_ids[3]::text and p->'selected'='false'::jsonb and p->'can_use'='true'::jsonb),'unselected edited history remains available for explicit reviewed re-add');
+ r:=studio_gallery_selection_change(f.actor,f.org,f.listing,'use',f.photo_ids[3],pg_temp.expected(f.listing),null,null,true);
+ expected:=array_append(expected,f.ids[3]);
+ perform pg_temp.ok(r->'gallery_asset_ids'=to_jsonb(expected),'explicit reviewed re-add appends only removed edited member after retained order');
+ select to_jsonb(l)into before_row from listings l where id=f.listing;
+ r:=remove_listing_gallery(f.actor,f.org,f.listing,op,array[f.ids[3]],null,key);
+ perform pg_temp.ok(r#>'{gallery_remove,replayed}'='true'::jsonb and r->'gallery_asset_ids'=to_jsonb(expected)and(select to_jsonb(l)=before_row from listings l where id=f.listing),'lost removal reply replay never removes a later explicit re-add');
+ perform pg_temp.denied(format('select remove_listing_gallery(%L,%L,%L,%L,%L::uuid[],null,%L)',f.actor,f.org,f.listing,op,array[f.ids[1]],key),'removal operation cannot be rebound to another family member');
+ perform pg_temp.denied(format('select remove_listing_gallery(%L,%L,%L,%L,%L::uuid[],%L::uuid[],%L)',f.actor,f.org,f.listing,gen_random_uuid(),array[f.ids[3]],array[f.ids[3]],key),'stale full ordered removal selection refuses');
+ perform pg_temp.denied(format('select remove_listing_gallery(%L,%L,%L,%L,%L::uuid[],%L::uuid[],null)',f.actor,f.org,f.listing,gen_random_uuid(),array[f.ids[3]],expected),'stale removal cover refuses');
+ perform pg_temp.ok((select to_jsonb(l)=before_row from listings l where id=f.listing),'stale and rebound removal refusals leave listing byte exact');
+ -- Both saved original and edit may occupy distinct slots; withdraw exactly
+ -- the chosen capture, retaining the other and the opaque anchors in order.
+ update listings set gallery_asset_ids=array[f.ids[5],f.ids[2],f.ids[6],f.ids[3]],main_photo_key=edit_key where id=f.listing;
+ r:=remove_listing_gallery(f.actor,f.org,f.listing,gen_random_uuid(),array[f.ids[2]],array[f.ids[5],f.ids[2],f.ids[6],f.ids[3]],edit_key);
+ perform pg_temp.ok(r->'gallery_asset_ids'=to_jsonb(array[f.ids[5],f.ids[6],f.ids[3]])and r->>'main_photo_key'=edit_key,'withdrawing original family slot retains selected edit unknown anchors and edited cover');
+ r:=remove_listing_gallery(f.actor,f.org,f.listing,gen_random_uuid(),array[f.ids[3]],array[f.ids[5],f.ids[6],f.ids[3]],edit_key);
+ perform pg_temp.ok(r->'gallery_asset_ids'=to_jsonb(array[f.ids[5],f.ids[6]])and r->'main_photo_key'='null'::jsonb,'withdrawing actual cover clears only removed cover and retains anchor order');
+ -- Eligibility is admission to publish, never a requirement to withdraw.
+ update listings set gallery_asset_ids=array[f.ids[4]],main_photo_key=null where id=f.listing;
+ s:=studio_gallery_selection_snapshot(f.actor,f.org,f.listing);
+ perform pg_temp.ok(exists(select 1 from jsonb_array_elements(s->'photos')p where p->>'photo_id'=f.photo_ids[4]::text and p->'selected'='true'::jsonb and p->'can_use'='false'::jsonb),'held selected edit remains visible for withdrawal');
+ r:=remove_listing_gallery(f.actor,f.org,f.listing,gen_random_uuid(),array[f.ids[4]],array[f.ids[4]],null);
+ perform pg_temp.ok(r->'gallery_asset_ids'='[]'::jsonb and r->'main_photo_key'='null'::jsonb,'withdrawing last held selection yields explicit empty not automatic NULL');
+ r:=remove_listing_gallery(f.actor,f.org,f.listing,gen_random_uuid(),array[f.ids[1]],'{}'::uuid[],null);
+ perform pg_temp.ok(r->'gallery_asset_ids'='[]'::jsonb and r#>'{gallery_remove,removed_asset_ids}'='[]'::jsonb,'removing absent member from explicit empty never rebuilds legacy selection');
+ perform pg_temp.ok((select jsonb_agg(to_jsonb(p)order by id)=before_photos from photos p where listing_id=f.listing)and(select jsonb_agg(to_jsonb(a)order by id)=before_assets from capture_assets a where listing_id=f.listing)and(select jsonb_agg(to_jsonb(m)order by id)=before_history from media_provenance m where listing_id=f.listing),'all shared removal re-add replay and refusal paths preserve history and saved photo order');
+end$$;
 reset role;
 select jsonb_build_object('passed',true,'assertions',(select count(*)from checks));
 rollback;

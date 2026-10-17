@@ -13,7 +13,7 @@ assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve internal3GiB reserve'
 DATA=Path(tempfile.mkdtemp(prefix='gallery-remove-owned-pg-'));SOCK=Path(tempfile.mkdtemp(prefix='gallery-remove-socket-',dir='/tmp'))
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)
-MIG=SQL/'migrations/20261015144353_atomic_listing_gallery_remove.sql';FIX=SQL/'tests/listing_gallery_remove.sql'
+REMOVAL=SQL/'migrations/20261017110321_preserve_gallery_removal_projection_order.sql';MIG=SQL/'migrations/20261015144353_atomic_listing_gallery_remove.sql';FIX=SQL/'tests/listing_gallery_remove.sql'
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'));SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',FIX,Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in SOURCES}
 receipt={'passed':False,'scope':'disposable actual PostgreSQL/schema/roles/concurrency, synthetic metadata only','networkCalls':0,'providerCalls':0,'sourceHashes':hashes(),'commands':[],'controls':[],'races':[]}
@@ -35,9 +35,12 @@ try:
  conn=['-h',SOCK,'-p','55583','-U','postgres'];run('createdb',[tool('createdb'),*conn,'gallery_remove_proof'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','gallery_remove_proof','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in MIGRATIONS:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ for m in MIGRATIONS:
+  run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+  if m==MIG:
+   boundary=run('old-own-boundary',[*PSQL,'-Atq','-c',"select pg_get_functiondef('public.remove_listing_gallery(uuid,uuid,uuid,uuid,uuid[],uuid[],text)'::regprocedure)"]);run('replay-old-at-own-boundary',[*PSQL,'-q','-1','-f',MIG]);assert run('old-own-boundary-replayed',[*PSQL,'-Atq','-c',"select pg_get_functiondef('public.remove_listing_gallery(uuid,uuid,uuid,uuid,uuid[],uuid[],text)'::regprocedure)"])==boundary
  for stage in ['fresh','replay']:
-  if stage=='replay':run('replay-own-migration',[*PSQL,'-q','-1','-f',MIG])
+  if stage=='replay':run('replay-current-removal-migration',[*PSQL,'-q','-1','-f',REMOVAL])
   out=run(stage+'-actual-gallery-remove',[*PSQL,'-Atq','-f',FIX]);rows=[json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x];assert len(rows)==1 and rows[0]['passed'];receipt[stage]=rows[0]
  for label,signature,anchor,replacement,oracle in [
   ('stale-CAS','public.remove_listing_gallery(uuid,uuid,uuid,uuid,uuid[],uuid[],text)','if l.gallery_asset_ids is distinct from p_expected or l.main_photo_key is distinct from p_expected_main then','if false then','ordered stale gallery CAS refuses'),
