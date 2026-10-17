@@ -275,14 +275,34 @@ def accounting_report(snapshot, events=(), spool=()):
         meta = row.get("meta") or {}
         if meta.get("request_key") and meta.get("stage"):
             matches[(row.get("org_id"), meta["request_key"], meta["stage"], row.get("provider"), row.get("model"))].append(row)
+    # Prospective pipeline rows are emitted only by the exact service-owned
+    # writer. Old snapshots/legacy matching retain their previous semantics.
+    pipeline_rows = defaultdict(list)
+    for row in ledger:
+        meta = row.get("meta") or {}
+        if meta.get("pipeline_cost_protocol") == "pipeline-cost-v1":
+            pipeline_rows[meta.get("pipeline_reservation_id")].append(row)
+    def exact_pipeline_link(hold, row):
+        meta = row.get("meta") or {}
+        return (row.get("idempotency_key") == "pipeline:" + str(hold["id"])
+                and meta.get("pipeline_reservation_id") == hold["id"]
+                and all(meta.get(k) == hold.get(k) and hold.get(k) is not None
+                        for k in ("request_key", "stage", "actor_id", "input_sha256"))
+                and all(row.get(k) == hold.get(k) and hold.get(k) is not None
+                        for k in ("org_id", "billing_org_id", "provider", "model")))
     hold_links = {}
     for hold in serving:
-        candidates = [r for r in ledger if r["id"] == hold.get("ledger_id")]
+        prospective = pipeline_rows.get(hold["id"], [])
+        if len(prospective) > 1 or (prospective and not exact_pipeline_link(hold, prospective[0])):
+            raise ValueError("Invalid immutable pipeline cost link")
+        candidates = prospective or [r for r in ledger if r["id"] == hold.get("ledger_id")]
         if candidates and any(r.get("org_id") != hold.get("org_id") or r.get("provider") != hold.get("provider") or r.get("model") != hold.get("model") for r in candidates):
             raise ValueError("Foreign immutable ledger link")
         if not candidates:
             candidates = matches.get((hold.get("org_id"), hold.get("request_key"), hold.get("stage"), hold.get("provider"), hold.get("model")), [])
         if len(candidates) == 1:
+            if (candidates[0].get("meta") or {}).get("pipeline_cost_protocol") == "pipeline-cost-v1" and not exact_pipeline_link(hold, candidates[0]):
+                raise ValueError("Invalid immutable pipeline cost link")
             hold_links[hold["id"]] = candidates[0]
     linked_tariffs = defaultdict(set)
     for hold in serving:
@@ -348,8 +368,14 @@ def accounting_report(snapshot, events=(), spool=()):
 
     holds = []
     for row in serving:
-        if row["id"] not in hold_links and row["state"] != "rejected":
-            holds.append({"journal": "serving", "id": row["id"], "state": row["state"], "hold_cents": cents(money(row["hold_cents"])), "account": scope(row.get("billing_org_id") or row.get("org_id")), "provider": token(row["provider"]), "model": token(row["model"]), "tariff_version": token(row.get("tariff_version")), "created_at": row.get("created_at"), "invoice_verified": False})
+        linked = hold_links.get(row["id"])
+        prospective = linked and (linked.get("meta") or {}).get("pipeline_cost_protocol") == "pipeline-cost-v1"
+        residual = max(ZERO, money(row["hold_cents"]) - money(linked["total_cents"])) if prospective else money(row["hold_cents"])
+        if row["state"] != "rejected" and (row["id"] not in hold_links or (prospective and residual > ZERO)):
+            line = {"journal": "serving", "id": row["id"], "state": row["state"], "hold_cents": cents(residual), "account": scope(row.get("billing_org_id") or row.get("org_id")), "provider": token(row["provider"]), "model": token(row["model"]), "tariff_version": token(row.get("tariff_version")), "created_at": row.get("created_at"), "invoice_verified": False}
+            if prospective:
+                line.update(admitted_bound_cents=cents(money(row["hold_cents"])), linked_modeled_cents=cents(money(linked["total_cents"])), accounting="pipeline_uncertainty_residual")
+            holds.append(line)
     overlap = []
     tombstones = []
     for row in videos:
@@ -425,7 +451,7 @@ def accounting_report(snapshot, events=(), spool=()):
             "spatial_cost_rollups_not_added_to_ledger": [{"job": scope(r["id"]), "status": token(r.get("status")), "reported_cents": cents(money(r["cost_cents"])), "invoice_verified": False} for r in snapshot["spatial"]],
             "other_accounting_journals_not_added_to_ledger": [{"kind": token(r["kind"]), "job": scope(r["id"]), "account": scope(r.get("org_id")), "listing": scope(r.get("listing_id")), "state": token(r.get("state")), "priced_cents": cents(money(r["priced_cents"])), "held_cents": cents(money(r["held_cents"])), "charged_cents": cents(money(r["charged_cents"])) if r.get("charged_cents") is not None else None, "ledger_id": r.get("ledger_id"), "supplier_request_id": request_id(r.get("supplier_request_id")), "price_version": token(r.get("price_version")), "has_billing_reference": r.get("has_billing_reference") is True} for r in snapshot["other_journals"]],
             "unpriced_usage": unpriced_usage(snapshot.get("unpriced_usage", {})),
-            "coverage": {"source_rows": snapshot["counts"], "unique_ledger_rows": len(ledger), "serving_rows_reconciled_to_ledger": len(hold_links), "ledger_rows_without_listing": sum(x["listing"] == "unknown" for x in lines), "ledger_rows_without_supplier_id": sum(not x["supplier_request_ids"] for x in lines), "ledger_rows_without_tariff": sum(not x["tariff_versions"] for x in lines), "supplier_invoice_reconciliation": "not supplied; no recorded cost labeled invoice verified", "spool_visibility": "supplied local spool only; other running workers unknown", "infrastructure": "vendor invoices/account telemetry not automatically imported", "hold_total_scope": "unreconciled serving/app-video holds; presenter/erase journals and spatial rollups separate to prevent duplicate summation", "failed_context": "current job/source state or retained ledger refusal flag; resumed jobs can change context without changing any recorded cost", "uncertain_dispatch_context": "ledger rows whose writer recorded outcome=uncertain (lost reply, or a funding refusal before dispatch when the writer books in finally); amounts stay recorded, rows without any matching serving hold are listed as possibly never dispatched", "provider_attempt_journal": "schema-2 snapshots export provider_attempt_receipts; unknown outcomes carry no amount and are never zero", "history": "account deletion can remove ledger rows; retained reservation tombstones are reported separately"}}
+            "coverage": {"source_rows": snapshot["counts"], "unique_ledger_rows": len(ledger), "serving_rows_reconciled_to_ledger": len(hold_links), "ledger_rows_without_listing": sum(x["listing"] == "unknown" for x in lines), "ledger_rows_without_supplier_id": sum(not x["supplier_request_ids"] for x in lines), "ledger_rows_without_tariff": sum(not x["tariff_versions"] for x in lines), "supplier_invoice_reconciliation": "not supplied; no recorded cost labeled invoice verified", "spool_visibility": "supplied local spool only; other running workers unknown", "infrastructure": "vendor invoices/account telemetry not automatically imported", "hold_total_scope": "unreconciled serving/app-video holds plus the uncovered bound of prospective exact pipeline links; presenter/erase journals and spatial rollups separate to prevent duplicate summation", "failed_context": "current job/source state or retained ledger refusal flag; resumed jobs can change context without changing any recorded cost", "uncertain_dispatch_context": "ledger rows whose writer recorded outcome=uncertain (lost reply, or a funding refusal before dispatch when the writer books in finally); amounts stay recorded, rows without any matching serving hold are listed as possibly never dispatched", "provider_attempt_journal": "schema-2 snapshots export provider_attempt_receipts; unknown outcomes carry no amount and are never zero", "history": "account deletion can remove ledger rows; retained reservation tombstones are reported separately"}}
 
 
 def private_write(path, body):

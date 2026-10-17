@@ -10,13 +10,14 @@ ledger as(
    where k=any(array['request_key','request_id','provider_request_id','stage','task','route_id',
     'tariff','price_version','cost_basis','price_basis','price_estimated','billing_reconciled','outcome','result','failed','attempt','attempts',
     'input_tokens','output_tokens','provider_usage','photo_check_id','evidence_id',
-    'app_video_reservation_id','provider_attempt_id','erase_job_id','kind','verdict','quality_profile'])),'{}') as meta
+    'app_video_reservation_id','provider_attempt_id','erase_job_id','kind','verdict','quality_profile',
+    'pipeline_cost_protocol','pipeline_reservation_id','actor_id','input_sha256'])),'{}') as meta
  from public.cost_ledger l left join public.render_jobs j on j.id=l.job_id
  order by l.created_at,l.id limit(select n+1 from limits)
 ),
 serving as(
  select id,org_id,billing_org_id,actor_id,request_key,stage,provider,model,tariff_version,
-  hold_cents::text,state,created_at,settled_at,ledger_id,budget_source
+  hold_cents::text,state,created_at,settled_at,ledger_id,budget_source,input_sha256
  from public.serving_cost_reservations order by created_at,id limit(select n+1 from limits)
 ),
 video as(
