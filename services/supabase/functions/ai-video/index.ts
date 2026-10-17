@@ -2314,6 +2314,16 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
   try {
     return completed(await output.complete(state));
   } catch (e) {
+    // Kie only: a completed result that can never be retained (an image or
+    // other non-video extension, or more bytes than the edge persist limit) is
+    // terminal here, so the worker fails the attempt once instead of re-polling
+    // the same receipt to its 24 h deadline. Kie's work is finished and its
+    // result is immutable; nothing is downloaded again. Every other provider
+    // keeps the retryable 503 exactly as before.
+    if (job.p === "kie" && e instanceof HttpError && e.details?.result_unretainable === true) {
+      console.error("ai-video routed Kie result cannot be retained", { provider: job.p, model: job.m, error_class: "upstream" });
+      return json({ status: "failed", error: "The generated result cannot be retained as a video.", error_class: "upstream", provider: job.p, failure_phase: "persistence", result_unretainable: true });
+    }
     console.error("ai-video result persistence failed", { provider: job.p, model: job.m, error_class: "upstream" });
     throw new HttpError(503, "The clip was generated but could not be stored yet. Retry the saved request shortly.", "upstream",
       { provider: job.p, error_class: "upstream", failure_phase: "persistence", retry_existing_job: true });

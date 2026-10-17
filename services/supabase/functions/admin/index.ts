@@ -87,6 +87,7 @@ import { APP_AI_UNIT_CENTS } from "../_shared/ledger.ts";
 import { probeAll } from "./probe.ts";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { handleFunnel } from "./funnel.ts";
+import { KIE_PROPERTY_ROUTE_ID } from "../_shared/property-video-kie.ts";
 import {
   aggregateLedger,
   bump,
@@ -733,6 +734,34 @@ function healthStatus(p: ProviderSpec, configured: boolean, hasRows: boolean): s
   if (!configured) return p.optional ? "optional_off" : "unconfigured";
   if (p.ledger_provider === null) return "unmetered";
   return hasRows ? "ok" : "idle";
+}
+
+/**
+ * KIE is optional while the pinned Kie property-video route row (migration
+ * 20261016100000, id KIE_PROPERTY_ROUTE_ID) is OFF, which it is until the
+ * owner-approved activation (docs/handoff/KIE-ACTIVATION.sql enables it).
+ * Once that row is enabled Kie carries paid customer work, so an unset key or
+ * a silent ledger is a fault, not a choice: the health row becomes required.
+ * Gated on that row's `enabled` ONLY, so with the row OFF every provider row
+ * (Kie included) is exactly what it was. Every other provider is untouched.
+ */
+export function healthProviderSpec(p: ProviderSpec, kieRouteEnabled: boolean): ProviderSpec {
+  if (p.key !== "kie" || !kieRouteEnabled) return p;
+  return {
+    ...p,
+    optional: false,
+    whatToDo:
+      "REQUIRED — the pinned Kie property-video route is enabled, so KIE_API_KEY must be set and Kie must be delivering. \"Not configured\" or no ledger rows in the window is a fault here, not an expected off state.",
+  };
+}
+
+/** The pinned Kie route row's `enabled` (false when the row is missing). A
+ * failed read is a 500 like every other health read: it must not silently
+ * report Kie as optional. */
+export async function readKieRouteEnabled(db: SupabaseClient): Promise<boolean> {
+  const { data, error } = await db.from("ai_routes").select("enabled").eq("id", KIE_PROPERTY_ROUTE_ID).maybeSingle();
+  if (error) throw new HttpError(500, `Kie route read failed: ${error.message}`);
+  return (data as { enabled?: unknown } | null)?.enabled === true;
 }
 
 /**
@@ -1785,7 +1814,10 @@ async function handleHealth(): Promise<Response> {
   const db = adminClient();
   const sinceIso = new Date(Date.now() - HEALTH_WINDOW_DAYS * 86_400_000).toISOString();
 
-  const metered = PROVIDERS.filter((p) => p.ledger_provider !== null);
+  // Kie is required only once its pinned property-video route row is enabled.
+  const kieRouteEnabled = await readKieRouteEnabled(db);
+  const specs = PROVIDERS.map((p) => healthProviderSpec(p, kieRouteEnabled));
+  const metered = specs.filter((p) => p.ledger_provider !== null);
 
   const [{ rows: windowRows }, lastRows, failures] = await Promise.all([
     readLedgerSince(db, sinceIso),
@@ -1844,7 +1876,7 @@ async function handleHealth(): Promise<Response> {
   });
 
   // Providers that never write ledger rows: say so instead of implying health.
-  for (const p of PROVIDERS.filter((x) => x.ledger_provider === null)) {
+  for (const p of specs.filter((x) => x.ledger_provider === null)) {
     const configured = providerConfigured(p);
     providers.push({
       key: p.key,
@@ -1898,6 +1930,9 @@ async function handleHealth(): Promise<Response> {
       "credential is deliberately unset is \"optional_off\" — the route verifies no secret for either and " +
       "asserts none is set. An unconfigured provider shows no success or spend, since it cannot have run.",
     window_days: HEALTH_WINDOW_DAYS,
+    // The pinned Kie property-video route row's enabled: while false, Kie is
+    // optional here; once true, its row above is required.
+    kie_property_route_enabled: kieRouteEnabled,
     providers,
     job_failures: {
       window_days: HEALTH_WINDOW_DAYS,
