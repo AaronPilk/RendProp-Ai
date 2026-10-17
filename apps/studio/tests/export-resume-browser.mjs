@@ -8,6 +8,9 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
+import { startNativeTraceObserver, NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
+import { startNodeSchedulingProbe, startPageSchedulingProbe, stopPageSchedulingProbe } from "./scheduling-probe.mjs";
+import { collectRunnerFacts, quickLoad } from "./runner-facts.mjs";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
 const onlyFixed=process.argv.slice(2).includes('--only-fixed');
@@ -20,7 +23,7 @@ const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["baseline", "seque
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
 const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", ...["export", "recording-clock", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = { sourceHashes, variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
+const receipt = { sourceHashes, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
@@ -268,7 +271,22 @@ document.querySelector("#run").onclick=async()=>{
     // Every other variant keeps the complete four-second source at 2x, including
     // the fixed/cadence/late-frame audio, timing, transition and cleanup oracles.
     for (const narrated of [true, false]) {
-      await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated, variant === "clock-baseline"); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant }); await page.locator("#run").click();
+      await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated, variant === "clock-baseline"); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant });
+      // Passive native webaudio trace for the two held-frame exports (the
+      // cadence-baseline control and the current late-frames variant), started
+      // before the click. It owns no clock, source or oracle and cannot turn a
+      // refusal into a download; raw bytes stay local (0600).
+      const attemptName = `${variant}-${narrated ? "narrated" : "original"}`;
+      const nativeTrace = ["cadence-baseline", "late-frames"].includes(variant) ? await startNativeTraceObserver({ context, page, artifacts, syncId: `${attemptName}-before-click`,
+        rawFileName: `native-trace-${attemptName}.raw.private.json`, sourceHashes, limits: NATIVE_TRACE_EXPORT_LIMITS }) : undefined;
+      // Scheduling probes for every attempt: a worker inside the renderer and
+      // a worker_thread in this Node process record how late they woke. A gap
+      // that lines up with a clock refusal says every thread stopped; a worker
+      // that kept running while the clocks froze says only the media/audio
+      // pipeline stopped. Neither touches the export or any oracle.
+      const nodeProbe = startNodeSchedulingProbe();
+      const schedulingProbe = { page: await startPageSchedulingProbe(page), node: nodeProbe.facts, loadBeforeRun: quickLoad() };
+      await page.locator("#run").click();
       let attempt;
       try {
         const outcome = () => page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending"));
@@ -280,10 +298,13 @@ document.querySelector("#run").onclick=async()=>{
         // a genuine production stall refusal. Only the restored old-await
         // baseline may classify a fully evidenced refusal as a detected fault;
         // every current-exporter variant must finish and pass its media oracles.
+        if (nativeTrace) await nativeTrace.finish();
+        schedulingProbe.page = await stopPageSchedulingProbe(page, schedulingProbe.page);
+        schedulingProbe.node = await nodeProbe.stop();
         attempt = await page.evaluate(() => ({ error: window.fixture.error, errorName: window.fixture.errorName, errorCause: window.fixture.errorCause, result: window.fixture.result,
           trace: window.fixture.trace, downloadHidden: document.querySelector("#download").hidden,
           tracks: window.fixture.tracks.map(track => track.readyState) }));
-        attempt = { ...attempt, variant, narrated };
+        attempt = { ...attempt, variant, narrated, schedulingProbe, ...(nativeTrace ? { nativeTrace: nativeTrace.facts } : {}) };
         receipt.attempts.push(attempt); await persist();
       }
       if (variant === "baseline" && attempt.error) {

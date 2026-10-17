@@ -7,135 +7,27 @@ import {createServer} from "node:http";
 import {execFileSync} from "node:child_process";
 import {build} from "vite";
 import {chromium, expect} from "@playwright/test";
+import {startNativeTraceObserver} from "./native-trace-observer.mjs";
+import {collectRunnerFacts} from "./runner-facts.mjs";
 
 const mode = process.argv[2] ?? "actual";
 assert(["actual", "--before", "--fault=omit-readiness"].includes(mode));
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-startup-"));
 const paths = ["src/editor/export.ts", "src/editor/recording-clock.ts", "src/editor/media.ts", "src/editor/model.ts",
-  "tests/export-startup-fixture.ts", "tests/export-startup-fixture.html", "tests/export-startup-browser.mjs"];
+  "tests/export-startup-fixture.ts", "tests/export-startup-fixture.html", "tests/export-startup-browser.mjs", "tests/native-trace-observer.mjs", "tests/runner-facts.mjs"];
 const hashes = async () => Object.fromEntries(await Promise.all(paths.map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = {status: "running", mode, sourceHashes: await hashes(), cases: [], checks: [], externalRequests: [], errors: [],
+const receipt = {status: "running", mode, sourceHashes: await hashes(), runnerFacts: collectRunnerFacts(), cases: [], checks: [], externalRequests: [], errors: [],
   proof: "Native Web Audio/canvas/MediaRecorder and decoded PCM. Explicit startup currentTime observation hold; real native time retained independently. No claim to reproduce the underlying hosted browser/device cause."};
 let browser, server, page, mutated = false;
 let nativeTraceOwner;
 // Passive native tracing for the actual first freeze/MP4 case only. This owns
 // no product clock/source/graph and never turns an export refusal into success.
+// The observer itself lives in native-trace-observer.mjs, shared with the
+// finishing and export-resume suites; its categories, limits, raw-file policy
+// and receipt fields are unchanged from when it was defined here.
 async function startNativeStartupTrace(context, page) {
-  const categories = ["webaudio", "disabled-by-default-webaudio.audionode"];
-  const names = ["AudioDestination::RequestRender", "RealtimeAudioDestinationHandler::Render", "MediaStreamAudioDestinationHandler::Process"];
-  const limits = {bufferKiB: 1024, rawBytes: 2 * 1024 * 1024, events: 10000, captureMs: 20000, finishMs: 10000};
-  const facts = {status: "initializing", passiveOnly: true, observationMayPerturbTiming: true,
-    categories, requiredSpanNames: names, limits, issues: [], sourceHashes: {...receipt.sourceHashes}};
-  receipt.nativeTrace = facts;
-  let session, attempted = false, started = false, timer, completeEvent, completeResolve, ending, finishing, stream;
-  const completed = new Promise(resolve => {completeResolve = resolve;});
-  const bounded = async (promise, ms) => {
-    let timeout;
-    try {return await Promise.race([promise, new Promise((_, reject) => {timeout = setTimeout(() => reject(new Error("Native trace observation deadline")), Math.max(1, ms));})]);}
-    finally {clearTimeout(timeout);}
-  };
-  // Never persist protocol error text, trace arguments or device identifiers in
-  // the receipt. Raw bytes use a bounded owned 0600 local file; current CI
-  // artifact patterns do not upload it. No screenshots, network, stack
-  // sampling, system tracing or arbitrary categories are enabled.
-  const issue = (stage, error) => {if (facts.issues.length < 8) facts.issues.push({stage, errorClass: error?.name ?? "Error"});};
-  const endOnce = reason => {
-    if (!ending) {facts.stopReason = reason; ending = bounded(session.send("Tracing.end"), 2500).catch(error => issue("end", error));}
-    return ending;
-  };
-  const finish = () => finishing ??= (async () => {
-    clearTimeout(timer);
-    const deadline = Date.now() + limits.finishMs;
-    const remaining = () => Math.max(1, deadline - Date.now());
-    try {
-      if (attempted) await endOnce("case-finished");
-      if (!started) return;
-      completeEvent = await bounded(completed, remaining()); stream = completeEvent.stream;
-      facts.dataLossOccurred = completeEvent.dataLossOccurred;
-      if (typeof facts.dataLossOccurred !== "boolean" || typeof stream !== "string" || !stream || completeEvent.traceFormat !== "json" || completeEvent.streamCompression && completeEvent.streamCompression !== "none") {
-        facts.status = "unavailable-stream-format"; return;
-      }
-      // No stream retrieval, JSON parsing or disk serialization happens until
-      // the first case has produced its result (or its original poll failed).
-      const chunks = []; let bytes = 0, eof = false, reads = 0;
-      while (!eof) {
-        if (Date.now() >= deadline) throw new Error("Native trace drain deadline");
-        if (++reads > 40) throw new Error("Native trace chunk limit");
-        const part = await bounded(session.send("IO.read", {handle: stream, size: 65536}), remaining());
-        const data = Buffer.from(part.data, part.base64Encoded ? "base64" : "utf8");
-        if (!data.length && part.eof !== true) throw new Error("Native trace made no progress");
-        const room = limits.rawBytes - bytes;
-        chunks.push(data.subarray(0, room)); bytes += Math.min(room, data.length); eof = part.eof === true;
-        if (data.length > room || bytes === limits.rawBytes && !eof) {facts.rawByteLimitReached = true; break;}
-      }
-      const raw = Buffer.concat(chunks, bytes), path = join(artifacts, "native-trace-freeze-mp4.raw.private.json");
-      await writeFile(path, raw, {flag: "wx", mode: 0o600});
-      facts.raw = {path, bytes, sha256: createHash("sha256").update(raw).digest("hex"), completeStream: eof};
-      if (!eof) {facts.status = "incomplete-byte-limit"; return;}
-      const parsed = JSON.parse(raw.toString("utf8"));
-      if (!Array.isArray(parsed.traceEvents)) {facts.status = "unavailable-event-shape"; return;}
-      // BEGIN pure native trace projection
-      facts.eventCount = parsed.traceEvents.length;
-      if (facts.eventCount > limits.events) {facts.status = "incomplete-event-limit"; return;}
-      const markers = parsed.traceEvents.filter(event => event.name === "clock_sync" &&
-        event.args?.sync_id === "startup-freeze-mp4-before-click" && Number.isFinite(event.ts));
-      const bridge = facts.clockMarker, maximumBracketMs = 2 * 1000 / 30;
-      const bracketValid = bridge && Number.isFinite(bridge.pageWallBeforeMs) && Number.isFinite(bridge.pageWallAfterMs) &&
-        bridge.pageWallAfterMs >= bridge.pageWallBeforeMs;
-      facts.clockAlignment = {matchedMarkers: markers.length,
-        available: markers.length === 1 && !!bracketValid && bridge.pageWallAfterMs - bridge.pageWallBeforeMs <= maximumBracketMs,
-        maximumBracketMs, ...(bracketValid ? {pageWallBeforeMs: bridge.pageWallBeforeMs, pageWallAfterMs: bridge.pageWallAfterMs,
-          uncertaintyMs: bridge.pageWallAfterMs - bridge.pageWallBeforeMs} : {}),
-        ...(markers.length === 1 ? {traceMarkerUs: markers[0].ts} : {})};
-      const spans = [], stacks = new Map();
-      for (const event of [...parsed.traceEvents].sort((a, b) => a.ts - b.ts)) {
-        if (!Number.isFinite(event.ts) || !Number.isInteger(event.pid) || !Number.isInteger(event.tid)) continue;
-        const key = `${event.pid}:${event.tid}`, stack = stacks.get(key) ?? [];
-        const add = (first, end) => {if (names.includes(first.name) && Number.isFinite(end) && end >= first.ts) spans.push({name: first.name, pid: first.pid, tid: first.tid, startUs: first.ts, durationUs: end - first.ts});};
-        if (event.ph === "B") {stack.push(event); stacks.set(key, stack);}
-        else if (event.ph === "E") {const first = stack.pop(); if (first) add(first, event.ts);}
-        else if (event.ph === "X" && Number.isFinite(event.dur)) add(event, event.ts + event.dur);
-      }
-      facts.spans = spans;
-      facts.spanCounts = Object.fromEntries(names.map(name => [name, spans.filter(span => span.name === name).length]));
-      facts.unmatchedRequiredBegins = [...stacks.values()].flat().filter(event => names.includes(event.name)).length;
-      facts.status = facts.dataLossOccurred !== false || facts.stopReason !== "case-finished" || !facts.clockAlignment.available || facts.unmatchedRequiredBegins ||
-        names.some(name => !facts.spanCounts[name]) ? "captured-incomplete" : "captured-required-spans";
-      facts.causalConclusion = "UNKNOWN: native spans require time-aligned offline review; a passing export is not a plateau repair";
-      // END pure native trace projection
-    } catch (error) {issue("finish", error); facts.status = "unavailable-or-incomplete";}
-    finally {
-      if (stream) await bounded(session.send("IO.close", {handle: stream}), 1000).catch(error => issue("stream-close", error));
-      if (session) await bounded(session.detach(), 1500).catch(error => issue("detach", error));
-    }
-  })();
-  try {
-    session = await bounded(context.newCDPSession(page), 2500);
-    session.on("Tracing.tracingComplete", value => {completeEvent = value; completeResolve(value);});
-    session.on("Tracing.bufferUsage", value => {
-      const fullness = Math.max(value.percentFull ?? 0, value.value ?? 0);
-      facts.maximumBufferFullness = Math.max(facts.maximumBufferFullness ?? 0, fullness);
-      if (fullness >= .8 || (value.eventCount ?? 0) >= limits.events) void endOnce("buffer-or-event-budget");
-    });
-    const available = await bounded(session.send("Tracing.getCategories"), 2500);
-    facts.categorySupport = Object.fromEntries(categories.map(category => [category, available.categories.includes(category)]));
-    if (categories.some(category => !facts.categorySupport[category])) {facts.status = "unavailable-required-category"; return {finish};}
-    attempted = true;
-    await bounded(session.send("Tracing.start", {transferMode: "ReturnAsStream", streamFormat: "json", streamCompression: "none",
-      bufferUsageReportingInterval: 100, traceConfig: {recordMode: "recordUntilFull", traceBufferSizeInKb: limits.bufferKiB,
-        enableSampling: false, enableSystrace: false, enableArgumentFilter: true, includedCategories: categories}}), 2500);
-    started = true; facts.status = "recording";
-    timer = setTimeout(() => {void endOnce("capture-deadline");}, limits.captureMs);
-    // The bracket maps the trace marker to page wall time without rewriting
-    // either clock. Unsupported markers remain explicitly unavailable.
-    try {
-      const syncId = "startup-freeze-mp4-before-click";
-      const before = await bounded(page.evaluate(() => performance.now()), 1000);
-      await bounded(session.send("Tracing.recordClockSyncMarker", {syncId}), 1000);
-      const after = await bounded(page.evaluate(() => performance.now()), 1000);
-      facts.clockMarker = {syncId, pageWallBeforeMs: before, pageWallAfterMs: after, exactMappingClaim: false};
-    } catch (error) {issue("clock-marker", error);}
-  } catch (error) {issue("start", error); facts.status = "unavailable-start";}
+  const {finish} = await startNativeTraceObserver({context, page, artifacts, syncId: "startup-freeze-mp4-before-click",
+    rawFileName: "native-trace-freeze-mp4.raw.private.json", sourceHashes: receipt.sourceHashes, onFacts: facts => {receipt.nativeTrace = facts;}});
   return {finish};
 }
 

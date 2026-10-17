@@ -10,23 +10,66 @@ import {execFileSync} from "node:child_process";
 import {build} from "vite";
 import {chromium, expect} from "@playwright/test";
 import {fixedAACTailWindow, fixedPCMWindow, measureTonePCM, requireAudibleFadeOut} from "./finishing-audio-probe.mjs";
+import {startNativeTraceObserver, NATIVE_TRACE_EXPORT_LIMITS} from "./native-trace-observer.mjs";
+import {startNodeSchedulingProbe, startPageSchedulingProbe, stopPageSchedulingProbe} from "./scheduling-probe.mjs";
+import {collectRunnerFacts, quickLoad} from "./runner-facts.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-finishing-")), dist = join(artifacts, "dist");
-const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", checks: [], errors: [], externalRequests: [], status: "running"};
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/finishing-browser.mjs", "tests/native-trace-observer.mjs", "tests/scheduling-probe.mjs", "tests/runner-facts.mjs",
+  ...["export", "recording-clock", "media", "finishing", "music"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
+const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", sourceHashes, runnerFacts: collectRunnerFacts(), checks: [], errors: [], externalRequests: [], status: "running"};
 let browser, server, page;
 // Retain the actual clock guard's cause without changing its readings,
 // scheduling, thresholds or error. A missing download alone cannot explain a
-// refused export.
+// refused export. Each reading is also enriched, test-only, with the wall gap
+// since the previous reading on the same clock and a snapshot of the page's
+// most recent running AudioContext (state, currentTime, latencies and
+// getOutputTimestamp), taken from the init-script registry below so no
+// product code changes. The last 16 enriched readings travel with a refusal;
+// a per-clock summary (window.exportClockObservations) is kept for every
+// clock whether or not it refuses. getOutputTimestamp() per reading is the
+// one extra call on the export path; it reads, never writes, the context.
 const clockReceiptPlugin = {name: "finishing-clock-refusal-receipt", enforce: "pre", transform(code, id) {
   if (!id.endsWith("/src/editor/recording-clock.ts")) return;
   const seam = "export class RecordingClock {";
   assert.equal(code.split(seam).length, 2, "Actual recording-clock observation anchor missing");
   return code.replace(seam, "class ShippingRecordingClock {") + `
 export class RecordingClock extends ShippingRecordingClock {
+  private enriched: unknown[] = [];
+  private previousAtMs?: number;
+  private previousAudio?: number;
+  private plateauStartMs?: number;
+  private summary = {reads: 0, maxInterReadMs: 0, longestAudioPlateauMs: 0, firstAtMs: null as number | null, lastAtMs: null as number | null, refused: false};
+  constructor() {
+    super();
+    ((window as any).exportClockObservations ??= []).push(this.summary);
+  }
   read(wall: number, timeline: number, audio?: number): void {
+    const atMs = performance.now();
+    const interReadMs = this.previousAtMs === undefined ? null : atMs - this.previousAtMs;
+    const contexts: AudioContext[] = (window as any).finishingAudioContexts ?? [];
+    const sound = [...contexts].reverse().find(context => context.state === "running") ?? contexts[contexts.length - 1];
+    let snapshot: any = null;
+    if (sound) {
+      snapshot = {state: sound.state, currentTime: sound.currentTime, sampleRate: sound.sampleRate, baseLatency: sound.baseLatency, outputLatency: sound.outputLatency, outputTimestamp: null};
+      try {const value = sound.getOutputTimestamp(); snapshot.outputTimestamp = {contextTime: value.contextTime, performanceTime: value.performanceTime};}
+      catch {snapshot.outputTimestampUnavailable = true;}
+    }
+    // Plateau: wall time across consecutive readings whose audio value did not change.
+    if (audio !== undefined && this.previousAudio === audio) {
+      this.plateauStartMs ??= this.previousAtMs;
+      this.summary.longestAudioPlateauMs = Math.max(this.summary.longestAudioPlateauMs, atMs - (this.plateauStartMs as number));
+    } else this.plateauStartMs = undefined;
+    this.previousAtMs = atMs; this.previousAudio = audio;
+    this.summary.reads++; this.summary.firstAtMs ??= atMs; this.summary.lastAtMs = atMs;
+    if (interReadMs !== null) this.summary.maxInterReadMs = Math.max(this.summary.maxInterReadMs, interReadMs);
+    this.enriched.push({atMs, interReadMs, wall, timeline, audio, visibilityState: document.visibilityState, audioSnapshot: snapshot});
+    if (this.enriched.length > 16) this.enriched.shift();
     try { super.read(wall, timeline, audio); }
     catch(error) {
+      this.summary.refused = true;
       const observations = (window as any).exportClockRefusals ??= [];
-      observations.push({atMs: performance.now(), message: (error as Error).message, cause: (error as Error).cause});
+      observations.push({atMs: performance.now(), message: (error as Error).message, cause: (error as Error).cause,
+        enrichedReadings: [...this.enriched], clockSummary: {...this.summary}, observationMayPerturbTiming: true});
       throw error;
     }
   }
@@ -114,8 +157,30 @@ try {
   await expect(page.getByRole("button", {name:"Export MP4", exact:true})).toBeEnabled();
   receipt.beforeExport = await snapshot();
   receipt.phase = "mixed-audio-caption-export";
-  await page.getByRole("button", {name:"Export MP4", exact:true}).click();
-  await expect(page.getByRole("link", {name:/Download MP4/})).toBeVisible({timeout:30000});
+  receipt.loadBeforeExport = quickLoad();
+  // Passive native webaudio trace around the one guarded export, as the
+  // startup suite already records. It owns no clock, source or oracle, cannot
+  // turn a refusal into a download, and its raw bytes stay local (0600). Its
+  // render-gap summary is evidence for offline review, never a verdict.
+  const nativeTrace = await startNativeTraceObserver({context, page, artifacts, syncId: "finishing-export-before-click",
+    rawFileName: "native-trace-finishing-export.raw.private.json", sourceHashes, limits: NATIVE_TRACE_EXPORT_LIMITS,
+    onFacts: facts => {receipt.nativeTrace = facts;}});
+  // Scheduling probes for the same window: a worker inside the renderer and a
+  // worker_thread inside this Node process each record how late they woke.
+  // A gap that lines up with a clock refusal says every thread stopped; a
+  // worker that kept running while the audio clock froze says only the audio
+  // pipeline stopped. Neither touches the export or any oracle.
+  const nodeProbe = startNodeSchedulingProbe();
+  receipt.schedulingProbe = {page: await startPageSchedulingProbe(page), node: nodeProbe.facts};
+  try {
+    await page.getByRole("button", {name:"Export MP4", exact:true}).click();
+    await expect(page.getByRole("link", {name:/Download MP4/})).toBeVisible({timeout:30000});
+  } finally {
+    await nativeTrace.finish();
+    receipt.schedulingProbe.page = await stopPageSchedulingProbe(page, receipt.schedulingProbe.page);
+    receipt.schedulingProbe.node = await nodeProbe.stop();
+    receipt.clockObservations = await page.evaluate(() => window.exportClockObservations ?? []).catch(() => null);
+  }
   const download = page.waitForEvent("download"); await page.getByRole("link", {name:/Download MP4/}).click();
   const output=join(artifacts,"music-captions-mix.mp4"); await (await download).saveAs(output);
   const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_entries","stream=codec_name,codec_type,start_time,duration,sample_rate:format=duration","-of","json",output],{encoding:"utf8"}));
@@ -255,6 +320,7 @@ try {
         progress: [...document.querySelectorAll("progress")].map(node => ({value: node.value, max: node.max})),
         fixture: window.finishingFixture?.snapshot(),
         clockRefusals: window.exportClockRefusals ?? [],
+        clockObservations: window.exportClockObservations ?? [],
         audioEvents: window.finishingAudioEvents ?? [],
         audioContexts: (window.finishingAudioContexts ?? []).map(audio => ({
           state: audio.state, currentTime: audio.currentTime, sampleRate: audio.sampleRate,
