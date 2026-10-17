@@ -5,7 +5,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 // @ts-ignore Release helpers are plain ESM, executed without tsx in production.
-import { parseDeploymentArgs, selectedPolicy, verifyLivePolicy, verifyDeploymentBefore, NEW_FUNCTION_POLICIES, verifyModernServiceTransition, MODERN_SERVICE_FUNCTIONS, sourceImports, sourceClosure, stageDeployment, verifyStagedSnapshot, verifyDownloadedSources, cliUploadPlan, SUPABASE_CLI_VERSION } from "../scripts/backend-deploy-lib.mjs";
+import { parseDeploymentArgs, selectedPolicy, verifyLivePolicy, verifyDeploymentBefore, NEW_FUNCTION_POLICIES, verifyModernServiceTransition, MODERN_SERVICE_FUNCTIONS, sourceImports, sourceClosure, stageDeployment, verifyStagedSnapshot, verifyDownloadedSources, cliUploadPlan, verifyCliUploadPlan, SUPABASE_CLI_VERSION } from "../scripts/backend-deploy-lib.mjs";
 // @ts-ignore Release helpers are plain ESM, executed without tsx in production.
 import { connectedProductionConfig, verifyConnectedBundle, manifestClosure, releaseAssetGroups, PROXY_ENTRY } from "../scripts/dist-policy.mjs";
 async function fixture(run: (root: string) => Promise<void>) {
@@ -131,6 +131,21 @@ test("CLI 2.101.0 upload walk misses compact imports; the staged plan uploads ea
   assert.equal(config, `project_id = "ymgqpbnjpztwjsyvceld"\n\n[functions.jobs]\nverify_jwt = true\nentrypoint = "./functions/jobs/index.ts"\nstatic_files = ["./functions/_shared/a.ts", "./functions/_shared/a2.ts", "./functions/_shared/b2.ts", "./functions/jobs/c.ts"]\n`);
   assert.deepEqual(manifest.cliUpload, { version: "2.101.0", byFunction: { jobs: plan } });
   await verifyStagedSnapshot(stage, manifest);
+}));
+test("pre-deploy upload check reads the stage from disk and refuses absent, missed or doubled uploads", async () => fixture(async (root) => {
+  const functions = path.join(root, "functions");
+  for (const [name, text] of Object.entries(CLI_WALK_FIXTURE)) await file(functions, name, text);
+  const closure = await sourceClosure(functions, ["jobs"]), stage = path.join(root, "stage");
+  const manifest = await stageDeployment(stage, closure, { jobs: true });
+  assert.deepEqual(verifyCliUploadPlan(stage, manifest, "jobs"), { uploadFiles: 9, staticFiles: 4, walkedFiles: 5 });
+  const configPath = path.join(stage, "supabase/config.toml"), config = await readFile(configPath, "utf8");
+  await writeFile(configPath, config.replace(/^static_files = .*\n/m, ""));
+  assert.throws(() => verifyCliUploadPlan(stage, manifest, "jobs"), /would not upload exactly jobs's sources \(missing 4: supabase\/functions\/_shared\/a\.ts/);
+  await writeFile(configPath, config.replace("static_files = [", 'static_files = ["./functions/_shared/b.ts", '));
+  assert.throws(() => verifyCliUploadPlan(stage, manifest, "jobs"), /twice 1/);
+  await writeFile(configPath, config);
+  await rm(path.join(stage, "supabase/functions/_shared/a2.ts"));
+  assert.throws(() => verifyCliUploadPlan(stage, manifest, "jobs"), /Required static uploads are absent/);
 }));
 test("readback accepts a static upload's second copy only as an exact byte copy of a planned static source", async () => fixture(async (root) => {
   const functions = path.join(root, "functions");

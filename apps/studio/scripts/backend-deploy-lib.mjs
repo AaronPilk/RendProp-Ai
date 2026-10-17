@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { lstatSync, readFileSync } from "node:fs";
 import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript-parser";
@@ -259,6 +260,33 @@ export function cliUploadPlan(closure, functions) {
     plan[name] = { walked, static: staticFiles };
   }
   return plan;
+}
+
+/** static_files of one function in a staged config.toml, as the CLI resolves them (supabase/ + entry). */
+export function stagedStaticFiles(config, name) {
+  const section = config.split(/^\[functions\./m).find((part) => part.startsWith(`${name}]\n`));
+  assert(section, `Staged config has no [functions.${name}] section.`);
+  const line = section.split("\n").find((entry) => entry.startsWith("static_files = "));
+  if (!line) return [];
+  const files = JSON.parse(line.slice("static_files = ".length));
+  assert(Array.isArray(files) && files.every((file) => typeof file === "string"), `Unreadable static_files for ${name}.`);
+  return files.map((file) => path.posix.join("supabase", file));
+}
+
+/** Last check before `functions deploy`: from the staged files and config on disk, what the CLI
+ * will upload must be this function's whole source closure, each file once. Throws otherwise. */
+export function verifyCliUploadPlan(stage, manifest, name) {
+  const exists = (file) => { try { const info = lstatSync(path.join(stage, file)); return info.isFile() ? "file" : info.isDirectory() ? "dir" : "other"; } catch (error) { if (error.code === "ENOENT" || error.code === "ENOTDIR") return undefined; throw error; } };
+  const statics = stagedStaticFiles(readFileSync(path.join(stage, "supabase/config.toml"), "utf8"), name);
+  const absent = statics.filter((file) => exists(file) !== "file");
+  assert.deepEqual(absent, [], `Required static uploads are absent from the stage for ${name}; nothing was deployed.`);
+  const upload = [...new Set(statics), ...cliWalkUploads(`supabase/functions/${name}/index.ts`, exists, (file) => readFileSync(path.join(stage, file)))];
+  const expected = manifest.sourcesByFunction[name].map((file) => `supabase/functions/${file}`);
+  const twice = upload.filter((file, index) => upload.indexOf(file) !== index);
+  const missing = expected.filter((file) => !upload.includes(file)), outside = upload.filter((file) => !expected.includes(file));
+  assert(!twice.length && !missing.length && !outside.length,
+    `Supabase CLI ${SUPABASE_CLI_VERSION} would not upload exactly ${name}'s sources (missing ${missing.length}: ${missing.slice(0, 3).join(", ")}; outside ${outside.length}; twice ${twice.length}). Nothing was deployed.`);
+  return { uploadFiles: upload.length, staticFiles: statics.length, walkedFiles: upload.length - statics.length };
 }
 
 export async function stageDeployment(stage, closure, policy) {

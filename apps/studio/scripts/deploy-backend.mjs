@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { PROJECT_REF, SUPABASE_CLI_VERSION, parseDeploymentArgs, selectedPolicy, sourceClosure, stageDeployment, verifyDownloadedSources, verifyLivePolicy, verifyDeploymentBefore, verifyStagedSnapshot } from "./backend-deploy-lib.mjs";
+import { PROJECT_REF, SUPABASE_CLI_VERSION, parseDeploymentArgs, selectedPolicy, sourceClosure, stageDeployment, verifyCliUploadPlan, verifyDownloadedSources, verifyLivePolicy, verifyDeploymentBefore, verifyStagedSnapshot } from "./backend-deploy-lib.mjs";
 
 const HELP = "Usage: node scripts/deploy-backend.mjs --functions studio[,other] [--run] [--modern-service-transport] [--create-new property-sites[,property-video-plan,photo-quality-review,ai-photo-v2,photo-feedback]]\nWithout --run: stage and hash local source only; no network, no deployment.\nWith --run: use the Supabase CLI's existing login or SUPABASE_ACCESS_TOKEN; verify live JWT policy, deploy only selected functions, download and compare source hashes.\nThe staged config names every source the CLI's own upload walk would miss as a static file, so each function uploads its whole closure once; --run refuses any Supabase CLI other than the version that plan mirrors (2.101.0).\nThe explicit modern transport option permits only the five declared service entrypoints to move to application-level service authentication; all five must be selected. Other JWT policies and final readback remain exact.\nThe explicit --create-new list permits only reviewed new endpoints to be absent before deployment; their declared JWT policies remain exact, existing entries remain exact and all final source/policy readbacks are mandatory.\n";
 if (process.argv.includes("--help")) { console.log(HELP); process.exit(0); }
@@ -48,15 +48,19 @@ try {
     await save();
     for (const name of options.functions) {
       await verifyStagedSnapshot(stage, manifest);
+      // What the CLI will upload, from the staged files and config: the whole closure, once each.
+      const upload = verifyCliUploadPlan(stage, manifest, name);
+      receipt.completed[name] = { status: "upload-verified", upload };
+      await save();
       // One explicit name per invocation: mixed JWT rules come from staged TOML,
       // never a global --no-verify-jwt switch and never --prune.
       await cli(["functions", "deploy", name, "--project-ref", PROJECT_REF, "--use-api", "--workdir", stage]);
-      receipt.completed[name] = { status: "deployed-awaiting-readback" };
+      receipt.completed[name] = { status: "deployed-awaiting-readback", upload };
       await save();
       const readback = await mkdtemp(path.join(tmpdir(), `rendprop-backend-readback-${name}-`));
       await mkdir(path.join(readback, "supabase"), { recursive: true });
       await cli(["functions", "download", name, "--use-api", "--project-ref", PROJECT_REF, "--workdir", readback]);
-      receipt.completed[name] = { status: "source-verified", readback, ...await verifyDownloadedSources(readback, name, manifest) };
+      receipt.completed[name] = { status: "source-verified", upload, readback, ...await verifyDownloadedSources(readback, name, manifest) };
       await save();
     }
     receipt.after = verifyLivePolicy(JSON.parse(await cli(["functions", "list", "--project-ref", PROJECT_REF, "-o", "json", "--workdir", stage])), policy);
