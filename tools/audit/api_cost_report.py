@@ -366,6 +366,18 @@ def accounting_report(snapshot, events=(), spool=()):
         if has_attempt_key:
             attempt_groups[attempt_key].append(row["id"])
 
+    # Owner decision (2026-10-17): a pipeline result produced by SEVERAL admitted
+    # worker attempts (same job/provider/model, none bound to a ledger row) is an
+    # ambiguous aggregate. The writer refuses to guess which attempt it bills, so
+    # every one of those holds stays fully held (conservative, never netted) and
+    # is reported explicitly here with a count. Per-attempt attribution is a
+    # follow-up, not inferred by this report.
+    unbound_pipeline = defaultdict(list)
+    for row in serving:
+        if row["state"] != "rejected" and row["id"] not in hold_links and str(row.get("stage") or "").startswith("worker:"):
+            unbound_pipeline[(row.get("org_id"), row.get("request_key"), row.get("provider"), row.get("model"))].append(row)
+    aggregates = {key: rows for key, rows in unbound_pipeline.items() if len(rows) > 1}
+    aggregate_hold_ids = {row["id"] for rows in aggregates.values() for row in rows}
     holds = []
     for row in serving:
         linked = hold_links.get(row["id"])
@@ -375,7 +387,12 @@ def accounting_report(snapshot, events=(), spool=()):
             line = {"journal": "serving", "id": row["id"], "state": row["state"], "hold_cents": cents(residual), "account": scope(row.get("billing_org_id") or row.get("org_id")), "provider": token(row["provider"]), "model": token(row["model"]), "tariff_version": token(row.get("tariff_version")), "created_at": row.get("created_at"), "invoice_verified": False}
             if prospective:
                 line.update(admitted_bound_cents=cents(money(row["hold_cents"])), linked_modeled_cents=cents(money(linked["total_cents"])), accounting="pipeline_uncertainty_residual")
+            elif row["id"] in aggregate_hold_ids:
+                line.update(accounting="unbound multi-attempt aggregate")
             holds.append(line)
+    multi_attempt = {"count": len(aggregates), "attempt_count": len(aggregate_hold_ids),
+                     "held_cents": cents(sum((money(r["hold_cents"]) for rows in aggregates.values() for r in rows), ZERO)),
+                     "groups": [{"library": scope(k[0]), "request_key": scope(k[1]), "provider": token(k[2]), "model": token(k[3]), "attempts": len(rows), "held_cents": cents(sum((money(r["hold_cents"]) for r in rows), ZERO)), "states": sorted({r["state"] for r in rows}), "accounting": "unbound multi-attempt aggregate"} for k, rows in sorted(aggregates.items(), key=lambda kv: (scope(kv[0][0]), scope(kv[0][1]), str(kv[0][2]), str(kv[0][3])))]}
     overlap = []
     tombstones = []
     for row in videos:
@@ -443,6 +460,7 @@ def accounting_report(snapshot, events=(), spool=()):
             # write yields two rows with one attempt identity. Flagged, never netted.
             "possible_duplicate_attempt_rows": [{"library": scope(k[0]), "request_key": scope(k[1]), "stage": token(k[2]), "provider": token(k[3]), "model": token(k[4]), "ledger_ids": v} for k, v in sorted(attempt_groups.items(), key=lambda kv: kv[1]) if len(v) > 1],
             "provider_attempt_journal": provider_attempt_journal(attempts, ledger_by_attempt),
+            "unbound_multi_attempt_aggregates": multi_attempt,
             "pending_spool_not_added_to_ledger": spool_lines,
             "external_events_separate_from_consumption": external,
             "provider_credit_funding_cents": cents(sum((money(e["amount_cents"]) for e in external if e["kind"] == "provider_credit_funding"), ZERO)),
@@ -451,7 +469,7 @@ def accounting_report(snapshot, events=(), spool=()):
             "spatial_cost_rollups_not_added_to_ledger": [{"job": scope(r["id"]), "status": token(r.get("status")), "reported_cents": cents(money(r["cost_cents"])), "invoice_verified": False} for r in snapshot["spatial"]],
             "other_accounting_journals_not_added_to_ledger": [{"kind": token(r["kind"]), "job": scope(r["id"]), "account": scope(r.get("org_id")), "listing": scope(r.get("listing_id")), "state": token(r.get("state")), "priced_cents": cents(money(r["priced_cents"])), "held_cents": cents(money(r["held_cents"])), "charged_cents": cents(money(r["charged_cents"])) if r.get("charged_cents") is not None else None, "ledger_id": r.get("ledger_id"), "supplier_request_id": request_id(r.get("supplier_request_id")), "price_version": token(r.get("price_version")), "has_billing_reference": r.get("has_billing_reference") is True} for r in snapshot["other_journals"]],
             "unpriced_usage": unpriced_usage(snapshot.get("unpriced_usage", {})),
-            "coverage": {"source_rows": snapshot["counts"], "unique_ledger_rows": len(ledger), "serving_rows_reconciled_to_ledger": len(hold_links), "ledger_rows_without_listing": sum(x["listing"] == "unknown" for x in lines), "ledger_rows_without_supplier_id": sum(not x["supplier_request_ids"] for x in lines), "ledger_rows_without_tariff": sum(not x["tariff_versions"] for x in lines), "supplier_invoice_reconciliation": "not supplied; no recorded cost labeled invoice verified", "spool_visibility": "supplied local spool only; other running workers unknown", "infrastructure": "vendor invoices/account telemetry not automatically imported", "hold_total_scope": "unreconciled serving/app-video holds plus the uncovered bound of prospective exact pipeline links; presenter/erase journals and spatial rollups separate to prevent duplicate summation", "failed_context": "current job/source state or retained ledger refusal flag; resumed jobs can change context without changing any recorded cost", "uncertain_dispatch_context": "ledger rows whose writer recorded outcome=uncertain (lost reply, or a funding refusal before dispatch when the writer books in finally); amounts stay recorded, rows without any matching serving hold are listed as possibly never dispatched", "provider_attempt_journal": "schema-2 snapshots export provider_attempt_receipts; unknown outcomes carry no amount and are never zero", "history": "account deletion can remove ledger rows; retained reservation tombstones are reported separately"}}
+            "coverage": {"source_rows": snapshot["counts"], "unique_ledger_rows": len(ledger), "serving_rows_reconciled_to_ledger": len(hold_links), "ledger_rows_without_listing": sum(x["listing"] == "unknown" for x in lines), "ledger_rows_without_supplier_id": sum(not x["supplier_request_ids"] for x in lines), "ledger_rows_without_tariff": sum(not x["tariff_versions"] for x in lines), "supplier_invoice_reconciliation": "not supplied; no recorded cost labeled invoice verified", "spool_visibility": "supplied local spool only; other running workers unknown", "infrastructure": "vendor invoices/account telemetry not automatically imported", "hold_total_scope": "unreconciled serving/app-video holds plus the uncovered bound of prospective exact pipeline links; presenter/erase journals and spatial rollups separate to prevent duplicate summation", "failed_context": "current job/source state or retained ledger refusal flag; resumed jobs can change context without changing any recorded cost", "uncertain_dispatch_context": "ledger rows whose writer recorded outcome=uncertain (lost reply, or a funding refusal before dispatch when the writer books in finally); amounts stay recorded, rows without any matching serving hold are listed as possibly never dispatched", "provider_attempt_journal": "schema-2 snapshots export provider_attempt_receipts; unknown outcomes carry no amount and are never zero", "unbound_multi_attempt_aggregate": "two or more unbound worker attempts (stage worker:*) behind one library/request/provider/model keep their full holds; the writer never guesses which attempt a result bills, so per-attempt attribution is reported as a count, not inferred", "history": "account deletion can remove ledger rows; retained reservation tombstones are reported separately"}}
 
 
 def private_write(path, body):

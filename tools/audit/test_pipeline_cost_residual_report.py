@@ -54,6 +54,30 @@ class PipelineResidualTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "pipeline"):
             accounting_report(f)
 
+    def test_unbound_multi_attempt_aggregate_stays_fully_held_and_is_reported_with_a_count(self):
+        # Two admitted worker attempts behind one result (same job, provider and
+        # model), one legacy ledger row with no binding: nothing is netted and
+        # the ambiguity is reported explicitly, not inferred per attempt.
+        f = fixture()
+        f["ledger"][0].update(org_id="org1", billing_org_id="org1", provider="fal", model="fal-ai/flux-pro/kontext", total_cents="4", idempotency_key="legacy-uuid")
+        f["ledger"][0]["meta"] = {"fallback": "flux_kontext"}
+        f["serving"] = [hold(id="hold1", stage="worker:" + "a" * 48, state="uncertain", provider="fal", model="fal-ai/flux-pro/kontext", billing_org_id="org1", hold_cents="4"),
+                        hold(id="hold2", stage="worker:" + "b" * 48, state="succeeded", provider="fal", model="fal-ai/flux-pro/kontext", billing_org_id="org1", hold_cents="4"),
+                        hold(id="hold3", stage="worker:" + "c" * 48, state="uncertain", provider="fal", model="fal-ai/flux-pro/kontext", billing_org_id="org1", hold_cents="3", request_key="request2")]
+        r = accounting_report(counted(f))
+        self.assertEqual(r["totals"]["recorded_ledger_cents"], "4.0000")
+        self.assertEqual(r["unledgered_hold_cents"], "11.0000", "the aggregate's holds and the lone attempt all stay fully held")
+        aggregate = r["unbound_multi_attempt_aggregates"]
+        self.assertEqual((aggregate["count"], aggregate["attempt_count"], aggregate["held_cents"]), (1, 2, "8.0000"))
+        self.assertEqual(len(aggregate["groups"]), 1)
+        self.assertEqual((aggregate["groups"][0]["attempts"], aggregate["groups"][0]["held_cents"], aggregate["groups"][0]["accounting"]), (2, "8.0000", "unbound multi-attempt aggregate"))
+        self.assertEqual(aggregate["groups"][0]["states"], ["succeeded", "uncertain"])
+        flagged = {h["id"]: h.get("accounting") for h in r["unledgered_holds"]}
+        self.assertEqual(flagged, {"hold1": "unbound multi-attempt aggregate", "hold2": "unbound multi-attempt aggregate", "hold3": None})
+        self.assertNotIn("request1", str(aggregate), "request keys are pseudonymised")
+        # A single unbound attempt and a bound attempt are never an aggregate.
+        self.assertEqual(accounting_report(linked())["unbound_multi_attempt_aggregates"], {"count": 0, "attempt_count": 0, "held_cents": "0.0000", "groups": []})
+
 
 if __name__ == "__main__":
     unittest.main()
