@@ -68,6 +68,15 @@ const errorMessage = (error: unknown) =>
 const industryName = (key: string) =>
   INDUSTRIES[key as Industry] ?? "Your business";
 
+function appendMediaPage(previous: ListingMedia, next: ListingMedia): ListingMedia {
+  return {
+    ...next,
+    photos: [...new Map([...previous.photos, ...next.photos].map(item => [item.id, item])).values()],
+    videos: [...new Map([...previous.videos, ...next.videos].map(item => [item.id, item])).values()],
+    unavailableCount: previous.unavailableCount + next.unavailableCount,
+  };
+}
+
 // Dependency injection is a component seam, not a browser URL/environment mode.
 // It lets isolated browser fixtures exercise real account transitions without
 // connecting to a provider or putting test identities in the production entry.
@@ -118,6 +127,9 @@ export default function App({ servicesFactory }: {
   const [storedSelected, setSelected] = useState<Listing | null>(null);
   const [storedMedia, setMedia] = useState<ListingMedia | null>(null);
   const [mediaVersion, setMediaVersion] = useState<number | null>(null);
+  const [mediaLoadedScope, setMediaLoadedScope] = useState("");
+  const [mediaWorkspaceVerified, setMediaWorkspaceVerified] = useState(false);
+  const mediaDepth = useRef({scope: "", pages: 1});
   const [mediaBusy, setMediaBusy] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [storedImport, setImportRequest] = useState<{
@@ -174,7 +186,11 @@ export default function App({ servicesFactory }: {
     storedSelected && belongsToLibrary(storedSelected, workspace)
       ? listings.find((item) => item.id === storedSelected.id) ?? null
       : null;
+  const mediaScopeKey = workspace && selected
+    ? `${session.identityVersion}:${workspace.user.id}:${workspace.org.id}:${selected.orgId}:${selected.id}`
+    : "";
   const media =
+    mediaWorkspaceVerified && mediaLoadedScope === mediaScopeKey &&
     workspace &&
     selected &&
     mediaVersion === session.identityVersion &&
@@ -201,7 +217,7 @@ export default function App({ servicesFactory }: {
   const importAgentPlan = agentPlanScope === editScope ? storedAgentPlan : undefined;
   const entry = featureEntry?.scope === editScope ? featureEntry : undefined;
   const mediaScope = useRef("");
-  mediaScope.current = `${editScope}:${selected?.id ?? ""}`;
+  mediaScope.current = mediaWorkspaceVerified ? mediaScopeKey : "";
   const presenterPending = useRef({scope: "", pending: false, busy: false});
   const listingContactGuard = useRef<{ scope: string; guard: ContactNavigationGuard | null }>({ scope: "", guard: null });
   const contactGuardChanged = useCallback((guard: ContactNavigationGuard | null) => { listingContactGuard.current = { scope: editScope, guard }; }, [editScope]);
@@ -361,6 +377,8 @@ export default function App({ servicesFactory }: {
     setSelected(null);
     setMedia(null);
     setMediaVersion(null);
+    setMediaLoadedScope("");
+    setMediaWorkspaceVerified(false);
     setMediaError(null);
     setNotice("");
     transfer.current?.abort();
@@ -370,6 +388,7 @@ export default function App({ servicesFactory }: {
     const controller = new AbortController();
     setLoadError(null);
     if (!services || !isConnected) {
+      setMediaWorkspaceVerified(false);
       setBusy(false);
       return () => controller.abort();
     }
@@ -395,6 +414,7 @@ export default function App({ servicesFactory }: {
       setLastSynced(new Date());
       setWorkspace(account);
       setListings(spaces);
+      setMediaWorkspaceVerified(true);
       const requestedListing=initialListing.current;
       if(requestedListing){setSelected(spaces.find(item=>item.id===requestedListing) ?? null);initialListing.current=null;}
       setLoadedVersion(version);
@@ -409,6 +429,9 @@ export default function App({ servicesFactory }: {
           !controller.signal.aborted &&
           services.getSnapshot().identityVersion === version
         ) {
+          // Local editor state may survive an outage; private Library rows may
+          // only survive a successfully verified directory and listing read.
+          setMediaWorkspaceVerified(false);
           if (!canRetainWorkspace(error)) {
             setWorkspace(null);
             setLoadedVersion(null);
@@ -475,41 +498,57 @@ export default function App({ servicesFactory }: {
   }, [key, editScope, restoreScope]);
   useEffect(() => {
     mediaPageAbort.current?.abort();
+    mediaPageAbort.current = null;
     setMediaPageBusy(false);
-    setMedia(null);
     setMediaError(null);
     setMediaBusy(false);
     const controller = new AbortController();
-    if (!selected || !workspace || !services) return () => controller.abort();
+    const scope = mediaScopeKey;
+    if (!selected || !workspace || !services || !mediaWorkspaceVerified) {
+      if (mediaDepth.current.scope !== scope) mediaDepth.current = {scope, pages: 1};
+      setMedia(null);
+      setMediaLoadedScope("");
+      return () => controller.abort();
+    }
+    if (mediaDepth.current.scope !== scope) {
+      mediaDepth.current = {scope, pages: 1};
+      setMedia(null);
+      setMediaLoadedScope("");
+    }
+    // A same-scope refresh renews the pages the user already opened, including
+    // an in-flight Load more. Every page rejoins the fresh typed mapping barrier;
+    // old requests are aborted and only the complete current aggregate is shown.
+    const depth = mediaDepth.current.pages;
     const version = session.identityVersion;
+    const current = () => !controller.signal.aborted && mediaScope.current === scope &&
+      services.getSnapshot().identityVersion === version;
     setMediaBusy(true);
-    void services
-      .listMedia(selected.orgId, selected.id, controller.signal)
-      .then((value) => {
-        if (
-          !controller.signal.aborted &&
-          services.getSnapshot().identityVersion === version
-        ) {
-          setMedia(value);
-          setMediaVersion(version);
-        }
-      })
-      .catch((error) => {
-        if (
-          !controller.signal.aborted &&
-          services.getSnapshot().identityVersion === version
-        )
-          setMediaError(errorMessage(error));
-      })
-      .finally(() => {
-        if (
-          !controller.signal.aborted &&
-          services.getSnapshot().identityVersion === version
-        )
-          setMediaBusy(false);
-      });
+    void (async () => {
+      let combined: ListingMedia | null = null, offset = 0, pages = 0;
+      for (let page = 0; page < depth; page++) {
+        const next = await services.listMedia(selected.orgId, selected.id, controller.signal, offset, workspace.org.id);
+        if (!current()) return;
+        combined = combined ? appendMediaPage(combined, next) : next;
+        pages++;
+        if (next.nextOffset === null) break;
+        offset = next.nextOffset;
+      }
+      if (current() && combined) {
+        mediaDepth.current.pages = pages;
+        setMedia(combined);
+        setMediaLoadedScope(scope);
+        setMediaVersion(version);
+      }
+    })().catch((error) => {
+      if (current()) {
+        setMedia(null);
+        setMediaLoadedScope("");
+        setMediaError(errorMessage(error));
+      }
+    }).finally(() => { if (current()) setMediaBusy(false); });
     return () => controller.abort();
-  }, [services, selected, workspace, refresh]);
+    // Object identity changes after directory refresh must not restart this read.
+  }, [services, mediaScopeKey, mediaWorkspaceVerified, refresh]);
   useEffect(
     () => () => {
       transfer.current?.abort();
@@ -667,7 +706,7 @@ export default function App({ servicesFactory }: {
       !selected ||
       !media ||
       media.nextOffset === null ||
-      mediaPageBusy
+      mediaBusy || mediaPageBusy
     )
       return;
     mediaPageAbort.current?.abort();
@@ -676,6 +715,7 @@ export default function App({ servicesFactory }: {
     const scope = mediaScope.current;
     const version = session.identityVersion;
     const nextOffset = media.nextOffset;
+    mediaDepth.current.pages++;
     setMediaPageBusy(true);
     setMediaError(null);
     try {
@@ -684,6 +724,7 @@ export default function App({ servicesFactory }: {
         selected.id,
         controller.signal,
         nextOffset,
+        workspace.org.id,
       );
       if (
         controller.signal.aborted ||
@@ -699,30 +740,18 @@ export default function App({ servicesFactory }: {
           previous.nextOffset !== nextOffset
         )
           return previous;
-        const photos = [
-          ...new Map(
-            [...previous.photos, ...next.photos].map((item) => [item.id, item]),
-          ).values(),
-        ];
-        const videos = [
-          ...new Map(
-            [...previous.videos, ...next.videos].map((item) => [item.id, item]),
-          ).values(),
-        ];
-        return {
-          ...next,
-          photos,
-          videos,
-          unavailableCount: previous.unavailableCount + next.unavailableCount,
-        };
+        return appendMediaPage(previous, next);
       });
     } catch (error) {
       if (
         !controller.signal.aborted &&
         mediaScope.current === scope &&
         services.getSnapshot().identityVersion === version
-      )
+      ) {
+        setMedia(null);
+        setMediaLoadedScope("");
         setMediaError(errorMessage(error));
+      }
     } finally {
       if (mediaPageAbort.current === controller) setMediaPageBusy(false);
     }
@@ -1206,7 +1235,7 @@ export default function App({ servicesFactory }: {
                 )}
                 {media.nextOffset !== null && (
                   <button
-                    disabled={mediaPageBusy}
+                    disabled={mediaBusy || mediaPageBusy}
                     onClick={() => void loadMoreMedia()}
                   >
                     {mediaPageBusy ? "Loading more media…" : "Load more media"}

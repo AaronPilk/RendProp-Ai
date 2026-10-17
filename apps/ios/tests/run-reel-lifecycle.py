@@ -30,6 +30,17 @@ def block(text, anchor):
         end += 1
     return text[start:end]
 
+def main_view_disappearance(reel_view):
+    view_body = block(reel_view, '    var body: some View {')
+    # Bind to the main NavigationStack's lifecycle chain, before its account
+    # identity hook. Later sheet/overlay permission hooks own other cleanup.
+    begin = '        .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })'
+    end = '        .onChange(of: auth.userID) { owner in'
+    assert view_body.count(begin) == view_body.count(end) == 1, 'main-view lifecycle bounds'
+    first, last = view_body.index(begin), view_body.index(end)
+    assert first < last, 'main-view lifecycle order'
+    return block(view_body[first:last], '        .onDisappear {')
+
 before = hashes()
 screen = source.read_text()
 # Remove imports and expose private stored grant identifiers/methods to the
@@ -38,7 +49,7 @@ body = '\n'.join(line for line in queue.read_text().splitlines() if not line.sta
 body = 'import Foundation\n' + body.replace('private(set)', '').replace('private var backgroundHold', 'var backgroundHold').replace('private func beginBackgroundHold()', 'func beginBackgroundHold()').replace('private func endBackgroundHold()', 'func endBackgroundHold()')
 body += '\n' + block(push.read_text(), 'enum ReelCompletionNotice {')
 reel_view = screen[screen.index('struct ReelStudioView:'):screen.index('// MARK: Sections', screen.index('struct ReelStudioView:'))]
-cleanup = block(reel_view, '        .onDisappear {')
+cleanup = main_view_disappearance(reel_view)
 body += '\n@MainActor final class ReelPresentationHarness {\nlet job: ReelWorkJob; let work: ReelWorkJob; let connection = ClosedConnection(); var voicePermissionID: UUID?; var requestingVoicePermission: Bool = false; var player: ClosedPlayer? { get { work.player } set { work.setPlaybackPlayer(newValue) } }; var voPlayer: ClosedPlayer? = ClosedPlayer(); var musicPreviewPlayer:ClosedPlayer?; let recorder = ClosedRecorder()\ninit(job: ReelWorkJob) { self.job = job; self.work = job; job.isPresented = true; job.setPlaybackPlayer(ClosedPlayer()) }\nfunc onDisappearCleanup() ' + cleanup[cleanup.index('{'):] + '\n}\n'
 assert '@ObservedObject private var work: ReelWorkJob' in reel_view
 assert '@State private var workTask' not in reel_view

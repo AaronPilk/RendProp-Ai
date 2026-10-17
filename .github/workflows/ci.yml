@@ -680,6 +680,7 @@ jobs:
           node tests/browser-connected-control.mjs
           node tests/auth-browser.mjs
           node tests/private-media-browser.mjs
+          node tests/library-pagination-browser.mjs
           node tests/presenter-app-browser.mjs
           node tests/presenter-browser.mjs
           node tests/prompts-browser.mjs
@@ -1185,7 +1186,9 @@ jobs:
           assert run['variant'] == 'baseline' and run['narrated'] is True
           assert 0 < run['duration'] <= 3.4
           assert not any(event.get('event') == 'resume.delivered' for event in run['trace'])
-          outputs = list(receipts[0].parent.glob('*.mp4'))
+          fixture_input = receipts[0].parent / 'opening-tone-video.mp4'
+          assert fixture_input.is_file()
+          outputs = [path for path in receipts[0].parent.glob('*.mp4') if path != fixture_input]
           assert len(outputs) == 1 and outputs[0].name == 'baseline-narrated.mp4'
           assert Path(run['output']).resolve() == outputs[0].resolve()
           expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs'}
@@ -1699,6 +1702,8 @@ jobs:
       - name: Warm pinned imports for closed Kie dispatch tests
         run: |
           deno install --no-config --no-lock --node-modules-dir=none --entrypoint \
+            services/supabase/functions/ai-video/index.ts \
+            services/supabase/functions/property-video-worker/engine.ts \
             services/supabase/functions/ai-video/property-video-kie-dispatch.test.ts \
             services/supabase/functions/property-video-worker/kie-dispatch-authority.test.ts
       - name: Install actual CPU, font and isolated database test dependencies

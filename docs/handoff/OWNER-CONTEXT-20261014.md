@@ -1,3 +1,13 @@
+## Current checkpoint — October 16, 2026, 21:17 EDT
+
+The owner explicitly authorized external Claude to review and improve Rendprop Studio's UI against the Apple/Pilk AI design direction. The actual Claude desktop assignment was sent and acknowledged; isolated visual work is underway, with Codex retaining functional integration/release. The assignment record is `docs/handoff/CLAUDE-STUDIO-DESIGN-ASSIGNMENT-20261016.md`; design results are not accepted yet.
+
+Studio46's actual Library pagination refresh defect is reproduced and source-fixed in App.tsx without changing services/authority. The old App fails the exact refresh assertion; the candidate passes13 actual-App/typed-service scenarios, three strict compiled omission controls,726/726 existing units, type/build and connected387115/400000 size gate. Final independent source/proof review is GO da2109ad. Hosted rollout remains pending. The hosted Studio46 has not changed. The new browser regression is registered in CI.
+
+Full CI38987224907 at160efdc is terminal11PASS/5FAIL, four primary plus dependent native aggregate. Its real media encoding, steady/Kie-profile and preceding native capture/batch gates passed; later scope/cost/native steps were skipped. Root has repaired the synthetic-input MP4 inventory wrapper, added the actual runtime roots to computed-import dependency warming (closed36tests pass), and integrated the bounded main-view lifecycle selector (98assertions/29original compiled controls pass). The initial simctl30s timeout remains recorded; no timeout widening. A new coherent whole CI is required, and no green/delivery claim follows these local repairs.
+
+Exact tested CPU image registry upload/readback SUCCEEDED once under V3: actual remote b4022fc9 index/runtime/config/all11layer descriptors and attestation verified; profile restored STOPPED and temporary credentials removed. PriorV2 refused before push with0push/0VMstart. This is a nonactivating artifact operation: no Worker/backend activation, new paid request or native88 delivery is authorized by it. Paid generation remains paused; Kie rollout, final owner quality/device/purchase acceptance and final onboarding remain open.
+
 ## Execution update — October16, 2026, 20:35 EDT
 
 - Current integrated source includes test-only compatibility commit **b07fd97**. Exact full CI38983754106@e2aae1d is TERMINAL12/16, with three primary failures plus derived native aggregate; the CPU linked CheckRun resolves its stale jobs-API in_progress field. Final receiptfea84a9c preserves both facts. Whole Studio, Edge, generalDB, UIKit exports and Linux actual encoding passed. Later Kie/O09 PG steps were skipped after the strict historical-replay refusal, not passed.
