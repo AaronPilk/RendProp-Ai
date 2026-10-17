@@ -110,7 +110,7 @@ try:
        ('race-starter-original','{starter}','{actor}','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval '20 days',true,'race-starter-tx',now()-interval '10 days',now()-interval '1 day'),
        ('race-negative-original','{negative}','{actor}','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval '20 days',true,'race-negative-tx',now()-interval '10 days',now()-interval '1 day');
       insert into cost_ledger(org_id,feature,provider,model,units,unit_cost_cents,total_cents,created_at)values
-       ('{starter}','photo_edit','gemini','gemini-3.1-flash-image',1,2021,2021,now()-interval '1 day'),('{negative}','photo_edit','gemini','gemini-3.1-flash-image',1,2021,2021,now()-interval '1 day');
+       ('{starter}','photo_edit','gemini','gemini-3.1-flash-image',1,2021,2021,now()-interval '1 minute'),('{negative}','photo_edit','gemini','gemini-3.1-flash-image',1,2021,2021,now()-interval '1 minute');
       insert into listings(id,org_id,agent_id,address)values
        ('{listings[0]}','{free_org}','{actor}','Synthetic race listing 1'),('{listings[1]}','{free_org}','{actor}','Synthetic race listing 2'),
        ('{listings[2]}','{free_negative}','{actor}','Synthetic race listing 3'),('{listings[3]}','{free_negative}','{actor}','Synthetic race listing 4');
