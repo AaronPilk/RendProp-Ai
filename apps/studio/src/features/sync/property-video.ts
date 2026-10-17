@@ -58,6 +58,13 @@ export function selectedSources(sources:readonly VideoSource[],selected:readonly
  const map=new Map(sources.map(s=>[s.photo_id,s]));
  return selected.map(photo=>{const s=map.get(photo);if(!s?.eligible||!s.photo_asset_id)throw Error("A selected photo changed or is unavailable. Refresh its saved version.");return{photo_id:s.photo_id,photo_asset_id:s.photo_asset_id,photo_version_id:s.photo_version_id,photo_provenance_id:s.photo_provenance_id,motion:"push_in"};});
 }
+// Planner-unavailable fallback (V3): a deterministic rotation by selected index so an
+// outage never produces a run of identical push-ins. Selected order is preserved and
+// fly_through is never chosen; all three moves are safe in any interior.
+export const FALLBACK_MOTION_ROTATION:readonly VideoMotion[]=["push_in","side_glide","pull_back"];
+export function fallbackVideoMotion(sources:readonly FrozenSource[]):FrozenSource[]{
+ return sources.map((source,index)=>({...source,motion:FALLBACK_MOTION_ROTATION[index%FALLBACK_MOTION_ROTATION.length]!}));
+}
 export function decodeJob(raw:unknown,scope:VideoScope,expectedOperation?:string):VideoJob {
  const j=object(raw);id(j.job_id);id(j.operation_id);
  if(j.listing_id!==scope.listing||j.org_id!==scope.org||j.selected_library_org_id!==scope.library||expectedOperation&&j.operation_id!==expectedOperation||typeof j.manifest_sha256!=="string"||!HEX.test(j.manifest_sha256)||!["queued","generating","quality_review","composing","ready","cancelled","failed","needs_reconciliation"].includes(String(j.state)))throw Error("This video belongs to another property or operation.");
