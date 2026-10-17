@@ -11,7 +11,12 @@ photos share a move and every four photos hold three distinct moves, never
 introduces `fly_through`, and records `requested`/`chosen`/`changed` under
 `manifest.motion_variety` (seed: the operation id). Steady profiles also record
 a temporal motion verdict per shot (`property_video_job_sources.temporal`,
-`property-video-worker/temporal.ts`) before the paid drift judge decides.
+`property-video-worker/temporal.ts`) before the paid drift judge decides. A
+missing, foreign or failing verdict holds the shot and then pauses the job with
+the paid clip retained; it never publishes, buys a retry or substitutes the
+still photo, and an owner resume re-reviews the same attempt (the first
+recorded verdict stands). Rollback of the SQL objects:
+`docs/handoff/PROPERTY-VIDEO-TEMPORAL-ROLLBACK.sql` (worker first).
 
 ## Client contract
 

@@ -10,8 +10,14 @@
 // bob/sway/cadence-only failure HOLD the shot through the existing CPU review
 // pause (property_video_job_failure 'cpu_extract_failed': two more immediate
 // extracts, then a resumable quality pause with the paid clip retained);
-// nothing is published and nothing is bought. Legacy and v1 jobs never request
-// a report and never require one.
+// nothing is published and nothing is bought. A travel/roll/duplicate/
+// unmeasurable failure is reported as quality_check_refused at once; without a
+// paid structural drift rejection SQL makes that the same resumable quality
+// pause, never a still-photo substitution (property_video_fallback_source_guard).
+// Either way the owner's resume re-reviews the same paid attempt and its first
+// recorded verdict stands, so a failed shot stays paused until the follow-up
+// paid-retry grant exists (see quality.test.ts, ignored case) or the limit
+// version changes. Legacy and v1 jobs never request a report and never require one.
 import{isSteadyPropertyVideoProfile}from'../ai-video/property-video-quality.ts';
 export const TEMPORAL_QC_PROFILE='temporal-motion-v2'as const;
 /** Mirror of motion_qc.FINISHED_LIMITS. Change both or the worker holds every steady shot. */
@@ -20,7 +26,7 @@ export const TEMPORAL_LIMITS={bob_pp_px:1.2,sway_pp_px:1.2,cadence_acf:.4,cadenc
 export const TEMPORAL_LIMITS_SHA256='244436b765886f537bd6d3b835dc42ca06cc758dc1a3b796028aae448b21d555';
 export function temporalLimitsCanonical(limits:Record<string,number>=TEMPORAL_LIMITS):string{return Object.keys(limits).sort().map(k=>`${k}=${limits[k]}`).join('\n');}
 export async function sha256Hex(text:string):Promise<string>{return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text))),x=>x.toString(16).padStart(2,'0')).join('');}
-/** Failures the stabiliser or one safer camera move could cure, versus failures that condemn the clip. */
+/** Failures the stabiliser or one safer camera move could cure (held), versus failures no re-measurement cures (refused at once; still a resumable pause in SQL, see above). */
 export const TEMPORAL_RETRYABLE=['vertical_bob','lateral_sway','walking_cadence','roll_wobble','zoom_pumping']as const;
 export const TEMPORAL_TERMINAL=['walk_through_travel','horizon_roll','duplicate_frames','unmeasurable']as const;
 export type TemporalRoute='pass'|'retry'|'refuse';

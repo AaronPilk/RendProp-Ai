@@ -113,6 +113,9 @@ export async function quality(ctx:any,raw:any){const j=ctx.job,s=ctx.source;asse
   // The recorded verdict decides (first measurement of this attempt under this limit version wins; SQL returns it on a repeat).
   const recorded=temporalReport(await rpc('property_video_job_temporal',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id,p_clip_sha256:raw.clip_sha256,p_report:report}));
   assert(recorded,503,'The recorded temporal verdict could not be read.');const route=temporalRoute(recorded.verdict);
+  // Not a still-photo substitution: with no paid structural drift rejection,
+  // property_video_job_failure makes this the resumable quality pause (paid clip
+  // retained) and property_video_fallback_source_guard refuses original_photo.
   if(route==='refuse'){await fail(ctx,'quality_check_refused',false);return;}
   // FOLLOW-UP (V2 retry routing): the single paid retry, property_video_job_quality_retry
   // (20261015040518), is granted only on a persisted paid DRIFT verdict
