@@ -37,6 +37,10 @@
 //        -> { generated_at, enabled, flag, spend_window_days, policies[], routes[] }
 //  POST /admin/routing/flag        { enabled }   -- the AI router master switch
 //  POST /admin/routing/step/{id}   { enabled }   -- one chain step on/off
+//   GET /admin/photo-feedback?window=7d|30d|90d   (admin/photo-feedback.ts)
+//        -> the AI photo quality report: generated / explicitly reviewed,
+//           useful rate, coverage, reasons, breakdowns, cost per useful result
+//           (contract docs/handoff/PHOTO-FEEDBACK-DESIGN-20261017.md section 5)
 //
 // The two POSTs are the ONLY writes this function has. They are gated by the
 // same requireAdmin() as everything else, they touch nothing but `app_config`
@@ -88,6 +92,7 @@ import { probeAll } from "./probe.ts";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { handleFunnel } from "./funnel.ts";
 import { KIE_PROPERTY_ROUTE_ID } from "../_shared/property-video-kie.ts";
+import { handlePhotoFeedback } from "./photo-feedback.ts";
 import {
   aggregateLedger,
   bump,
@@ -170,12 +175,14 @@ Deno.serve(async (req) => {
         return isRoutingWrite
           ? await handleRoutingWrite(req, admin, seg)
           : await handleRouting(admin);
+      case "photo-feedback":
+        return await handlePhotoFeedback(req);
       default:
         throw new HttpError(
           404,
           "Unknown route — GET /admin/spend, /admin/providers, /admin/providers/probe, " +
             "/admin/usage, /admin/health, /admin/funnel, /admin/cohorts, /admin/churn, " +
-            "/admin/subscriptions " +
+            "/admin/subscriptions, /admin/photo-feedback " +
             "or /admin/routing (POST /admin/routing/flag, /admin/routing/step/{id})",
         );
     }

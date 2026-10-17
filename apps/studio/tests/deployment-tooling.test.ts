@@ -42,7 +42,9 @@ test("mixed JWT preserved; live drift, missing/duplicate functions and undeclare
   assert.throws(() => selectedPolicy({ studio: "true" }, ["studio"]));
 });
 test("first deployment requires explicit reviewed endpoint names; policy mismatch or absent ordinary functions still refuse",()=>{
-  assert.deepEqual(NEW_FUNCTION_POLICIES,{"property-sites":true,"property-video-plan":true,"property-video-jobs":true,"property-video-worker":false,"photo-quality-worker":false,"photo-quality-review":true,"ai-photo-v2":true});
+  assert.deepEqual(NEW_FUNCTION_POLICIES,{"property-sites":true,"property-video-plan":true,"property-video-jobs":true,"property-video-worker":false,"photo-quality-worker":false,"photo-quality-review":true,"ai-photo-v2":true,"photo-feedback":true});
+  assert.deepEqual(verifyDeploymentBefore([],{"photo-feedback":true},["photo-feedback"]),{"photo-feedback":{create:true,verifyJwt:true}});
+  assert.throws(()=>verifyDeploymentBefore([],{"photo-feedback":false},["photo-feedback"]),/reviewed JWT/);
   assert.deepEqual(verifyDeploymentBefore([],{"photo-quality-worker":false},["photo-quality-worker"]),{"photo-quality-worker":{create:true,verifyJwt:false}});
   assert.deepEqual(verifyDeploymentBefore([],{"photo-quality-review":true},["photo-quality-review"]),{"photo-quality-review":{create:true,verifyJwt:true}});
   assert.throws(()=>verifyDeploymentBefore([],{"photo-quality-review":false},["photo-quality-review"]),/reviewed JWT/);
