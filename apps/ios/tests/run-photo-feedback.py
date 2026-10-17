@@ -84,12 +84,12 @@ for forbidden in ['aiPhotoEdit', 'PhotoEditService(', 'ai-photo', 'aiVideo', 'Ph
 transport = block(src['live'], 'extension LiveAPIClient: PhotoFeedbackAPI {')
 for required in ['makeRequest(url: url(route.pathSegments), method: "POST", json: body)',
                  'request.setValue(library, forHTTPHeaderField: "X-Org-Id")',
-                 'request.setValue(library, forHTTPHeaderField: "x-rendprop-org")',
                  'guard let token = await AuthStore.validAccessToken()',
                  'AnonymousAdoptionRecovery.identity(token)?.id == actorUUID',
                  'let (data, response) = try await session.data(for: request)',
                  'guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else {']:
     gate(required in transport, 'feedback transport keeps the account fence and library headers: ' + required)
+gate('x-rendprop-org' not in transport, 'contract A1: the library travels as X-Org-Id only')
 gate(src['live'].rstrip().endswith(transport.rstrip()), 'the transport is a trailing same-file extension, outside every extracted client method')
 gate('case .feedback: return ["photo-feedback"]' in fb and 'case .signal: return ["photo-feedback", "signal"]' in fb, 'contract routes')
 

@@ -2917,11 +2917,11 @@ extension LiveAPIClient: PhotoFeedbackAPI {
         guard let actor = AuthStore.shared.userID, actor.lowercased() == actorID.lowercased(),
               let actorUUID = UUID(uuidString: actor) else { throw CloudSyncError.identityChanged }
         var request = makeRequest(url: url(route.pathSegments), method: "POST", json: body)
-        // The contract names `x-rendprop-org`; every existing library-scoped
-        // route reads `X-Org-Id` (preferredOrg). Both carry the queued library.
+        // Contract amendment A1: the library is `X-Org-Id` only, read by the
+        // server's shared preferredOrg() like every library-scoped route. It is
+        // the library the item was queued in; a later switch never redirects it.
         let library = libraryOrgID.uuidString.lowercased()
         request.setValue(library, forHTTPHeaderField: "X-Org-Id")
-        request.setValue(library, forHTTPHeaderField: "x-rendprop-org")
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 30
         guard let token = await AuthStore.validAccessToken(),
