@@ -5,7 +5,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 // @ts-ignore Release helpers are plain ESM, executed without tsx in production.
-import { parseDeploymentArgs, selectedPolicy, verifyLivePolicy, verifyDeploymentBefore, NEW_FUNCTION_POLICIES, verifyModernServiceTransition, MODERN_SERVICE_FUNCTIONS, sourceImports, sourceClosure, stageDeployment, verifyStagedSnapshot, verifyDownloadedSources } from "../scripts/backend-deploy-lib.mjs";
+import { parseDeploymentArgs, selectedPolicy, verifyLivePolicy, verifyDeploymentBefore, NEW_FUNCTION_POLICIES, verifyModernServiceTransition, MODERN_SERVICE_FUNCTIONS, sourceImports, sourceClosure, stageDeployment, verifyStagedSnapshot, verifyDownloadedSources, cliUploadPlan, SUPABASE_CLI_VERSION } from "../scripts/backend-deploy-lib.mjs";
 // @ts-ignore Release helpers are plain ESM, executed without tsx in production.
 import { connectedProductionConfig, verifyConnectedBundle, manifestClosure, releaseAssetGroups, PROXY_ENTRY } from "../scripts/dist-policy.mjs";
 async function fixture(run: (root: string) => Promise<void>) {
@@ -93,6 +93,78 @@ test("transitive cross-function closure includes types, excludes tests, stages e
   await file(stage, "supabase/functions/studio/unexpected.ts", "export {};");
   await assert.rejects(verifyStagedSnapshot(stage, manifest), /closure changed/);
 }));
+// The expected walk below was produced by Supabase CLI 2.101.0's own Go code (config loader,
+// EdgeRuntimeAPI.Deploy, writeForm, WalkImportPaths) against an in-process server.
+const CLI_WALK_FIXTURE: Record<string, string> = {
+  "jobs/index.ts": `import{a}from'../_shared/a.ts';
+import { b } from "../_shared/b.ts";
+export{c}from'./c.ts';
+import type{T}from'./t.ts';
+export type { U } from './u.ts';
+const d = () => import('./d.ts');
+// export async function OPTIONS() {} is not an import, and neither is './missing.ts' in a comment: import './missing.ts'
+export async function GET(): Promise<T | U> { return 'OPTIONS' as T; }
+export const loaded = [d];
+`,
+  "_shared/a.ts": "import { a2 } from './a2.ts';\nexport const a = a2;\n",
+  "_shared/a2.ts": "export const a2 = 1;\n",
+  "_shared/b.ts": "import{b2}from'./b2.ts';export const b=b2;\n",
+  "_shared/b2.ts": "export const b2 = 2;\n",
+  "jobs/c.ts": "export const c = 3;\n",
+  "jobs/t.ts": "export type T = string;\n",
+  "jobs/u.ts": "export type U = number;\n",
+  "jobs/d.ts": "export default 4;\n",
+};
+test("CLI 2.101.0 upload walk misses compact imports; the staged plan uploads each source once", async () => fixture(async (root) => {
+  const functions = path.join(root, "functions");
+  for (const [name, text] of Object.entries(CLI_WALK_FIXTURE)) await file(functions, name, text);
+  const closure = await sourceClosure(functions, ["jobs"]);
+  assert.equal(SUPABASE_CLI_VERSION, "2.101.0");
+  const plan = cliUploadPlan(closure, ["jobs"]).jobs;
+  // Spaced imports, `import type{`, `export type {` and import() are followed; `import{`/`export{` are not,
+  // and nothing reached only through a static file is parsed. The missing comment target is skipped.
+  assert.deepEqual(plan.walked, ["jobs/index.ts", "jobs/d.ts", "jobs/u.ts", "jobs/t.ts", "_shared/b.ts"].map((f) => `supabase/functions/${f}`));
+  assert.deepEqual(plan.static, ["_shared/a.ts", "_shared/a2.ts", "_shared/b2.ts", "jobs/c.ts"].map((f) => `supabase/functions/${f}`));
+  assert.deepEqual([...plan.static, ...plan.walked].sort(), closure.sourcesByFunction.jobs.map((f: string) => `supabase/functions/${f}`).sort());
+  const stage = path.join(root, "stage"), manifest = await stageDeployment(stage, closure, { jobs: true });
+  const config = await readFile(path.join(stage, "supabase/config.toml"), "utf8");
+  assert.equal(config, `project_id = "ymgqpbnjpztwjsyvceld"\n\n[functions.jobs]\nverify_jwt = true\nentrypoint = "./functions/jobs/index.ts"\nstatic_files = ["./functions/_shared/a.ts", "./functions/_shared/a2.ts", "./functions/_shared/b2.ts", "./functions/jobs/c.ts"]\n`);
+  assert.deepEqual(manifest.cliUpload, { version: "2.101.0", byFunction: { jobs: plan } });
+  await verifyStagedSnapshot(stage, manifest);
+}));
+test("upload plan refuses where the CLI walk would upload staging metadata, abort, or leak another function's file", async () => fixture(async (root) => {
+  const functions = path.join(root, "functions");
+  for (const [source, error] of [["export const note = \"../../config.toml\";", /staging metadata/], ["export const route = '/v1/x.json';", /would abort reading \/v1\/x\.json/]] as const) {
+    await file(functions, "meta/index.ts", source);
+    await assert.rejects(async () => cliUploadPlan(await sourceClosure(functions, ["meta"]), ["meta"]), error);
+  }
+  await file(functions, "left/index.ts", "export const sibling = '../right/only.ts';\n");
+  await file(functions, "right/index.ts", "import './only.ts';\n"); await file(functions, "right/only.ts", "export {};\n");
+  const union = await sourceClosure(functions, ["left", "right"]);
+  assert.throws(() => cliUploadPlan(union, ["left", "right"]), /outside left's source closure/);
+  assert.deepEqual(cliUploadPlan(await sourceClosure(functions, ["left"]), ["left"]).left, { walked: ["supabase/functions/left/index.ts"], static: [] }, "alone, the sibling path does not exist and the CLI skips it");
+}));
+test("every function's planned CLI upload is exactly its source closure; the 17 Oct jobs failure is covered", async () => {
+  const functionsRoot = path.resolve(import.meta.dirname, "../../../services/supabase/functions");
+  const { readdir, stat } = await import("node:fs/promises");
+  const names: string[] = [];
+  for (const item of await readdir(functionsRoot, { withFileTypes: true })) if (item.isDirectory() && !item.name.startsWith("_") && await stat(path.join(functionsRoot, item.name, "index.ts")).then(() => true, () => false)) names.push(item.name);
+  assert(names.length >= 30 && names.includes("property-video-jobs") && names.includes("photo-feedback"));
+  const covered: Record<string, number> = {};
+  for (const name of names) {
+    const closure = await sourceClosure(functionsRoot, [name]), plan = cliUploadPlan(closure, [name])[name];
+    const upload = [...plan.static, ...plan.walked], expected = closure.sourcesByFunction[name].map((f: string) => `supabase/functions/${f}`);
+    assert.equal(new Set(upload).size, upload.length, `${name}: a file would be uploaded twice`);
+    assert.deepEqual([...upload].sort(), [...expected].sort(), `${name}: upload must be exactly the source closure`);
+    assert.equal(plan.walked[0], `supabase/functions/${name}/index.ts`);
+    covered[name] = plan.static.length;
+  }
+  const jobs = cliUploadPlan(await sourceClosure(functionsRoot, ["property-video-jobs"]), ["property-video-jobs"])["property-video-jobs"];
+  assert.deepEqual(jobs.walked, ["supabase/functions/property-video-jobs/index.ts"], "the CLI alone uploads only the entrypoint (HTTP 400 on 17 Oct)");
+  assert(jobs.static.includes("supabase/functions/_shared/cors.ts"));
+  assert.equal(covered.property, 0, "property (deployed with this CLI on 17 Oct) keeps an unchanged config");
+  assert.equal(covered["property-video-plan"], 0); assert.equal(covered["photo-feedback"], 0);
+});
 test("path and symlink escape, aliases, missing dependencies and implicit config fail before stage", async () => fixture(async (root) => {
   const functions = path.join(root, "functions"); await file(root, "outside.ts", "export const secret=1;");
   for (const source of ["import '../../outside.ts';", "import '/absolute.ts';", "import 'alias';", "import './missing.ts';", "import './%2e%2e/secret.ts';"]) {
@@ -162,7 +234,8 @@ test("mocked CLI roundtrip deploys only selection, preserves mixed JWT and verif
 import fs from 'node:fs'; import path from 'node:path';
 const args=process.argv.slice(2), action=args[1], name=args[2];
 fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(args)+'\\n');
-if(action==='list') console.log(JSON.stringify(['studio','portfolio'].map(name=>({name,status:'ACTIVE',import_map:false,verify_jwt:name==='studio'&&!process.env.FAKE_DRIFT,version:12}))));
+if(args[0]==='--version') console.log(process.env.FAKE_CLI_VERSION||'2.101.0');
+else if(action==='list') console.log(JSON.stringify(['studio','portfolio'].map(name=>({name,status:'ACTIVE',import_map:false,verify_jwt:name==='studio'&&!process.env.FAKE_DRIFT,version:12}))));
 else if(action==='deploy') {
  const workdir=args[args.indexOf('--workdir')+1], config=fs.readFileSync(path.join(workdir,'supabase/config.toml'),'utf8');
  if(!config.includes('[functions.studio]\\nverify_jwt = true')||!config.includes('[functions.portfolio]\\nverify_jwt = false')) process.exit(8);
@@ -176,9 +249,9 @@ else if(action==='deploy') {
 } else process.exit(9);
 `, { mode: 0o755 });
   const script = path.resolve(import.meta.dirname, "../scripts/deploy-backend.mjs");
-  for (const scenario of ["success", "drift", "tamper"]) {
+  for (const scenario of ["success", "drift", "tamper", "version"]) {
     await writeFile(log, "");
-    const result = spawnSync(process.execPath, [script, "--functions", "studio,portfolio", "--run"], { encoding: "utf8", env: { ...process.env, PATH: `${root}${path.delimiter}${path.dirname(process.execPath)}`, FAKE_DRIFT: scenario === "drift" ? "1" : "", FAKE_TAMPER: scenario === "tamper" ? "1" : "" } });
+    const result = spawnSync(process.execPath, [script, "--functions", "studio,portfolio", "--run"], { encoding: "utf8", env: { ...process.env, PATH: `${root}${path.delimiter}${path.dirname(process.execPath)}`, FAKE_DRIFT: scenario === "drift" ? "1" : "", FAKE_TAMPER: scenario === "tamper" ? "1" : "", FAKE_CLI_VERSION: scenario === "version" ? "2.102.0" : "" } });
     const calls = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
     const receiptPath = scenario === "success" ? JSON.parse(result.stdout).receipt : result.stderr.match(/Receipt retained at (.+deployment-receipt\.json)/)?.[1];
     assert(receiptPath, result.stderr);
@@ -192,6 +265,8 @@ else if(action==='deploy') {
         assert(receipt.completed.studio.stagedTypeOnlyNotInRuntime.includes("studio/context.ts"));
       } else if (scenario === "drift") {
         assert.notEqual(result.status, 0); assert(!calls.some((call) => call[1] === "deploy")); assert.match(receipt.failure, /drift/);
+      } else if (scenario === "version") {
+        assert.notEqual(result.status, 0); assert.deepEqual(calls, [["--version"]]); assert.match(receipt.failure, /2\.102\.0 is installed.*verified for 2\.101\.0/);
       } else {
         assert.notEqual(result.status, 0); assert.equal(calls.filter((call) => call[1] === "deploy").length, 1); assert.match(receipt.failure, /mismatch/);
       }
@@ -224,7 +299,8 @@ test("mocked first deployment creates only declared JWT-protected endpoints and 
 import fs from 'node:fs';import path from 'node:path';
 const args=process.argv.slice(2),action=args[1],name=args[2],state=fs.existsSync(${JSON.stringify(statefile)})?JSON.parse(fs.readFileSync(${JSON.stringify(statefile)},'utf8')):{};
 fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(args)+'\\n');
-if(action==='list')console.log(JSON.stringify(['studio',...Object.keys(state).filter(n=>n!=='studio')].map(name=>({name,status:'ACTIVE',import_map:false,verify_jwt:!(process.env.FAKE_DRIFT==='before'&&name==='studio'||process.env.FAKE_DRIFT==='after'&&Object.keys(state).length===3&&name==='property-video-plan'),version:1}))));
+if(args[0]==='--version')console.log('2.101.0');
+else if(action==='list')console.log(JSON.stringify(['studio',...Object.keys(state).filter(n=>n!=='studio')].map(name=>({name,status:'ACTIVE',import_map:false,verify_jwt:!(process.env.FAKE_DRIFT==='before'&&name==='studio'||process.env.FAKE_DRIFT==='after'&&Object.keys(state).length===3&&name==='property-video-plan'),version:1}))));
 else if(action==='deploy'){
  const source=args[args.indexOf('--workdir')+1],config=fs.readFileSync(path.join(source,'supabase/config.toml'),'utf8');
  if(!['studio','property-sites','property-video-plan'].includes(name)||!config.includes('[functions.'+name+']\\nverify_jwt = true'))process.exit(8);

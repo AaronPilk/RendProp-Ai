@@ -4,9 +4,9 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { PROJECT_REF, parseDeploymentArgs, selectedPolicy, sourceClosure, stageDeployment, verifyDownloadedSources, verifyLivePolicy, verifyDeploymentBefore, verifyStagedSnapshot } from "./backend-deploy-lib.mjs";
+import { PROJECT_REF, SUPABASE_CLI_VERSION, parseDeploymentArgs, selectedPolicy, sourceClosure, stageDeployment, verifyDownloadedSources, verifyLivePolicy, verifyDeploymentBefore, verifyStagedSnapshot } from "./backend-deploy-lib.mjs";
 
-const HELP = "Usage: node scripts/deploy-backend.mjs --functions studio[,other] [--run] [--modern-service-transport] [--create-new property-sites[,property-video-plan,photo-quality-review,ai-photo-v2,photo-feedback]]\nWithout --run: stage and hash local source only; no network, no deployment.\nWith --run: use the Supabase CLI's existing login or SUPABASE_ACCESS_TOKEN; verify live JWT policy, deploy only selected functions, download and compare source hashes.\nThe explicit modern transport option permits only the five declared service entrypoints to move to application-level service authentication; all five must be selected. Other JWT policies and final readback remain exact.\nThe explicit --create-new list permits only reviewed new endpoints to be absent before deployment; their declared JWT policies remain exact, existing entries remain exact and all final source/policy readbacks are mandatory.\n";
+const HELP = "Usage: node scripts/deploy-backend.mjs --functions studio[,other] [--run] [--modern-service-transport] [--create-new property-sites[,property-video-plan,photo-quality-review,ai-photo-v2,photo-feedback]]\nWithout --run: stage and hash local source only; no network, no deployment.\nWith --run: use the Supabase CLI's existing login or SUPABASE_ACCESS_TOKEN; verify live JWT policy, deploy only selected functions, download and compare source hashes.\nThe staged config names every source the CLI's own upload walk would miss as a static file, so each function uploads its whole closure once; --run refuses any Supabase CLI other than the version that plan mirrors (2.101.0).\nThe explicit modern transport option permits only the five declared service entrypoints to move to application-level service authentication; all five must be selected. Other JWT policies and final readback remain exact.\nThe explicit --create-new list permits only reviewed new endpoints to be absent before deployment; their declared JWT policies remain exact, existing entries remain exact and all final source/policy readbacks are mandatory.\n";
 if (process.argv.includes("--help")) { console.log(HELP); process.exit(0); }
 
 async function cli(args) {
@@ -37,6 +37,10 @@ try {
   const save = async () => writeFile(path.join(stage, "deployment-receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
   await save();
   if (options.run) {
+    // The staged static_files plan mirrors this CLI version's upload walk; another version must be re-verified first.
+    const versions = (await cli(["--version"])).split(/\r?\n/).map((line) => line.trim()).filter((line) => /^\d+\.\d+\.\d+$/.test(line));
+    receipt.cliVersion = versions.join(",") || "unreadable";
+    if (versions.length !== 1 || versions[0] !== SUPABASE_CLI_VERSION) throw new Error(`Supabase CLI ${receipt.cliVersion} is installed; the upload plan was verified for ${SUPABASE_CLI_VERSION}. Nothing was deployed.`);
     const inventory = JSON.parse(await cli(["functions", "list", "--project-ref", PROJECT_REF, "-o", "json", "--workdir", stage]));
     receipt.before = verifyDeploymentBefore(inventory,policy,options.createNew??[],options.modernServiceTransport===true);
     receipt.status = "deploying";

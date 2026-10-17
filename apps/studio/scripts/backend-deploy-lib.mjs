@@ -197,6 +197,70 @@ export async function sourceClosure(functionsRoot, functions) {
   };
 }
 
+// `supabase functions deploy --use-api` does not upload the AST closure above. Supabase CLI
+// 2.101.0 uploads config static_files, then the entrypoint, then whatever this regex finds in
+// raw text, recursively (apps/cli-go/pkg/function/deno.go importPathPattern + WalkImportPaths,
+// pkg/function/deploy.go writeForm). The regex needs whitespace after import/export, so
+// `import{x}from'./y.ts'` is invisible to it and the server bundle fails (HTTP 400, 17 Oct).
+// Mirrored exactly: RE2's \s is [\t\n\f\r ] and its . excludes only \n.
+export const SUPABASE_CLI_VERSION = "2.101.0";
+const CLI_SPACE = "[\\t\\n\\f\\r ]";
+export const CLI_IMPORT_PATTERN = new RegExp(`(?:import|export)${CLI_SPACE}+(?:type${CLI_SPACE}+)?(?:\\{[^{}]+\\}|[^\\n]*?)${CLI_SPACE}*(?:from)?${CLI_SPACE}*['"]([^\\n]*?)['"]|import\\(${CLI_SPACE}*['"]([^\\n]*?)['"]\\)`, "gi");
+const goExt = (value) => { for (let i = value.length - 1; i >= 0 && value[i] !== "/"; i--) if (value[i] === ".") return value.slice(i); return ""; };
+
+/** The CLI's own upload walk from one entrypoint, in workdir-relative paths and upload order.
+ * `exists(p)` is "file" | "dir" | undefined. Throws where the CLI itself would abort. */
+export function cliWalkUploads(entrypoint, exists, read) {
+  const seen = new Set(), uploads = [], stack = [entrypoint];
+  while (stack.length) {
+    const current = stack.pop();
+    if (seen.has(current)) continue;
+    seen.add(current);
+    // io/fs.ValidPath: no absolute paths and no "." or ".." elements after path.Clean.
+    assert(!current.startsWith("/") && current !== "." && !current.split("/").includes(".."), `Supabase CLI ${SUPABASE_CLI_VERSION} would abort reading ${current}.`);
+    const kind = exists(current);
+    if (kind === "dir") throw new Error(`Supabase CLI ${SUPABASE_CLI_VERSION} would abort: ${current} is a directory.`);
+    if (kind !== "file") {
+      const parts = current.split("/");
+      for (let i = 1; i < parts.length; i++) assert.notEqual(exists(parts.slice(0, i).join("/")), "file", `Supabase CLI ${SUPABASE_CLI_VERSION} would abort reading ${current}.`);
+      continue; // the CLI warns and skips a missing file
+    }
+    uploads.push(current);
+    for (const match of read(current).toString("utf8").matchAll(CLI_IMPORT_PATTERN)) {
+      let mod = (match[1] || match[2] || "").trim();
+      if (goExt(mod) === "") continue;
+      const relative = mod.startsWith("./") || mod.startsWith("../");
+      if (!relative && !mod.startsWith("/")) continue;
+      if (relative) mod = path.posix.join(path.posix.dirname(current), mod);
+      stack.push(path.posix.normalize(mod));
+    }
+  }
+  return uploads;
+}
+
+/** Name every staged source the CLI's walk would miss, so the CLI uploads it as a static file.
+ * Upload = static files + walked files: each source exactly once, nothing outside the function's
+ * closure. Refuses instead of deploying if the walk would reach any other file. */
+export function cliUploadPlan(closure, functions) {
+  const files = new Map([...closure.files].map(([name, bytes]) => [`supabase/functions/${name}`, bytes]));
+  for (const root of ["supabase/config.toml", "function-jwt-policy.json", "deployment-receipt.json"]) files.set(root, undefined);
+  const dirs = new Set();
+  for (const name of files.keys()) for (let dir = path.posix.dirname(name); dir !== "."; dir = path.posix.dirname(dir)) dirs.add(dir);
+  const exists = (name) => files.has(name) ? "file" : dirs.has(name) ? "dir" : undefined;
+  const read = (name) => { const bytes = files.get(name); assert(bytes, `Supabase CLI would upload staging metadata ${name}.`); return bytes; };
+  const plan = {};
+  for (const name of functions) {
+    const expected = closure.sourcesByFunction[name].map((file) => `supabase/functions/${file}`);
+    const walked = cliWalkUploads(`supabase/functions/${name}/index.ts`, exists, read);
+    const outside = walked.filter((file) => !expected.includes(file));
+    assert.deepEqual(outside, [], `Supabase CLI would upload files outside ${name}'s source closure.`);
+    const staticFiles = expected.filter((file) => !walked.includes(file)).sort();
+    for (const file of staticFiles) assert(/^supabase\/functions\/[A-Za-z0-9_][A-Za-z0-9._\/-]*$/.test(file), `Static upload path needs review: ${file}.`);
+    plan[name] = { walked, static: staticFiles };
+  }
+  return plan;
+}
+
 export async function stageDeployment(stage, closure, policy) {
   const root = path.join(stage, "supabase/functions");
   const hashes = {};
@@ -206,10 +270,12 @@ export async function stageDeployment(stage, closure, policy) {
     await writeFile(file, bytes, { flag: "wx" });
     hashes[name] = sha256(bytes);
   }
-  const config = `project_id = "${PROJECT_REF}"\n\n` + Object.entries(policy).map(([name, value]) => `[functions.${name}]\nverify_jwt = ${value}\nentrypoint = "./functions/${name}/index.ts"\n`).join("\n");
+  const cliUpload = cliUploadPlan(closure, Object.keys(policy).filter((name) => closure.sourcesByFunction[name]));
+  const statics = (name) => cliUpload[name]?.static.length ? `static_files = [${cliUpload[name].static.map((file) => JSON.stringify(`./${file.slice("supabase/".length)}`)).join(", ")}]\n` : "";
+  const config = `project_id = "${PROJECT_REF}"\n\n` + Object.entries(policy).map(([name, value]) => `[functions.${name}]\nverify_jwt = ${value}\nentrypoint = "./functions/${name}/index.ts"\n${statics(name)}`).join("\n");
   await writeFile(path.join(stage, "supabase/config.toml"), config, { flag: "wx" });
   await writeFile(path.join(stage, "function-jwt-policy.json"), JSON.stringify(policy, null, 2) + "\n", { flag: "wx" });
-  return { hashes, configSha256: sha256(config), policySha256: sha256(JSON.stringify(policy)), runtimeByFunction: closure.runtimeByFunction, sourcesByFunction: closure.sourcesByFunction, externalImports: closure.externalImports };
+  return { hashes, configSha256: sha256(config), policySha256: sha256(JSON.stringify(policy)), runtimeByFunction: closure.runtimeByFunction, sourcesByFunction: closure.sourcesByFunction, externalImports: closure.externalImports, cliUpload: { version: SUPABASE_CLI_VERSION, byFunction: cliUpload } };
 }
 
 export async function verifyStagedSnapshot(stage, manifest) {
