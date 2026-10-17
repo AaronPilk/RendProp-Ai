@@ -7,7 +7,7 @@ import {createServer} from "node:http";
 import {execFileSync} from "node:child_process";
 import {build} from "vite";
 import {chromium,expect} from "@playwright/test";
-const fault=process.argv[2]??null;assert(fault===null||["--fault=live-original-audio","--fault=late-buffered-wall-origin"].includes(fault));
+const fault=process.argv[2]??null;assert(fault===null||["--fault=live-original-audio","--fault=late-buffered-wall-origin","--fault=omit-bucket-pacing"].includes(fault));
 const root=resolve(import.meta.dirname,".."), artifacts=await mkdtemp(join(tmpdir(),"rendprop-export-original-audio-")),dist=join(artifacts,"dist");
 const paths=["src/editor/export.ts","src/editor/recording-clock.ts","src/editor/media.ts","src/editor/model.ts","tests/export-audio-fixture.ts","tests/export-audio-browser.mjs"];
 const hashes=async()=>Object.fromEntries(await Promise.all(paths.map(async path=>[path,createHash("sha256").update(await readFile(join(root,path))).digest("hex")])));
@@ -16,6 +16,11 @@ let browser,server,page,mutated=false;
 try{
  await build({configFile:false,root,publicDir:false,logLevel:"error",plugins:fault?[{name:"live-original-audio-regression",enforce:"pre",transform(code,id){
   if(!id.endsWith("/src/editor/export.ts"))return;
+  if(fault==="--fault=omit-bucket-pacing"){
+    const gate='if (paintBucket !== lastPaintedBucket || elapsed >= duration) {';
+    assert.equal(code.split(gate).length,2,"Paint bucket mutation sentinel missing");mutated=true;
+    return code.replace(gate,'if (true) {');
+  }
   if(fault==="--fault=late-buffered-wall-origin"){
     const origin='const start = originalWallStart ?? performance.now();';
     assert.equal(code.split(origin).length,2,"Buffered-clock origin mutation sentinel missing");mutated=true;
@@ -72,16 +77,34 @@ try{
    };
   }
   document.addEventListener("visibilitychange",()=>record("document-visibilitychange"));
+  // Passive-only native observations. Original method return/throw values are retained.
+  let activeRecorder=null,lastReading=null;const clockSamples=[],paintBuckets=new Map(),paintOps={drawImage:{calls:0,totalMs:0,maxMs:0},fillRect:{calls:0,totalMs:0,maxMs:0}},passiveErrors=[];
+  for(const method of ["start","resume","pause","stop"]){
+   const native=MediaRecorder.prototype[method];
+   MediaRecorder.prototype[method]=function(...args){const result=Reflect.apply(native,this,args);activeRecorder=this;return result;};
+  }
+  window.audioExportObserveClock=args=>{
+   if(activeRecorder?.state!=="recording")return;
+   try{lastReading={wall:args[0],timeline:args[1],audio:args[2]};const sample={reading:{...lastReading},sampleWallBeforeMs:performance.now(),contexts:[]};
+    for(const[audio,contextId]of contexts){const timestamp=typeof audio.getOutputTimestamp==="function"?audio.getOutputTimestamp():null;sample.contexts.push({contextId,state:audio.state,sampleRate:audio.sampleRate,currentTime:audio.currentTime,baseLatency:typeof audio.baseLatency==="number"?audio.baseLatency:null,outputLatency:typeof audio.outputLatency==="number"?audio.outputLatency:null,outputTimestamp:timestamp?{contextTime:timestamp.contextTime,performanceTime:timestamp.performanceTime}:null});}
+    sample.sampleWallAfterMs=performance.now();clockSamples.push(sample);if(clockSamples.length>192)clockSamples.shift();
+   }catch(error){if(passiveErrors.length<8)passiveErrors.push(String(error));}
+  };
+  for(const name of ["drawImage","fillRect"]){const native=CanvasRenderingContext2D.prototype[name];
+   CanvasRenderingContext2D.prototype[name]=function(...args){const tracked=activeRecorder?.state==="recording"&&this.canvas.width>=1280&&this.canvas.height>=720;const began=tracked?performance.now():0;try{return Reflect.apply(native,this,args);}finally{if(tracked)try{const cost=performance.now()-began,op=paintOps[name];op.calls++;op.totalMs+=cost;op.maxMs=Math.max(op.maxMs,cost);if(name==="drawImage"&&lastReading){const bucket=Math.floor(lastReading.timeline*30),row=paintBuckets.get(bucket)??{bucket,calls:0,totalMs:0,maxMs:0,firstReading:{...lastReading}};row.calls++;row.totalMs+=cost;row.maxMs=Math.max(row.maxMs,cost);paintBuckets.set(bucket,row);}}catch(error){if(passiveErrors.length<8)passiveErrors.push(String(error));}}};
+  }
+  window.audioExportPassive=()=>({nativeMethodsReturnedUnchanged:true,clockSamples:[...clockSamples],paintOps,paintBuckets:[...paintBuckets.values()],duplicateBuckets:[...paintBuckets.values()].filter(x=>x.calls>1),errors:[...passiveErrors]});
   window.audioExportDiagnostics=()=>({events:[...events],dropped,visibility:document.visibilityState,
    contexts:[...contexts].map(([audio,contextId])=>({contextId,state:audio.state,currentTime:audio.currentTime})),
    tracks:[...tracks].map(([track,audio])=>({contextId:contexts.get(audio),kind:track.kind,readyState:track.readyState,muted:track.muted,enabled:track.enabled}))});
  });
+ receipt.passiveRuntime={node:process.version,browser:browser.version(),platform:process.platform,architecture:process.arch};
  page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(15000);
  const run=async(name,config,{refused=false,silentAudio=false,cancelled=false}={})=>{
   await page.goto(`${origin}/tests/export-audio-fixture.html`);await page.getByLabel("Synthetic source").setInputFiles(silentAudio?silent:tone);
   await page.evaluate(config=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,playResolutionDelayMs:0,...config},config);
   await page.getByRole("button",{name:"Export fixture",exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result)).not.toBeNull();
-  const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error,cause:result.cause};receipt.cases.push(record);
+  const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error,cause:result.cause};receipt.cases.push(record);record.passive=await page.evaluate(()=>window.audioExportPassive());
   if(!result.ok)record.lifecycle=await page.evaluate(()=>window.audioExportDiagnostics());
   if(config.stall||config.hiccup||config.playResolutionDelayMs)assert(result.injected,"Forced playback fixture not injected");
   if(cancelled){assert.equal(result.ok,false);assert.match(result.error,/Synthetic export cancelled/);assert.equal(result.base64,undefined);return;}
@@ -112,7 +135,17 @@ try{
   const rms=Math.sqrt(power/(pcm.length/2)),frequency=crossings/(pcm.length/2/48000);record.weakest40msRMS=weakest;record.rms=rms;record.frequency=frequency;
   if(silentAudio)assert(rms<.001,"Silent source gained sound");
   else{assert(weakest>.03,`Continuous speech through cutaway boundaries: weakest40ms RMS${weakest}`);assert(Math.abs(frequency-880)<30,`Original speech pitch changed: ${frequency}`);}
- };
+  // Budget is checked only after the unchanged encoded-duration/PCM oracles.
+  if(!config.split){
+   const nonterminal=record.passive.paintBuckets.filter(row=>row.bucket<Math.floor(expected*30));
+   assert(nonterminal.every(row=>row.calls===1),"Duplicate30fps timeline bucket was repainted");
+   assert(record.passive.paintOps.drawImage.calls<=Math.ceil(expected*30)+3,"Capture paint budget exceeded");
+  }
+ }; if(fault==="--fault=omit-bucket-pacing"){
+  await run("bucket-omission-silent",{},{silentAudio:true});
+  assert.fail("Compiled paint-budget omission unexpectedly passed");
+ }
+
  if(fault==="--fault=late-buffered-wall-origin"){
   await run("delayed-buffered-start",{playResolutionDelayMs:120});
   assert.fail("Late buffered clock-origin negative control unexpectedly passed");

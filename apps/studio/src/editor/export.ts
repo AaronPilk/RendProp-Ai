@@ -461,6 +461,7 @@ export async function exportLocalVideo(options: {
       let lastVideoTime = video?.currentTime ?? 0;
       let lastVideoAdvance = start;
       const duration = clipDuration(clip);
+      let lastPaintedBucket = -1;
       while (true) {
         assertCurrentRevision(draft, currentDraft(), renderSignal);
         const elapsedAtWait = originalClockStart !== undefined && audio
@@ -501,8 +502,14 @@ export async function exportLocalVideo(options: {
             originalGain.gain.setTargetAtTime(speaking ? .22 : 1, audio.currentTime, .025);
           }
         }
-        drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore + elapsed, localTime: elapsed, previous: hasPrevious ? previous : undefined});
-        await overlays.paint(canvas, elapsedBefore + elapsed);
+        // The capture stream is30fps. Keep every clock/safety reading above,
+        // while avoiding repeated HD paints inside the same capture interval.
+        const paintBucket = Math.floor(elapsed * 30);
+        if (paintBucket !== lastPaintedBucket || elapsed >= duration) {
+          drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore + elapsed, localTime: elapsed, previous: hasPrevious ? previous : undefined});
+          await overlays.paint(canvas, elapsedBefore + elapsed);
+          lastPaintedBucket = paintBucket;
+        }
         if (now - lastProgressAt > 150) {
           onProgress(Math.min(1, (elapsedBefore + elapsed) / total));
           lastProgressAt = now;

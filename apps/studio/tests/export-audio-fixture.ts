@@ -1,3 +1,4 @@
+import {RecordingClock} from "../src/editor/recording-clock";
 import {exportFormats, exportLocalVideo} from "../src/editor/export";
 import {inspectFile} from "../src/editor/media";
 import {newDraft, validateDraft} from "../src/editor/model";
@@ -9,6 +10,11 @@ document.querySelector("button")!.addEventListener("click",async()=>{
   const controller=new AbortController(), timers:ReturnType<typeof setTimeout>[]=[];
   const play=HTMLMediaElement.prototype.play, decode=AudioContext.prototype.decodeAudioData, createBuffer=AudioContext.prototype.createBufferSource;
   let injected=false, decodeCalls=0;
+  const nativeClockRead=RecordingClock.prototype.read;
+  RecordingClock.prototype.read=function(...args: Parameters<RecordingClock["read"]>){
+    (window as unknown as {audioExportObserveClock?:(args: Parameters<RecordingClock["read"]>)=>void}).audioExportObserveClock?.(args);
+    return Reflect.apply(nativeClockRead,this,args);
+  };
   try {
     const file=(document.querySelector("input") as HTMLInputElement).files![0];
     const local=await inspectFile(file,controller.signal);
@@ -54,5 +60,5 @@ document.querySelector("button")!.addEventListener("click",async()=>{
     fixture.result={ok:true,base64:btoa(binary),duration:result.duration,decodeCalls,injected};
     URL.revokeObjectURL(local.url);
   }catch(error){fixture.result={ok:false,error:String(error),cause:error instanceof Error?error.cause:undefined,decodeCalls,injected};}
-  finally{for(const timer of timers)clearTimeout(timer);HTMLMediaElement.prototype.play=play;AudioContext.prototype.decodeAudioData=decode;AudioContext.prototype.createBufferSource=createBuffer;controller.abort();}
+  finally{for(const timer of timers)clearTimeout(timer);RecordingClock.prototype.read=nativeClockRead;HTMLMediaElement.prototype.play=play;AudioContext.prototype.decodeAudioData=decode;AudioContext.prototype.createBufferSource=createBuffer;controller.abort();}
 });

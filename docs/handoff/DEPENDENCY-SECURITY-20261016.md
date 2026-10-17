@@ -70,10 +70,12 @@ remain unqueried or unknown. The new normal training CI must confirm integration
 
 ## Remaining acceptance
 
-This is local implementation/verification, not a hosted enforcement claim.
-Run the workflow at the final integrated source; verify PR dependency-graph access
-and required-check configuration before claiming a merge is blocked. Hosted npm
-uses Node22 and must independently pass; local Node25 evidence is not substituted.
+Hosted push workflow38998994789 at5121609 passes the inventory and all four
+include-development npm audits. PR-only dependency review correctly skips on a
+push; its dependency-graph access is still unproved. Read-only GitHub metadata
+confirms secret scanning/push protection enabled, main unprotected and no
+rulesets. No repository-admin settings were changed. Required-check/PR graph
+enforcement therefore remains open; a successful push scan is not merge blocking.
 
 Python update PRs alone do not constitute a vulnerability audit; the direct-pin
 review above does not resolve transitive/Git/native coverage. Deno imports

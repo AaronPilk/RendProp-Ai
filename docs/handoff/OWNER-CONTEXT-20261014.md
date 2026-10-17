@@ -1,3 +1,13 @@
+## Verified backend rollout and export update — October 17, 2026, 00:23 EDT
+
+Three exact reviewed migrations and all six backend functions are now live, applied once and read back. Actual SQL history040043/040214/040320; tours70/me70/Studio39/ai-video88/worker13/jobs13. Exact runtime closure accepts only independently proved type-only import elision; all returned runtime bytes match. The26 unselected functions and FAL selector remain unchanged; Kie OFF, no grant/activation/disclosure publication. Full catalog/security proof and final advisor comparison retain only two expected server-only RLS information additions; existing warnings remain open. Final receipt2dcfd482 in build88-inactive-backend-rollout-5121609. Existing public Signature gallery still renders200.
+
+CPU17 deployed once using exact tested b4022fc9 image; all management policy fields compare as expected. Source content/v2 returned an unrecognized MIME part type; controller byte verification is open. No redeploy/rollback is authorized by that readback failure.
+
+Current5121609 full CI has a real silent-video audio-clock plateau refusal. Local passive diagnosis observed redundant HD paints; it did not reproduce/prove the hosted cause. Reviewed30fps bucket pacing removes redundant drawing while preserving all timing checks. One candidate audio run and resume/interruption/preparation guards pass; live-original, late-origin and paint-omission controls fail at their intended oracles. Source and new CI omission gate are integrated; fresh coherent CI/build required. Prior466/85 styled UI proofs are unchanged in their measured scopes, not rerun for this performance change.
+
+Native+Studio architecture, paid-generation pause, new-apartment/phone acceptance and onboarding-LAST persist. No new Apple action or user/archive deletion occurred. Older checkpoints below retain their original historical status.
+
 ## Integrated implementation checkpoint — October 16, 2026, 23:30 EDT
 
 Five delivered Studio design patches plus minimal target repairs are integrated. Actual styled checks pass466 accessibility assertions, eight workflow suites/85 assertions,726 units/type/build and393,303-byte gzip; independent ee5a7b85. Measured contrast excludes complex backgrounds; no full WCAG or phone proof. Actual0.5× guidance now follows owner intent. Exact audio source/regression packet remains separately valid; no new paid tests.

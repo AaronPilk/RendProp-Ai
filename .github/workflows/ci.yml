@@ -1217,6 +1217,11 @@ jobs:
             exit 1
           fi
           grep -q "Audio and picture timing drifted during export" "$RUNNER_TEMP/export-clock-origin-defect.log"
+          if node tests/export-audio-browser.mjs --fault=omit-bucket-pacing > "$RUNNER_TEMP/export-paint-budget-defect.log" 2>&1; then
+            echo "::error::Redundant-paint regression control unexpectedly passed"
+            exit 1
+          fi
+          grep -q "Duplicate30fps timeline bucket was repainted" "$RUNNER_TEMP/export-paint-budget-defect.log"
           node tests/cloud-editor-browser.mjs
           node tests/conversation-browser.mjs
           node tests/finishing-audio-probe-controls.mjs
