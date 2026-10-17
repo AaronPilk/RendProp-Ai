@@ -7,7 +7,7 @@
 import{assert,assertEquals}from'https://deno.land/std@0.224.0/assert/mod.ts';
 const id=(i:number)=>`f7000000-0000-4000-8000-${String(i).padStart(12,'0')}`;const actor=id(1),org=id(2),listing=id(3),operation=id(4),job=id(5),grant=id(6);
 for(const[k,v]of Object.entries({SUPABASE_URL:'https://jobs-db.fixture.invalid',SUPABASE_ANON_KEY:'public-fixture',SUPABASE_SERVICE_ROLE_KEY:'service-fixture',CLOUDFLARE_ACCOUNT_ID:'a'.repeat(32),R2_ACCESS_KEY_ID:'inert-fixture',R2_SECRET_ACCESS_KEY:'inert-fixture'}))Deno.env.set(k,v);
-const{handler:realHandler}=await import('./index.ts');
+const{handler:realHandler}=await import('./index.ts');const{variedJobInput}=await import('./variety.ts');const{jobInput}=await import('./input.ts');
 const{KIE_PROPERTY_IDENTITY:KIE,KIE_PROPERTY_PROFILE:KIE_PROFILE}=await import('../_shared/property-video-kie.ts');
 let handler=realHandler;
 const V1='property-video-jobs-v1',V2='property-video-jobs-v2',REVISION='processors-2026-10-16.1',STALE='processors-2026-10-01.0';
@@ -81,7 +81,8 @@ function admitted(r:Result,profile:string,consent:unknown,testGrant:string|null)
  const a=admits(r);assertEquals(a.map(x=>x.name),['property_video_job_admit_v2']);
  assertEquals(Object.keys(a[0].args).sort(),['p_actor','p_consent','p_manifest','p_quality_profile','p_quote','p_test_grant']);
  assertEquals([a[0].args.p_actor,a[0].args.p_quality_profile,a[0].args.p_consent,a[0].args.p_test_grant],[actor,profile,consent,testGrant]);
- assertEquals(a[0].args.p_manifest.sources,sources);assertEquals(a[0].args.p_manifest.operation_id,operation);
+ // Identity and order pass through; the server freezes varied camera moves (variety.ts).
+ assertEquals(a[0].args.p_manifest.sources.map((s:any)=>({...s,motion:undefined})),sources.map(s=>({...s,motion:undefined})));assertEquals(a[0].args.p_manifest.sources,variedJobInput(jobInput(body)).sources);assertEquals(a[0].args.p_manifest.operation_id,operation);
  return a[0].args;
 }
 

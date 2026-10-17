@@ -52,3 +52,13 @@ const audio:any={action:'inspect_audio',state:'queued',job_id:job,lease_token:le
 assert.deepEqual(capabilities(audio,hosts).capabilities,[{url:source.url,method:'GET',bytes:12}]);
 assert.throws(()=>capabilities({...audio,source:{...source,bytes:20*1024*1024+1}},hosts));
 assert.deepEqual(sanitizedFailure(audio),{job_id:job,lease_token:lease,phase:'inspect_audio',code:'cpu_attempt_failed'});
+// A steady-profile extract_frames task carries the renderer's temporal QC request
+// (ExtractAction.temporal_qc); it changes no capability, failure shape or identity.
+import type {ExtractAction} from '../../../supabase/functions/property-video-jobs/contracts.ts';
+const extract:ExtractAction={action:'extract_frames',state:'quality_review',job_id:job,attempt_id:'00000000-0000-4000-8000-000000000003',lease_token:lease,source:{...source,asset_id:job},clip:{url:'https://media.example.test/private/clip-bytes?signature=three',sha256:'b'.repeat(64),bytes:34},temporal_qc:{profile:'temporal-motion-v2',aspect:'16:9'},expires_at:action.expires_at};
+assert.deepEqual(capabilities(extract,hosts).capabilities,[{url:extract.clip.url,method:'GET',bytes:34}]);
+const {temporal_qc:_temporal,...legacyExtract}=extract;
+assert.deepEqual(capabilities(legacyExtract as ExtractAction,hosts),capabilities(extract,hosts));
+assert.deepEqual(sanitizedFailure(extract),{job_id:job,lease_token:lease,attempt_id:extract.attempt_id,phase:'extract_frames',code:'cpu_attempt_failed'});
+assert.ok(!JSON.stringify(sanitizedFailure(extract)).includes('temporal'));
+console.log('Private controller: temporal QC request rides the extract task without widening any capability.');

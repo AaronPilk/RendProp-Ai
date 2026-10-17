@@ -10,6 +10,7 @@ import{presignGet}from'../_shared/providers/common.ts';
 import{headObject,R2_BUCKET_RENDERS}from'../_shared/r2.ts';
 import{rpc,bucket,bytesFrom,base64}from'../property-video-jobs/runtime.ts';
 import type{WorkerAction,ComposeAction}from'../property-video-jobs/contracts.ts';
+import{temporalReport,temporalRequired,temporalRoute,temporalTask}from'./temporal.ts';
 const seconds=(n:number)=>new Date(Date.now()+n*1000).toISOString();
 export async function scope(job:string,lease:string,attempt?:string){return await rpc('property_video_job_worker_scope',{p_job:job,p_lease:lease,p_attempt:attempt??null});}
 // kieDispatchAuthority: ai-video calls it at the prospective Kie POST boundary,
@@ -103,7 +104,29 @@ export async function poll(ctx:any){
   await rpc('property_video_job_poll_release',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id}).catch(()=>{});
  }
 }
-export async function quality(ctx:any,raw:any){const j=ctx.job,s=ctx.source;assert(raw.clip_sha256===s.clip?.sha256&&Array.isArray(raw.frames)&&raw.frames.length===3,409,'Use the retained generated clip and all three review frames.');const{bytes}=await bytesFrom(s.source);const frames=raw.frames.map((frame:any,i:number)=>{assert(frame&&typeof frame.image_b64==='string'&&frame.image_b64.length<=524288&&frame.mime==='image/jpeg',400,'Use bounded actual JPEG review frames.');return{at:['first','middle','last'][i],b64:frame.image_b64,mime:frame.mime};});const out=await callAI(ctx,'POST','drift',{request_id:s.receipt.request_id,kind:'reel',source_b64:base64(bytes),source_mime:s.source.content_type,frames,seconds:5,motion:s.motion,listing_id:j.listing_id,asset_id:s.asset_id,provenance_id:s.generation_provenance_id,attempt:(s.quality_retries??0)>0?1:0});
+export async function quality(ctx:any,raw:any){const j=ctx.job,s=ctx.source;assert(raw.clip_sha256===s.clip?.sha256&&Array.isArray(raw.frames)&&raw.frames.length===3,409,'Use the retained generated clip and all three review frames.');
+ // Steady profiles: the CPU's temporal motion report (temporal.ts) is verified
+ // against this limit version and recorded on the shot BEFORE the paid drift
+ // judge. A HOLD is the existing CPU review pause (cpu_extract_failed): two more
+ // immediate extracts, then the job pauses as a resumable quality pause with its
+ // paid clip retained and the verdict recorded. Never a pass, never a purchase.
+ if(temporalRequired(j.quality_profile)){const report=temporalReport(raw.temporal);
+  if(!report){await fail(ctx,'cpu_extract_failed',false);return;}
+  // The recorded verdict decides (first measurement of this attempt under this limit version wins; SQL returns it on a repeat).
+  const recorded=temporalReport(await rpc('property_video_job_temporal',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id,p_clip_sha256:raw.clip_sha256,p_report:report}));
+  assert(recorded,503,'The recorded temporal verdict could not be read.');const route=temporalRoute(recorded.verdict);
+  // Not a still-photo substitution: with no paid structural drift rejection,
+  // property_video_job_failure makes this the resumable quality pause (paid clip
+  // retained) and property_video_fallback_source_guard refuses original_photo.
+  if(route==='refuse'){await fail(ctx,'quality_check_refused',false);return;}
+  // FOLLOW-UP (V2 retry routing): the single paid retry, property_video_job_quality_retry
+  // (20261015040518), is granted only on a persisted paid DRIFT verdict
+  // (property_video_quality_retry_evidence). A temporal-only bob/sway/cadence
+  // failure has no such grant yet, so it holds here with its verdict recorded
+  // instead of buying a retry or publishing; see quality.test.ts (ignored case).
+  if(route==='retry'){await fail(ctx,'cpu_extract_failed',false);return;}
+ }
+ const{bytes}=await bytesFrom(s.source);const frames=raw.frames.map((frame:any,i:number)=>{assert(frame&&typeof frame.image_b64==='string'&&frame.image_b64.length<=524288&&frame.mime==='image/jpeg',400,'Use bounded actual JPEG review frames.');return{at:['first','middle','last'][i],b64:frame.image_b64,mime:frame.mime};});const out=await callAI(ctx,'POST','drift',{request_id:s.receipt.request_id,kind:'reel',source_b64:base64(bytes),source_mime:s.source.content_type,frames,seconds:5,motion:s.motion,listing_id:j.listing_id,asset_id:s.asset_id,provenance_id:s.generation_provenance_id,attempt:(s.quality_retries??0)>0?1:0});
  if(out.status===200&&out.value.drift?.action==='accept'&&out.value.drift.publishable===true){await rpc('property_video_job_qc',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});return;}
  // The drift gate's single paid retry grant is not a pass or a still fallback.
  // SQL verifies its persisted paid verdict and archives the superseded attempt
@@ -116,7 +139,7 @@ export async function action(ctx:any):Promise<WorkerAction>{const j=ctx.job,s=ct
  const steady=j.quality_profile===PROPERTY_VIDEO_STEADY_PROFILE||j.quality_profile===KIE_PROPERTY_PROFILE;
  if(ctx.action==='inspect_audio'){await scope(j.id,j.audio_lease);let c:any;if(j.manifest.narration_asset_id){const n=await adminClient().from('property_video_audio_assets').select('*').eq('id',j.manifest.narration_asset_id).eq('actor_id',j.actor_id).eq('listing_id',j.listing_id).eq('state','ready').maybeSingle();assert(!n.error&&n.data,409,'Saved narration is unavailable.');c={bucket:'renders',storage_key:n.data.storage_key,bytes:n.data.bytes,sha256:n.data.sha256,etag:n.data.etag,content_type:n.data.mime};await bytesFrom(c,20*1024*1024);}else{const n=await adminClient().from('studio_creative_results').select('*').eq('id',j.manifest.narration_result_id).eq('user_id',j.actor_id).eq('listing_id',j.listing_id).eq('kind','voice').maybeSingle();assert(!n.error&&n.data,409,'Saved AI narration is unavailable.');const h=await headObject(bucket(n.data.bucket),n.data.storage_key,AbortSignal.timeout(10000));assert(h.exists&&h.bytes&&h.etag,409,'Saved AI narration is unavailable.');c={bucket:n.data.bucket,storage_key:n.data.storage_key,bytes:h.bytes,etag:h.etag,content_type:h.contentType};const observed=await bytesFrom(c,20*1024*1024);c.sha256=observed.sha256;}await rpc('property_video_job_audio_source',{p_job:j.id,p_lease:j.audio_lease,p_source:c});const transition=j.manifest.presentation?.transition,fps=steady?24:30,joinFrames=transition==='dissolve'?(steady?6:8):transition==='whip'?(steady?4:5):0;return{job_id:j.id,state:'queued',action:'inspect_audio',lease_token:j.audio_lease,manifest_sha256:j.manifest_sha256,source:await media(c),max_duration_s:5*j.source_count-(j.source_count-1)*joinFrames/fps,expires_at:seconds(240)};}
 
- if(ctx.action==='extract_frames'){await scope(j.id,s.lease_token,s.attempt_id);return{job_id:j.id,state:'quality_review',action:'extract_frames',attempt_id:s.attempt_id,lease_token:s.lease_token,source:{...await media(s.source),asset_id:s.asset_id},clip:await media(s.clip),expires_at:seconds(240)};}
+ if(ctx.action==='extract_frames'){await scope(j.id,s.lease_token,s.attempt_id);return{job_id:j.id,state:'quality_review',action:'extract_frames',attempt_id:s.attempt_id,lease_token:s.lease_token,source:{...await media(s.source),asset_id:s.asset_id},clip:await media(s.clip),...temporalTask(j.quality_profile,j.manifest.aspect),expires_at:seconds(240)};}
  if(ctx.action==='compose'){await scope(j.id,j.compose_lease);const m=j.manifest;let narration:any=null,music:any=null;
  if(m.narration_asset_id){const n=await adminClient().from('property_video_audio_assets').select('*').eq('id',m.narration_asset_id).eq('actor_id',j.actor_id).eq('listing_id',j.listing_id).eq('state','ready').maybeSingle();assert(!n.error&&n.data,409,'Saved narration is unavailable.');narration={...await media({...n.data,bucket:'renders'},1800),words:m.narration_words??[],kind:'own'};}
  if(m.narration_result_id){const n=await adminClient().from('studio_creative_results').select('*').eq('id',m.narration_result_id).eq('user_id',j.actor_id).eq('listing_id',j.listing_id).eq('kind','voice').maybeSingle();assert(!n.error&&n.data,409,'Saved AI narration is unavailable.');const h=await headObject(bucket(n.data.bucket),n.data.storage_key,AbortSignal.timeout(10000));assert(h.exists&&h.bytes&&h.etag,409,'Saved AI narration bytes are unavailable.');const c={bucket:n.data.bucket,storage_key:n.data.storage_key,bytes:h.bytes,etag:h.etag,content_type:h.contentType};const observed=await bytesFrom(c,20*1024*1024);narration={...await media({...c,sha256:observed.sha256},1800),words:n.data.metadata?.words??[],kind:'ai'};}

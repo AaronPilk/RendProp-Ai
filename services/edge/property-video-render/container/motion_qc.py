@@ -55,6 +55,21 @@ FINISHED_LIMITS = {
 }
 
 
+def limits_canonical(limits=FINISHED_LIMITS) -> str:
+    """One line per limit, sorted, `%g` formatted: the same text the worker
+    (property-video-worker/temporal.ts) builds from its mirror, so one SHA-256
+    names this exact limit set on every stored verdict."""
+    return "\n".join(f"{key}={limits[key]:g}" for key in sorted(limits))
+
+
+def limits_sha256(limits=FINISHED_LIMITS) -> str:
+    import hashlib
+    return hashlib.sha256(limits_canonical(limits).encode()).hexdigest()
+
+
+LIMITS_SHA256 = limits_sha256()
+
+
 class MotionError(Exception):
     pass
 
@@ -422,7 +437,7 @@ def measure(path: Path, aspect="16:9", series=False, max_frames=None):
     fps = native_fps(stream)
     steps = measure_steps(path, aspect, max_frames)
     metrics, camera, smooth = summarize(steps, fps, aspect)
-    report = {"metrics": metrics, "verdict": verdict(metrics)}
+    report = {"metrics": metrics, "verdict": verdict(metrics), "limits": {"profile": PROFILE, "sha256": LIMITS_SHA256}}
     if series:
         report["series"] = {"dy": [round(float(v), 3) for v in camera["step_dy"]],
                             "dx": [round(float(v), 3) for v in camera["step_dx"]],
