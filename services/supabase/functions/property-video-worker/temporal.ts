@@ -4,8 +4,9 @@
 // pumping, travel and repeated frames in the final frame (motion_qc.py,
 // profile temporal-motion-v2) when an extract_frames task carries
 // `temporal_qc`. The worker asks for it on every steady-profile shot, verifies
-// the report names this exact versioned limit set, records it on the shot
-// through property_video_job_temporal, and only then lets the existing paid
+// the report names this exact versioned limit set, records it through
+// property_video_job_temporal (property_video_job_temporal_verdicts: one
+// immutable row per shot attempt and limit version), and only then lets the existing paid
 // drift QC decide. No report, a malformed report, foreign limits, or a
 // bob/sway/cadence-only failure HOLD the shot through the existing CPU review
 // pause (property_video_job_failure 'cpu_extract_failed': two more immediate
