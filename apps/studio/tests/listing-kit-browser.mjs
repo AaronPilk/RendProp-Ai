@@ -1,16 +1,35 @@
 import { verifyPrivateKitCache } from "./listing-kit-cache-browser.mjs";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
+import { crc32 } from "node:zlib";
 import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-listing-kit-browser-")), dist = join(artifacts, "dist");
 const receipt = { proof: "Actual ListingWorkflow and listing-kit UI, generated media, system-unzipped browser downloads; isolated fixture only, no production or paid calls.", checks: [], externalRequests: [], errors: [] };
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64");
+const KIT_MAX_FILE_BYTES = 128 * 1024 * 1024, OVERSIZE_COPY = "This kit exceeds its download size. Choose fewer files, or download a large video separately.";
+/** Independent ZIP reader (no archive dependency): walks the end-of-central-directory record and every central-directory header of a saved download. */
+function readZipDirectory(buffer) {
+  const eocd = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06])); assert(eocd >= 0, "end of central directory record missing");
+  const count = buffer.readUInt16LE(eocd + 10), size = buffer.readUInt32LE(eocd + 12), start = buffer.readUInt32LE(eocd + 16); assert.equal(buffer.readUInt16LE(eocd + 8), count);
+  const entries = []; let offset = start;
+  for (let index = 0; index < count; index++) {
+    assert.equal(buffer.readUInt32LE(offset), 0x02014b50, `central directory header ${index} missing`);
+    const method = buffer.readUInt16LE(offset + 10), crc = buffer.readUInt32LE(offset + 16), compressed = buffer.readUInt32LE(offset + 20), uncompressed = buffer.readUInt32LE(offset + 24);
+    const nameLength = buffer.readUInt16LE(offset + 28), extraLength = buffer.readUInt16LE(offset + 30), commentLength = buffer.readUInt16LE(offset + 32), local = buffer.readUInt32LE(offset + 42);
+    const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
+    assert.equal(buffer.readUInt32LE(local), 0x04034b50, `${name}: local header missing`);
+    const dataStart = local + 30 + buffer.readUInt16LE(local + 26) + buffer.readUInt16LE(local + 28);
+    entries.push({ name, method, crc, compressed, uncompressed, bytes: method === 0 ? buffer.subarray(dataStart, dataStart + compressed) : null });
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  assert.equal(offset - start, size); return entries;
+}
 let browser, server, page, mode = "normal", held = [], downloads = [];
 try {
   receipt.cache = await verifyPrivateKitCache({ root, artifacts: join(artifacts, "cache-regression"), executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
@@ -32,6 +51,7 @@ try {
     if (url.hostname === `${"a".repeat(32)}.r2.cloudflarestorage.com` && req.method() === "GET") {
       if (req.resourceType() === "fetch" && mode === "hold") { held.push(route); return; }
       if (req.resourceType() === "fetch" && mode === "fail") return route.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" } });
+      if (req.resourceType() === "fetch" && mode === "oversize") return route.fulfill({ status: 200, contentType: "image/png", headers: { "Access-Control-Allow-Origin": "*", "Content-Length": String(KIT_MAX_FILE_BYTES + 1) }, body: png });
       return route.fulfill({ status: 200, contentType: url.pathname.endsWith(".mp4") ? "video/mp4" : "image/png", headers: { "Access-Control-Allow-Origin": "*" }, body: url.pathname.endsWith(".mp4") ? movie : png });
     }
     receipt.externalRequests.push({ origin: url.origin, path: url.pathname, method: req.method() }); return route.abort();
@@ -48,7 +68,22 @@ try {
   await page.getByLabel("Include Reviewed office reel", { exact: true }).check(); await review().check();
   const downloadPromise = page.waitForEvent("download"); await page.getByRole("button", { name: "Download ZIP", exact: true }).click(); const download = await downloadPromise;
   const zip = join(artifacts, "listing-kit.zip"); await download.saveAs(zip); assert.equal(download.suggestedFilename(), "10-Oak-Street-listing-kit.zip");
+  assert.equal(await download.failure(), null); const zipStat = await stat(zip); assert(zipStat.isFile() && zipStat.size > png.length + movie.length, "saved download must be a real non-empty file");
+  const expected = await page.evaluate(({ listingA }) => {
+    const photos = window.kitFixture.media(listingA).photos, altered = photos.filter(row => row.isAltered && row.originalUrl && row.originalUrl !== row.url), plain = photos.filter(row => !row.isAltered);
+    const videos = window.kitFixture.state(listingA).assets.filter(row => row.kind === "video" && row.qc_publishable);
+    return { edited: plain.length + altered.length, originals: altered.length, videos: videos.length, excluded: photos.length - plain.length - altered.length + window.kitFixture.state(listingA).assets.length - videos.length };
+  }, { listingA: "20000000-0000-4000-8000-000000000002" });
+  assert.deepEqual(expected, { edited: 2, originals: 1, videos: 1, excluded: 2 });
+  const entries = readZipDirectory(await readFile(zip)), entryNames = entries.map(entry => entry.name);
+  assert(["START-HERE.html", "manifest.json", "disclosures.txt", "property-details.txt"].every(name => entryNames.includes(name)));
+  assert.equal(entryNames.filter(name => name.startsWith("photos/")).length, expected.edited); assert.equal(entryNames.filter(name => name.startsWith("originals/")).length, expected.originals); assert.equal(entryNames.filter(name => name.startsWith("videos/")).length, expected.videos);
+  assert.equal(new Set(entryNames).size, entryNames.length); assert(entries.every(entry => entry.method === 0 && entry.compressed === entry.uncompressed && entry.bytes?.length === entry.uncompressed && crc32(entry.bytes) === entry.crc));
+  assert.deepEqual(entries.filter(entry => entry.name.startsWith("originals/")).map(entry => Buffer.from(entry.bytes)), [png]); assert.deepEqual(entries.find(entry => entry.name.startsWith("videos/")).bytes, movie);
+  const inlineManifest = JSON.parse(Buffer.from(entries.find(entry => entry.name === "manifest.json").bytes).toString("utf8"));
+  assert.equal(inlineManifest.selectedMediaCount, expected.edited + expected.videos); assert.equal(inlineManifest.availableMediaCount, expected.edited + expected.videos); assert.equal(inlineManifest.excluded.length, expected.excluded);
   assert.match(execFileSync("unzip", ["-t", zip], { encoding: "utf8" }), /No errors detected/); execFileSync("unzip", ["-q", zip, "-d", join(artifacts, "opened")]);
+  receipt.zip = { path: zip, bytes: zipStat.size, entries: entryNames };
   const manifest = JSON.parse(await readFile(join(artifacts, "opened/manifest.json"), "utf8")); assert.equal(manifest.files.length, 3); assert.equal(manifest.files[1].originalRelationship, "Paired original");
   assert.deepEqual(await readFile(join(artifacts, "opened", manifest.files[1].originalPath)), png); assert.deepEqual(await readFile(join(artifacts, "opened", manifest.files[2].path)), movie);
   assert.equal(manifest.files[2].originalPath, null); assert.match(manifest.files[2].sourceNote, /No single unaltered original/);
@@ -64,6 +99,10 @@ try {
   await review().check(); mode = "fail"; const count = downloads.length; await page.getByRole("button", { name: "Download ZIP", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "No incomplete kit" })).toBeVisible(); assert.equal(downloads.length, count); mode = "normal";
   receipt.checks.push("Changing selection clears review; a missing selected asset reports failure and never emits a partial ZIP");
+  await review().check(); mode = "oversize"; await page.getByRole("button", { name: "Download ZIP", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText(OVERSIZE_COPY); assert.equal(downloads.length, count); mode = "normal";
+  await expect(page.getByRole("button", { name: "Download ZIP", exact: true })).toBeEnabled(); await expect(page.getByLabel("Headline", { exact: true })).toHaveValue("Unsaved office headline must stay");
+  receipt.checks.push(`Control: a selected file declared over the ${KIT_MAX_FILE_BYTES / 1024 / 1024} MB per-file cap is refused with the exact delivery-kit copy and no ZIP is emitted`);
   const releaseHeld = async () => { const routes = held; held = []; await Promise.all(routes.map(route => route.fulfill({ status: 200, contentType: "image/png", headers: { "Access-Control-Allow-Origin": "*" }, body: png }).catch(() => {}))); };
   mode = "hold"; await page.getByRole("button", { name: "Download ZIP", exact: true }).click(); await expect.poll(() => held.length).toBeGreaterThan(0);
   await page.getByRole("button", { name: "Cancel download", exact: true }).click(); mode = "normal"; await releaseHeld(); await page.waitForTimeout(100);
