@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { HttpError, throwRpc } from "./http.ts";
-import { propertyRequestId } from "./property/provider.ts";
+import { propertyRequestId, propertyRequestRef } from "./property/provider.ts";
 
 type Authority = { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> };
 export type PropertyAttempt = { actor: string; org: string; id: string };
@@ -39,17 +39,35 @@ export async function beginPropertyAttempt(admin: Authority, actor: string, org:
   return { actor, org, id: value.attempt_id };
 }
 
+/** "No such function" is the one reply that proves nothing was written: the
+ * nine-argument finish (20261017170000) is absent, so the pre-reference RPC
+ * is the schema's only writer. PostgREST reports PGRST202; a direct SQL
+ * shim reports SQLSTATE 42883. Any other error is never retried. */
+function referenceOverloadMissing(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  if (code === "PGRST202" || code === "42883") return true;
+  return typeof message === "string" && /provider_attempt_finish/.test(message) && /(does not exist|schema cache)/i.test(message);
+}
+
 /** A lost terminal write leaves the durable intent unresolved. It cannot
- * trigger another supplier call, remove the intent, or fabricate a charge. */
+ * trigger another supplier call, remove the intent, or fabricate a charge.
+ * The supplier reference is routed by shape: a UUID to `provider_request_id`,
+ * a 32-hex trace id to `provider_request_ref`; anything else is null. The
+ * nine-argument RPC is the one PostgREST resolves for these named keys; on a
+ * schema that predates it, the same evidence goes to the eight-argument RPC
+ * without a reference rather than leaving the intent unresolved. */
 export async function finishPropertyAttempt(admin: Authority, attempt: PropertyAttempt, evidence: PropertyOutcome): Promise<boolean> {
   try {
-    const result = await rpc(admin, "provider_attempt_finish", {
+    const legacy = {
       p_actor: attempt.actor, p_org: attempt.org, p_attempt: attempt.id,
       p_outcome: evidence.outcome, p_http_status: evidence.status,
       p_provider_request_id: propertyRequestId(evidence.requestId),
       p_estimated_cents: evidence.estimatedCents ?? null,
       p_ledger_status: evidence.ledgerStatus ?? "not_booked",
-    });
+    };
+    let result = await rpc(admin, "provider_attempt_finish", { ...legacy, p_provider_request_ref: propertyRequestRef(evidence.requestId) });
+    if (result.error && referenceOverloadMissing(result.error)) result = await rpc(admin, "provider_attempt_finish", legacy);
     const value = result.data as Record<string, unknown> | null;
     if (!result.error && value && value.saved === true && value.attempt_id === attempt.id) return true;
   } catch { /* Only bounded, content-free failure information is logged below. */ }

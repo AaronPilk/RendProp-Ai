@@ -29,6 +29,29 @@ Deno.test("RentCast valid facts and genuine404/empty matches retain existing mod
   assertEquals(r.calls, 1); assertEquals(rentcast.unitCents, 7);
 });
 
+Deno.test("RentCast's supplier reference is the Google Frontend trace id, a UUID request id when present, and otherwise null", async () => {
+  // Observed2026-10-17 on an unauthenticated probe: `x-cloud-trace-context`, `server: Google Frontend`, no `x-request-id`.
+  const trace = "2c3738f2d4c4b4984f9f9b36a137d515";
+  for (const [headers, expected] of [
+    [{ "x-cloud-trace-context": trace }, trace],
+    [{ "x-cloud-trace-context": trace.toUpperCase() + "/9876543210;o=1" }, trace],
+    [{ "x-request-id": "A9100000-0000-4000-8000-000000000099", "x-cloud-trace-context": trace }, "a9100000-0000-4000-8000-000000000099"],
+    [{ "x-cloud-trace-context": "https://private.invalid/" + address }, null],
+    [{ "x-cloud-trace-context": trace.slice(0, 31) }, null],
+    [{}, null],
+  ] as const) {
+    const hit = await closed(async () => Response.json([{ bedrooms: 3 }], { headers }), () => rentcast.lookup(address));
+    assertEquals(hit.result.requestId, expected); assertEquals(hit.result.status, 200); assertEquals(hit.calls, 1);
+    const miss = await closed(async () => new Response(null, { status: 404, headers }), () => rentcast.lookup(address));
+    assertEquals(miss.result.requestId, expected); assertEquals(miss.result.facts, null);
+    const refused = await closed(async () => Response.json({ private: address }, { status: 500, headers }), async () => {
+      const error = await assertRejects(() => rentcast.lookup(address), PropertyLookupFailure);
+      assertEquals(error.requestId, expected); assert(!JSON.stringify(error.requestId).includes(address));
+    });
+    assertEquals(refused.calls, 1);
+  }
+});
+
 Deno.test("RentCast auth/rate/server refusals are failures rather than invented property misses", async () => {
   for (const status of [401, 403, 429, 500]) {
     const r = await closed(async () => Response.json({ private: address }, { status }), async () => {
