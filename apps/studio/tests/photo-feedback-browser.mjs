@@ -135,7 +135,10 @@ try {
   assert.equal(posts("")[0].raw, JSON.stringify(queued.body), "the delivered body is byte-identical to the stored one");
   assert.equal(posts("")[0].org, ORG, "the selected library travels as X-Org-Id");
   assert.deepEqual([state.rows.get(P1).revision, state.rows.get(P1).revision_count], [1, 1]);
-  receipt.checks.push("Reconnecting fires one delivery of the byte-identical stored body (no other trigger); the status changes to Saved and no duplicate follows");
+  // Re-render the workspace: a delivered verdict must never stand in for the acknowledgment.
+  await page.getByRole("textbox", { name: "Room or view", exact: true }).fill("Living room");
+  await expect(save).toBeDisabled(); await expect(review.getByRole("button", { name: "Download photo", exact: true })).toBeDisabled(); await expect(ack).not.toBeChecked();
+  receipt.checks.push("Reconnecting fires one delivery of the byte-identical stored body (no other trigger); the status changes to Saved and no duplicate follows; after a re-render the delivered verdict still does not unlock Save or Download");
 
   // Feedback requests held open must not delay the acknowledgment, save or download.
   state.hold = true;
