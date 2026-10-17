@@ -12,12 +12,21 @@ import { checkSubstitution, classifyKie, kieAdapter, parseResultUrls } from "./k
 import { HF_MOTION_FALLBACK, hfInput, higgsfieldAdapter } from "./higgsfield.ts";
 import { imageSizeFor, mapWhisperWords } from "./openai.ts";
 import { assertNotCoveredModel, outputConfigFor } from "./anthropic.ts";
-import { geminiImagePayload } from "./gemini.ts";
+import { geminiAdapter, geminiImagePayload, supportsStagingReference } from "./gemini.ts";
 import { runChain } from "./chain.ts";
-import { extractJobToken, routerStatusUrl, verifyJobToken } from "./jobtoken.ts";
-import { ProviderError, snippet } from "./common.ts";
+import { assertJobTokenSigningReady, extractJobToken, routerStatusUrl, verifyJobToken, verifyJobTokenForRecovery } from "./jobtoken.ts";
+import { ProviderError, snippet, inlineImageResult } from "./common.ts";
 import { MAX_PARAM_OUTPUT_TOKENS } from "./params.ts";
 import { HttpError } from "../http.ts";
+
+Deno.test("inline image detection returns exact bytes without decoding a discarded4K buffer",async()=>{
+  const previous=globalThis.atob;let decodes=0;
+  globalThis.atob=()=>{decodes++;throw new Error("Inline detection must not allocate image bytes");};
+  try {
+    const state={status:"done" as const,result_url:"data:image/jpeg;base64,YWJj",mime:"image/jpeg",meta:{image_b64:"YWJj"}};
+    assertEquals(await inlineImageResult("gemini",state),state);assertEquals(decodes,0);
+  } finally { globalThis.atob=previous; }
+});
 
 function step(over: Partial<RouteStep> = {}): RouteStep {
   return {
@@ -54,7 +63,7 @@ async function withFetch(handler: (url: string, init?: RequestInit) => Response,
 // The literals below are copied from the shipped ai-video/index.ts. If this
 // test fails, the flag-off path has stopped being a no-op.
 
-Deno.test("fal reel-clip payload is byte-identical to the shipped call", () => {
+Deno.test("fal reel-clip payload pins bounded frame count and aspect for price authority", () => {
   const body = falInput(step(), {
     task: "video.reel_clip",
     prompt: "PROMPT",
@@ -69,11 +78,14 @@ Deno.test("fal reel-clip payload is byte-identical to the shipped call", () => {
       image_url: "https://r2.example/photo.jpg",
       resolution: "1080p",
       duration: "5",
+      num_frames:121,
+      aspect_ratio:"16:9",
+      camera_fixed: false,
     }),
   );
 });
 
-Deno.test("fal grounded-aerial payload is byte-identical (aspect_ratio + camera_fixed)", () => {
+Deno.test("fal grounded-aerial payload pins bounded frame count with aspect and camera control", () => {
   const body = falInput(step({ task: "video.aerial" }), {
     task: "video.aerial",
     prompt: "PROMPT",
@@ -89,6 +101,7 @@ Deno.test("fal grounded-aerial payload is byte-identical (aspect_ratio + camera_
       image_url: "data:image/jpeg;base64,AAAA",
       resolution: "1080p",
       duration: "6",
+      num_frames:145,
       aspect_ratio: "16:9",
       camera_fixed: false,
     }),
@@ -213,7 +226,7 @@ Deno.test("kie: never trust the echo — a substituted duration/resolution is fl
 });
 
 Deno.test("kie status codes map to the router's vocabulary", () => {
-  assertEquals(classifyKie(402), "validation"); // out of credits
+  assertEquals(classifyKie(402), "upstream"); // our vendor account is out of credits
   assertEquals(classifyKie(429), "rate_limit");
   assertEquals(classifyKie(408), "upstream");
   assertEquals(classifyKie(455), "upstream");
@@ -379,16 +392,62 @@ Deno.test("Sonnet 5 always carries output_config effort:low", () => {
 
 // ── 6. GEMINI ────────────────────────────────────────────────────────────────
 
-Deno.test("gemini 2.5 payload is the shipped one; 3.x pins imageSize to 1K", () => {
+Deno.test("Gemini payload pins one candidate and bounded requested output;3.x pins1K", () => {
   assertEquals(
     JSON.stringify(geminiImagePayload("gemini-2.5-flash-image", "PROMPT", "image/jpeg", "AAAA")),
     JSON.stringify({
       contents: [{ role: "user", parts: [{ text: "PROMPT" }, { inline_data: { mime_type: "image/jpeg", data: "AAAA" } }] }],
-      generationConfig: { responseModalities: ["IMAGE"] },
+      generationConfig: { responseModalities: ["IMAGE"],candidateCount:1,maxOutputTokens:4096 },
     }),
   );
   const v3 = geminiImagePayload("gemini-3.1-flash-image", "PROMPT", "image/jpeg", "AAAA");
   assertEquals((v3.generationConfig as Record<string, unknown>).imageConfig, { imageSize: "1K" });
+});
+
+Deno.test("Gemini staging reference preserves target-first authority, reference bytes and 1K cost pin", async () => {
+  Deno.env.set("GEMINI_API_KEY", "synthetic-not-real");
+  let posts = 0;
+  await withFetch((_url, init) => {
+    posts++;
+    assertEquals(init?.method, "POST");
+    const body = JSON.parse(String(init?.body));
+    const parts = body.contents[0].parts;
+    assertEquals(parts.length, 4);
+    assertEquals(parts[1].inline_data, {mime_type:"image/jpeg",data:"TARGET"});
+    assertStringIncludes(parts[2].text, "Never copy its architecture");
+    assertEquals(parts[3].inline_data, {mime_type:"image/png",data:"REFERENCE"});
+    assertEquals(body.generationConfig.imageConfig, {imageSize:"1K"});
+    return Response.json({candidates:[{content:{parts:[{inlineData:{mimeType:"image/png",data:"OUTPUT"}}]}}]});
+  }, async () => {
+    const ref = await geminiAdapter.submit(step({provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.stage"}), {
+      task:"photo.stage",prompt:"Same movable furnishings",image_b64:"TARGET",
+      extra:{staging_reference_b64:"REFERENCE",staging_reference_mime:"image/png"},
+    });
+    assertEquals((await geminiAdapter.poll(ref)).status,"done");
+    assertEquals(posts,1);
+  });
+});
+
+for (const invalid of [
+  {task:"photo.declutter"}, {model:"unknown-image-model"},
+  {reference:""}, {reference:"A".repeat(6_000_001)},
+  {target:"A".repeat(6_000_001),reference:"B".repeat(6_000_000)}, {mime:"image/heic"},
+]) {
+  Deno.test(`invalid staging reference fails before vendor dispatch: ${Object.keys(invalid).join(",")}`, async () => {
+    let requests = 0;
+    await withFetch(() => { requests++; return Response.json({}); }, async () => {
+      await assertRejects(() => geminiAdapter.submit(step({provider:"gemini",model:invalid.model??"gemini-3.1-flash-image",task:"photo.stage"}), {
+        task:invalid.task??"photo.stage",image_b64:invalid.target??"TARGET",
+        extra:{staging_reference_b64:invalid.reference??"REFERENCE",staging_reference_mime:invalid.mime??"image/jpeg"},
+      }), ProviderError);
+      assertEquals(requests,0);
+    });
+  });
+}
+
+Deno.test("staging reference model capability is explicit, never inferred for an unknown route", () => {
+  assert(supportsStagingReference("gemini-3.1-flash-image"));
+  assert(!supportsStagingReference("gemini-3-unknown-image"));
 });
 
 // ── 7. THE CHAIN LOOP ────────────────────────────────────────────────────────
@@ -462,7 +521,7 @@ Deno.test("chain: an exhausted multi-step chain is one 503 naming the task", asy
   assertStringIncludes((err as HttpError).message, "All providers for video.reel_clip are unavailable right now.");
 });
 
-Deno.test("chain: a chain of ONE surfaces the provider's own error (flag-off shape)", async () => {
+Deno.test("chain: a chain of ONE retains status/code and excludes the provider's raw body", async () => {
   const err = await assertRejects(() =>
     runChain("photo.sky", [step({ provider: "gemini", task: "photo.sky" })], () => {
       throw new ProviderError("gemini", "upstream", "gemini HTTP 502: upstream boom");
@@ -471,7 +530,8 @@ Deno.test("chain: a chain of ONE surfaces the provider's own error (flag-off sha
   assert(err instanceof HttpError);
   assertEquals((err as HttpError).status, 502);
   assertEquals((err as HttpError).code, "upstream");
-  assertStringIncludes((err as HttpError).message, "gemini HTTP 502");
+  assertEquals((err as HttpError).details?.provider, "gemini");
+  assert(!(err as HttpError).message.includes("upstream boom"));
 });
 
 // ── 8. THE ROUTED-JOB TOKEN (what ai-video puts in status_url) ───────────────
@@ -866,4 +926,69 @@ Deno.test("0030's position shift is guarded and cannot run twice", async () => {
 
   // And the column itself is additive: null default, added if-not-exists.
   assertStringIncludes(sql, "add column if not exists params jsonb");
+});
+
+Deno.test("signed paid status carries admitted listing scope, preserves old tokens and rejects retargeting", async () => {
+  const { encodeJobToken, decodeJobToken } = await import("./jobtoken.ts");
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET", "synthetic-test-only-signing-placeholder");
+  const owner={orgId:"synthetic-org",userId:"synthetic-user",listingId:"fa300505-0000-4000-8000-000000000011"};
+  const raw=await encodeJobToken({p:"fal",m:"fixture",i:"provider-id",t:"now",k:"video.reel_clip"},owner);
+  assertEquals((await verifyJobToken(raw,owner))?.l,owner.listingId);
+  const old=await encodeJobToken({p:"fal",m:"fixture",i:"provider-old",t:"now",k:"video.reel_clip"},{orgId:owner.orgId,userId:owner.userId});
+  assertEquals((await verifyJobToken(old,owner))?.l,undefined);
+  const [payload,signature]=raw.split(".");
+  const text=JSON.parse(atob(payload.replace(/-/g,"+").replace(/_/g,"/")));
+  text.l="fa300505-0000-4000-8000-000000000099";
+  const changed=btoa(JSON.stringify(text)).replace(/=/g,"").replace(/\+/g,"-").replace(/\//g,"_");
+  assertEquals(await decodeJobToken(changed+"."+signature),null);
+});
+
+Deno.test("actual receipt signer preflight rejects missing configuration even after a cached key",async()=>{
+ const prior=Deno.env.get("JOB_TOKEN_SIGNING_SECRET");
+ try{
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET","synthetic-receipt-readiness-test-secret");
+  await assertJobTokenSigningReady();
+  Deno.env.delete("JOB_TOKEN_SIGNING_SECRET");
+  await assertRejects(()=>assertJobTokenSigningReady(),Error,"JOB_TOKEN_SIGNING_SECRET");
+ }finally{prior===undefined?Deno.env.delete("JOB_TOKEN_SIGNING_SECRET"):Deno.env.set("JOB_TOKEN_SIGNING_SECRET",prior);}
+});
+
+Deno.test("expired recovery requires exact authenticated paid proof while ordinary verification stays strict", async () => {
+  const { encodeJobToken, decodeJobToken } = await import("./jobtoken.ts");
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET", "synthetic-expired-recovery-test-secret");
+  const owner = { orgId: "owned-org", userId: "owned-actor", listingId: "fa300505-0000-4000-8000-000000000011" };
+  const raw = await encodeJobToken({ p: "fal", m: "fixture", i: "paid-job", t: new Date().toISOString(), k: "video.reel_clip" }, owner);
+  const original = await decodeJobToken(raw); assert(original);
+  const future = new Date(original.exp * 1000);
+  let proofs = 0;
+  const paid = async (job: typeof original) => { proofs++; assertEquals(job, original); return true; };
+  assertEquals(await verifyJobToken(raw, owner, future), null);
+  assertEquals(await verifyJobTokenForRecovery(raw, owner, paid, future), original);
+  assertEquals(proofs, 1);
+  assertEquals(await verifyJobTokenForRecovery(raw, owner, async () => false, future), null);
+  for (const denied of [{ ...owner, userId: "foreign" }, { ...owner, orgId: "foreign" }]) {
+    assertEquals(await verifyJobTokenForRecovery(raw, denied, paid, future), null);
+  }
+  const [payload, signature] = raw.split(".");
+  const changed = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+  changed.i = "unpaid-job";
+  const tampered = btoa(JSON.stringify(changed)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_") + "." + signature;
+  assertEquals(await verifyJobTokenForRecovery(tampered, owner, paid, future), null);
+  assertEquals(proofs, 1);
+  assertEquals(await verifyJobTokenForRecovery(raw, owner, paid), original);
+  assertEquals(proofs, 1); // Unexpired transport verification has no new paid read.
+  await assertRejects(() => verifyJobTokenForRecovery(raw, owner, async () => { throw new Error("payment reader unavailable"); }, future), Error, "payment reader unavailable");
+});
+
+
+Deno.test("signed accepted admission key is preserved, optional for old receipts and tamper protected",async()=>{
+ const {encodeJobToken,decodeJobToken}=await import("./jobtoken.ts");
+ Deno.env.set("JOB_TOKEN_SIGNING_SECRET","synthetic-admitted-recovery-secret");
+ const owner={orgId:"owned-org",userId:"owned-actor",admissionKey:"synthetic-original-key"};
+ const fields={p:"fal",m:"fixture",i:"accepted-job",t:new Date().toISOString(),k:"video.reel_clip"};
+ const raw=await encodeJobToken(fields,owner);assertEquals((await decodeJobToken(raw))?.a,owner.admissionKey);
+ const old=await encodeJobToken(fields,{orgId:owner.orgId,userId:owner.userId});assertEquals((await decodeJobToken(old))?.a,undefined);
+ const [payload,signature]=raw.split(".");const parsed=JSON.parse(atob(payload.replace(/-/g,"+").replace(/_/g,"/")));parsed.a="other-admission";
+ const changed=btoa(JSON.stringify(parsed)).replace(/=/g,"").replace(/\+/g,"-").replace(/\//g,"_");assertEquals(await decodeJobToken(changed+"."+signature),null);
+ const invalid=await encodeJobToken(fields,{...owner,admissionKey:"bad"});assertEquals(await decodeJobToken(invalid),null);
 });

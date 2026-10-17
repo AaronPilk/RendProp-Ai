@@ -1,0 +1,3 @@
+# Optional isolated Mac test encoder when Homebrew FFmpeg omits drawtext.
+# The production Docker image uses Debian's FFmpeg and Liberation Sans2.
+imageio-ffmpeg==0.6.0

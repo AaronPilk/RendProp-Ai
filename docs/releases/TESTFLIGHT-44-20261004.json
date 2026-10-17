@@ -1,0 +1,244 @@
+{
+  "kind": "Internal TestFlight 1.0.4 (44) audit remediation delivery",
+  "verifiedAt": "2026-10-05T01:34:36.007011+00:00",
+  "source": {
+    "branch": "fix/claude-audit-20261004",
+    "runtimeCommit": "9d27fb5a9e81a5f016c0e00deae744c7ca6c718c",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/26",
+    "note": "The clean archived runtime source is fixed at this commit; later documentation records delivery."
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "marketingVersion": "1.0.4",
+    "build": "44",
+    "scheme": "RendpropSpatialTestFlight",
+    "internalOnly": true
+  },
+  "ci": {
+    "runID": 37248967678,
+    "runURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37248967678",
+    "sourceCommit": "9d27fb5a9e81a5f016c0e00deae744c7ca6c718c",
+    "conclusion": "success",
+    "passedJobs": 12,
+    "updatedAt": "2026-10-05T01:11:03Z"
+  },
+  "archive": {
+    "createdAt": "2026-10-05T01:24:27+00:00",
+    "finishedAt": "2026-10-05T01:24:27.230041+00:00",
+    "attempts": 1,
+    "exitCode": 0,
+    "sourceManifestSHA256": "54619bf88066fa552fa6e616850d7a988e25b246d2a4226fbfe8d61cff8a02cb",
+    "sourceInputs": 226,
+    "compiledTrackedSwiftInputs": 142,
+    "compiledGeneratedSwiftInputs": 1,
+    "signatureVerified": true,
+    "localArchiveBindingPassed": true,
+    "executableSHA256": "88fd409dc35f3827e1144274dde55461f06887f4382c8e414ff90547e6166991",
+    "archiveDSYMSHA256": "34b6ed73669b4854a9299c460e5c5d0cc20e6e0ee6637fb6e769bfabb692d952",
+    "arm64UUID": "8DE0D288-6010-392C-A424-7144D9E449FD",
+    "allUUIDsMatch": true,
+    "derivedDataAndArchiveDSYMBytesMatch": true,
+    "qualification": "DerivedData app product was moved during archive creation; no separate app-product byte-match is claimed. Exact source/compiler inputs and surviving dSYM binding verify the signed archive."
+  },
+  "upload": {
+    "startedAt": "2026-10-05T01:29:18.072872+00:00",
+    "finishedAt": "2026-10-05T01:30:25.348201+00:00",
+    "exitCode": 0,
+    "attempts": 1,
+    "internalOnly": true
+  },
+  "appleReadback": {
+    "buildID": "2cab4332-f370-408a-92bf-7608d5d7915e",
+    "verifiedAt": "2026-10-05T01:32:22.182054+00:00",
+    "operation": "GET only",
+    "marketingVersion": "1.0.4",
+    "build": "44",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "internalBuildState": "IN_BETA_TESTING",
+    "externalBuildState": "NOT_APPLICABLE",
+    "expired": false,
+    "uploadedDate": "2026-10-04T18:31:26-07:00",
+    "available": true,
+    "internalGroup": {
+      "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+      "name": "Rendprop team",
+      "buildIncluded": true
+    }
+  },
+  "backend": {
+    "sourceCommit": "9d27fb5a9e81a5f016c0e00deae744c7ca6c718c",
+    "migrationApplications": [
+      {
+        "source": "20261004215403_app_video_rejected_submission_release.sql",
+        "sourceSHA256": "598bb7efbceb549998035d3357d94cd0d944a0c41528a9d69c253beabd500afe",
+        "liveVersion": "20261005011911",
+        "liveName": "app_video_rejected_submission_release"
+      },
+      {
+        "source": "20261004220253_listing_measurement_compare_and_set.sql",
+        "sourceSHA256": "7b7b8c8c4f87a073e0ef9c5305ca1eed918975be620902bd7072fb23bbfdba78",
+        "liveVersion": "20261005011920",
+        "liveName": "listing_measurement_compare_and_set"
+      }
+    ],
+    "deployedFunctions": [
+      {
+        "name": "tours",
+        "version": 49,
+        "status": "ACTIVE",
+        "verifyJWT": true,
+        "submittedFiles": 14,
+        "returnedFiles": 13,
+        "returnedFilesMatched": 13,
+        "hashMismatches": [],
+        "missingFromReadback": [
+          "functions/spatial/contract.ts"
+        ]
+      },
+      {
+        "name": "listings",
+        "version": 41,
+        "status": "ACTIVE",
+        "verifyJWT": true,
+        "submittedFiles": 12,
+        "returnedFiles": 12,
+        "returnedFilesMatched": 12,
+        "hashMismatches": [],
+        "missingFromReadback": []
+      },
+      {
+        "name": "ai-video",
+        "version": 51,
+        "status": "ACTIVE",
+        "verifyJWT": true,
+        "submittedFiles": 33,
+        "returnedFiles": 33,
+        "returnedFilesMatched": 33,
+        "hashMismatches": [],
+        "missingFromReadback": []
+      }
+    ],
+    "toursQualification": "The returned 13 runtime files match. The 14th submitted file, spatial/contract.ts, contains types and was omitted from provider readback; no 14/14 claim is made.",
+    "matchingSQLFunctionBodies": 8,
+    "serviceOnlyRPCs": [
+      "save_listing_measurements",
+      "app_video_cost_release_rejected",
+      "app_video_cost_settle"
+    ],
+    "triggerEnabled": true,
+    "releaseConstraintValidated": true,
+    "privateReservationRLS": true,
+    "privateReservationClientPolicies": 0,
+    "deferredFunctions": [
+      {
+        "name": "coach",
+        "version": 22
+      },
+      {
+        "name": "admin",
+        "version": 30
+      }
+    ],
+    "deferredReason": "Preserve older-client compatibility until the X-Org-Id/contract rollout and upgrade boundary are reviewed. Native privacy/session/org capture changes are present in build-44 source.",
+    "anonymousGETStatus": {
+      "tours": 401,
+      "listings": 401,
+      "ai-video": 401
+    },
+    "scope": "Metadata and exact prosrc MD5 equality against applied SQL; no paid/customer-write/RPC test.",
+    "paidProviderCalls": 0,
+    "heldCentsAuthenticatedExecutionPreserved": "app_video_held_cents intentionally retains authenticated execution with exact-source membership/service-role guards.",
+    "topazCostFencePreserved": true,
+    "topazQualification": "Static source/readback proof preserves trusted output decoding and the 16 cents/second worst-case hold; no paid canary or invoice claim.",
+    "advisors": {
+      "ERRORRecords": 0,
+      "WARNRecords": 26,
+      "WARNFindings": 48,
+      "INFORecords": 1,
+      "denyAllTables": 44,
+      "sameTurnBaselineAvailable": false,
+      "qualification": "Current inventory; no warning-delta or clean-advisor claim."
+    }
+  },
+  "public42Readback": {
+    "checkedAt": "2026-10-05T01:18:40.574325+00:00",
+    "operation": "GET only",
+    "version": "1.0.3",
+    "build": "42",
+    "appStoreState": "READY_FOR_SALE",
+    "appStoreVersionID": "33fa0285-e1aa-49b6-9b9c-74f2ccfc3509",
+    "buildID": "56692628-791e-4072-a222-09fc11929726",
+    "binaryChanged": false
+  },
+  "scope": [
+    "Available to the existing internal Rendprop team only; no external beta or shared-team launch is certified.",
+    "226 native/source inputs bound to signed archive; all twelve exact-source CI jobs succeeded.",
+    "Synthetic UI/model/SQL/browser evidence remains in the audit handoff; production metadata readbacks do not replace phone or customer-write acceptance."
+  ],
+  "knownLimits": [
+    "Shared-team launch remains blocked: stale ordinary main-photo or coordinate saves can replace newer Studio facts, sold/archive state and plan attachments using a full-row update. Build 44 does not fix this path.",
+    "Independent measurements CAS protects only its private plan; general changed-field intent, atomic conflicts and an older-client upgrade boundary remain required.",
+    "Coach v22/admin v30 remain live; updated source backend contracts are deferred for compatibility.",
+    "Original FAL rejection cause and real generation access remain unverified; no paid provider canary/output acceptance was performed.",
+    "Physical camera/AR measurement accuracy, phone Files/Photos delivery, same-account phone/Studio and deployed two-writer acceptance remain pending.",
+    "Allowance refunds after durable rejection release remain best effort and require operational reconciliation when counter refund fails.",
+    "Imported edited cloud photos require verified server provenance before republication; imported local removals preserve published photos.",
+    "Dormant Python worker and spatial GPU/quality paths were not activated or accepted.",
+    "No pricing, subscription quantity or 75% margin policy change is certified by this audit."
+  ],
+  "evidenceSHA256": {
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/ci-success.json": "1495ef26da9b8c796aac54635df080c47cae361ae6c71f2ecff4f72f447ff186",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/source-manifest.json": "54619bf88066fa552fa6e616850d7a988e25b246d2a4226fbfe8d61cff8a02cb",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/apple-preflight.json": "9cf369e8fbea3e6cd6ed0b4f373ff526d0a3f75836bb8871ab935a87f4d7e757",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/archive-result.json": "4d976eb010ce7bd8d3cf6ddefb2e1fe9a6a673f6a7cce11714b2428a0320699a",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/archive-source-binding.json": "bfdd57ff437975fb685c6fb3014cfb49ec03f73402fb6f0accd9a8baa9e1f2e6",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/archive-independent-preflight.json": "074f813ece64a66c285e81bbc06f782983d3fa65c9e84901f25fa87e4e2fdf85",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/backend/root-mutation-receipts.json": "fd44ab73320386635362bff7aef6e8e56e94ea01a72c88332da9188bf92eea6e",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/backend/post-migration-verification.json": "dc1a2caad1a9c20f37b69f106cbc58571c47fe964e518c859886eaced121e361",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/backend/after-function-metadata.json": "33ee7d99a52dcc7ca7357e66d3b1c8c2443dbd9f229b8026aabba4abf095f6ff",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/backend/after-source-comparison.json": "d54687d3bee8b17c0381604a927b5dcbbb0b5465ed552e3956653fe8a2004d93",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/backend/anonymous-probes.json": "f3891de1dd51530e77643b0ef2c27ac7cd97dd6e35934c51c9286d92e83a4cdd",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/backend/backend-delivery-verification.json": "b657b4735caa6420e540360b54defe9e0ea482922b702ef7920a5bf1ff3f50b2",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/upload-result.json": "a4cc532d00a80c04125301185db3fc0fb814d49a64f77757eb76cf1de5d3b01b",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/testflight-ready.json": "fc28268ab9b204bdf321c030edac76aa0cb2cb7f0fa161a859be01d0a1618cbd",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/test-notes-receipt.json": "4ebf909ab4cbbbc1ed61c46ed1f0123b74c5950e7fa9876a31181442517a4b5f",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/Rendprop-build44-uploaded.ipa": "dd54b83a52dfb9567730e9c104e51613f49492ffbd644a3d10b4f0477c031b6b",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/uploaded-package-local-binding.json": "2e11a7fb288dc7a8410e29e7bdf8952efcadf96d9c301ba2aa2efbe79d165431",
+    "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/uploaded-package-apple-ready-binding.json": "c5a685a216485bea84b3e6321a96288f54a235437370d5813cf2719b81ea2c60"
+  },
+  "testNotes": {
+    "verifiedAt": "2026-10-05T01:34:36.007011+00:00",
+    "buildID": "2cab4332-f370-408a-92bf-7608d5d7915e",
+    "locale": "en-US",
+    "readbackVerified": true,
+    "textSHA256": "c628c3f81f4b1fec16e728b7a86aa4ce15fc716be58cfb456914ec6a9a10eba2"
+  },
+  "uploadedPackage": {
+    "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-testflight44-20261004/testflight44/Rendprop-build44-uploaded.ipa",
+    "bytes": 21028417,
+    "sha256": "dd54b83a52dfb9567730e9c104e51613f49492ffbd644a3d10b4f0477c031b6b",
+    "qualification": "Retained actual uploaded IPA matches the completed transport record, original pipeline re-signed app and verified source archive; separate Apple GET confirms internal availability."
+  },
+  "uploadedDistributionVerification": {
+    "localVerificationPassed": true,
+    "sourceCommit": "9d27fb5a9e81a5f016c0e00deae744c7ca6c718c",
+    "signatureVerified": true,
+    "authority": "Apple Distribution",
+    "getTaskAllow": false,
+    "appleSignIn": "Default",
+    "appStoreDistributionProfile": true,
+    "architecture": "arm64",
+    "nativeUUID": "8DE0D288-6010-392C-A424-7144D9E449FD",
+    "archiveDSYMUUIDMatches": true,
+    "nativeSectionsByteExactToSourceArchive": true,
+    "nativeSectionsVerified": 37,
+    "resourcesByteExactToSourceArchive": 7,
+    "filesMatchedOriginalDistributionApp": 11,
+    "transferLogPathAndMD5Match": true,
+    "transferCompleted": true,
+    "distributionExecutableSHA256": "3a80ff0c8831a2287ecf631eabf7735b2f4c3b802d8acc623f50b4f9531a676b",
+    "developmentOrSecretResourcesFound": [],
+    "qualification": "The Apple Distribution signature changes executable bytes; all file-backed native sections and the Mach-O UUID match the verified archive. Installation and physical-device acceptance are not claimed."
+  }
+}

@@ -5,28 +5,32 @@ struct OnboardingView: View {
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var page = 0
     @State private var choosingType = false
+    @State private var choosingRole = false
+    @State private var selectedRole: RealEstateRole = .agent
 
     // Feature-first: each page is one headline feature wearing its signature
     // gradient (the same one it wears on Home's showroom).
     private let cards: [(icon: String, gradient: LinearGradient, title: String, body: String)] = [
-        ("video.fill", RPGradient.drone,
-         "Film with your phone.\nGet a drone-style tour.",
-         "Walk through once while recording. Rendprop turns it into a smooth, cinematic flythrough people scroll to explore."),
+        ("house.fill", RPGradient.drone,
+         "Start with your home.\nAdd the details.",
+         "Enter the address and property details. Your photos, video, website and leads stay grouped with that home."),
         ("wand.and.stars", RPGradient.photo,
-         "An AI photo studio\nin your pocket.",
-         "Twilight skies, decluttered rooms, virtual staging — pro listing photos from the ones you already have."),
+         "Landscape photos.\nOptional AI edits.",
+         "Add landscape photos and keep the camera level. Use 0.5× when needed and available. Keep your Originals and review optional AI edits."),
         ("film.stack", RPGradient.reel,
-         "Reels and floor plans,\ndone for you.",
-         "AI animates your photos into a social-ready reel. On iPhones with LiDAR, you can scan a floor plan too — or upload one."),
+         "Make a Listing video.\nReview the result.",
+         "Choose landscape Listing or portrait Social media. Your selected order is kept, with automatic camera motion. Voice and music are optional."),
         ("link", RPGradient.share,
-         "One link.\nReal leads.",
-         "Share your tour anywhere. Your card rides along, every viewer can reach you in a tap, and their inquiries land in Leads."),
+         "Your website.\nShare and follow up.",
+         "Choose your gallery and cover, check video and contact details, then publish. Share the link and follow up in Leads. Recorded walkthroughs are optional."),
     ]
 
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
-            if choosingType {
+            if choosingRole {
+                rolePicker
+            } else if choosingType {
                 typePicker
             } else {
                 cardsView
@@ -150,24 +154,13 @@ struct OnboardingView: View {
                 .padding()
             }
 
-            // Nothing in the app had ever mentioned the free week, so nobody
-            // knew they were on one — and until migration 0032 there was
-            // nothing to mention, because `trial` and `free` carried identical
-            // entitlements. Deliberately NOT called a "7-day free trial": the
-            // paywall's StoreKit introductory offer is called that, and two
-            // different things under one name is how a 3.1.2 problem starts.
-            //
-            // The week is sized per industry (migration 0044): an agent gets
-            // 3 tours, a single-location business 1. The line reads the LIVE
-            // selection above — tap "Event venue" and it says "1 tour" — so
-            // the promise a person reads is the one the server will keep for
-            // the type they picked. The title stays word for word: the
-            // screenshot walk finds this screen by it.
+            // Trial access starts through StoreKit confirmation, never merely
+            // by completing onboarding or creating an anonymous workspace.
             VStack(spacing: 3) {
-                Text("Your first week is on us")
+                Text("Choose a plan. Confirm with Apple.")
                     .font(.rpCaption.weight(.semibold))
                     .foregroundStyle(Theme.ink)
-                Text("\((SpaceType(rawValue: spaceTypeRaw) ?? .realEstate).freeWeekLine), free. No card, no account.")
+                Text("Eligible subscriptions include 7 days free. Apple shows the offer and renewal price before you confirm. Exploring the app does not start a trial.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)
@@ -177,19 +170,43 @@ struct OnboardingView: View {
             .padding(.top, 14)
             .padding(.bottom, 12)
 
-            PrimaryButton(title: "Get started", systemImage: "arrow.right") {
-                hasOnboarded = true
-                // Ask about notifications HERE, not only after the first
-                // publish. A person who is never asked can currently only find
-                // this in Settings, and nobody goes looking for a switch they
-                // do not know exists. This raises the plain-words pre-prompt,
-                // never the iOS dialog — that one is spent only on a yes, so a
-                // "Not now" costs nothing and the publish moment may ask once
-                // more. See PushManager.noteOnboardingFinished.
-                PushManager.shared.noteOnboardingFinished()
+            PrimaryButton(title: spaceTypeRaw == SpaceType.realEstate.rawValue ? "Continue" : "Explore the app", systemImage: "arrow.right") {
+                if spaceTypeRaw == SpaceType.realEstate.rawValue { withAnimation { choosingRole = true } }
+                else { finish(showPlans: false) }
             }
+            .accessibilityIdentifier("onboarding.explore")
             .padding(.horizontal, 24)
-            .padding(.bottom, 28)
+            .padding(.bottom, 8)
+            Button("See plans") {
+                if spaceTypeRaw == SpaceType.realEstate.rawValue { withAnimation { choosingRole = true } }
+                else { finish(showPlans: true) }
+            }
+                .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                .accessibilityIdentifier("onboarding.choosePlan")
+                .padding(.bottom, 24)
         }
+    }
+
+    private var rolePicker: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("How do you work?").font(.rpLargeTitle).foregroundStyle(Theme.ink)
+            Text("We'll tailor your real estate workflow.").font(.rpBody).foregroundStyle(Theme.inkDim)
+            RealEstateRoleChoice(selected: $selectedRole)
+            Spacer()
+            PrimaryButton(title: "Explore the app", systemImage: "arrow.right") { finish(showPlans: false) }
+                .accessibilityIdentifier("onboarding.role.explore")
+            Button("See plans") { finish(showPlans: true) }
+                .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                .accessibilityIdentifier("onboarding.role.choosePlan")
+            Button("Back") { choosingRole = false }.font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }.padding(24)
+    }
+    private func finish(showPlans: Bool) {
+        guard NativeAccountLaunchAdmission.allows(signedIn: AuthStore.shared.isSignedIn,
+            identified: AuthStore.shared.isIdentified, actorID: AuthStore.shared.userID,
+            offlineFixture: Config.isOfflineAccountFixture) else { return }
+        if spaceTypeRaw == SpaceType.realEstate.rawValue { RealEstateRoleStore.choose(selectedRole, owner: AuthStore.shared.userID) }
+        hasOnboarded = true
+        if showPlans { PaywallRouter.shared.present(reason: .upgrade) }
     }
 }

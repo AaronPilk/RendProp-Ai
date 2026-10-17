@@ -24,6 +24,7 @@ try{
   page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(15000);
   await page.goto(`${origin}/tests/cloud-editor-fixture.html`);
   async function openTools(){
+    await page.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();
     await expect(page.getByRole("region",{name:"Confirm version handoff",exact:true})).toHaveCount(0);
     for(const label of ["Capture plan & extra editing tools","Saved versions & team review","Team review & saved versions"]){
       const summary=page.locator("summary").filter({hasText:new RegExp(`^${label}$`)});

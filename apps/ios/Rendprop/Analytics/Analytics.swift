@@ -171,6 +171,23 @@ enum Analytics {
         #endif
     }
 
+    /// A failed AI request, with the server's error class and nothing else.
+    /// Until 2026-10-08 the app reported successes only, so a provider dying
+    /// looked exactly like nobody trying. `detail` is the HTTP status or the
+    /// transport class — never the message, never anything identifying.
+    static func trackAIFailure(_ category: String, step: String, error: Error) {
+        var code = "client", detail = ""
+        if let api = error as? APIError {
+            code = api.code ?? (api.status.map { "http_\($0)" } ?? "server")
+            detail = api.status.map { String($0) } ?? ""
+        } else if error is CancellationError {
+            return
+        } else if error is URLError {
+            code = "offline"
+        }
+        track("error", ["category": category, "step": step, "code": code, "detail": detail])
+    }
+
     /// Start the pipeline: device id, session id, `app_open`, the crash
     /// subscriber, the SKAdNetwork install postback, and the periodic flush.
     ///

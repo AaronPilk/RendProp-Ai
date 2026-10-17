@@ -31,6 +31,7 @@ export class DocumentSync {
   private running = false;
   private stopped = false;
   private uncertain: { payload: string; revision: number } | null = null;
+  private rejectedWrite: StudioError | null = null;
   private controller = new AbortController();
   state: SyncState = "loading";
   constructor(private services: StudioServices, readonly orgId: string, readonly key: string,
@@ -63,6 +64,7 @@ export class DocumentSync {
   async flush(): Promise<void> {
     if (this.stopped || this.running || !this.pending || this.state === "conflict" || this.state === "offline" || this.state === "loading") return;
     this.running = true;
+    this.rejectedWrite = null;
     const payload = this.pending;
     const attempt = { payload: canonicalDocument(payload), revision: this.revision };
     this.pending = null;
@@ -80,6 +82,11 @@ export class DocumentSync {
       this.status(this.pending ? "saving" : "saved");
     } catch(error) {
       this.pending ??= payload;
+      // A caller creating a new identity may keep its previous editor when the
+      // server explicitly refused this write. Timeouts, bad receipts and 5xx
+      // remain uncertain and must retain the same key for reconciliation.
+      if (error instanceof StudioError && error.status !== undefined &&
+        [400, 401, 403, 404, 409, 413, 422].includes(error.status)) this.rejectedWrite = error;
       this.uncertain = error instanceof StudioError && error.status === 409 ? null : attempt;
       this.status(error instanceof StudioError && error.status===409 ? "conflict" : "offline");
     } finally {
@@ -107,6 +114,7 @@ export class DocumentSync {
   get hasUnsavedWork(): boolean { return this.running || this.pending !== null || this.uncertain !== null || this.state === "conflict"; }
   /** Last server-confirmed revision, used to bind review actions to saved work. */
   get confirmedRevision(): number { return this.revision; }
+  get writeRejection(): StudioError | null { return this.rejectedWrite; }
   /** When another device saves, ask to reload instead of silently replacing an open edit. */
   async checkRemote(): Promise<void> {
     if (this.stopped || this.state !== "saved" || this.hasUnsavedWork) return;

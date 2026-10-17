@@ -1,0 +1,269 @@
+{
+  "schema": 1,
+  "recordedAt": "2026-10-09T21:54:32.227084+00:00",
+  "branch": "audit/launch-alignment-20261008",
+  "codeCheckpoint": "dca97aad9e6ab555e4dffb50259336debe46fa41",
+  "delivery": {
+    "githubPushed": true,
+    "version": "1.0.4",
+    "build": "54",
+    "archiveSource": "ed88c1687ddcf560c0d8409cfea84f87f30ca067",
+    "nativeTree": "f12bb82143167e1bbfd488b7558647ddd3fb04a6",
+    "binarySHA256": "44210c11162c20a916804f83913b1a988bf119aab049b6c18dfe5c49b6943407",
+    "ipaSHA256": "819a06aa41a69b50ef4f080ece4294bff2abcfa002733914cf4d5e8e716b3134",
+    "uploadAttempts": 1,
+    "uploadExit": 0,
+    "appleBuildID": "ebe4d32d-7568-49d3-8906-ce58a6e52d19",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "externalBuildState": "READY_FOR_BETA_SUBMISSION",
+    "audience": "APP_STORE_ELIGIBLE",
+    "nonExemptEncryption": false
+  },
+  "database": {
+    "projectRef": "ymgqpbnjpztwjsyvceld",
+    "migrationFile": "20261009192550_team_private_listing_libraries.sql",
+    "recordedVersion": "20261009214512",
+    "migrationName": "team_private_listing_libraries",
+    "sqlSHA256": "3a0a02b67632bb4c84fe2f72c5bd4e5efd7153a6472d86083cd26e33f3eae94f",
+    "transactionCommitted": true,
+    "reviewedProductionPredecessors": 4,
+    "unknownBodyGuardsRetained": true,
+    "restrictivePresenterPoliciesRetained": true
+  },
+  "functions": {
+    "me": {
+      "id": "2fe30f3d-3570-4a10-b8c1-e3afa7a3518d",
+      "version": 62,
+      "verifyJwt": false
+    },
+    "listings": {
+      "id": "04ed7098-03d4-4da2-a77c-8998a8402ce1",
+      "version": 49,
+      "verifyJwt": true
+    },
+    "studio": {
+      "id": "48930645-bb3e-481a-a615-501f300e4dee",
+      "version": 29,
+      "verifyJwt": true
+    },
+    "team": {
+      "id": "a52069c1-fe13-49e0-b889-68014f5420b2",
+      "version": 27,
+      "verifyJwt": true
+    },
+    "leads": {
+      "id": "26e4ad1a-8349-46cc-b77e-232bd62a7a1d",
+      "version": 46,
+      "verifyJwt": false
+    },
+    "ai-photo": {
+      "id": "ed6f9fc0-e651-4622-b79a-e752770279be",
+      "version": 66,
+      "verifyJwt": true
+    },
+    "ai-copy": {
+      "id": "a21425d9-8959-4a6b-9399-c928abd148e6",
+      "version": 33,
+      "verifyJwt": true
+    },
+    "ai-video": {
+      "id": "9dd26656-ea6d-454d-bb29-951a7e03b3dd",
+      "version": 63,
+      "verifyJwt": true
+    },
+    "ai-voice": {
+      "id": "4537778d-5283-484e-a6f5-56038070d525",
+      "version": 46,
+      "verifyJwt": true
+    },
+    "ai-chapters": {
+      "id": "2e627a9e-1f5a-48aa-bf1b-ce1a21318008",
+      "version": 37,
+      "verifyJwt": true
+    },
+    "uploads": {
+      "id": "202a9033-a7c7-491c-bdf0-991720548b63",
+      "version": 54,
+      "verifyJwt": false
+    },
+    "coach": {
+      "id": "2fa42061-bdbb-4231-b651-9a149c4a1b59",
+      "version": 34,
+      "verifyJwt": true
+    },
+    "property": {
+      "id": "863e69f3-b7de-49ae-8217-5c8401a26153",
+      "version": 23,
+      "verifyJwt": true
+    },
+    "events": {
+      "id": "521bf2c7-ed2c-4795-93a1-15a48673e07f",
+      "version": 36,
+      "verifyJwt": true
+    },
+    "spatial": {
+      "id": "f6659ee4-7db9-4264-97cc-7e7d6deb9b4b",
+      "version": 20,
+      "verifyJwt": false
+    },
+    "tours": {
+      "id": "513c3707-3d47-4411-87e0-33e40259fa23",
+      "version": 56,
+      "verifyJwt": false
+    },
+    "renders": {
+      "id": "a8e56416-0d6a-4fee-a4ee-b671e0298167",
+      "version": 50,
+      "verifyJwt": true
+    }
+  },
+  "functionsVerified": 17,
+  "jwtPolicyChanged": false,
+  "cloudflare": {
+    "studio": {
+      "version": "c2875843-acdd-4960-858c-af9f3c817f1d",
+      "servedReadback": "passed",
+      "GETRequests": 35,
+      "verifiedFiles": 31,
+      "accountLoginVerified": false
+    },
+    "tourHost": {
+      "version": "0f6183e6-1e41-4170-bad2-3b114d8b53fb",
+      "servedRoutes": [
+        "/terms",
+        "/privacy",
+        "/support"
+      ],
+      "sourceContentMatch": true,
+      "zoneTransformation": "exact observed Cloudflare JSD script; only request ID/timestamp vary",
+      "zoneSecurityChanged": false
+    }
+  },
+  "ci": {
+    "runID": 37995386399,
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37995386399",
+    "headSha": "dca97aad9e6ab555e4dffb50259336debe46fa41",
+    "status": "in_progress",
+    "conclusion": "",
+    "snapshotAt": "2026-10-09T21:56:41.886784+00:00",
+    "jobs": [
+      {
+        "name": "Offline audit evidence, consent and adoption source gates",
+        "status": "in_progress",
+        "conclusion": ""
+      },
+      {
+        "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Cloudflare Worker (tour-host)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Studio contracts, build and property workflows (offline)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "iOS static gates",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Web parity inventory and design-token contracts (offline)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Offline reel-style preservation and blind-evaluation contracts",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Secret scan",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Python workers (render, spatial, training adapter)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase edge functions (deno check + tests)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase migrations (fresh replay + invariants)",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "appStore": {
+    "submitted": false,
+    "candidateVersion": "1.0.4",
+    "attachedDraftBuild": "53",
+    "draftState": "PREPARE_FOR_SUBMISSION",
+    "submissionGate": "Claude final GO plus completed successful exact-source CI; separate final Apple preparation",
+    "manualRelease": true,
+    "artwork": "Seven COMPLETE campaign images; revised Home and account/privacy frames uploaded, five retained",
+    "JohnAppleTouched": false
+  },
+  "limitations": [
+    "Phone camera, interruption/background operation and ordinary trial/purchase/restore remain owner-deferred, not passed by simulator.",
+    "Actual Mom join/sibling visibility on phone remains pending.",
+    "Spatial and video reflection experiments remain in their existing experimental scope.",
+    "No new paid generation: one actual ordinary Gemini declutter and one owner-sponsored Seedance reel exist; ordinary reel/aerial and supplier invoices not certified.",
+    "Optional Python polling worker source changed; no live fleet identity/image or redeployment established. Git/TestFlight does not deploy that runtime.",
+    "Legacy shared member portfolio continuity and owner all-library bounded pagination remain documented follow-ups."
+  ],
+  "evidence": {
+    "package": {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/team-private-libraries-20261009/testflight54/receipt.json",
+      "sha256": "eee4e88c4aa80d6f116fb2cd3cfb4a20db4194f3b7a1f0b16f866e21246321c5"
+    },
+    "packageVerification": {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/team-private-libraries-20261009/testflight54/package-verification.json",
+      "sha256": "091979e89b11d16e7eca8e464dab754a952bdf95565807a4b69bd597c241549d"
+    },
+    "appleProcessing": {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/team-private-libraries-20261009/testflight54/apple-processing-readback.json",
+      "sha256": "d54e8f88027b8875e8ffad086270652fa275a68a7fe7d134e56277e3c3927b87"
+    },
+    "backendSourceReadback": {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/design-refresh-20261009/team-privacy/backend-team-source-readback-final.json",
+      "sha256": "5d5d5522d6250769c288d428fe45dd73742f1c0b5af87dba315c1b8fc1790df5"
+    },
+    "studioServedReadback": {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/design-refresh-20261009/team-privacy/studio-deployed-readback-final.json",
+      "sha256": "e22ff0f7d56f5aa716ed43ecea81afa2585ab98d2c5813f2a6146fb3daaf7777"
+    },
+    "siteServedReadback": {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/design-refresh-20261009/team-privacy/tour-host-deployed-readback-final.json",
+      "sha256": "69ceb6e1788ea03174f946af1311186e5cef7fad87171f2c3c8aef93d46e5147"
+    },
+    "guardCompatibility": {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/design-refresh-20261009/team-private-libraries/production-guard-review-6dd3/final-review-receipt.json",
+      "sha256": "42baf7e7700739d83e157153af86ff74977d85e34168acf764f67b805436f4c4"
+    },
+    "productionPrivacy": {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/design-refresh-20261009/team-private-libraries/production-acceptance-dca97aa/read-only-production-acceptance.json",
+      "sha256": "a66cedc5f8a7491984ce5fb97c6fd8627adee85d335858f834b7eba09aaea20b"
+    },
+    "ciSnapshot": {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/design-refresh-20261009/team-privacy/ci-dca97aa-progress.json",
+      "sha256": "4e923cf93f76170c9c4fb4fbfc1e3cefd815fceb6ba677266c00232c04e119a5"
+    }
+  }
+}

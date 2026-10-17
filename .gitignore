@@ -26,6 +26,7 @@ graphify-out/
 # Supabase deploy staging dir (deploy-functions.sh builds + deletes it; never commit)
 services/supabase/.deploy/
 services/supabase/.temp/
+services/supabase/supabase/.temp/
 services/supabase/functions/deno.json
 services/supabase/functions/deno.lock
 

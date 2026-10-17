@@ -1,9 +1,11 @@
-#if DEBUG
+#if DEBUG && targetEnvironment(simulator)
 import SwiftUI
 import UIKit
 
 /// Only entered by the dedicated loopback-network test on a disposable simulator.
-/// It seeds media/state, then renders the real production screen and buttons.
+/// It admits a fixed identified loopback account, seeds media/state, then
+/// renders the real production screen and buttons. Token refresh uses the
+/// ordinary AuthStore path; signed-out/anonymous admission is never bypassed.
 struct PhaseOneFixtureRoot: View {
     @EnvironmentObject var model: AppModel
     @State private var fixture: Listing?
@@ -35,12 +37,30 @@ struct PhaseOneFixtureRoot: View {
         .task {
             guard fixture == nil, error == nil, let base = Config.sessionTestURL else { return }
             do {
+                // This synthetic token is accepted only by the loopback test
+                // server. Its short expiry forces the real refresh/retry path.
+                let identity = try await AuthStore.shared.exchangeAppleIdentityToken(
+                    idToken: "rendprop-session-network-identified-fixture")
+                let owner = UUID(uuidString: "10000000-0000-4000-8000-000000000003")!
+                let org = UUID(uuidString: "10000000-0000-4000-8000-000000000005")!
+                guard identity.ownerID == owner.uuidString.lowercased(),
+                      AuthStore.shared.isSignedIn, AuthStore.shared.isIdentified else {
+                    throw CloudSyncError.identityChanged
+                }
+                let member = WorkspaceMembership(id: org, name: "Network Test Workspace", role: "owner",
+                    accessMode: "own", libraryOwnerUserID: owner, billingOrgID: org,
+                    canRead: true, canWrite: true, canManageSubscription: true)
+                guard WorkspaceContext.save(.init(selectedOrgID: org, workspaces: [member]), owner: owner) else {
+                    throw CloudSyncError.invalidResponse
+                }
                 // The fixture server is loopback-only; no provider is involved.
                 let (media, response) = try await URLSession.shared.data(from: base.appendingPathComponent("clip.mp4"))
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
                 var listing = Listing(address: "Network Test Workspace", beds: 2, baths: 1,
                                       sqft: 1000, price: Money(cents: 0))
                 listing.serverID = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
+                listing.serverOrgID = org
+                listing.cloudSyncOwnerID = owner
                 listing.latitude = 0; listing.longitude = 0
                 listing.status = .ready
                 let dir = EnhancedPhoto.directory(for: listing.id)

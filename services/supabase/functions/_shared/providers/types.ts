@@ -25,6 +25,8 @@ export interface GenerateInput {
   mask_url?: string;
   seconds?: number;
   aspect?: "16:9" | "9:16" | "1:1";
+  /** Reel only: keep the input photograph's shape; aspect describes the app canvas. */
+  framing?: "preserve_photo";
   resolution?: "720p" | "1080p" | "4k";
   text?: string; // tts
   voice_id?: string;
@@ -39,8 +41,15 @@ export interface JobRef {
   submitted_at: string;
 }
 
+export type ProviderDeliveryIssue = {
+  phase: "result_read"; provider: "fal"; provider_state: "completed"; provider_status: 403;
+  reason: "balance_exhausted" | "account_locked" | "auth" | "permission" | "unknown";
+} | {
+  phase: "status_and_result_read"; provider: "fal"; provider_state: "unavailable";
+  provider_status: 404; result_status: 404; reason: "not_found";
+};
 export type JobState =
-  | { status: "queued" | "running" }
+  | { status: "queued" | "running"; delivery_issue?: ProviderDeliveryIssue }
   | {
     status: "done";
     result_url: string;

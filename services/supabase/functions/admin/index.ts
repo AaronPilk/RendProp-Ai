@@ -85,8 +85,18 @@ import { adminClient, getUser } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { APP_AI_UNIT_CENTS } from "../_shared/ledger.ts";
 import { probeAll } from "./probe.ts";
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { handleFunnel } from "./funnel.ts";
+import {
+  aggregateLedger,
+  bump,
+  summarizeUnreconciled,
+  type AppVideoHoldRow,
+  type Bucket,
+  type LedgerRow,
+  type ProviderAttemptRow,
+  type ServingHoldRow,
+} from "./spend-summary.ts";
 
 // A console refresh is a handful of aggregate queries; 60/min per admin is
 // generous for a human and still bounds an accidental poll loop.
@@ -189,6 +199,9 @@ interface AdminCaller {
  */
 async function requireAdmin(req: Request): Promise<AdminCaller> {
   const user = await getUser(req); // 401 on a missing/invalid/expired token
+  if (user.is_anonymous !== false || !user.email_confirmed_at) {
+    throw new HttpError(403, "A verified admin account is required for this console.", "forbidden", { reason: "unverified_admin" });
+  }
 
   const { data, error } = await adminClient()
     .from("profiles")
@@ -742,22 +755,12 @@ async function pageAll<T>(
   return { rows, truncated: true };
 }
 
-interface LedgerRow {
-  id: string;
-  org_id: string | null;
-  provider: string | null;
-  feature: string | null;
-  model: string | null;
-  total_cents: number | string | null;
-  created_at: string;
-}
-
 function readLedgerSince(db: SupabaseClient, sinceIso: string) {
   return pageAll<LedgerRow>(
     (from, to) =>
       db
         .from("cost_ledger")
-        .select("id, org_id, provider, feature, model, total_cents, created_at")
+        .select("id, org_id, billing_org_id, provider, feature, model, total_cents, created_at")
         .gte("created_at", sinceIso)
         .order("id", { ascending: true })
         .range(from, to),
@@ -765,16 +768,46 @@ function readLedgerSince(db: SupabaseClient, sinceIso: string) {
   );
 }
 
-interface Bucket {
-  total: number;
-  rows: number;
+// The three journals that can hold supplier liability WITHOUT a ledger row.
+// Read with the same paging/truncation discipline as the ledger; the summary
+// never prices them and never adds them to total_cents.
+function readServingHoldsSince(db: SupabaseClient, sinceIso: string) {
+  return pageAll<ServingHoldRow>(
+    (from, to) =>
+      db
+        .from("serving_cost_reservations")
+        .select("id, org_id, billing_org_id, state, budget_source, ledger_id, hold_cents, created_at")
+        .gte("created_at", sinceIso)
+        .order("id", { ascending: true })
+        .range(from, to),
+    "Serving holds",
+  );
 }
 
-function bump(map: Map<string, Bucket>, key: string, cents: number): void {
-  const b = map.get(key) ?? { total: 0, rows: 0 };
-  b.total += cents;
-  b.rows += 1;
-  map.set(key, b);
+function readAppVideoHoldsSince(db: SupabaseClient, sinceIso: string) {
+  return pageAll<AppVideoHoldRow>(
+    (from, to) =>
+      db
+        .from("app_video_cost_reservations")
+        .select("id, hold_cents, cost_ledger_id, released_at, created_at")
+        .gte("created_at", sinceIso)
+        .order("id", { ascending: true })
+        .range(from, to),
+    "App video holds",
+  );
+}
+
+function readProviderAttemptsSince(db: SupabaseClient, sinceIso: string) {
+  return pageAll<ProviderAttemptRow>(
+    (from, to) =>
+      db
+        .from("provider_attempt_receipts")
+        .select("id, provider, outcome, estimated_cents, ledger_status, created_at")
+        .gte("created_at", sinceIso)
+        .order("id", { ascending: true })
+        .range(from, to),
+    "Provider attempts",
+  );
 }
 
 function share(part: number, whole: number): number {
@@ -819,29 +852,33 @@ async function handleSpend(req: Request): Promise<Response> {
   const fromIso = from.toISOString();
   const db = adminClient();
 
-  const [{ rows, truncated }, coverage] = await Promise.all([
+  const [{ rows, truncated }, coverage, serving, video, attempts] = await Promise.all([
     readLedgerSince(db, fromIso),
     buildCoverage(db),
+    readServingHoldsSince(db, fromIso),
+    readAppVideoHoldsSince(db, fromIso),
+    readProviderAttemptsSince(db, fromIso),
   ]);
 
-  const byProvider = new Map<string, Bucket>();
-  const byFeature = new Map<string, Bucket>();
-  const byOrg = new Map<string, Bucket>();
-  let total = 0;
+  // Pure aggregation (admin/spend-summary.ts): workspace view (`by_org`,
+  // cost_ledger.org_id) AND paying-account view (`by_billing_org`,
+  // cost_ledger.billing_org_id, falling back to org_id for legacy rows).
+  const agg = aggregateLedger(rows);
+  const { byProvider, byFeature, byOrg, byBillingOrg } = agg;
+  const total = agg.total;
 
-  for (const r of rows) {
-    const cents = Number(r.total_cents ?? 0);
-    if (!Number.isFinite(cents)) continue;
-    total += cents;
-    bump(byProvider, r.provider ?? "unknown", cents);
-    bump(byFeature, r.feature ?? "unknown", cents);
-    bump(byOrg, r.org_id ?? "", cents); // "" == unattributed (org_id is nullable)
-  }
-  total = round4(total);
+  const unreconciled = summarizeUnreconciled({
+    serving: serving.rows,
+    servingTruncated: serving.truncated,
+    video: video.rows,
+    videoTruncated: video.truncated,
+    attempts: attempts.rows,
+    attemptsTruncated: attempts.truncated,
+  });
 
   // Org names for the ids we actually saw. Org-level only: id + name + plan,
   // never a member.
-  const orgIds = [...byOrg.keys()].filter((k) => k !== "");
+  const orgIds = [...new Set([...byOrg.keys(), ...byBillingOrg.keys()])].filter((k) => k !== "");
   const orgMeta = new Map<string, { name: string; plan: string | null }>();
   for (let i = 0; i < orgIds.length; i += 200) {
     const chunk = orgIds.slice(i, i + 200);
@@ -855,6 +892,18 @@ async function handleSpend(req: Request): Promise<Response> {
   const sortDesc = <T extends { total_cents: number }>(a: T[]): T[] =>
     a.sort((x, y) => y.total_cents - x.total_cents);
 
+  const orgBuckets = (map: Map<string, Bucket>) =>
+    sortDesc(
+      [...map.entries()].map(([id, b]) => ({
+        org_id: id === "" ? null : id,
+        org_name: id === "" ? "(unattributed)" : (orgMeta.get(id)?.name ?? "(deleted workspace)"),
+        plan: id === "" ? null : (orgMeta.get(id)?.plan ?? null),
+        total_cents: round4(b.total),
+        rows: b.rows,
+        share: share(b.total, total),
+      })),
+    );
+
   return json({
     window: win,
     from: fromIso,
@@ -862,6 +911,7 @@ async function handleSpend(req: Request): Promise<Response> {
     generated_at: nowIso(),
     total_cents: total,
     ledger_rows: rows.length,
+    ledger_rows_unreadable_amount: agg.unreadableRows,
     truncated,
     by_provider: sortDesc(
       [...byProvider.entries()].map(([key, b]) => ({
@@ -881,36 +931,31 @@ async function handleSpend(req: Request): Promise<Response> {
         share: share(b.total, total),
       })),
     ),
-    by_org: sortDesc(
-      [...byOrg.entries()].map(([id, b]) => ({
-        org_id: id === "" ? null : id,
-        org_name: id === "" ? "(unattributed)" : (orgMeta.get(id)?.name ?? "(deleted workspace)"),
-        plan: id === "" ? null : (orgMeta.get(id)?.plan ?? null),
-        total_cents: round4(b.total),
-        rows: b.rows,
-        share: share(b.total, total),
-      })),
-    ),
+    // Workspace the call ran in (cost_ledger.org_id) — unchanged contract.
+    by_org: orgBuckets(byOrg),
+    // Account that pays for it (cost_ledger.billing_org_id → org_id). A Team
+    // member's library bills to the team org; an anonymised deleted-account
+    // row keeps its billing org after org_id is nulled.
+    by_billing_org: orgBuckets(byBillingOrg),
+    attribution: {
+      by_org: "workspace: cost_ledger.org_id",
+      by_billing_org: "paying account: cost_ledger.billing_org_id, falling back to org_id for rows stamped before the column existed",
+      rows_billed_outside_workspace: agg.billedElsewhereRows,
+    },
+    // Liability the ledger total cannot see (same window). Never added to
+    // total_cents; unknown outcomes carry no amount.
+    unreconciled,
     coverage,
   });
 }
 
 // ── coverage: what the ledger number does and does NOT include ───────────────
 //
-// This is the honest part of /admin/spend. `total_cents` is the LEDGER's number,
-// not the invoice. Two named sources are missing today (docs/handoff/E-network.md
-// §2, finding F-E-15): ai-photo and ai-video make billable Gemini and fal calls
-// and never write a cost_ledger row, so every in-app AI generation is invisible
-// here AND to the per-org monthly COGS ceiling inside log_job_cost(). Stream
-// DELIVERY — the one cost that scales with views — is metered per view in
-// `metering` and likewise never priced into the ledger.
-//
-// `represented` is probed against the data, not asserted in prose, so coverage
-// heals itself the moment those writers land:
-//   • app AI has no render job, so an org-scoped ledger row with job_id IS NULL
-//     can only have come from an app-AI ledger write (E-network.md §2 says
-//     logCost() cannot be used as-is precisely because it requires a job_id).
-//   • stream delivery would arrive as feature = 'stream_deliver'.
+// total_cents is internal priced ledger accounting, not a supplier invoice.
+// These two presence probes cannot prove that every call, failed attempt,
+// serving operation or recurring infrastructure charge has been recorded.
+// Keep missing whole-app accounting and invoice reconciliation explicit even
+// when both categories contain rows; estimates can exceed or understate bills.
 
 interface CoverageSource {
   key: string;
@@ -932,55 +977,56 @@ async function buildCoverage(db: SupabaseClient): Promise<Record<string, unknown
   const sources: CoverageSource[] = [
     {
       key: "worker_pipeline",
-      label: "Worker render pipeline — declutter, restage, hero clip, QC",
+      label: "Worker AI pipeline — priced successful-call receipts",
       represented: true,
-      detail:
-        "services/pipeline writes one cost_ledger row per metered provider call through log_job_cost(), which also enforces the per-job cap and the per-org monthly COGS ceiling.",
+      detail: "The legacy pipeline writes priced provider receipts with a durable retry spool. Failed or uncertain attempts and their retained holds still need exact receipt reconciliation.",
       reference: "services/pipeline/cost_ledger.py",
     },
     {
       key: "worker_infra",
-      label: "Worker infrastructure — server encode compute and Stream storage",
+      label: "Worker infrastructure — partial estimates",
       represented: true,
-      detail:
-        "services/worker/infra_costs.py logs feature=render and feature=stream_store. The render number is a configurable per-minute ESTIMATE, not a vendor bill.",
+      detail: "The legacy worker records configurable encode estimates and the first month of Stream storage at publish. This does not cover all CPU attempts, recurring storage or supplier bills.",
       reference: "services/worker/infra_costs.py",
     },
     {
-      key: "app_ai_photo",
-      label: "In-app AI photo edits (POST /ai-photo)",
+      key: "app_api_ledger",
+      label: "App/API priced ledger receipts",
       represented: appAiLogged,
       detail: appAiLogged
-        ? "Org-scoped ledger rows with no render job are present, so app AI photo spend is now being recorded."
-        : "The ai-photo edge function never writes a cost_ledger row, so every Photo Studio edit is missing from the total above and from the per-org monthly COGS ceiling. Real provider spend is HIGHER than this number. Size the gap from GET /admin/usage photo_edits_used x 3.9c.",
-      reference: "docs/handoff/E-network.md §2 (finding F-E-15)",
-    },
-    {
-      key: "app_ai_video",
-      label: "In-app AI video — reel clips, aerials, Topaz drone renders (POST /ai-video)",
-      represented: appAiLogged,
-      detail: appAiLogged
-        ? "Org-scoped ledger rows with no render job are present, so app AI video spend is now being recorded."
-        : "The ai-video edge function never writes a cost_ledger row. These are the expensive taps (aerial $0.80, Topaz up to $14.40) and none of them appear above. Size the gap from GET /admin/usage reels/aerials/drone counters x the unit prices in GET /admin/providers.",
-      reference: "docs/handoff/E-network.md §2 (finding F-E-15)",
+        ? "Some app/API receipts without a render job are present. This broad presence check does not prove complete photo, video, helper or failed-call accounting."
+        : "No app/API ledger receipt was confirmed by this read. Missing or unreadable rows do not prove that no provider cost was incurred.",
+      reference: "services/supabase/functions/_shared/ledger.ts",
     },
     {
       key: "stream_delivery",
-      label: "Cloudflare Stream delivery — the cost that scales with views",
+      label: "Cloudflare Stream delivery — priced ledger presence",
       represented: deliveryLogged,
       detail: deliveryLogged
-        ? "feature=stream_deliver rows are present, so watched-minute delivery is priced into the ledger."
-        : "Views are metered in the `metering` table (watched minutes per render per day) but never priced into cost_ledger, so delivery spend does not appear above.",
-      reference: "docs/AI-COST-MODEL.md §3 ($0.001 per watched minute)",
+        ? "Some stream_deliver ledger rows exist. Their presence does not reconcile every view or the supplier delivery bill."
+        : "No stream_deliver ledger row was confirmed. Watch/request/byte counters remain usage evidence and are not a supplier invoice.",
+      reference: "tools/audit/API-COST-ACCOUNTING.md",
+    },
+    {
+      key: "unmetered_external_usage",
+      label: "Other external calls, serving and recurring infrastructure",
+      represented: false,
+      detail: "Complete accounting is still missing for uncertain property lookups, email attempts, Images transformations, CPU attempts, R2 operations/storage, and Supabase/hosting usage. Existing quotas and partial counters are not total costs.",
+      reference: "tools/audit/API-COST-ACCOUNTING.md",
+    },
+    {
+      key: "supplier_reconciliation",
+      label: "Supplier invoices and historical reconciliation",
+      represented: false,
+      detail: "Supplier usage/billing evidence is not automatically reconciled here. Catalog estimates, complete-price bounds, usage counts and funding top-ups must stay separate from invoiced consumption; account deletion can also remove ledger history.",
+      reference: "tools/audit/API-COST-ACCOUNTING.md",
     },
   ];
 
   const missing = sources.filter((s) => !s.represented);
   return {
-    complete: missing.length === 0,
-    headline: missing.length === 0
-      ? "Every known spend source writes to the ledger — this total is complete."
-      : `Incomplete: ${missing.length} spend source(s) never reach the ledger, so real provider spend is HIGHER than the total shown.`,
+    complete: false,
+    headline: "Incomplete accounting: recorded estimates and usage evidence are not the whole-app supplier bill.",
     represented_count: sources.length - missing.length,
     missing_count: missing.length,
     sources,
@@ -1625,6 +1671,7 @@ const COHORT_NOTE =
   "whole one.";
 
 const CHURN_NOTE =
+  "This owner report summarizes subscriptions across workspaces; it is not your personal renewal setting. Auto-renew off means a subscriber stopped the next renewal. It does not mean a provider key is disabled, and current paid access may continue until expiry. " +
   "Cancellations that are STILL IN FORCE: a subscriber who cancelled and came " +
   "back inside the window is not counted, because a win-back clears the " +
   "cancellation date. A cancellation is either a subscription that ended " +

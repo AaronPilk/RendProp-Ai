@@ -1,5 +1,16 @@
 # App Store Review readiness — Rendprop v1.0 (build 1)
 
+> **Superseded claims (10 October 2026, build 57).** This is the dated 2026-09-05 audit
+> and is kept as a record. Three things it treats as shipped no longer describe the
+> current build: (1) the floor plan / RoomPlan rows (§1 "2.5.1", "4.0 / 4.2", §3 "Floor plan —
+> RoomPlan…", §4 item 6) — in build 57 **Measurements, 3D floor plan and 3D walkthrough are
+> Coming soon cards on Home and in each listing's toolbox; they open nothing, no plan includes
+> them, and no scan, measurement entry or plan import is reachable**; (2) the yearly prices in
+> §3 (`$490` / `$990`) and "five products" in §4 — plans are **monthly only** (Starter, Pro,
+> Team); (3) "works without an account" — the app is account-first (Sign in with Apple before
+> Home). The current store copy is in `metadata/en-US/` and
+> [review-notes.md](review-notes.md); treat those, not this table, as the claim-by-claim truth.
+
 Audited **2026-09-05** against the App Store Review Guidelines as published at
 <https://developer.apple.com/app-store/review/guidelines/> (fetched the same day), on branch
 `launch`. Scope: the iOS app binary, its `Info.plist`, `PrivacyInfo.xcprivacy`, and the shipped

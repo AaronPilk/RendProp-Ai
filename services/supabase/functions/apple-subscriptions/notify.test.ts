@@ -78,6 +78,7 @@ function facts(over: Partial<NotificationFacts> = {}): NotificationFacts {
     environment: "Production",
     bundleId: "com.rendprop.app",
     transaction: tx(),
+    signedDate: PAST,
     renewal: renewal(),
     ...over,
   };

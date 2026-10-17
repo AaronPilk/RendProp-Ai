@@ -63,23 +63,21 @@
 // want to tune, so they are named constants at the top rather than buried.
 
 import {
+  factLines,
   type ScriptFacts,
   type SpaceType,
   type Tone,
-  extractJsonObject,
-  factLines,
   toneDirection,
 } from "./prompt.ts";
 import {
+  captionFrom,
+  classifyRoom,
+  MAX_OVERLAY_CHARS,
+  MAX_OVERLAY_WORDS,
   type Motion,
   type RoomClass,
   type ShotPhoto,
-  MAX_OVERLAY_CHARS,
-  MAX_OVERLAY_WORDS,
-  MAX_PHOTO_ID_CHARS,
   SURFACE_SEPARATOR,
-  captionFrom,
-  classifyRoom,
 } from "./shotlist.ts";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
@@ -110,6 +108,17 @@ export const MIN_CLIP_SECONDS = 6;
  *  eighty windows in it. Reached long after MAX_BROLL_SHARE in practice. */
 export const MAX_WINDOWS = 12;
 
+/** Visible answer contract, separate from a reasoning provider's combined cap.
+ * Astra retains its seeded 700-token cap; its last 200 tokens are headroom, not
+ * permission to return a larger edit. Bound the ENTIRE completed JSON in UTF-8
+ * bytes before parsing (a conservative byte upper bound on visible tokens). */
+export const MAX_AGENT_REEL_TOKENS = 500;
+export const MAX_AGENT_REEL_RESPONSE_BYTES = 500;
+/** Captions are optional. Share this budget across all windows so twelve photo
+ * assignments fit even when the offered photo IDs are long UUIDs. Unicode and
+ * JSON escaping still have to fit the independent whole-answer byte limit. */
+export const MAX_AGENT_REEL_CAPTION_BYTES = 240;
+
 /** Transcript hygiene. Phrase-level, not word-level: word-level timings make a
  *  prompt four times the size and buy nothing, because rule 3 snaps to phrase
  *  boundaries anyway. */
@@ -125,7 +134,9 @@ export type ReelSubject = typeof SUBJECTS[number];
 
 export function subjectOf(raw: unknown): ReelSubject {
   const s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
-  return (SUBJECTS as readonly string[]).includes(s) ? (s as ReelSubject) : "listing";
+  return (SUBJECTS as readonly string[]).includes(s)
+    ? (s as ReelSubject)
+    : "listing";
 }
 
 // ── Small helpers ────────────────────────────────────────────────────────────
@@ -252,7 +263,12 @@ export function planWindows(
       .map((p) => p.text)
       .join(" ");
 
-    out.push({ window_id: `w${out.length + 1}`, start: t1(start), end: t1(end), says });
+    out.push({
+      window_id: `w${out.length + 1}`,
+      start: t1(start),
+      end: t1(end),
+      says,
+    });
     spent += end - start;
     freeFrom = end + MIN_FACE_GAP_SECONDS; // rule 4
   }
@@ -285,8 +301,8 @@ const CLASS_MOVES: Record<RoomClass, readonly Motion[]> = {
   dining: ["orbit_right", "pull_back", "push_in"],
   primary: ["push_in", "pull_back", "tilt_up"],
   bed: ["push_in", "pull_back", "tilt_up"],
-  bath: ["rack_focus", "push_in", "tilt_down"],   // tight room: never an orbit
-  entry: ["tilt_up", "push_in", "pull_back"],     // height is what an entry sells
+  bath: ["rack_focus", "push_in", "tilt_down"], // tight room: never an orbit
+  entry: ["tilt_up", "push_in", "pull_back"], // height is what an entry sells
   work: ["push_in", "pull_back", "rack_focus"],
   detail: ["rack_focus", "tilt_down", "push_in"],
 };
@@ -333,34 +349,32 @@ export function agentReelInstruction(req: AgentReelRequest): string {
     : "The agent is talking about ONE PROPERTY. The photographs are that property.";
 
   return [
-    "You are the editor of a short vertical video for a real-estate agent who has already",
-    "filmed themselves speaking to camera. You are NOT writing the script: every word in",
-    "this reel has already been said. You decide only what the viewer sees when the agent",
-    "cuts away, and what few words appear on screen.",
+    "Edit an agent's already-filmed vertical reel. You are NOT writing the script:",
+    "the agent already spoke. Choose matching photographs and useful short captions.",
     "",
     about,
     "",
     "RULES:",
-    "1. You are given CUTAWAY WINDOWS that are already fixed. You cannot add, remove,",
-    "   move, lengthen or reorder them. Answer for the window_ids you were given.",
-    "2. For each window pick the ONE photograph that best matches WHAT IS BEING SAID",
-    "   underneath it. If the agent says the kitchen opens onto the deck, that window",
-    "   shows the kitchen or the deck — not the next picture in the list.",
-    "3. A photograph may be used more than once across the reel, but never in two",
-    "   windows in a row.",
-    "4. If no photograph honestly matches a window, return an empty photo_id for it.",
-    "   A window that stays on the agent's face is a better reel than a window showing",
-    "   a bathroom while they talk about the school district.",
-    `5. on_screen_text is at most ${MAX_OVERLAY_WORDS} words and ${MAX_OVERLAY_CHARS}`,
-    "   characters, upper case, and it must NOT repeat what is being said out loud. It",
-    "   adds a number, a name or a fact the ear cannot catch. Leave it empty rather than",
-    "   padding it.",
+    "1. CUTAWAY WINDOWS are fixed. Never add, remove, move, lengthen or reorder them.",
+    "   Answer for each given window_id exactly once.",
+    "2. Pick the ONE photo alias that best matches WHAT IS BEING SAID under each window.",
+    "   Kitchen/deck words need that room, not the next photo in the list.",
+    "3. Photos may recur across the reel, but never in two windows in a row.",
+    "4. If no photo honestly matches, return an empty photo alias: stay on the agent's face.",
+    `5. Each caption is at most ${MAX_OVERLAY_WORDS} words and ${MAX_OVERLAY_CHARS}`,
+    "   characters, upper case. Add a supported number, name or fact, NEVER repeat the",
+    "   spoken words. Leave it empty rather than padding it.",
     "6. Never describe or address the people who might live somewhere. Describe the",
     "   property and the service only.",
+    `7. The COMPLETE minified JSON answer is at most ${MAX_AGENT_REEL_RESPONSE_BYTES} UTF-8 bytes.`,
+    `   All captions together are at most ${MAX_AGENT_REEL_CAPTION_BYTES} UTF-8 bytes BEFORE escaping.`,
+    "   Prefer a few useful captions; leave others empty. Include every window exactly",
+    "   once, including face-only windows. Use only the given photo aliases, never UUIDs.",
     "",
     toneDirection(req.tone),
     "",
-    'Answer with JSON only: {"windows":[{"window_id":"w1","photo_id":"...","on_screen_text":"..."}]}',
+    'Answer with JSON only: {"w":[["w1","p1","caption"],["w2","",""]]}',
+    "Each tuple is [window_id,photo_alias,caption]. No other keys, fields or prose.",
   ].join("\n");
 }
 
@@ -370,19 +384,27 @@ export function agentReelInstruction(req: AgentReelRequest): string {
 export function buildAgentReelTurn(req: AgentReelRequest): string {
   const parts: string[] = [];
   const facts = factLines(req.space, req.facts);
-  if (facts.length) parts.push("FACTS:\n" + facts.map((f) => `- ${f}`).join("\n"));
+  if (facts.length) {
+    parts.push("FACTS:\n" + facts.map((f) => `- ${f}`).join("\n"));
+  }
 
   parts.push(
     "PHOTOGRAPHS:\n" +
       req.photos
-        .map((p) => `- ${p.id}${p.room ? ` — ${p.room}` : ""}${p.caption_hint ? ` (${p.caption_hint})` : ""}`)
+        .map((p, i) =>
+          `- p${i + 1}${p.room ? ` — ${p.room}` : ""}${
+            p.caption_hint ? ` (${p.caption_hint})` : ""
+          }`
+        )
         .join("\n"),
   );
 
   parts.push(
     `CUTAWAY WINDOWS (the clip is ${t1(req.clipSeconds)}s long):\n` +
       req.windows
-        .map((w) => `- ${w.window_id} @ ${w.start}s–${w.end}s — they are saying: "${w.says}"`)
+        .map((w) =>
+          `- ${w.window_id} @ ${w.start}s–${w.end}s — they are saying: "${w.says}"`
+        )
         .join("\n"),
   );
   return parts.join("\n\n");
@@ -416,10 +438,11 @@ export interface AgentReelAnswer {
  * parseShotlist() makes about photo_id, for the same reason: a renumbered reply
  * must not be able to slide every picture onto the wrong sentence.
  *
- * A photo_id we never offered is dropped rather than trusted, and rule 3 (no
- * repeat in adjacent windows) is enforced HERE rather than asked for, because
- * the model is the thing assigning pictures and a rule the answer can break is
- * not a rule.
+ * The compact model wire is private to this route. It must contain EVERY
+ * window exactly once and only known request-local photo aliases. Parse the
+ * whole JSON, never salvage a balanced prefix, fenced object or truncated EDL.
+ * Reconstruct the caller's exact UUIDs before applying the unchanged rule 3
+ * (no repeat in adjacent windows), motion and compliance surface.
  *
  * Unusable means not one window got a picture: an edit with no cutaways is the
  * original clip, which the app can already produce without paying for a call.
@@ -429,21 +452,48 @@ export function parseAgentReel(
   windows: Window[],
   photos: ShotPhoto[],
 ): AgentReelAnswer | null {
-  if (windows.length === 0) return null;
+  if (
+    windows.length === 0 || windows.length > MAX_WINDOWS ||
+    new TextEncoder().encode(raw).byteLength > MAX_AGENT_REEL_RESPONSE_BYTES
+  ) return null;
   const known = new Map(photos.map((p) => [p.id, p]));
-  const obj = extractJsonObject(raw);
-  const rows = obj && Array.isArray(obj.windows) ? (obj.windows as unknown[]) : [];
+  const aliases = new Map(photos.map((p, i) => [`p${i + 1}`, p.id]));
+  const windowIds = new Set(windows.map((w) => w.window_id));
+  if (windowIds.size !== windows.length) return null;
+  let obj: unknown;
+  try {
+    obj = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (
+    !obj || typeof obj !== "object" || Array.isArray(obj) ||
+    Object.keys(obj).length !== 1 || !("w" in obj) || !Array.isArray(obj.w) ||
+    obj.w.length !== windows.length
+  ) return null;
+  const rows: unknown[] = obj.w;
 
   const byWindow = new Map<string, { photo_id: string; caption: string }>();
+  let captionBytes = 0;
   for (const row of rows) {
-    if (!row || typeof row !== "object") continue;
-    const r = row as Record<string, unknown>;
-    const id = line(r.window_id, 16);
-    if (!id || byWindow.has(id)) continue; // first entry wins, deterministically
-    const pid = line(r.photo_id, MAX_PHOTO_ID_CHARS);
+    if (
+      !Array.isArray(row) || row.length !== 3 ||
+      !row.every((v) => typeof v === "string")
+    ) return null;
+    const [id, alias, caption] = row as [string, string, string];
+    if (
+      !windowIds.has(id) || byWindow.has(id) ||
+      (alias !== "" && !aliases.has(alias))
+    ) return null;
+    captionBytes += new TextEncoder().encode(caption).byteLength;
+    if (
+      captionBytes > MAX_AGENT_REEL_CAPTION_BYTES ||
+      caption.length > MAX_OVERLAY_CHARS
+    ) return null;
+    const pid = alias === "" ? "" : aliases.get(alias)!;
     byWindow.set(id, {
-      photo_id: known.has(pid) ? pid : "", // an id we never offered is not a picture
-      caption: captionFrom(r.on_screen_text),
+      photo_id: pid,
+      caption: captionFrom(caption),
     });
   }
 
@@ -477,7 +527,9 @@ export function parseAgentReel(
   const filled = cutaways.filter((c) => c.photo_id);
   if (filled.length === 0) return null;
 
-  const captions = cutaways.map((c) => c.on_screen_text).filter((t) => t.length > 0);
+  const captions = cutaways.map((c) => c.on_screen_text).filter((t) =>
+    t.length > 0
+  );
   return {
     cutaways,
     covered_seconds: t1(filled.reduce((n, c) => n + (c.end - c.start), 0)),

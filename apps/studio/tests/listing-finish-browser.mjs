@@ -28,7 +28,7 @@ try {
   await expect(page.getByRole("tab", { name: "1 Media" })).toHaveAttribute("aria-selected", "true");
   await guide().getByRole("button", { name: "Review details", exact: true }).click();
   await expect(page.getByLabel("Address or property name")).toHaveValue("10 Oak Street");
-  await guide().getByRole("button", { name: "Open Reel Studio", exact: true }).click();
+  await guide().getByRole("button", { name: "Make a video", exact: true }).click();
   await expect(page.getByRole("status", { name: "Opened tool" })).toHaveText("reel:20000000-0000-4000-8000-000000000002");
   await guide().getByRole("button", { name: "Open AI Photo Studio", exact: true }).click();
   await expect(page.getByRole("status", { name: "Opened tool" })).toHaveText("studio:20000000-0000-4000-8000-000000000002");
@@ -48,7 +48,7 @@ try {
   await noMutations(); receipt.checks.push("Generated video points to existing accuracy-review tool without granting approval or publishing");
   await open("readonly");
   await expect(guide().getByRole("button", { name: "Open accuracy review", exact: true })).toBeDisabled();
-  await expect(guide().getByRole("button", { name: "Open Reel Studio", exact: true })).toBeDisabled();
+  await expect(guide().getByRole("button", { name: "Make a video", exact: true })).toBeDisabled();
   await expect(guide().getByRole("button", { name: "Open AI Photo Studio", exact: true })).toBeDisabled();
   await guide().getByRole("button", { name: "View results needing review" }).click();
   await guide().getByRole("button", { name: "Review details", exact: true }).click();

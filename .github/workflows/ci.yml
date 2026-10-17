@@ -10,6 +10,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Jobs may read source/artifacts; no default repository write token.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -21,25 +25,86 @@ jobs:
     # production Swift (Foundation + Combine) with /usr/bin/swiftc and assert on
     # the binary, and the glob below is meant to pick up every new gate without
     # anyone editing this file. There is no Linux toolchain for those sources.
+    # Use the original Apple Silicon runner. The temporary Intel fallback
+    # stalled in CoreSimulator before the UIKit export checks could execute.
     runs-on: macos-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The floor-plan boundary compares preserved scan/import bodies
+          # against build75. A depth-one checkout omits that exact baseline.
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
+      - name: Ensure ripgrep for native source and privacy controls
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            brew install ripgrep
+          fi
+          rg --version
       - name: Database runner control-flow (mocked, no database)
         run: python3 tools/audit/test_database_runner.py
+      - name: Exact rollout readback, freshness and artifact refusals (offline)
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 tools/deploy/test_verify_rollout_readback.py
       - name: Invariant source registration contracts
         run: python3 tools/audit/test_database_invariant_sources.py
+      - name: Republish retry clears a stale warning before its sync refusals (source gate)
+        run: python3 tools/audit/test_republish_retry_source.py
+      - name: Native account and workspace presentation privacy
+        run: python3 tools/audit/run_native_presentation_privacy.py --out "$RUNNER_TEMP/native-presentation-privacy"
+      - name: Native deletion confirmation and late-response account privacy
+        run: python3 tools/audit/run_native_account_deletion.py --out "$RUNNER_TEMP/native-account-deletion"
+      - name: Retain native deletion admission and guard-removal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-account-deletion-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/native-presentation-privacy/receipt.json
+            ${{ runner.temp }}/native-presentation-privacy/*.log
+            ${{ runner.temp }}/native-presentation-privacy/*.swift
+            ${{ runner.temp }}/native-account-deletion/receipt.json
+            ${{ runner.temp }}/native-account-deletion/*.log
+            ${{ runner.temp }}/native-account-deletion/*.swift
       # Every Phase 1 node gate, discovered by glob: consent selector and Ask AI
       # label source contracts, adoption source/mutant/local-binding gates and
       # the consent persistence gate. None of them is a UI runtime test.
       - name: Phase 1 source and executable-Swift gates (tests/phase1/*.test.mjs)
         run: node --test tests/phase1/*.test.mjs
+      - name: Ask AI offline replies and selected-screen privacy controls
+        run: |
+          set -o pipefail
+          bash tests/phase1/run-unit.sh 2>&1 | tee "$RUNNER_TEMP/rendprop-coach-native.log"
       - name: Draft corrections survive an older cloud snapshot
-        run: python3 tools/audit/complete-product-20260922/photos_sync.py
+        run: python3 tools/audit/complete-product-20260922/photos_sync.py --output-directory "$RUNNER_TEMP/rendprop-photos-sync/baseline"
+      - name: Draft sync rejects compiled dirty-write and identity regressions
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, sys
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'rendprop-photos-sync'
+          cases = [('dirty-write', ['--inject-fault'], 'expectedDirtyAssertionRejected'),
+                   ('photos-context', ['--inject-context-fault', 'photos'], 'expectedContextAssertionRejected'),
+                   ('receive-context', ['--inject-context-fault', 'receive'], 'expectedContextAssertionRejected')]
+          for name, flags, field in cases:
+              out = root / name
+              result = subprocess.run([sys.executable, 'tools/audit/complete-product-20260922/photos_sync.py', *flags, '--output-directory', str(out)], check=False)
+              receipt = json.loads((out / 'receipt.json').read_text())
+              if result.returncode != 1 or receipt.get('passed') is not False or receipt.get('compiled') is not True or receipt.get('sourceBoundAtEnd') is not True or receipt.get(field) is not True:
+                  raise SystemExit(f'{name}: expected a named runtime rejection after a successful source-bound compile')
+          PY
+      - name: Retain draft synchronization receipts and control logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: draft-synchronization-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-photos-sync/**/receipt.json
+            ${{ runner.temp }}/rendprop-photos-sync/**/*.log
       - name: Phone production plan preservation and sync receipts
         run: |
           production_test_dir=$(mktemp -d)
@@ -51,58 +116,491 @@ jobs:
           "$production_test_dir/production-plan-tests"
       - name: Phone production autosync survives lost replies and relaunch
         run: bash apps/ios/tests/run-production-writer.sh
-      # Playwright's Linux Chromium lacks the H.264/AAC encoder combination
-      # required by this real MP4 export gate. Keep those assertions intact and
-      # run them in official Chrome on macOS, where the codecs are supported.
-      - name: Install locked Studio dependencies for the media export gate
-        working-directory: apps/studio
-        run: npm ci --ignore-scripts
-      - name: Verify official Chrome and synthetic media tools
-        working-directory: apps/studio
-        shell: bash
-        run: |
-          set -euo pipefail
-          chrome_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-          if [ ! -x "$chrome_path" ]; then
-            npx playwright install chrome
-          fi
-          test -x "$chrome_path"
-          "$chrome_path" --version
-          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
-            brew install ffmpeg
-          fi
-          ffmpeg -version
-          ffprobe -version
-      - name: Studio MP4 export, AAC narration and continuous agent audio
-        working-directory: apps/studio
-        timeout-minutes: 10
-        env:
-          STUDIO_BROWSER_EXECUTABLE: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
-          TMPDIR: ${{ runner.temp }}
-        run: |
-          node tests/export-resume-browser.mjs
-          node tests/cloud-editor-browser.mjs
-          node tests/conversation-browser.mjs
-          node tests/finishing-browser.mjs
-      - name: Retain media export receipts and browser evidence
+      - name: Phone production work survives anonymous-account adoption
+        run: bash apps/ios/tests/run-adoption-production.sh
+      - name: Home location callbacks and restore snapshots retain their opening identity
+        run: python3 apps/ios/tests/run-home-restore-async-boundaries.py --out "$RUNNER_TEMP/rendprop-home-restore-async"
+      - name: Guest personal cards and paid requests survive only verified adoption
+        run: python3 apps/ios/tests/run-adoption-owned-identity.py
+      - name: Subscription offer disclosures and durable workspace intent
+        run: bash apps/ios/tests/run-subscription-policy.sh
+      - name: Coming-soon Aerial admission preserves existing accepted jobs and saved clips
+        run: python3 apps/ios/tests/run-aerial-launch-availability.py --evidence-dir "$RUNNER_TEMP/rendprop-aerial-launch"
+      - name: Introduction replay presents the movie without resetting account or ongoing work
+        run: python3 apps/ios/tests/run-settings-intro-replay.py --evidence-dir "$RUNNER_TEMP/rendprop-settings-intro-replay"
+      - name: Private testing allowance labels preserve ordinary plan displays
+        run: python3 apps/ios/tests/run-workspace-allowance-display.py --out "$RUNNER_TEMP/rendprop-testing-allowance"
+      - name: Verified trial counters and disabled offers preserve billing dates
+        run: python3 apps/ios/tests/run-native-trial.py --out "$RUNNER_TEMP/rendprop-native-trial"
+      - name: Configured photo admissions and separate AI balance remain workspace bound
+        run: python3 apps/ios/tests/run-serving-photo-package.py --out "$RUNNER_TEMP/rendprop-native-photo-package"
+      - name: Retain photo package decoding and compiled refusal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-photo-package-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-native-photo-package/receipt.json
+            ${{ runner.temp }}/rendprop-native-photo-package/*.log
+            ${{ runner.temp }}/rendprop-native-photo-package/*.swift
+      - name: Atomic pre-StoreKit trial buyer reservation and compiled controls
+        run: python3 apps/ios/tests/run-native-trial-hold.py --out "$RUNNER_TEMP/rendprop-native-trial-hold"
+      - name: Durable StoreKit intervention and purchase recovery controls
+        run: python3 apps/ios/tests/run-purchase-fulfilment.py --out "$RUNNER_TEMP/rendprop-purchase-fulfilment"
+      - name: Property website consumable custody and account recovery controls
+        run: python3 apps/ios/tests/run-website-upgrade.py --out "$RUNNER_TEMP/rendprop-website-upgrade"
+      - name: Retain purchase recovery runtime and guard-removal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: purchase-fulfilment-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-purchase-fulfilment/receipt.json
+            ${{ runner.temp }}/rendprop-purchase-fulfilment/*.log
+            ${{ runner.temp }}/rendprop-purchase-fulfilment/*.swift
+            ${{ runner.temp }}/rendprop-website-upgrade/receipt.json
+            ${{ runner.temp }}/rendprop-website-upgrade/**/*.log
+            ${{ runner.temp }}/rendprop-website-upgrade/**/*.swift
+      - name: Private media gateway actor binding and import context controls
+        run: python3 apps/ios/tests/run-private-media-gateway.py --out "$RUNNER_TEMP/rendprop-private-media-gateway"
+      - name: Retain private media gateway runtime and guard-removal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: private-media-gateway-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-private-media-gateway/receipt.json
+            ${{ runner.temp }}/rendprop-private-media-gateway/*.log
+            ${{ runner.temp }}/rendprop-private-media-gateway/*.swift
+      - name: Native UX preserves drafts, deferred links, consent and archive baselines
+        run: python3 apps/ios/tests/run-native-ux-audit.py --evidence-dir "$RUNNER_TEMP/rendprop-native-ux-audit"
+      - name: Native client verification and lead deletion require scoped receipts
+        run: python3 apps/ios/tests/run-native-lead-privacy.py --evidence-dir "$RUNNER_TEMP/rendprop-native-lead-privacy"
+      - name: Leads tab groups exact listing identities and preserves existing destinations
+        run: python3 apps/ios/tests/run-lead-inbox-grouping.py --evidence-dir "$RUNNER_TEMP/rendprop-lead-inbox"
+      - name: Public buyer links stay in the browser and preserve publication identity
+        run: python3 apps/ios/tests/run-public-website-links.py --evidence-dir "$RUNNER_TEMP/rendprop-public-links"
+      - name: Private library identity, delegation, purchase scope and refusal controls
+        run: python3 apps/ios/tests/run-private-library-context.py --out "$RUNNER_TEMP/rendprop-private-library-context"
+      - name: Push account switch cleanup, stale acknowledgments and recipient fences
+        run: python3 apps/ios/tests/run-push-account-isolation.py --out "$RUNNER_TEMP/rendprop-push-account-isolation"
+      - name: Account downloads verify manifests, account changes and private generation-owned files
+        run: python3 apps/ios/tests/run-account-export.py --evidence-dir "$RUNNER_TEMP/rendprop-native-account-export"
+      - name: Photo lens, orientation, level and failed-save handling
+        run: bash apps/ios/tests/run-photo-capture.sh
+      - name: Photo versions, retained originals and destination export geometry
+        run: bash apps/ios/tests/run-photo-delivery.sh
+      - name: Large photo imports preserve selection order, source bytes and partial failures
+        run: python3 apps/ios/tests/run-photo-import.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-import"
+      - name: Browser originals retain full resolution, orientation and color with exact local sources
+        run: python3 apps/ios/tests/run-photo-browser-original.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-browser-original"
+      - name: Photo review previews and pre-sign-in playback preserve local privacy
+        run: python3 apps/ios/tests/run-photo-review-preview.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-review-preview"
+      - name: Individual photo review edits one retained original without changing bulk editing
+        run: python3 apps/ios/tests/run-photo-review-edit.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-review-edit"
+      - name: Photo family browsing preserves upload order and exact version/edit identity
+        run: python3 apps/ios/tests/run-photo-family-pager.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-family-pager"
+      - name: Exact cloud photo family choices and durable typed transport
+        run: python3 apps/ios/tests/run-photo-cloud-selection.py --output-dir "$RUNNER_TEMP/rendprop-photo-cloud-selection"
+      - name: Initial photo publication queue preserves current cloud choices and cover
+        run: python3 apps/ios/tests/run-photo-cloud-initial-publication.py --output-dir "$RUNNER_TEMP/rendprop-photo-cloud-initial"
+      - name: Automatic photo callbacks cannot upload or overwrite cloud selection
+        run: python3 apps/ios/tests/run-photo-cloud-automatic-sync.py --output-dir "$RUNNER_TEMP/rendprop-photo-cloud-automatic"
+      - name: Local photo selection retains version review and removal controls
+        run: python3 apps/ios/tests/run-photo-listing-selection.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-local-selection"
+      - name: Retain exact cloud selection and local selection evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: studio-macos-media-export-${{ github.run_attempt }}
+          name: native-photo-selection-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/rendprop-cloud-editor-*/receipt.json
-            ${{ runner.temp }}/rendprop-cloud-editor-*/*.png
-            ${{ runner.temp }}/rendprop-cloud-editor-*/*.mp4
-            ${{ runner.temp }}/rendprop-conversation-*/receipt.json
-            ${{ runner.temp }}/rendprop-conversation-*/*.png
-            ${{ runner.temp }}/rendprop-conversation-*/*.mp4
-            ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
-            ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
-            ${{ runner.temp }}/rendprop-finishing-*/receipt.json
-            ${{ runner.temp }}/rendprop-finishing-*/*.png
-            ${{ runner.temp }}/rendprop-finishing-*/*.mp4
+            ${{ runner.temp }}/rendprop-photo-cloud-selection/receipt.json
+            ${{ runner.temp }}/rendprop-photo-cloud-selection/*.log
+            ${{ runner.temp }}/rendprop-photo-cloud-selection/*.swift
+            ${{ runner.temp }}/rendprop-photo-cloud-initial/receipt.json
+            ${{ runner.temp }}/rendprop-photo-cloud-initial/*.log
+            ${{ runner.temp }}/rendprop-photo-cloud-initial/*.swift
+            ${{ runner.temp }}/rendprop-photo-cloud-automatic/receipt.json
+            ${{ runner.temp }}/rendprop-photo-cloud-automatic/*/*.log
+            ${{ runner.temp }}/rendprop-photo-cloud-automatic/*/*.swift
+            ${{ runner.temp }}/rendprop-photo-local-selection/receipt.json
+            ${{ runner.temp }}/rendprop-photo-local-selection/*/*.log
+            ${{ runner.temp }}/rendprop-photo-local-selection/*/*.swift
+      - name: Branded quick-start video stays within two minutes with a readable transcript
+        run: |
+          if ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+          python3 apps/ios/tests/run-quick-start-video.py --evidence-dir "$RUNNER_TEMP/rendprop-quick-start-video"
+      - name: Photo review and saved reel settings stay bound to the selected versions
+        run: python3 apps/ios/tests/run-photo-reel-egress.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-reel-egress"
+      - name: Room names and listing coordinates commit the current form values
+        run: python3 apps/ios/tests/run-native-form-commits.py --evidence-dir "$RUNNER_TEMP/rendprop-native-form-commits"
+      - name: Actual gallery sync races, warning recovery and provenance fences
+        run: |
+          python3 tools/audit/gallery-sync-20261002/run.py
+          for fault in clear-unrelated stale-selection ignore-provenance; do
+            python3 tools/audit/gallery-sync-20261002/run.py --inject-fault "$fault"
+          done
+      - name: Reel generation stops at failures and retains completed clips
+        run: python3 apps/ios/tests/run-reel-batch-stop.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-batch-stop"
+      - name: Retain reel batch ordering and classified guard-removal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: reel-batch-stop-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-reel-batch-stop/receipt.json
+            ${{ runner.temp }}/rendprop-reel-batch-stop/*.log
+      - name: Actual QC wire preserves first attempt, bounded retry and provenance
+        run: python3 apps/ios/tests/run-video-drift-wire.py --evidence-dir "$RUNNER_TEMP/rendprop-video-drift-wire"
+      - name: Full-photo reel framing preserves wire intent and legacy receipts
+        run: python3 apps/ios/tests/run-reel-framing-wire.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-framing-wire"
+      - name: Video destination and larger photo sequences survive saved work and recovery
+        run: python3 apps/ios/tests/run-video-purpose.py --evidence-dir "$RUNNER_TEMP/rendprop-video-purpose"
+      - name: Pending narration cannot freeze stale audio or discard an active recording
+        run: python3 apps/ios/tests/run-video-narration-readiness.py --evidence-dir "$RUNNER_TEMP/rendprop-video-narration-readiness"
+      - name: Selected photo versions retain agent-chosen order and automatic per-shot motion
+        run: python3 apps/ios/tests/run-property-video-planner.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-planner"
+      - name: Video sources retain reviewed staged versions instead of newer previews
+        run: python3 apps/ios/tests/run-staged-video-source.py --evidence-dir "$RUNNER_TEMP/rendprop-staged-video-source"
+      - name: Finished property videos retain master selection and publication identity
+        run: python3 apps/ios/tests/run-listing-video-native.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-video-native"
+      - name: Durable property video jobs retain admission, cancellation and same-job recovery
+        run: python3 apps/ios/tests/run-property-video-jobs.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-jobs"
+      - name: Native processor permission preserves saved jobs and durable withdrawal
+        timeout-minutes: 5
+        run: python3 apps/ios/tests/run-property-video-processors.py --output-dir "$RUNNER_TEMP/rendprop-property-video-processors" --controls
+      - name: Photo orientation, crop confirmation and optional music preserve exact sources
+        run: python3 apps/ios/tests/run-capture-orientation.py --evidence-dir "$RUNNER_TEMP/rendprop-capture-orientation"
+      - name: Room tags require a real recorded or uploaded walkthrough
+        run: python3 apps/ios/tests/run-room-tag-walkthrough.py --evidence-dir "$RUNNER_TEMP/rendprop-room-tag-walkthrough"
+      - name: Large video batches retain every selected photo and recover both output formats
+        run: python3 apps/ios/tests/run-reel-request-recovery.py --large-only --evidence-dir "$RUNNER_TEMP/rendprop-video-large"
+      - name: Retain video purpose and buyer navigation regression evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: listing77-native-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-property-video-jobs/**
+            ${{ runner.temp }}/rendprop-property-video-processors/receipt.json
+            ${{ runner.temp }}/rendprop-property-video-processors/*/*.log
+            ${{ runner.temp }}/rendprop-property-video-processors/*/*.swift
+            ${{ runner.temp }}/rendprop-capture-orientation/**
+            ${{ runner.temp }}/rendprop-room-tag-walkthrough/**
+            ${{ runner.temp }}/rendprop-lead-inbox/receipt.json
+            ${{ runner.temp }}/rendprop-lead-inbox/*.log
+            ${{ runner.temp }}/rendprop-public-links/receipt.json
+            ${{ runner.temp }}/rendprop-public-links/*.log
+            ${{ runner.temp }}/rendprop-video-purpose/receipt.json
+            ${{ runner.temp }}/rendprop-video-purpose/*.log
+            ${{ runner.temp }}/rendprop-video-narration-readiness/receipt.json
+            ${{ runner.temp }}/rendprop-video-narration-readiness/*/*.log
+            ${{ runner.temp }}/rendprop-video-large/receipt.json
+            ${{ runner.temp }}/rendprop-video-large/*.log
+            ${{ runner.temp }}/rendprop-property-video-planner/receipt.json
+            ${{ runner.temp }}/rendprop-property-video-planner/*.log
+            ${{ runner.temp }}/rendprop-staged-video-source/receipt.json
+            ${{ runner.temp }}/rendprop-staged-video-source/*.log
+            ${{ runner.temp }}/rendprop-listing-video-native/receipt.json
+            ${{ runner.temp }}/rendprop-listing-video-native/*.log
+      - name: Reel completion notices and background expiry remain generation scoped
+        run: python3 apps/ios/tests/run-reel-lifecycle.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-lifecycle"
+      - name: Global reel banner and completion taps preserve current job identity
+        run: python3 apps/ios/tests/run-reel-work-integration.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-work-integration"
+      - name: Moving-photo work refuses changed account, consent and library contexts
+        run: python3 apps/ios/tests/run-moving-photo-identity.py --evidence-dir "$RUNNER_TEMP/rendprop-moving-photo-identity"
+      - name: Actual AVFoundation extraction handles downloaded MP4 bytes
+        run: python3 apps/ios/tests/run-clip-frames.py --evidence-dir "$RUNNER_TEMP/rendprop-clip-frames"
+      - name: Original photo motion preserves source pixels, orientation and geometry
+        run: python3 apps/ios/tests/run-original-photo-motion.py --evidence-dir "$RUNNER_TEMP/rendprop-original-photo-motion"
+      - name: Clean reel framing preserves intended crop, orientation and voice
+        run: python3 apps/ios/tests/run-reel-whole-scene-framing.py --evidence-dir "$GITHUB_WORKSPACE/reel-whole-scene-framing-evidence"
+      - name: Whole listing package preserves sources and refuses incomplete handovers
+        run: python3 apps/ios/tests/run-listing-package-assembly.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-package-assembly"
+      - name: Retain whole listing package assembly and guard-removal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: listing-package-assembly-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-listing-package-assembly/receipt.json
+            ${{ runner.temp }}/rendprop-listing-package-assembly/*.log
+      - name: Reflection permission revocation fences pending requests
+        run: python3 tools/audit/call-20260919/reflection-controller/run.py
+      - name: Photo work survives navigation and fences account transitions
+        run: bash apps/ios/tests/run-photo-work-queue.sh
+      - name: Photo edit lifecycle and background resource cleanup
+        run: bash apps/ios/tests/run-photo-edit-lifecycle.sh
+      - name: Exact saved photo requests survive lost answers and quality pauses
+        run: python3 apps/ios/tests/run-photo-pending-edit.py
+      - name: Custom photo prompt delivery and native review controls
+        run: python3 apps/ios/tests/run-custom-photo-prompt.py
+      - name: Owner-bound Apple sign-in code and export admission
+        run: |
+          python3 tools/audit/apple-code-session-20261004/run.py
+          for fault in drop-dispatch-fences drop-receipt-fences legacy-rebind drop-exchange-fence; do
+            python3 tools/audit/apple-code-session-20261004/run.py --inject-fault "$fault"
+          done
+          python3 tools/audit/native-media-export-20261004/run.py
+          for fault in drop-permission-context drop-listing-binding drop-csv-context drop-completion-context drop-presentation-actor drop-presentation-workspace drop-custom-download-review; do
+            python3 tools/audit/native-media-export-20261004/run.py --inject-fault "$fault"
+          done
+      - name: Ordinary listing intent and shared-version review
+        run: |
+          python3 tools/audit/listing-facts-sync-20261004/run.py
+          for fault in broad-wire wrong-workspace late-conflict drop-receipt-scope drop-archive-restore sold-strings-only sold-wide-tolerance sold-canonical-baseline sold-clear-newer; do
+            python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault "$fault"
+          done
+          python3 tools/audit/listing-facts-review-20261004/run.py --output-dir "$RUNNER_TEMP/rendprop-listing-facts-review-positive"
+          for fault in drop-review-context expose-private-details; do
+            python3 tools/audit/listing-facts-review-20261004/run.py --inject-fault "$fault" --output-dir "$RUNNER_TEMP/rendprop-listing-facts-review-$fault"
+          done
+      - name: Create receipts retire consumed intent and preserve newer edits
+        run: |
+          python3 tools/audit/listing-create-intent-20261004/run.py
+          for fault in revive-replay-intent drop-replay-base retain-consumed-address drop-archive-restore; do
+            python3 tools/audit/listing-create-intent-20261004/run.py --expect-regression --inject-fault "$fault"
+          done
+      - name: Native forms retain opened intent, exact cents and workspace binding
+        run: |
+          python3 tools/audit/listing-form-intent-20261004/run.py
+          for fault in broad-form fresh-baseline price-rounding; do
+            python3 tools/audit/listing-form-intent-20261004/run.py --inject-fault "$fault"
+          done
+      - name: Legacy photo galleries, cover review and per-family selection
+        run: |
+          python3 tools/audit/photo-gallery-reconciliation-20261004/run.py
+          for fault in drop-legacy-reconciliation bypass-stage-review latest-as-cover blank-family-badges; do
+            python3 tools/audit/photo-gallery-reconciliation-20261004/run.py --inject-fault "$fault"
+          done
+      - name: Listing unit fields and real estate metadata survive editing
+        run: bash apps/ios/tests/run-listing-unit-form.sh
+      - name: Owner cohort metrics preserve numeric wire keys
+        run: bash apps/ios/tests/run-admin-cohort-decoding.sh --negative-controls
+      - name: Floor measurements preserve dimensions, layout and wire data
+        run: |
+          bash apps/ios/tests/run-floor-measurements.sh
+          python3 apps/ios/tests/check-floor-measurement-controls.py
+          python3 tools/audit/floor-measurement-outline-editor-20261004/run.py
+          for fault in drop-original-geometry drop-original-vector drop-save-fence; do
+            python3 tools/audit/floor-measurement-outline-editor-20261004/run.py --inject-fault "$fault"
+          done
+          python3 tools/audit/floor-measurement-sync-20261004/run.py
+          sync_failed=0
+          sync_pids=()
+          sync_faults=()
+          sync_log_dir="$(mktemp -d /tmp/rendprop-floor-measurement-sync-launch-XXXXXX)"
+          wait_sync_batch() {
+            for i in "${!sync_pids[@]}"; do
+              if wait "${sync_pids[$i]}"; then
+                printf '%s exit=0\n' "${sync_faults[$i]}"
+              else
+                sync_status=$?
+                printf '%s exit=%s\n' "${sync_faults[$i]}" "$sync_status"
+                sync_failed=1
+              fi
+              if ! cat "$sync_log_dir/${sync_faults[$i]}.log"; then
+                sync_failed=1
+              fi
+            done
+            sync_pids=()
+            sync_faults=()
+          }
+          for fault in drop-wire drop-fingerprint ignore-dirty drop-replay-adopt rewrite-raw-keys legacy-ignore-edit discard-outline-only outline-fingerprint legacy-v2-accept drop-local-raw-mirror omit-cas-base ignore-pending-measurements wrong-cas-workspace ignore-cas-conflict omit-facts-fingerprint ignore-facts-review skip-legacy-recovery ignore-cas-lineage overwrite-shared-backup compare-backup-wire-only retain-backup-after-new-edit; do
+            python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault "$fault" >"$sync_log_dir/$fault.log" 2>&1 &
+            sync_pids+=("$!")
+            sync_faults+=("$fault")
+            if [ "${#sync_pids[@]}" -eq 1 ]; then wait_sync_batch; fi
+          done
+          if [ "${#sync_pids[@]}" -gt 0 ]; then wait_sync_batch; fi
+          [ "$sync_failed" -eq 0 ]
+      - name: Measured-plan Photos export fences permission and context changes
+        run: |
+          python3 tools/audit/floor-measurement-export-20261004/run.py
+          for fault in drop-context-check ignore-cancellation drop-completion-check; do
+            python3 tools/audit/floor-measurement-export-20261004/run.py --inject-fault "$fault"
+          done
+          bash tools/audit/measurement-export-20261004/run-controls.sh
+      - name: Photographer preference, client drafts and confirmed contact transactions
+        run: bash apps/ios/tests/run-client-contact.sh
+      - name: Actual business cards, deliberate portfolio selection and scoped logo recovery
+        run: |
+          python3 tools/audit/native-profile-beta-20261005/run.py --out "$RUNNER_TEMP/rendprop-profile-beta-positive"
+          for fault in logo-late-context logo-old-draft portfolio-all-listings share-late-context share-unbound-workspace personal-inviter-brand personal-late-context personal-old-draft personal-broad-fields personal-untouched-adoption personal-erase-cache logo-stale-brand-read personal-erase-legacy logo-reload-stale-read; do
+            python3 tools/audit/native-profile-beta-20261005/run.py --fault "$fault" --out "$RUNNER_TEMP/rendprop-profile-beta-$fault"
+          done
+      - name: App Store capture isolation and physical UI-test switch boundaries
+        run: bash apps/ios/tests/run-app-store-boundaries.sh
+      - name: Guided scan storage, pose epochs and native depth packing
+        run: bash tools/spatial-spike/capture-ios/verify-station.sh
+      - name: Panorama projection, coverage and cancellation on synthetic images
+        run: bash tools/spatial-spike/capture-ios/verify-panorama.sh
+      - name: Room survey, standing suggestions and saved-view navigation
+        run: bash tools/spatial-spike/capture-ios/verify-room-guidance.sh
+      - name: Saved panorama cache freshness, corruption and cancellation
+        run: bash apps/ios/tests/verify-guided-panorama-preview-store.sh
+      - name: Retain native audit receipts and control logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-audit-evidence-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-coach-native.log
+            /tmp/rendprop-coach-privacy.*/*.log
+            /tmp/rendprop-coach-privacy.*/*.swift
+            ${{ runner.temp }}/rendprop-video-drift-wire/receipt.json
+            ${{ runner.temp }}/rendprop-video-drift-wire/*.log
+            ${{ runner.temp }}/rendprop-video-drift-wire/*.swift
+            ${{ runner.temp }}/rendprop-reel-framing-wire/receipt.json
+            ${{ runner.temp }}/rendprop-reel-framing-wire/*.log
+            ${{ runner.temp }}/rendprop-reel-framing-wire/*.swift
+            ${{ runner.temp }}/rendprop-home-restore-async/receipt.json
+            ${{ runner.temp }}/rendprop-home-restore-async/*.log
+            ${{ runner.temp }}/rendprop-reel-lifecycle/receipt.json
+            ${{ runner.temp }}/rendprop-reel-lifecycle/*.log
+            ${{ runner.temp }}/rendprop-photo-reel-egress/receipt.json
+            ${{ runner.temp }}/rendprop-photo-reel-egress/*.log
+            ${{ runner.temp }}/rendprop-photo-review-preview/receipt.json
+            ${{ runner.temp }}/rendprop-photo-review-preview/*.log
+            ${{ runner.temp }}/rendprop-photo-review-preview/*.swift
+            ${{ runner.temp }}/rendprop-photo-review-edit/**
+            ${{ runner.temp }}/rendprop-photo-family-pager/**
+            ${{ runner.temp }}/rendprop-photo-import/receipt.json
+            ${{ runner.temp }}/rendprop-photo-import/*.log
+            ${{ runner.temp }}/rendprop-photo-import/*.swift
+            ${{ runner.temp }}/rendprop-photo-browser-original/receipt.json
+            ${{ runner.temp }}/rendprop-photo-browser-original/*.log
+            ${{ runner.temp }}/rendprop-photo-browser-original/*.swift
+            ${{ runner.temp }}/rendprop-quick-start-video/receipt.json
+            ${{ runner.temp }}/rendprop-quick-start-video/ffprobe.json
+            ${{ runner.temp }}/rendprop-quick-start-video/ffprobe.stderr
+            ${{ runner.temp }}/rendprop-native-form-commits/receipt.json
+            ${{ runner.temp }}/rendprop-native-form-commits/*.log
+            ${{ runner.temp }}/rendprop-reel-work-integration/receipt.json
+            ${{ runner.temp }}/rendprop-reel-work-integration/*/*.log
+            ${{ runner.temp }}/rendprop-moving-photo-identity/receipt.json
+            ${{ runner.temp }}/rendprop-moving-photo-identity/*.log
+            ${{ runner.temp }}/rendprop-clip-frames/receipt.json
+            ${{ runner.temp }}/rendprop-clip-frames/*.log
+            ${{ runner.temp }}/rendprop-original-photo-motion/receipt.json
+            ${{ runner.temp }}/rendprop-original-photo-motion/*.log
+            ${{ github.workspace }}/reel-whole-scene-framing-evidence/receipt.json
+            ${{ github.workspace }}/reel-whole-scene-framing-evidence/*.log
+            /tmp/rendprop-gallery-sync-fixture-*/receipt.json
+            /tmp/rendprop-gallery-sync-fixture-*/*.log
+            /tmp/rendprop-gallery-sync-fixture-*/*.swift
+            /tmp/rendprop-photo-reconciliation-*/actual-current-local-reader/receipt.json
+            /tmp/rendprop-photo-reconciliation-*/actual-current-local-reader/*.log
+            /tmp/rendprop-photo-reconciliation-*/actual-current-local-reader/*.swift
+            /tmp/rendprop-floor-outline-controls-*/receipt.json
+            /tmp/rendprop-floor-outline-controls-*/*.log
+            /tmp/rendprop-outline-editor-*/receipt.json
+            /tmp/rendprop-outline-editor-*/*.log
+            /tmp/rendprop-floor-measurement-sync-*/receipt.json
+            /tmp/rendprop-floor-measurement-sync-*/*.log
+            /tmp/rendprop-listing-create-intent-*/receipt.json
+            /tmp/rendprop-listing-create-intent-*/*.log
+            /tmp/rendprop-listing-facts-sync-*/receipt.json
+            /tmp/rendprop-listing-facts-sync-*/*.log
+            ${{ runner.temp }}/rendprop-listing-facts-review-*/receipt.json
+            ${{ runner.temp }}/rendprop-listing-facts-review-*/*.log
+            /tmp/rendprop-listing-form-intent-*/receipt.json
+            /tmp/rendprop-listing-form-intent-*/*.log
+            /tmp/rendprop-measurement-export-*/receipt.json
+            /tmp/rendprop-measurement-export-*/*.log
+            /tmp/rendprop-measurement-export-controls*/*.log
+            /tmp/rendprop-app-store-boundaries-*/receipt.json
+            /tmp/rendprop-app-store-boundaries-*/*.log
+            /tmp/rendprop-photo-reconciliation-*/receipt.json
+            /tmp/rendprop-photo-reconciliation-*/*.log
+            ${{ runner.temp }}/rendprop-profile-beta-*/receipt.json
+            ${{ runner.temp }}/rendprop-profile-beta-*/*.log
+            ${{ runner.temp }}/rendprop-adoption-owned-*/receipt.json
+            ${{ runner.temp }}/rendprop-adoption-owned-*/*.log
+            ${{ runner.temp }}/rendprop-testing-allowance/receipt.json
+            ${{ runner.temp }}/rendprop-testing-allowance/**/*.log
+            ${{ runner.temp }}/rendprop-native-ux-audit/receipt.json
+            ${{ runner.temp }}/rendprop-native-ux-audit/*.log
+            ${{ runner.temp }}/rendprop-native-lead-privacy/receipt.json
+            ${{ runner.temp }}/rendprop-native-lead-privacy/*.log
+            ${{ runner.temp }}/rendprop-private-library-context/receipt.json
+            ${{ runner.temp }}/rendprop-private-library-context/**/*.log
+            ${{ runner.temp }}/rendprop-push-account-isolation/receipt.json
+            ${{ runner.temp }}/rendprop-push-account-isolation/**/*.log
           retention-days: 7
           if-no-files-found: warn
+
+  native-photo-renderer:
+    name: Actual UIKit photo exports and classified controls
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Verify installed UIKit toolchain and exact owned kernel
+        run: |
+          python3 tools/audit/test_photo_export_ci_setup.py --out "$RUNNER_TEMP/rendprop-photo-export-setup-controls"
+          python3 tools/audit/prepare_photo_export_ci.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-export-setup-$GITHUB_RUN_ATTEMPT"
+      - name: Actual UIKit JPEG exports, level crops and original-byte preservation
+        run: |
+          python3 tools/audit/test_photo_export_simulator_discovery.py
+          python3 apps/ios/tests/run-photo-export-renderer.py --simulator "${RENDPROP_PHOTO_EXPORT_SIMULATOR:?verified CI kernel required}"
+      - name: Retain actual UIKit renderer receipts and control logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-photo-renderer-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-photo-export-renderer-*/receipt.json
+            ${{ runner.temp }}/rendprop-photo-export-renderer-*/*.log
+            ${{ runner.temp }}/rendprop-photo-export-setup-*/receipt.json
+            ${{ runner.temp }}/rendprop-photo-export-setup-*/*.log
+            ${{ runner.temp }}/rendprop-photo-export-setup-controls/**/*.json
+            ${{ runner.temp }}/rendprop-photo-export-setup-controls/**/*.log
+            ${{ runner.temp }}/rendprop-photo-export-setup-controls/*.py
+          retention-days: 7
+          if-no-files-found: warn
+
+  native-reel-recovery:
+    name: Paid reel recovery and classified controls
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Paid reel requests survive lost responses and retain downloaded clips
+        run: python3 apps/ios/tests/run-reel-request-recovery.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-request-recovery-$GITHUB_RUN_ATTEMPT"
+      - name: Retain paid recovery receipts, sources and control logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-reel-recovery-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-reel-request-recovery-*/receipt.json
+            ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.log
+            ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.swift
+          retention-days: 7
+          if-no-files-found: warn
+
+  native-audit-required:
+    name: All native audit gates required
+    if: always()
+    needs: [audit-harnesses, native-photo-renderer, native-reel-recovery]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require every native audit job to succeed
+        env:
+          AUDIT_RESULT: ${{ needs['audit-harnesses'].result }}
+          PHOTO_RESULT: ${{ needs['native-photo-renderer'].result }}
+          REEL_RESULT: ${{ needs['native-reel-recovery'].result }}
+        run: |
+          test "$AUDIT_RESULT" = success
+          test "$PHOTO_RESULT" = success
+          test "$REEL_RESULT" = success
 
   web-client-contracts:
     name: Web parity inventory and design-token contracts (offline)
@@ -117,7 +615,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for fault in missing-upload low-contrast no-op-validator; do
+          for fault in missing-upload missing-export low-contrast no-op-validator; do
             set +e
             python3 tools/web-client/verify_foundation.py --inject-fault "$fault"
             status=$?
@@ -151,7 +649,7 @@ jobs:
   studio:
     name: Studio contracts, build and property workflows (offline)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
     defaults:
@@ -169,28 +667,307 @@ jobs:
       - name: Install the locked browser for isolated UI fixtures
         run: npx playwright install --with-deps chromium
       - name: Install synthetic video and archive verification tools
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg unzip
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg unzip
+      - name: Styled Studio accessibility and beginner entry points
+        timeout-minutes: 5
+        run: |
+          node tests/design-a11y-probe.mjs --out="$RUNNER_TEMP/rendprop-design-a11y.json"
+          node tests/feature-entry-browser.mjs
       - name: Property switching, recovery and listing completion
         run: |
           node tests/property-reels-browser.mjs
+          node tests/reel-media-browser.mjs
+          node tests/brand-browser.mjs
           node tests/editor-recipes-browser.mjs
           node tests/production-browser.mjs
           node tests/listing-finish-browser.mjs
           node tests/listing-kit-browser.mjs
           node tests/browser-connected.mjs
+          node tests/contact-navigation-browser.mjs
+          node tests/listing-facts-browser.mjs
           node tests/creation-shell-browser.mjs
           node tests/browser-connected-control.mjs
           node tests/auth-browser.mjs
+          node tests/private-media-browser.mjs
+          node tests/library-pagination-browser.mjs
           node tests/presenter-app-browser.mjs
           node tests/presenter-browser.mjs
           node tests/prompts-browser.mjs
           node tests/projects-browser.mjs
+          node tests/creative-browser.mjs
+          node tests/creative-photo-pages-browser.mjs
+          node tests/make-video-browser.mjs
+          node tests/make-video-status-browser.mjs
+          node tests/make-video-discard-browser.mjs
+          node tests/listing-upload-order-browser.mjs
+          node tests/listing-large-import-browser.mjs
+          node tests/photo-recovery-browser.mjs
+          node tests/photo-delivery-browser.mjs
+          node tests/photo-output-browser.mjs
+          node tests/photographer-browser.mjs
+          node tests/business-browser.mjs
+          node tests/industry-details-browser.mjs
+          node tests/recovery-browser.mjs
+          node --test ../../tools/deploy/check-migration-ledger.test.mjs
+      - name: Exact processor permission preserves saved jobs and durable withdrawal
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rendprop-processor-consent-browser"
+          mkdir -p "$evidence_root"
+          # The joint stop control removes both redundant safeguards; each
+          # single omission is intentionally protected by the other safeguard.
+          for control in positive unpublished-any404 journal-permission-omitted resume-without-local-allow v2-fal-downgrade revocation-no-durable-stop revocation-keeps-planning stop-join-and-confirmation-omitted; do
+            control_root="$evidence_root/$control"
+            mkdir -p "$control_root"
+            set +e
+            if [ "$control" = positive ]; then
+              TMPDIR="$control_root" node tests/make-video-consent-browser.mjs > "$control_root/run.log" 2>&1
+            else
+              TMPDIR="$control_root" node tests/make-video-consent-browser.mjs --fault="$control" > "$control_root/run.log" 2>&1
+            fi
+            control_status=$?
+            set -e
+            if [ "$control" = positive ]; then
+              if [ "$control_status" -ne 0 ]; then tail -n 60 "$control_root/run.log"; exit "$control_status"; fi
+            else
+              test "$control_status" -ne 0
+            fi
+            CONSENT_EVIDENCE="$control_root" CONSENT_CONTROL="$control" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,readdirSync} from 'node:fs';
+          import {join} from 'node:path';
+          const root=process.env.CONSENT_EVIDENCE,control=process.env.CONSENT_CONTROL;
+          const folders=readdirSync(root,{withFileTypes:true}).filter(item=>item.isDirectory());
+          assert.equal(folders.length,1);
+          const receipt=JSON.parse(readFileSync(join(root,folders[0].name,'receipt.json'),'utf8'));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          if(control==='positive'){
+            assert.equal(receipt.status,'passed');assert.equal(receipt.fault,null);assert.equal(receipt.checks.length,13);
+          }else{
+            const expected={"unpublished-any404":{"failure":["Create video","Expected: disabled","Received: enabled"],"visible":null},"journal-permission-omitted":{"failure":["Current property video","Expected substring: \"queued\""],"visible":"Fixture processor consent/operation missing"},"resume-without-local-allow":{"failure":["Resume saved video","Expected: disabled","Received: enabled"],"visible":null},"v2-fal-downgrade":{"failure":["Resume saved video","element is not enabled"],"visible":null},"revocation-no-durable-stop":{"failure":["Expected substring: \"lost cancel reply\"","element(s) not found"],"visible":"Video work is stopped."},"revocation-keeps-planning":{"failure":["Revoke during planning never starts downstream voice","1 !== 0"],"visible":null},"stop-join-and-confirmation-omitted":{"failure":["Video work is stopped.","Expected: 0","Received: 1"],"visible":null}};
+            assert.equal(receipt.status,'failed');assert.equal(receipt.fault,control);
+            assert.ok(expected[control],'Unknown consent control');
+            for(const text of expected[control].failure)assert.ok(receipt.failure.includes(text),control+': missing intended failure '+text);
+            if(expected[control].visible)assert.ok(receipt.visibleText.includes(expected[control].visible));
+          }
+          NODE
+          done
+      - name: Explicit listing selection requires original review and a fresh snapshot
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rendprop-gallery-selection-browser"
+          mkdir -p "$evidence_root"
+          STUDIO_PROOF_ROOT="$evidence_root/positive" node tests/listing-selection-browser.mjs > "$evidence_root/positive.log" 2>&1
+          for control in review-omitted stale-snapshot-omitted; do
+            control_root="$evidence_root/$control"
+            mkdir -p "$control_root"
+            set +e
+            STUDIO_PROOF_ROOT="$control_root" node tests/listing-selection-browser.mjs --fault="$control" > "$control_root/run.log" 2>&1
+            control_status=$?
+            set -e
+            test "$control_status" -ne 0
+            SELECTION_EVIDENCE="$control_root" SELECTION_CONTROL="$control" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,readdirSync} from 'node:fs';
+          import {join} from 'node:path';
+          const root=process.env.SELECTION_EVIDENCE, control=process.env.SELECTION_CONTROL;
+          const folders=readdirSync(root,{withFileTypes:true}).filter(item=>item.isDirectory());
+          assert.equal(folders.length,1);
+          const receipt=JSON.parse(readFileSync(join(root,folders[0].name,'receipt.json'),'utf8'));
+          assert.equal(receipt.status,'failed');
+          assert.equal(receipt.fault,control);
+          const expected={'review-omitted':'Expected: disabled','stale-snapshot-omitted':'changed on another device'};
+          assert.ok(receipt.failure.includes(expected[control]));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          NODE
+          done
+      - name: Saved source copies preserve exact bytes and recover one private version
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rendprop-gallery-copy-browser"
+          mkdir -p "$evidence_root"
+          STUDIO_PROOF_ROOT="$evidence_root/positive" node tests/gallery-copy-browser.mjs > "$evidence_root/positive.log" 2>&1
+          control_root="$evidence_root/client-hash-omitted"
+          mkdir -p "$control_root"
+          set +e
+          STUDIO_PROOF_ROOT="$control_root" node tests/gallery-copy-browser.mjs --fault=client-hash-omitted > "$control_root/run.log" 2>&1
+          control_status=$?
+          set -e
+          test "$control_status" -ne 0
+          COPY_EVIDENCE="$control_root" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,readdirSync} from 'node:fs';
+          import {join} from 'node:path';
+          const root=process.env.COPY_EVIDENCE;
+          const folders=readdirSync(root,{withFileTypes:true}).filter(item=>item.isDirectory());
+          assert.equal(folders.length,1);
+          const receipt=JSON.parse(readFileSync(join(root,folders[0].name,'receipt.json'),'utf8'));
+          assert.equal(receipt.status,'failed');
+          assert.equal(receipt.fault,'client-hash-omitted');
+          assert.ok(receipt.failure.includes('Changed source must refuse BEFORE any destination PUT'));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          NODE
+      - name: Discard, upload-order and partial-import compiled browser faults
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          for control in client-only-discard forget-after-lost-reply discard-hides-accepted-job uuid-tie-break omit-partial-refresh; do
+            evidence_root="$RUNNER_TEMP/rendprop-c2-browser-control-$control"
+            mkdir -p "$evidence_root"
+            script=make-video-discard-browser.mjs
+            if [ "$control" = "uuid-tie-break" ]; then script=listing-upload-order-browser.mjs; fi
+            if [ "$control" = "omit-partial-refresh" ]; then script=listing-large-import-browser.mjs; fi
+            set +e
+            TMPDIR="$evidence_root" node "tests/$script" --fault="$control" > "$evidence_root/run.log" 2>&1
+            control_status=$?
+            set -e
+            test "$control_status" -ne 0
+            C2_EVIDENCE="$evidence_root" C2_CONTROL="$control" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,readdirSync} from 'node:fs';
+          import {join} from 'node:path';
+          const root=process.env.C2_EVIDENCE, control=process.env.C2_CONTROL;
+          const folders=readdirSync(root,{withFileTypes:true}).filter(item=>item.isDirectory());
+          assert.equal(folders.length,1);
+          const receipt=JSON.parse(readFileSync(join(root,folders[0].name,'receipt.json'),'utf8'));
+          const expected={
+            'client-only-discard':'the server recorded the discard',
+            'forget-after-lost-reply':'lost discard response',
+            'discard-hides-accepted-job':'already accepted this request',
+            'uuid-tie-break':'earlier photos keep their upload order',
+            'omit-partial-refresh':'Saved prefix must remain visible immediately after a later upload fails',
+          };
+          assert.equal(receipt.status,'failed');
+          assert.equal(receipt.fault,control);
+          assert.ok(receipt.failure.includes(expected[control]));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          NODE
+          done
+      - name: Recovery retains drafts and suppresses private caught errors
+        run: |
+          for control in clear-draft-on-reload unsafe-react-logging; do
+            evidence_dir="/tmp/rendprop-studio-recovery-$control"
+            mkdir -p "$evidence_dir"
+            rm -f "$evidence_dir/receipt.json"
+            set +e
+            RENDPROP_RECOVERY_EVIDENCE="$evidence_dir" node tests/recovery-browser.mjs --fault="$control" > "$RUNNER_TEMP/recovery-$control.log" 2>&1
+            control_status=$?
+            set -e
+            test "$control_status" -ne 0
+            node --input-type=module - "$evidence_dir/receipt.json" "$control" <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const receipt=JSON.parse(readFileSync(process.argv[2],'utf8'));
+          const control=process.argv[3];
+          const expected={
+            'clear-draft-on-reload':'An edited draft must survive explicit Reload without reseeding',
+            'unsafe-react-logging':'Caught React errors must not expose private signed URLs in the browser console',
+          };
+          assert.equal(receipt.passed,false);
+          assert.equal(receipt.fault,control);
+          assert.equal(receipt.sourceBoundAtEnd,true);
+          if(control==='unsafe-react-logging') assert.equal(receipt.unsafeControlCompiled,true);
+          assert.ok(receipt.failure.includes(expected[control]));
+          NODE
+          done
+      - name: Contact navigation and account isolation controls
+        run: |
+          for control in missing-guard missing-account-scope; do
+            evidence_log="$RUNNER_TEMP/rendprop-contact-$control.log"
+            set +e
+            node tests/contact-navigation-browser.mjs --fault="$control" > "$evidence_log" 2>&1
+            control_status=$?
+            set -e
+            if [ "$control_status" -eq 0 ]; then
+              cat "$evidence_log"
+              exit 1
+            fi
+            node --input-type=module - "$evidence_log" "$control" <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const receipt=JSON.parse(readFileSync(process.argv[2],'utf8'));
+          const control=process.argv[3];
+          const expected={
+            'missing-guard':'Canceling property change must retain client A',
+            'missing-account-scope':'The other account must see only the saved shared contact',
+          };
+          assert.equal(receipt.status,'failed');
+          assert.equal(receipt.fault,control);
+          assert.ok(receipt.failure.includes(expected[control]));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          console.log(`Contact control ${control} caught at its intended assertion.`);
+          NODE
+          done
+      - name: Explicit listing facts controls
+        run: |
+          for control in broad-changes normalized-baseline missing-draft; do
+            evidence_log="$RUNNER_TEMP/rendprop-facts-$control.log"
+            set +e
+            node tests/listing-facts-browser.mjs --fault="$control" > "$evidence_log" 2>&1
+            control_status=$?
+            set -e
+            if [ "$control_status" -eq 0 ]; then
+              cat "$evidence_log"
+              exit 1
+            fi
+            node --input-type=module - "$evidence_log" "$control" <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const receipt=JSON.parse(readFileSync(process.argv[2],'utf8'));
+          const control=process.argv[3];
+          const expected={
+            'broad-changes':'Only changed form fields may enter the facts contract',
+            'normalized-baseline':'Expected empty text must remain the raw server value',
+            'missing-draft':'Property switch must recover unsaved fact fields',
+          };
+          assert.equal(receipt.status,'failed');
+          assert.equal(receipt.fault,control);
+          assert.ok(receipt.failure.includes(expected[control]));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          console.log(`Listing facts control ${control} caught at its intended assertion.`);
+          NODE
+          done
       - name: Retain browser failure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: studio-property-workflows-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/rendprop-design-a11y.json
+            /tmp/rendprop-design-a11y-*/*.png
+            /tmp/rendprop-creative-pages-*/receipt.json
+            /tmp/rendprop-creative-pages-*/*.png
+            /tmp/rendprop-make-video-*/receipt.json
+            /tmp/rendprop-make-video-*/*.png
+            /tmp/rendprop-make-video-status-*/receipt.json
+            /tmp/rendprop-make-video-status-*/*.png
+            /tmp/rendprop-listing-order-*/receipt.json
+            /tmp/rendprop-listing-order-*/*.png
+            ${{ runner.temp }}/rendprop-gallery-selection-browser/**/receipt.json
+            ${{ runner.temp }}/rendprop-gallery-selection-browser/**/*.png
+            ${{ runner.temp }}/rendprop-gallery-selection-browser/**/*.log
+            ${{ runner.temp }}/rendprop-gallery-selection-browser/positive.log
+            ${{ runner.temp }}/rendprop-gallery-copy-browser/**/receipt.json
+            ${{ runner.temp }}/rendprop-gallery-copy-browser/**/*.png
+            ${{ runner.temp }}/rendprop-gallery-copy-browser/**/*.log
+            ${{ runner.temp }}/rendprop-gallery-copy-browser/positive.log
+            ${{ runner.temp }}/rendprop-processor-consent-browser/**/receipt.json
+            ${{ runner.temp }}/rendprop-processor-consent-browser/**/*.log
+            ${{ runner.temp }}/rendprop-processor-consent-browser/**/*.png
+            ${{ runner.temp }}/rendprop-c2-browser-control-*/**/receipt.json
+            ${{ runner.temp }}/rendprop-c2-browser-control-*/**/*.png
+            ${{ runner.temp }}/rendprop-c2-browser-control-*/run.log
+            /tmp/rendprop-photo-recovery-*/receipt.json
+            /tmp/rendprop-photo-recovery-*/*.png
             /tmp/rendprop-property-reels-*/receipt.json
             /tmp/rendprop-property-reels-*/*.png
             /tmp/rendprop-guided-recipes-*/receipt.json
@@ -203,6 +980,13 @@ jobs:
             /tmp/rendprop-listing-kit-*/*.png
             /tmp/rendprop-connected-browser-*/receipt.json
             /tmp/rendprop-connected-browser-*/*.png
+            /tmp/rendprop-studio-recovery-*/receipt.json
+            /tmp/rendprop-photo-output-*/receipt.json
+            ${{ runner.temp }}/recovery-*.log
+            /tmp/rendprop-contact-navigation-*/receipt.json
+            /tmp/rendprop-contact-navigation-*/*.png
+            /tmp/rendprop-listing-facts-browser-*/receipt.json
+            /tmp/rendprop-listing-facts-browser-*/*.png
             /tmp/rendprop-creation-shell-*/receipt.json
             /tmp/rendprop-creation-shell-*/*.png
             /tmp/rendprop-presenter-*/*.json
@@ -213,11 +997,18 @@ jobs:
             /tmp/rendprop-auth-sdk-*/*.png
             /tmp/rendprop-prompts-*/*.json
             /tmp/rendprop-prompts-*/*.png
+            /tmp/rendprop-creative-*/receipt.json
+            /tmp/rendprop-creative-*/*.png
+            /tmp/rendprop-photo-delivery-browser-*/receipt.json
+            /tmp/rendprop-photo-delivery-browser-*/*.png
+            /tmp/rendprop-photo-delivery-browser-*/*.zip
+            /tmp/rendprop-photographer-*/receipt.json
+            /tmp/rendprop-photographer-*/*.png
           if-no-files-found: warn
 
   worker-edge:
     name: Cloudflare Worker (tour-host)
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: services/edge/tour-host
@@ -233,6 +1024,8 @@ jobs:
       # lockfile meant a clean install didn't resolve.
       - name: npm ci (clean, lockfile-driven)
         run: npm ci
+      - name: Private measurement drafts stay out of public listing facts
+        run: node --test ../../supabase/functions/tours/public-details-renderer-check.mjs
 
       - name: Typecheck
         run: npm run typecheck
@@ -243,16 +1036,318 @@ jobs:
       # branding violations are fined (RI Statewide MLS: $50 first offence,
       # escalating). scripts/check-unbranded.mjs renders the real renderer with
       # sentinel-loaded branded fields and fails on any leak.
-      - name: Unbranded (MLS-safe) page check
+      # npm test also runs check:thumbnails: unit boundaries, the actual Worker
+      # runtime and real codec/geometry checks, using the locked native tools.
+      - name: Public pages, media delivery and thumbnail checks
         run: npm test
 
       - name: Bundle (deploy --dry-run, no credentials needed)
         run: npx wrangler deploy --dry-run --outdir /tmp/wrangler-dry
 
-      # Production dependencies must be clean. Dev-tool advisories (miniflare,
-      # sharp, ws) don't ship in the Worker bundle, so they don't fail the build.
+      # Keep this fast runtime-only check. The separate Dependency security
+      # workflow audits every tracked npm project, including development tools.
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
+
+      # Run real H.264/AAC gates in the full browser bundled with the locked
+      # Playwright version, rather than an independently installed system Chrome.
+      - name: Install locked Studio dependencies for the media export gate
+        working-directory: apps/studio
+        run: npm ci --ignore-scripts
+      - name: Verify locked full Chromium and synthetic media tools
+        working-directory: apps/studio
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright install chromium --no-shell
+          browser_path="$(node --input-type=module -e "import { chromium } from '@playwright/test'; console.log(chromium.executablePath());")"
+          test -x "$browser_path"
+          "$browser_path" --version
+          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$browser_path" >> "$GITHUB_ENV"
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
+      - name: Published listing navigation and opt-in video delivery
+        working-directory: .
+        timeout-minutes: 5
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          npm ci --ignore-scripts --prefix services/edge/tour-host
+          node services/edge/tour-host/scripts/check-listing-browser.mjs
+          node services/edge/tour-host/scripts/check-listing-browser.mjs --chapter-observation-delay-ms=350 --evidence="$RUNNER_TEMP/rendprop-listing-browser-delayed-chapter"
+      - name: Property website galleries and photo-based video delivery
+        working-directory: .
+        timeout-minutes: 10
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          node services/edge/tour-host/scripts/check-property-site-browser.mjs --evidence="$RUNNER_TEMP/rendprop-property-site-browser"
+          control_dir="$RUNNER_TEMP/rendprop-property-site-browser-omit-preview-offset"
+          test ! -e "$control_dir"
+          preview_control_status=0
+          node services/edge/tour-host/scripts/check-property-site-browser.mjs --fault=omit-preview-offset --evidence="$control_dir" || preview_control_status=$?
+          test "$preview_control_status" -eq 1
+          node --input-type=module - "$control_dir/failure.json" <<'NODE'
+          import assert from 'node:assert/strict';
+          import { existsSync, lstatSync, readFileSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          const path = process.argv[2], file = lstatSync(path);
+          assert(file.isFile() && !file.isSymbolicLink() && file.size <= 2 * 1024 ** 2, 'bounded regular omission receipt');
+          assert(!existsSync(join(dirname(path), 'receipt.json')), 'no positive receipt for omission');
+          const q = JSON.parse(readFileSync(path, 'utf8'));
+          assert.equal(q.passed, false);
+          assert.equal(q.error, 'scripted/signature-estate/home/390/preview: script-enabled main target clears actual sticky navigation/preview chrome');
+          assert(Array.isArray(q.errors) && q.errors.length === 0, 'no runtime errors');
+          assert(Array.isArray(q.checks) && q.checks.every(x => typeof x === 'string'));
+          assert(q.checks.includes('scripted/signature-estate/home/390/preview: native Enter focuses main with JavaScript enabled'), 'native main focus passed before refusal');
+          assert(Array.isArray(q.measurements));
+          const witnesses = q.measurements.filter(x => x.tag === 'scripted/signature-estate/home/390/preview' && x.type === 'scripted-skip-clearance');
+          assert.equal(witnesses.length, 1);
+          const g = witnesses[0];
+          assert.equal(q.measurements.at(-1), g, 'failure immediately follows recorded geometry');
+          assert(g.active === true && g.top === 72 && g.obstruction === 74 && g.scrollMargin === '72px' && g.top < g.obstruction - 1, 'exact retained72/74 strict clearance failure');
+          assert(Array.isArray(g.surfaces) && g.surfaces.length === 2);
+          const banners = g.surfaces.filter(x => x.selector === '.property-preview-banner'), navs = g.surfaces.filter(x => x.selector === '#listing-nav');
+          assert.equal(banners.length, 1); assert.equal(navs.length, 1);
+          const banner = banners[0], nav = navs[0];
+          assert(banner.position === 'sticky' && banner.top === 0 && banner.bottom === 74 && banner.height === 74, 'actual74px sticky preview banner');
+          assert(nav.position === 'relative' && nav.height === 56 && nav.top === -2 && nav.bottom === 54, 'actual56px relative navigation');
+          console.log('Exact preview-offset omission witnessed: focused main72, sticky banner74, no runtime errors.');
+          NODE
+          node services/edge/tour-host/scripts/check-property-video-browser.mjs
+          node services/edge/tour-host/scripts/check-property-video-controls.mjs
+      - name: Chapter seek and Explore handoff reject missing seek, stale timing and rewind
+        working-directory: .
+        timeout-minutes: 5
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          for control in chapter-no-seek stale-explore-reference explore-rewind; do
+            evidence_dir="$RUNNER_TEMP/rendprop-listing-browser-$control"
+            set +e
+            node services/edge/tour-host/scripts/check-listing-browser.mjs --fault="$control" --evidence="$evidence_dir"
+            status=$?
+            set -e
+            test "$status" -eq 1
+            LISTING_CONTROL="$control" LISTING_EVIDENCE="$evidence_dir" node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const read = name => JSON.parse(readFileSync(process.env.LISTING_EVIDENCE + '/' + name));
+          const receipt = read('receipt.json');
+          assert.equal(receipt.fault, process.env.LISTING_CONTROL);
+          assert.equal(receipt.passed, false);
+          assert.deepEqual(receipt.pageErrors, []);
+          if (receipt.fault === 'chapter-no-seek') {
+            const chapter = read('chapter-observation.json');
+            assert.equal(receipt.error, 'Room chapter seeks the actual media timeline');
+            assert.ok(receipt.checks.includes('Native keyboard pause control works'));
+            assert.equal(chapter.error, 'No chapter seek and decoded frame within 4000ms');
+            assert.equal(chapter.seek, null);
+            assert.equal(chapter.presented, null);
+          } else {
+            const handoff = read('explore-handoff.json');
+            assert.equal(receipt.error, 'Returning to Explore pauses at the current playback position without losing the tour');
+            assert.ok(receipt.checks.includes('Seeking yields a real nonempty decoded test-pattern frame'));
+            assert.ok(handoff.afterExplore.paused && !handoff.afterExplore.controls && handoff.afterExplore.muted);
+            assert.equal(handoff.afterExplore.currentSrc, handoff.handoff.currentSrc);
+            if (receipt.fault === 'stale-explore-reference') {
+              assert.ok(handoff.staleDelta > .2);
+              assert.ok(Math.abs(handoff.handoffDelta) < handoff.toleranceSeconds);
+            } else {
+              assert.ok(Math.abs(handoff.handoffDelta) > 1);
+            }
+          }
+          console.log('Browser negative control rejected at its intended assertion:', receipt.fault);
+          JS
+          done
+      - name: Actual native and worker HD master encoding
+        working-directory: .
+        timeout-minutes: 10
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          python3 tools/audit/run_render_quality.py
+          python3 tools/audit/run_render_review_fences.py
+      - name: Studio waits for advancing audio before recording content
+        working-directory: apps/studio
+        timeout-minutes: 3
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          node tests/export-startup-browser.mjs
+          control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-startup-control.XXXXXX")
+          set +e
+          TMPDIR="$control_root" node tests/export-startup-browser.mjs --fault=omit-readiness > "$control_root/run.log" 2>&1
+          control_status=$?
+          set -e
+          test "$control_status" -eq 1
+          python3 - "$control_root" <<'PY'
+          import json, sys
+          from pathlib import Path
+          receipts = list(Path(sys.argv[1]).glob('rendprop-export-startup-*/receipt.json'))
+          assert len(receipts) == 1, receipts
+          receipt = json.loads(receipts[0].read_text())
+          assert receipt['status'] == 'failed' and receipt['mode'] == '--fault=omit-readiness'
+          assert receipt['sourceBoundAtEnd'] is True
+          assert receipt['errors'] == [] and receipt['externalRequests'] == []
+          assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Content and recording must not start while startup clock is frozen')
+          forbidden = {'recorder.start', 'user.buffer.start', 'user.video.play'}
+          assert any(event.get('held') is True and event['kind'] in forbidden
+                     for event in receipt['failureSnapshot']['events'])
+          print('Omitted readiness reaches the intended pre-content timing assertion')
+          PY
+      - name: Studio MP4 export, AAC narration and continuous agent audio
+        working-directory: apps/studio
+        timeout-minutes: 10
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          node tests/export-resume-browser.mjs
+          control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-resume-control.XXXXXX")
+          set +e
+          TMPDIR="$control_root" node tests/export-resume-browser.mjs --fault=omit-old-await > "$control_root/run.log" 2>&1
+          control_status=$?
+          set -e
+          test "$control_status" -eq 1
+          python3 - "$control_root" <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          receipts = list(Path(sys.argv[1]).glob('rendprop-export-resume-*/receipt.json'))
+          assert len(receipts) == 1, receipts
+          receipt = json.loads(receipts[0].read_text())
+          assert receipt['status'] == 'failed' and receipt['fault'] == 'omit-old-await'
+          assert receipt['variants'] == ['baseline']
+          assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Negative control must reproduce drift with the old await:')
+          assert receipt['errors'] == [] and receipt['externalRequests'] == []
+          assert len(receipt['attempts']) == len(receipt['runs']) == 1
+          attempt, run = receipt['attempts'][0], receipt['runs'][0]
+          assert attempt['error'] is None and attempt['tracks'] and all(track == 'ended' for track in attempt['tracks'])
+          assert run['variant'] == 'baseline' and run['narrated'] is True
+          assert 0 < run['duration'] <= 3.4
+          assert not any(event.get('event') == 'resume.delivered' for event in run['trace'])
+          fixture_input = receipts[0].parent / 'opening-tone-video.mp4'
+          assert fixture_input.is_file()
+          outputs = [path for path in receipts[0].parent.glob('*.mp4') if path != fixture_input]
+          assert len(outputs) == 1 and outputs[0].name == 'baseline-narrated.mp4'
+          assert Path(run['output']).resolve() == outputs[0].resolve()
+          expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs'}
+          expected_sources.update(f'src/editor/{name}.ts' for name in
+                                  ('export', 'recording-clock', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
+          assert set(receipt['sourceHashes']) == expected_sources
+          for path, digest in receipt['sourceHashes'].items():
+              assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
+          print('Omitted historical await reaches the intended bad-duration assertion')
+          PY
+          node tests/export-audio-browser.mjs
+          if node tests/export-audio-browser.mjs --fault=live-original-audio > "$RUNNER_TEMP/export-original-audio-defect.log" 2>&1; then
+            echo "::error::Original-audio regression control unexpectedly passed"
+            exit 1
+          fi
+          grep -q "Continuous speech through cutaway boundaries: weakest40ms RMS" "$RUNNER_TEMP/export-original-audio-defect.log"
+          if node tests/export-audio-browser.mjs --fault=late-buffered-wall-origin > "$RUNNER_TEMP/export-clock-origin-defect.log" 2>&1; then
+            echo "::error::Buffered-audio clock-origin regression control unexpectedly passed"
+            exit 1
+          fi
+          grep -q "Audio and picture timing drifted during export" "$RUNNER_TEMP/export-clock-origin-defect.log"
+          if node tests/export-audio-browser.mjs --fault=omit-bucket-pacing > "$RUNNER_TEMP/export-paint-budget-defect.log" 2>&1; then
+            echo "::error::Redundant-paint regression control unexpectedly passed"
+            exit 1
+          fi
+          grep -q "Duplicate30fps timeline bucket was repainted" "$RUNNER_TEMP/export-paint-budget-defect.log"
+          control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-optional-control.XXXXXX")
+          set +e
+          TMPDIR="$control_root" node tests/export-audio-browser.mjs --alignment-only --fault=late-optional-track-schedule > "$control_root/run.log" 2>&1
+          control_status=$?
+          set -e
+          test "$control_status" -eq 1
+          python3 - "$control_root" <<'PYCONTROL'
+          import hashlib, json, sys
+          from pathlib import Path
+          receipts = list(Path(sys.argv[1]).glob('rendprop-export-original-audio-*/receipt.json'))
+          assert len(receipts) == 1, receipts
+          receipt = json.loads(receipts[0].read_text())
+          assert receipt['status'] == 'failed' and receipt['fault'] == '--fault=late-optional-track-schedule'
+          assert receipt['errors'] == [] and receipt['externalRequests'] == []
+          assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Narration onset must honor its saved offset before delayed play delivery')
+          assert len(receipt['cases']) == 1
+          case = receipt['cases'][0]
+          assert case['name'] == 'alignment-opening' and case['ok'] is True
+          assert len(case['playEvidence']) == 2
+          assert case['playEvidence'][1]['media'] - case['playEvidence'][0]['media'] > .15
+          assert case['pcm']['voiceRef'] > .15
+          assert case['pcm']['voiceEarly'] <= case['pcm']['voiceRef'] * .7
+          assert abs(float(case['probe']['format']['duration']) - 2) < .18
+          assert sum(x['codec_type'] == 'audio' and x['codec_name'] == 'aac' for x in case['probe']['streams']) == 1
+          expected = {'tests/export-audio-fixture.ts', 'tests/export-audio-browser.mjs'}
+          expected.update(f'src/editor/{name}.ts' for name in ('export', 'recording-clock', 'media', 'model', 'music', 'finishing'))
+          assert set(receipt['sourceHashes']) == expected
+          for path, digest in receipt['sourceHashes'].items():
+              assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
+          print('Late optional-track control reaches its encoded narration-onset assertion')
+          PYCONTROL
+          node tests/cloud-editor-browser.mjs
+          node tests/conversation-browser.mjs
+          node tests/finishing-audio-probe-controls.mjs
+          node tests/finishing-browser.mjs
+      - name: Retain media export receipts and browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: studio-macos-media-export-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-property-site-browser/**
+            ${{ runner.temp }}/rendprop-property-site-browser-omit-preview-offset/**
+            ${{ runner.temp }}/rendprop-property-video-*/**
+            ${{ runner.temp }}/rendprop-export-original-audio-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-original-audio-*/*.mp4
+            ${{ runner.temp }}/export-original-audio-defect.log
+            ${{ runner.temp }}/rendprop-cloud-editor-*/receipt.json
+            ${{ runner.temp }}/rendprop-cloud-editor-*/*.png
+            ${{ runner.temp }}/rendprop-cloud-editor-*/*.mp4
+            ${{ runner.temp }}/rendprop-conversation-*/receipt.json
+            ${{ runner.temp }}/rendprop-conversation-*/*.png
+            ${{ runner.temp }}/rendprop-conversation-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-resume-control.*/run.log
+            ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-startup-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-startup-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-startup-*/*.webm
+            ${{ runner.temp }}/rendprop-export-startup-control.*/run.log
+            ${{ runner.temp }}/rendprop-export-startup-control.*/rendprop-export-startup-*/receipt.json
+            ${{ runner.temp }}/export-clock-origin-defect.log
+            ${{ runner.temp }}/export-paint-budget-defect.log
+            ${{ runner.temp }}/rendprop-export-optional-control.*/run.log
+            ${{ runner.temp }}/rendprop-export-optional-control.*/rendprop-export-original-audio-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-optional-control.*/rendprop-export-original-audio-*/*.mp4
+            ${{ runner.temp }}/rendprop-finishing-*/receipt.json
+            ${{ runner.temp }}/rendprop-finishing-*/*.png
+            ${{ runner.temp }}/rendprop-finishing-*/*.mp4
+            ${{ runner.temp }}/rendprop-listing-browser-*/receipt.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/explore-handoff.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-seek.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-observation.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/playback-clock.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/decoded-frame.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/*.png
+            ${{ runner.temp }}/rendprop-listing-browser-*/*.mp4
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/receipt.json
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/*.log
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/**/*.json
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/failure-evidence/*.mp4
+            ${{ runner.temp }}/rendprop-render-review-fences-*/receipt.json
+            ${{ runner.temp }}/rendprop-render-review-fences-*/*.log
+          retention-days: 7
+          if-no-files-found: warn
 
   upload-gateway:
     name: Cloudflare Worker (upload-gateway, deno check + tests)
@@ -307,20 +1402,15 @@ jobs:
           done
           exit $fail
 
-      # 743 hermetic unit tests across all 33 *.test.ts / *_test.ts files
-      # (731 before the deletion escalation/503 tests; the SUMMARY line the
-      # step prints is the count that actually ran): router policy, provider
-      # redaction/circuit-breaker, fair-housing + chapter postprocessing,
-      # Apple JWS/notification verdicts, coach output sanitization, event
-      # scrubbing/whitelisting, admin probe/funnel SQL shaping, upload
-      # transport/publication, spatial routes and the account-deletion
-      # handler. No Supabase project, no live provider keys, no DB, no network
-      # beyond Deno's own fetch-and-cache of the std@0.224.0 / jsr:@std/assert
-      # imports and the npm:@supabase/supabase-js package the shared client
-      # needs — verified with a throwaway DENO_DIR (forcing that fetch from a
-      # cold cache) and still every test passed / 0 failed.
+      # Hermetic edge-function tests. The SUMMARY line records the actual
+      # inventory (1,521 passed in the October 5 local audit); do not treat
+      # fixture-only checks as production/provider or camera acceptance.
+      # A real local-SQL presenter controller case runs in its dedicated
+      # disposable Postgres job instead of this unit-suite environment.
       # --node-modules-dir=auto (a flag, not a committed deno.json) lays out
       # node_modules for the `npm:` specifiers.
+      # The recursive suite includes tours/photo-delivery.test.ts and
+      # delivery-handler.test.ts; do not duplicate their authority checks.
       - name: Run edge function tests
         working-directory: services/supabase/functions
         env:
@@ -339,6 +1429,14 @@ jobs:
       - name: Run the tools/audit upload fixtures directly
         working-directory: services/supabase/functions
         run: deno test --allow-all --node-modules-dir=auto ../../../tools/audit/uploads_*_test.ts
+      - name: Actual listing intent handler against closed transport
+        run: deno run --cached-only --allow-env --allow-read tools/audit/listing-facts-handler-20261004.ts
+      - name: Uppercase phone ids save facts; the 2026-10-11 503 stays reproduced by its negative control
+        run: deno run --cached-only --allow-env --allow-read tools/audit/listing-uppercase-ids-20261011.ts
+      - name: Build 58 Recently deleted routes (actual listings handler, own process)
+        run: deno test --no-lock --allow-env --allow-read --allow-net=trash-fixture.invalid tools/audit/listing-trash-routes-20261011_test.ts
+      - name: Build 58 republish-app route (actual renders handler, own process)
+        run: deno test --no-lock --allow-env --allow-read --allow-net=republish-fixture.invalid tools/audit/renders-republish-route-20261011_test.ts
 
   db-migrations:
     name: Supabase migrations (fresh replay + invariants)
@@ -356,7 +1454,11 @@ jobs:
         #     -H 'Accept: application/vnd.oci.image.index.v1+json' \
         #     https://registry-1.docker.io/v2/library/postgres/manifests/16
         #   # -> docker-content-digest: sha256:...
-        image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+        # Docker Hub refused the CI runner's unauthenticated pull on Oct 9.
+        # Google's official cache returned this exact index with matching
+        # Docker-Content-Digest AND independently computed SHA-256; same bits.
+        # https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images
+        image: mirror.gcr.io/library/postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -397,13 +1499,13 @@ jobs:
             psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
           done
 
-      - name: Durable video reflection jobs and idempotent migration replay
+      # Test current writers here. Historical replay runs in the clean second
+      # database below; old function bodies cannot be replayed over their newer
+      # receipt-identity replacements on the final schema.
+      - name: Durable video reflection jobs on the final schema
         run: |
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
-          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/0055_video_reflection_jobs.sql
-          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/0056_active_photo_fallback.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase_direct_bria.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
 
       - name: Concurrent reflection receipts, cancellation and cost fences
@@ -412,27 +1514,37 @@ jobs:
           trap 'dropdb --if-exists erase_audit' EXIT
           python3 tools/audit/call-20260919/web/erase-concurrency.py psql -X --no-password -v ON_ERROR_STOP=1 -d erase_audit
 
+      - name: Inclusive serving funds, Apple trial pool and finite reviewer authority
+        run: |
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/funded_serving.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/bounded_subscription_trial.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_purchase_reservations.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_video_duration.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/modern_service_transport.sql
+          # Launch ceiling mode (2026-10-08): money admission, SKU envelopes,
+          # fail-closed configuration, Sandbox trials, free slots, retention.
+          # Keep these on the final schema. Historical versions are replayed
+          # only in the second clean database below.
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/launch_blockers.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_grace.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_settlement_identity.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/ops_deleted_workspace.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/private_library_adoption_safety.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/notification_session_fencing.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_library_selection.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_device_takeover.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_notification_sessions.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_deleted_team_video.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/build57_db_controls.sql
+
       # The adversarial battery: privileged surface, grants, plan coherence
       # (enforced == published), lifecycle schema, and a mutating fixture that
       # exercises signup → publish → quota → chapters → leads → delete.
-      - name: Invariants (kept-red #155 tolerated by exact name)
+      - name: Invariants (all270 must pass)
         run: |
-          # invariants.sql raises when any assertion is red. Exactly one is red
-          # on purpose — #155, the agent-reel token headroom the owner has not
-          # decided yet (see the comment above that assertion in invariants.sql
-          # and KEPT_RED in tools/audit/run_database_regression.py). Accept that
-          # one by its exact name and nothing else.
-          set +e
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql > /tmp/invariants.out 2>&1
-          status=$?
-          set -e
-          cat /tmp/invariants.out
-          red=$(grep -E '^ *[0-9]+ \|.*\| f +\|' /tmp/invariants.out | grep -vF "each astra ceiling clears its route's visible answer and stays under the code clamp" || true)
-          if [ -n "$red" ]; then echo "::error::unexpected red invariant(s):"; echo "$red"; exit 1; fi
-          if [ "$status" -ne 0 ] && ! grep -q 'INVARIANTS FAILED: 1 assertion' /tmp/invariants.out; then
-            echo "::error::invariants exited $status with something other than the one kept-red assertion"; exit 1
-          fi
-          echo "invariants: green apart from the documented kept-red #155 (agent-reel ceiling)"
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql 2>&1 | tee /tmp/invariants.out
+          grep -q 'All 270 invariants passed.' /tmp/invariants.out
 
       # Replay each historical version before a later migration replaces it.
       #0050's old overload is intentionally superseded by0051; applying0050
@@ -444,7 +1556,7 @@ jobs:
           createdb rendprop_replay
           psql -v ON_ERROR_STOP=1 -q -f services/supabase/tests/ci-bootstrap.sql
           # Use the same exact replay policy as the disposable runner. The
-          # eight transactional Studio migrations still run once in EACH
+          # listed transactional Studio migrations still run once in EACH
           # fresh database; their CREATE statements are not replay APIs.
           python3 - <<'PY' > /tmp/rendprop-replayable-migrations.txt
           from pathlib import Path
@@ -460,28 +1572,34 @@ jobs:
             fi
           done
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase_direct_bria.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
+          # Run the same serving fixtures after the supported historical replay
+          # reaches the final schema, including strict settlement and grace.
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/funded_serving.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/bounded_subscription_trial.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_purchase_reservations.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_video_duration.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/modern_service_transport.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/launch_blockers.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_grace.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_settlement_identity.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/ops_deleted_workspace.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/private_library_adoption_safety.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/notification_session_fencing.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_library_selection.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_device_takeover.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_notification_sessions.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_deleted_team_video.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/build57_db_controls.sql
 
-      - name: Invariants after the replay (same answers, one overload per RPC)
+      - name: Invariants after the replay (all270 must pass)
         env:
           PGDATABASE: rendprop_replay
         run: |
-          # invariants.sql raises when any assertion is red. Exactly one is red
-          # on purpose — #155, the agent-reel token headroom the owner has not
-          # decided yet (see the comment above that assertion in invariants.sql
-          # and KEPT_RED in tools/audit/run_database_regression.py). Accept that
-          # one by its exact name and nothing else.
-          set +e
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql > /tmp/invariants.out 2>&1
-          status=$?
-          set -e
-          cat /tmp/invariants.out
-          red=$(grep -E '^ *[0-9]+ \|.*\| f +\|' /tmp/invariants.out | grep -vF "each astra ceiling clears its route's visible answer and stays under the code clamp" || true)
-          if [ -n "$red" ]; then echo "::error::unexpected red invariant(s):"; echo "$red"; exit 1; fi
-          if [ "$status" -ne 0 ] && ! grep -q 'INVARIANTS FAILED: 1 assertion' /tmp/invariants.out; then
-            echo "::error::invariants exited $status with something other than the one kept-red assertion"; exit 1
-          fi
-          echo "invariants: green apart from the documented kept-red #155 (agent-reel ceiling)"
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql 2>&1 | tee /tmp/invariants.out
+          grep -q 'All 270 invariants passed.' /tmp/invariants.out
 
   db-publication-regression:
     name: Disposable PostgreSQL publication, invariant and deletion regression
@@ -492,10 +1610,8 @@ jobs:
     # Do not reuse db-migrations' TCP service/database. Every runner below
     # owns its own initdb, a private Unix socket and database, verifies
     # identity, discards inherited PG credentials, and stops only its own
-    # cluster. The invariant the owner keeps red on purpose (the agent-reel
-    # ceiling headroom assertion, #155 today) is accepted only because
-    # run_database_regression.py declares it in KEPT_RED, and is printed
-    # loudly; any other red assertion still fails the job.
+    # cluster. Every invariant must pass on fresh and replayed schemas; the
+    # historical agent-reel headroom exception has been removed.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -543,6 +1659,18 @@ jobs:
           set -euo pipefail
           export PATH="/usr/lib/postgresql/16/bin:$PATH"
           python3 tools/audit/run_database_regression.py
+      - name: Direct Bria reservations, stage admissions and cancellation races
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          python3 services/supabase/tests/video_erase_direct_bria_pg.py
+      - name: Ordinary video priced admission, settlement and deletion races
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          python3 services/supabase/tests/app_video_cost_pg.py
       # The spatial edge regression runs --cached-only without preparing its
       # own cache (the deletion runners do), so fill the Deno cache with every
       # first-party edge module's pinned std/npm imports first. This is the
@@ -563,8 +1691,39 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          python3 tools/audit/test_privacy_receipt_fail_closed.py
+          python3 tools/audit/run_deletion_integrity.py
           python3 tools/audit/run_deletion_regression.py --provider-commit "$GITHUB_SHA"
           python3 tools/audit/run_adoption_regression.py
+          python3 tools/audit/run_team_readiness.py
+          python3 tools/audit/run_subscription_trial_regression.py
+          python3 tools/audit/run_subscription_chronology.py
+          python3 tools/audit/test_workspace_handler_inventory.py --out "$RUNNER_TEMP/rendprop-workspace-inventory"
+          python3 tools/audit/run_workspace_selection.py
+          python3 tools/audit/run_team_private_libraries.py
+          python3 tools/audit/run_account_library_safety.py
+          python3 tools/audit/run_reaudit_database.py
+          python3 tools/audit/run_legacy_notification_sessions.py
+          python3 tools/audit/run_build57_db_controls.py
+          python3 services/supabase/tests/run_build68_backend.py --evidence "$RUNNER_TEMP/build68-backend"
+          python3 tools/audit/run_internal_testing_grants.py
+          python3 tools/audit/run_private_internal_testing.py
+          python3 services/supabase/tests/funded_serving_pg.py
+          python3 services/supabase/tests/verified_retail_guest_pg.py
+          python3 services/supabase/tests/subscription_trial_video_duration_pg.py
+          python3 services/supabase/tests/subscription_trial_purchase_reservations_pg.py
+          python3 services/supabase/tests/bounded_subscription_trial_pg.py
+          python3 services/supabase/tests/serving_photo_partitions_pg.py
+          python3 services/supabase/tests/launch_blockers_pg.py
+          python3 services/supabase/tests/property_video_websites_pg.py
+          python3 tools/audit/run_listing_gallery_selection.py
+          python3 tools/audit/run_listing_measurement_cas.py
+          python3 tools/audit/run_listing_facts_cas.py
+          python3 tools/audit/run_brand_logo_regression.py
+          python3 tools/audit/run_personal_card_regression.py
+          python3 tools/audit/run_member_portfolio_regression.py
+          python3 tools/audit/run_account_export.py
+          python3 tools/audit/run_photographer_client_delivery.py
           python3 tools/audit/run_spatial_regression.py
           python3 tools/audit/run_spatial_provider_regression.py
           python3 tools/audit/run_deletion_handler_regression.py
@@ -575,6 +1734,12 @@ jobs:
           python3 services/supabase/tests/presenter_execution.py --controller
           python3 services/supabase/tests/prompt_library.py
           python3 tools/audit/run_studio_private_media.py
+          python3 tools/audit/run_photo_authority.py
+          python3 tools/audit/run_backend_billing_authority.py
+          python3 tools/audit/run_verified_recipients.py
+          python3 tools/audit/run_privacy_cleanup_inventory.py
+          python3 tools/audit/run_upload_privacy_admission.py
+          python3 tools/audit/run_bounded_media_delivery.py
       # A real red invariant suite still runs positive/negative publication
       # fixtures before exiting nonzero. Preserve its evidence, not a green
       # override. Preflight can fail before the runner creates any evidence.
@@ -587,6 +1752,11 @@ jobs:
           path: |
             /tmp/rendprop-*/receipt.json
             /tmp/rendprop-*/*.log
+            /tmp/rendprop-gallery-selection-*/*.json
+            /tmp/rendprop-privacy-receipt-*/**/receipt.json
+            /tmp/rendprop-privacy-receipt-*/**/*.log
+            /tmp/rendprop-photographer-client-*/*.json
+            ${{ runner.temp }}/rendprop-workspace-inventory/receipt.json
             build/pr-*/receipt.json
             build/pr-*/server.log
             build/pres-*/receipt.json
@@ -599,6 +1769,309 @@ jobs:
             build/prm-*/server.log
           retention-days: 7
           if-no-files-found: ${{ steps.database.outcome == 'success' && 'error' || 'warn' }}
+
+  property-video-renderer:
+    name: Private property video CPU and actual background authority
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.14"
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6"
+      - name: Warm pinned imports for closed Kie dispatch tests
+        run: |
+          deno install --no-config --no-lock --node-modules-dir=none --entrypoint \
+            services/supabase/functions/ai-video/index.ts \
+            services/supabase/functions/property-video-worker/engine.ts \
+            services/supabase/functions/ai-video/property-video-kie-dispatch.test.ts \
+            services/supabase/functions/property-video-worker/kie-dispatch-authority.test.ts \
+            services/supabase/functions/property/index.ts \
+            services/supabase/tests/rentcast_billing_binding.fixture.ts
+      - name: Install actual CPU, font and isolated database test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-liberation2 postgresql postgresql-client
+          python -m pip install -r services/edge/property-video-render/requirements.txt
+          python -m pip install -r services/edge/property-video-render/requirements-test.txt
+          npm ci --prefix services/edge/property-video-render --ignore-scripts
+      - name: Actual private CPU encoding, EXIF, motion, captions and audio preflight
+        working-directory: services/edge/property-video-render
+        run: npm run verify
+      - name: Actual isolated PostgreSQL admission, leases, cancellation and funding races
+        run: |
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_jobs_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-pg"
+          python3 services/supabase/tests/studio_photo_history_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-photo-pg"
+          python3 services/supabase/tests/photo_quality_evidence_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-quality-pg"
+      - name: Unaccepted saved video discard serializes admission and preserves accepted work
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_abandon_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-abandon-pg"
+      - name: Studio uploads append in order across concurrent batches and reordering
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/studio_gallery_order_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-gallery-order-pg"
+      - name: Native photo choices preserve unrelated selections and serialize competing requests
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/native_photo_family_selection_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-native-photo-selection-pg"
+      - name: Property lookup receipts retain unknown costs and serialize supplier dispatch
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/provider_attempt_receipts_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-provider-attempt-receipts-pg"
+      - name: RentCast settlement keeps admitted billing across binding changes and lost replies
+        timeout-minutes: 7
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 -m unittest discover -s services/supabase/tests -p test_rentcast_billing_binding_driver.py -v
+          deno_cache_dir="$(deno info --no-config --no-lock --json | python3 -c 'import json,pathlib,sys; v=json.load(sys.stdin); assert type(v) is dict and type(v.get("denoDir")) is str; p=pathlib.Path(v["denoDir"]); assert p.is_absolute() and p.is_dir(); print(p)')"
+          python3 services/supabase/tests/rentcast_billing_binding_pg.py --deno-cache-dir "$deno_cache_dir" --evidence-dir "$RUNNER_TEMP/rendprop-rentcast-billing-binding-pg"
+      - name: Exact-byte gallery copies retain source history and serialize completion
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/studio_gallery_source_copy_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-gallery-source-copy-pg"
+      - name: Direct video provenance isolates requests and preserves account erasure scope
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/direct_property_video_source_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-direct-property-source-pg"
+      - name: Steady video profiles preserve frozen jobs and native frame timing
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_steady_v2_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-steady-v2-pg"
+      - name: Kie profile preserves native pixels, frozen jobs, operators and cutover races
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_kie_profile_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-kie-profile-pg"
+      - name: Kie consent and grant authority reject stale or revoked dispatch
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_kie_scope_consent_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-kie-scope-pg"
+      - name: Actual saved photo background judge race and no-repeat control
+        timeout-minutes: 10
+        run: |
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/photo_quality_background_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-background-pg"
+      - name: Native4K output preserves bounded candidate authority and smaller source limits
+        timeout-minutes: 10
+        run: |
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/photo_output_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-output-pg"
+      - name: Failed recipes release supplier capacity only after a paid terminal receipt
+        timeout-minutes: 10
+        run: |
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_failed_terminal_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-video-failed-terminal-pg"
+      - name: Saved video quality profiles preserve paid identity and admission cutover races
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_quality_profile_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-video-quality-profile-pg"
+      - name: Ordinary photo quality stays disabled until each task is approved
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/normal_photo_quality_profile_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-normal-photo-quality-pg"
+      - name: Paid quality processing preserves verified billing and finite shared funding
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/paid_quality_processing_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-paid-quality-processing-pg"
+      - name: Cloud gallery removal preserves partial selections and immutable retries
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/listing_gallery_remove_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-gallery-remove-pg"
+      - name: Listing gallery appends preserve exact selections through one hundred photos
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/listing_gallery_append_capacity_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-gallery-append-capacity-pg"
+      - name: Studio saved versions require explicit listing selection under concurrent uploads
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/studio_explicit_listing_gallery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-explicit-gallery-pg"
+      - name: Terminal quality retry retains paid evidence and same-job owner recovery
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_derived_retry_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-derived-retry-pg"
+      - name: Retained paid supplier results recover without replacing accepted requests
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_result_delivery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-result-delivery-pg"
+      - name: Definitively unaccepted supplier requests recover exactly once
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_submit_recovery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-submit-recovery-pg"
+      - name: Studio photos and recorded publication exclude video derivatives
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/studio_recorded_source_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-recorded-source-pg"
+      - name: Owner testing preserves metering and the retained financial-budget delegate
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/owner_testing_media_delivery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-owner-media-testing-pg"
+      - name: Authorized product media stays metered without a financial activation block
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/product_media_serving_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-product-media-serving-pg"
+      - name: Published photo previews retain exact source and hosting authority
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/published_photo_delivery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-published-photo-delivery-pg"
+      - name: Missing paid supplier results retain evidence and permit one funded replacement
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_missing_result_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-missing-result-pg"
+      - name: Pre-output assembly recovery retains all paid clips and rejects stale leases
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_compose_recovery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-compose-recovery-pg"
+      - name: Fixed saved-photo repair keeps explicit operation and immutable paid assembly
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_static_compose_repair_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-static-compose-repair-pg"
+      - name: Standalone accepted video receipts survive lost replies and canonical erasure
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/app_video_submission_receipts_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-video-submission-receipts-pg"
+      - name: API cost reports separate consumption, holds, funding and unpriced usage
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tools/audit -p 'test_api_cost*.py' -v 2>&1 | tee "$RUNNER_TEMP/rendprop-api-cost-report-unit.log"
+      - name: Cost export preserves real attempt journals and billing attribution
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 tools/audit/api_cost_report_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-api-cost-report-pg"
+      - name: Retain actual background authority and privacy receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: property-video-authority-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-property-video-pg/**
+            ${{ runner.temp }}/rendprop-property-video-abandon-pg/**
+            ${{ runner.temp }}/rendprop-studio-gallery-order-pg/**
+            ${{ runner.temp }}/rendprop-provider-attempt-receipts-pg/**
+            ${{ runner.temp }}/rendprop-rentcast-billing-binding-pg/**
+            ${{ runner.temp }}/rendprop-gallery-source-copy-pg/**
+            ${{ runner.temp }}/rendprop-direct-property-source-pg/**
+            ${{ runner.temp }}/rendprop-property-steady-v2-pg/**
+            ${{ runner.temp }}/rendprop-property-kie-profile-pg/receipt.json
+            ${{ runner.temp }}/rendprop-property-kie-profile-pg/*.log
+            ${{ runner.temp }}/rendprop-property-kie-profile-pg/*.sql
+            ${{ runner.temp }}/rendprop-property-kie-scope-pg/receipt.json
+            ${{ runner.temp }}/rendprop-property-kie-scope-pg/*.log
+            ${{ runner.temp }}/rendprop-studio-photo-pg/**
+            ${{ runner.temp }}/rendprop-photo-quality-pg/**
+            ${{ runner.temp }}/rendprop-photo-background-pg/**
+            ${{ runner.temp }}/rendprop-photo-output-pg/**
+            ${{ runner.temp }}/rendprop-video-failed-terminal-pg/**
+            ${{ runner.temp }}/rendprop-video-quality-profile-pg/**
+            ${{ runner.temp }}/rendprop-normal-photo-quality-pg/**
+            ${{ runner.temp }}/rendprop-paid-quality-processing-pg/**
+            ${{ runner.temp }}/rendprop-listing-gallery-remove-pg/**
+            ${{ runner.temp }}/rendprop-listing-gallery-append-capacity-pg/**
+            ${{ runner.temp }}/rendprop-studio-explicit-gallery-pg/**
+            ${{ runner.temp }}/rendprop-property-derived-retry-pg/**
+            ${{ runner.temp }}/rendprop-property-result-delivery-pg/**
+            ${{ runner.temp }}/rendprop-property-submit-recovery-pg/**
+            ${{ runner.temp }}/rendprop-studio-recorded-source-pg/**
+            ${{ runner.temp }}/rendprop-owner-media-testing-pg/**
+            ${{ runner.temp }}/rendprop-product-media-serving-pg/**
+            ${{ runner.temp }}/rendprop-published-photo-delivery-pg/**
+            ${{ runner.temp }}/rendprop-property-missing-result-pg/**
+            ${{ runner.temp }}/rendprop-property-compose-recovery-pg/**
+            ${{ runner.temp }}/rendprop-property-static-compose-repair-pg/**
+            ${{ runner.temp }}/rendprop-video-submission-receipts-pg/**
+            ${{ runner.temp }}/rendprop-api-cost-report-unit.log
+            ${{ runner.temp }}/rendprop-api-cost-report-pg/receipt.json
+            ${{ runner.temp }}/rendprop-api-cost-report-pg/*.log
+          if-no-files-found: warn
 
   python-worker:
     name: Python workers (render, spatial, training adapter)
@@ -627,10 +2100,14 @@ jobs:
       # libzimg's zscale+tonemap) — installed explicitly rather than trusting
       # whatever the runner image happens to preinstall; Ubuntu's package
       # includes libzimg.
-      - name: Install worker deps (pinned) + ffmpeg
+      - name: Install pinned worker Python dependencies
+        timeout-minutes: 10
+        run: pip install --disable-pip-version-check -r services/worker/requirements.txt
+      - name: Install worker ffmpeg
+        timeout-minutes: 10
         run: |
-          pip install --disable-pip-version-check -r services/worker/requirements.txt
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
 
       # Both hermetic: no live Supabase, no real R2, no network beyond
       # localhost. test_job_lease.py runs a stdlib-only fake PostgREST on
@@ -656,10 +2133,13 @@ jobs:
           python3 services/worker/tests/test_reaper_snapshot.py
           python3 services/worker/tests/test_verification_prerequisites.py
           python3 services/worker/tests/test_stream_fallback.py
+          python3 services/worker/tests/test_provider_funding.py
           python3 services/worker/tests/test_lease_probe_fail_closed.py
           python3 services/worker/tests/test_process_specific.py
           python3 services/worker/tests/test_cost_spool.py
           python3 services/worker/tests/test_r2_timeouts.py
+          python3 services/worker/tests/test_storage_admission.py
+          python3 services/worker/tests/test_credential_redirect_boundary.py
           python3 services/worker/tests/test_resource_limits.py
           python3 services/worker/tests/test_hdr_tonemap.py
 
@@ -672,7 +2152,7 @@ jobs:
       # GPU), Pillow for the JPEG decode, numpy + tyro for the trainer CLI
       # parsing. Nothing here contacts Modal, a GPU or any provider.
       - name: Install spatial worker + training adapter deps (pinned)
-        run: pip install --disable-pip-version-check modal==1.5.3 Pillow==12.1.1 numpy==1.26.4 tyro==0.9.35
+        run: pip install --disable-pip-version-check modal==1.5.3 Pillow==12.3.0 numpy==1.26.4 tyro==0.9.35
 
       - name: Run spatial worker tests (unittest discovery)
         run: python3 -m unittest discover -s services/spatial-worker -p 'test_*.py'

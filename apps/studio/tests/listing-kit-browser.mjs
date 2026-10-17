@@ -1,3 +1,4 @@
+import { verifyPrivateKitCache } from "./listing-kit-cache-browser.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,6 +13,8 @@ const receipt = { proof: "Actual ListingWorkflow and listing-kit UI, generated m
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64");
 let browser, server, page, mode = "normal", held = [], downloads = [];
 try {
+  receipt.cache = await verifyPrivateKitCache({ root, artifacts: join(artifacts, "cache-regression"), executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
+  receipt.checks.push("Actual Kit bypasses non-CORS image cache for public and heuristic freshness, emits Origin-bearing GETs and preserves exact ZIP photo bytes");
   const moviePath = join(artifacts, "synthetic.mp4");
   execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=c=purple:s=128x128:r=15:d=1", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", moviePath], { timeout: 20000 }); const movie = await readFile(moviePath);
   await build({ configFile: false, root, publicDir: false, logLevel: "error", build: { outDir: dist, rollupOptions: { input: join(root, "tests/listing-kit-fixture.html") } } });

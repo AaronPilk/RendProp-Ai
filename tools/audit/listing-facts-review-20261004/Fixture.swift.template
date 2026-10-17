@@ -1,0 +1,87 @@
+import Foundation
+enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/synthetic/" + path) } }
+@MainActor final class AuthStore { static let shared = AuthStore(); var userID: String? = "synthetic-A"; var syncSessionRevision: UInt64 = 1; var isIdentified = true }
+@MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID() }
+enum Failure: Error { case expected }
+@MainActor final class AppModel {
+    var listings: [Listing]; var result: ListingFactsReview; var resolutions: [Bool] = []; var failLoad = false, failResolve = false
+    init(_ local: Listing, _ shared: Listing) { listings = [local]; result = .init(local: local, shared: shared, ownerID: AuthStore.shared.userID, sessionRevision: AuthStore.shared.syncSessionRevision) }
+    func loadListingFactsReview(_ id: UUID) async throws -> ListingFactsReview { if failLoad { throw Failure.expected }; return result }
+    func resolveListingFacts(_ review: ListingFactsReview, keepLocal: Bool) throws { if failResolve { throw Failure.expected }; resolutions.append(keepLocal) }
+}
+__ROWS__
+@MainActor private final class Harness {
+    let listingID: UUID; let model: AppModel; let auth = AuthStore.shared
+    var review: ListingFactsReview?; var loading = false; var error: String?; var dismissed = 0
+    var currentListing: Listing { model.listings[0] }
+    init(_ local: Listing, _ shared: Listing) { listingID = local.id; model = AppModel(local, shared) }
+    func dismiss() { dismissed += 1 }
+    func needsReview() -> Bool { listingFactsNeedReview }
+    func current() -> Bool { reviewIsCurrent }
+    func invokeLoad() async { await load() }
+    func invokeChoice(_ keepLocal: Bool) { resolve(keepLocal: keepLocal) }
+__POLICY__
+__CURRENT__
+__LOAD__
+__RESOLVE__
+}
+@main @MainActor enum Main {
+    static var assertions = 0
+    static func check(_ value: Bool, _ message: String) { assertions += 1; guard value else { print("FAIL: " + message); exit(1) } }
+    static func reset() { AuthStore.shared.userID = "synthetic-A"; AuthStore.shared.syncSessionRevision = 1; AuthStore.shared.isIdentified = true; WorkspaceContext.selectedOrgID = UUID() }
+    static func main() async throws {
+        reset()
+        var local = Listing(address: "Phone address", beds: 3, baths: 2, sqft: 1800, price: .dollars(400000))
+        local.serverID = UUID(); local.serverOrgID = WorkspaceContext.selectedOrgID
+        var shared = local; shared.address = "Office address"; shared.price = .dollars(450000); shared.soldAt = Date(timeIntervalSince1970: 1800000000)
+        let policy = Harness(local, shared)
+        check(!policy.needsReview(), "clean listing hides review card")
+        policy.model.listings[0].needsServerSync = true
+        check(policy.needsReview(), "older bound dirty snapshot shows review card")
+        policy.model.listings[0].serverID = nil
+        check(!policy.needsReview(), "new local draft does not request shared review")
+        policy.model.listings[0].factsSync = .init(); policy.model.listings[0].factsSync?.conflict = true
+        check(policy.needsReview(), "confirmed conflict shows review card")
+        policy.model.listings[0].factsSync?.conflict = false; policy.model.listings[0].factsSync?.reviewRequired = true
+        check(policy.needsReview(), "explicit recovery review shows review card")
+        let detailKey = ListingFactsSync.editableDetailKeys.filter { $0 != Listing.searchIndexingKey }.sorted().first!
+        local.details = [Listing.searchIndexingKey: "true", detailKey: "Phone editable value", "rendprop_floor_measurements_v1": "private-plan", "server_secret_metadata": "private-secret"]
+        local.allowSearchIndexing = true; local.latitude = .nan; local.longitude = .infinity
+        shared.details = [Listing.searchIndexingKey: "false", detailKey: "Office editable value"]; shared.allowSearchIndexing = false
+        let comparison = ListingFactsReview(local: local, shared: shared, ownerID: AuthStore.shared.userID, sessionRevision: 1)
+        let rows = ListingFactsReviewRows.make(comparison)
+        check(rows.first { $0.id == "address" }?.local == "Phone address" && rows.first { $0.id == "address" }?.shared == "Office address", "comparison preserves both explicit addresses")
+        check(rows.first { $0.id == "price" }?.local == "$400,000" && rows.first { $0.id == "price" }?.shared == "$450,000", "comparison preserves exact phone and office price")
+        check(rows.first { $0.id == "sold" }?.local == "Active" && rows.first { $0.id == "sold" }?.shared.hasPrefix("Sold") == true, "comparison exposes sold state difference")
+        check(rows.first { $0.id == "location" }?.local == "Not set", "nonfinite location remains display safe")
+        check(rows.contains { $0.id == "detail:" + detailKey } && rows.contains { $0.title == "List on Google" }, "comparison includes editable details and indexing")
+        check(!rows.contains { $0.local.contains("private") || $0.id.contains("secret") || $0.id.contains("measurements") }, "review excludes private geometry and unknown server metadata")
+        local.latitude = nil; local.longitude = nil
+        for mode in ["account", "session", "workspace", "mutation", "deleted", "identified"] {
+            reset(); local.serverOrgID = WorkspaceContext.selectedOrgID; shared.serverOrgID = WorkspaceContext.selectedOrgID
+            let h = Harness(local, shared); await h.invokeLoad(); check(h.current(), "loaded exact review is current")
+            switch mode {
+            case "account": AuthStore.shared.userID = "synthetic-B"
+            case "session": AuthStore.shared.syncSessionRevision += 1
+            case "workspace": WorkspaceContext.selectedOrgID = UUID()
+            case "mutation": h.model.listings[0].address = "New phone mutation"
+            case "deleted": h.model.listings = []
+            case "identified": AuthStore.shared.isIdentified = false
+            default: break
+            }
+            h.invokeChoice(true)
+            check(h.model.resolutions.isEmpty && h.dismissed == 0, "changed review cannot invoke model resolution")
+        }
+        for keepLocal in [false, true] {
+            reset(); local.serverOrgID = WorkspaceContext.selectedOrgID; shared.serverOrgID = WorkspaceContext.selectedOrgID
+            let h = Harness(local, shared); await h.invokeLoad(); h.invokeChoice(keepLocal)
+            check(h.model.resolutions == [keepLocal] && h.dismissed == 1, "valid choice invokes exact intent once and dismisses")
+        }
+        reset(); local.serverOrgID = WorkspaceContext.selectedOrgID; shared.serverOrgID = WorkspaceContext.selectedOrgID
+        let failure = Harness(local, shared); failure.model.failLoad = true; await failure.invokeLoad()
+        check(failure.review == nil && failure.error != nil && !failure.loading, "failed load retains retryable sheet without choices")
+        failure.model.failLoad = false; await failure.invokeLoad(); failure.model.failResolve = true; failure.invokeChoice(true)
+        check(failure.review != nil && failure.error != nil && failure.dismissed == 0, "failed resolution keeps comparison and reload path")
+        print("PASS: \(assertions) actual native listing-review assertions")
+    }
+}

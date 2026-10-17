@@ -1,0 +1,230 @@
+{
+  "kind": "Listing and photo-work beta fixes — internal TestFlight 41 and production publication deployment",
+  "verifiedAt": "2026-10-02T17:27:14.601710+00:00",
+  "source": {
+    "branch": "fix/beta-polish-20261002",
+    "runtimeCommit": "3615a23a4c055045be053cf788e776263de75851",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/18",
+    "pullRequestBase": "fix/ios-crash-hardening-20261002",
+    "draftAtDelivery": true,
+    "note": "Delivery documentation is a later docs-only commit; shared branches and Claude checkout were not rewritten."
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "41",
+    "minimumOS": "16.0"
+  },
+  "feedback": {
+    "availableSubmissionsReviewed": 25,
+    "allCommentsRead": true,
+    "allScreenshotsVisuallyReviewed": true,
+    "byBuild": {
+      "40": 13,
+      "37": 2,
+      "28": 1,
+      "27": 6,
+      "24": 3
+    },
+    "newOwnerScreenshots": 5,
+    "rawPrivacy": "Customer feedback, identifiers, screenshots and signed media references remain private outside Git."
+  },
+  "ci": {
+    "sourceCommit": "3615a23a4c055045be053cf788e776263de75851",
+    "runURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37038155565",
+    "passedJobs": 12,
+    "requiredJobNames": [
+      "Cloudflare Worker (tour-host)",
+      "Cloudflare Worker (upload-gateway, deno check + tests)",
+      "Disposable PostgreSQL publication, invariant and deletion regression",
+      "Offline audit evidence, consent and adoption source gates",
+      "Offline reel-style preservation and blind-evaluation contracts",
+      "Python workers (render, spatial, training adapter)",
+      "Secret scan",
+      "Studio contracts, build and property workflows (offline)",
+      "Supabase edge functions (deno check + tests)",
+      "Supabase migrations (fresh replay + invariants)",
+      "Web parity inventory and design-token contracts (offline)",
+      "iOS static gates"
+    ],
+    "event": "pull_request",
+    "pullRequestMergeCommit": "b05cc233a20283044ae24a717c25ebb88085bf66",
+    "sourceAndMergeTree": "7b1cad69b664589a7ea5848aefb0f3ed23d9f577",
+    "mergeTreeMatchesRuntimeSource": true,
+    "earlierRealFailure": "Isolated workspace-selection negative-control compilation lacked the unchanged Studio handler dependency; copying/hash-binding it restored the intended assertion. No runtime or product assertion was weakened."
+  },
+  "softwareChecks": {
+    "publicActualBrowserAssertions": 195,
+    "publicBrokenControls": 5,
+    "backendDenoTests": 42,
+    "gallerySQLAssertionsFreshAndReplay": 47,
+    "realConcurrentGalleryAppendChecks": true,
+    "photoHistoryExportAssertions": 304,
+    "combineQueueAssertions": 22,
+    "lifecycleAndNotificationBoundaryAssertions": 65,
+    "unitAndMetadataAssertions": 71,
+    "existingClientContactAssertions": 60,
+    "syntheticAVFoundationMotionStatusAndHDGatesPassed": true,
+    "paidAIOrGPUCalls": 0
+  },
+  "releaseUI": {
+    "acceptedUniqueBetaCases": 5,
+    "detailVariantsWithPassingEvidenceAcrossRuns": 7,
+    "singleAllGreen12TestRun": false,
+    "finalNativeRuntimeCasesPassed": 2,
+    "testedNativeSourceCommit": "00f1a2ea4ce62aaaae5c371c54d86a0e9c563d67",
+    "all214NativeInputsMatchFinalArchiveSource": true,
+    "qualification": "Final CI dependency-harness correction changes neither native inputs nor UI assertions. The final UI binary was built at00f1a2e, not rebuilt at3615a23.",
+    "finalQueueNavigationAndReviewPassed": true,
+    "finalColdRichAllEightToolDestinationsPassed": true,
+    "earlierGenuineBannerOverlapFailurePreserved": true,
+    "bannerOverlapFixedAndRegressionPassed": true,
+    "scopeLimit": "Synthetic local media, actual Release UI. Four editor cases and earlier detail variants were not all rerun after the final banner-layout change; passing final queue and cold-rich runs are separate. No camera/provider/GPS/physical arm64e acceptance."
+  },
+  "archive": {
+    "createdAt": "2026-10-02T17:05:44+00:00",
+    "scheme": "RendpropSpatialTestFlight",
+    "explicitArchiveBuildOverride": "41",
+    "sourceInputs": 214,
+    "compiledTrackedSwiftInputs": 139,
+    "compiledGeneratedSwiftInputs": 1,
+    "signatureVerified": true,
+    "executableSHA256": "f98c89851d8c8cba94dc2294375e16c36f9877679945a5b33fdbadfea30e2b9e",
+    "arm64UUID": "47096A17-076C-344D-A518-D3B756B72A46",
+    "allUUIDsMatch": true,
+    "derivedDataAndArchiveDSYMBytesMatch": true,
+    "simulatorFixtureMarkersAbsentFromDeviceBinaryAndDSYM": true,
+    "note": "The development-signed archive was independently checked; App Store Connect export/upload and processed internal-only availability are separate proofs. The moved DerivedData app product is not claimed byte-matched."
+  },
+  "upload": {
+    "startedAt": "2026-10-02T17:20:09.862919+00:00",
+    "finishedAt": "2026-10-02T17:21:40.622087+00:00",
+    "exitCode": 0,
+    "attempts": 1,
+    "internalOnly": true
+  },
+  "appleReadback": {
+    "checkedAt": "2026-10-02T17:23:58.938315+00:00",
+    "available": true,
+    "buildID": "48d08a93-3cf1-4248-8071-afc9398b1c56",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "expired": false,
+    "uploadedDate": "2026-10-02T10:22:21-07:00",
+    "minOSVersion": "16.0",
+    "usesNonExemptEncryption": false,
+    "internalBuildState": "IN_BETA_TESTING",
+    "groupName": "Rendprop team",
+    "existingGroupBuildIncluded": true
+  },
+  "testNotes": {
+    "verifiedAt": "2026-10-02T17:24:42.109702+00:00",
+    "locale": "en-US",
+    "readbackVerified": true,
+    "textSHA256": "ae91d12bd11526c4942db70986cf98e4e101fd8df3f868c17b62ea46cacc1729"
+  },
+  "backend": {
+    "projectRef": "ymgqpbnjpztwjsyvceld",
+    "migrationName": "listing_gallery_selection",
+    "sourceMigrationVersion": "20261002160344",
+    "sourceMigrationSHA256": "f6c335be739ef2ea5d61a6792f6f254559cfeffc59c2e0234dd1042f8978acba",
+    "liveMigrationVersion": "20261002171338",
+    "catalogChecksPassed": 8,
+    "allThreeExactFunctionBodiesMatch": true,
+    "functions": [
+      {
+        "name": "listings",
+        "version": 38,
+        "status": "ACTIVE",
+        "verifyJWT": true,
+        "submittedFiles": 12,
+        "extractedFiles": 12,
+        "allExtractedFilesHashMatch": true,
+        "qualification": null
+      },
+      {
+        "name": "tours",
+        "version": 45,
+        "status": "ACTIVE",
+        "verifyJWT": true,
+        "submittedFiles": 14,
+        "extractedFiles": 13,
+        "allExtractedFilesHashMatch": true,
+        "qualification": "The omitted spatial/contract.ts is reached only by an erased import type Row edge from chapters.ts; its unused runtime exports are unreachable through that edge."
+      },
+      {
+        "name": "ai-photo",
+        "version": 49,
+        "status": "ACTIVE",
+        "verifyJWT": true,
+        "submittedFiles": 24,
+        "extractedFiles": 24,
+        "allExtractedFilesHashMatch": true,
+        "qualification": null
+      }
+    ],
+    "unauthenticatedGETProbesAll401": true,
+    "uniqueExtractedSources": 36,
+    "uniqueSubmittedSources": 37,
+    "syntheticProductionCustomerWrites": 0,
+    "existingHistoricalAuditRowsRewritten": false
+  },
+  "worker": {
+    "name": "rendprop-tour-host",
+    "version": "0d5db590-c2c8-4482-9f3f-77bcf893fcd6",
+    "createdAt": "2026-10-02T17:15:45.025182Z",
+    "trafficPercent": 100,
+    "sourceAnnotationMatches": true,
+    "routesVarsAndSecretsPreserved": true,
+    "productionHTMLGETChecksPassed": 4,
+    "servedEngineAndCSSMatchReviewedSource": true,
+    "allRemoteWorkerSourcesHashVerified": false,
+    "requestedMediaBytes": 0,
+    "productionBrowserPlaybackClaim": false,
+    "qualification": "Four existing branded/MLS HTML GETs; actual playback, seek, unload and geometry tests used generated local fixtures. Live HTML does not prove the complete remote Worker bundle."
+  },
+  "evidenceSHA256": {
+    "ci-success.json": "d5fc08bd622658f16eff8161eac3e83bff0a8cd564acfa3d87b9506b6799458d",
+    "ci-tree-binding.json": "8f265389f0383ac0f3005ffa2676f0b7389cd80a71ce653727631fc9b041d813",
+    "native-beta-polish-final-ui-review.json": "6127bf4335b95ade52839c0c672c3849565d3ab3ef8f1c6516acb37b3e3c6764",
+    "production-delivery-independent-addendum.json": "737df787913f028ede47a9b9d81659e19dd0fe4d763fbb7638df77a54acdc3da",
+    "production-delivery-independent-schema-addendum.json": "819823d0cada77dffad0150e256efad000af1c5a9b65b2e534ca58aafa7da92a",
+    "production-html-live-3615a23a4c055045be053cf788e776263de75851-1790961398390.json": "e5dafd46783ff4fb808f0eae222d6edc053d59f453ebee63b2b13930940f1557",
+    "public-player-browser-reviewed-final/receipt.json": "c54894ae634cb72a212d9cd3fc77cbb586aeef27249c73fef18dffca785a1bb0",
+    "backend-packages/final-source-binding.json": "412ae15fbf2913c25590a96c22c3c9ffb19b177eec4b12c981d67c8bde4f40b9",
+    "backend-packages/independent-backend-release-review.json": "19e78448daecda623d1ba4bb4dabb6c4984072d2b734da81e98b4bf690d218fc",
+    "backend-packages/live-schema-complete-readback.json": "369e637013682888a1b012bced22f5b2de98ba603432b53de2464e50457ed5ed",
+    "backend-packages/unauthenticated-probes.json": "5c3937d580740df28525bef42540b8888076680f969b8d14c4e93f763a891507",
+    "testflight41/source-manifest.json": "cd74b1f1512ef77030cb8be102fb89da705cca3c9c35adf4d458d4b3882cec5f",
+    "testflight41/archive-source-binding.json": "a75d3191393d34a58578c7856c4d6c0074644df9b347fda7bdf44813af44ff50",
+    "testflight41/archive-independent-preflight.json": "a0ac629c3ddeb6b8a6011775834c440ed2b9f5da9e16a484b3cedc9810b5410b",
+    "testflight41/archive-independent-peer-review.json": "b9b7c059586430c2b520c063f08de806b9db3615dadce30de8e1d7b45338abe8",
+    "testflight41/independent-helper-final-source-review.json": "caa9cf9d27836093ee00ee7978d0348a7c34d362848fef3c5eefea71573f0125",
+    "testflight41/owner-release-gate.json": "d3cf883be176cddc1ba05ce1a649e503a7960d108a87ad8063a9124052e2f275",
+    "testflight41/upload-result.json": "54ac4ff5fc6a249aa14454400b635ea57f0556dcc49dd66b9657404f07e9a771",
+    "testflight41/testflight-ready.json": "d39379772a3f229e34fdd11eba8f9f051c8eceecafbfbbb21feecc5b065a9595",
+    "testflight41/test-notes-receipt.json": "c4faa5f7cd5e07a07251936b33710f2114f3a851f5485a7a42d2b5fc92934a0c"
+  },
+  "remainingAcceptance": [
+    "Real iPhone cold launches, editor keyboard, Current location unit and account/Studio sync.",
+    "Real declutter batch navigation, permitted completion notification, retained history and main-photo publication.",
+    "Real walking footage sharpness/bob/turns and Safari Explore/Play; drone-like output is not certified.",
+    "Controlled Apple sign-in/purchase/restore and client inquiry inbox acceptance."
+  ],
+  "knownLimits": [
+    "Unfinished photo jobs do not resume after force-quit; iOS background execution is finite. Completed files survive.",
+    "Staging geometry and consistent furniture across room angles are not fixed; staging requires review and deliberate selection.",
+    "Whole-video decluttering is not delivered. Existing short reflection removal needs separate provider and real-footage acceptance.",
+    "Motion profile/capture mode parameters remain unchanged; status reports measured correction rather than treating a safety crop as stabilization.",
+    "Cloud-imported photo additions preserve older remote variants; shared cloud photo-family/version selection is unfinished.",
+    "Nearby attractions and automatic composition/perspective correction are not added."
+  ],
+  "scope": {
+    "publicAppStoreRelease": false,
+    "testerOrGroupConfigurationChanges": false,
+    "paidAIOrGPUCalls": 0,
+    "spatialGlobalFlagEnabled": false,
+    "spatialBudgetChanged": false,
+    "claudeCheckoutTouched": false
+  }
+}

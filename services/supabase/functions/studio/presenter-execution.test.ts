@@ -67,7 +67,12 @@ async function harness() {
       if (action === "dispatch_claim") { if (job.state !== "reserved") return Promise.resolve({ claimed: false, job }); job.state = "dispatching"; return Promise.resolve({ claimed: true, dispatch_token: I.key, job }); }
       if (action === "dispatch_result") { Object.assign(job, payload, { state: "queued" }); return Promise.resolve({ job }); }
       if (action === "ambiguous") { job.state = "uncertain"; return Promise.resolve({ job }); }
-      if (action === "failed" || action === "cancelled") { Object.assign(job, { state: action, charged_cents: payload.charged_cents, held_cents: 0 }); return Promise.resolve({ job }); }
+      if (action === "failed" || action === "cancelled") {
+        job.state = action;
+        // Match the SQL's existing optional confirmed-billing transition.
+        if (payload.billing_final === true) Object.assign(job, { charged_cents: payload.charged_cents, held_cents: 0 });
+        return Promise.resolve({ job });
+      }
       if (action === "output_claim") return Promise.resolve({ claimed: job.state === "queued", job, lease_token: I.key, write_deadline: new Date(Date.now() + 240_000).toISOString() });
       if (action === "output_ready") { equal(payload.lease_token, I.key); job.state = "review"; job.output_sha256 = payload.sha256; permissions.can_preview = permissions.can_review = true; return Promise.resolve({ job }); }
       if (action === "cleanup_claim") return Promise.resolve({ claimed: false });
@@ -145,18 +150,33 @@ Deno.test("ambiguous paid submission holds money and never submits on replay or 
   equal(h.jobs[0].state, "uncertain"); equal(h.jobs[0].held_cents, 100); equal(h.calls.filter((c) => c === "submit").length, 1);
 });
 Deno.test("explicit provider rejection settles zero but status transport errors retain hold", async () => {
-  const h = await harness(); h.deps.submit = () => Promise.reject(new ProviderError("higgsfield", "validation", "rejected", 422));
+  const h = await harness(); h.deps.submit = () => Promise.reject(new ProviderError("higgsfield", "validation", "rejected", 422, true));
   await h.quote(); await h.generate(); equal(h.jobs[0].state, "failed"); equal(h.jobs[0].charged_cents, 0);
   const p = await harness(); await p.quote(); await p.generate(); p.deps.poll = () => Promise.reject(new Error("temporary"));
   await rejects(() => p.api.progress(I.job)); equal(p.jobs[0].state, "queued"); equal(p.jobs[0].held_cents, 100);
 });
-Deno.test("cancel acknowledgment alone is not refunded; terminal canceled status is", async () => {
+Deno.test("cancel acknowledgment and terminal status both preserve unconfirmed billing", async () => {
   const h = await harness(); await h.quote(); await h.generate();
   h.deps.poll = () => Promise.resolve({ status: "in_progress" });
   await h.api.action(I.listing, { action: "cancel", job_id: I.job, expected_revision: 1 });
   equal(h.jobs[0].held_cents, 100); equal(h.calls.includes("cancel"), true);
   h.deps.poll = () => Promise.resolve({ status: "canceled" }); await h.api.progress(I.job);
-  equal(h.jobs[0].held_cents, 0); equal(h.jobs[0].state, "cancelled");
+  equal(h.jobs[0].held_cents, 100); equal(h.jobs[0].charged_cents, null); equal(h.jobs[0].state, "cancelled");
+});
+Deno.test("failed and safety-terminal provider jobs never invent a zero final bill", async () => {
+  for (const status of ["failed", "nsfw"] as const) {
+    const h = await harness(); await h.quote(); await h.generate();
+    h.deps.poll = () => Promise.resolve({ status });
+    await h.api.progress(I.job);
+    equal(h.jobs[0].state, "failed"); equal(h.jobs[0].held_cents, 100); equal(h.jobs[0].charged_cents, null);
+    equal(h.calls.filter(c => c === "submit").length, 1);
+  }
+});
+Deno.test("receipt-shaped or unclassified submit failures retain liability despite an HTTP status", async () => {
+  const h = await harness();
+  h.deps.submit = () => Promise.reject(new ProviderError("higgsfield", "upstream", "ambiguous receipt", 422, false));
+  await h.quote(); await h.generate(); await h.generate();
+  equal(h.jobs[0].state, "uncertain"); equal(h.jobs[0].held_cents, 100); equal(h.jobs[0].charged_cents, null);
 });
 Deno.test("unapproved output host never gets fetched or stored", async () => {
   const h = await harness(); await h.quote(); await h.generate(); h.deps.outputHosts = () => ["different.rendprop.com"];

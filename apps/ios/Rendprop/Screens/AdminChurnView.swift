@@ -32,6 +32,9 @@ struct AdminChurnCount: Sendable, Hashable, Identifiable {
     /// "solo" → "Solo", "auto_renew_off" → "Auto renew off".
     var title: String {
         guard !label.isEmpty else { return "(unknown)" }
+        if ["auto_renew_off", "auto_renew_disabled"].contains(label.lowercased()) {
+            return "Renewal turned off · access may continue"
+        }
         let spaced = label.replacingOccurrences(of: "_", with: " ")
         return spaced.prefix(1).uppercased() + spaced.dropFirst()
     }
@@ -309,7 +312,7 @@ struct AdminChurnView: View {
         } header: {
             Text(window.phrase.prefix(1).uppercased() + window.phrase.dropFirst())
         } footer: {
-            Text("A subscriber who cancelled and came back inside the window isn't counted — a win-back clears the cancellation. Sandbox testers are never in the main figure.")
+            Text("This is an account-wide report, not your subscription setting. Turning renewal off counts here even while access continues until expiry. A subscriber who returned during the window isn't counted. Sandbox testers are separate.")
         }
     }
 

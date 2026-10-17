@@ -63,7 +63,7 @@ final class RendpropUITests: XCTestCase {
             //   RendpropApp.swift  @AppStorage("hasOnboarded")
             //   RootTabView        @AppStorage("space.type") / SpaceType.realEstate == "real_estate"
             //   RendpropApp.swift  @AppStorage("appearance")  / Appearance.light == "light"
-            //   AIConsent          "ai.thirdPartyProcessing.consent.v2"
+            //   AIConsent          "ai.thirdPartyProcessing.consent.v3"
             "-hasOnboarded", "YES",
             "-space.type", "real_estate",
             // Deterministic screenshots regardless of the simulator's theme.
@@ -71,7 +71,7 @@ final class RendpropUITests: XCTestCase {
             // Guideline 5.1.2(i) consent. Without it the AI screens
             // (PhotoStudioView, ReelStudioView) show a full-screen disclosure
             // overlay and dismiss themselves when it is not answered.
-            "-ai.thirdPartyProcessing.consent.v2", "YES",
+            "-ai.thirdPartyProcessing.consent.v3", "YES",
             "-ui.seedPhotosDir", fixtureDirectory.path,
         ]
         app.launch()
@@ -82,6 +82,183 @@ final class RendpropUITests: XCTestCase {
     }
 
     // MARK: - The walk
+
+    func testRequiredAccountGate() throws {
+#if targetEnvironment(simulator)
+        app.terminate()
+        app.launchArguments += ["-ui.requiredAccountGate"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Welcome to Rendprop"].waitForExistence(timeout: screenTimeout))
+        XCTAssertTrue(app.buttons["account.signInApple"].exists)
+        XCTAssertFalse(app.buttons["Not now"].exists)
+        for identifier in ["account.terms", "account.privacy", "account.help"] {
+            XCTAssertTrue(app.descendants(matching: .any)[identifier].exists, identifier)
+        }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "required-account-gate"; screenshot.lifetime = .keepAlways; add(screenshot)
+        let tree = XCTAttachment(string: app.debugDescription)
+        tree.name = "required-account-accessibility"; tree.lifetime = .keepAlways; add(tree)
+#else
+        throw XCTSkip("Closed account-screen fixtures exist only on the simulator.")
+#endif
+    }
+
+    /// Closed Home-only render: no listing creation, capture or paid action.
+    /// The same test can run at the simulator's default and accessibility sizes.
+    func testHomeShowroomCards() throws {
+#if targetEnvironment(simulator)
+        XCTAssertTrue(waitForHome(timeout: screenTimeout))
+        let activeIDs = ["tour", "photos", "photoStudio", "reel"]
+            .map { "home.feature.\($0)" }
+        var identifiers = activeIDs
+        let activeCount = identifiers.count
+        identifiers.append("home.comingSoon.aerial")
+#if SPATIAL_CAPTURE_LAB
+        identifiers += ["home.feature.floorPlan", "home.feature.spatial"]
+#else
+        identifiers += ["home.comingSoon.floorPlan", "home.comingSoon.spatial"]
+#endif
+        let cards = identifiers.map { app.descendants(matching: .any).matching(identifier: $0).firstMatch }
+        for card in cards { XCTAssertTrue(card.exists, card.identifier) }
+        func revealCard(_ card: XCUIElement) {
+            let top = app.navigationBars.firstMatch.frame.maxY
+            let bottom = app.tabBars.firstMatch.frame.minY
+            // At large text a full swipe can pass a card. Choose direction
+            // from its current geometry instead of continuing toward the end.
+            for _ in 0..<16 {
+                let frame = card.frame
+                if card.isHittable && frame.minY >= top && frame.maxY <= bottom { return }
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+                let toward = frame.minY < top ? 0.72 : 0.38
+                start.press(forDuration: 0.05, thenDragTo:
+                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: toward)))
+            }
+        }
+        revealCard(cards[0])
+
+        let frames = cards.map(\.frame)
+        let first = frames[0]
+        XCTAssertGreaterThan(first.height, 0)
+        XCTAssertGreaterThan(first.width, 0)
+        for (index, frame) in frames.enumerated() {
+            XCTAssertEqual(frame.height, first.height, accuracy: 1, identifiers[index])
+            XCTAssertEqual(frame.width, first.width, accuracy: 1, identifiers[index])
+            if index > 0 {
+                let previous = frames[index - 1]
+                XCTAssertTrue(frame.minY > previous.minY + 1
+                    || (abs(frame.minY - previous.minY) <= 1 && frame.minX > previous.minX),
+                    "Active cards must precede Coming soon cards: \(identifiers[index])")
+            }
+        }
+        for identifier in identifiers where identifier.hasPrefix("home.comingSoon.") {
+            XCTAssertFalse(app.buttons[identifier].exists, "Coming soon must not open a feature")
+        }
+#if SPATIAL_CAPTURE_LAB
+        XCTAssertTrue(app.buttons["home.feature.floorPlan"].exists)
+        XCTAssertTrue(app.buttons["home.feature.spatial"].exists)
+#else
+        XCTAssertFalse(app.buttons["home.feature.floorPlan"].exists)
+        XCTAssertFalse(app.buttons["home.feature.spatial"].exists)
+#endif
+        XCTAssertFalse(app.descendants(matching: .any)["home.comingSoon.3dFloorPlan"].exists,
+                       "Plans and measurements must have one shared card")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label CONTAINS %@",
+            "You, on every tour you send")).count, 0)
+        XCTAssertTrue(app.tabBars.buttons["Profile"].exists)
+
+        let frameRows = zip(identifiers, frames).map { identifier, frame in
+            ["id": identifier, "x": Double(frame.minX), "y": Double(frame.minY),
+             "width": Double(frame.width), "height": Double(frame.height)] as [String: Any]
+        }
+        let frameData = try JSONSerialization.data(withJSONObject: frameRows, options: [.prettyPrinted, .sortedKeys])
+        let frameAttachment = XCTAttachment(string: String(decoding: frameData, as: UTF8.self))
+        frameAttachment.name = "home-showroom-frames.json"; frameAttachment.lifetime = .keepAlways; add(frameAttachment)
+        let firstActiveScreenshot = XCTAttachment(screenshot: app.screenshot())
+        firstActiveScreenshot.name = "home-showroom-active-start"; firstActiveScreenshot.lifetime = .keepAlways; add(firstActiveScreenshot)
+
+        func retainSection(endingAt card: XCUIElement, name: String) {
+            let visibleBottom = app.tabBars.firstMatch.frame.minY
+            revealCard(card)
+            XCTAssertTrue(card.isHittable, "Could not reach \(card.identifier) within the bounded Home scroll")
+            XCTAssertLessThanOrEqual(card.frame.maxY, visibleBottom + 1, "The retained card must not be hidden behind the tab bar")
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
+        }
+        retainSection(endingAt: cards[activeCount - 1], name: "home-showroom-active-cards")
+        retainSection(endingAt: cards[cards.count - 1], name: "home-showroom-coming-soon-cards")
+        let tree = XCTAttachment(string: app.debugDescription)
+        tree.name = "home-showroom-accessibility"; tree.lifetime = .keepAlways; add(tree)
+#else
+        throw XCTSkip("Closed Home fixtures exist only on the simulator.")
+#endif
+    }
+
+    func testDesignHomeOnlyKeepsApprovedCopyAndTwoColumnCards() {
+        XCTAssertTrue(waitForHome(timeout: screenTimeout))
+        XCTAssertTrue(app.staticTexts["List it. Launch it. Sell it."].exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@",
+            "Be your own crew. Capture and polish photos, create tours, social media content, floor plans, virtual staging, and a shareable property site - all from your phone.")).firstMatch.exists)
+        let started = app.buttons["home.getStarted"]
+        XCTAssertTrue(started.isHittable)
+        XCTAssertGreaterThanOrEqual(started.frame.height, 44)
+        XCTAssertFalse(app.buttons["home.addHome"].exists,
+            "Get started is the sole Home creation CTA")
+        XCTAssertFalse(app.staticTexts["My Listings"].exists,
+            "Listings belong in their own tab, not the Home dashboard")
+        XCTAssertFalse(app.staticTexts["Your first home in five steps"].exists,
+            "Get started replaces the duplicate Home setup card")
+        shot("design-home-only-hero")
+        let cards = ["tour", "photos", "photoStudio", "reel"].map {
+            app.buttons["home.feature.\($0)"]
+        }
+        for card in cards { XCTAssertTrue(card.exists, card.identifier) }
+        let frames = cards.map(\.frame)
+        XCTAssertEqual(frames[0].minY, frames[1].minY, accuracy: 1)
+        XCTAssertEqual(frames[2].minY, frames[3].minY, accuracy: 1)
+        XCTAssertGreaterThan(frames[1].minX, frames[0].minX)
+        XCTAssertGreaterThan(frames[2].minY, frames[0].maxY)
+        XCTAssertEqual(frames[0].width, frames[1].width, accuracy: 1)
+        for _ in 0..<8 where !cards[3].isHittable { app.swipeUp() }
+        shot("design-home-only-two-column-cards")
+    }
+
+    func testAppearanceSettingsFollowSystemAndKeepOverrides() {
+#if targetEnvironment(simulator)
+        // Unlike screenshot fixtures, this test must let Settings write the
+        // preference: NSArgumentDomain would otherwise force the launch value.
+        app.terminate()
+        if let index = app.launchArguments.firstIndex(of: "-appearance") {
+            app.launchArguments.removeSubrange(index...(index + 1))
+        }
+        app.launch()
+        XCTAssertTrue(waitForHome(timeout: screenTimeout))
+
+        func choose(_ label: String) {
+            app.tabBars.buttons["Settings"].tap()
+            let option = app.segmentedControls.buttons[label]
+            for _ in 0..<6 where !option.isHittable { app.swipeUp() }
+            XCTAssertTrue(option.isHittable, "Appearance choice must remain reachable")
+            option.tap()
+            XCTAssertTrue(option.isSelected, "Settings must accept \(label)")
+            app.tabBars.buttons["Home"].tap()
+            XCTAssertTrue(app.buttons["home.getStarted"].exists)
+            shot("appearance-home-\(label.lowercased())")
+        }
+
+        for label in ["Light", "Dark", "System"] {
+            choose(label)
+            app.terminate()
+            app.launch()
+            app.tabBars.buttons["Settings"].tap()
+            let option = app.segmentedControls.buttons[label]
+            for _ in 0..<6 where !option.isHittable { app.swipeUp() }
+            XCTAssertTrue(option.isSelected, "\(label) must persist across relaunch")
+            app.tabBars.buttons["Home"].tap()
+        }
+#else
+        // This closed fixture performs no camera, account, purchase or AI work.
+#endif
+    }
 
     func testWalk() {
         step01Home()
@@ -118,20 +295,23 @@ final class RendpropUITests: XCTestCase {
 
     private func step02AddHome() {
         activity("02 — Add a home") {
-            guard let add = find(ids: ["home.addHome"], labels: ["Add a home"], timeout: shortTimeout) else {
-                note("SKIPPED: no `home.addHome` and no button labelled \"Add a home\" on Home.")
+            let listings = app.tabBars.buttons["Listings"]
+            XCTAssertTrue(listings.waitForExistence(timeout: shortTimeout), "Listings tab must remain reachable")
+            listings.tap()
+            guard let add = find(ids: [], labels: ["Add a home"], timeout: shortTimeout) else {
+                note("SKIPPED: the Listings tab's Add a home action was unavailable.")
                 return
             }
             tap(add)
-            // The big button pushes NewListingView (nav title "New Home");
-            // the same words also title StartProjectSheet, which the feature
-            // tiles raise. Either is a correct `02-add-home`.
+            // The collection's Add action always opens NewListingView, including
+            // when a real listing already exists. Get started uses that listing.
             XCTAssertTrue(waitForAny(ids: [],
                            labels: ["New Home", "Add a home", "Name this home first"],
                            timeout: shortTimeout + 3), "Add-home form did not open")
             settle()
             shot("02-add-home")
             dismissTopScreen()
+            XCTAssertTrue(returnToHomeDashboard(), "Add-home form did not return to Home")
             XCTAssertTrue(waitForHome(timeout: shortTimeout + 3), "Add-home form did not dismiss")
         }
     }
@@ -192,11 +372,17 @@ final class RendpropUITests: XCTestCase {
             tap(card)
             nameFirstProjectIfAsked()
 
-            guard app.navigationBars["Reel Studio"].waitForExistence(timeout: screenTimeout) else {
+            guard app.navigationBars["Make a video"].waitForExistence(timeout: screenTimeout) else {
                 note("SKIPPED: Reel Studio did not open.")
                 return
             }
 
+            let social = app.buttons["video.purpose.social_media"]
+            guard social.waitForExistence(timeout: screenTimeout), social.isHittable else {
+                note("Required Social media video destination did not open.")
+                return
+            }
+            tap(social)
             let photos = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reel.photo."))
             guard photos.element(boundBy: 1).waitForExistence(timeout: screenTimeout) else {
                 note("Reel Studio has fewer than two synthetic photos; test-only seed import failed.")
@@ -210,7 +396,7 @@ final class RendpropUITests: XCTestCase {
                 }
                 tap(visible)
             }
-            XCTAssertTrue(waitForAny(ids: [], labels: ["2/8"], timeout: shortTimeout),
+            XCTAssertTrue(waitForAny(ids: [], labels: ["2/100"], timeout: shortTimeout),
                           "Reel Studio did not select both synthetic photos")
             guard let myVoice = scrollTo(ids: [], labels: ["My voice"], swipes: 8) else {
                 note("Required My voice segment did not scroll into view.")
@@ -369,7 +555,7 @@ final class RendpropUITests: XCTestCase {
 
     /// Home is up when its one unmissable action is on screen.
     private func waitForHome(timeout: TimeInterval) -> Bool {
-        waitForAny(ids: ["home.addHome"], labels: ["Add a home", "My Homes"], timeout: timeout)
+        waitForAny(ids: ["home.getStarted"], labels: ["Create Something Amazing"], timeout: timeout)
     }
 
     /// A Home-tab selection alone can leave that tab's navigation stack pushed.

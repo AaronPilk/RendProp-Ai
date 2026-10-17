@@ -17,22 +17,12 @@ import subprocess
 import sys
 import tempfile
 
-# Assertions the owner has decided to keep red on purpose. Each entry is the
-# exact `name` string tests/invariants.sql prints for that row, and the
-# assertion's own comment there is the authority on why it stays visible
-# instead of being weakened. A run whose ONLY failing assertions are in this
-# set is accepted (exit 0) and announced loudly; any other failing assertion
-# still exits 1. An entry that starts passing is a stale exception and also
-# exits 1, so the list has to be trimmed in the same change that fixes it.
-KEPT_RED = {
-    # tests/invariants.sql, "each astra ceiling clears its route's visible
-    # answer": the 0034 agent-reel seed sets max_output_tokens to 700, equal
-    # to the visible MAX_AGENT_REEL_TOKENS answer, and that comment says to
-    # keep the failure visible rather than enlarge the provider budget or
-    # weaken > to >=. Owner decision: neither the invariant nor the ceiling
-    # changes.
-    "each astra ceiling clears its route's visible answer and stays under the code clamp",
-}
+# No invariant failure is currently accepted. The historical agent-reel
+# headroom exception was removed only after all270 passed on fresh and replayed
+# schemas with the compact <=500-byte answer and unchanged700 combined cap.
+# Keep classification generic so any future explicit exception must still be
+# named, visible and rejected if it becomes stale.
+KEPT_RED: set[str] = set()
 
 # Exact size of the tests/invariants.sql inventory. A suite that prints fewer
 # rows is rejected even when its footer agrees with itself, so this number has
@@ -45,11 +35,21 @@ KEPT_RED = {
 # activation stamp, org_is_real, cancelled_at, admin_cohorts/admin_churn; 213 for
 # the 0044 plan-rework / industry-trial section; 198 before that).
 #
-# CONCURRENT BRANCHES, now reconciled: 234 + 13 (0048) + 19 (0047) = 266. The
-# 0047 assertions are appended AFTER the 0048 block, so every assertion that
-# existed before either branch — #155, the kept-red astra ceiling below
-# included — keeps the number it had.
-INVARIANT_COUNT = 266
+# The 0047/0048 branches totalled 266. Apple chronology and listing facts
+# registration add four assertions, bringing the current inventory to 270.
+# The kept-red exception is identified by its exact name, not its row number.
+INVARIANT_COUNT = 270
+
+# These tests are transactional and rolled back. Require their exact completion
+# markers on both freshly migrated and historically replayed schemas; merely
+# hashing/registering an SQL file does not prove its receipts or cost fences.
+REFLECTION_FIXTURES = (
+    ("video_erase.sql", "PASS video erase SQL: 51 assertions", 51),
+    ("video_erase_direct_bria.sql", "PASS direct Bria SQL: 40 assertions", 40),
+    ("member_portfolios.sql", "PASS: member portfolio SQL assertions; all fixtures rolled back.", 23),
+    # Build 58: Recently deleted (30-day restore window) and republish in place.
+    ("build58_db_controls.sql", '{"suite": "build58_db_controls", "assertions": 52}', 52),
+)
 
 # These already-shipped transactional Studio migrations intentionally create
 # their tables/policies once. Apply every listed file on BOTH fresh database paths, but
@@ -67,6 +67,15 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20260924232058_studio_named_projects.sql",
     "20260924232510_studio_project_media.sql",
     "20260924232803_studio_property_music.sql",
+    # Launch ceiling mode (2026-10-08): exact-anchor rewrites of live function
+    # bodies (pg_temp.rp_patch) refuse a second application by design.
+    "20261008201736_launch_ceiling_mode.sql",
+    "20261008220411_launch_blockers.sql",
+    "20261008235218_launch_round2.sql",
+    "20261009005727_launch_settlement_identity.sql",
+    # Superseded function overlay: focused drivers preserve its historical
+    # replay proof and verify it refuses the later reviewed device functions.
+    "20261010030225_reaudit_library_session_settlement.sql",
 })
 
 
@@ -111,8 +120,8 @@ def invariant_rows(output, exit_code):
     required = {
         "all three explicit Astra writing seats keep their 0030/0034 paid-plan gates",
         "no gpt-6-astra row is reachable on the free or trial tier",
-        "plan_entitlements match paid plans and 0032 trial/free for every metered feature",
-        "org_entitlement on a fitness trial org is the single-location free week (1/60/4/1/1, 1 seat, 1000¢)",
+        "plan_entitlements match current paid/trial/free catalog for every metered feature",
+        "org_entitlement on a fitness trial org is the single-location free week (1/20/20/1/1, 1 seat, 1500¢)",
     }
     require(required.issubset(names), "Required paid-plan/entitlement gates absent")
     failed = [name.strip() for _, name, passed in rows if passed != "t"]
@@ -191,6 +200,7 @@ def main():
             run("apply-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
         counts = []
         receipt["invariantRuns"] = []
+        receipt["reflectionFixtures"] = []
         for phase in ("initial", "replayed"):
             if phase == "replayed":
                 # Reapply each historical version where it actually existed.
@@ -210,6 +220,15 @@ def main():
                 receipt["replayedMigrations"] = len(replay)
                 receipt["singleApplicationMigrations"] = sorted(SINGLE_APPLICATION_MIGRATIONS)
                 receipt["replayMode"] = "second clean database; each replayable migration twice at its historical schema point"
+            for filename, marker, assertion_count in REFLECTION_FIXTURES:
+                fixture = sqlroot / "tests" / filename
+                require(fixture in sources, "Required reflection fixture missing from source receipt")
+                reflection = run("reflection-" + phase + "-" + fixture.stem,
+                                 psql + ["-f", str(fixture)])
+                require(marker in reflection, f"{filename} did not complete its {assertion_count} assertions")
+                receipt["reflectionFixtures"].append({"phase": phase, "fixture": filename,
+                    "assertions": assertion_count, "rolledBack": True,
+                    "database": psql[psql.index("-d") + 1]})
             output = run("invariants-" + phase, psql + ["-f", str(sqlroot / "tests/invariants.sql")], expected=(0, 3))
             # Preserve a genuine red suite, but still test migration replay.
             # A SQL/load error is not a completed red suite and aborts here.

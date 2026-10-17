@@ -56,7 +56,7 @@ enum AskAIScreen: String {
     var starters: [String] {
         switch self {
         case .home:
-            return ["Start my first tour",
+            return ["Start my first home",
                     "What should I do first?",
                     "How do I share to the MLS?",
                     "What does this cost me?"]
@@ -81,20 +81,20 @@ enum AskAIScreen: String {
                     "Which change should I use on a dark room?",
                     "Can I do all my photos at once?"]
         case .reelStudio:
-            return ["What makes a reel people actually watch?",
-                    "How long should my reel be?",
-                    "Should I use my own voice?",
-                    "What do I post this to?"]
+            return ["How do I finish this video?",
+                    "What does Fly-through do?",
+                    "Why is this paused?",
+                    "How do I save or export?"]
         case .floorPlan:
-            return ["How do I scan a second floor?",
-                    "Why did it miss a room?",
-                    "How slowly should I walk?",
+            return ["How do I enter room measurements?",
+                    "Can my phone measure a distance?",
+                    "How do I draw a second floor outline?",
                     "Can I upload a plan I already have?"]
         case .aerial:
-            return ["What is an aerial intro for?",
-                    "Do I need a drone?",
-                    "Can I use my own drone footage?",
-                    "How long does it take?"]
+            return ["Why is aerial intro Coming soon?",
+                    "Where is my saved aerial?",
+                    "How do I resume an earlier request?",
+                    "Can I use my own drone footage?"]
         case .tourCapture:
             return ["How should I walk a big house?",
                     "How do I hold the phone?",
@@ -130,13 +130,15 @@ extension View {
     /// Use it on the screen's own root content, INSIDE whatever
     /// `NavigationStack` / `NavigationLink` destination it lives in — a
     /// toolbar item only renders when there is a nav bar above it.
-    func askAI(_ screen: AskAIScreen) -> some View {
-        modifier(AskAIModifier(screen: screen))
+    func askAI(_ screen: AskAIScreen, listingID: UUID? = nil, photoState: CoachRequest.PhotoState? = nil) -> some View {
+        modifier(AskAIModifier(screen: screen, listingID: listingID, photoState: photoState))
     }
 }
 
 private struct AskAIModifier: ViewModifier {
     let screen: AskAIScreen
+    let listingID: UUID?
+    let photoState: CoachRequest.PhotoState?
     @EnvironmentObject private var model: AppModel
     @State private var showCoach = false
 
@@ -149,7 +151,7 @@ private struct AskAIModifier: ViewModifier {
             }
             .sheet(isPresented: $showCoach) {
                 CoachView(model: model, originScreen: screen.rawValue,
-                          starters: screen.starters)
+                          starters: screen.starters, listingID: listingID, photoState: photoState)
             }
     }
 }

@@ -18,7 +18,7 @@ app = modal.App(APP_NAME)
 # Reuse the experiment's content-addressed base rather than floating latest.
 image = (modal.Image.from_registry(
     "pytorch/pytorch@sha256:3d614dfd422b7e43647491cbf07d6acc516c032fc49c594a94afdebd52552fb9")
-    .pip_install("modal==1.5.3", "Pillow==12.1.1"))
+    .pip_install("modal==1.5.3", "Pillow==12.3.0"))
 # Explicit source inventory. A folder mount must not pick up a future private
 # receipt, .env file or exported room that somebody puts next to these scripts.
 SOURCE_FILES = (

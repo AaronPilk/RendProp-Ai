@@ -1,5 +1,27 @@
 import Foundation
 
+/// Setup migration is separate from paid batch recovery. Legacy setup defaults
+/// cannot be distinguished from explicit choices. New videos always keep the
+/// selected upload order; saved paid batches retain their separate manifest.
+struct NativeReelPlanningSetup: Sendable {
+    let motionPreset: String?
+    let pictureLabels: Bool
+    let automaticOrder: Bool
+    let notice: String?
+    init(automaticOrder: Bool?, motionPreset: String?, pictureLabels: Bool) {
+        self.automaticOrder = false
+        if automaticOrder != nil {
+            self.motionPreset = motionPreset
+            self.pictureLabels = pictureLabels
+            self.notice = nil
+        } else {
+            self.motionPreset = nil
+            self.pictureLabels = false
+            self.notice = "Your photo order is kept. Older setups use automatic camera motion with picture labels off; your photos and narration are kept."
+        }
+    }
+}
+
 /// Semantic setup shared with Studio. Device URLs, upload capabilities and paid
 /// generation requests never enter this document. Unsupported local media is
 /// represented explicitly, so another device cannot invent a matching shot.
@@ -22,9 +44,14 @@ struct NativeReelDraft: Codable, Hashable, Sendable {
     let photos: [Photo]
     let localExtraClipCount: Int
     let updatedAt: String
+    var motionPreset: String? = nil
+    var automaticOrder: Bool? = nil
+    var planningSetup: NativeReelPlanningSetup {
+        NativeReelPlanningSetup(automaticOrder: automaticOrder, motionPreset: motionPreset, pictureLabels: shotCaptions)
+    }
 
     func checked() throws -> Self {
-        guard schema == 1, kind == "native-reel-setup", ["off", "lowerThird", "punchCard", "highlightBox"].contains(captionStyle),
+        guard motionPreset == nil || ["fly_through", "push_in", "side_glide", "pull_back"].contains(motionPreset!), schema == 1, kind == "native-reel-setup", ["off", "lowerThird", "punchCard", "highlightBox"].contains(captionStyle),
               ["cut", "dissolve", "whip"].contains(transition), ["warm", "punchy", "luxury"].contains(tone),
               ["off", "myVoice", "aiVoice"].contains(voiceMode), motionPrompt.count <= 4000, script.count <= 100_000,
               photos.count <= 100, Set(photos.map(\.localId)).count == photos.count,

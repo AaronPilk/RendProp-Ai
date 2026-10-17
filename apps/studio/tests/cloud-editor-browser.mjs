@@ -6,9 +6,12 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { build } from "vite";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chromium, expect } from "@playwright/test";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-cloud-editor-")), dist = join(artifacts, "dist");
-const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
+const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx",...['export','recording-clock','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
+const sourceHashes=async()=>Object.fromEntries(await Promise.all(sourcePaths.map(async path=>[path,createHash('sha256').update(await readFile(join(root,path))).digest('hex')])));
+const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
 let browser, server, page;
 const timingDevices=[];
 // Test-only observation: every wrapper returns the original native result and
@@ -56,18 +59,36 @@ function installMediaTimingFixture() {
 async function captureMediaTiming() {
   for(const device of timingDevices){
     if(device.tab.isClosed())continue;
-    try{device.trace=await device.tab.evaluate(()=>window.mediaTimingFixture.snapshot());}
+    try{device.trace=await device.tab.evaluate(()=>window.mediaTimingFixture.snapshot());device.clockRefusals=await device.tab.evaluate(()=>window.exportClockRefusals??[]);}
     catch(error){device.captureError=String(error);}
   }
-  receipt.mediaTiming=timingDevices.map(({id,listing,trace,captureError})=>({id,listing,trace,captureError}));
+  receipt.mediaTiming=timingDevices.map(({id,listing,trace,clockRefusals,captureError})=>({id,listing,trace,clockRefusals,captureError}));
 }
 async function closeDevice(tab){await captureMediaTiming();await tab.close();}
 async function saveExportDiagnostics(label,path,probe){await captureMediaTiming();receipt.exportProbes.push({label,path,ffprobe:probe});await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));}
 
-const pro=async tab=>{await expect(tab.getByRole("button",{name:"Pro view",exact:true})).toBeVisible();await tab.getByRole("button",{name:"Pro view",exact:true}).click();};
+const pro=async tab=>{await tab.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();await expect(tab.getByRole("button",{name:"Pro view",exact:true})).toBeVisible();await tab.getByRole("button",{name:"Pro view",exact:true}).click();};
 const advancedTools=async tab=>{const details=tab.locator("details.creation-advanced").filter({has:tab.locator("summary",{hasText:"Capture plan & extra editing tools"})});if(!await details.evaluate(node=>node.open))await details.locator("summary").click();};
+// Retain the actual guard's cause on a refused export. No clock arguments,
+// scheduling, thresholds or thrown errors change; successful reads are untouched.
+const clockReceiptPlugin={name:"cloud-clock-refusal-receipt",enforce:"pre",transform(code,id){
+  if(!id.endsWith('/src/editor/recording-clock.ts'))return;
+  const seam='export class RecordingClock {';
+  assert.equal(code.split(seam).length,2,"Actual recording-clock observation anchor missing");
+  return code.replace(seam,'class ShippingRecordingClock {')+`
+export class RecordingClock extends ShippingRecordingClock {
+  read(wall: number, timeline: number, audio?: number): void {
+    try { super.read(wall,timeline,audio); }
+    catch(error) {
+      const observations = (window as any).exportClockRefusals ??= [];
+      observations.push({atMs:performance.now(),message:(error as Error).message,cause:(error as Error).cause});
+      throw error;
+    }
+  }
+}`;
+}};
 try {
-  await build({ configFile: false, root, publicDir: false, logLevel: "error", build: { outDir: dist, rollupOptions: { input: join(root, "tests/cloud-editor-fixture.html") } } });
+  await build({ configFile: false, root, publicDir: false, logLevel: "error", plugins:[clockReceiptPlugin], build: { outDir: dist, rollupOptions: { input: join(root, "tests/cloud-editor-fixture.html") } } });
   server = createServer(async (request, response) => { const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`); if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end(); try { response.setHeader("Content-Type", ({ ".html": "text/html", ".js": "application/javascript", ".css": "text/css" })[extname(path)] ?? "application/octet-stream"); response.end(await readFile(path)); } catch { response.writeHead(404).end(); } });
   await new Promise((done) => server.listen(0, "127.0.0.1", done)); const origin = `http://127.0.0.1:${server.address().port}`;
   const sourceVideo = join(artifacts, "source-blue.mp4"), agentVideo = join(artifacts, "agent-green.mp4"), voiceFile = join(artifacts, "narration.wav");
@@ -127,6 +148,7 @@ try {
   receipt.checks.push("A second browser restores both the complete conversation and its actual edited draft, including later manual refinements, while reusing the same original media");
 
   await second.getByRole("combobox", { name: "Property reel", exact: true }).selectOption("20000000-0000-4000-8000-000000000003");
+  await second.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();
   await expect(second.getByRole("button",{name:"Pro view",exact:true})).toHaveAttribute("aria-pressed","false");await pro(second);
   await expect(second.getByLabel("Title overlay", {exact:true})).toHaveValue("");
   await expect(second.getByRole("button", {name:/Select clip /})).toHaveCount(0);
@@ -179,8 +201,25 @@ try {
   for(let i=0;i<pcm.length;i+=2){const v=pcm.readInt16LE(i)/32768;power+=v*v;if(i>=2&&pcm.readInt16LE(i-2)<0&&v>=0)crossings++;}
   const rms=Math.sqrt(power/(pcm.length/2)); assert(rms>0.02); assert(crossings>600&&crossings<720,`Narration frequency ${crossings}`);
   const pixel=(time,x=100)=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",exported,"-frames:v","1","-vf",`format=rgb24,crop=1:1:${x}:400`,"-f","rawvideo","pipe:1"])];
-  const dissolve=pixel(.64);assert(dissolve[0]>20&&dissolve[0]<100&&dissolve[2]>170&&dissolve[2]<245,`Dissolve mixed outgoing purple and incoming blue: ${dissolve}`);
-  const whipLeft=pixel(2.6,100),whipRight=pixel(2.6,650);assert(whipLeft[2]>200&&whipLeft[0]<30&&whipRight[0]>200&&whipRight[2]<30,"Whip frame must contain outgoing blue and incoming red at different horizontal positions");
+  // Inspect a fixed window around the 0.5s boundary and 0.28s dissolve.
+  // Encoded frames may arrive late; require progressing blends, not one
+  // hand-picked midpoint. A hard cut or frozen blend cannot pass.
+  const dissolve={before:pixel(.4),samples:[.54,.58,.62,.66,.70,.74,.78,.82,.86].map(time=>({time,rgb:pixel(time)})),after:pixel(1.1)};
+  receipt.exportProbes.at(-1).transitionPixels={dissolve};
+  const blends=dissolve.samples.filter(({rgb})=>rgb[0]>20&&rgb[0]<100&&rgb[2]>170&&rgb[2]<245);
+  assert(blends.some((sample,index)=>blends.slice(index+1).some(later=>sample.rgb[0]-later.rgb[0]>=8&&later.rgb[2]-sample.rgb[2]>=8)),`Dissolve must progress from purple toward blue within the bounded window: ${JSON.stringify(dissolve.samples)}`);
+  assert(dissolve.before[0]>100&&dissolve.before[0]<135&&dissolve.before[1]>65&&dissolve.before[1]<95&&dissolve.before[2]>135&&dissolve.before[2]<175,"The preceding shot must still be purple before the dissolve");
+  assert(dissolve.after[0]<10&&dissolve.after[1]<10&&dissolve.after[2]>240,"The following shot must be fully blue after the dissolve");
+  const isWhip=({left,right})=>left[2]>200&&left[0]<30&&right[0]>200&&right[2]<30;
+  const whipPixels=time=>({time,left:pixel(time,100),right:pixel(time,650)});
+  // Match the export-resume gate: MediaRecorder can shift the 180 ms whip by
+  // a few encoded frames. Require the spatial split inside a bounded window,
+  // plus the intact preceding/following shots; a hard cut cannot pass.
+  const transitionPixels={dissolve,beforeWhip:whipPixels(2.4),whip:[2.54,2.58,2.62,2.66,2.70,2.74].map(whipPixels),afterWhip:whipPixels(2.9)};
+  receipt.exportProbes.at(-1).transitionPixels=transitionPixels;
+  assert(transitionPixels.whip.some(isWhip),`Whip frames must contain outgoing blue and incoming red at different horizontal positions within the bounded timeline window: ${JSON.stringify(transitionPixels.whip)}`);
+  assert(transitionPixels.beforeWhip.left[2]>200&&transitionPixels.beforeWhip.right[2]>200&&!isWhip(transitionPixels.beforeWhip),"The preceding shot must still be blue before the whip");
+  assert(transitionPixels.afterWhip.left[0]>200&&transitionPixels.afterWhip.right[0]>200&&!isWhip(transitionPixels.afterWhip),"The closing shot must be fully red after the whip");
   receipt.checks.push("Decoded exported frames prove actual dissolve blending and horizontal whip movement");
   receipt.checks.push(`Actual exported MP4 is H264/AAC, 2x speed gives ${Number(probe.format.duration).toFixed(2)}s edit, and decoded narration has 660Hz tone (RMS ${rms.toFixed(3)})`);
   await second.evaluate(() => window.cloudFixture.loseComplete());
@@ -196,9 +235,11 @@ try {
   receipt.checks.push("Real MP4 export saves to workspace and a lost completion/repeated Save reconciles without duplicate ticket or bytes");
   const beforeImport = await second.evaluate(() => window.cloudFixture.snapshot());
   await second.getByLabel("Property reel",{exact:true}).selectOption("20000000-0000-4000-8000-000000000002");
+  await second.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();
   await expect(second.getByRole("button",{name:"Pro view",exact:true})).toHaveAttribute("aria-pressed","false");await pro(second);
   await expect(second.getByLabel("Title overlay",{exact:true})).toHaveValue("Office to phone edit");
   await second.getByLabel("Property reel",{exact:true}).selectOption("20000000-0000-4000-8000-000000000003");
+  await second.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();
   await expect(second.getByRole("button",{name:"Pro view",exact:true})).toHaveAttribute("aria-pressed","false");await pro(second);
   await expect(second.getByRole("button",{name:/Select clip /})).toHaveCount(3);
   assert.equal((await second.evaluate(() => window.cloudFixture.snapshot())).tickets,beforeImport.tickets);
@@ -298,4 +339,4 @@ try {
   await second.screenshot({ path: join(artifacts, "cloud-editor.png"), fullPage: true });
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); receipt.visibleText = await page?.locator("body").innerText().catch(()=>""); process.exitCode = 1; if (page) await page.screenshot({ path: join(artifacts, "failure.png"), fullPage: true }).catch(() => {}); }
-finally { await captureMediaTiming(); await browser?.close(); if (server) await new Promise(done => server.close(done)); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }
+finally { await captureMediaTiming(); await browser?.close(); if (server) await new Promise(done => server.close(done)); receipt.sourceBoundAtEnd=JSON.stringify(await sourceHashes())===JSON.stringify(receipt.sourceHashes); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }

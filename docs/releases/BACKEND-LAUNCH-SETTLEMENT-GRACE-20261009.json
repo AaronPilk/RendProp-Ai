@@ -1,0 +1,198 @@
+{
+  "schema": 1,
+  "createdAt": "2026-10-09T00:57:59.295Z",
+  "mode": "run",
+  "status": "verified",
+  "projectRef": "ymgqpbnjpztwjsyvceld",
+  "functions": [
+    "ai-photo",
+    "ai-video",
+    "ai-copy",
+    "ai-chapters",
+    "ai-voice",
+    "coach",
+    "studio",
+    "me"
+  ],
+  "jwtPolicy": {
+    "ai-photo": true,
+    "ai-video": true,
+    "ai-copy": true,
+    "ai-chapters": true,
+    "ai-voice": true,
+    "coach": true,
+    "studio": true,
+    "me": false
+  },
+  "modernServiceTransport": false,
+  "before": {
+    "ai-photo": {
+      "id": "ed6f9fc0-e651-4622-b79a-e752770279be",
+      "version": 61,
+      "verifyJwt": true
+    },
+    "ai-video": {
+      "id": "9dd26656-ea6d-454d-bb29-951a7e03b3dd",
+      "version": 59,
+      "verifyJwt": true
+    },
+    "ai-copy": {
+      "id": "a21425d9-8959-4a6b-9399-c928abd148e6",
+      "version": 28,
+      "verifyJwt": true
+    },
+    "ai-chapters": {
+      "id": "2e627a9e-1f5a-48aa-bf1b-ce1a21318008",
+      "version": 34,
+      "verifyJwt": true
+    },
+    "ai-voice": {
+      "id": "4537778d-5283-484e-a6f5-56038070d525",
+      "version": 43,
+      "verifyJwt": true
+    },
+    "coach": {
+      "id": "2fa42061-bdbb-4231-b651-9a149c4a1b59",
+      "version": 30,
+      "verifyJwt": true
+    },
+    "studio": {
+      "id": "48930645-bb3e-481a-a615-501f300e4dee",
+      "version": 26,
+      "verifyJwt": true
+    },
+    "me": {
+      "id": "2fe30f3d-3570-4a10-b8c1-e3afa7a3518d",
+      "version": 58,
+      "verifyJwt": false
+    }
+  },
+  "completed": {
+    "ai-photo": {
+      "status": "source-verified",
+      "matchedSourceFiles": 32,
+      "runtimeSourceFiles": 32,
+      "stagedTypeOnlyNotInRuntime": []
+    },
+    "ai-video": {
+      "status": "source-verified",
+      "matchedSourceFiles": 44,
+      "runtimeSourceFiles": 44,
+      "stagedTypeOnlyNotInRuntime": [
+        "studio/context.ts"
+      ]
+    },
+    "ai-copy": {
+      "status": "source-verified",
+      "matchedSourceFiles": 22,
+      "runtimeSourceFiles": 22,
+      "stagedTypeOnlyNotInRuntime": [
+        "_shared/providers/types.ts"
+      ]
+    },
+    "ai-chapters": {
+      "status": "source-verified",
+      "matchedSourceFiles": 22,
+      "runtimeSourceFiles": 22,
+      "stagedTypeOnlyNotInRuntime": [
+        "_shared/providers/types.ts"
+      ]
+    },
+    "ai-voice": {
+      "status": "source-verified",
+      "matchedSourceFiles": 29,
+      "runtimeSourceFiles": 29,
+      "stagedTypeOnlyNotInRuntime": [
+        "_shared/providers/types.ts",
+        "studio/context.ts"
+      ]
+    },
+    "coach": {
+      "status": "source-verified",
+      "matchedSourceFiles": 21,
+      "runtimeSourceFiles": 21,
+      "stagedTypeOnlyNotInRuntime": [
+        "_shared/providers/types.ts"
+      ]
+    },
+    "studio": {
+      "status": "source-verified",
+      "matchedSourceFiles": 50,
+      "runtimeSourceFiles": 50,
+      "stagedTypeOnlyNotInRuntime": [
+        "_shared/providers/types.ts",
+        "studio/context.ts"
+      ]
+    },
+    "me": {
+      "status": "source-verified",
+      "matchedSourceFiles": 48,
+      "runtimeSourceFiles": 48,
+      "stagedTypeOnlyNotInRuntime": [
+        "_shared/providers/types.ts",
+        "studio/context.ts"
+      ]
+    }
+  },
+  "after": {
+    "ai-photo": {
+      "id": "ed6f9fc0-e651-4622-b79a-e752770279be",
+      "version": 62,
+      "verifyJwt": true
+    },
+    "ai-video": {
+      "id": "9dd26656-ea6d-454d-bb29-951a7e03b3dd",
+      "version": 60,
+      "verifyJwt": true
+    },
+    "ai-copy": {
+      "id": "a21425d9-8959-4a6b-9399-c928abd148e6",
+      "version": 29,
+      "verifyJwt": true
+    },
+    "ai-chapters": {
+      "id": "2e627a9e-1f5a-48aa-bf1b-ce1a21318008",
+      "version": 35,
+      "verifyJwt": true
+    },
+    "ai-voice": {
+      "id": "4537778d-5283-484e-a6f5-56038070d525",
+      "version": 44,
+      "verifyJwt": true
+    },
+    "coach": {
+      "id": "2fa42061-bdbb-4231-b651-9a149c4a1b59",
+      "version": 31,
+      "verifyJwt": true
+    },
+    "studio": {
+      "id": "48930645-bb3e-481a-a615-501f300e4dee",
+      "version": 27,
+      "verifyJwt": true
+    },
+    "me": {
+      "id": "2fe30f3d-3570-4a10-b8c1-e3afa7a3518d",
+      "version": 59,
+      "verifyJwt": false
+    }
+  },
+  "sourceCommit": "1f5650e6616bb74abe5044263d9f98d9620d9334 (deployed from a git-archive export of this exact commit)",
+  "migrations": [
+    {
+      "version": "20261009005727",
+      "name": "launch_settlement_identity",
+      "repoFile": "services/supabase/migrations/20261009005727_launch_settlement_identity.sql",
+      "stagedAs": "20261009003159"
+    },
+    {
+      "version": "20261009005753",
+      "name": "carry_paid_allowance_through_grace",
+      "repoFile": "services/supabase/migrations/20261009005753_carry_paid_allowance_through_grace.sql",
+      "stagedAs": "20261009003326"
+    }
+  ],
+  "preflight": "All three settlement patch anchors unique on live; 0 ceiling holds; 0 active/grace Apple subscriptions (no customer data affected).",
+  "readback": "Trigger exact-identity, ACL postgres+service_role only; app_video_cost_settle carries request_key+stage; plan_serving_ceiling grace branch grants 0; plan_serving_ceiling ACL service-only.",
+  "smoke": "Fresh anonymous account: GET /me serving_envelope free/lifetime/300; ai-copy 403 guest gate; ai-photo 400 validation; DELETE /me ok (request bb7d0c14-423b-40e1-8fd6-ee00998abde6). No provider called.",
+  "localProof": "Disposable PG: launch_blockers 176, serving_grace 35, serving_settlement_identity 20, funded_serving 63, bounded_subscription_trial 65, hosting_retention, serving_photo_partitions 33, video_erase 51, video_erase_direct_bria 40, purchase_reservations 43, video_duration 31, modern_transport 7, app_video_rejections 34; invariants 269/270 (#267 sandbox-only). Deno 1,803 pass, deno check clean."
+}

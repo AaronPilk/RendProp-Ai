@@ -23,7 +23,7 @@ async function denied(fn: () => Promise<unknown>, contains: string) { try { awai
 const uuid = (n: number) => `91000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const org = uuid(1), listing = uuid(2), subject = uuid(3), author = uuid(4), photoId = uuid(5), sourceId = uuid(6), draftId = uuid(7);
 
-Deno.test({ name: "real local SQL controller lifecycle: quote, hold, one submit, private subject review, native quota import, cleanup, ambiguous and refunded cancellation", ignore: !fixture, async fn() {
+Deno.test({ name: "real local SQL controller lifecycle: quote, hold, one submit, private subject review, native quota import, cleanup, ambiguous and unconfirmed cancellation", ignore: !fixture, async fn() {
   const video = syntheticPresenterMP4(), photo = new Uint8Array([255, 216, 255, 0, 255, 217]);
   const sourceKey = `uploads/${org}/${listing}/${sourceId}.mp4`, photoKey = `uploads/${org}/${listing}/${photoId}.jpg`;
   const videoSha = await sha256(video), photoSha = await sha256(photo);
@@ -140,6 +140,6 @@ Deno.test({ name: "real local SQL controller lifecycle: quote, hold, one submit,
   submitMode = "ok"; const third = await makeJob(); statusMode = "canceled";
   result = await api.action(listing, { action: "cancel", job_id: third.job.id, expected_revision: third.job.revision });
   job = (result.jobs as O[]).find((j) => j.id === third.job.id)!;
-  eq(job.status, "cancelled"); eq(job.held_cents, 0); eq(job.charged_cents, 0); eq(submitted, 3);
-  console.log("Controller/SQL verified: disabled gate, exact estimate+maximum, one POST, private subject review, native reservation/single+copy receipts, publication/provenance, deletion, ambiguity hold, confirmed cancellation refund. No real network/media/cost.");
+  eq(job.status, "cancelled"); eq(job.held_cents, 100); eq(job.charged_cents, null); eq(submitted, 3);
+  console.log("Controller/SQL verified: disabled gate, exact estimate+maximum, one POST, private subject review, native reservation/single+copy receipts, publication/provenance, deletion, ambiguity and unconfirmed cancellation holds. No real network/media/cost.");
 } });

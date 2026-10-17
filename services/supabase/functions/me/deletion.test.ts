@@ -8,12 +8,16 @@ const ORG = "00000000-0000-4000-8000-000000000003";
 const LISTING = "00000000-0000-4000-8000-000000000004";
 const REQUEST = "00000000-0000-4000-8000-000000000005";
 const LEASE = "00000000-0000-4000-8000-000000000006";
+const SERVICE = "sb_secret_" + "deletion_fixture_only_".repeat(2);
 const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), {
   status, headers: { "content-type": "application/json" },
 });
 Deno.env.set("SUPABASE_URL", "https://deletion-fixture.invalid");
 Deno.env.set("SUPABASE_ANON_KEY", "synthetic-public-key");
 Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "synthetic-service-key");
+Deno.env.set("SUPABASE_SECRET_KEYS", JSON.stringify({ default: SERVICE }));
+Deno.env.set("RENDPROP_SECRET_KEY_NAME", "default");
+Deno.env.set("RENDPROP_LEGACY_SERVICE_AUTH", "disabled");
 Deno.env.set("CLOUDFLARE_ACCOUNT_ID", "deletion-storage-fixture");
 Deno.env.set("R2_ACCESS_KEY_ID", "synthetic-only-access");
 Deno.env.set("R2_SECRET_ACCESS_KEY", "synthetic-only-secret");
@@ -37,7 +41,7 @@ if (!handler) throw new Error("Actual /me handler was not captured");
 type Options = { prepareError?: boolean; receiptPatch?: Record<string, unknown>; finishError?: boolean; finishPatch?: Record<string, unknown>; authError?: boolean; sweep?: boolean; legacy?: boolean;
   payloadPatch?: Record<string, unknown>; providerReady?: boolean; providerError?: boolean; storageError?: boolean;
   // Non-RPnnn PostgREST failures (deadlock, lock timeout, missing overload): the exact text the DB would send.
-  prepareDbError?: string; finishDbError?: string; claimEscalated?: boolean };
+  prepareDbError?: string; finishDbError?: string; claimEscalated?: boolean; sweepHeaders?: Record<string, string> };
 async function invoke(opts: Options = {}) {
   const prior = globalThis.fetch;
   let owner = USER, winnerDeleted = false, authDeleted = false;
@@ -101,7 +105,9 @@ async function invoke(opts: Options = {}) {
   try {
     const response = await handler(new Request(`https://edge.invalid/me${opts.sweep ? "/sweep-deletions" : ""}`, {
       method: opts.sweep ? "POST" : "DELETE",
-      headers: { authorization: `Bearer ${opts.sweep ? "synthetic-service-key" : "synthetic-user-session"}` },
+      // The service sweeper has no Auth session; user DELETE remains a user bearer request.
+      headers: opts.sweep ? (opts.sweepHeaders ?? { apikey: SERVICE })
+        : { authorization: "Bearer synthetic-user-session" },
     }));
     return { status: response.status, body: await response.json(), calls, owner, winnerDeleted, authDeleted };
   } finally { globalThis.fetch = prior; }
@@ -146,6 +152,16 @@ Deno.test("legacy sweep quarantines unbound payload without deletion", async () 
   const out = await invoke({ sweep: true, legacy: true });
   assertEquals(out.status, 200); assertEquals(out.body.manual_review, 1);
   assertEquals(out.calls.some(c => c.method === "DELETE" || c.method === "PATCH"), false);
+});
+Deno.test("sweeper refuses forged service claims, wrong apikey and bearer-only modern key before cleanup", async () => {
+  const forged = "eyJhbGciOiJIUzI1NiJ9." + btoa(JSON.stringify({ role: "service_role" })) + ".synthetic-unsigned";
+  const refused: Record<string, string>[] = [{ authorization: "Bearer " + forged },
+    { apikey: SERVICE + "x", authorization: "Bearer " + forged }, { authorization: "Bearer " + SERVICE }];
+  for (const headers of refused) {
+    const out = await invoke({ sweep: true, sweepHeaders: headers });
+    assertEquals(out.status, 403); assertEquals(out.calls, []);
+    assertEquals(out.authDeleted, false); assertEquals(out.winnerDeleted, false); assertEquals(out.owner, USER);
+  }
 });
 Deno.test("false completed envelope cannot conceal a retained Auth target", async () => {
   const out = await invoke({ authError: true, finishPatch: { cleanup_complete: true } });

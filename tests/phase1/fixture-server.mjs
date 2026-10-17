@@ -10,10 +10,18 @@ let blocked = true;
 let requests = {};
 let bodyByRoute = {};
 let accepted = 0;
-const token = 'fixture.' + Buffer.from(JSON.stringify({sub:'10000000-0000-4000-8000-000000000003',is_anonymous:true})).toString('base64url') + '.fixture';
+let identifiedExchanges = 0;
+const owner = '10000000-0000-4000-8000-000000000003';
+const org = '10000000-0000-4000-8000-000000000005';
+const refreshToken = 'local-fixture-refresh';
+const token = seconds => 'fixture.' + Buffer.from(JSON.stringify({
+  sub:owner,is_anonymous:false,exp:Math.floor(Date.now()/1000)+seconds
+})).toString('base64url') + '.fixture';
+let refreshedToken;
 
 http.createServer(async (req, res) => {
-  const path = new URL(req.url, base).pathname;
+  const url = new URL(req.url, base);
+  const path = url.pathname;
   const chunks = [];
   for await (const part of req) chunks.push(part);
   let body = {};
@@ -21,17 +29,34 @@ http.createServer(async (req, res) => {
   const json = (data, status = 200) => {
     res.writeHead(status, {'content-type':'application/json'}); res.end(JSON.stringify(data));
   };
-  if (path === '/__control/reset') { blocked = true; requests={}; bodyByRoute={}; accepted=0; return json({ok:true}); }
+  if (path === '/__control/reset') { blocked = true; requests={}; bodyByRoute={}; accepted=0; identifiedExchanges=0; refreshedToken=undefined; return json({ok:true}); }
   if (path === '/__control/unblock') { blocked=false; return json({ok:true}); }
-  if (path === '/__control/state') return json({blocked, requests, accepted});
+  if (path === '/__control/state') return json({blocked, requests, accepted, identifiedExchanges});
   requests[path]=(requests[path]??0)+1;
+  if (path === '/auth/v1/token') {
+    const grant = url.searchParams.get('grant_type');
+    const route = `${path}?grant_type=${grant}`;
+    requests[route]=(requests[route]??0)+1;
+    if (grant === 'id_token' && body.provider === 'apple' && body.id_token === 'rendprop-session-network-identified-fixture') {
+      identifiedExchanges++;
+      return json({access_token:token(30), refresh_token:refreshToken, expires_in:30});
+    }
+    if (grant === 'refresh_token' && body.refresh_token === refreshToken) {
+      // Actual TCP loss while refreshing an already identified account.
+      if (blocked) return req.socket.destroy();
+      accepted++;
+      refreshedToken=token(3600);
+      return json({access_token:refreshedToken, refresh_token:refreshToken, expires_in:3600});
+    }
+    return json({error:'Unknown local fixture credential',code:'unauthorized'},401);
+  }
   bodyByRoute[path]=body;
   if (path === '/clip.mp4') { res.writeHead(200, {'content-type':'video/mp4'}); return res.end(clip); }
   if (path === '/auth/v1/signup') {
-    // Actual TCP connection loss, not a fake signed-out flag or mocked Bool.
-    if (blocked) return req.socket.destroy();
-    accepted++;
-    return json({access_token:token, refresh_token:'local-fixture-refresh', expires_in:3600});
+    return json({error:'Guest signup is not supported by this fixture',code:'forbidden'},403);
+  }
+  if (path.startsWith('/functions/v1/') && (!refreshedToken || req.headers.authorization !== `Bearer ${refreshedToken}`)) {
+    return json({error:'Identified token refresh required',code:'unauthorized'},401);
   }
   if (path === '/functions/v1/renders/publish-app') return json({
     id:'10000000-0000-4000-8000-000000000004',slug:'local-test',share_url:base+'/f/local-test',
@@ -47,6 +72,9 @@ http.createServer(async (req, res) => {
   if (path === '/functions/v1/ai-copy/shotlist') return json({script:'Two test photos.',shots:(body.photos??[]).map((p,i)=>({photo_id:p.id,order:i+1,seconds:2,motion:'push_in'}))});
   if (path === '/functions/v1/me/compliance') return json({rows:[]});
   if (path === '/functions/v1/me') return json({plan:'team',plan_raw:'team',role:'owner',entitlement:{photo_edits_per_month:100,renders_per_month:100,reels_per_month:100,aerials_per_month:100,topaz_per_month:100}});
+  if (path === '/functions/v1/me/workspaces') return json({actor_id:owner,own_org_id:org,billing_org_id:org,
+    can_switch_agent_libraries:false,active_org_id:org,workspaces:[{id:org,name:'Network Test Workspace',role:'owner',
+      access_mode:'own',library_owner_user_id:owner,billing_org_id:org,can_read:true,can_write:true,can_manage_subscription:true}]});
   if (path === '/functions/v1/events') return json({ok:true});
   // Best-effort uploads fail immediately in these feature-gate tests. No real
   // storage, original image, credential, account, or external provider exists.

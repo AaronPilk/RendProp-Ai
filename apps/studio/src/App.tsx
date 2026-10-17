@@ -1,7 +1,6 @@
 import {
   useCallback,
   lazy,
-  Suspense,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -10,16 +9,19 @@ import {
 } from "react";
 import type { Listing, ListingMedia, SessionSnapshot, Workspace } from "./data";
 import { createStudioServices, readStudioConfig } from "./data";
+import { belongsToLibrary } from "./data/contracts";
 import type { VideoEditorProps } from "./editor/VideoEditor";
 import { EDIT_LIMITS, validateDraft } from "./editor/model";
 import type { EditDraft } from "./editor/model";
 import type { AgentPlanHandoff, ShotPlanHandoff, CreativeEntryRequest, CreativeTool } from "./features/creative/model";
 import Planner from "./Planner";
 import { AppearanceSelector } from "./Appearance";
+import { SafeLoad } from "./StudioBoundary";
 import Dashboard, { FeatureGate } from "./features/home/Dashboard";
 import { homeWords, type FeatureId } from "./features/home/features";
 import type { BusinessSectionRequest } from "./features/business/BusinessWorkspace";
 import type { ListingEntryRequest } from "./features/listings/ListingWorkflow";
+import type { ContactNavigationGuard } from "./features/listings/ClientContactEditor";
 import Icon from "./icons";
 import type { IconName } from "./icons";
 import { INDUSTRIES, scopeKey, writePlans } from "./workspace";
@@ -32,14 +34,15 @@ type Page = "overview" | "properties" | "creative" | "editor" | "library" | "pla
 const ListingWorkflow = lazy(() => import("./features/listings/ListingWorkflow"));
 const CreativeWorkspace = lazy(() => import("./features/creative/CreativeWorkspace"));
 const BusinessWorkspace = lazy(() => import("./features/business/BusinessWorkspace"));
+const RealEstateRolePicker = lazy(() => import("./features/business/RealEstateRolePicker"));
 const CloudEditor = lazy(() => import("./features/sync/PropertyReels"));
 const CloudPlanner = lazy(() => import("./features/sync/CloudPlanner"));
 const EditorImpl = lazy(() => import("./features/projects/Projects"));
 function VideoEditor(props: VideoEditorProps & {services?: ReturnType<typeof createStudioServices>; workspace?: Workspace | null; storageScope: string}) {
   return (
-    <Suspense fallback={<p role="status">Loading the video editor…</p>}>
+    <SafeLoad resetKey={props.storageScope} fallback={<p role="status">Loading the video editor…</p>}>
       <EditorImpl {...props} />
-    </Suspense>
+    </SafeLoad>
   );
 }
 const pages: { id: Page; label: string; icon: IconName }[] = [
@@ -64,6 +67,15 @@ const errorMessage = (error: unknown) =>
     : "That did not finish. Please try again.";
 const industryName = (key: string) =>
   INDUSTRIES[key as Industry] ?? "Your business";
+
+function appendMediaPage(previous: ListingMedia, next: ListingMedia): ListingMedia {
+  return {
+    ...next,
+    photos: [...new Map([...previous.photos, ...next.photos].map(item => [item.id, item])).values()],
+    videos: [...new Map([...previous.videos, ...next.videos].map(item => [item.id, item])).values()],
+    unavailableCount: previous.unavailableCount + next.unavailableCount,
+  };
+}
 
 // Dependency injection is a component seam, not a browser URL/environment mode.
 // It lets isolated browser fixtures exercise real account transitions without
@@ -115,6 +127,9 @@ export default function App({ servicesFactory }: {
   const [storedSelected, setSelected] = useState<Listing | null>(null);
   const [storedMedia, setMedia] = useState<ListingMedia | null>(null);
   const [mediaVersion, setMediaVersion] = useState<number | null>(null);
+  const [mediaLoadedScope, setMediaLoadedScope] = useState("");
+  const [mediaWorkspaceVerified, setMediaWorkspaceVerified] = useState(false);
+  const mediaDepth = useRef({scope: "", pages: 1});
   const [mediaBusy, setMediaBusy] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [storedImport, setImportRequest] = useState<{
@@ -168,14 +183,18 @@ export default function App({ servicesFactory }: {
   const accountName = workspace?.user.name?.trim() || (isConnected ? "Your account" : "Sign in");
   const selected =
     workspace &&
-    storedSelected?.orgId === workspace.org.id
+    storedSelected && belongsToLibrary(storedSelected, workspace)
       ? listings.find((item) => item.id === storedSelected.id) ?? null
       : null;
+  const mediaScopeKey = workspace && selected
+    ? `${session.identityVersion}:${workspace.user.id}:${workspace.org.id}:${selected.orgId}:${selected.id}`
+    : "";
   const media =
+    mediaWorkspaceVerified && mediaLoadedScope === mediaScopeKey &&
     workspace &&
     selected &&
     mediaVersion === session.identityVersion &&
-    storedMedia?.orgId === workspace.org.id &&
+    storedMedia?.orgId === selected.orgId &&
     storedMedia.listingId === selected.id
       ? storedMedia
       : null;
@@ -198,8 +217,14 @@ export default function App({ servicesFactory }: {
   const importAgentPlan = agentPlanScope === editScope ? storedAgentPlan : undefined;
   const entry = featureEntry?.scope === editScope ? featureEntry : undefined;
   const mediaScope = useRef("");
-  mediaScope.current = `${editScope}:${selected?.id ?? ""}`;
+  mediaScope.current = mediaWorkspaceVerified ? mediaScopeKey : "";
   const presenterPending = useRef({scope: "", pending: false, busy: false});
+  const listingContactGuard = useRef<{ scope: string; guard: ContactNavigationGuard | null }>({ scope: "", guard: null });
+  const contactGuardChanged = useCallback((guard: ContactNavigationGuard | null) => { listingContactGuard.current = { scope: editScope, guard }; }, [editScope]);
+  function canReplaceListingContact() {
+    const state = listingContactGuard.current;
+    return state.scope !== editScope || state.guard?.canLeave() !== false;
+  }
   // Local files and Creative drafts can both be mounted. Keep their guards
   // independent so one component cannot clear another component's work.
   const localCreationState = useRef({scope: "", hasSources: false, blockReason: null as string | null});
@@ -228,12 +253,14 @@ export default function App({ servicesFactory }: {
     return !state.pending || window.confirm("Discard unsaved Creative Studio changes?");
   }
   function setRequestedOrg(orgId: string | undefined) {
+    if (orgId && orgId !== workspace?.org.id && (!workspace?.canSwitchAgentLibraries ||
+        !workspace.memberships.some(member => member.orgId === orgId && member.canRead === true))) return;
     if (orgId !== workspace?.org.id && !canReplaceAccountWork()) return;
     setRequestedSelection(
       orgId ? { orgId, identityVersion: session.identityVersion } : undefined,
     );
   }
-  function canReplaceAccountWork() {
+  function canReplaceAccountWork(includeContact = true) {
     const saved = savedCreationState.current;
     if (saved.scope === editScope && saved.blockReason) { setNotice(saved.blockReason); return false; }
     const local = localCreationState.current;
@@ -241,7 +268,7 @@ export default function App({ servicesFactory }: {
       if (local.blockReason) { setNotice(`Video projects: ${local.blockReason} Return to Video projects in Create to finish it.`); return false; }
       if (local.hasSources && !window.confirm("Switch accounts or workspaces? Video projects remain separate for each account and workspace. Projects saved only in this browser stay on this device.")) return false;
     }
-    return canReplacePresenter();
+    return canReplacePresenter() && (!includeContact || canReplaceListingContact());
   }
   function setNotice(message: string) {
     setNoticeScope(editScope);
@@ -249,6 +276,7 @@ export default function App({ servicesFactory }: {
   }
   function selectListing(id: string, alreadyConfirmed = false) {
     if (!alreadyConfirmed && id !== selected?.id && !canReplacePresenter()) return false;
+    if (id !== selected?.id && !canReplaceListingContact()) return false;
     const found = listings.find(item => item.id === id);
     // A newly created row can arrive before the workspace refresh. Preserve
     // its selection so moving from Properties to Create opens the same work.
@@ -262,18 +290,21 @@ export default function App({ servicesFactory }: {
     navigate("workspace");
   }
   function openCreative(listingId:string,tool:CreativeTool) {
+    if (tool === "aerial") return;
     if (!workspace || !listings.some(item=>item.id===listingId)) return;
     if (!canReplacePresenter()) return;
-    selectListing(listingId, true);
+    if (!selectListing(listingId, true)) return;
     setFeatureEntry({scope:editScope,creative:{id:crypto.randomUUID(),listingId,tool}});
     navigate("creative");
   }
   function createProperty() {
     if (!workspace) { setShowLogin(true); return; }
+    if (!canReplaceListingContact()) return;
     setFeatureEntry({scope:editScope,create:crypto.randomUUID()});
     navigate("properties");
   }
   function openFeature(feature:FeatureId,requestedId?:string) {
+    if (feature === "aerial") return;
     if (!workspace) { setShowLogin(true); return; }
     if (feature === "agent") { openBusiness("brand"); return; }
     const available=listings.filter(item=>!item.soldAt);
@@ -299,22 +330,22 @@ export default function App({ servicesFactory }: {
   }
   function useShotPlan(plan: ShotPlanHandoff) {
     if (!workspace || !listings.some(item => item.id === plan.listingId)) return;
+    if (!selectListing(plan.listingId)) return;
     transfer.current?.abort();
     setImportRequest(undefined);
     setStoredAgentPlan(undefined);
     setShotPlanScope(editScope);
     setStoredShotPlan({...structuredClone(plan),id:crypto.randomUUID()});
-    selectListing(plan.listingId);
     navigate("editor");
   }
   function useAgentPlan(plan: AgentPlanHandoff) {
     if (!workspace || !listings.some(item => item.id === plan.listingId)) return;
+    if (!selectListing(plan.listingId)) return;
     transfer.current?.abort();
     setImportRequest(undefined);
     setStoredShotPlan(undefined);
     setAgentPlanScope(editScope);
     setStoredAgentPlan({...structuredClone(plan),id:crypto.randomUUID()});
-    selectListing(plan.listingId);
     navigate("editor");
   }
   function setShowLogin(open: boolean) {
@@ -346,6 +377,8 @@ export default function App({ servicesFactory }: {
     setSelected(null);
     setMedia(null);
     setMediaVersion(null);
+    setMediaLoadedScope("");
+    setMediaWorkspaceVerified(false);
     setMediaError(null);
     setNotice("");
     transfer.current?.abort();
@@ -355,6 +388,7 @@ export default function App({ servicesFactory }: {
     const controller = new AbortController();
     setLoadError(null);
     if (!services || !isConnected) {
+      setMediaWorkspaceVerified(false);
       setBusy(false);
       return () => controller.abort();
     }
@@ -380,6 +414,7 @@ export default function App({ servicesFactory }: {
       setLastSynced(new Date());
       setWorkspace(account);
       setListings(spaces);
+      setMediaWorkspaceVerified(true);
       const requestedListing=initialListing.current;
       if(requestedListing){setSelected(spaces.find(item=>item.id===requestedListing) ?? null);initialListing.current=null;}
       setLoadedVersion(version);
@@ -394,6 +429,9 @@ export default function App({ servicesFactory }: {
           !controller.signal.aborted &&
           services.getSnapshot().identityVersion === version
         ) {
+          // Local editor state may survive an outage; private Library rows may
+          // only survive a successfully verified directory and listing read.
+          setMediaWorkspaceVerified(false);
           if (!canRetainWorkspace(error)) {
             setWorkspace(null);
             setLoadedVersion(null);
@@ -460,41 +498,57 @@ export default function App({ servicesFactory }: {
   }, [key, editScope, restoreScope]);
   useEffect(() => {
     mediaPageAbort.current?.abort();
+    mediaPageAbort.current = null;
     setMediaPageBusy(false);
-    setMedia(null);
     setMediaError(null);
     setMediaBusy(false);
     const controller = new AbortController();
-    if (!selected || !workspace || !services) return () => controller.abort();
+    const scope = mediaScopeKey;
+    if (!selected || !workspace || !services || !mediaWorkspaceVerified) {
+      if (mediaDepth.current.scope !== scope) mediaDepth.current = {scope, pages: 1};
+      setMedia(null);
+      setMediaLoadedScope("");
+      return () => controller.abort();
+    }
+    if (mediaDepth.current.scope !== scope) {
+      mediaDepth.current = {scope, pages: 1};
+      setMedia(null);
+      setMediaLoadedScope("");
+    }
+    // A same-scope refresh renews the pages the user already opened, including
+    // an in-flight Load more. Every page rejoins the fresh typed mapping barrier;
+    // old requests are aborted and only the complete current aggregate is shown.
+    const depth = mediaDepth.current.pages;
     const version = session.identityVersion;
+    const current = () => !controller.signal.aborted && mediaScope.current === scope &&
+      services.getSnapshot().identityVersion === version;
     setMediaBusy(true);
-    void services
-      .listMedia(workspace.org.id, selected.id, controller.signal)
-      .then((value) => {
-        if (
-          !controller.signal.aborted &&
-          services.getSnapshot().identityVersion === version
-        ) {
-          setMedia(value);
-          setMediaVersion(version);
-        }
-      })
-      .catch((error) => {
-        if (
-          !controller.signal.aborted &&
-          services.getSnapshot().identityVersion === version
-        )
-          setMediaError(errorMessage(error));
-      })
-      .finally(() => {
-        if (
-          !controller.signal.aborted &&
-          services.getSnapshot().identityVersion === version
-        )
-          setMediaBusy(false);
-      });
+    void (async () => {
+      let combined: ListingMedia | null = null, offset = 0, pages = 0;
+      for (let page = 0; page < depth; page++) {
+        const next = await services.listMedia(selected.orgId, selected.id, controller.signal, offset, workspace.org.id);
+        if (!current()) return;
+        combined = combined ? appendMediaPage(combined, next) : next;
+        pages++;
+        if (next.nextOffset === null) break;
+        offset = next.nextOffset;
+      }
+      if (current() && combined) {
+        mediaDepth.current.pages = pages;
+        setMedia(combined);
+        setMediaLoadedScope(scope);
+        setMediaVersion(version);
+      }
+    })().catch((error) => {
+      if (current()) {
+        setMedia(null);
+        setMediaLoadedScope("");
+        setMediaError(errorMessage(error));
+      }
+    }).finally(() => { if (current()) setMediaBusy(false); });
     return () => controller.abort();
-  }, [services, selected, workspace, refresh]);
+    // Object identity changes after directory refresh must not restart this read.
+  }, [services, mediaScopeKey, mediaWorkspaceVerified, refresh]);
   useEffect(
     () => () => {
       transfer.current?.abort();
@@ -633,7 +687,7 @@ export default function App({ servicesFactory }: {
   }
   async function signOut() {
     if (!services) return;
-    if (!canReplaceAccountWork()) return;
+    if (!canReplaceAccountWork(false)) return;
     setAuthBusy(true);
     transfer.current?.abort();
     try {
@@ -652,7 +706,7 @@ export default function App({ servicesFactory }: {
       !selected ||
       !media ||
       media.nextOffset === null ||
-      mediaPageBusy
+      mediaBusy || mediaPageBusy
     )
       return;
     mediaPageAbort.current?.abort();
@@ -661,14 +715,16 @@ export default function App({ servicesFactory }: {
     const scope = mediaScope.current;
     const version = session.identityVersion;
     const nextOffset = media.nextOffset;
+    mediaDepth.current.pages++;
     setMediaPageBusy(true);
     setMediaError(null);
     try {
       const next = await services.listMedia(
-        workspace.org.id,
+        selected.orgId,
         selected.id,
         controller.signal,
         nextOffset,
+        workspace.org.id,
       );
       if (
         controller.signal.aborted ||
@@ -684,30 +740,18 @@ export default function App({ servicesFactory }: {
           previous.nextOffset !== nextOffset
         )
           return previous;
-        const photos = [
-          ...new Map(
-            [...previous.photos, ...next.photos].map((item) => [item.id, item]),
-          ).values(),
-        ];
-        const videos = [
-          ...new Map(
-            [...previous.videos, ...next.videos].map((item) => [item.id, item]),
-          ).values(),
-        ];
-        return {
-          ...next,
-          photos,
-          videos,
-          unavailableCount: previous.unavailableCount + next.unavailableCount,
-        };
+        return appendMediaPage(previous, next);
       });
     } catch (error) {
       if (
         !controller.signal.aborted &&
         mediaScope.current === scope &&
         services.getSnapshot().identityVersion === version
-      )
+      ) {
+        setMedia(null);
+        setMediaLoadedScope("");
         setMediaError(errorMessage(error));
+      }
     } finally {
       if (mediaPageAbort.current === controller) setMediaPageBusy(false);
     }
@@ -823,8 +867,8 @@ export default function App({ servicesFactory }: {
             {workspace?.org.name.slice(0, 1).toUpperCase() ?? "R"}
           </span>
           <div>
-            {workspace ? <><label className="sr-only" htmlFor="switch-workspace">Switch workspace</label><select id="switch-workspace" value={workspace.org.id} onChange={e=>{transfer.current?.abort();setRequestedOrg(e.target.value);}}>{workspace.memberships.map(m=><option key={m.orgId} value={m.orgId}>{m.orgName}</option>)}</select></> : <strong>Your creative space</strong>}
-            <small>{workspace ? "Connected workspace" : "Local workspace"}</small>
+            {workspace?.canSwitchAgentLibraries && workspace.memberships.length > 1 ? <><label className="sr-only" htmlFor="switch-workspace">Switch agent</label><select id="switch-workspace" value={workspace.org.id} onChange={e=>{transfer.current?.abort();setRequestedOrg(e.target.value);}}>{workspace.memberships.map(m=><option key={m.orgId} value={m.orgId}>{m.orgName}</option>)}</select></> : <strong>{workspace?.org.name || "Your creative space"}</strong>}
+            <small>{workspace ? "Your listing library" : "Local projects"}</small>
           </div>
         </div>
         <p className="nav-label">YOUR STUDIO</p>
@@ -980,22 +1024,23 @@ export default function App({ servicesFactory }: {
               </p>
             </div>
           </div>}
-          {page === "overview" && <Dashboard workspace={workspace} listings={listings} selectedId={selected?.id} busy={busy} spatialAvailable={spatialFlag?.scope===editScope&&spatialFlag.enabled} onSelect={selectListing} onFeature={openFeature} onCreate={createProperty} onStartCreating={()=>navigate("editor")} onProperties={()=>navigate("properties")} onLeads={()=>openBusiness("leads")} onPlanner={()=>navigate("planner")} onConnect={()=>setShowLogin(true)} onLibrary={()=>navigate("library")}/>}
+          {workspace && services && workspace.org.spaceType === "real_estate" && !workspace.user.realEstateRole && <SafeLoad resetKey={editScope} fallback={<p role="status">Loading your work preference…</p>}><RealEstateRolePicker key={editScope} workspace={workspace} services={services} onboarding onSaved={() => setRefresh(v => v + 1)} /></SafeLoad>}
+          {page === "overview" && <Dashboard services={services} workspace={workspace} listings={listings} selectedId={selected?.id} busy={busy} spatialAvailable={spatialFlag?.scope===editScope&&spatialFlag.enabled} onSelect={selectListing} onFeature={openFeature} onCreate={createProperty} onStartCreating={()=>navigate("editor")} onProperties={()=>navigate("properties")} onLeads={()=>openBusiness("leads")} onPlanner={()=>navigate("planner")} onConnect={()=>setShowLogin(true)} onLibrary={()=>navigate("library")}/>}
           {entry?.gate && workspace && <FeatureGate feature={entry.gate} listings={listings} spaceType={workspace.org.spaceType} onChoose={id=>openFeature(entry.gate!,id)} onCancel={()=>setFeatureEntry(undefined)} onCreate={createProperty}/>}
-          {(page === "properties" || propertiesOpened) && <section hidden={page !== "properties"} aria-label="Your property workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening your properties…</p>}>
-            <ListingWorkflow entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} />
-          </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
-          {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening creative tools…</p>}>
+          {(page === "properties" || propertiesOpened) && <section hidden={page !== "properties"} aria-label="Your property workspace">{workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening your properties…</p>}>
+            <ListingWorkflow entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} onContactGuardChange={contactGuardChanged} />
+          </SafeLoad> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
+          {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening creative tools…</p>}>
             <CreativeWorkspace entryRequest={entry?.creative} onOpenEditor={id=>openFeature("reel",id)} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={id => selectListing(id, true)} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} onPresenterPendingChange={presenterPendingChanged} />
-          </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
+          </SafeLoad> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "editor" || editorOpened) && (
             <section
               hidden={page !== "editor"}
               aria-label="Video editing workspace"
             >
-              {workspace && services ? <Suspense fallback={<p role="status">Opening your saved edit…</p>}>
+              {workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening your saved edit…</p>}>
                 <CloudEditor entryRequest={entry?.reel} onOpenCreative={openCreative} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} active={page === "editor"} importRequest={importRequest} importPlan={importPlan} importAgentPlan={importAgentPlan} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing} onSwitchBlockChange={savedBlockChanged} localCreationHasWork={!!draft?.clips.length} renderLocalCreation={(active, observeBlock) => workspaceDraftReady ? <VideoEditor services={services} workspace={workspace} storageScope={key} {...localAssistant} key={`${editScope}:${restoreAttempt}`} active={active} initialMode="conversation" conversationStorageKey={`${key}:conversation`} initialDraft={draft} onDraftChange={saveDraft} onSourcesChange={localSourcesChanged} onSwitchBlockChange={reason => {localBlockChanged(reason); observeBlock(reason);}} importRequest={importRequest?.listingId ? undefined : importRequest} /> : <p role="status">Opening your video projects…</p>} />
-              </Suspense> : workspaceDraftReady ? (
+              </SafeLoad> : workspaceDraftReady ? (
                 <VideoEditor
                   services={services??undefined} workspace={workspace} storageScope={key}
                   key={`${editScope}:${restoreAttempt}`}
@@ -1190,7 +1235,7 @@ export default function App({ servicesFactory }: {
                 )}
                 {media.nextOffset !== null && (
                   <button
-                    disabled={mediaPageBusy}
+                    disabled={mediaBusy || mediaPageBusy}
                     onClick={() => void loadMoreMedia()}
                   >
                     {mediaPageBusy ? "Loading more media…" : "Load more media"}
@@ -1199,7 +1244,7 @@ export default function App({ servicesFactory }: {
               </section>
             )}
           {(page === "planner" || plannerOpened) && <section hidden={page !== "planner"} aria-label="Content planning workspace">
-            {workspace && services ? <Suspense fallback={<p role="status">Opening saved plans…</p>}><CloudPlanner key={editScope} services={services} workspace={workspace} onNotice={setNotice}/></Suspense> : workspaceDraftReady ? (
+            {workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening saved plans…</p>}><CloudPlanner key={editScope} services={services} workspace={workspace} onNotice={setNotice}/></SafeLoad> : workspaceDraftReady ? (
               <Planner
                 key={restoreScope}
                 items={plans}
@@ -1211,7 +1256,7 @@ export default function App({ servicesFactory }: {
             ) : (
               <p role="status">Opening this workspace’s content plan…</p>
             )}</section>}
-          {(page === "workspace" || businessOpened) && workspace && services && <section hidden={page !== "workspace"} aria-label="Business workspace"><Suspense fallback={<p role="status">Opening your business workspace…</p>}><BusinessWorkspace sectionRequest={entry?.business} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing}/></Suspense></section>}
+          {(page === "workspace" || businessOpened) && workspace && services && <section hidden={page !== "workspace"} aria-label="Business workspace"><SafeLoad resetKey={editScope} fallback={<p role="status">Opening your business workspace…</p>}><BusinessWorkspace sectionRequest={entry?.business} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing}/></SafeLoad></section>}
           {page === "workspace" && (
             <div className="settings-grid">
               <section className="panel">
@@ -1227,8 +1272,8 @@ export default function App({ servicesFactory }: {
                       {accountName}
                     </p>
                     <p className="muted">{workspace.user.email}</p>
-                    <label>
-                      Workspace
+                    {workspace.canSwitchAgentLibraries && workspace.memberships.length > 1 && <label>
+                      Switch agent
                       <select
                         value={workspace.org.id}
                         onChange={(e) => {
@@ -1242,7 +1287,7 @@ export default function App({ servicesFactory }: {
                           </option>
                         ))}
                       </select>
-                    </label>
+                    </label>}
                     <dl className="account-details">
                       <div>
                         <dt>Business</dt>
@@ -1262,9 +1307,9 @@ export default function App({ servicesFactory }: {
                       </div>
                     </dl>
                     <p className="muted small">
-                      Plans and purchases remain managed by the existing
-                      Rendprop app. Studio does not create a second
-                      subscription.
+                      Choose or change your plan in the iPhone app under Settings → Plan &amp; usage.
+                      A 7-day trial starts only after you confirm an eligible Apple subscription offer.
+                      Signing in does not start a trial; Studio uses that same subscription.
                     </p>
                     <button onClick={() => void signOut()} disabled={authBusy}>
                       {authBusy ? "Signing out…" : "Sign out"}

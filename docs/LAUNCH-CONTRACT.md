@@ -22,9 +22,14 @@ still defined and still maps to `team` for entitlements — it is listed in
 app requests from StoreKit. Emptying that set re-enables it in one line once Apple grants
 the price points. Details: `docs/handoff/launch-P1.md` §5.3.
 
-`trial` (7 days, card on file) is Apple's **introductory offer** on each product — not a
-separate product. `free` is the lapsed floor: no product, it's what an expired
-subscription becomes. `solo` is a legacy alias of `starter` — never sell it.
+The **7-day free trial** is an eligible Apple **introductory offer** on a paid
+subscription, not a separate product or an automatic signup entitlement. It starts
+only after Apple's subscription confirmation and server verification of the signed
+transaction. StoreKit must report a free, seven-day offer and eligibility before the
+app promises one; prices and renewal disclosures use the returned product.
+`free` is the new-account and lapsed floor, with no paid product.
+The database's historical `trial` plan is a separate legacy grant, not evidence of
+an Apple subscription. `solo` is a legacy alias of `starter` — never sell it.
 Subscription group id (ASC): `rendprop_plans`. All three products in ONE group so
 upgrades/downgrades are Apple-managed.
 
@@ -36,14 +41,24 @@ upgrades/downgrades are Apple-managed.
 | pro | 10 | 200 | 12 | 4 | 0 | 1 |
 | team | 25 | 400 | 25 | 8 | 2 | 2 (was 3) |
 
-The **free week** (no card, no account, automatic on install — deliberately not called a
-"free trial" in the UI) is sized per industry: real estate = 3 tour renders, 60 photo edits,
-4 reel clips, 2 aerial intros; single-location businesses (event venue, restaurant/bar,
-retail/grocery, gym/studio, other) = 1 tour render, 60 photo edits, 4 reel clips, 1 aerial
-intro. After the week, `free` = 1 tour render a month. The 7-day introductory offer stays
-on every paid product, once per Apple ID. The metered unit is "reel clips" (never "reels" as
-a count) and "tour renders" wherever a number is stated on the web or in the App Store.
-Anything above this note that quotes the launch-day numbers is history, not the contract.
+**2026-10-01 trial policy (owner-requested).** New guest and identified accounts start
+on `free`, without a trial expiry or an automatic seven-day grant. Existing legacy
+free-week grants, manual grants, Apple subscriptions and brokerage contracts retain
+their existing access. Apple introductory offers remain subject to the actual product,
+storefront and subscription-group eligibility; a local StoreKit fixture does not prove
+live App Store availability. Canceling the purchase sheet grants no trial. Canceling
+renewal keeps verified access until expiry; refund/revocation and expiry follow Apple's
+verified status. The free floor remains 1 tour render a month.
+
+Home and Settings must expose plans without exhausting an allowance first. Settings
+must always expose compare/change plans, restore purchases and Apple's subscription
+management, including when StoreKit's product fetch is empty or a subscription was
+restored on another device. No client-only timer can grant paid access.
+
+The metered unit is "reel clips" (never "reels" as a count) and "tour renders" wherever
+a number is stated on the web or in the App Store. Older free-week descriptions are
+historical, not the current new-account contract. Prices and paid allowances are
+unchanged by this update.
 
 ## Entitlement sync (P1 ↔ P2)
 

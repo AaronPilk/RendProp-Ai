@@ -51,7 +51,7 @@ TEAM_ID = "5F5C5G25Y6"
 APP_NAME = "Rendprop"
 APP_NAME_FALLBACK = "Rendprop: AI Property Tours"
 PRIMARY_LOCALE = "en-US"
-VERSION_STRING = "1.0"
+VERSION_STRING = "1.0.4"
 COPYRIGHT = "2026 Rendprop"
 PLATFORM = "IOS"
 
@@ -848,6 +848,16 @@ def load_review_contact(key_dir=None):
 # ---------------------------------------------------------------------------
 # App lookup
 # ---------------------------------------------------------------------------
+
+
+# 2026-10-09: Rendprop sells monthly plans only. Annual products are never
+# touched (priced, put on sale, added for review) by any command; pass
+# --include-annual to override deliberately.
+NOT_SOLD_PRODUCT_IDS = (
+    "com.rendprop.app.starter.annual",
+    "com.rendprop.app.pro.annual",
+    "com.rendprop.app.team.annual",
+)
 
 
 def active_subscriptions(args, out=None):
@@ -2315,7 +2325,7 @@ def ensure_app_price_free(client, app_id, plan):
 
 
 def find_editable_version(client, app_id):
-    """Find the 1.0 iOS App Store version that is still editable."""
+    """Find only the configured iOS App Store version when it is editable."""
     versions = client.get_all(
         "/v1/apps/%s/appStoreVersions" % app_id,
         params={"filter[platform]": PLATFORM, "limit": 200},
@@ -2325,10 +2335,6 @@ def find_editable_version(client, app_id):
         if attrs.get("versionString") != VERSION_STRING:
             continue
         state = attrs.get("appVersionState") or attrs.get("appStoreState")
-        if state in EDITABLE_VERSION_STATES:
-            return version
-    for version in versions:
-        state = attributes_of(version).get("appVersionState") or attributes_of(version).get("appStoreState")
         if state in EDITABLE_VERSION_STATES:
             return version
     return None
@@ -4124,6 +4130,9 @@ def build_parser():
             command.add_argument(
                 "--skip-product", action="append", metavar="PRODUCT_ID", default=[],
                 help="leave this product alone entirely; repeatable")
+            command.add_argument(
+                "--include-annual", action="store_true",
+                help="also touch the annual products (monthly-only by default since 2026-10-09)")
         if name == "review":
             command.add_argument("--yes", action="store_true",
                                  help="for `send`: actually press Submit to App Review")
@@ -4145,7 +4154,7 @@ def build_parser():
                      "the set becomes exactly the files in the directory, in "
                      "filename order" % SCREENSHOT_DISPLAY_TYPE)
 
-    # `build attach` links the newest processed build to the 1.0 version. It is
+    # `build attach` links the newest processed build to the release version. It is
     # not part of the bridge because a build only exists after
     # bridge-600-archive-upload.sh has run and Apple has finished processing.
     build = sub.add_parser("build", help="attach the newest processed build to version %s"
@@ -4163,6 +4172,9 @@ def build_parser():
         "--skip-product", action="append", metavar="PRODUCT_ID", default=[],
         help="a product deliberately not sold at launch: its row is shown but it is "
              "not counted as missing unless it is actually on sale; repeatable")
+    status.add_argument(
+        "--include-annual", action="store_true",
+        help="count the annual products as expected (monthly-only by default since 2026-10-09)")
     return parser
 
 
@@ -4181,6 +4193,10 @@ def main(argv=None, out=None, client=None):
     out = out or sys.stdout
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Monthly plans only: annual products are skipped unless --include-annual.
+    if hasattr(args, "skip_product") and not getattr(args, "include_annual", False):
+        args.skip_product = list(args.skip_product or []) + [
+            p for p in NOT_SOLD_PRODUCT_IDS if p not in (args.skip_product or [])]
     if not args.command:
         parser.print_help(out)
         return 2

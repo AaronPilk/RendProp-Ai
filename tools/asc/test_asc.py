@@ -667,7 +667,7 @@ class FakeAsc(object):
             "appInfos", {"state": state, "appStoreAgeRating": age_rating}, parents)
 
     def add_build(self, version="1", state="VALID", uploaded="2026-09-05T08:34:43-07:00",
-                  uses_non_exempt_encryption=None, marketing_version="1.0", expired=False):
+                  uses_non_exempt_encryption=None, marketing_version=asc.VERSION_STRING, expired=False):
         """A build as GET /v1/builds returns it.
 
         `version` is the build number ("1"); the marketing version ("1.0") lives
@@ -689,7 +689,7 @@ class FakeAsc(object):
              "expired": expired, "usesNonExemptEncryption": uses_non_exempt_encryption},
             {"app": self.app_id, "preReleaseVersion": prerelease_id})
 
-    def add_version(self, version_string="1.0", state="PREPARE_FOR_SUBMISSION",
+    def add_version(self, version_string=asc.VERSION_STRING, state="PREPARE_FOR_SUBMISSION",
                     localization=None):
         version_id = self._insert(
             "appStoreVersions",
@@ -2575,13 +2575,13 @@ class WhatsNewTests(unittest.TestCase):
 
     def test_an_app_with_only_a_first_version_has_no_previous_release(self):
         fake = FakeAsc()
-        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION")
         out = io.StringIO()
         self.assertFalse(asc.app_has_previous_release(self.client(fake, out), fake.app_id))
 
     def test_a_released_version_counts(self):
         fake = FakeAsc()
-        fake.add_version("1.0", "READY_FOR_SALE")
+        fake.add_version(asc.VERSION_STRING, "READY_FOR_SALE")
         fake.add_version("1.1", "PREPARE_FOR_SUBMISSION")
         out = io.StringIO()
         self.assertTrue(asc.app_has_previous_release(self.client(fake, out), fake.app_id))
@@ -2589,13 +2589,13 @@ class WhatsNewTests(unittest.TestCase):
     def test_an_approved_but_unreleased_version_does_not_count(self):
         """ACCEPTED means App Review passed, not that customers ever saw it."""
         fake = FakeAsc()
-        fake.add_version("1.0", "ACCEPTED")
+        fake.add_version(asc.VERSION_STRING, "ACCEPTED")
         out = io.StringIO()
         self.assertFalse(asc.app_has_previous_release(self.client(fake, out), fake.app_id))
 
     def test_a_version_is_not_its_own_predecessor(self):
         fake = FakeAsc()
-        version_id = fake.add_version("1.0", "PENDING_DEVELOPER_RELEASE")
+        version_id = fake.add_version(asc.VERSION_STRING, "PENDING_DEVELOPER_RELEASE")
         out = io.StringIO()
         client = self.client(fake, out)
         self.assertTrue(asc.app_has_previous_release(client, fake.app_id))
@@ -2606,7 +2606,7 @@ class WhatsNewTests(unittest.TestCase):
         """The live 409, and the point of the retry: nothing else is lost."""
         fake = FakeAsc()
         version_id = fake.add_version(
-            "1.0", "PREPARE_FOR_SUBMISSION",
+            asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION",
             localization={"description": "old", "keywords": "old"})
         out = io.StringIO()
         plan = asc.Plan(out=out)
@@ -2628,7 +2628,7 @@ class WhatsNewTests(unittest.TestCase):
 
     def test_a_created_localization_recovers_the_same_way(self):
         fake = FakeAsc()
-        version_id = fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        version_id = fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION")
         out = io.StringIO()
         asc.ensure_version_localization(
             self.client(fake, out), version_id,
@@ -2640,7 +2640,7 @@ class WhatsNewTests(unittest.TestCase):
     def test_whats_new_is_kept_when_the_api_accepts_it(self):
         fake = FakeAsc()
         fake.whats_new_editable = True
-        version_id = fake.add_version("1.0", "PREPARE_FOR_SUBMISSION",
+        version_id = fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION",
                                       localization={"description": "old"})
         out = io.StringIO()
         asc.ensure_version_localization(
@@ -2807,7 +2807,7 @@ class StatusPriceTests(unittest.TestCase):
         client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
         asc.cmd_subscriptions(client, Args(), out)
         fake.add_app_info()
-        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION",
+        fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION",
                          localization={"description": "d", "keywords": "k",
                                        "supportUrl": "https://rendprop.com/support"})
         return fake
@@ -2949,7 +2949,7 @@ class CategoryTests(unittest.TestCase):
     def test_status_reports_set_categories_as_set(self):
         fake = FakeAsc()
         fake.add_app_info()
-        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION")
         out = io.StringIO()
         code = asc.cmd_status(self.client(fake, out), Args(json=True), out)
         output = out.getvalue()
@@ -2975,7 +2975,7 @@ class StatusSkipProductTests(unittest.TestCase):
         client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
         asc.cmd_subscriptions(client, Args(), out)
         fake.add_app_info()
-        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION",
+        fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION",
                          localization={"description": "d", "keywords": "k",
                                        "supportUrl": "https://rendprop.com/support"})
         fake.repoint_price(self.PRODUCT, "1000.0")
@@ -3082,13 +3082,58 @@ class StatusSkipProductTests(unittest.TestCase):
         self.assertIn("status --skip-product com.rendprop.app.team.annual", bridge)
 
 
+class ExactReleaseVersionTests(unittest.TestCase):
+    def client(self, fake):
+        return asc.Client(credentials=None, transport=fake, verbose=False, out=io.StringIO())
+
+    def test_only_the_release_version_is_selected_among_editable_versions(self):
+        fake = FakeAsc()
+        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        fake.add_version("1.1", "READY_FOR_REVIEW")
+        target = fake.add_version("1.0.4", "READY_FOR_REVIEW")
+        self.assertEqual(asc.VERSION_STRING, "1.0.4")
+        self.assertEqual(asc.find_editable_version(self.client(fake), fake.app_id)["id"], target)
+        self.assertEqual(fake.writes, [])
+
+    def test_another_editable_version_is_never_a_fallback(self):
+        fake = FakeAsc()
+        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        fake.add_version("1.1", "READY_FOR_REVIEW")
+        self.assertIsNone(asc.find_editable_version(self.client(fake), fake.app_id))
+        self.assertEqual(fake.writes, [])
+
+    def test_build_attach_refuses_unrelated_draft_before_any_write(self):
+        fake = FakeAsc()
+        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        fake.add_build(version="57", marketing_version="1.0.4")
+        with self.assertRaises(asc.AscError):
+            asc.cmd_build(self.client(fake), Args(action="attach", build="57"), io.StringIO())
+        self.assertEqual(fake.writes, [], "A valid build must not cause writes to an unrelated version")
+
+    def test_published_target_does_not_select_an_unrelated_draft(self):
+        fake = FakeAsc()
+        fake.add_version("1.0.4", "READY_FOR_SALE")
+        fake.add_version("1.1", "PREPARE_FOR_SUBMISSION")
+        self.assertIsNone(asc.find_editable_version(self.client(fake), fake.app_id))
+        self.assertEqual(fake.writes, [])
+
+    def test_create_plan_names_current_release_without_writes(self):
+        fake = FakeAsc()
+        fake.add_version("1.0", "READY_FOR_SALE")
+        out = io.StringIO()
+        plan = asc.Plan(out=out, dry_run=True)
+        asc.ensure_app_store_version(self.client(fake), fake.app_id, plan)
+        self.assertIn("create App Store version 1.0.4", out.getvalue())
+        self.assertEqual(fake.writes, [])
+
+
 class BuildAttachTests(unittest.TestCase):
-    """`build attach` links the newest processed build to the 1.0 version."""
+    """`build attach` links a processed build to the configured release version."""
 
     def build(self, *builds, **version):
         fake = FakeAsc()
         if version.get("with_version", True):
-            fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+            fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION")
         for kwargs in builds:
             fake.add_build(**kwargs)
         return fake
@@ -3111,7 +3156,7 @@ class BuildAttachTests(unittest.TestCase):
         code, output = self.run_attach(fake)
         self.assertEqual(code, 0)
         self.assertEqual(self.attached_build_number(fake), "2")
-        self.assertIn("+ attach build 2 to version 1.0", output)
+        self.assertIn("+ attach build 2 to version " + asc.VERSION_STRING, output)
         self.assertIn("Build attach: 2 change(s) applied.", output)
 
     def test_newer_failed_builds_are_passed_over_with_a_warning(self):
@@ -3206,7 +3251,7 @@ class BuildAttachTests(unittest.TestCase):
                                uploaded="2026-09-05T10:00:00-07:00"))
         self.run_attach(fake, build="1")
         self.assertEqual(self.attached_build_number(fake), "1")
-        self.run_attach(fake, build="1.0")      # newest VALID build of version 1.0
+        self.run_attach(fake, build=asc.VERSION_STRING)  # newest VALID build of the release version
         self.assertEqual(self.attached_build_number(fake), "2")
         self.run_attach(fake, build="1.1")
         self.assertEqual(self.attached_build_number(fake), "3")
@@ -3229,7 +3274,7 @@ class BuildAttachTests(unittest.TestCase):
         code, output = self.run_attach(fake, dry_run=True)
         self.assertEqual(code, 0)
         self.assertEqual(fake.writes, [])
-        self.assertIn("WOULD attach build 1 to version 1.0", output)
+        self.assertIn("WOULD attach build 1 to version " + asc.VERSION_STRING, output)
         self.assertIsNone(self.attached_build_number(fake))
 
     def test_it_needs_an_editable_version(self):
@@ -3264,7 +3309,7 @@ class BuildAttachTests(unittest.TestCase):
         client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
         asc.cmd_status(client, Args(json=True), out)
         output = out.getvalue()
-        self.assertIn("attached to 1.0: yes", output)
+        self.assertIn("attached to " + asc.VERSION_STRING + ": yes", output)
         report = json.loads(output[output.index("{"):])
         self.assertNotIn("a build attached to version 1.0", report["missing"])
 
@@ -3301,7 +3346,7 @@ class MetadataCommandTests(unittest.TestCase):
         fake = FakeAsc()
         fake.add_app_info()
         fake.whats_new_editable = True
-        fake.add_version("1.0", "READY_FOR_SALE")
+        fake.add_version(asc.VERSION_STRING, "READY_FOR_SALE")
         code, _output = self.run_metadata(fake)
         self.assertEqual(code, 0)
         listing = [v["attributes"] for v in

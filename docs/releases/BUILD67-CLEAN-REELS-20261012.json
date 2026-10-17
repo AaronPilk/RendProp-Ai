@@ -1,0 +1,99 @@
+{
+  "recordedUTC": "2026-10-13T00:11:33.061578+00:00",
+  "version": "1.0.4",
+  "build": "67",
+  "sourceCommit": "7c83a0f3fe6711c6c2734f2d626e3981ab69a198",
+  "purpose": "Owner-selected full-screen Instagram framing: full photo sent to AI, one delivery crop, no synthetic blur",
+  "archiveVerified": true,
+  "ipaSHA256": "2ae962939b5f82d4913b22930fe83ec862fec1b10cba57197fd806e8d2bba39d",
+  "deliveryUUID": "80a4930b-a6d4-4f8f-a8a7-84bf05643cb1",
+  "uploadCount": 1,
+  "testflightState": "IN_BETA_TESTING",
+  "existingInternalTeamVerified": true,
+  "testingNotesVerified": true,
+  "encodedProofs": {
+    "cleanCompositor": {
+      "assertions": 120,
+      "negativeControls": 4
+    },
+    "photoMotionFallback": {
+      "assertions": 261,
+      "negativeControls": 8
+    },
+    "fullPhotoInputAndPaidRecovery": "unchanged body hashes; reused proof explicitly rebound"
+  },
+  "phone66Actual": {
+    "fullSource": true,
+    "twoKlingClips": "1244x1660",
+    "twoFirstAttemptQcPasses": true,
+    "backgroundResumeNoDuplicate": true,
+    "globalProgressAndReview": true,
+    "saveToPhotos": true,
+    "blurredDeliveryRejected": true
+  },
+  "cleanPreview": {
+    "size": "1080x1920",
+    "fps": 30,
+    "seconds": 10,
+    "samePaidRawClips": true,
+    "noBlur": true,
+    "ownerSelectedAsDefault": true
+  },
+  "ci": {
+    "runID": 38324044229,
+    "sourceCommit": "7c83a0f3fe6711c6c2734f2d626e3981ab69a198",
+    "state": "running",
+    "prior66": "9pass,2failed,remaining native cancelled on new source",
+    "extractedFixtureRepair": "5tests+8controls passed locally",
+    "unresolved": "Studio web whip transition timing under held callbacks",
+    "status": "in_progress",
+    "conclusion": "",
+    "passed": 11,
+    "failed": 0,
+    "remaining": [
+      "Offline audit evidence, consent and adoption source gates"
+    ],
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38324044229"
+  },
+  "phone67": {
+    "installed": true,
+    "newGeneratedReelAccepted": false,
+    "installedVersion": "1.0.4",
+    "installedBuild": "67",
+    "deviceReadbackUTC": "2026-10-13T00:05:35.433664Z",
+    "openedToHome": true
+  },
+  "appStore": {
+    "build": "57",
+    "state": "WAITING_FOR_REVIEW",
+    "release": "MANUAL",
+    "modified": false
+  },
+  "limits": [
+    "Different photo shapes require different amounts of delivery cropping",
+    "Existing saved videos are not overwritten",
+    "Full cloud completion after iOS suspension or process termination is not implemented",
+    "Owner-only Kie comparison does not certify public routes"
+  ],
+  "nativeActualComposition": {
+    "sourceCheckpoint": "7c83a0f3fe6711c6c2734f2d626e3981ab69a198",
+    "nativeFilesMatchCheckpoint": true,
+    "existingPaidPhone66Clips": true,
+    "newProviderRequests": 0,
+    "size": "1080x1920",
+    "fps": 30,
+    "seconds": 10.1,
+    "bytes": 19676468,
+    "sha256": "dc06c536cbfc4e70980d70563cef471b574587aaf791a9aaf626b85ed03a0103",
+    "inputBytesUnchanged": true,
+    "syntheticBlurCodeAbsent": true,
+    "oneCenteredCoverCrop": true,
+    "visualInspection": "Two decoded scene frames show sharp source content to all four edges; no blurred matte or black bars.",
+    "limits": [
+      "Existing paid raw clips only; no provider requests, no phone/Simulator UI. Exact native default preserves real5.041667-second sources, cadence quantization yields10.1 seconds. Provider scene fidelity remains the prior phone66 judgment; this verifies67delivery transformation only.",
+      "Initial absolute0.95 SSIM cutoff was not met for source1full/bottom; no product change/rerender was made. Clean-versus-blurred reference discrimination is reported explicitly, including all scores.",
+      "The first shot outer240px top strip is almost featureless ceiling; its blurred-reference score is uninformative. The480px top band includes the real fan edge and is separately tested, rather than claiming flat pixels prove sharpness.",
+      "No universal sharpness acceptance score was established for these real camera/provider images. The artifact, projections and all counterfactual scores are supplied for actual visual acceptance; receipt passed refers to source-bound native delivery/metadata/input-byte checks."
+    ]
+  }
+}

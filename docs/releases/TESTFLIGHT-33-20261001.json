@@ -1,0 +1,120 @@
+{
+  "kind": "Internal TestFlight delivery receipt",
+  "verifiedAt": "2026-10-01T13:37:54.867516+00:00",
+  "source": {
+    "commit": "a36485037e6f4f44cec2ac10740408121c06b0ba",
+    "branch": "feat/guided-panorama-testflight-20261001",
+    "verifiedSourceFileCount": 199,
+    "scheme": "RendpropSpatialTestFlight",
+    "committedTestFlightBuildSetting": "33",
+    "explicitArchiveBuildOverride": "33",
+    "ciPassedJobs": 12,
+    "ciSourceCommit": "a36485037e6f4f44cec2ac10740408121c06b0ba",
+    "ciRunURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/36869402112",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/10"
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "33",
+    "minimumOS": "16.0"
+  },
+  "archive": {
+    "signatureVerified": true,
+    "captureLabFlagVerified": true,
+    "requiredGuidedSourcesCompiled": [
+      "StationCaptureModels.swift",
+      "StationCapturePolicy.swift",
+      "StationCaptureRecorder.swift",
+      "PanoramaProjection.swift",
+      "PanoramaRenderer.swift",
+      "PanoramaPreviewViewController.swift",
+      "GuidedPanoramaCaptureController.swift",
+      "GuidedPanoramaLabView.swift",
+      "GuidedPanoramaPreviewStore.swift"
+    ],
+    "executableSHA256": "5a808d95af0344a03b51e4c1836240246e96c0fe3f992079e77427884b49da24",
+    "archiveInfoSHA256": "e840244a742fa563e441a47721fb4e681d1b996b263258c4931ecc91c4a59e88",
+    "archiveLogSHA256": "c0ffc9dfd48abe5828f14760134ebdf8901ab851f113e37dc1dfa2a54328f8d4",
+    "compileListSHA256": "e0543ee9d1eac08cf62fc55d3c05a64053d35ba634a5b140638c688333e94206"
+  },
+  "export": {
+    "method": "app-store-connect",
+    "destination": "upload",
+    "testFlightInternalTestingOnly": true,
+    "manageAppVersionAndBuildNumber": false,
+    "optionsSHA256": "172ea6fcb6b3e50cc48598c12ebfc5d9d57c2c4689a8003ca7b7b0745019b0fc",
+    "attempts": 1,
+    "startedAt": "2026-10-01T13:34:14.506988+00:00",
+    "finishedAt": "2026-10-01T13:35:43.114261+00:00",
+    "exitCode": 0
+  },
+  "apple": {
+    "id": "76ac2a39-b7d5-4daf-b1e5-37c527b24c08",
+    "marketingVersion": "1.0.3",
+    "build": "33",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "expired": false,
+    "uploadedDate": "2026-10-01T06:36:37-07:00",
+    "usesNonExemptEncryption": false,
+    "minOsVersion": "16.0",
+    "betaDetails": {
+      "autoNotifyEnabled": true,
+      "internalBuildState": "IN_BETA_TESTING",
+      "externalBuildState": "NOT_APPLICABLE"
+    },
+    "group": {
+      "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+      "name": "Rendprop team",
+      "buildIncluded": true
+    }
+  },
+  "testNotes": {
+    "locale": "en-US",
+    "verifiedAt": "2026-10-01T13:38:17.412753+00:00",
+    "readbackVerified": true
+  },
+  "softwareVerification": {
+    "stationStorageDepthAssertions": 178,
+    "projectionRenderAssertions": 45,
+    "previewCacheAssertions": 24,
+    "navigationUITests": 3,
+    "navigationFailures": 0,
+    "phase1Tests": 22,
+    "productionWriterChecks": 11,
+    "legacyCaptureChecksPassed": true,
+    "independentReview": "No unresolved software blocker for owner-operated internal TestFlight",
+    "syntheticSphericalRMSE_0to255": 0.7369987206622631,
+    "macStressRenderSeconds": 1.707,
+    "macStressPeakRSSBytes": 193150976
+  },
+  "operations": {
+    "newTesterInvitations": false,
+    "testerOrGroupMembershipWrites": false,
+    "buildSpecificTestNotesUpdated": true,
+    "appStoreVersionAttachment": false,
+    "appReviewSubmission": false,
+    "productionSpatialFlagsChanged": false,
+    "gpuAllocation": false,
+    "paidGenerationCostUSD": 0
+  },
+  "evidenceSHA256": {
+    "source-manifest.json": "98c1d08449c11be345092465d02f12825ed793357fbdd53cf68bbfd07240dd40",
+    "archive-preflight.json": "4b9aecb55d877e33bbd2e201880618ad50128c236ad193d6d9d2a5ab1cd2b0cf",
+    "upload-result.json": "bcbb6c61689a09caf5b78cdb3f0dd8136db6b5c8c49d5691ad7dae80ff200aae",
+    "export-sanitized.log": "aae69c4d37d02e94445555ae0fb185959dbfb91e4be9b96a47f79f174d14bc6c",
+    "testflight-ready.json": "4da935b8e4c2e6ef08654727b5cb8288186b2b9530d55b277896d2c276f3f506",
+    "test-notes-receipt.json": "03a78b9be298fdcc0b317b073ce5da79c67dc75c7f5e1fff82d492bef7c71b83",
+    "independent-audit-summary.json": "c4b0dd0ae31437db108382cbed5b075c6d0b52e9d5610deb4708335de551d1f4",
+    "station-tests-final.log": "0c298bcef44acb05b8752824254edc16583ecd555daffdc2ade675f744135591",
+    "preview-store-tests.log": "6778b023527c288ae5d2c9adfd85a1cccf16206eeab35912221c0d44117bf1fd"
+  },
+  "limitations": [
+    "Actual iPhone installation and room capture remain owner tests; simulator checks only cover navigation and synthetic software.",
+    "The guided panorama prototype saves locally; published tours, Studio sync for these archives, dollhouse, and measurements are not implemented in this build.",
+    "Handheld capture quality, real-room seams, tracking, depth alignment and phone thermal/memory behavior are not yet accepted.",
+    "Production reconstruction remains disabled; no spatial GPU spend was added.",
+    "Apple state does not attest the local archive hash; local archive and upload receipts bind the attempted artifact."
+  ]
+}

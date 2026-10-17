@@ -10,9 +10,10 @@ import Foundation
 // person who signed up in July and published in September appears in neither
 // number together. A cohort follows the same workspaces forward:
 //
-//   OF THE WORKSPACES THAT SIGNED UP IN A GIVEN WEEK — how many ever published
-//   a tour, how many did it within seven days, how long the median one took,
-//   and how many are paying right now.
+//   OF THE WORKSPACES THAT SIGNED UP IN A GIVEN WEEK AND HAVE RECORDED WORK —
+//   how many ever published a tour, how many did it within seven days, how
+//   long the median one took, and how many are paying right now. The exclusion
+//   predicate cannot distinguish an unused signup from an adoption leftover.
 //
 // Everything comes from `GET /admin/cohorts`, gated server-side by
 // `profiles.is_admin`. Nothing on this phone unlocks it.
@@ -63,9 +64,9 @@ struct AdminCohortSummary: Sendable, Hashable {
     var everPaidSandbox: Int = 0
     var payingNow: Int = 0
     var churned: Int = 0
-    /// Workspaces left out of the denominator entirely (an empty second
-    /// workspace created by signing in with Apple). Shown, because a number
-    /// quietly dropped is a number nobody can check.
+    /// Workspaces without a listing, upload or subscription are excluded.
+    /// These may be adoption leftovers or people who have not started;
+    /// the activity predicate does not distinguish those cases.
     var orphanOrgsExcluded: Int = 0
 }
 
@@ -91,7 +92,11 @@ struct AdminCohortReport: Sendable, Hashable {
 extension AdminCohortBucket: Decodable {
     private enum CodingKeys: String, CodingKey {
         case bucketStart, bucketEnd, partial, orgs, activated
-        case activatedWithin24h, activatedWithin7d, medianHoursToActivate
+        // convertFromSnakeCase capitalizes the suffix after a numeric component:
+        // activated_within_24h becomes activatedWithin24H (likewise 7D).
+        case activatedWithin24h = "activatedWithin24H"
+        case activatedWithin7d = "activatedWithin7D"
+        case medianHoursToActivate
         case everPaid, everPaidSandbox, payingNow, churned
     }
 
@@ -114,7 +119,9 @@ extension AdminCohortBucket: Decodable {
 
 extension AdminCohortSummary: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case orgs, activated, activatedWithin24h, activatedWithin7d
+        case orgs, activated
+        case activatedWithin24h = "activatedWithin24H"
+        case activatedWithin7d = "activatedWithin7D"
         case medianHoursToActivate, everPaid, everPaidSandbox, payingNow, churned
         case orphanOrgsExcluded
     }
@@ -398,7 +405,7 @@ struct AdminCohortsView: View {
                 Section { HStack { ProgressView(); Text("Loading…").foregroundStyle(Theme.inkDim) } }
             } else {
                 Section {
-                    Text("Nobody signed up in \(window.phrase).")
+                    Text("No workspaces with recorded work signed up in \(window.phrase).")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 }
             }
@@ -425,7 +432,7 @@ struct AdminCohortsView: View {
             }
             .pickerStyle(.segmented)
         } footer: {
-            Text("Every row is one SIGNUP WEEK inside \(window.phrase), followed forward however long those workspaces took to act.")
+            Text("Rows group workspaces by signup week inside \(window.phrase). Only workspaces with a listing, upload or subscription are counted.")
         }
     }
 
@@ -445,7 +452,7 @@ struct AdminCohortsView: View {
     private func summarySection(_ report: AdminCohortReport) -> some View {
         if let s = report.summary {
             Section {
-                countRow("Workspaces", s.orgs, tint: Theme.accent, icon: "building.2")
+                countRow("Workspaces with recorded work", s.orgs, tint: Theme.accent, icon: "building.2")
                 countRow("Published a tour", s.activated,
                          tint: s.activated > 0 ? Theme.good : Theme.inkDim, icon: "checkmark.seal")
                 countRow("Within 7 days", s.activatedWithin7d, tint: Theme.inkDim, icon: "calendar")
@@ -453,13 +460,13 @@ struct AdminCohortsView: View {
                 countRow("Paying now", s.payingNow,
                          tint: s.payingNow > 0 ? Theme.good : Theme.inkDim, icon: "creditcard")
                 if s.orphanOrgsExcluded > 0 {
-                    countRow("Left out (empty workspaces)", s.orphanOrgsExcluded,
+                    countRow("Unused workspaces excluded", s.orphanOrgsExcluded,
                              tint: Theme.inkDim, icon: "tray")
                 }
             } header: {
-                Text("Everyone in \(window.phrase)")
+                Text("Recorded work in \(window.phrase)")
             } footer: {
-                Text("\"Published a tour\" counts a workspace that ever did, at any time after signing up. Paying now comes from subscriptions Apple verified, so a phone can't inflate it.")
+                Text("Unused workspaces may include people who haven't started. \"Published a tour\" counts any later publication. Paying now comes from verified Apple subscriptions.")
             }
         }
     }
@@ -469,7 +476,7 @@ struct AdminCohortsView: View {
         let rows = report.bucketList
         Section {
             if rows.isEmpty || report.isEmpty {
-                Text("No one signed up in \(window.phrase).")
+                Text("No workspaces with recorded work signed up in \(window.phrase).")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
             } else {
                 ForEach(rows) { row in
@@ -579,7 +586,7 @@ private struct CohortBucketRow: View {
                         .font(.rpCaption).foregroundStyle(Theme.warn)
                 }
                 Spacer(minLength: 8)
-                Text("\(bucket.orgs.formatted()) signed up")
+                Text("\(bucket.orgs.formatted()) workspaces")
                     .font(.rpHeadline).foregroundStyle(Theme.ink)
             }
             GeometryReader { geo in
@@ -596,7 +603,7 @@ private struct CohortBucketRow: View {
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Week of \(bucket.bucketStart): \(bucket.orgs) signed up, \(bucket.activated) published a tour, \(bucket.payingNow) paying now")
+        .accessibilityLabel("Week of \(bucket.bucketStart): \(bucket.orgs) workspaces with recorded work, \(bucket.activated) published a tour, \(bucket.payingNow) paying now")
     }
 
     private var detailLine: String {

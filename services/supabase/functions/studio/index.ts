@@ -7,11 +7,12 @@ import {
   assertNotDeleting,
   getUser,
   orgForUser,
+  contentOrgForUser,
   userClient,
 } from "../_shared/supabase.ts";
-import { assert, HttpError, json, pathSegments } from "../_shared/http.ts";
-import { presignGet } from "../_shared/providers/common.ts";
-import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS } from "../_shared/r2.ts";
+import { assert, HttpError, json, pathSegments, readJsonLimited } from "../_shared/http.ts";
+import { listingLibraryScope } from "../_shared/library-access.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
 
 import { handleOptions } from "../_shared/cors.ts";
 import { handleProjectMedia } from "./project-media.ts";
@@ -44,7 +45,8 @@ export async function handleStudio(req: Request): Promise<Response> {
     ...createStudioRepository(req, {
       getUser,
       assertNotDeleting,
-      orgForUser,
+      activeOrg: async (org) => await adminClient().from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle(),
+      listingScope: (actor, listing) => listingLibraryScope(adminClient(), actor, listing),
       userClient,
     }),
     async rateLimit(scope) {
@@ -59,12 +61,9 @@ export async function handleStudio(req: Request): Promise<Response> {
       }
       return data === true;
     },
-    sign: (bucket, key, seconds) =>
-      presignGet(
-        bucket === "uploads" ? R2_BUCKET_UPLOADS : R2_BUCKET_RENDERS,
-        key,
-        seconds,
-      ),
+    sign: (bucket, key, seconds, scope) => privateMediaUrl({
+      actor:scope.userId,org:scope.orgId,listing:scope.listingId,bucket,key,
+    },seconds),
     now: () => Date.now(),
   })(req);
   try {
@@ -75,13 +74,23 @@ export async function handleStudio(req: Request): Promise<Response> {
     const selector = req.headers.get("x-org-id") ?? url.searchParams.get("org_id") ?? "";
     assert(/^[0-9a-f-]{36}$/i.test(selector), 400, "Choose a workspace.");
     assert(!url.searchParams.has("org_id") || url.searchParams.get("org_id") === selector, 400, "Workspace selectors disagree.");
-    const org = await orgForUser(user.id, selector);
-    assert(org === selector, 403, "Workspace authorization failed.");
+    // Listing-bound requests may reference a retained legacy Team row. Resolve
+    // that exact row before choosing its physical storage org; do not authorize
+    // the whole old Team library for the invited agent.
+    let listingId = url.searchParams.get("listing_id") ?? undefined;
+    if (!["GET", "HEAD"].includes(req.method)) {
+      const body = await readJsonLimited<Record<string, unknown>>(req.clone(), 2 * 1024 * 1024);
+      if (body.listing_id !== undefined) {
+        assert(typeof body.listing_id === "string" && (!listingId || listingId === body.listing_id), 400, "Listing selectors disagree.");
+        listingId = body.listing_id;
+      }
+    }
+    const org = await contentOrgForUser(user.id, selector, listingId, !["GET", "HEAD"].includes(req.method));
     const db = userClient(req), admin = adminClient();
-    const active = await db.from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle();
+    const active = await admin.from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle();
     assert(!active.error && active.data, 403, "This workspace is unavailable.");
-    const repository = createStudioRepository(req, { getUser, assertNotDeleting, orgForUser, userClient });
-    const context: StudioContext = { userId: user.id, orgId: org, db, admin,
+    const repository = createStudioRepository(req, { getUser, assertNotDeleting, activeOrg: async (org) => await adminClient().from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle(), listingScope: (actor, listing) => listingLibraryScope(adminClient(), actor, listing), userClient });
+    const context: StudioContext = { userId: user.id, orgId: org, listingId: listingId ?? null, db, admin,
       async authorizeListing(id) {
         assert(/^[0-9a-f-]{36}$/i.test(id), 400, "Choose a valid listing.");
         await repository.authorize(req, org, id);

@@ -30,7 +30,11 @@ struct AnonymousAdoptionRecoveryTests {
             remove: { store.removals += 1; if store.failRemove { return false }; store.raw = nil; return true },
             send: send, changed: { store.messages.append($0) },
             prepareLocal: { _ in !store.failPrepareLocal },
-            finishLocal: { _, _ in store.finishes += 1; return !store.failFinishLocal },
+            finishLocal: { _, _, data in
+                store.finishes += 1
+                let card = try? JSONSerialization.jsonObject(with: data) as? [String:Any]
+                return !store.failFinishLocal && card?["user_id"] as? String == destination.uuidString.lowercased()
+            },
             discardLocal: { store.discards.append($0) })
     }
     static func prepared(_ value: AnonymousAdoptionRecovery, expired: Bool = false) throws {
@@ -41,6 +45,11 @@ struct AnonymousAdoptionRecoveryTests {
         (try! JSONSerialization.data(withJSONObject: body), HTTPURLResponse(url: req.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
     }
     static func success(_ req: URLRequest, patch: [String: Any] = [:]) -> (Data, HTTPURLResponse) {
+        if req.httpMethod == "GET" {
+            check(req.url?.path.hasSuffix("/me/card") == true, "adoption reads the account-only card endpoint")
+            check(req.value(forHTTPHeaderField:"Authorization") == "Bearer " + token(destination, anonymous:false), "fresh card uses the exact named-account token")
+            return response(req, ["ok":true,"user_id":destination.uuidString.lowercased(),"space_type":NSNull(),"public_card":NSNull()])
+        }
         var body = try! JSONSerialization.jsonObject(with: req.httpBody!) as! [String: Any]
         body.removeValue(forKey: "anonymous_token")
         body["ok"] = true; body["adopted"] = true; body["org_id"] = other.uuidString
@@ -151,7 +160,7 @@ struct AnonymousAdoptionRecoveryTests {
             }
             try prepared(target, expired: true)
             await target.retry(destinationAccess: token(destination, anonymous: false), isCurrent: { true })
-            check(calls == (refreshStatus == 200 ? 3 : 2), "bounded refresh attempt")
+            check(calls == (refreshStatus == 200 ? 4 : 2), "bounded refresh plus one current-card read")
             check((cell.raw == nil) == (refreshStatus == 200), "only verified receipt clears recovery")
         }
         for badSource in [token(other, anonymous: true), token(source, anonymous: false)] {
@@ -169,7 +178,7 @@ struct AnonymousAdoptionRecoveryTests {
         let replay = make(replayStore) { req in replayCalls += 1; return success(req) }
         try prepared(replay, expired: true)
         await replay.retry(destinationAccess: token(destination, anonymous: false), isCurrent: { true })
-        check(replayCalls == 1 && replayStore.raw == nil, "receipt clears expired source without refresh")
+        check(replayCalls == 2 && replayStore.raw == nil, "receipt plus one current-card read clears expired source without refresh")
         let failedRemoval = Store(); failedRemoval.failRemove = true
         let removal = make(failedRemoval) { success($0) }; try prepared(removal)
         await removal.retry(destinationAccess: token(destination, anonymous: false), isCurrent: { true })
@@ -182,7 +191,25 @@ struct AnonymousAdoptionRecoveryTests {
         }
         try prepared(reentrant)
         await reentrant.retry(destinationAccess: token(destination, anonymous: false), isCurrent: { true })
-        check(reentrantCalls == 1 && reentrantStore.raw == nil, "reentrant client shares one attempt")
+        check(reentrantCalls == 2 && reentrantStore.raw == nil, "reentrant client shares one adoption attempt and current-card read")
+
+        for mode in ["card-logout", "card-500", "card-too-large", "card-wrong-owner"] {
+            let cell = Store(); var current = true; var calls = 0
+            let target = make(cell) { req in
+                calls += 1
+                if req.httpMethod != "GET" { return success(req) }
+                if mode == "card-logout" { current = false }
+                let owner = mode == "card-wrong-owner" ? other : destination
+                let body: [String:Any] = ["ok":true,"user_id":owner.uuidString.lowercased(),"space_type":NSNull(),"public_card":NSNull(),
+                    "synthetic_padding":mode == "card-too-large" ? String(repeating:"x",count:24_001) : ""]
+                return response(req,body,status:mode == "card-500" ? 500 : 200)
+            }
+            try prepared(target)
+            await target.retry(destinationAccess:token(destination,anonymous:false),isCurrent:{current})
+            check(cell.raw != nil && cell.removals == 0, "Current card " + mode + " preserves the exact recovery operation")
+            check(calls == 2, "Current card " + mode + " performs no further adoption or generation request")
+            if mode != "card-wrong-owner" { check(cell.finishes == 0, "Current card " + mode + " cannot apply a local card") }
+        }
 
         // Sign-out (explicit or forced), "Clear local data" and "Delete account"
         // discard the saved handoff. The next activation mints a NEW anonymous

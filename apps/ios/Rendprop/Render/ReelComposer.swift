@@ -1,8 +1,112 @@
 import AVFoundation
 import CoreGraphics
+import CoreImage
 import Foundation
 import QuartzCore
 import UIKit
+
+/// Local still-photo fallback after a terminal property-drift refusal. The
+/// selected photo stays fixed in one centered cover crop; no generated scenery,
+/// camera movement, parallax or room model is introduced.
+enum OriginalPhotoMotion {
+    static func isClip(_ url: URL) -> Bool { url.lastPathComponent.contains("photo-motion-") }
+
+    static func summaryURL(for reel: URL) -> URL { reel.deletingPathExtension().appendingPathExtension("photo-motion.json") }
+    static func saveSummary(count: Int, for reel: URL) throws {
+        let data = try JSONEncoder().encode(["originalPhotoMotionShots": count])
+        let target = summaryURL(for: reel)
+        try data.write(to: target, options: .atomic)
+        guard try Data(contentsOf: target) == data else { throw CocoaError(.fileWriteUnknown) }
+    }
+    static func summaryCount(for reel: URL) -> Int {
+        guard let data = try? Data(contentsOf: summaryURL(for: reel)),
+              let value = try? JSONDecoder().decode([String: Int].self, from: data) else { return 0 }
+        return max(0, value["originalPhotoMotionShots"] ?? 0)
+    }
+
+    static func render(jpeg: Data, renderSize: CGSize, output: URL) async throws {
+        try Task.checkCancellation()
+        guard let image = UIImage(data: jpeg), image.size.width > 0, image.size.height > 0,
+              renderSize.width.isFinite, renderSize.height.isFinite,
+              renderSize.width >= 2, renderSize.height >= 2,
+              renderSize.width <= 4096, renderSize.height <= 4096 else { throw CocoaError(.fileReadCorruptFile) }
+        // Bake EXIF orientation once. Delivery uses one centered cover crop,
+        // with no backdrop or extra zoom. The selected source JPEG is unchanged.
+        let format = UIGraphicsImageRendererFormat.default(); format.scale = 1; format.opaque = true
+        let normalized = UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: image.size))
+        }
+        guard let cg = normalized.cgImage else { throw CocoaError(.fileReadCorruptFile) }
+        let width = Int(renderSize.width), height = Int(renderSize.height)
+        guard width % 2 == 0, height % 2 == 0 else { throw CocoaError(.fileWriteInvalidFileName) }
+        let writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
+        writer.shouldOptimizeForNetworkUse = true
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height,
+            AVVideoColorPropertiesKey: [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2],
+            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 8_000_000,
+                AVVideoExpectedSourceFrameRateKey: 30, AVVideoAllowFrameReorderingKey: false],
+        ])
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
+            kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+        ])
+        guard writer.canAdd(input) else { throw CocoaError(.fileWriteUnknown) }
+        writer.add(input)
+        guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+        writer.startSession(atSourceTime: .zero)
+        do {
+            let scale = max(renderSize.width / CGFloat(cg.width), renderSize.height / CGFloat(cg.height))
+            let size = CGSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale)
+            for frame in 0..<150 {
+                try Task.checkCancellation()
+                let deadline = Date().addingTimeInterval(15)
+                while !input.isReadyForMoreMediaData {
+                    try Task.checkCancellation()
+                    guard writer.status == .writing, Date() < deadline else {
+                        throw writer.error ?? CocoaError(.fileWriteUnknown)
+                    }
+                    try await Task.sleep(nanoseconds: 2_000_000)
+                }
+                guard let pool = adaptor.pixelBufferPool else { throw CocoaError(.fileWriteUnknown) }
+                var pixel: CVPixelBuffer?
+                guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixel) == kCVReturnSuccess,
+                      let buffer = pixel else { throw CocoaError(.fileWriteUnknown) }
+                CVBufferSetAttachments(buffer, [kCVImageBufferColorPrimariesKey: kCVImageBufferColorPrimaries_ITU_R_709_2,
+                    kCVImageBufferTransferFunctionKey: kCVImageBufferTransferFunction_ITU_R_709_2,
+                    kCVImageBufferYCbCrMatrixKey: kCVImageBufferYCbCrMatrix_ITU_R_709_2] as CFDictionary, .shouldPropagate)
+                CVPixelBufferLockBaseAddress(buffer, [])
+                let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height,
+                    bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)
+                guard let context else { CVPixelBufferUnlockBaseAddress(buffer, []); throw CocoaError(.fileWriteUnknown) }
+                context.setFillColor(UIColor.black.cgColor)
+                context.fill(CGRect(origin: .zero, size: renderSize))
+                context.interpolationQuality = .high
+                context.draw(cg, in: CGRect(x: (renderSize.width - size.width) / 2,
+                    y: (renderSize.height - size.height) / 2, width: size.width, height: size.height))
+                CVPixelBufferUnlockBaseAddress(buffer, [])
+                guard adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)) else {
+                    throw writer.error ?? CocoaError(.fileWriteUnknown)
+                }
+            }
+            input.markAsFinished()
+            await withCheckedContinuation { continuation in writer.finishWriting { continuation.resume() } }
+            try Task.checkCancellation()
+            guard writer.status == .completed else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+            guard (try output.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) > 0 else { throw CocoaError(.fileWriteUnknown) }
+        } catch {
+            if writer.status == .writing { writer.cancelWriting() }
+            try? FileManager.default.removeItem(at: output)
+            throw error
+        }
+    }
+}
 
 // MARK: - Reel composer (the on-device edit: cut, pace, caption, export)
 //
@@ -229,9 +333,9 @@ enum ReelComposer {
 
     /// Build the reel and export it to `output` (mp4, overwritten).
     ///
-    /// Every clip is aspect-FILLED (scale to cover + centre-crop) with a layer
-    /// instruction transform computed from its track's naturalSize +
-    /// preferredTransform, so portrait / rotated sources render upright.
+    /// Raw QC-passed clips fill the delivery canvas with one centered crop.
+    /// There is no intermediate matte, blur, or framing encode. Source files
+    /// remain intact, and orientation is applied by the existing fill transform.
     ///
     /// THE GUARANTEE THE OLD `stitch()` DOCUMENTED, KEPT WORD FOR WORD:
     /// `voiceover` is mixed onto a new AUDIO track at time zero. VIDEO LENGTH
@@ -252,6 +356,7 @@ enum ReelComposer {
             throw ComposeError.badRenderSize
         }
 
+        try Task.checkCancellation()
         let prepared = await prepare(shots, renderSize: renderSize)
         // AVAssetTrack.asset is weak. The asynchronous prepare pass must keep
         // every source asset alive through insertion AND export; retaining the
@@ -287,7 +392,7 @@ enum ReelComposer {
 
         // ---- Video length wins ----
         if audio.inserted, audio.duration > layout.videoDuration {
-            holdLastFrame(&layout, upTo: audio.duration, track: audio.track)
+            await holdLastFrame(&layout, upTo: audio.duration, track: audio.track)
         }
 
         // ---- Instructions ----
@@ -643,13 +748,13 @@ enum ReelComposer {
     /// Losing the last words of a take is bad; shipping black video is worse,
     /// and this path only runs when the freeze-frame already failed.
     private static func holdLastFrame(_ layout: inout Layout, upTo audioDuration: CMTime,
-                                      track audioTrack: AVMutableCompositionTrack?) {
+                                      track audioTrack: AVMutableCompositionTrack?) async {
         let videoDuration = layout.videoDuration
         if let tailTrack = layout.tailTrack, let lastSrcTrack = layout.lastSrcTrack {
             let freezeDuration = CMTimeSubtract(audioDuration, videoDuration)
             let srcEnd = CMTimeAdd(layout.lastSrcRange.start, layout.lastSrcRange.duration)
-            let lastFrameStart = CMTimeMaximum(layout.lastSrcRange.start,
-                                               CMTimeSubtract(srcEnd, frameDuration))
+            let lastFrameStart = await finalSourceFrameStart(track: lastSrcTrack, range: layout.lastSrcRange)
+                ?? CMTimeMaximum(layout.lastSrcRange.start, CMTimeSubtract(srcEnd, frameDuration))
             let stillRange = CMTimeRange(start: lastFrameStart,
                                          duration: CMTimeSubtract(srcEnd, lastFrameStart))
             if stillRange.duration > .zero, freezeDuration > .zero {
@@ -678,6 +783,30 @@ enum ReelComposer {
         // together.
         audioTrack?.removeTimeRange(CMTimeRange(start: videoDuration,
                                                 duration: CMTimeSubtract(audioDuration, videoDuration)))
+    }
+
+    /// Read compressed sample timing, not decoded pixels. A 24fps (or slower)
+    /// clip's final sample can begin earlier than the final output1/30second;
+    /// slicing only the latter can insert no video and lose the promised hold.
+    private static func finalSourceFrameStart(track: AVAssetTrack, range: CMTimeRange) async -> CMTime? {
+        guard let asset = track.asset else { return nil }
+        do {
+            let reader = try AVAssetReader(asset: asset)
+            let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+            output.alwaysCopiesSampleData = false
+            guard reader.canAdd(output) else { return nil }
+            reader.add(output); reader.timeRange = range
+            guard reader.startReading() else { return nil }
+            var last: CMTime?
+            let end = CMTimeAdd(range.start, range.duration)
+            while let sample = output.copyNextSampleBuffer() {
+                guard !Task.isCancelled else { reader.cancelReading(); return nil }
+                let time = CMSampleBufferGetPresentationTimeStamp(sample)
+                if time.isNumeric, time >= range.start, time < end { last = last.map { CMTimeMaximum($0, time) } ?? time }
+                await Task.yield()
+            }
+            return reader.status == .completed ? last : nil
+        } catch { return nil }
     }
 
     // MARK: - Overlay (title card + shot captions + spoken-word captions)

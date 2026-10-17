@@ -6,9 +6,19 @@
 // `GET /portfolio/:handle` (services/supabase/functions/portfolio/index.ts),
 // read defensively since brand_kit-derived fields are freeform.
 
-export interface Env {
+/// <reference path="../worker-configuration.d.ts" />
+export interface Env extends Partial<Pick<TourHostBindings, "ASSETS" | "MEDIA_RENDERS" | "MEDIA_UPLOADS" | "IMAGES">> {
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_STREAM_TOKEN?: string;
+  CLOUDFLARE_STREAM_CUSTOMER_CODE?: string;
+  STREAM_PRIVATE_PLAYBACK?: string;
+  /** Private Worker→API delivery credential. Never sent to viewers. */
+  MEDIA_GATEWAY_SECRET?: string;
   /** Base URL of the Supabase Edge Functions, e.g. https://<ref>.supabase.co/functions/v1 */
   SUPABASE_FUNCTIONS_URL: string;
+  /** Explicit read-function region, colocated with this project's database.
+   * Empty/unset restores automatic routing during a regional outage. */
+  SUPABASE_READ_REGION?: string;
   /** Supabase anon key — public by design (RLS enforces access). Used as the
    *  apikey/Authorization header on the server->Supabase read and on the public
    *  browser lead/beacon calls. Provided as a Worker SECRET (`wrangler secret
@@ -105,6 +115,14 @@ export interface AgentCard {
 }
 
 export interface Tour {
+  /** Verified finished landscape composition selected for this property.
+   * Independent of the optional recorded walkthrough below. */
+  listing_video?: import("./property-video").ListingVideo | null;
+  /** Server-resolved paid property entitlement; never a client details flag. */
+  website_theme?: import("./property-design").WebsiteTheme;
+  /** Server-resolved, visible property cover photo selected by the owner.
+   *  Separate from the video poster; never sourced from client headshots. */
+  cover_url?: string | null;
   /** The listing's own photos, from `role:"gallery"` uploads, as
    *  `{ url, label }` objects (a bare string url is also accepted). Top level
    *  on the payload; `listing.details.gallery` is the older freeform shape the
@@ -133,6 +151,10 @@ export interface Tour {
   speed_factor: number | null;
   chapters: Chapter[];
   agent_card: AgentCard;
+  /** Listing-specific client identity. Never derived from a query parameter. */
+  client_mode?: boolean;
+  /** Hide service promotions while retaining the client's card and lead form. */
+  hide_rendprop_branding?: boolean;
   cta: Cta;
   staged: boolean;
   staged_disclosure: string | null;

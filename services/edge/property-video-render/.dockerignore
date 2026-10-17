@@ -1,0 +1,10 @@
+node_modules
+tests
+.wrangler
+package*.json
+src
+*.log
+.venv
+__pycache__
+*.pyc
+requirements-test.txt

@@ -1,4 +1,5 @@
 // Pure typed tests: local imports only, no endpoint/provider/auth/deletion calls.
+import { systemInstruction } from "./prompt.ts";
 import { KNOWLEDGE, knowledgeBlock } from "./knowledge.ts";
 
 function assert(value: boolean, reason: string): asserts value {
@@ -15,26 +16,13 @@ function fact(topic: string): string {
 }
 
 function requireAccountPolicy(text: string): void {
-  assert(
-    text.includes("No account is required"),
-    "must explicitly reject an account requirement",
-  );
-  assert(text.includes("publish"), "publication must be included");
-  assert(
-    text.includes("Sign in with Apple is optional"),
-    "Apple identity must remain optional",
-  );
-  assert(
-    text.includes("internet connection"),
-    "anonymous publication does not mean offline publication",
-  );
-  assert(
-    !/fully signed out|needed only to publish|no server account/i.test(text),
-    "stale session/identity claim",
-  );
+  assert(text.includes("identified account"), "online publishing/AI must require identified account");
+  assert(text.includes("internet connection"), "online access requires network");
+  assert(text.includes("Local recording"), "local work remains distinct from paid/cloud tools");
+  assert(!text.includes("Sign in with Apple is optional"), "obsolete optional online sign-in policy");
 }
 
-Deno.test("knowledge: publication does not require an identified account", () => {
+Deno.test("knowledge: online publishing/AI require identified account", () => {
   requireAccountPolicy(fact("Signing in — what needs an account"));
 });
 
@@ -86,4 +74,38 @@ Deno.test("knowledge: known defective account statement is rejected", () => {
     rejected = true;
   }
   assert(rejected, "negative control did not reject stale policy");
+});
+
+Deno.test("knowledge: introductory trial requires Apple's subscription confirmation", () => {
+  const trial = fact("Free trial");
+  for (const required of ["7-day", "choosing a subscription", "confirming it in Apple's purchase sheet", "does not start that trial", "selected plan's allowances", "renews at the displayed subscription price", "original end date"]) {
+    assert(trial.includes(required), `trial policy omitted: ${required}`);
+  }
+  const block = knowledgeBlock();
+  assert(block.includes(trial), "actual guidance must contain the trial policy");
+  assert(block.includes("never on signup"), "allowances summary must not grant an automatic trial");
+});
+
+Deno.test("knowledge: Measurements, 3D floor plans and 3D walkthroughs are all Coming soon (build 57)", () => {
+  const measurement = fact("Measurements and floor plans — current availability");
+  for (const required of ["Measurements, 3D floor plans and 3D walkthroughs are Coming soon", "does not open yet", "no plan includes it", "nothing else in the app waits on it", "PDF or image", "not be a certified survey", "TestFlight Lab", "local capture tests", "agency and Studio capture planning"]) {
+    assert(measurement.includes(required), `current availability omitted: ${required}`);
+  }
+  assert(!measurement.includes("LiDAR phones can also scan"), "ordinary workflow must not promise automatic generation");
+  assert(!/Open a listing's Measurements card/.test(measurement), "the Measurements card is Coming soon and must not be described as opening");
+  assert(!/Draw a floor outline by entering/.test(measurement), "manual outlines are not available in build 57");
+  assert(knowledgeBlock().includes(measurement), "actual online prompt must carry current availability");
+  assert(!knowledgeBlock().includes("manual Measurements"), "no fact may describe manual Measurements as usable today");
+  assert(fact("What the app needs to run").includes("Measurements, 3D floor plans and 3D walkthroughs are Coming soon"), "requirements fact must carry the Coming-soon state");
+  assert(!fact("A render or upload failed").includes("back automatically"), "recovery must not promise every attempt is refunded");
+});
+
+Deno.test("Aerial launch facts and intent guidance preserve earlier media without selling new generation",()=>{
+  const aerial=fact("Aerial intro — what it does"),block=knowledgeBlock(),prompt=systemInstruction("real_estate");
+  for(const required of ["Coming soon","no launch plan includes new Aerial generation","Previously saved clips and already accepted jobs remain available","never described as real drone footage"])
+    assert(aerial.includes(required),`Missing aerial policy: ${required}`);
+  assert(block.includes(aerial),"Actual online prompt must contain launch availability");
+  assert(!/\d+ aerial intros/.test(block),"No launch plan may advertise internal aerial counters");
+  assert(prompt.includes("never emit open_aerial"),"Online next-step guidance must not offer an Aerial chip");
+  assert(!prompt.includes("Aerial intro → open_aerial"),"Obsolete generation instruction");
 });

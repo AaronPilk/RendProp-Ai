@@ -4,6 +4,16 @@ import Foundation
 /// `RenderTier`; the model keeps it nested as `Render.Tier`. Same type.
 typealias RenderTier = Render.Tier
 
+struct BusinessLogoReceipt: Codable, Equatable, Sendable {
+    let ok: Bool
+    let orgID: UUID
+    let businessLogoURL: String?
+    var replayed: Bool? = nil
+    enum CodingKeys: String, CodingKey {
+        case ok, replayed; case orgID = "org_id", businessLogoURL = "business_logo_url"
+    }
+}
+
 /// Result of `POST /uploads`. Expresses BOTH server modes (contract §2.1):
 ///  • `.single`    — one presigned PUT (`putURL`), files ≤ 64 MB / photos.
 ///  • `.multipart` — R2/S3 multipart (`uploadID` + `partSize` + `partCount`),
@@ -88,6 +98,9 @@ struct Entitlements: Codable, Hashable {
     /// This window's usage. Keys: renders, photo_edits, reels, aerials, drone.
     var used: [String: Int]
     var leads: Int
+    /// /me plan_source. Optional for older responses; used only for displaying
+    /// the private testing allowance, never for granting access.
+    var planSource: String? = nil
 
     /// Monthly cap for a `used` key (renders | photo_edits | reels | aerials | drone).
     func cap(for feature: String) -> Int {
@@ -113,6 +126,27 @@ struct Entitlements: Codable, Hashable {
 }
 
 /// This-month usage/cost rollup for the signed-in org (contract: GET /me → usage).
+struct HostingRetentionSummary: Codable, Hashable {
+    let orgId: UUID
+    let policy: String
+    let protected: Bool
+    let retentionEndsAt: String?
+    let hostingAvailable: Bool
+    var deadline: Date? {
+        guard let retentionEndsAt else { return nil }
+        let formatter = ISO8601DateFormatter()
+        if let date = formatter.date(from: retentionEndsAt) { return date }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: retentionEndsAt)
+    }
+    func checked(org: UUID) -> HostingRetentionSummary? {
+        guard orgId == org else { return nil }
+        if policy == "preserved" { return retentionEndsAt == nil && hostingAvailable ? self : nil }
+        guard policy == "prospective_90_day_grace", !protected, deadline != nil else { return nil }
+        return self
+    }
+}
+
 struct UsageSummary: Codable, Hashable {
     var aiSpendCents: Int? = nil   // usage.cost_cents (total infra+AI spend this month)
     var renderCount: Int? = nil    // usage.renders (this month)
@@ -136,6 +170,15 @@ struct UsageSummary: Codable, Hashable {
     /// Membership role when the server sends one ("owner" | "admin" | "agent" |
     /// "marketing"). Secondary to `isAdmin`.
     var role: String? = nil
+    var hostingRetention: HostingRetentionSummary? = nil
+    var trialUsage: TrialUsageSummary? = nil
+    var trialOffer: TrialOfferSummary? = nil
+    var servingActivation: ServingActivationSummary? = nil
+    var servingPhotoPackage: ServingPhotoPackageSummary? = nil
+    /// Shared AI budget in ceiling serving mode (`/me` → `serving_envelope`);
+    /// nil on funded-mode servers, on older servers, and when the server
+    /// could not compute it.
+    var servingEnvelope: ServingEnvelopeSummary? = nil
 
     /// AI spend as Money (integer-cents guardrail). Zero when unknown.
     var aiSpend: Money { Money(cents: aiSpendCents ?? 0) }
@@ -220,15 +263,19 @@ struct ProvenanceRecord: Identifiable, Hashable, Sendable {
 /// the edit at all), a human label for the disclosure line, and the asset id of
 /// the untouched ORIGINAL uploaded with `role:"original"` — which is what makes
 /// the public "View original" link real (California AB 723).
-struct AIPhotoEditRequest: Sendable, Hashable {
+struct AIPhotoEditRequest: Sendable, Hashable, Codable {
     var imageBase64: String
     var mime: String = "image/jpeg"
     /// "twilight" | "sky" | "lawn" | "declutter" | "stage" | "custom".
     var edit: String
-    /// Stage only ("modern" | "rustic" | "minimalist" | "scandinavian").
+    /// Stage only ("modern" | "rustic" | "minimalist" | "contemporary"). Legacy "scandinavian" stays accepted for saved requests.
     var style: String? = nil
-    /// Custom only (free text, ≤ 600 chars server-side).
+    /// Custom instruction or staging furnishing brief (≤ 600 chars).
     var prompt: String? = nil
+    /// Staging only. A reviewed version in this listing, selected explicitly
+    /// as a reference for movable furniture in another view of the same room.
+    var stagingReferenceBase64: String? = nil
+    var stagingReferenceMime: String? = nil
     /// The LISTING's business type (`SpaceType.rawValue`) — selects the
     /// industry prompt set and scopes the fair-housing gate server-side. Set it
     /// from the listing in hand; nil falls back to `SpaceType.current`.
@@ -239,7 +286,7 @@ struct AIPhotoEditRequest: Sendable, Hashable {
     var label: String? = nil
     /// `capture_assets.id` of the untouched source (uploads `role:"original"`).
     var originalAssetID: String? = nil
-    /// One UUID per user TAP (billed provider call).
+    /// One UUID per paid attempt, retained through a lost answer or quality pause.
     var idempotencyKey: String? = nil
 }
 
@@ -560,6 +607,16 @@ struct AIScriptResult: Sendable, Hashable {
 // the kitchen, pull back on the great room, tilt up the staircase, hold on the
 // view. That variety is one short text call away and it costs nothing.
 
+/// Server-authored, versioned five-second camera presets. A photo reel does
+/// not infer the property's connected floor plan or unseen surfaces.
+enum ReelCameraMove: String, CaseIterable, Codable, Sendable {
+    case flyThrough = "fly_through", pushIn = "push_in", sideGlide = "side_glide", pullBack = "pull_back"
+    var title: String {
+        switch self { case .flyThrough: return "Fly-through"; case .pushIn: return "Slow push-in"
+        case .sideGlide: return "Side glide"; case .pullBack: return "Pull-back" }
+    }
+}
+
 /// One shot in the plan.
 struct AIShot: Sendable, Hashable, Identifiable {
     /// Echoed back untouched from the request — the app's own local photo id,
@@ -605,7 +662,7 @@ struct AIShot: Sendable, Hashable, Identifiable {
     /// variety, nothing broken. If instead we passed anything through, the same
     /// mismatch would be a hard failure on every clip of the reel.
     static let renderableMotions: Set<String> = [
-        "push_in", "pull_back", "tilt_up", "tilt_down",
+        "fly_through", "side_glide", "push_in", "pull_back", "tilt_up", "tilt_down",
         "orbit_left", "orbit_right", "rack_focus", "static_parallax",
     ]
 }
@@ -665,6 +722,26 @@ struct AIShotListRequest: Sendable, Hashable {
 }
 
 /// A prospect who submitted the hosted tour's lead form (`GET /leads`).
+struct LeadDeletionReceipt: Decodable, Equatable {
+    let ok: Bool
+    let leadID: UUID
+    let deleted: Bool
+    let cleanupPending: Bool
+    enum CodingKeys: String, CodingKey { case ok, leadID = "lead_id", deleted, cleanupPending = "cleanup_pending" }
+    func checked(leadID expected: UUID) throws -> Self {
+        guard ok, deleted, leadID == expected else { throw ClientContactError.invalidResponse }
+        return self
+    }
+}
+struct ClientRecipientVerificationReceipt: Decodable {
+    let ok: Bool
+    let state: String
+    func checked() throws -> Self {
+        guard ok, ["queued", "verified"].contains(state) else { throw ClientContactError.invalidResponse }
+        return self
+    }
+}
+
 struct Lead: Identifiable, Codable, Hashable {
     var id: UUID
     var listingID: UUID? = nil
@@ -677,6 +754,7 @@ struct Lead: Identifiable, Codable, Hashable {
     var source: String? = nil
     var listingAddress: String? = nil
     var status: String? = nil
+    var clientDelivery: ClientLeadDelivery? = nil
 }
 
 /// One tap-to-jump chapter sent with a publish (`{label, t_ms, sort}` on the
@@ -768,8 +846,17 @@ protocol APIClient: Sendable {
     /// address, price, beds/baths/sqft, tagline, details, lat/lng, zillow_url,
     /// sold_at (JSON null to un-sell) and status (`uploading` → `processing`).
     func updateListing(_ listing: Listing) async throws -> Listing
+    /// Saves only measurements, conditional on the exact cached wire value.
+    func updateMeasurements(_ listing: Listing) async throws -> Listing
     /// DELETE `listings/<serverID>` — soft-deletes and unpublishes its tours.
+    /// Build 58: the server keeps the listing restorable for 30 days.
     func deleteListing(serverID: UUID) async throws
+    /// GET `listings/trash` — the selected library's Recently deleted listings
+    /// (build 58). Only listings still inside their restore window are returned.
+    func trashedListings() async throws -> [TrashedListing]
+    /// POST `listings/<serverID>/restore` — undeletes a listing inside its
+    /// window and brings the SAME public tour link back (build 58).
+    func restoreListing(serverID: UUID) async throws -> RestoredListing
 
     // MARK: Uploads (contract §2)
 
@@ -843,6 +930,20 @@ protocol APIClient: Sendable {
                     enhancements: Enhancements, chapters: [ChapterInput],
                     posterAssetID: String?) async throws -> PublishedTour
 
+    /// POST /renders/republish-app — same body as `publishApp`, but the server
+    /// moves the listing's CURRENT public tour onto the new upload in place:
+    /// the slug, the share link, QR codes and the MLS field never change. A
+    /// listing with no tour yet gets an ordinary first publish (build 58).
+    func republishApp(listingID: UUID, assetID: String, durationS: Double,
+                      speedFactor: Double, tier: RenderTier,
+                      enhancements: Enhancements, chapters: [ChapterInput],
+                      posterAssetID: String?) async throws -> PublishedTour
+
+    /// Owned photo-video publication. The server registers ordered source
+    /// lineage before allowing this upload to become the website presentation.
+    func publishListingVideo(listingID: UUID, assetID: String, record: ListingVideoRecord, operationID: UUID,
+                             posterAssetID: String?, republish: Bool) async throws -> PublishedTour
+
     /// PATCH /renders/:id/chapters — replace the published tour's tap-to-jump
     /// chapters (room tags retimed to the rendered timeline) without re-publishing.
     func updateChapters(renderID: UUID, chapters: [ChapterInput]) async throws
@@ -879,6 +980,18 @@ protocol APIClient: Sendable {
     /// functions allow-list exactly these fields). Empty-string values clear
     /// the field server-side. Best-effort: callers fire-and-forget.
     func updateBrand(_ fields: [String: String]) async throws
+    func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt
+    func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt
+    func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt
+    func personalCard() async throws -> PersonalCardReceipt
+    func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt
+    func realEstateRole() async throws -> RealEstateRole
+    func updateRealEstateRole(_ role: RealEstateRole) async throws
+    func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact?
+    func saveClientContact(_ contact: ListingClientContact, listingID: UUID, orgID: UUID) async throws -> ListingClientContact
+    func sendLeadToClient(leadID: UUID, recipient: String, requestID: UUID, orgID: UUID) async throws -> ClientLeadDelivery
+    func requestClientRecipientVerification(listingID: UUID, orgID: UUID) async throws -> ClientRecipientVerificationReceipt
+    func deleteLead(leadID: UUID, orgID: UUID) async throws -> LeadDeletionReceipt
 
     /// POST /ai-photo — single-image AI edit. `request.edit` = "twilight" |
     /// "sky" | "lawn" | "declutter" | "stage" | "custom"; `style` applies to
@@ -906,6 +1019,10 @@ protocol APIClient: Sendable {
     /// whole workspace.
     func complianceCSV(listingServerID: UUID?) async throws -> Data
 
+    /// GET /me/export — bounded account-owned cloud inventory with an explicit
+    /// manifest of excluded files and operational data; independent of workspace.
+    func exportAccountData() async throws -> Data
+
     /// PATCH /me/compliance/:id — attach the untouched ORIGINAL and/or the
     /// published ALTERED result to a provenance row after their uploads land.
     /// The original alone satisfies California AB 723's access requirement; both
@@ -924,13 +1041,13 @@ protocol APIClient: Sendable {
     func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion]
 
     /// POST /ai-copy/edit-prompt — rewrites a rough custom-edit idea
-    /// (≤ 300 chars sent) into a sharper, more specific prompt (≤ 400 back).
+    /// (≤ 600 chars sent) into a sharper, more specific prompt (≤ 400 back).
     ///
     /// TEXT-ONLY, and now honestly so. `improve_prompt` never looked at the
     /// image (audit F-E-16 stopped the client SENDING one) but the call site
     /// went on base64-encoding a 1024 px JPEG on the main path for a payload
-    /// that was thrown away, so the photo is gone from the signature too. Not
-    /// charged against the monthly photo-edit allowance.
+    /// that was thrown away, so the photo is gone from the signature too.
+    /// Its funded text cost shares the AI serving allowance.
     ///
     /// `roomHint` is the area the photo shows ("Kitchen", "Patio") when the app
     /// knows it — it is what turns "make it brighter" into an instruction about
@@ -996,6 +1113,12 @@ protocol APIClient: Sendable {
     /// flags so the UI can disclose "AI-generated — not real drone footage".
     func aiVideoAerial(_ request: AerialRequest, idempotencyKey: String?) async throws -> AIVideoJob
 
+    /// Exact uploaded private JPEG binds generation/QC to composition lineage.
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                        aspect: String?, framing: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                        listingServerID: UUID?, label: String?, idempotencyKey: String?,
+                        sourceAssetID: String, sourceProvenanceID: String?) async throws -> AIVideoJob
+
     /// POST /ai-video/reel-clip — animate a photo (base64) into a 2–12 s motion
     /// clip (Seedance image-to-video). `listingServerID` anchors the clip's
     /// provenance row so the generated motion is disclosed on the tour and in
@@ -1014,13 +1137,16 @@ protocol APIClient: Sendable {
     /// skips that stronger default and writes its own words into the listing's
     /// provenance log as if the agent had typed them.
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
-                         motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                         aspect: String?, framing: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob
 
     /// GET /ai-video/status — poll one submitted job. fal result URLs EXPIRE, so
     /// download the video promptly on `.completed`.
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus
+
+    /// Read-only recovery of this exact saved standalone animation operation.
+    func aiVideoOperation(operationID: UUID, listingServerID: UUID) async throws -> AIVideoJob?
 
     func reflectionQuote(listingID: UUID) async throws -> ReflectionQuote
     func removeReflections(assetID: String, listingID: UUID, batchID: UUID,
@@ -1181,6 +1307,27 @@ protocol APIClient: Sendable {
 
 // MARK: - Convenience overloads (protocol requirements can't carry defaults)
 extension APIClient {
+    func aiVideoOperation(operationID: UUID, listingServerID: UUID) async throws -> AIVideoJob? {
+        throw APIError.server(status: 503, code: "unsupported", message: "This connection cannot recover the saved video request. No new generation was started.")
+    }
+    func publishListingVideo(listingID: UUID, assetID: String, record: ListingVideoRecord, operationID: UUID,
+                             posterAssetID: String?, republish: Bool) async throws -> PublishedTour {
+        throw APIError.server(status: 503, code: "unsupported", message: "Listing video publication isn't available on this connection. Your video is saved on this phone.")
+    }
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                        aspect: String?, framing: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                        listingServerID: UUID?, label: String?, idempotencyKey: String?, sourceAssetID: String,
+                        sourceProvenanceID: String?) async throws -> AIVideoJob {
+        throw APIError.server(status: 503, code: "unsupported", message: "Verified photo-video generation isn't available on this connection. Your photos are saved.")
+    }
+    func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
+    func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
+    func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
+    func personalCard() async throws -> PersonalCardReceipt { throw APIError.notConfigured }
+    func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt { throw APIError.notConfigured }
+    // Mock/unsupported transports fail closed instead of falling back to a full-row write.
+    func updateMeasurements(_ listing: Listing) async throws -> Listing { throw APIError.notConfigured }
+
     /// Capture uploads (the common case) don't specify a role or type.
     func requestUpload(filename: String, bytes: Int64,
                        listingID: UUID?, sha256: String?, kind: String) async throws -> UploadTicket {
@@ -1228,6 +1375,25 @@ extension APIClient {
 
     func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob {
         try await aiVideoDrone(assetID: assetID, tier: tier, targetFps: targetFps, idempotencyKey: nil)
+    }
+
+    /// Existing saved requests omit framing and retain their original contract.
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         aspect: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                         listingServerID: UUID?, label: String?, idempotencyKey: String?) async throws -> AIVideoJob {
+        try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt, seconds: seconds,
+            aspect: aspect, framing: nil, presetVersion: presetVersion, motion: motion, room: room,
+            shotIndex: shotIndex, shotCount: shotCount, listingServerID: listingServerID, label: label,
+            idempotencyKey: idempotencyKey)
+    }
+
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                         listingServerID: UUID?, label: String?,
+                         idempotencyKey: String?) async throws -> AIVideoJob {
+        try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt, seconds: seconds,
+            aspect: nil, presetVersion: nil, motion: motion, room: room, shotIndex: shotIndex, shotCount: shotCount,
+            listingServerID: listingServerID, label: label, idempotencyKey: idempotencyKey)
     }
 
     /// Source-compatible reel clip with no shot plan — every planning field nil,
@@ -1312,6 +1478,12 @@ struct AIVideoJob: Codable, Sendable {
     /// `media_provenance.id` when the server logged the generation.
     var provenanceID: String? = nil
 
+    /// Server acknowledgement of this exact private photo input. Older jobs
+    /// remain playable but cannot claim the new composition source binding.
+    var sourceBound: Bool? = nil
+    var sourceAssetID: String? = nil
+
+
     /// The sentence to show when the server sent none (older server / offline):
     /// HousingWire's recommended simulated-movement disclosure.
     static let aerialFallbackDisclosure =
@@ -1337,6 +1509,33 @@ enum AIVideoStatus: Sendable {
 
 /// Result of `POST /renders/publish-app` — the app-published tour's public
 /// identity. `slug`/`shareURL` are the REAL server values (never fabricated).
+/// One row of Recently deleted (`GET /listings/trash`, build 58).
+struct TrashedListing: Sendable, Hashable, Identifiable {
+    let id: UUID
+    let orgID: UUID
+    let address: String
+    let spaceType: SpaceType?
+    let mainPhotoKey: String?
+    let deletedAt: Date
+    /// After this moment the listing is gone for good (storage cleanup runs).
+    let restorableUntil: Date
+    /// The delete took a live tour down; restoring brings the same link back.
+    let hadPublishedTour: Bool
+    /// The signed-in member may restore it (owner/admin/agent of that library).
+    let canRestore: Bool
+}
+
+/// `POST /listings/:id/restore` (build 58).
+struct RestoredListing: Sendable, Hashable {
+    let id: UUID
+    let orgID: UUID
+    let address: String?
+    /// How many public tours came back online with their original links.
+    let republishedRenders: Int
+    /// Client-delivery emails that were skipped by the delete and are NOT re-sent.
+    let cancelledClientDeliveries: Int
+}
+
 struct PublishedTour: Sendable, Hashable {
     let slug: String
     let shareURL: String
@@ -1383,9 +1582,15 @@ enum APIError: Error, LocalizedError {
         return nil
     }
 
-    /// 402 — plan boundary / monthly allowance reached → show an "Upgrade plan"
-    /// CTA that opens the in-app StoreKit paywall (`PaywallRouter`).
-    var isQuota: Bool { status == 402 || code == "quota_exceeded" || code == "plan_required" }
+    /// Trial-wide capacity is separate from a customer's own allowance.
+    /// Purchasing a higher plan is not the recovery action for this refusal.
+    var isTrialCapacityUnavailable: Bool { code == "trial_capacity_unavailable" }
+    /// A free intent clarification/refusal is resolved by changing the request,
+    /// never by repeating the same batch or opening the purchase screen.
+    var isPhotoPromptRefusal: Bool { code == "photo_clarification_required" || code == "unsupported_edit" }
+    /// 402 — a customer's plan boundary / allowance reached → the in-app
+    /// StoreKit paywall. A typed trial capacity refusal never opens it.
+    var isQuota: Bool { !isTrialCapacityUnavailable && (status == 402 || code == "quota_exceeded" || code == "plan_required") }
     /// 401 — session expired/revoked → re-prompt sign-in.
     var isUnauthorized: Bool { status == 401 || code == "unauthorized" }
     /// 409 — duplicate / already complete / account deleting.
@@ -1395,6 +1600,9 @@ enum APIError: Error, LocalizedError {
     var isNotFound: Bool { status == 404 || code == "not_found" }
     var isForbidden: Bool { status == 403 || code == "forbidden" }
     var isPayloadTooLarge: Bool { status == 413 || code == "payload_too_large" }
+    /// 503 `upstream` — the generation service refused or could not be
+    /// reached. Not the customer's input; a batch must stop on the first one.
+    var isServiceUnavailable: Bool { status == 503 || code == "upstream" || code == "internal" }
     /// 400 — the request itself was rejected; retrying identically won't help.
     var isValidation: Bool { status == 400 || code == "validation" }
 
@@ -1420,6 +1628,8 @@ enum APIError: Error, LocalizedError {
     }
 
     var recoverySuggestion: String? {
+        if isPhotoPromptRefusal { return "Choose a specific photo change and review the instruction before generating." }
+        if isTrialCapacityUnavailable { return "Try again later, or contact support. Your saved work is still here." }
         if isQuota { return "Upgrade your plan to continue." }
         if isRateLimited { return "Try again in a few minutes." }
         if isUnauthorized { return "Sign in again to continue." }
@@ -1824,5 +2034,19 @@ enum AdminText {
         let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "—" }
         return pretty(trimmed)
+    }
+}
+
+
+extension APIClient {
+    func exportAccountData() async throws -> Data {
+        throw APIError.server(status: 501, code: "live_service_required", message: "Connect to Rendprop to download your account data.")
+    }
+    /// Offline and older injected clients cannot claim a server action succeeded.
+    func requestClientRecipientVerification(listingID: UUID, orgID: UUID) async throws -> ClientRecipientVerificationReceipt {
+        throw APIError.server(status: 501, code: "live_service_required", message: "Connect to Rendprop to request client email verification.")
+    }
+    func deleteLead(leadID: UUID, orgID: UUID) async throws -> LeadDeletionReceipt {
+        throw APIError.server(status: 501, code: "live_service_required", message: "Connect to Rendprop to delete this saved lead.")
     }
 }

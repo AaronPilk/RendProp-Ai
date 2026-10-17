@@ -28,7 +28,7 @@ const realError = console.error;
 function stubFetch(success: boolean) {
   globalThis.fetch = (() =>
     Promise.resolve(
-      new Response(JSON.stringify({ success }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      new Response(JSON.stringify({ success, hostname: "rendprop.com", action: "listing-inquiry" }), { status: 200, headers: { "Content-Type": "application/json" } }),
     )) as typeof fetch;
 }
 
@@ -147,4 +147,63 @@ Deno.test("verifyTurnstile: a network error talking to Cloudflare fails closed, 
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+Deno.test("verifyTurnstile: success on another hostname or action is refused", async () => {
+  try {
+    await withEnv({ TURNSTILE_SECRET_KEY: "test-secret" }, async () => {
+      for (const body of [
+        { success: true, hostname: "attacker.example", action: "listing-inquiry" },
+        { success: true, hostname: "rendprop.com.attacker.example", action: "listing-inquiry" },
+        { success: true, hostname: "localhost", action: "listing-inquiry" },
+        { success: true, hostname: "rendprop.com", action: "signup" },
+        { success: true, hostname: "rendprop.com" },
+        { success: true },
+        { success: "true", hostname: "rendprop.com", action: "listing-inquiry" },
+      ]) {
+        globalThis.fetch = (() => Promise.resolve(Response.json(body))) as typeof fetch;
+        assertEquals(await verifyTurnstile("token", "unknown"), false);
+      }
+    });
+  } finally { globalThis.fetch = realFetch; }
+});
+
+Deno.test("verifyTurnstile: non-success HTTP cannot authorize even with a success body", async () => {
+  globalThis.fetch = (() => Promise.resolve(Response.json({ success: true, hostname: "rendprop.com", action: "listing-inquiry" }, { status: 503 }))) as typeof fetch;
+  try {
+    await withEnv({ TURNSTILE_SECRET_KEY: "test-secret" }, async () => {
+      assertEquals(await verifyTurnstile("token", "unknown"), false);
+    });
+  } finally { globalThis.fetch = realFetch; }
+});
+
+Deno.test("verifyTurnstile: malformed or oversized tokens never reach the provider", async () => {
+  let calls = 0;
+  globalThis.fetch = (() => { calls++; return Promise.resolve(Response.json({ success: false })); }) as typeof fetch;
+  try {
+    await withEnv({ TURNSTILE_SECRET_KEY: "test-secret" }, async () => {
+      for (const token of [undefined, "", "  ", "x".repeat(2049)]) assertEquals(await verifyTurnstile(token, "unknown"), false);
+    });
+    assertEquals(calls, 0);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+Deno.test("verifyTurnstile: deadline, token payload and generic error logging", async () => {
+  let checked = false;
+  globalThis.fetch = ((_input, init) => {
+    const options = init as { body?: unknown; signal?: AbortSignal } | undefined;
+    const payload = new URLSearchParams(String(options?.body));
+    assertEquals(payload.get("response"), "private-token");
+    assertEquals(payload.get("remoteip"), null);
+    assertEquals(options?.signal instanceof AbortSignal, true);
+    checked = true;
+    return Promise.reject(new Error("private-token private-address"));
+  }) as typeof fetch;
+  try {
+    await withEnv({ TURNSTILE_SECRET_KEY: "test-secret" }, async () => {
+      const logs = await captureErrors(async () => { assertEquals(await verifyTurnstile("private-token", "unknown"), false); });
+      assertEquals(logs, ["Turnstile verification unavailable"]);
+    });
+    assertEquals(checked, true);
+  } finally { globalThis.fetch = realFetch; }
 });

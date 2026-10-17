@@ -1,0 +1,15 @@
+# Claude Studio design assignment — October 16, 2026
+
+The owner explicitly asked Codex to have the external Claude review Rendprop Studio because Claude knows the Apple design aesthetic used in the Pilk AI marketing sites. Codex sent the assignment through the existing Claude desktop Rendprop AI conversation. The message is visibly sent, and Claude replied: “Taking the Studio design lane” with desktop/narrow-phone inspection, audit, implementation and handoff planned. This is actual external Claude, separate from Codex collaboration agents.
+
+Claude owns an isolated visual/UX lane from committed base `160efdc68e25884170aecf9970a18e6bb432f036`. The assignment covers Studio navigation, hierarchy, typography, spacing, compact controls, restrained readable glass and motion, responsive media/photo versions, Make a video/reel, progress/recovery/results, website preview/design choice, sharing and empty/loading/error states. It requests concrete before/after desktop and phone screenshots, a reviewable patch, accessibility/responsive checks and honest test/build/size evidence. It points to the connected brand guidance and existing Pilk AI references without inventing URLs.
+
+Codex retains integration, backend and release. Claude must not edit the shared checkout or replace Codex's uncommitted App.tsx pagination fix; any App visual patch must be identified separately for integration. Services, authority, ordering, jobs, consent, costs, billing, CI and deploy configuration stay outside this visual lane. Existing functions and the simple photo-first realtor workflow must be preserved. No push, deploy, production edits, paid generation or onboarding rebuild is authorized by this assignment. Paid generation remains paused. Website template code is a separate lane.
+
+Deliver through `_bridge/build88-claude-studio-apple-design/` in the connected Rendprop AI folder, or the equivalent external Builds/Active directory when accessible. Claude acknowledged the exact committed base and began a command. Final audit/design/implementation results have not been received or accepted yet.
+
+## Parallel integration work
+
+Actual Studio46 owner UI reproduces Library pagination returning to the first 50 items during refresh. The App-only fix and actual-App/typed-service regression fixture are independently source-reviewed; bounded runtime checks are now authorized, with no deployment yet. This remains separate from Claude's visual lane.
+
+Full CI `38987224907` at `160efdc` is terminal: 11 passed, five failed (four primary plus dependent native aggregate). The exact final receipt is `build88-integrated-ci-160efdc/observer/FINAL-TERMINAL-CI-RECEIPT.json` SHA256 `69ef6cf30ff9b278dce366d8132517c8235a2562843670ad1add4a733973ec0e`. The primary failures are an initial simctl timeout, an MP4 inventory wrapper that counted its synthetic input, missing cached dependencies for computed-import Kie tests, and an ambiguous native lifecycle extraction anchor. Local repairs are in progress; no full-green, new delivery or launch-readiness claim follows.

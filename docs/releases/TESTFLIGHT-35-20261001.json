@@ -1,0 +1,250 @@
+{
+  "kind": "Internal TestFlight delivery receipt",
+  "verifiedAt": "2026-10-01T17:06:20.717923+00:00",
+  "source": {
+    "commit": "7636c537449b993b1853f5bdbd2bdabe8168dd59",
+    "branch": "fix/guided-photo-capture-20261001",
+    "verifiedSourceFileCount": 191,
+    "scheme": "RendpropSpatialTestFlight",
+    "committedTestFlightBuildSetting": "35",
+    "explicitArchiveBuildOverride": "35",
+    "ciPassedJobs": 12,
+    "ciSourceCommit": "7636c537449b993b1853f5bdbd2bdabe8168dd59",
+    "ciRunURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/36895250913",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/12",
+    "pullRequestBase": "audit/core-readiness-20261001",
+    "pullRequestDraftAtDelivery": true
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "35",
+    "minimumOS": "16.0"
+  },
+  "archive": {
+    "signatureVerified": true,
+    "captureLabFlagVerified": true,
+    "requiredPhotoSourcesCompiled": [
+      "GuidedPhotoCamera.swift",
+      "PhotoCapturePolicy.swift",
+      "PhotoCaptureStorage.swift",
+      "FlythroughDetailView.swift"
+    ],
+    "preservedCaptureWorkspaceBillingSourcesCompiled": [
+      "StationCaptureModels.swift",
+      "StationCapturePolicy.swift",
+      "StationCaptureRecorder.swift",
+      "PanoramaProjection.swift",
+      "PanoramaRenderer.swift",
+      "PanoramaPreviewViewController.swift",
+      "GuidedPanoramaCaptureController.swift",
+      "GuidedPanoramaLabView.swift",
+      "GuidedPanoramaPreviewStore.swift",
+      "WorkspaceContext.swift",
+      "WorkspaceStore.swift",
+      "WorkspacePickerView.swift",
+      "SubscriptionBillingContext.swift",
+      "SubscriptionOfferPolicy.swift",
+      "PurchaseManager.swift",
+      "PurchasesAPI.swift",
+      "AuthStore.swift",
+      "WorkspaceSync.swift",
+      "LiveAPIClient.swift",
+      "CameraManager.swift",
+      "CaptureView.swift",
+      "PhotoCapturePolicy.swift",
+      "PhotoCaptureStorage.swift"
+    ],
+    "compiledTrackedSwiftInputCount": 129,
+    "generatedSourceHashes": {
+      "Build/Intermediates.noindex/ArchiveIntermediates/RendpropSpatialTestFlight/IntermediateBuildFilesPath/RendpropSpatialTestFlight.build/Release-iphoneos/Rendprop.build/DerivedSources/GeneratedAssetSymbols.swift": "1e83960d05f0c3e518fd0704d5f5c0ea8497423567cfadc2970cab52314dd2a0"
+    },
+    "executableSHA256": "7f2c515cc7cd03f22dba72cf698157bab9d9ad7f06985ebbfa6740f6100bef47",
+    "archiveInfoSHA256": "5d41cf6da5dbae1e4685fc65ac3f4380f01b2d1b7d68a70b9e51caa01f36e3f0",
+    "archiveLogSHA256": "2ad1f0d81421ba8c40f314a1c3c22a06e0f50560dd88a8f7930368dab0062a0c",
+    "compileListSHA256": "9cab47605c4ced5fa9b68fa70a801d0f582cad069ffb29f5f69e12a17c4ae452",
+    "createdAt": "2026-10-01T16:54:21+00:00",
+    "sourceManifestCapturedAt": "2026-10-01T16:52:57.163272+00:00",
+    "sourceBinding": {
+      "finalLogProjectSchemeArchiveDerivedDataPathsVerified": true,
+      "machOUUIDs": [
+        [
+          "arm64",
+          "FDD0B52E-A4DC-3BA2-9C92-9885738BA7CB"
+        ]
+      ],
+      "archiveExecutableAndBothDSYMUUIDsMatch": true,
+      "derivedDataAndArchiveDSYMBytesMatch": true,
+      "separateDerivedDataExecutableAvailable": false,
+      "separateDerivedDataExecutableByteComparison": null,
+      "note": "Xcode removed InstallationBuildProductsLocation after archive; the remaining DerivedData app symlink is dangling. Provenance is cross-checked through the final logged linker/dsymutil paths, matching Mach-O UUIDs and byte-identical DerivedData/archive dSYMs."
+    }
+  },
+  "export": {
+    "method": "app-store-connect",
+    "destination": "upload",
+    "testFlightInternalTestingOnly": true,
+    "manageAppVersionAndBuildNumber": false,
+    "optionsSHA256": "172ea6fcb6b3e50cc48598c12ebfc5d9d57c2c4689a8003ca7b7b0745019b0fc",
+    "attempts": 1,
+    "startedAt": "2026-10-01T17:02:06.133642+00:00",
+    "finishedAt": "2026-10-01T17:03:40.654505+00:00",
+    "exitCode": 0
+  },
+  "apple": {
+    "id": "1209e4df-6915-4b71-ba9f-e25e66e789c8",
+    "marketingVersion": "1.0.3",
+    "build": "35",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "expired": false,
+    "uploadedDate": "2026-10-01T10:04:26-07:00",
+    "usesNonExemptEncryption": false,
+    "minOsVersion": "16.0",
+    "betaDetails": {
+      "autoNotifyEnabled": true,
+      "internalBuildState": "IN_BETA_TESTING",
+      "externalBuildState": "NOT_APPLICABLE"
+    },
+    "group": {
+      "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+      "name": "Rendprop team",
+      "buildIncluded": true
+    }
+  },
+  "testNotes": {
+    "locale": "en-US",
+    "verifiedAt": "2026-10-01T17:07:13.842471+00:00",
+    "readbackVerified": true
+  },
+  "softwareVerification": {
+    "localSoftwareEvidenceCommit": "5cf226b1acd6126bd5ef402ed16665afd05f805c",
+    "localEvidenceInputsByteIdenticalToFinalArchive": true,
+    "matchingNativeInputCount": 191,
+    "photoPolicyFilesystemChecks": 105,
+    "actualParentIntegrationAssertions": 29,
+    "identityFenceNegativeControlsDetected": 6,
+    "debugAppBuildPassed": true,
+    "guidedPhotoNavigationUITests": 2,
+    "guidedPhotoNavigationFailures": 0,
+    "largestTextScreenshotReviewed": true,
+    "signedTestFlightReleaseArchivePassed": true,
+    "physicalCameraTested": false,
+    "independentReview": "No unresolved source-level blocker for owner-operated internal TestFlight. Hardware image quality and phone workflow acceptance remain pending.",
+    "finalSourceCI": {
+      "jobsPassed": 12,
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "Offline reel-style preservation and blind-evaluation contracts",
+          "conclusion": "success"
+        },
+        {
+          "name": "Supabase migrations (fresh replay + invariants)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Cloudflare Worker (tour-host)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Secret scan",
+          "conclusion": "success"
+        },
+        {
+          "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Offline audit evidence, consent and adoption source gates",
+          "conclusion": "success"
+        },
+        {
+          "name": "Web parity inventory and design-token contracts (offline)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Studio contracts, build and property workflows (offline)",
+          "conclusion": "success"
+        },
+        {
+          "name": "iOS static gates",
+          "conclusion": "success"
+        },
+        {
+          "name": "Supabase edge functions (deno check + tests)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Python workers (render, spatial, training adapter)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "finalCISyntheticMedia": {
+      "sourceCommit": "7636c537449b993b1853f5bdbd2bdabe8168dd59",
+      "run": 36895250913,
+      "verifiedSuiteCount": 4,
+      "suites": [
+        "Cloud editor restoration and export",
+        "Conversational editing and prompt review",
+        "Export resume regression with old-await negative control",
+        "Finishing, audio mixing, captions and editing copies"
+      ],
+      "externalRequests": 0,
+      "note": "Real synthetic MP4/AAC verification. Browser sampling checks were repaired; production export-engine code was unchanged in this photo-camera increment."
+    }
+  },
+  "inheritedCoreRelease": {
+    "receipt": "TESTFLIGHT-34-20261001.json",
+    "sourceCommit": "5a1406392a8fecef6131667de56521a35c4d285a",
+    "backendSourceCommit": "0346caecaf48ba22047f2f615a5b2ca135e82d9d",
+    "newBackendDeploymentForPhotoIncrement": false,
+    "newWebDeploymentForPhotoIncrement": false,
+    "note": "Existing account/workspace/subscription/backend deployment details and outstanding real-phone acceptance remain recorded in the build 34 receipt."
+  },
+  "operations": {
+    "newTesterInvitations": false,
+    "testerOrGroupMembershipWrites": false,
+    "buildSpecificTestNotesUpdated": true,
+    "appStoreVersionAttachment": false,
+    "appReviewSubmission": false,
+    "applePriceOrOfferChanges": false,
+    "realPurchases": false,
+    "productionSpatialFlagsChanged": false,
+    "gpuAllocation": false,
+    "paidGenerationCostUSD": 0
+  },
+  "evidenceSHA256": {
+    "testflight/source-manifest.json": "071dd14949b211a28645965fe59f95affa62ea2245c2dc5c1cacc497b418b21f",
+    "testflight/archive-preflight.json": "8af5c35adddd268c708ed3c9090fb7cf0e0d421ff535173f90eeaee8904cd8a8",
+    "testflight/archive-independent-preflight.json": "3d4862d34da0eea1e63a585967488fa1f2f5e468c4f5f962d631162ea9bbb264",
+    "testflight/archive-source-binding.json": "6445251449511e13c2ef461f56f8bd421fed1ecdb083a597fec31f99c7a988cd",
+    "testflight/owner-release-gate.json": "23c3388ab5e9cd914de51e7fb13075bab1641fe8a96a3f3699738279096426bb",
+    "github-ci-final-source.json": "347838e3fa056c2d84d559484940067d8e642870041e8cb69579c91a61a50f2f",
+    "github-ci-final-media-evidence.json": "4203ee13cecc415265abf7fe3e6a9c424f9aa5ed363b59f9004466864a997dd0",
+    "software-receipt.json": "b6b360345bab9bc2a43028e77299fd73352ddde4cdd21b5105960b90fe8694ad",
+    "parent-integration/receipt.json": "91dad1fcd918411d1990f9df8080336b106dddc13af97832c08f8cac36dd7d8d",
+    "ui/navigation-final.log": "b6fede415d7f800568660006d1ae41eb673de4f80c525a2a766c9a59212be319",
+    "native-camera-receipt.md": "035b835daaa0c2d187f999334932725baa1560980f720a1c73fc4b554b8c0e19",
+    "testflight/upload-result.json": "ae05ba679871be04dcb9eeab73fd1f48a149ff5767e9d5b83ec31e4ba63d3266",
+    "testflight/export-sanitized.log": "4179cd3c7ca36e61668beb5b823578c04e5c991d7d51c3d4d528cc05880de382",
+    "testflight/testflight-ready.json": "7d677e6e048e001adfd726935400a0bd33db93e2c0784a09ab09e0f69e44f674",
+    "testflight/test-notes-receipt.json": "7fb3fa1d452054704756819ff7285320d658eca2391af9d2ed5e46cb6f8e02e2"
+  },
+  "limitations": [
+    "Physical lens choice, sensor field of view, preview-to-JPEG matching, orientation, focus, low-light/window exposure and interruptions require real-phone acceptance; simulator navigation does not validate camera output.",
+    "The captured review image stays in memory until Use photo succeeds. Closing or terminating before an acknowledged save can lose that unsaved shot.",
+    "Photos originals are re-encoded pre-enhancement JPEGs, not RAW or byte-identical camera files. The exterior-reference route retains its existing maximum 2560-pixel downscale.",
+    "Original/enhanced writes are individually atomic and handled failures remove partial pairs; this is not a two-file crash-atomic transaction.",
+    "Phone-to-Studio continuity requires the existing upload/publication workflow and the same account/workspace. A local capture alone does not establish synchronization.",
+    "Build 34 real-phone subscription confirmation, canceled purchase sheet, restore, plan change, renewal cancellation, invitation delivery and representative two-account workflow checks remain pending.",
+    "Guided panoramas remain a local TestFlight lab and spatial reconstruction remains disabled.",
+    "Apple readback does not attest a local archive hash; source/archive/upload receipts bind the attempted artifact.",
+    "Source remains on the isolated guided-photo branch and stacked draft PR 12; shared main was not advanced."
+  ]
+}

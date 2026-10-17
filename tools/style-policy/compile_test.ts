@@ -108,7 +108,7 @@ for (const seconds of [1, 13, 2.5, NaN, Infinity]) {
     throws(() => validateEDL(e));
   });
 }
-Deno.test("all 408 room-motion-style combinations preserve input and withhold safety", async () => {
+Deno.test("all 510 room-motion-style combinations preserve input and withhold safety", async () => {
   let cases = 0;
   for (const ref of await catalogRefs()) {
     for (const room of ["", ...ROOMS]) {
@@ -124,7 +124,7 @@ Deno.test("all 408 room-motion-style combinations preserve input and withhold sa
       }
     }
   }
-  equal(cases, 408);
+  equal(cases, 510);
 });
 Deno.test("B-roll share rejects an otherwise valid five-window timeline", () => {
   const e = agentFixture();

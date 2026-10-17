@@ -30,7 +30,7 @@ from config import ARCHITECTURE_LOCK, SETTINGS
 from cost_ledger import CostLedger, LedgerError
 from providers import anthropic_qc, costs, fal_client as fal, gemini
 from providers.anthropic_qc import QCResult
-from providers.base import ProviderError, ProviderResult
+from providers.base import ProviderError, ProviderFundingError, ProviderResult
 
 DECLUTTER_PROMPTEDIT = (
     "Remove all clutter, mess, boxes, cords, cables, laundry, dishes, and personal "
@@ -181,6 +181,8 @@ def restage(ctx: JobContext, image: bytes, style_prompt: str, *, allow_fallback:
         return _meter(ctx, "restage", est, lambda: _restage_primary(route, image, style_prompt))
     except BudgetExceeded:
         raise  # cap breaches never silently fall back — they abort
+    except ProviderFundingError:
+        raise  # Funding refusal/replay is not permission to buy a fallback.
     except ProviderError as e:
         if not allow_fallback or route == "fal":
             raise

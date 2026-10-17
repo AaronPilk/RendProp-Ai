@@ -17,8 +17,13 @@ export type ErrorCode =
   | "forbidden"
   | "not_found"
   | "conflict"
+  | "publication_superseded"
+  | "gallery_selection_changed"
+  | "consent_required"
   | "plan_required"
+  | "sandbox_testing_required"
   | "quota_exceeded"
+  | "trial_capacity_unavailable"
   | "rate_limited"
   | "payload_too_large"
   // A prompt the FAIR-HOUSING guardrails refuse (people, pets, religious or
@@ -26,6 +31,11 @@ export type ErrorCode =
   // 400, never auto-derived from a status: only thrown deliberately, so the app
   // can show the refusal differently from an ordinary validation error.
   | "unsupported_edit"
+  | "photo_clarification_required"
+  | "photo_quality_pending"
+  | "photo_quality_hold"
+  | "photo_quality_closed"
+  | "photo_quality_refused"
   | "upstream"
   | "internal";
 
@@ -103,23 +113,48 @@ export function json(
  * `error` is human copy the app may show verbatim; `code` is what it branches on.
  */
 export function respondError(err: unknown): Response {
+  if (err instanceof HttpError && "saved_response" in err && err.saved_response && typeof err.saved_response === "object") {
+    return json(err.saved_response);
+  }
   if (err instanceof HttpError) {
+    if (err.status >= 500) logServerError(err.status, err.code, "handled");
     return json({ ...(err.details ?? {}), error: err.message, code: err.code }, err.status);
   }
-  // The message of an UNEXPECTED error is logged, never returned: on a public
-  // route it can name an upstream, an env var, or a table. Every deliberate
-  // failure is an HttpError and keeps its own copy.
-  console.error("Unhandled error:", err);
+  // Both messages and stacks can contain customer media, prompts, signed URLs,
+  // database rows or keys. Log only bounded classification facts, including
+  // deliberate upstream failures that previously produced no operator signal.
+  logServerError(500, "internal", "unexpected");
   return json({ error: "Something went wrong on our side — try again in a moment.", code: "internal" }, 500);
+}
+
+function logServerError(status: number, code: ErrorCode, kind: "handled" | "unexpected"): void {
+  const safeStatus = Number.isInteger(status) && status >= 500 && status <= 599 ? status : 500;
+  const safeCode = code === "upstream" ? "upstream" : "internal";
+  console.error(JSON.stringify({ event: "http_server_error", status: safeStatus, code: safeCode, kind }));
 }
 
 /** Parse a JSON request body, or throw a 400. */
 export async function readJson<T = Record<string, unknown>>(req: Request): Promise<T> {
+  let parsed: unknown;
   try {
-    return (await req.json()) as T;
+    parsed = await req.json();
   } catch {
     throw new HttpError(400, "Request body must be valid JSON");
   }
+  return canonicalBodyIds(parsed) as T;
+}
+
+/** Top-level body keys that always carry a database uuid identity. A client's
+ * uppercase casing of these must never fail a `===` against a returned row.
+ * Idempotency keys, batch ids, tokens and storage keys are deliberately NOT
+ * here: their stored text must stay byte-identical to what the client sent. */
+export const CANONICAL_ID_KEYS = Object.freeze([
+  "listing_id", "org_id", "lead_id", "asset_id", "source_asset_id", "original_asset_id",
+  "capture_asset_id", "render_id", "job_id", "workspace_id", "photo_id", "contact_asset_id",
+] as const);
+function canonicalBodyIds(parsed: unknown): unknown {
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) canonicalIds(parsed as Record<string, unknown>, CANONICAL_ID_KEYS);
+  return parsed;
 }
 
 /**
@@ -176,11 +211,30 @@ export async function readJsonLimited<T = Record<string, unknown>>(
     at += c.byteLength;
   }
 
+  let parsed: unknown;
   try {
-    return JSON.parse(new TextDecoder().decode(joined)) as T;
+    parsed = JSON.parse(new TextDecoder().decode(joined));
   } catch {
     throw new HttpError(400, "Request body must be valid JSON");
   }
+  return canonicalBodyIds(parsed) as T;
+}
+
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * Lowercase a UUID the way Postgres renders it. The phone sends
+ * `UUID.uuidString` (uppercase) in paths, queries and JSON; every `===`
+ * against a row the database returned must see the canonical form, or a
+ * legitimate request fails as "inconsistent identity" (2026-10-11 incident).
+ * Non-UUID values pass through untouched so existing validation still runs.
+ */
+export function canonicalUuid<T>(value: T): T {
+  return typeof value === "string" && UUID_SHAPE.test(value) ? value.toLowerCase() as unknown as T : value;
+}
+/** `canonicalUuid` applied in place to the named keys of a parsed body. */
+export function canonicalIds<T extends Record<string, unknown>>(body: T, keys: readonly string[]): T {
+  if (body && typeof body === "object") for (const key of keys) if (key in body) (body as Record<string, unknown>)[key] = canonicalUuid(body[key]);
+  return body;
 }
 
 /**
@@ -195,7 +249,9 @@ export function pathSegments(req: Request, functionName: string): string[] {
   if (parts[0] === "functions") parts.shift();
   if (parts[0] === "v1") parts.shift();
   if (parts[0] === functionName) parts.shift();
-  return parts;
+  // A uuid in the path is a database identity (listing, lead, render, invite);
+  // tour slugs and handles are not uuid-shaped and pass through unchanged.
+  return parts.map((part) => canonicalUuid(part));
 }
 
 // URL-safe (base64url) alphabet — 64 chars so `byte & 63` is unbiased.
@@ -215,6 +271,14 @@ export function round4(n: number): number {
   return Math.round(n * 1e4) / 1e4;
 }
 
+// A shared trial allocation is an operator availability boundary, not the
+// customer's usage quota. Keep its wire code distinct from upgrade prompts.
+export const TRIAL_CAPACITY_UNAVAILABLE_MESSAGE =
+  "Trial AI is temporarily unavailable. Nothing was charged. Please try again later or contact support.";
+export function isTrialCapacityRefusal(message: string): boolean {
+  return /RP402:\s*Free-trial AI limit reached \[pool=(?:cap|closed)\]/.test(message);
+}
+
 /**
  * Map an `RPnnn: message` exception raised by one of the SECURITY DEFINER RPCs
  * (create_render_job, publish_render, fail_render_job, set_render_chapters,
@@ -225,9 +289,14 @@ export function round4(n: number): number {
 export function throwRpc(message: string | undefined): never {
   const msg = message ?? "request failed";
   const m = /RP(\d{3}):\s*([\s\S]*)/.exec(msg);
-  if (!m) throw new HttpError(400, msg);
+  // Only deliberate RP errors are safe customer copy. Database exceptions
+  // can contain table names, constraints and the caller's private data.
+  if (!m) throw new HttpError(503, "This action is temporarily unavailable. Please try again.");
   const status = Number(m[1]);
   const text = m[2].trim() || msg;
+  if (status === 402 && isTrialCapacityRefusal(msg)) {
+    throw new HttpError(402, TRIAL_CAPACITY_UNAVAILABLE_MESSAGE, "trial_capacity_unavailable");
+  }
   let code: ErrorCode | undefined;
   if (status === 402) code = /limit reached|ceiling reached/i.test(text) ? "quota_exceeded" : "plan_required";
   throw new HttpError(status, text, code);
@@ -262,4 +331,26 @@ export function clientIp(req: Request): string {
   const xff = req.headers.get("x-forwarded-for");
   if (xff) return xff.split(",")[0].trim();
   return "unknown";
+}
+
+// Postgres renders a timestamptz as `2026-10-11T14:52:52.261+00:00`. The phone
+// keeps that raw string as its facts baseline and compares it with the ISO 8601
+// `…Z` form it sends (ListingFactsSync.values), so a sold marker was never
+// acknowledged and the listing re-sent its facts three times on every refresh
+// ("1 listing update is waiting to sync", TestFlight 59, 2026-10-11). Every
+// listing payload now carries sold_at in the phone's own shape — millisecond
+// precision with `Z` — when that is lossless; a value with finer precision is
+// left exactly as stored so the phone's compare-and-set still matches it.
+export function canonicalTimestamps<T extends Record<string, unknown>>(row: T): T {
+  const raw = row?.sold_at;
+  if (typeof raw !== "string") return row;
+  // Only a full timestamptz rendering (date, time, zone) is reshaped; anything
+  // else is some other writer's value and is passed through untouched.
+  const m = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[.,](\d+))?(?:Z|[+-]\d{2}:?\d{2})$/.exec(raw);
+  if (!m) return row;
+  const t = Date.parse(raw);
+  if (!Number.isFinite(t)) return row;
+  const fraction = m[1] ?? "";
+  if (fraction.length > 3 && /[1-9]/.test(fraction.slice(3))) return row;
+  return { ...row, sold_at: new Date(t).toISOString() };
 }

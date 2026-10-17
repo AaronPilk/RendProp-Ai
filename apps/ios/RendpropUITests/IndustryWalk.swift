@@ -111,8 +111,8 @@ private struct Industry {
 
     var nounCap: String { noun.prefix(1).uppercased() + noun.dropFirst() }
     var customerCap: String { customer.prefix(1).uppercased() + customer.dropFirst() }
-    var tabTitle: String { nounCap + "s" }                       // RootTabView: "\(spaceNounCap)s"
-    var collectionTitle: String { "My " + nounCap + "s" }        // SpaceType.collectionTitle
+    var tabTitle: String { isRealEstate ? "Listings" : nounCap + "s" } // RootTabView collection tab
+    var collectionTitle: String { isRealEstate ? "My Listings" : "My " + nounCap + "s" } // SpaceType.collectionTitle
     var newItemTitle: String { "New " + nounCap }                // SpaceType.newItemTitle
     var isRealEstate: Bool { raw == "real_estate" }
     /// ListingFieldsForm: the optional-details disclosure title.
@@ -139,8 +139,8 @@ private struct Industry {
     static let realEstate = Industry(
         raw: "real_estate", tag: "realestate",
         displayName: "Real estate", noun: "home", customer: "buyers", cta: "Book a showing",
-        heroLine1: "Win the listing.", heroLine2: "Skip the film crew.",
-        heroSubline: "One walkthrough becomes a cinematic tour, polished photos and a link buyers can't stop scrolling — in minutes, from your phone.",
+        heroLine1: "List it.", heroLine2: "Launch it. Sell it.",
+        heroSubline: "Be your own crew. Capture and polish photos, create tours, social media content, floor plans, virtual staging, and a shareable property site - all from your phone.",
         emptyStateLine1: "Walk through with your phone.",
         pitch: "Sell homes with cinematic tours",
         archiveVerb: "sold", businessLabel: "Brokerage",
@@ -352,7 +352,7 @@ final class IndustryWalk: XCTestCase {
             "-appearance", "light",
             // Guideline 5.1.2(i) consent — without it the AI screens show the
             // disclosure overlay and dismiss themselves when it is not answered.
-            "-ai.thirdPartyProcessing.consent.v2", "YES",
+            "-ai.thirdPartyProcessing.consent.v3", "YES",
         ]
     }
 
@@ -521,10 +521,11 @@ final class IndustryWalk: XCTestCase {
             checkContains("\(i.tag): hero headline line 2 is \"\(i.heroLine2)\" (SpaceType.heroHeadline)", i.heroLine2)
             checkContains("\(i.tag): hero subline matches SpaceType.heroSubline", i.heroSubline)
             checkText("\(i.tag): collection section titled \"\(i.collectionTitle)\"", i.collectionTitle)
-            checkText("\(i.tag): \"Add a \(i.noun)\" button (home.addHome)", "Add a \(i.noun)")
-            checkContains("\(i.tag): showroom caption \"Everything you make is saved to one \(i.noun).\"",
-                          "Everything you make is saved to one \(i.noun).")
-            checkContains("\(i.tag): profile tile is named \"\(i.profileCardName)\"", i.profileCardName)
+            check("\(i.tag): Get started creation action (home.getStarted)",
+                  app.buttons["home.getStarted"].exists)
+            checkText("\(i.tag): Home tool heading", "Create Something Amazing")
+            check("\(i.tag): AI Photo Studio retains its project-first route",
+                  app.buttons["home.feature.photoStudio"].exists)
             checkContains("\(i.tag): how-it-works step 1 \"Add the \(i.noun)\"", "Add the \(i.noun)")
             checkContains("\(i.tag): how-it-works step 3 addresses \(i.customerCap)", "\(i.customerCap) scroll it")
             checkContains("\(i.tag): demo caption says \"the tour your \(i.customer) get\"",
@@ -612,7 +613,7 @@ final class IndustryWalk: XCTestCase {
             if let studio { studioState = "isEnabled=\(studio.isEnabled)" } else { studioState = "tile missing" }
             check("\(i.tag): AI Photo Studio tile present and DISABLED on the sample",
                   studio != nil && studio?.isEnabled == false, actual: studioState)
-            let reel = find(ids: ["detail.reelStudio"], labels: ["Make a reel"], timeout: shortTimeout)
+            let reel = find(ids: ["detail.reelStudio"], labels: ["Make a video"], timeout: shortTimeout)
             let reelState: String
             if let reel { reelState = "isEnabled=\(reel.isEnabled)" } else { reelState = "tile missing" }
             check("\(i.tag): Make a reel tile present and DISABLED on the sample",
@@ -664,9 +665,9 @@ final class IndustryWalk: XCTestCase {
                 note("SKIPPED: Home tab unavailable.")
                 return
             }
-            scrollToTop()
-            guard let add = scrollTo(ids: ["home.addHome"], labels: ["Add a \(i.noun)"], swipes: 6) else {
-                note("SKIPPED: no `home.addHome` and no \"Add a \(i.noun)\" button on Home.")
+            guard openCollectionTab(i),
+                  let add = scrollTo(ids: [], labels: ["Add a \(i.noun)"], swipes: 6) else {
+                note("SKIPPED: the \(i.tabTitle) tab's Add a \(i.noun) action was unavailable.")
                 return
             }
             tap(add)
@@ -760,7 +761,7 @@ final class IndustryWalk: XCTestCase {
             for chip in i.studioChipsAbsent {
                 checkAbsent("\(i.tag): edit \"\(chip)\" NOT offered to a \(i.noun)", chip)
             }
-            let reel = find(ids: ["detail.reelStudio"], labels: ["Make a reel"], timeout: shortTimeout)
+            let reel = find(ids: ["detail.reelStudio"], labels: ["Make a video"], timeout: shortTimeout)
             let reelState: String
             if let reel { reelState = "isEnabled=\(reel.isEnabled)" } else { reelState = "card missing" }
             check("\(i.tag): \"Make a reel\" card present and disabled with no photos", reel != nil && reel?.isEnabled == false,
@@ -911,20 +912,23 @@ final class IndustryWalk: XCTestCase {
                 return
             }
             scrollToTop()
-            guard let tile = scrollTo(ids: ["detail.reelStudio"], labels: ["Make a reel"], swipes: 8), tile.isEnabled else {
+            guard let tile = scrollTo(ids: ["detail.reelStudio"], labels: ["Make a video"], swipes: 8), tile.isEnabled else {
                 note("SKIPPED: the \"Make a reel\" tool card is absent or disabled.")
                 return
             }
             tap(tile)
-            guard waitForAny(ids: [], labels: ["AI Photo Studio"], timeout: screenTimeout) else {
-                note("SKIPPED: the studio did not open from the reel tile.")
+            guard waitForAny(ids: [], labels: ["Make a video"], timeout: screenTimeout),
+                  let social = find(ids: ["video.purpose.social_media"], labels: [], timeout: shortTimeout), social.isHittable else {
+                note("SKIPPED: the video destination chooser did not open from the toolbox.")
                 dismissTopScreen()
                 return
             }
+            tap(social)
             settle(1.2)
             shot("\(i.tag)-14-reel-entry")
-            checkContains("\(i.tag): reel card names \"Voice + captions\"", "Voice + captions")
-            checkContains("\(i.tag): reel card explains \"Add 2 photos to start\"", "Add 2 photos to start")
+            check("\(i.tag): Social media destination opens video setup",
+                  find(ids: ["video.deliveryFormat"], labels: [], timeout: shortTimeout) != nil,
+                  actual: "No generation or recording is started.")
             dismissTopScreen()              // Back to the detail
             settle(0.5)
         }
@@ -1346,15 +1350,14 @@ final class IndustryWalk: XCTestCase {
 
     /// Home is up when its one unmissable action is on screen.
     private func waitForHome(timeout: TimeInterval) -> Bool {
-        waitForAny(ids: ["home.addHome"], labels: ["Make something"], timeout: timeout)
+        waitForAny(ids: ["home.getStarted"], labels: ["Create Something Amazing"], timeout: timeout)
     }
 
-    /// CAREFUL with the confirming labels: "Add a home" and "My Homes" appear
-    /// on BOTH the Home dashboard and the collection tab, so only `home.addHome`
-    /// and "Make something" are unique to the dashboard.
+    /// Confirm the dashboard with its unique Get started action or tool heading,
+    /// never the collection tab's unchanged Add action.
     @discardableResult
     private func openHomeTab() -> Bool {
-        openTab("Home", ids: ["home.addHome"], confirmedBy: ["Make something"])
+        openTab("Home", ids: ["home.getStarted"], confirmedBy: ["Create Something Amazing"])
     }
 
     @discardableResult
