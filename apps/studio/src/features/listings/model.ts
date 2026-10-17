@@ -115,3 +115,15 @@ export function tourLinks(slug: string): { branded: string; unbranded: string } 
   if (!/^[a-zA-Z0-9_-]{1,160}$/.test(slug)) return null;
   return { branded: `https://rendprop.com/f/${encodeURIComponent(slug)}`, unbranded: `https://rendprop.com/u/${encodeURIComponent(slug)}` };
 }
+/** The three property-website designs tour-host can render. A preview link
+ * (`?preview_theme=`) is presentation only: it never changes the published
+ * website or grants a paid design — purchase happens in the iPhone app. */
+export const WEBSITE_DESIGNS = [
+  { theme: "basic", name: "Classic", paid: false },
+  { theme: "signature-estate", name: "Signature Estate", paid: true },
+  { theme: "coastal-luxe", name: "Coastal Luxe", paid: true },
+] as const;
+export function websiteDesignPreviews(slug: string): { theme: string; name: string; paid: boolean; href: string }[] | null {
+  const links = tourLinks(slug);
+  return links && WEBSITE_DESIGNS.map(design => ({ ...design, href: `${links.branded}?preview_theme=${design.theme}` }));
+}
