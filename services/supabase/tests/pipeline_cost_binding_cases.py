@@ -109,14 +109,21 @@ class PipelineCostTests(unittest.TestCase):
    c=scope();t=reserve(c,bound);rpc('pipeline_record_provider_cost',cost_args(c,t,cost));s=state(c);results.append(s)
    self.assertEqual(s['spent'],expected);self.assertEqual(s['holds'][0]['state'],'uncertain')
   self.observation=results
- def test_both_insert_finish_orders(self):
+ def test_succeeded_but_estimated_keeps_the_larger_value_in_every_insert_finish_order(self):
+  # Owner decision: while the supplier cost is still an estimate the ceiling
+  # retains max(admitted bound, modeled cost) even after `succeeded` — internal
+  # allowance accounting, not a customer charge. Both insert/finish orders,
+  # both final states, bound larger (20 vs 4 → 20) and modeled larger (4 vs 6 → 6).
   out=[]
   for before in [True,False]:
    for final in ['uncertain','succeeded']:
-    c=scope();t=reserve(c,20,final if before else None)
-    rpc('pipeline_record_provider_cost',cost_args(c,t))
-    if not before:finish_attempt(t,final)
-    s=state(c);out.append(s);self.assertEqual(s['spent'],20);self.assertEqual(s['ledger_count'],1)
+    for bound,cost,expected in [(20,4,20),(4,6,6)]:
+     c=scope();t=reserve(c,bound,final if before else None)
+     rpc('pipeline_record_provider_cost',cost_args(c,t,cost))
+     if not before:finish_attempt(t,final)
+     s=state(c);out.append({'insert_before_finish':before,'final':final,'bound':bound,'modeled':cost,'state':s})
+     with self.subTest(insert_before_finish=before,final=final,bound=bound,modeled=cost):
+      self.assertEqual(s['spent'],expected,'succeeded-but-estimated must keep the larger of bound and modeled');self.assertEqual((s['ledger_count'],s['links'],s['ledger_cents']),(1,1,cost));self.assertEqual(s['holds'][0]['state'],final)
   self.observation=out
  def test_old_period_ledger_cannot_subtract_current_unknown_bound(self):
   c=scope();t=reserve(c,20);rpc('pipeline_record_provider_cost',cost_args(c,t))
