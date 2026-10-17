@@ -68,7 +68,7 @@ for (const kind of ["voice","helper","chapters"] as const) {
     if(kind==="chapters"){
       // The absolute-deadline scope owns this real timer. Accelerate only its
       // unchanged nominal90s budget; the fixture watchdog and other timers stay real.
-      globalThis.setTimeout=((handler:Parameters<typeof setTimeout>[0],ms?:number,...args:unknown[])=>{
+      globalThis.setTimeout=((handler:(...a:unknown[])=>void,ms?:number,...args:unknown[])=>{
         if(typeof ms==="number"&&ms>=89_000&&ms<=90_000){budgets.push(ms);return nativeTimer(handler,20,...args);}
         return nativeTimer(handler,ms,...args);
       }) as typeof setTimeout;
