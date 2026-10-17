@@ -262,6 +262,79 @@ sink, audio-service starvation); whether a user Mac can show it; the 500 ms
 `dataavailable` slice near page time 8550 is a coincidence that was not ruled
 out.
 
+### CPU/background job — the steps CI has never reached on this branch
+
+The RentCast step (added in f74e540) sits before 26 further harness steps in
+`property-video-renderer` (ci.yml 1852–2030); no run on this branch has
+executed them since the step was added. Rather than let the next push move the
+red one step down, all 27 were mirrored locally as user `claude` on disposable
+PostgreSQL 16.15 on this head (`/home/claude/cpu-tail-evidence/SUMMARY.txt`,
+one evidence dir + log per harness). Result (15:04Z): **26 of 27 pass on first run**; the one failure,
+`property_video_kie_scope_consent_pg.py` (exit 1 at line 90), is repaired
+below. `api_cost_report_pg.py` ran at the end of the mirror with the repair
+in place and passed; its unrepaired failure is the B-lane base control.
+
+One pre-existing red found and repaired (`5515820`, harness only):
+`tools/audit/api_cost_report_pg.py` seeded the RentCast *hit* by finishing the
+attempt and then inserting its ledger row; the liability freeze
+`20261017110114` (f74e540) refuses "RP409: Terminal provider attempt cannot
+add a cost". The property handler (`functions/property/index.ts`, same commit)
+writes the ledger row first, then finishes the attempt — the seed now follows
+the product's order. Unmodified harness: fails at seed on `7130625` (B-lane
+base control, identical file bytes); repaired: 25/25 assertions including
+"priced hit links to its retained ledger row and supplier request id"
+(`/home/claude/api-cost-evidence/repaired-run1/receipt.json`). No oracle
+changed.
+
+Second pre-existing red found and repaired (`57633d4`, harness only):
+`services/supabase/tests/property_video_kie_scope_consent_pg.py:90` pinned
+`len(MIGS) == 181` (from b84455d, 2026-10-16); the two later migrations in
+f74e540/f80dac4 made it refuse before applying anything. The harness now
+applies every current migration with 181 kept as a floor and records the
+count; no oracle, control or regression changed. Repaired run as `claude`:
+183 applied, 20/20 checks, v1/steady/jobs regressions, 36 closed handler
+tests (`/home/claude/kie-scope-evidence/repaired-run1/receipt.json`). No other
+Python harness pins a migration count (grep over `services/supabase/tests`
+and `tools/audit`).
+
+## B lane — pipeline hold/cost binding (Priority 2): proven, not integrated
+
+Branch `claude/pipeline-hold-binding-20261017` (worktree
+`/home/claude/rendprop-b-lane`), HEAD `071e4ed` = `7130625` + the sealed
+`PARTIAL-CANDIDATE.patch` (fdff8fe9, WIP `f3d8c19`) + three commits:
+`d40ceff` migration own-replay guard (own functions pinned by md5, owner,
+language, volatility, security, search_path, ACL; relation pinned by column
+list, constraints, indexes, RLS, ACL), `ad5fe4d` 18 cases + full-chronology
+driver (predecessors → seeded ledger/hold history → first apply → immediate
+replay no-op → 9 refused controls with catalog/history unchanged after each →
+remaining migrations → cases → omission witness `8.0 != 4`), `071e4ed` driver
+evidence size. Not pushed; `ci.yml` untouched; nothing deployed. Full report:
+`/home/claude/b-lane-evidence/B-LANE-REPORT.md`; CI registration proposal
+(one step before the `api_cost_report_pg` step, one line each in the api-cost
+unittest step and the python-worker list): `CI-INTEGRATION-PROPOSAL.md`.
+
+Executed: driver `{"passed": true, "caseCount": 18, "currentMigrationCount":
+184}`; python suites 23 + 5 + 11 + 2 + 37 + 12 + 37 OK; exact mirror of the
+`db-migrations` job with the new migration (270/270 invariants fresh and
+replay, immediate double-apply no-op); `run_database_regression.py` PASS
+(184 applied, 160 replayed, negative controls detected).
+
+Owner / root decisions before integration (not routine, so not taken here):
+
+1. With a binding present the ceiling counts the larger of the admitted bound
+   and the modeled ledger cost **even for succeeded attempts** (the old settle
+   trigger released the whole hold after success). Direction is conservative —
+   less headroom, never a double charge; for `fal-ai/flux-pro/kontext` bound ==
+   modeled so nothing changes; a Gemini image attempt keeps its ≈31.1¢ quote
+   reserved instead of dropping to the modeled estimate after success. Accept
+   as designed (the candidate's own comment states this intent) or narrow to
+   uncertain/reserved attempts.
+2. A multi-attempt `produce()` (two paid calls behind one result) stays
+   unbound, so the old inflation persists there by design ("ambiguous
+   aggregates").
+3. Rollout order: SQL first. A new worker without the RPC would spool every
+   pipeline ledger write (degraded, not lossy).
+
 ## Not done / honest limits
 
 - No push happened until every affected proof above was in hand; the new CI
