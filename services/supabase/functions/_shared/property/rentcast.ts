@@ -13,7 +13,7 @@
 // ledger's number is only as honest as this constant — confirm it against the
 // first real invoice before it sets a COGS floor anywhere.
 
-import { num, PropertyLookupFailure, PropertyProvider, propertyRequestId, str } from "./provider.ts";
+import { cloudTraceId, num, PropertyLookupFailure, PropertyProvider, propertyRequestId, str } from "./provider.ts";
 
 const BASE = "https://api.rentcast.io/v1/properties";
 
@@ -45,7 +45,12 @@ export const rentcast: PropertyProvider = {
         throw new PropertyLookupFailure("transport_unknown", null);
       }
 
-      const requestId = propertyRequestId(res.headers.get("x-request-id"));
+      // Observed 2026-10-17 (unauthenticated probe, 401): RentCast is served by
+      // Google Frontend and sends `x-cloud-trace-context`, not `x-request-id`.
+      // Keep the UUID header first should it ever appear; otherwise the trace
+      // id is the only supplier-side reference. Absent both, null — never a
+      // client-generated value standing in for a supplier id.
+      const requestId = propertyRequestId(res.headers.get("x-request-id")) ?? cloudTraceId(res.headers.get("x-cloud-trace-context"));
 
       // 404 is a real answer — "no record for that address" — and must not read
       // as an outage. Anything else that is not ok is logged WITHOUT the key and

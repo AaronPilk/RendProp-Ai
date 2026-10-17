@@ -60,6 +60,17 @@ export class PropertyLookupFailure extends Error {
 export function propertyRequestId(value: string | null): string | null {
   return value !== null && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value) ? value.toLowerCase() : null;
 }
+/** The other supplier reference shape actually observed: RentCast answers from
+ * Google Frontend with no `x-request-id`, only `x-cloud-trace-context`, whose
+ * trace id is 32 lowercase hex digits. Same rule: opaque and bounded, or null. */
+export function propertyRequestRef(value: string | null): string | null {
+  return value !== null && /^[a-f0-9]{32}$/i.test(value) ? value.toLowerCase() : null;
+}
+/** `x-cloud-trace-context: TRACE_ID/SPAN_ID;o=1` → TRACE_ID, or null. The span
+ * and sampling flag are not a request identity and are dropped. */
+export function cloudTraceId(header: string | null): string | null {
+  return header === null ? null : propertyRequestRef(header.trim().split("/")[0].split(";")[0]);
+}
 
 /** Number, or null. Providers send "", "N/A", and strings-that-are-numbers. */
 export function num(v: unknown): number | null {

@@ -88,6 +88,16 @@ for (const filename of ["index.html", "support.html"]) {
   expect(!copy.includes("delete your account and everything in it"), `${filename}: no universal deletion promise`);
 }
 expect(p.includes("180 days") && p.includes("applicable retention settings") && !p.includes("short, fixed schedule"), "No invented universal backup/log retention period");
+// E7 (O07): the routine MetricKit payload callback sends nothing, so the notice
+// may not describe launch-time figures. The native source is the oracle: if the
+// callback starts reporting again, this fails until the copy is revised.
+expect(!/median launch time|launch histogram|launch-time figures such as/i.test(p), "No stale launch-time example in the diagnostics copy");
+expect(p.includes("for a hang, how long it lasted") && p.includes("does not currently send launch-time figures"), "Diagnostics copy matches the shipped MetricKit callbacks (hang duration; no launch metrics)");
+expect(p.includes("crash, hang, CPU or disk-write problem"), "Diagnostics copy names the four MetricKit diagnostic categories the app reports");
+const crashReporter = readFileSync(new URL("../../../../apps/ios/Rendprop/Analytics/CrashReporter.swift", import.meta.url), "utf8");
+const metricCallback = /func didReceive\(_ payloads: \[MXMetricPayload\]\) \{([\s\S]*?)\n    \}/.exec(crashReporter)?.[1] ?? null;
+expect(metricCallback !== null && !/\b(report|Analytics\.track|medianMilliseconds)\s*\(/.test(metricCallback), "Native MXMetricPayload callback still reports no launch metrics (copy oracle)");
+expect(/hangDuration/.test(crashReporter) && /cpuExceptionDiagnostics/.test(crashReporter) && /diskWriteExceptionDiagnostics/.test(crashReporter), "Native diagnostics still cover hang duration, CPU and disk-write categories");
 expect(privacy.includes('aria-label="Service providers and data processing"'), "Responsive table keeps a descriptive name");
 expect((privacy.match(/role="row"/g) || []).length === 15, "All header/provider rows retain explicit roles");
 expect((privacy.match(/role="cell"/g) || []).length === 42, "All provider cells retain explicit roles");

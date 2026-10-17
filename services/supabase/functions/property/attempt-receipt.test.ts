@@ -28,7 +28,7 @@ const mod = await import("data:application/typescript," + encodeURIComponent(`
 `));
 
 async function fixture() {
-  const state: any = { rate: true, anonymous: false, authFailure: false, writable: true, providerStatus: 200, transportUnknown: false, invalid: false, unreadableBody: false, beginFailure: false, finishFailure: false, ledgerFailure: false, cache: null, supplierCalls: 0, ledgers: [], ledgerAttempts: [], rpcs: [], events: [], receipts: new Map(), admin: null };
+  const state: any = { rate: true, anonymous: false, authFailure: false, writable: true, providerStatus: 200, transportUnknown: false, invalid: false, unreadableBody: false, beginFailure: false, finishFailure: false, referenceOverloadMissing: false, supplierHeaders: {}, ledgerFailure: false, cache: null, supplierCalls: 0, ledgers: [], ledgerAttempts: [], rpcs: [], events: [], receipts: new Map(), admin: null };
   state.admin = {
     async rpc(name: string, args: any) {
       state.rpcs.push({ name, args }); state.events.push(name);
@@ -43,8 +43,10 @@ async function fixture() {
       }
       if (name === "provider_attempt_finish") {
         if (state.finishFailure) return { data: null, error: { message: "lost-terminal-write" } };
+        // A schema before20261017170000 has only the eight-argument RPC: PostgREST answers PGRST202 for nine named keys.
+        if (state.referenceOverloadMissing && "p_provider_request_ref" in args) return { data: null, error: { code: "PGRST202", message: "Could not find the function public.provider_attempt_finish(p_actor, p_attempt, p_estimated_cents, p_http_status, p_ledger_status, p_org, p_outcome, p_provider_request_id, p_provider_request_ref) in the schema cache" } };
         const row = [...state.receipts.values()].find((r: any) => r.attempt_id === args.p_attempt);
-        Object.assign(row, { outcome: args.p_outcome, status: args.p_http_status, estimatedCents: args.p_estimated_cents, ledgerStatus: args.p_ledger_status });
+        Object.assign(row, { outcome: args.p_outcome, status: args.p_http_status, estimatedCents: args.p_estimated_cents, ledgerStatus: args.p_ledger_status, requestId: args.p_provider_request_id, requestRef: "p_provider_request_ref" in args ? args.p_provider_request_ref : "absent" });
         return { data: { saved: true, attempt_id: args.p_attempt }, error: null };
       }
       throw new Error("Unexpected closed RPC " + name);
@@ -60,8 +62,8 @@ async function fixture() {
     const req = new Request(input, init); assertEquals(new URL(req.url).origin, "https://api.rentcast.io"); assertEquals(req.method, "GET"); state.supplierCalls++; state.events.push("supplier");
     if (state.transportUnknown) throw new DOMException("PRIVATE-TRANSPORT-SENTINEL", "AbortError");
     if (state.unreadableBody) return new Response(new ReadableStream({ start(controller) { controller.error(new DOMException("PRIVATE-BODY-SENTINEL", "AbortError")); } }), { status: 200, headers: { "x-request-id": attemptId } });
-    if (state.providerStatus === 404) return new Response(null, { status: 404 });
-    return Response.json(state.invalid ? { error: address } : state.providerStatus !== 200 ? { message: address } : [{ bedrooms: 3, squareFootage: 1500 }], { status: state.providerStatus });
+    if (state.providerStatus === 404) return new Response(null, { status: 404, headers: state.supplierHeaders });
+    return Response.json(state.invalid ? { error: address } : state.providerStatus !== 200 ? { message: address } : [{ bedrooms: 3, squareFootage: 1500 }], { status: state.providerStatus, headers: state.supplierHeaders });
   };
   return { state, run: (requestKey = operation) => mod.make(state)(new Request("https://closed-property.invalid/property?address=" + address, { headers: { authorization: "Bearer inert-fixture", "idempotency-key": requestKey } })), close: () => { globalThis.fetch = previousFetch; previousKey === undefined ? Deno.env.delete("RENTCAST_API_KEY") : Deno.env.set("RENTCAST_API_KEY", previousKey); } };
 }
@@ -103,8 +105,42 @@ Deno.test("successful headers with an unreadable body retain known HTTP evidence
   assertEquals(row.outcome, "invalid_response"); assertEquals(row.status, 200);
   assertEquals(row.estimatedCents, null); assertEquals(row.ledgerStatus, "not_booked");
   const terminal = f.state.rpcs.find((r: any) => r.name === "provider_attempt_finish");
-  assertEquals(terminal.args.p_provider_request_id, attemptId);
+  assertEquals(terminal.args.p_provider_request_id, attemptId); assertEquals(terminal.args.p_provider_request_ref, null);
   assertEquals(f.state.ledgers.length, 0); assertEquals(f.state.cache, null);
   assert(!JSON.stringify(f.state.rpcs).includes("PRIVATE-BODY-SENTINEL"));
   assertEquals((await f.run()).status, 409); assertEquals(f.state.supplierCalls, 1);
 }));
+Deno.test("RentCast's Google Frontend trace id reaches the receipt as the supplier reference; absent or unbounded headers stay null", async () => {
+  const trace = "2c3738f2d4c4b4984f9f9b36a137d515";
+  for (const [headers, requestId, requestRef, status] of [
+    [{ "x-cloud-trace-context": trace.toUpperCase() + "/1234567890;o=1" }, null, trace, 200],
+    [{ "x-cloud-trace-context": trace }, null, trace, 404],
+    [{ "x-request-id": attemptId, "x-cloud-trace-context": trace }, attemptId, null, 200],
+    [{ "x-cloud-trace-context": "https://private.invalid/PRIVATE-URL-SENTINEL" }, null, null, 200],
+    [{}, null, null, 200],
+  ] as const) await check(async f => {
+    f.state.supplierHeaders = headers; f.state.providerStatus = status;
+    assertEquals((await f.run()).status, 200);
+    const terminal = f.state.rpcs.filter((r: any) => r.name === "provider_attempt_finish");
+    assertEquals(terminal.length, 1, "One terminal write per outcome");
+    assertEquals(terminal[0].args.p_provider_request_id, requestId); assertEquals(terminal[0].args.p_provider_request_ref, requestRef);
+    const row: any = [...f.state.receipts.values()][0]; assertEquals(row.outcome, status === 404 ? "no_record" : "hit"); assertEquals(row.requestRef, requestRef);
+    assert(!JSON.stringify(f.state.rpcs).includes("PRIVATE-URL-SENTINEL"));
+  });
+});
+Deno.test("a schema without the reference overload still records the same outcome through the legacy RPC; other finish errors are never retried", async () => {
+  await check(async f => {
+    f.state.referenceOverloadMissing = true; f.state.supplierHeaders = { "x-cloud-trace-context": "2c3738f2d4c4b4984f9f9b36a137d515" };
+    assertEquals((await f.run()).status, 200);
+    const terminal = f.state.rpcs.filter((r: any) => r.name === "provider_attempt_finish");
+    assertEquals(terminal.length, 2); assert("p_provider_request_ref" in terminal[0].args); assert(!("p_provider_request_ref" in terminal[1].args));
+    assertEquals(terminal[1].args.p_outcome, "hit"); assertEquals(terminal[1].args.p_estimated_cents, 7); assertEquals(terminal[1].args.p_ledger_status, "recorded");
+    const row: any = [...f.state.receipts.values()][0]; assertEquals(row.outcome, "hit"); assertEquals(row.requestRef, "absent");
+    assertEquals(f.state.supplierCalls, 1);
+  });
+  await check(async f => {
+    f.state.finishFailure = true; assertEquals((await f.run()).status, 200);
+    assertEquals(f.state.rpcs.filter((r: any) => r.name === "provider_attempt_finish").length, 1, "A lost terminal write is not retried");
+    assertEquals([...f.state.receipts.values()][0].outcome, "intent");
+  });
+});
