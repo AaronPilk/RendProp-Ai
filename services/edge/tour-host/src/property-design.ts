@@ -85,6 +85,21 @@ export const PROPERTY_DESIGN_CSS = `
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-location-visual { background-color:var(--accent-soft); }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-location-visual span { background:var(--accent-3); }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-nearby-list li { border:0; border-top:1px solid var(--premium-line); border-radius:0; background:transparent; padding:20px 0; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-nearby-list a { color:var(--ink); }
+  /* Neighbourhood map takes each design's paper, ink and accent; marker shapes stay. */
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-nearby-map { --nearby-paper:var(--premium-paper); --nearby-ring:var(--premium-line); --nearby-ink:var(--ink); --nearby-dim:var(--ink-dim); --nearby-home:var(--accent-3); margin-top:32px; }
+  .property-site.site-theme-signature-estate .property-nearby-map { --nearby-restaurant:#9a4a2c; --nearby-cafe:#7d613f; --nearby-shop:#4d6b5a; }
+  .property-site.site-theme-signature-estate .property-nearby-map-svg { border:1px solid var(--premium-line); border-radius:2px; }
+  .property-site.site-theme-signature-estate .property-nearby-map .nm-paper { rx:0; }
+  .property-site.site-theme-coastal-luxe .property-nearby-map { --nearby-restaurant:#a9532f; --nearby-cafe:#8c6d2c; --nearby-shop:#216b58; }
+  .property-site.site-theme-coastal-luxe .property-nearby-map-svg { border-radius:22px; }
+  .property-site.site-theme-coastal-luxe .property-nearby-map .nm-paper { rx:22; }
+  /* Room-grouped editorial Gallery: a small rule-led heading above each room. */
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-rooms { display:grid; gap:56px; margin-top:28px; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-room-title { display:flex; align-items:baseline; gap:14px; margin:0 0 18px; font:600 12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; letter-spacing:.16em; text-transform:uppercase; color:var(--accent-3); }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-room-title::after { content:""; flex:1; height:1px; background:var(--premium-line); align-self:center; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-room-count { order:1; color:var(--ink-dim); font-weight:400; letter-spacing:0; text-transform:none; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-rooms .lp-mediadate { margin-top:0; }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) #endcard .panel { max-width:1160px; padding:40px; border:1px solid var(--premium-line); border-radius:0; box-shadow:none; background:var(--premium-paper); }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .field input,.property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .field textarea { background:var(--bg); border-color:#a8afa5; border-radius:6px; }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-btn,.property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .cta { color:white; background:var(--accent-3); border-radius:6px; box-shadow:none; }
