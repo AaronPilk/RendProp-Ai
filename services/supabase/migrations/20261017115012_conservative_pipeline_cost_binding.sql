@@ -2,6 +2,61 @@
 -- Generic HTTP acceptance remains uncertain; a linked attempt counts the larger
 -- of its admitted bound and modeled ledger cost, not both amounts added together.
 begin;
+-- Before ANY DDL, replay accepts only this migration's exact own objects: the
+-- relation's exact shape, constraints, RLS and ACL, and each helper's exact
+-- body, security, config, signature and ACL. An unknown same-name object is
+-- refused here rather than silently normalised by IF NOT EXISTS / OR REPLACE.
+-- Missing objects are the first apply. Nothing below is historical DML.
+do $own_replay_guard$
+declare e record;p pg_catalog.pg_proc;rel oid;owner_expected oid;service_oid oid;postgres_oid oid;shape text;
+begin
+ select proowner into owner_expected from pg_catalog.pg_proc where oid='public.serving_cost_finish(uuid,uuid,text,text,text,integer)'::regprocedure;
+ select oid into service_oid from pg_catalog.pg_roles where rolname='service_role';
+ select oid into postgres_oid from pg_catalog.pg_roles where rolname='postgres';
+ if owner_expected is null or service_oid is null then raise exception 'Serving finish authority and service_role must exist before pipeline cost binding';end if;
+ for e in select *from(values
+  ('public.pipeline_record_provider_cost(uuid,uuid,uuid,text,text,text,text,text,uuid,text,numeric,numeric,numeric,jsonb)','5500cfe7e17058770a1eeeb006196cdd','plpgsql','v','jsonb',
+   array['p_actor','p_org','p_reservation','p_key','p_stage','p_provider','p_model','p_input_sha256','p_job','p_feature','p_units','p_unit_cost','p_total','p_meta']),
+  ('public.pipeline_cost_covered_cents(uuid,timestamptz,timestamptz)','80187fb4191277dccc4a09eade462407','sql','s','numeric',array['p_reservation','p_start','p_end'])
+ )v(signature,body_md5,lang,volatility,result_type,arg_names)loop
+  if to_regprocedure(e.signature)is not null then
+   select *into p from pg_catalog.pg_proc where oid=to_regprocedure(e.signature);
+   if md5(p.prosrc)<>e.body_md5 or p.proowner<>owner_expected or p.prokind<>'f'
+    or p.prolang<>(select oid from pg_catalog.pg_language where lanname=e.lang)
+    or not p.prosecdef or p.provolatile::text<>e.volatility or p.proisstrict or p.proleakproof or p.proparallel<>'u'
+    or p.proconfig is distinct from array['search_path=""']::text[]
+    or p.proargnames is distinct from e.arg_names or p.proargmodes is not null or p.proallargtypes is not null
+    or p.provariadic<>0 or p.pronargdefaults<>0 or p.proargdefaults is not null
+    or p.prorettype is distinct from to_regtype(e.result_type)::oid
+    or exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))a
+      where a.grantor<>owner_expected or a.privilege_type<>'EXECUTE'or a.is_grantable
+       or a.grantee not in(owner_expected,service_oid,postgres_oid))
+    or not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))a where a.grantee=owner_expected)
+    or not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))a where a.grantee=service_oid)then
+    raise exception 'Review changed pipeline cost binding helper: %',e.signature;
+   end if;
+  end if;
+ end loop;
+ rel:=to_regclass('public.pipeline_provider_cost_bindings');
+ if rel is not null then
+  select string_agg(a.attname||' '||format_type(a.atttypid,a.atttypmod)||case when a.attnotnull then ' not null'else ''end||coalesce(' default '||pg_get_expr(d.adbin,d.adrelid),''),', 'order by a.attnum)
+   into shape from pg_catalog.pg_attribute a left join pg_catalog.pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum
+   where a.attrelid=rel and a.attnum>0 and not a.attisdropped;
+  if shape is distinct from 'reservation_id uuid not null, ledger_id uuid not null, created_at timestamp with time zone not null default now()'
+   or(select string_agg(conname||': '||pg_get_constraintdef(oid),'; 'order by conname)from pg_catalog.pg_constraint where conrelid=rel)is distinct from
+    'pipeline_provider_cost_bindings_ledger_id_fkey: FOREIGN KEY (ledger_id) REFERENCES cost_ledger(id) ON DELETE CASCADE; pipeline_provider_cost_bindings_ledger_id_key: UNIQUE (ledger_id); pipeline_provider_cost_bindings_pkey: PRIMARY KEY (reservation_id); pipeline_provider_cost_bindings_reservation_id_fkey: FOREIGN KEY (reservation_id) REFERENCES serving_cost_reservations(id)'
+   or(select string_agg(indexrelid::regclass::text,', 'order by indexrelid::regclass::text)from pg_catalog.pg_index where indrelid=rel)is distinct from
+    'pipeline_provider_cost_bindings_ledger_id_key, pipeline_provider_cost_bindings_pkey'
+   or(select relkind<>'r'or not relrowsecurity or relforcerowsecurity or relowner<>owner_expected from pg_catalog.pg_class where oid=rel)
+   or exists(select 1 from pg_catalog.pg_policy where polrelid=rel)
+   or exists(select 1 from pg_catalog.pg_trigger where tgrelid=rel and not tgisinternal)
+   or exists(select 1 from pg_catalog.pg_class c,aclexplode(coalesce(c.relacl,acldefault('r',c.relowner)))a where c.oid=rel
+      and(a.grantor<>owner_expected or a.is_grantable or(a.grantee<>owner_expected and(a.grantee<>service_oid or a.privilege_type<>'SELECT'))))
+   or not exists(select 1 from pg_catalog.pg_class c,aclexplode(coalesce(c.relacl,acldefault('r',c.relowner)))a where c.oid=rel and a.grantee=service_oid and a.privilege_type='SELECT')then
+   raise exception 'Review changed pipeline cost binding relation: public.pipeline_provider_cost_bindings';
+  end if;
+ end if;
+end$own_replay_guard$;
 create table if not exists public.pipeline_provider_cost_bindings (
  reservation_id uuid primary key references public.serving_cost_reservations(id),
  ledger_id uuid not null unique references public.cost_ledger(id) on delete cascade,
