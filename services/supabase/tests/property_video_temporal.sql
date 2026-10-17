@@ -14,8 +14,18 @@ create function pg_temp.report(reasons text[],limits text default repeat('1',64)
   'verdict',jsonb_build_object('profile','temporal-motion-v2','pass',cardinality(reasons)=0,'reasons',to_jsonb(reasons)))
 $$;
 -- A paid, retained clip under its live quality-review lease (actual claim/receipt/clip RPCs).
-create function pg_temp.review_job(i integer)returns jsonb language plpgsql as $$declare j public.property_video_jobs;c jsonb;begin
- j:=property_video_job_enqueue((select actor from bf),pg_temp.recipe(i));c:=property_video_job_claim(j.id,'slot-0');return pg_temp.paid_clip(c);end$$;
+create function pg_temp.review_job(i integer,n integer default 2)returns jsonb language plpgsql as $$declare j public.property_video_jobs;c jsonb;begin
+ j:=property_video_job_enqueue((select actor from bf),pg_temp.recipe(i,n));c:=property_video_job_claim(j.id,'slot-0');return pg_temp.paid_clip(c);end$$;
+-- Stored paid drift 'retry' evidence for one attempt, exactly as
+-- property_video_derived_retry.sql (pg_temp.retry_grant) seeds it: synthetic
+-- receipt rows only, no generated pixels, model or provider call.
+create function pg_temp.retry_grant(c jsonb)returns void language plpgsql security definer as $$declare j public.property_video_jobs;s public.property_video_job_sources;r public.app_video_cost_reservations;v jsonb;begin
+ select *into j from property_video_jobs where id=(c#>>'{job,id}')::uuid;select *into s from property_video_job_sources where job_id=j.id and attempt_id=(c#>>'{source,attempt_id}')::uuid;
+ select *into r from app_video_cost_reservations where actor_id=j.actor_id and org_id=j.org_id and idempotency_key=s.request_key;
+ v:=jsonb_build_object('task','judge.qc_drift','request_id',s.receipt->>'request_id','source_sha256',repeat('d',32),'verdict','pass','action','retry','publishable',false,'failed',jsonb_build_array('additions','artifacts'),'attempt',0,'scores',jsonb_build_object('architecture',95,'contents',97,'additions',0,'artifacts',8,'same_room',98),'thresholds',jsonb_build_object('architecture',85,'contents',80,'additions',90,'artifacts',75,'same_room',90));
+ update media_provenance set qc=v where id=s.generation_provenance_id;
+ insert into cost_ledger(org_id,feature,provider,model,total_cents,meta)values(j.org_id,'qc','anthropic','fixture-judge',.0001,v||jsonb_build_object('kind','video_drift','provenance_id',s.generation_provenance_id,'source_asset_id',s.asset_id));
+ insert into app_video_drift_checks(reservation_id,actor_id,org_id,listing_id,source_sha256,state,result)values(r.id,j.actor_id,j.org_id,j.listing_id,repeat('d',32),'retry',jsonb_build_object('drift',v||jsonb_build_object('status','fail')));end$$;
 select pg_temp.ok((select data_type='jsonb'and is_nullable='YES'from information_schema.columns where table_name='property_video_job_sources'and column_name='temporal'),'temporal column is a nullable jsonb record');
 select pg_temp.ok((select column_default like'%[]%'from information_schema.columns where table_name='property_video_job_sources'and column_name='temporal_history'),'temporal history defaults empty');
 select pg_temp.ok(not has_function_privilege('authenticated','public.property_video_job_temporal(uuid,uuid,uuid,text,jsonb)','execute')and not has_function_privilege('anon','public.property_video_job_temporal(uuid,uuid,uuid,text,jsonb)','execute')and has_function_privilege('service_role','public.property_video_job_temporal(uuid,uuid,uuid,text,jsonb)','execute'),'temporal record is service-only');
@@ -57,6 +67,12 @@ select pg_temp.ok((select r#>>'{verdict,pass}'='true'and r#>>'{limits,sha256}'=r
 select pg_temp.ok((select s.temporal=(select r from second_record)and s.temporal_history=jsonb_build_array((select r from first_record))from property_video_job_sources s,rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt),'prior verdict archived exactly once, unchanged');
 reset role;
 select pg_temp.refuse($q$update property_video_job_sources s set temporal_history=jsonb_set(temporal_history,'{0,verdict,pass}','true')from rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt$q$,'RP409:','archived verdict cannot be edited');
+-- The table itself enforces the RPC's contract, even for a direct service write:
+-- nothing is archived without a replacement, and a replacement for the same
+-- attempt under the same limit version is refused even when archived properly.
+select pg_temp.refuse($q$update property_video_job_sources s set temporal_history=temporal_history||jsonb_build_array(temporal)from rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt$q$,'RP409: The first temporal verdict for this attempt and limit version stands','archiving without a replacement refused');
+select pg_temp.refuse($q$update property_video_job_sources s set temporal=jsonb_set(temporal,'{verdict}',(select r->'verdict'from first_record)),temporal_history=temporal_history||jsonb_build_array(temporal)from rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt$q$,'RP409: The first temporal verdict for this attempt and limit version stands','a same-attempt same-limits replacement refused even when archived');
+select pg_temp.ok((select s.temporal=(select r from second_record)and s.temporal_history=jsonb_build_array((select r from first_record))from property_video_job_sources s,rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt),'refused direct writes left the record and its archive unchanged');
 set local role service_role;
 -- The record never advances, approves or buys: the shot still needs the paid drift receipt.
 select pg_temp.refuse($q$select property_video_job_qc(job,lease,attempt)from rv_ids$q$,'RP409: This clip has no passing paid source quality receipt','a recorded temporal pass is not a publication receipt');
@@ -89,7 +105,41 @@ reset role;create temporary table live_lease as select(c#>>'{source,lease_token}
 reset role;update property_video_job_sources s set lease_until=now()-interval'1 second'from rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt;set local role service_role;
 select pg_temp.refuse($q$select property_video_job_temporal(job,(select lease from live_lease),attempt,repeat('e',64),pg_temp.report('{}',repeat('3',64)))from rv_ids$q$,'RP409:','lapsed review lease cannot record');
 select pg_temp.ok((select s.temporal=(select r from second_record)from property_video_job_sources s,rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt),'lapsed-lease refusal recorded nothing');
--- The retry path keeps the superseded attempt's verdict in its archived prior_source; a fresh attempt records anew.
-select pg_temp.ok((select(to_jsonb(s)-'quality_retry_history')?'temporal'from property_video_job_sources s,rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt),'prior_source snapshots carry the recorded verdict');
+-- A temporal refusal (walk-through travel, horizon roll, repeated frames,
+-- unmeasurable) is what the worker reports as quality_check_refused. Without a
+-- paid structural drift rejection that is NOT an original-photo substitution:
+-- property_video_job_failure pauses the job with the paid clip, receipt and
+-- provenance retained, and the fallback guard refuses a forged substitution. A
+-- CPU measurement never invents provenance, a QC receipt or a still fallback.
+create temporary table rf as select pg_temp.review_job(2,1)c;grant select on rf to service_role;
+create temporary table rf_ids as select(c#>>'{job,id}')::uuid job,(c#>>'{source,lease_token}')::uuid lease,(c#>>'{source,attempt_id}')::uuid attempt from rf;grant select on rf_ids to service_role;
+create temporary table rf_before as select(select count(*)from media_provenance)provenance,(select count(*)from app_video_cost_reservations)reservations,(select count(*)from cost_ledger)ledger;grant select on rf_before to service_role;
+create temporary table rf_record as select property_video_job_temporal(job,lease,attempt,repeat('e',64),pg_temp.report('{walk_through_travel}'))r from rf_ids;grant select on rf_record to service_role;
+select pg_temp.ok((select property_video_job_failure(job,lease,attempt,'quality_check_refused',false)from rf_ids),'the worker''s temporal refusal is accepted as a quality refusal');
+select pg_temp.ok((select s.state='failed'and s.last_error='quality_check_refused'and s.clip is not null and s.receipt is not null and s.generation_provenance_id is not null and s.temporal=(select r from rf_record)from property_video_job_sources s,rf_ids where s.job_id=rf_ids.job and s.attempt_id=rf_ids.attempt),'a temporal refusal pauses the shot with the paid clip, receipt, provenance and recorded verdict retained');
+select pg_temp.ok((select state='failed'and message like'Video quality review paused.%'from property_video_jobs,rf_ids where id=rf_ids.job),'a temporal refusal pauses the job, never ready and never a still substitution');
+select pg_temp.ok((select count(*)=0 from property_video_job_sources s,rf_ids where s.job_id=rf_ids.job and s.state='original_photo'),'no original-photo fallback without a paid structural rejection');
+select pg_temp.ok((select(select count(*)from media_provenance)=provenance and(select count(*)from app_video_cost_reservations)=reservations and(select count(*)from cost_ledger)=ledger from rf_before),'the temporal refusal created no provenance, QC receipt, reservation or cost row');
+-- Even a direct service write (the role the worker holds) cannot forge the substitution.
+select pg_temp.refuse($q$update property_video_job_sources s set state='original_photo'from rf_ids where s.job_id=rf_ids.job and s.attempt_id=rf_ids.attempt$q$,'RP409: Original-photo fallback requires a confirmed paid structural quality rejection','a recorded temporal refusal cannot be turned into a still fallback');
+create temporary table rf_resumed as select(property_video_job_resume((select actor from bf),job,0)).*from rf_ids;grant select on rf_resumed to service_role;
+create temporary table rf_claim as select property_video_job_claim(job,'slot-0')c from rf_ids;grant select on rf_claim to service_role;
+select pg_temp.ok((select r.state='generating'and c->>'action'='extract_frames'and(c#>>'{source,attempt_id}')::uuid=rf_ids.attempt from rf_resumed r,rf_claim,rf_ids),'owner resume re-reviews the same paid attempt without a new quote');
+select pg_temp.ok((select property_video_job_temporal(rf_ids.job,(c#>>'{source,lease_token}')::uuid,rf_ids.attempt,repeat('e',64),pg_temp.report('{}'))=(select r from rf_record)from rf_claim,rf_ids),'after resume the recorded refusal still stands: a re-measurement cannot pass the same attempt');
+select pg_temp.ok((select(select count(*)from app_video_cost_reservations)=reservations and(select count(*)from cost_ledger)=ledger from rf_before),'the refusal pause and its resume bought nothing');
+-- The actual single paid retry (a persisted drift 'retry' grant) archives the
+-- superseded attempt's row WITH its recorded verdict; the stale record stays on
+-- the shot until the next paid attempt reports, which archives it unchanged
+-- and records the new attempt's own verdict.
+create temporary table rt as select pg_temp.review_job(3,1)c;grant select on rt to service_role;
+create temporary table rt_ids as select(c#>>'{job,id}')::uuid job,(c#>>'{source,lease_token}')::uuid lease,(c#>>'{source,attempt_id}')::uuid attempt from rt;grant select on rt_ids to service_role;
+create temporary table rt_first as select property_video_job_temporal(job,lease,attempt,repeat('e',64),pg_temp.report('{vertical_bob}'))r from rt_ids;grant select on rt_first to service_role;
+reset role;select pg_temp.retry_grant((select c from rt));set local role service_role;
+select pg_temp.ok((select(property_video_job_quality_retry(job,lease,attempt)->>'retry_scheduled')='true'from rt_ids),'a persisted paid drift grant schedules the one paid retry');
+select pg_temp.ok((select quality_retries=1 and state='pending'and quality_retry_history#>'{0,prior_source,temporal}'=(select r from rt_first)and temporal=(select r from rt_first)and temporal_history='[]'from property_video_job_sources s,rt_ids where s.job_id=rt_ids.job and s.position=0),'the paid retry archives the superseded attempt with its recorded verdict');
+create temporary table rt_next as select pg_temp.paid_clip(property_video_job_claim(job,'slot-0'))c from rt_ids;grant select on rt_next to service_role;
+select pg_temp.ok((select(c#>>'{source,attempt_id}')::uuid is distinct from rt_ids.attempt and(c#>>'{job,id}')::uuid=rt_ids.job from rt_next,rt_ids),'the next paid attempt of the same shot is under review');
+select pg_temp.ok((select property_video_job_temporal(rt_ids.job,(c#>>'{source,lease_token}')::uuid,(c#>>'{source,attempt_id}')::uuid,repeat('e',64),pg_temp.report('{}'))#>>'{verdict,pass}'='true'from rt_next,rt_ids),'the new attempt records its own verdict');
+select pg_temp.ok((select s.temporal->>'attempt_id'=(c#>>'{source,attempt_id}')and s.temporal_history=jsonb_build_array((select r from rt_first))from property_video_job_sources s,rt_next,rt_ids where s.job_id=rt_ids.job and s.position=0),'the superseded attempt''s verdict is archived unchanged');
 reset role;select jsonb_build_object('passed',true,'assertions',(select n from checks),'supplierPOSTs',0);
 rollback;

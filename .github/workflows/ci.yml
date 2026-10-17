@@ -1944,6 +1944,13 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/property_video_derived_retry_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-derived-retry-pg"
+      - name: Temporal motion verdicts record once, never approve or substitute, and roll back exactly
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_temporal_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-temporal-pg"
       - name: Retained paid supplier results recover without replacing accepted requests
         timeout-minutes: 10
         shell: bash
@@ -2058,6 +2065,7 @@ jobs:
             ${{ runner.temp }}/rendprop-listing-gallery-append-capacity-pg/**
             ${{ runner.temp }}/rendprop-studio-explicit-gallery-pg/**
             ${{ runner.temp }}/rendprop-property-derived-retry-pg/**
+            ${{ runner.temp }}/rendprop-property-temporal-pg/**
             ${{ runner.temp }}/rendprop-property-result-delivery-pg/**
             ${{ runner.temp }}/rendprop-property-submit-recovery-pg/**
             ${{ runner.temp }}/rendprop-studio-recorded-source-pg/**
