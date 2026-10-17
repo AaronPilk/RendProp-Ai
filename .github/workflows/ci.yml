@@ -1158,10 +1158,44 @@ jobs:
       - name: Studio MP4 export, AAC narration and continuous agent audio
         working-directory: apps/studio
         timeout-minutes: 10
+        shell: bash
         env:
           TMPDIR: ${{ runner.temp }}
         run: |
           node tests/export-resume-browser.mjs
+          control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-resume-control.XXXXXX")
+          set +e
+          TMPDIR="$control_root" node tests/export-resume-browser.mjs --fault=omit-old-await > "$control_root/run.log" 2>&1
+          control_status=$?
+          set -e
+          test "$control_status" -eq 1
+          python3 - "$control_root" <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          receipts = list(Path(sys.argv[1]).glob('rendprop-export-resume-*/receipt.json'))
+          assert len(receipts) == 1, receipts
+          receipt = json.loads(receipts[0].read_text())
+          assert receipt['status'] == 'failed' and receipt['fault'] == 'omit-old-await'
+          assert receipt['variants'] == ['baseline']
+          assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Negative control must reproduce drift with the old await:')
+          assert receipt['errors'] == [] and receipt['externalRequests'] == []
+          assert len(receipt['attempts']) == len(receipt['runs']) == 1
+          attempt, run = receipt['attempts'][0], receipt['runs'][0]
+          assert attempt['error'] is None and attempt['tracks'] and all(track == 'ended' for track in attempt['tracks'])
+          assert run['variant'] == 'baseline' and run['narrated'] is True
+          assert 0 < run['duration'] <= 3.4
+          assert not any(event.get('event') == 'resume.delivered' for event in run['trace'])
+          outputs = list(receipts[0].parent.glob('*.mp4'))
+          assert len(outputs) == 1 and outputs[0].name == 'baseline-narrated.mp4'
+          assert Path(run['output']).resolve() == outputs[0].resolve()
+          expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs'}
+          expected_sources.update(f'src/editor/{name}.ts' for name in
+                                  ('export', 'recording-clock', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
+          assert set(receipt['sourceHashes']) == expected_sources
+          for path, digest in receipt['sourceHashes'].items():
+              assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
+          print('Omitted historical await reaches the intended bad-duration assertion')
+          PY
           node tests/export-audio-browser.mjs
           if node tests/export-audio-browser.mjs --fault=live-original-audio > "$RUNNER_TEMP/export-original-audio-defect.log" 2>&1; then
             echo "::error::Original-audio regression control unexpectedly passed"
@@ -1196,6 +1230,9 @@ jobs:
             ${{ runner.temp }}/rendprop-conversation-*/*.mp4
             ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
             ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-resume-control.*/run.log
+            ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/*.mp4
             ${{ runner.temp }}/rendprop-export-startup-*/receipt.json
             ${{ runner.temp }}/rendprop-export-startup-*/*.mp4
             ${{ runner.temp }}/rendprop-export-startup-*/*.webm

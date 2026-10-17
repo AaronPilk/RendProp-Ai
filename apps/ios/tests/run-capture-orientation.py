@@ -25,7 +25,7 @@ view = (ROOT/'apps/ios/Rendprop/Screens/FlythroughDetailView.swift').read_text()
 assert 'captureIntent: portrait ? .socialPhotos : .listingPhotos' in view and '@State private var musicSelection: VideoMusicSelection? = nil' in view
 reelview=view[view.index('struct ReelStudioView:'):]
 generation=reelview[reelview.index('    private func generate() {'):reelview.index('    private func generateWithSession()')]
-assert generation.index('VideoPhotoFramingReader.read(') < generation.index('connection.run { generateWithSession() }')
+assert generation.index('VideoPhotoFramingReader.read(') < generation.index('connection.run { authorizeVideoPreparation { generateWithSession() } }')
 assert 'framingSelectionKey == key' in generation and 'work.isPresented' in generation and 'AIConsent.shared.revocationRevision == consent' in generation
 assert 'assessments.count == inputs.count' in generation and 'VideoFramingReviewPolicy.needsAcknowledgment(' in generation
 session=reelview[reelview.index('    private func generateWithSession()'):reelview.index('    nonisolated private static func preparedReelJPEG(')]

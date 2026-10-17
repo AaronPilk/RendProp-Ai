@@ -11,14 +11,16 @@ import { chromium, expect } from "@playwright/test";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
 const onlyFixed=process.argv.slice(2).includes('--only-fixed');
-assert(process.argv.slice(2).every(argument=>argument==='--only-fixed'),"Unknown resume test option");
-const variants=onlyFixed?["fixed"]:["baseline", "sequential", "clock-baseline", "cadence-baseline", "fixed", "late-frames"];
+const omitOldAwait=process.argv.slice(2).includes('--fault=omit-old-await');
+assert(process.argv.slice(2).every(argument=>argument==='--only-fixed'||argument==='--fault=omit-old-await'),"Unknown resume test option");
+assert(!(onlyFixed&&omitOldAwait),"Historical omission control cannot select the fixed-only suite");
+const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["baseline", "sequential", "clock-baseline", "cadence-baseline", "fixed", "late-frames"];
 // Two one-second notifications leave a clear regression beyond the unchanged
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
 const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", ...["export", "recording-clock", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = { sourceHashes, variants, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
+const receipt = { sourceHashes, variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
@@ -135,8 +137,14 @@ document.querySelector("#run").onclick=async()=>{
   const oldAwaitPlugin = { name: "negative-control-original-resume-await", enforce: "pre", transform(code, id) {
     if (!id.endsWith("/src/editor/export.ts")) return;
     const seam = /        \/\/ resume\(\) changes state synchronously[\s\S]*?track\?\.requestFrame\?\.\(\);/;
-    assert(seam.test(code), "Negative control must match the audited resume fix");
-    return code.replace(seam, '        const resumed = waitForEvent(recorder, "resume", renderSignal);\n        recorder.resume();\n        await resumed;');
+    assert.equal([...code.matchAll(new RegExp(seam.source,"g"))].length,1,"Negative control must match the audited resume fix exactly once");
+    const guard='const recordingClock = new RecordingClock();';
+    assert.equal(code.split(guard).length-1,1,"Historical resume control must isolate only the main segment recording guard");
+    // As in the historical photo-clock control, exclude the later independent
+    // recording guard only in this deliberately faulty compiled variant. Keep
+    // actual startup readiness, original-audio loss admission and all clocks.
+    const isolated=code.replace(guard,'const recordingClock = {read() {}};');
+    return omitOldAwait?isolated:isolated.replace(seam, '        const resumed = waitForEvent(recorder, "resume", renderSignal);\n        recorder.resume();\n        await resumed;');
   } };
   // Delay only export-time decoder readiness, never file inspection or source
   // playback. The sequential negative control restores the former per-boundary
