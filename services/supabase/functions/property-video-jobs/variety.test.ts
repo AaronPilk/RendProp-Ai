@@ -55,6 +55,19 @@ Deno.test('variedJobInput writes chosen moves on each source and a record, keepi
  const{sources:_a,motion_variety:_b,...rest}=out;const{sources:_c,...expected}=input;assertEquals(rest,expected);
  assertEquals(variedJobInput(input),out);assertEquals(input.sources.map(s=>s.motion),sources.map(s=>s.motion));
 });
+Deno.test('seeded random recipes of 1 to 100 photos (the admission bound) always freeze a compliant, replayable sequence',()=>{
+ // Deterministic LCG: arbitrary planner/client shapes and operation identities,
+ // including long single-move runs, every move mixed and fly_through anywhere.
+ let state=0x9e3779b9;const next=()=>(state=(Math.imul(state,1664525)+1013904223)>>>0);
+ const moves:Motion[]=[P,S,B,F];let changedTotal=0;
+ for(let trial=0;trial<3000;trial++){
+  const n=1+next()%100,runBias=next()%4;let current=moves[next()%4];const requested:Motion[]=[];
+  for(let i=0;i<n;i++){if(next()%4>=runBias)current=moves[next()%4];requested.push(current);}
+  const op=[8,4,4,4,12].map(len=>Array.from({length:len},()=>(next()%16).toString(16)).join('')).join('-');
+  const v=check(requested,op);assertEquals(varyMotions(requested,op),v);changedTotal+=v.changed.length;
+ }
+ assert(changedTotal>0,'the sweep must exercise the rewrite path');
+});
 Deno.test('deliberate defect control: the rule checker rejects the exact rejected shapes',()=>{
  assertEquals(motionVarietySatisfied([P,P]),false);assertEquals(motionVarietySatisfied([P,S,P,S]),false);assertEquals(motionVarietySatisfied([P,S,B,P]),true);assertEquals(motionVarietySatisfied([]),true);
 });
