@@ -10,6 +10,12 @@ import {join} from "node:path";
 export const NATIVE_TRACE_CATEGORIES = ["webaudio", "disabled-by-default-webaudio.audionode"];
 export const NATIVE_TRACE_SPAN_NAMES = ["AudioDestination::RequestRender", "RealtimeAudioDestinationHandler::Render", "MediaStreamAudioDestinationHandler::Process"];
 export const NATIVE_TRACE_LIMITS = {bufferKiB: 1024, rawBytes: 2 * 1024 * 1024, events: 10000, captureMs: 20000, finishMs: 10000};
+// A guarded editor export runs for seconds, not the startup case's ~2 s; the
+// hosted startup trace reached 10 053 events (1.96 MB) in that window. These
+// bounds keep the same policy (recordUntilFull, bounded drain, private raw
+// file) with room for one whole export. Still bounded; still local-only.
+export const NATIVE_TRACE_EXPORT_LIMITS = {bufferKiB: 16384, rawBytes: 48 * 1024 * 1024, events: 250000, captureMs: 45000, finishMs: 20000,
+  chunkBytes: 1024 * 1024, chunkReads: 96};
 const RENDER_GAP_THRESHOLDS_MS = [33, 100];
 
 // Pure: longest idle gap between consecutive AudioDestination::RequestRender
@@ -53,10 +59,10 @@ export function summarizeRenderGaps(spans, clockAlignment) {
 // Returns {facts, finish}. `onFacts` runs synchronously before any await so a
 // caller can attach the facts object to its receipt exactly as the startup
 // suite did when this code lived there.
-export async function startNativeTraceObserver({context, page, artifacts, syncId, rawFileName, sourceHashes, onFacts}) {
+export async function startNativeTraceObserver({context, page, artifacts, syncId, rawFileName, sourceHashes, onFacts, limits = NATIVE_TRACE_LIMITS}) {
   const categories = NATIVE_TRACE_CATEGORIES;
   const names = NATIVE_TRACE_SPAN_NAMES;
-  const limits = NATIVE_TRACE_LIMITS;
+  const chunkBytes = limits.chunkBytes ?? 65536, chunkReads = limits.chunkReads ?? 40;
   const facts = {status: "initializing", passiveOnly: true, observationMayPerturbTiming: true,
     categories, requiredSpanNames: names, limits, issues: [], sourceHashes: {...sourceHashes}};
   onFacts?.(facts);
@@ -93,8 +99,8 @@ export async function startNativeTraceObserver({context, page, artifacts, syncId
       const chunks = []; let bytes = 0, eof = false, reads = 0;
       while (!eof) {
         if (Date.now() >= deadline) throw new Error("Native trace drain deadline");
-        if (++reads > 40) throw new Error("Native trace chunk limit");
-        const part = await bounded(session.send("IO.read", {handle: stream, size: 65536}), remaining());
+        if (++reads > chunkReads) throw new Error("Native trace chunk limit");
+        const part = await bounded(session.send("IO.read", {handle: stream, size: chunkBytes}), remaining());
         const data = Buffer.from(part.data, part.base64Encoded ? "base64" : "utf8");
         if (!data.length && part.eof !== true) throw new Error("Native trace made no progress");
         const room = limits.rawBytes - bytes;

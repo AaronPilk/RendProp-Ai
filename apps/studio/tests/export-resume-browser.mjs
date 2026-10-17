@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
+import { startNativeTraceObserver, NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
 const onlyFixed=process.argv.slice(2).includes('--only-fixed');
@@ -268,7 +269,15 @@ document.querySelector("#run").onclick=async()=>{
     // Every other variant keeps the complete four-second source at 2x, including
     // the fixed/cadence/late-frame audio, timing, transition and cleanup oracles.
     for (const narrated of [true, false]) {
-      await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated, variant === "clock-baseline"); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant }); await page.locator("#run").click();
+      await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated, variant === "clock-baseline"); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant });
+      // Passive native webaudio trace for the two held-frame exports (the
+      // cadence-baseline control and the current late-frames variant), started
+      // before the click. It owns no clock, source or oracle and cannot turn a
+      // refusal into a download; raw bytes stay local (0600).
+      const attemptName = `${variant}-${narrated ? "narrated" : "original"}`;
+      const nativeTrace = ["cadence-baseline", "late-frames"].includes(variant) ? await startNativeTraceObserver({ context, page, artifacts, syncId: `${attemptName}-before-click`,
+        rawFileName: `native-trace-${attemptName}.raw.private.json`, sourceHashes, limits: NATIVE_TRACE_EXPORT_LIMITS }) : undefined;
+      await page.locator("#run").click();
       let attempt;
       try {
         const outcome = () => page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending"));
@@ -280,10 +289,11 @@ document.querySelector("#run").onclick=async()=>{
         // a genuine production stall refusal. Only the restored old-await
         // baseline may classify a fully evidenced refusal as a detected fault;
         // every current-exporter variant must finish and pass its media oracles.
+        if (nativeTrace) await nativeTrace.finish();
         attempt = await page.evaluate(() => ({ error: window.fixture.error, errorName: window.fixture.errorName, errorCause: window.fixture.errorCause, result: window.fixture.result,
           trace: window.fixture.trace, downloadHidden: document.querySelector("#download").hidden,
           tracks: window.fixture.tracks.map(track => track.readyState) }));
-        attempt = { ...attempt, variant, narrated };
+        attempt = { ...attempt, variant, narrated, ...(nativeTrace ? { nativeTrace: nativeTrace.facts } : {}) };
         receipt.attempts.push(attempt); await persist();
       }
       if (variant === "baseline" && attempt.error) {
