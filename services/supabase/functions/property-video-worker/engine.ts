@@ -105,9 +105,11 @@ export async function poll(ctx:any){
 export async function quality(ctx:any,raw:any){const j=ctx.job,s=ctx.source;assert(raw.clip_sha256===s.clip?.sha256&&Array.isArray(raw.frames)&&raw.frames.length===3,409,'Use the retained generated clip and all three review frames.');
  // Steady profiles: the CPU's temporal motion report (temporal.ts) is verified
  // against this limit version and recorded on the shot BEFORE the paid drift
- // judge. Missing or malformed: refuse this callback (409) so the shot holds in
- // quality_review for the next extract; never a pass, never a purchase.
- if(temporalRequired(j.quality_profile)){const report=temporalReport(raw.temporal);assert(report,409,'The steady clip has no usable temporal motion report. It is held, not published, until the next review pass measures it.');
+ // judge. A HOLD is the existing CPU review pause (cpu_extract_failed): two more
+ // immediate extracts, then the job pauses as a resumable quality pause with its
+ // paid clip retained and the verdict recorded. Never a pass, never a purchase.
+ if(temporalRequired(j.quality_profile)){const report=temporalReport(raw.temporal);
+  if(!report){await fail(ctx,'cpu_extract_failed',false);return;}
   // The recorded verdict decides (first measurement of this attempt under this limit version wins; SQL returns it on a repeat).
   const recorded=temporalReport(await rpc('property_video_job_temporal',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id,p_clip_sha256:raw.clip_sha256,p_report:report}));
   assert(recorded,503,'The recorded temporal verdict could not be read.');const route=temporalRoute(recorded.verdict);
@@ -117,7 +119,7 @@ export async function quality(ctx:any,raw:any){const j=ctx.job,s=ctx.source;asse
   // (property_video_quality_retry_evidence). A temporal-only bob/sway/cadence
   // failure has no such grant yet, so it holds here with its verdict recorded
   // instead of buying a retry or publishing; see quality.test.ts (ignored case).
-  assert(route==='pass',409,'The steady clip failed temporal motion review (bob or cadence). It is held with its recorded verdict; no clip is published or bought.');
+  if(route==='retry'){await fail(ctx,'cpu_extract_failed',false);return;}
  }
  const{bytes}=await bytesFrom(s.source);const frames=raw.frames.map((frame:any,i:number)=>{assert(frame&&typeof frame.image_b64==='string'&&frame.image_b64.length<=524288&&frame.mime==='image/jpeg',400,'Use bounded actual JPEG review frames.');return{at:['first','middle','last'][i],b64:frame.image_b64,mime:frame.mime};});const out=await callAI(ctx,'POST','drift',{request_id:s.receipt.request_id,kind:'reel',source_b64:base64(bytes),source_mime:s.source.content_type,frames,seconds:5,motion:s.motion,listing_id:j.listing_id,asset_id:s.asset_id,provenance_id:s.generation_provenance_id,attempt:(s.quality_retries??0)>0?1:0});
  if(out.status===200&&out.value.drift?.action==='accept'&&out.value.drift.publishable===true){await rpc('property_video_job_qc',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});return;}

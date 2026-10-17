@@ -42,7 +42,7 @@ select pg_temp.ok((select temporal is null and temporal_history='[]'from propert
 create temporary table reservations_before as select count(*)n from app_video_cost_reservations;grant select on reservations_before to service_role;
 create temporary table first_record as select property_video_job_temporal(job,lease,attempt,repeat('e',64),pg_temp.report('{vertical_bob,walking_cadence}'))r from rv_ids;grant select on first_record to service_role;
 select pg_temp.ok((select r->>'attempt_id'=attempt::text and r->>'clip_sha256'=repeat('e',64)and(r->>'recorded_at')::timestamptz<=now()and r#>>'{verdict,pass}'='false'and r#>'{verdict,reasons}'='["vertical_bob","walking_cadence"]'::jsonb and r#>>'{limits,sha256}'=repeat('1',64)from first_record,rv_ids),'first verdict recorded with attempt, clip and limit version');
-select pg_temp.ok((select s.temporal=(select r from first_record)and s.temporal_history='[]'and s.state='quality_review'and s.last_error is null from property_video_job_sources s,rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt),'record stored on the shot without changing its state (hold is the worker refusing the callback)');
+select pg_temp.ok((select s.temporal=(select r from first_record)and s.temporal_history='[]'and s.state='quality_review'and s.last_error is null from property_video_job_sources s,rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt),'record stored on the shot without changing its state');
 select pg_temp.ok((select property_video_job_temporal(job,lease,attempt,repeat('e',64),pg_temp.report('{vertical_bob,walking_cadence}'))=(select r from first_record)from rv_ids),'exact replay returns the same record');
 select pg_temp.ok((select property_video_job_temporal(job,lease,attempt,repeat('e',64),pg_temp.report('{}'))=(select r from first_record)from rv_ids),'a re-measurement under the same limits cannot overwrite: the first recorded verdict wins');
 select pg_temp.ok((select s.temporal=(select r from first_record)and s.temporal_history='[]'from property_video_job_sources s,rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt),'stored verdict unchanged by the repeat');
@@ -62,9 +62,32 @@ set local role service_role;
 select pg_temp.refuse($q$select property_video_job_qc(job,lease,attempt)from rv_ids$q$,'RP409: This clip has no passing paid source quality receipt','a recorded temporal pass is not a publication receipt');
 select pg_temp.refuse($q$select property_video_job_quality_retry(job,lease,attempt)from rv_ids$q$,'RP409: A terminal paid same-source retry grant is required','a temporal-only failure has no paid retry grant (follow-up: see temporal.ts)');
 select pg_temp.ok((select count(*)from app_video_cost_reservations)=(select n from reservations_before),'no reservation or purchase followed any temporal write');
--- A lapsed lease (the hold path) refuses a write until the next claim.
+-- The worker's HOLD is the existing CPU review pause: the recorded verdict survives the
+-- re-extract (new lease, same attempt, first measurement still wins) and the third pause
+-- is a resumable quality pause with the paid clip retained, never a publication.
+create temporary table hold_claims(n integer,c jsonb);grant all on hold_claims to service_role;
+do $$declare i integer;c jsonb;j uuid;l uuid;a uuid;begin select job,lease,attempt into j,l,a from rv_ids;
+ for i in 1..2 loop
+  perform property_video_job_failure(j,l,a,'cpu_extract_failed',false);
+  if(select state<>'processing'or temporal is null or last_error<>'cpu_extract_failed'from property_video_job_sources where job_id=j and attempt_id=a)then raise exception'TEMPORAL FAIL: hold % did not keep the verdict in a review pause',i;end if;
+  c:=property_video_job_claim(j,'slot-0');if c->>'action'<>'extract_frames'or(c#>>'{source,attempt_id}')::uuid<>a then raise exception'TEMPORAL FAIL: hold % did not re-extract the same attempt',i;end if;
+  l:=(c#>>'{source,lease_token}')::uuid;insert into hold_claims values(i,c);
+  if property_video_job_temporal(j,l,a,repeat('e',64),pg_temp.report('{}',repeat('2',64)))<>(select r from second_record)then raise exception'TEMPORAL FAIL: re-extract % overwrote the recorded verdict',i;end if;
+ end loop;
+ perform property_video_job_failure(j,l,a,'cpu_extract_failed',false);end$$;
+select pg_temp.ok((select s.state='failed'and s.last_error='cpu_extract_failed'and s.cpu_attempts=3 and s.clip is not null and s.receipt is not null and s.generation_provenance_id is not null and s.cpu_recoveries=0 and s.temporal=(select r from second_record)and jsonb_array_length(s.temporal_history)=1 from property_video_job_sources s,rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt),'third hold is a resumable quality pause with paid clip and recorded verdict retained');
+select pg_temp.ok((select state='failed'and message like'Video quality review paused.%'from property_video_jobs,rv_ids where id=rv_ids.job),'held job pauses explicitly, never ready');
+select pg_temp.ok((select count(*)from app_video_cost_reservations)=(select n from reservations_before),'holds bought nothing');
+create temporary table resumed as select(property_video_job_resume((select actor from bf),job,0)).*from rv_ids;grant select on resumed to service_role;
+select pg_temp.ok((select state='generating'from resumed),'owner resume reopens the held review without a new quote');
+select pg_temp.ok((select s.state='processing'and s.cpu_recoveries=1 and s.cpu_attempts=0 and s.temporal=(select r from second_record)from property_video_job_sources s,rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt),'resume keeps the recorded verdict for the next review pass');
+create temporary table resumed_claim as select property_video_job_claim(job,'slot-0')c from rv_ids;grant select on resumed_claim to service_role;
+select pg_temp.ok((select c->>'action'='extract_frames'and(c#>>'{source,attempt_id}')::uuid=attempt from resumed_claim,rv_ids),'resumed review re-extracts the same paid attempt');
+select pg_temp.ok((select property_video_job_temporal(rv_ids.job,(c#>>'{source,lease_token}')::uuid,rv_ids.attempt,repeat('e',64),pg_temp.report('{vertical_bob}',repeat('2',64)))=(select r from second_record)from resumed_claim,rv_ids),'after resume the first recorded verdict still wins');
+-- A lapsed lease refuses a write until the next claim.
+reset role;create temporary table live_lease as select(c#>>'{source,lease_token}')::uuid lease from resumed_claim;grant select on live_lease to service_role;set local role service_role;
 reset role;update property_video_job_sources s set lease_until=now()-interval'1 second'from rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt;set local role service_role;
-select pg_temp.refuse($q$select property_video_job_temporal(job,lease,attempt,repeat('e',64),pg_temp.report('{}',repeat('3',64)))from rv_ids$q$,'RP409:','lapsed review lease cannot record');
+select pg_temp.refuse($q$select property_video_job_temporal(job,(select lease from live_lease),attempt,repeat('e',64),pg_temp.report('{}',repeat('3',64)))from rv_ids$q$,'RP409:','lapsed review lease cannot record');
 select pg_temp.ok((select s.temporal=(select r from second_record)from property_video_job_sources s,rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt),'lapsed-lease refusal recorded nothing');
 -- The retry path keeps the superseded attempt's verdict in its archived prior_source; a fresh attempt records anew.
 select pg_temp.ok((select(to_jsonb(s)-'quality_retry_history')?'temporal'from property_video_job_sources s,rv_ids where s.job_id=rv_ids.job and s.attempt_id=rv_ids.attempt),'prior_source snapshots carry the recorded verdict');

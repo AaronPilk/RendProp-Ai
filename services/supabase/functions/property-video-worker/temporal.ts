@@ -6,10 +6,12 @@
 // `temporal_qc`. The worker asks for it on every steady-profile shot, verifies
 // the report names this exact versioned limit set, records it on the shot
 // through property_video_job_temporal, and only then lets the existing paid
-// drift QC decide. No report, a malformed report, or foreign limits HOLD the
-// shot: the qc callback is refused, the CPU lease lapses and the next extract
-// repeats the measurement; nothing is published and nothing is bought.
-// Legacy and v1 jobs never request a report and never require one.
+// drift QC decide. No report, a malformed report, foreign limits, or a
+// bob/sway/cadence-only failure HOLD the shot through the existing CPU review
+// pause (property_video_job_failure 'cpu_extract_failed': two more immediate
+// extracts, then a resumable quality pause with the paid clip retained);
+// nothing is published and nothing is bought. Legacy and v1 jobs never request
+// a report and never require one.
 import{isSteadyPropertyVideoProfile}from'../ai-video/property-video-quality.ts';
 export const TEMPORAL_QC_PROFILE='temporal-motion-v2'as const;
 /** Mirror of motion_qc.FINISHED_LIMITS. Change both or the worker holds every steady shot. */
