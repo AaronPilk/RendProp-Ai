@@ -30,3 +30,15 @@ that plateau; it establishes neither its cause nor a repair. Current full CI and
 a fresh Studio build are still required. Optional-mix tests use two-second clips;
 the maximum 180-second envelope allocation is source-bounded, not benchmarked.
 No paid generation, provider activation or release occurred.
+
+The next coherent CI also observes native browser audio spans around its actual
+first freeze/MP4 case. This test-only observer leaves the original six cases,
+assertions, product clocks and refusal outcomes intact. It has a bounded native
+buffer, stream and event count; parsing occurs after capture. The sanitized
+receipt requires a native clock marker and bounded page-time bracket before
+claiming usable alignment. Missing categories, markers or complete data remain
+explicitly incomplete. Raw trace bytes stay local and are not included by the
+current CI artifact patterns. Syntax, 24 parser checks and three intended
+omission controls pass; actual native transport is unexecuted at this checkpoint.
+Evidence: external `build88-startup-native-trace-observer/REVIEW-READY-V2.json`
+(`f633f033`). A passing observed export still cannot explain the earlier stall.

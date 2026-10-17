@@ -133,8 +133,11 @@ selected runtime version probe and SLSA descriptor are not a complete installed
 Python/OS inventory. No package was installed or automatically upgraded.
 
 Evidence: `/Volumes/Rendprop Files/Builds/Active/build88-o12-deno-installed-image-feasibility/FEASIBILITY.md`
-(`b1391069`) and the exact query result (`1b4f12ae`). A metadata-only image
-inventory plan is prepared but remains unexecuted at this checkpoint. O12 stays
-open for the broader scopes named above.
+(`b1391069`) and the exact query result (`1b4f12ae`). The reviewed metadata-only capture subsequently ran once against exactb402:
+3 Python distributions and295 installed Debian records; source/image checks
+remain exact and the initially-Stopped VM is restored. Receiptff9cee97,
+inventory16029c7c. No package was installed, pulled or imported by the collector.
+Installed-scope advisory classification/query is still pending. O12 stays open
+for the broader scopes named above.
 This is reported-range reconciliation, not a complete transitive Python/Deno/OS,
 publisher, license or arbitrary-code audit. Retain those open scopes.
