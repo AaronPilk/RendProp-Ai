@@ -80,10 +80,13 @@ try:
     run('facts-prerequisite-replay', [*psql, '-q', '-1', '-f', FACTS_PREREQUISITE])
     run('floorplan-prerequisite-replay', [*psql, '-q', '-1', '-f', FLOORPLAN_PREREQUISITE])
     run('terminal-replay', [*psql, '-q', '-1', '-f', TERMINAL])
-    # Newer gallery upload authority trips this guard before the render guard.
-    # Require the exact current refusal, never an unrelated migration error.
+    # The library migration pins several newer authorities in file order. Since
+    # 20261017115012 (pipeline cost binding) patches the serving ceiling body,
+    # its serving_ceiling_spent_cents pin (line ~1022) trips before the gallery
+    # upload pin (reserve_upload_assets, line ~1416) and the render guard.
+    # Require the exact current first refusal, never an unrelated migration error.
     run('superseded-library-replay-refused', [*psql, '-q', '-1', '-f', LIBRARY_AUTHORITY],
-        refuses='Review changed function reserve_upload_assets(uuid,jsonb)')
+        refuses='Review changed function serving_ceiling_spent_cents(uuid,timestamp with time zone,timestamp with time zone)')
     run('restore-current-measurement-definitions', [*psql, '-q', '-1'], current_definitions)
     assert run('library-catalog-after-replay', [*psql, '-Atq'], catalog) == final_catalog
     receipt['finalLibraryBodiesAndAuthorityPreserved'] = True
