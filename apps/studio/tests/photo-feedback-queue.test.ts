@@ -210,26 +210,38 @@ test("feedback_exists adopts the existing key and resends only a different verdi
   } finally { g.dispose(); }
 });
 
-test("offline feedback waits, then flushes exactly once on the online event", async () => {
+test("offline feedback waits; the online and visible events alone deliver it, once", async () => {
   const f = fixture(), page = new EventTarget(), doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
   const globals = globalThis as unknown as Record<string, unknown>, saved = ["addEventListener", "removeEventListener", "document"].map(name => globals[name]);
   Object.assign(globals, { addEventListener: page.addEventListener.bind(page), removeEventListener: page.removeEventListener.bind(page), document: doc });
+  // Wait for a delivery the event started, without calling flush() ourselves.
+  const until = async (done: () => boolean) => { for (let tries = 0; !done(); tries++) { assert(tries < 200, "the event did not deliver the queued item"); await new Promise(resolve => setTimeout(resolve, 10)); } };
+  const idle = () => new Promise(resolve => setTimeout(resolve, 100));
   try {
     await f.open();
     f.server.setMode("down");
-    f.queue.start(); await f.queue.flush();
+    f.queue.start();
     f.queue.submit({ provenance_id: P1, output_sha256: SHA1, verdict: "needs_work", reasons: ["changed_permanent_features"] }); await f.queue.flush();
     assert.equal(f.server.requests.length, 0); assert.equal(f.queue.entry(P1)!.state, "queued"); assert.equal(f.queue.waiting(), true);
     f.server.setMode("up");
-    page.dispatchEvent(new Event("online")); await f.queue.flush();
-    assert.equal(feedbackPosts(f).length, 1); assert.equal(f.queue.entry(P1)!.state, "sent");
-    doc.dispatchEvent(new Event("visibilitychange")); page.dispatchEvent(new Event("online")); await f.queue.flush();
-    assert.equal(feedbackPosts(f).length, 1, "later triggers find nothing left to send");
-    f.queue.dispose(); f.queue.submit({ provenance_id: P2, output_sha256: SHA2, verdict: "useful", reasons: [] }); page.dispatchEvent(new Event("online")); await f.queue.flush();
-    assert.equal(feedbackPosts(f).length, 1, "a disposed queue stops listening and sending");
+    page.dispatchEvent(new Event("online"));
+    await until(() => f.queue.entry(P1)!.state === "sent");
+    assert.equal(feedbackPosts(f).length, 1);
+    f.server.setMode("down");
+    f.queue.submit({ provenance_id: P2, output_sha256: SHA2, verdict: "useful", reasons: [] }); await f.queue.flush();
+    assert.equal(f.queue.entry(P2)!.state, "queued");
+    f.server.setMode("up"); doc.visibilityState = "hidden"; doc.dispatchEvent(new Event("visibilitychange")); await idle();
+    assert.equal(f.queue.entry(P2)!.state, "queued", "a hidden tab does not flush");
+    doc.visibilityState = "visible"; doc.dispatchEvent(new Event("visibilitychange"));
+    await until(() => f.queue.entry(P2)!.state === "sent");
+    page.dispatchEvent(new Event("online")); doc.dispatchEvent(new Event("visibilitychange")); await idle();
+    assert.equal(feedbackPosts(f).length, 2, "each verdict was delivered once; later triggers find nothing to send");
+    f.queue.dispose(); recordFeedback(f.storage, f.scope, { provenance_id: HISTORICAL, verdict: "useful", reasons: [] });
+    page.dispatchEvent(new Event("online")); doc.dispatchEvent(new Event("visibilitychange")); await idle();
+    assert.equal(feedbackPosts(f).length, 2, "a disposed queue stops listening and sending");
   } finally {
-    ["addEventListener", "removeEventListener", "document"].forEach((name, index) => { globals[name] = saved[index]; });
     f.dispose();
+    ["addEventListener", "removeEventListener", "document"].forEach((name, index) => { globals[name] = saved[index]; });
   }
 });
 
@@ -301,5 +313,17 @@ test("a late retry never regresses a newer verdict stored under the same key", a
     const stored = f.queue.entry(P1)!, row = f.server.rows.get(`${ACTOR}:${P1}`)!;
     assert.deepEqual([stored.state, stored.body.revision, stored.body.verdict, stored.body.note, stored.body.client_key], ["sent", 7, "needs_work", "Seen on the phone", item.body.client_key]);
     assert.deepEqual([row.revision, row.revision_count, row.verdict], [7, 2, "needs_work"], "the replayed retry changed nothing on the server");
+  } finally { f.dispose(); }
+});
+
+test("a submission made while an empty pass is starting is delivered by that pass", async () => {
+  const f = fixture();
+  try {
+    await f.open();
+    const pass = f.queue.flush();
+    f.queue.submit({ provenance_id: P1, output_sha256: SHA1, verdict: "useful", reasons: [] });
+    assert.equal(f.queue.flush(), pass, "a request during a pass joins it");
+    await pass;
+    assert.equal(f.queue.entry(P1)!.state, "sent"); assert.equal(feedbackPosts(f).length, 1);
   } finally { f.dispose(); }
 });

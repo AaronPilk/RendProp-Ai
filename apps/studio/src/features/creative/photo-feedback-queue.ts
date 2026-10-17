@@ -136,19 +136,25 @@ export function createPhotoFeedbackQueue(services: Pick<StudioServices, "api" | 
     if (running) { again = true; return running; }
     cancel();
     return running = (async () => {
+      // Yield first so `running` is set before the pass begins. A flush requested
+      // during the pass is picked up by its loop; `running` clears in the same step
+      // as the last check, so a later request always starts a new pass.
+      await null;
       let outcome: Outcome = "sent", stop = false;
-      do {
-        again = false;
-        for (const key of queuedFeedback(storage, scope)) {
-          if (!current()) return;
-          // An item neither delivered nor refused ends the pass: the rest would most
-          // likely fail the same way, so one trigger costs at most one such request.
-          if (stop = (outcome = await deliver(key)) === "retry" || outcome === "wait") break;
-        }
-      } while (again && !stop && current());
-      failures = stop ? failures + 1 : 0;
-      if (outcome === "retry" && current() && navigator.onLine !== false) cancel = schedule(Math.min(300_000, 2_500 * 2 ** failures), () => void flush());
-    })().catch(() => { /* Items stay queued for the next trigger. */ }).finally(() => { running = null; notify(); });
+      try {
+        do {
+          again = false;
+          for (const key of queuedFeedback(storage, scope)) {
+            if (!current()) return;
+            // An item neither delivered nor refused ends the pass: the rest would most
+            // likely fail the same way, so one trigger costs at most one such request.
+            if (stop = (outcome = await deliver(key)) === "retry" || outcome === "wait") break;
+          }
+        } while (again && !stop && current());
+        failures = stop ? failures + 1 : 0;
+        if (outcome === "retry" && current() && navigator.onLine !== false) cancel = schedule(Math.min(300_000, 2_500 * 2 ** failures), () => void flush());
+      } catch { /* Items stay queued for the next trigger. */ } finally { running = null; notify(); }
+    })();
   }
   return {
     entry: (provenance: string) => load(storage, scope, scoped(scope) + provenance.toLowerCase()),
