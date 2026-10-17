@@ -1,6 +1,6 @@
 import type { Listing, ListingMedia, Workspace } from "../../data/contracts";
 import type { FeatureId } from "../home/features";
-import { canPublishAsset, tourLinks } from "./model";
+import { canPublishAsset, tourLinks, websiteDesignPreviews } from "./model";
 import type { ListingState } from "./model";
 
 export type ListingDestination = { tab: "media" | "tour" | "details" } | { feature: FeatureId } | { refresh: true };
@@ -13,6 +13,8 @@ export type ListingFinish = {
   next: Action | null;
   steps: ListingFinishStep[];
   publishedLinks: ReturnType<typeof tourLinks>;
+  /** Design previews for the published slug (W5); never an entitlement. */
+  designPreviews: ReturnType<typeof websiteDesignPreviews>;
   progress: number | null;
   checking: boolean;
 };
@@ -34,11 +36,11 @@ export function listingFinish(input: {
   const tab = (label: string, value: "media" | "tour" | "details"): Action => ({ label, destination: { tab: value } });
   if (input.loadFailed || state.nextOffset !== null || media?.nextOffset != null) return {
     title: "Check the latest property status", detail: "Some property information could not be loaded. Refresh before deciding what is ready to share.",
-    next: { label: "Reload listing status", destination: { refresh: true } }, steps: [], publishedLinks: null, progress: null, checking: false,
+    next: { label: "Reload listing status", destination: { refresh: true } }, steps: [], publishedLinks: null, designPreviews: null, progress: null, checking: false,
   };
   if (input.loading || !media) return {
     title: "Checking your saved work…", detail: "Loading this property's uploads, results and published tours.",
-    next: null, steps: [], publishedLinks: null, progress: null, checking: true,
+    next: null, steps: [], publishedLinks: null, designPreviews: null, progress: null, checking: true,
   };
   const assets = state.assets.filter(asset => asset.uploaded === true && asset.id !== listing.details.floorplan_asset_id);
   const photoIds = new Set([...assets.filter(asset => asset.kind === "photo").map(asset => asset.id), ...media.photos.filter(photo => photo.id !== listing.details.floorplan_asset_id).map(photo => photo.id)]);
@@ -84,5 +86,5 @@ export function listingFinish(input: {
     detail = links ? "Its existing tour is still published. Review its sharing options or update the property status in Details." : "Your saved work remains available. Review the property status before creating new marketing.";
     next = links ? steps[4].action : tab("View property status", "details");
   }
-  return { title, detail, next, steps, publishedLinks: links, progress, checking: false };
+  return { title, detail, next, steps, publishedLinks: links, designPreviews: latestPublished ? websiteDesignPreviews(latestPublished.slug) : null, progress, checking: false };
 }
