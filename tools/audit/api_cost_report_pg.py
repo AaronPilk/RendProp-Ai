@@ -144,9 +144,12 @@ create temporary table a_intent as select public.provider_attempt_begin('{ACTOR}
 create temporary table a_lost as select public.provider_attempt_begin('{ACTOR}',(select org from scope),repeat('2',64),repeat('a',64))r;
 select public.provider_attempt_finish('{ACTOR}',(select org from scope),(select(r->>'attempt_id')::uuid from a_lost),'transport_unknown',null,null,null,'not_booked');
 create temporary table a_hit as select public.provider_attempt_begin('{ACTOR}',(select org from scope),repeat('3',64),repeat('a',64))r;
-select public.provider_attempt_finish('{ACTOR}',(select org from scope),(select(r->>'attempt_id')::uuid from a_hit),'hit',200,'0f1e2d3c-4b5a-4968-8776-655443322110',7,'recorded');
+-- Same order as the property handler: the ledger row is written while the
+-- attempt is still an intent, then the attempt is finished as recorded. The
+-- liability freeze (20261017110114) refuses a cost added to a terminal attempt.
 insert into public.cost_ledger(org_id,feature,provider,model,units,unit_cost_cents,total_cents,meta)
  select org,'property_lookup','rentcast','properties',1,7,7,jsonb_build_object('result','hit','provider_attempt_id',(select r->>'attempt_id' from a_hit),'cost_basis','configured_per_call_estimate') from scope;
+select public.provider_attempt_finish('{ACTOR}',(select org from scope),(select(r->>'attempt_id')::uuid from a_hit),'hit',200,'0f1e2d3c-4b5a-4968-8776-655443322110',7,'recorded');
 create temporary table a_miss as select public.provider_attempt_begin('{ACTOR}',(select org from scope),repeat('4',64),repeat('a',64))r;
 select public.provider_attempt_finish('{ACTOR}',(select org from scope),(select(r->>'attempt_id')::uuid from a_miss),'no_record',404,null,7,'unconfirmed');
 create temporary table a_err as select public.provider_attempt_begin('{OTHER}',(select other_org from scope),repeat('5',64),repeat('a',64))r;
