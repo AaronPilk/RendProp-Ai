@@ -40,7 +40,7 @@ export async function beginPropertyAttempt(admin: Authority, actor: string, org:
 }
 
 /** "No such function" is the one reply that proves nothing was written: the
- * nine-argument finish (20261017170000) is absent, so the pre-reference RPC
+ * nine-argument finish (20261017190000) is absent, so the pre-reference RPC
  * is the schema's only writer. PostgREST reports PGRST202; a direct SQL
  * shim reports SQLSTATE 42883. Any other error is never retried. */
 function referenceOverloadMissing(error: unknown): boolean {

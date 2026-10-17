@@ -44,7 +44,7 @@ MIG = SQL / "migrations/20261016192846_provider_attempt_receipts.sql"
 # Supplier reference column + nine-argument finish; the eight-argument RPC
 # becomes a wrapper. Replaying MIG restores the original eight-argument body,
 # so the reference migration is replayed right after it, as production would.
-REF = SQL / "migrations/20261017170000_provider_attempt_supplier_reference.sql"
+REF = SQL / "migrations/20261017190000_provider_attempt_supplier_reference.sql"
 FIX = SQL / "tests/provider_attempt_receipts.sql"
 MIGRATIONS = sorted((SQL / "migrations").glob("*.sql"))
 SOURCES = [*MIGRATIONS, SQL / "tests/ci-bootstrap.sql", FIX, Path(__file__).resolve()]

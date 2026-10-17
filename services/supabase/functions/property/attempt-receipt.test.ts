@@ -43,7 +43,7 @@ async function fixture() {
       }
       if (name === "provider_attempt_finish") {
         if (state.finishFailure) return { data: null, error: { message: "lost-terminal-write" } };
-        // A schema before20261017170000 has only the eight-argument RPC: PostgREST answers PGRST202 for nine named keys.
+        // A schema before 20261017190000 has only the eight-argument RPC: PostgREST answers PGRST202 for nine named keys.
         if (state.referenceOverloadMissing && "p_provider_request_ref" in args) return { data: null, error: { code: "PGRST202", message: "Could not find the function public.provider_attempt_finish(p_actor, p_attempt, p_estimated_cents, p_http_status, p_ledger_status, p_org, p_outcome, p_provider_request_id, p_provider_request_ref) in the schema cache" } };
         const row = [...state.receipts.values()].find((r: any) => r.attempt_id === args.p_attempt);
         Object.assign(row, { outcome: args.p_outcome, status: args.p_http_status, estimatedCents: args.p_estimated_cents, ledgerStatus: args.p_ledger_status, requestId: args.p_provider_request_id, requestRef: "p_provider_request_ref" in args ? args.p_provider_request_ref : "absent" });
