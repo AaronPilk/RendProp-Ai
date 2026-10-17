@@ -118,6 +118,77 @@ class ClosedMotionDiagnostics(unittest.TestCase):
                 motion_qc.native_fps(bad)
 
 
+class VersionedLimitsAndWorkerReport(unittest.TestCase):
+    # property-video-worker/temporal.ts pins this exact text and SHA; the worker
+    # holds every steady shot whose report names any other limit set.
+    WORKER_PIN = "244436b765886f537bd6d3b835dc42ca06cc758dc1a3b796028aae448b21d555"
+
+    def test_limits_canonical_text_and_sha_match_the_worker_pin(self):
+        text = motion_qc.limits_canonical()
+        self.assertEqual(text.split("\n")[0], "bob_pp_px=1.2")
+        self.assertEqual(text.split("\n"), sorted(text.split("\n")))
+        self.assertEqual(len(text.split("\n")), len(motion_qc.FINISHED_LIMITS))
+        self.assertEqual(motion_qc.limits_canonical({"a": 1.0, "b": .4}), "a=1\nb=0.4")  # %g parity with JS String(n)
+        self.assertEqual(motion_qc.LIMITS_SHA256, self.WORKER_PIN)
+        self.assertNotEqual(motion_qc.limits_sha256({**motion_qc.FINISHED_LIMITS, "bob_pp_px": 1.3}), self.WORKER_PIN)
+
+    def test_measure_reports_verdict_metrics_and_the_limit_version(self):
+        with tempfile.TemporaryDirectory(prefix="motion-report-") as directory:
+            root = Path(directory)
+            glide = shot(root / "glide.mp4", (640, 360), pan=.4, seed=91)
+            report = motion_qc.measure(glide)
+            self.assertEqual(set(report), {"metrics", "verdict", "limits"})
+            self.assertEqual(report["limits"], {"profile": motion_qc.PROFILE, "sha256": self.WORKER_PIN})
+            self.assertEqual(report["verdict"]["profile"], motion_qc.PROFILE)
+            self.assertEqual(report["metrics"]["profile"], motion_qc.PROFILE)
+            self.assertTrue(report["verdict"]["pass"], report["verdict"])
+            bob = shot(root / "bob.mp4", (640, 360), pan=.4, bob=6, seed=92)
+            failed = motion_qc.measure(bob)
+            self.assertFalse(failed["verdict"]["pass"])
+            self.assertTrue({"vertical_bob", "walking_cadence"} & set(failed["verdict"]["reasons"]), failed["verdict"])
+            self.assertEqual(failed["limits"]["sha256"], self.WORKER_PIN)
+            self.assertNotIn("series", failed)
+
+    def test_extract_task_with_temporal_qc_returns_frames_and_the_report_the_worker_records(self):
+        # The actual renderer extract step with a closed local download double:
+        # a steady-profile task (temporal_qc) adds `temporal`; a v1 task does not.
+        import datetime
+        import hashlib
+        import renderer
+        with tempfile.TemporaryDirectory(prefix="motion-extract-") as directory:
+            root = Path(directory)
+            clip = shot(root / "glide-1080.mp4", (1920, 1080), pan=.5, seed=93)
+            sha = hashlib.sha256(clip.read_bytes()).hexdigest()
+            expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).isoformat()
+            job, attempt, lease = ("30000000-0000-4000-8000-00000000000%d" % i for i in (1, 2, 3))
+            task = {"state": "quality_review", "action": "extract_frames", "job_id": job, "attempt_id": attempt, "lease_token": lease,
+                    "source": {"url": "https://media.invalid/photo", "bytes": 1, "sha256": "a" * 64},
+                    "clip": {"url": "https://media.invalid/clip", "bytes": clip.stat().st_size, "sha256": sha}, "expires_at": expires}
+
+            def local_download(item, target, hosts, **_):
+                self.assertEqual(item["url"], "https://media.invalid/clip")
+                target.write_bytes(clip.read_bytes())
+                return sha
+            for steady in (True, False):
+                with self.subTest(steady=steady):
+                    full = {**task, **({"temporal_qc": {"profile": "temporal-motion-v2", "aspect": "16:9"}} if steady else {})}
+                    renderer.validate_task(full)
+                    work = root / ("work-steady" if steady else "work-v1")
+                    work.mkdir()
+                    with patch("renderer.download", side_effect=local_download):
+                        result = renderer.extract(full, work, {"media.invalid"})
+                    self.assertEqual([result["job_id"], result["attempt_id"], result["lease_token"], result["clip_sha256"]], [job, attempt, lease, sha])
+                    self.assertEqual(len(result["frames"]), 3)
+                    self.assertEqual((result["width"], result["height"]), (1920, 1080))
+                    if steady:
+                        self.assertEqual(set(result["temporal"]), {"metrics", "verdict", "limits"})
+                        self.assertEqual(result["temporal"]["limits"]["sha256"], self.WORKER_PIN)
+                        self.assertTrue(result["temporal"]["verdict"]["pass"], result["temporal"]["verdict"])
+                        self.assertEqual(result["temporal"]["metrics"]["frame"], [1920, 1080])
+                    else:
+                        self.assertNotIn("temporal", result)
+
+
 class EncodedDiagnosticDefects(unittest.TestCase):
     def test_encoded_zoom_pumping_and_majority_freeze_are_refused(self):
         # Small encoded textures test the detector in final-frame pixels. They
