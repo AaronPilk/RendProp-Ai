@@ -3154,8 +3154,9 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const cfg = {
     slug: tour.slug,
     listingVideo: primaryVideo,
-    // Premium designs present the video as a film (W1): loading-only status copy.
-    filmHero: !!primaryVideo && premiumPresentation,
+    // Premium designs present the video as a film (W1): loading-only status
+    // copy. Omitted (not false) so Classic inline config stays byte-identical.
+    ...(primaryVideo && premiumPresentation ? { filmHero: true } : {}),
     preview,
     functionsBase,
     anonKey: anonKey || "",
