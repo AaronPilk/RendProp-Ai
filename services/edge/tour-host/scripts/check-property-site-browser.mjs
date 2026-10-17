@@ -102,7 +102,9 @@ try {
         const media = document.querySelector(".property-video-stage") || document.querySelector(".listing-cover > img,.property-hero-media > img");
         const lum = color => color.match(/[\d.]+/g).slice(0,3).map(Number).map(value => { value /= 255; return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4; }).reduce((sum,value,index) => sum + value * [.2126,.7152,.0722][index],0);
         const watchContrast = [...document.querySelectorAll("#listing-nav .watch-button")].map(button => { const style = getComputedStyle(button); const [hi,lo] = [lum(style.color),lum(style.backgroundColor)].sort((a,b) => b-a); return (hi+.05)/(lo+.05); });
-        return { media:box(media),copy:box(document.querySelector(".property-hero-copy")),title:box(document.querySelector(".property-hero-title")),nav:box(document.querySelector("#listing-nav")),overflow:document.documentElement.scrollWidth > innerWidth,bodyText:document.body.innerText,watchContrast,contain:document.querySelector("#property-video") ? getComputedStyle(document.querySelector("#property-video")).objectFit : null };
+        const stage = document.querySelector(".property-video-stage"), status = document.getElementById("property-video-status"), play = document.getElementById("property-video-play");
+        const hero = stage ? { film:stage.classList.contains("property-film"),text:stage.textContent.replace(/\s+/g," ").trim(),status:status.textContent,statusLive:status.getAttribute("aria-live"),statusRole:status.getAttribute("role"),label:stage.querySelector(".property-film-label")?.textContent ?? null,play:play.textContent.replace(/\s+/g," ").trim(),playHidden:play.hidden,videoLabel:document.getElementById("property-video").getAttribute("aria-label"),preload:document.getElementById("property-video").getAttribute("preload"),src:document.getElementById("property-video").getAttribute("src"),backdrop:stage.querySelectorAll(".property-film-backdrop").length } : null;
+        return { media:box(media),copy:box(document.querySelector(".property-hero-copy")),title:box(document.querySelector(".property-hero-title")),nav:box(document.querySelector("#listing-nav")),overflow:document.documentElement.scrollWidth > innerWidth,bodyText:document.body.innerText,watchContrast,contain:document.querySelector("#property-video") ? getComputedStyle(document.querySelector("#property-video")).objectFit : null,hero };
       });
       measurements.push({ theme,width,presentation,composition });
       const tag = `${theme}-${width}-${presentation}`;
@@ -120,6 +122,28 @@ try {
       }
       check(!composition.overflow,tag+": no horizontal overflow");
       if(presentation === "video") check(composition.contain === "contain" && Math.abs(composition.media.width/composition.media.height-16/9)<.01,tag+": full16:9 film remains contain, independent of page height");
+      // W1 hero copy per design. Premium designs present a film (running time,
+      // one quiet play mark, loading-only status); Classic keeps its exact copy.
+      if (presentation === "video") {
+        const hero = composition.hero;
+        check(hero && hero.statusRole === "status" && hero.statusLive === "polite" && hero.preload === "none" && hero.src === null && !hero.playHidden, tag+": every design keeps explicit opt-in play and the polite status region");
+        if (theme === "basic") {
+          check(!hero.film && hero.backdrop === 0 && hero.label === null, tag+": Classic hero is not the premium film presentation");
+          check(hero.status === "1920 × 1080 · Select Play to load the video." && hero.play === "Play property video ▶" && hero.videoLabel === "Property video for 123 Synthetic Lane, Example, FL 33000", tag+": Classic hero keeps its exact dimension/status copy and play label");
+        } else {
+          check(hero.film && hero.backdrop === 1, tag+": premium hero is the film presentation with a full-bleed poster backdrop");
+          check(!/\d\s*×\s*\d/.test(hero.text) && !hero.text.includes("Select Play") && !hero.text.includes("1920"), tag+": premium hero shows no pixel-dimension string");
+          check(hero.label === "Property film · 0:30" && hero.status === "" && hero.play === "Play the film" && hero.videoLabel === "Property film for 123 Synthetic Lane, Example, FL 33000", tag+": premium hero reads as a film with its running time, one play control and a silent status until loading");
+          const settled = await page.evaluate(async () => {
+            await Promise.all(document.getAnimations().map(a => a.finished.catch(() => {})));
+            const stage = document.querySelector(".property-video-stage"), video = document.getElementById("property-video"), play = document.getElementById("property-video-play");
+            return { stage:getComputedStyle(stage).opacity, stageTransform:getComputedStyle(stage).transform, video:getComputedStyle(video).transform, play:getComputedStyle(play).opacity, label:getComputedStyle(stage.querySelector(".property-film-label")).opacity, reduced:matchMedia("(prefers-reduced-motion: reduce)").matches };
+          });
+          measurements.push({ theme, width, presentation, settled });
+          const identity = value => value === "none" || value === "matrix(1, 0, 0, 1, 0, 0)";
+          check(settled.stage === "1" && identity(settled.stageTransform) && identity(settled.video) && settled.play === "1" && settled.label === "1", tag+": film arrive motion settles to fully visible, untransformed media");
+        }
+      }
       if (theme !== "basic") presentationChecks.push([composition.watchContrast.length > 0 && composition.watchContrast.every(ratio => ratio >= 4.5),tag+": film navigation text meets 4.5:1 contrast with either primary media"]);
       if (theme === "signature-estate") presentationChecks.push([composition.media.bottom <= composition.copy.y+1,tag+": Signature leads with complete media before editorial copy"]);
       if (theme === "coastal-luxe") {
@@ -340,8 +364,9 @@ try {
     check(await page.locator(".property-photo noscript img").count()===PHOTOS.length && await page.locator(".property-photo noscript img").first().isVisible(),theme+": existing noscript master images remain available");
     await page.goto(origin+"/property/synthetic-site",{waitUntil:"networkidle"});
     const session=await context.newCDPSession(page);await session.send("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"reduce"},{name:"prefers-reduced-transparency",value:"reduce"}]});
-    const fallback=await page.locator("#listing-nav").evaluate(el=>({background:getComputedStyle(el).backgroundColor,blur:getComputedStyle(el).backdropFilter,animation:getComputedStyle(document.querySelector(".property-hero-copy")).animationName,opacity:getComputedStyle(document.querySelector(".property-hero-copy")).opacity}));
+    const fallback=await page.locator("#listing-nav").evaluate(el=>({background:getComputedStyle(el).backgroundColor,blur:getComputedStyle(el).backdropFilter,animation:getComputedStyle(document.querySelector(".property-hero-copy")).animationName,opacity:getComputedStyle(document.querySelector(".property-hero-copy")).opacity,film:[".property-video-stage.property-film",".property-video-stage.property-film > video","#property-video-play",".property-film-label"].map(selector=>{const node=document.querySelector(selector);return node?getComputedStyle(node).animationName+"/"+getComputedStyle(node).opacity+"/"+getComputedStyle(node).transitionDuration:"missing";})}));
     check(fallback.blur==="none"&&!fallback.background.startsWith("rgba")&&fallback.animation==="none"&&fallback.opacity==="1",theme+": actual reduced-transparency/motion preferences keep opaque visible content");
+    check(fallback.film.length===4&&fallback.film.every(value=>value==="none/1/0s"),theme+": reduced motion removes every film hero animation and transition while keeping the poster, play mark and running time fully visible");
     await page.screenshot({path:join(evidence,theme+"-390-long-no-price-no-script-opaque.png"),fullPage:true});
     await page.goto(origin+"/property/synthetic-site?preview_theme="+theme,{waitUntil:"networkidle"});
     check(await page.locator(".property-preview-banner").isVisible() && await page.locator("form").count()===0,theme+": actual design preview retains its label and omits enquiry");

@@ -15,11 +15,16 @@ const evidence=arg('--evidence')?resolve(arg('--evidence')):mkdtempSync(join(tmp
 mkdirSync(evidence,{recursive:true});
 const fault=arg('--fault')||null;
 assert.ok(!fault||['eager-media','no-controls','crop-master','preview-beacon','retain-master'].includes(fault));
+// The gate is H.264/AAC in the locked full Chromium. `--codec=vp9` exists only
+// so the same page/player assertions can run on a Linux Chromium without
+// proprietary codecs; the receipt records which master was used.
+const codec=arg('--codec')||'h264';
+assert.ok(['h264','vp9'].includes(codec),'codec is h264 (default gate) or vp9 (local codec-free Chromium)');
 const { chromium } = await import(pathToFileURL(arg('--playwright')||resolve(ROOT,'../../../apps/studio/node_modules/@playwright/test/index.mjs')).href);
 const sourceHashes=Object.fromEntries(readdirSync(join(ROOT,'src')).filter(x=>x.endsWith('.ts')).map(x=>['src/'+x,createHash('sha256').update(readFileSync(join(ROOT,'src',x))).digest('hex')]));
 sourceHashes['scripts/check-property-video-browser.mjs']=createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
 const moviePath=join(evidence,'SYNTHETIC-NOT-A-LISTING-1080P.mp4');
-execFileSync('ffmpeg',['-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc2=size=1920x1080:rate=24:duration=4','-f','lavfi','-i','sine=frequency=440:sample_rate=48000:duration=4','-c:v','libx264','-preset','ultrafast','-crf','30','-g','24','-pix_fmt','yuv420p','-c:a','aac','-b:a','96k','-movflags','+faststart','-shortest',moviePath],{timeout:60000});
+execFileSync('ffmpeg',['-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc2=size=1920x1080:rate=24:duration=4','-f','lavfi','-i','sine=frequency=440:sample_rate=48000:duration=4',...(codec==='vp9'?['-c:v','libvpx-vp9','-deadline','realtime','-cpu-used','8','-crf','40','-b:v','0','-g','24','-pix_fmt','yuv420p','-c:a','libopus','-b:a','96k']:['-c:v','libx264','-preset','ultrafast','-crf','30','-g','24','-pix_fmt','yuv420p','-c:a','aac','-b:a','96k']),'-movflags','+faststart','-shortest',moviePath],{timeout:60000});
 const movie=readFileSync(moviePath),load=buildSrc('property-video-browser-'+process.pid);
 const { renderTourPage,unbrandedSelfCheck }=await load('player');
 const { buildDemoTour }=await load('demo');
@@ -81,18 +86,33 @@ try{
   check(Math.abs(layout.width/layout.height-16/9)<.01&&layout.fit==='contain','Complete landscape master retained at mobile width for '+theme);
   check(layout.body.includes('site-theme-'+theme),'Actual server style rendered for '+theme);measurements.push({theme,...layout});
   await page.screenshot({path:join(evidence,theme+'-mobile.png'),fullPage:false});
+  // W1: premium designs present a film (running time, quiet play mark, silent
+  // status until loading); Classic keeps its exact dimension/status copy.
+  const heroCopy=()=>page.evaluate(()=>{const stage=document.querySelector('.property-video-stage'),status=document.getElementById('property-video-status'),play=document.getElementById('property-video-play');return {film:stage.classList.contains('property-film'),text:stage.textContent.replace(/\s+/g,' ').trim(),status:status.textContent,live:status.getAttribute('aria-live'),label:stage.querySelector('.property-film-label')?.textContent??null,labelVisible:!!stage.querySelector('.property-film-label')&&getComputedStyle(stage.querySelector('.property-film-label')).display!=='none',play:play.textContent.replace(/\s+/g,' ').trim(),playHidden:play.hidden,mark:play.querySelectorAll('.property-film-play-mark').length,playing:stage.classList.contains('is-playing')};});
+  const idle=await heroCopy();measurements.push({theme,hero:'idle',...idle});
+  check(idle.live==='polite'&&!idle.playHidden,'Polite status region and visible explicit play for '+theme);
+  if(theme==='basic')check(!idle.film&&idle.status==='1920 × 1080 · Select Play to load the video.'&&idle.play==='Play property video ▶'&&idle.label===null,'Classic hero keeps its exact dimension/status copy');
+  else check(idle.film&&!/\d\s*×\s*\d/.test(idle.text)&&!idle.text.includes('Select Play')&&idle.label==='Property film · 0:04'&&idle.labelVisible&&idle.status===''&&idle.play==='Play the film'&&idle.mark===1,'Premium film hero shows running time, one play mark and no dimension string for '+theme);
   await page.locator(theme==='basic'?'#property-video-nav-play':'#property-video-play').click();
+  const loading=await heroCopy();measurements.push({theme,hero:'loading',...loading});
+  check(loading.playHidden&&(loading.playing||loading.status===(theme==='basic'?'Loading property video…':'Loading the film…')),'Status speaks only while loading for '+theme);
   await page.waitForFunction(()=>{const v=document.getElementById('property-video');return v.readyState>=2&&v.currentTime>0;});
   const playback=await page.locator('#property-video').evaluate(v=>({controls:v.controls,width:v.videoWidth,height:v.videoHeight,muted:v.muted,paused:v.paused,source:v.currentSrc}));
   check(playback.controls,'Native controls available for '+theme);
   check(playback.width===1920&&playback.height===1080,'Actual decoded 1080p master for '+theme);
   check(!playback.muted&&!playback.paused,'Explicit Play uses normal sound/playback for '+theme);
+  const live=await heroCopy();measurements.push({theme,hero:'playing',...live});
+  if(theme==='basic')check(live.playing&&live.status==='Property video · 1920 × 1080','Classic playing status keeps its dimension copy');
+  else check(live.playing&&live.status===''&&!live.labelVisible,'Premium film clears the status and caption so native controls stand alone for '+theme);
   await page.locator('#listing-nav .walkthrough-secondary').click();
   check(await page.locator('#property-video').evaluate(v=>v.paused),'Optional walkthrough pauses hero for '+theme);
   await page.locator('#flythrough-close').click();
   await page.evaluate(()=>dispatchEvent(new Event('pagehide')));
   check(await page.locator('#property-video').evaluate(v=>!v.getAttribute('src')&&v.preload==='none'),'Page lifecycle releases primary master for '+theme);
   check(await page.locator('#property-video-play').isVisible(),'Restored page can explicitly replay for '+theme);
+  const restored=await heroCopy();measurements.push({theme,hero:'restored',...restored});
+  if(theme==='basic')check(restored.status==='Select Play to load the property video.'&&restored.play==='Play property video ▶','Classic restored page keeps its exact replay copy');
+  else check(restored.status===''&&restored.play==='Play the film'&&restored.mark===1&&restored.labelVisible,'Premium restored page brings back the quiet play mark and running time without status noise for '+theme);
  }
  await page.goto(origin+'/property/synthetic-video?retry=1',{waitUntil:'networkidle'});
  await page.locator('#property-video-play').click();await page.waitForFunction(()=>document.getElementById('property-video-play').textContent==='Retry property video');
@@ -135,7 +155,7 @@ try{
  await page.goto(origin+'/u/synthetic-video',{waitUntil:'networkidle'});
  check(await page.locator('#property-video-play').isVisible()&&await page.locator('form').count()===0,'MLS retains normal property video without contact');
  check(errors.length===0,'No actual browser script errors');check(external.length===0,'No external template assets, fonts, trackers or provider requests');
- writeFileSync(join(evidence,'receipt.json'),JSON.stringify({passed:true,checks,measurements,sourceHashes,syntheticMovieSHA256:createHash('sha256').update(movie).digest('hex'),requests,errors,external,fault,scope:'Local Chromium + synthetic H.264/AAC; not phone/customer/live-generation proof'},null,2));
- console.log(`Property-video browser: ${checks.length} real-browser assertions passed; local 1080p master, mobile/desktop/preview/MLS; receipt ${evidence}`);
+ writeFileSync(join(evidence,'receipt.json'),JSON.stringify({passed:true,checks,measurements,sourceHashes,syntheticMovieSHA256:createHash('sha256').update(movie).digest('hex'),codec,requests,errors,external,fault,scope:codec==='h264'?'Local Chromium + synthetic H.264/AAC; not phone/customer/live-generation proof':'Local codec-free Chromium + synthetic VP9/Opus 1080p; player/copy proof only, NOT the H.264/AAC delivery gate'},null,2));
+ console.log(`Property-video browser: ${checks.length} real-browser assertions passed; local 1080p ${codec} master, mobile/desktop/preview/MLS; receipt ${evidence}`);
 }catch(error){writeFileSync(join(evidence,'failure.json'),JSON.stringify({passed:false,error:String(error),sourceHashes,requests,errors,external,fault},null,2));throw error;}
 finally{if(browser)await browser.close();if(server)await new Promise(resolve=>server.close(resolve));}
