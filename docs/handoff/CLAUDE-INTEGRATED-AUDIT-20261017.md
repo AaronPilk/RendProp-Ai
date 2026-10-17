@@ -114,3 +114,105 @@ of all 27 is still **unexecuted** until the next run.
   `run_deletion_handler_regression`, `run_backend_billing_authority`).
 - A verified source backup — scheduled for the first coherent green checkpoint
   (Phase 5), not before.
+
+---
+
+## 7. Update 2026-10-17 19:15Z — CI run 39055656587, production reconciliation, ordering
+
+Everything below was read from the live system or executed here; nothing is
+inferred from a chat transcript or screenshot.
+
+### 7.1 Hosted run 39055656587 at `b57ba713`
+
+Green: migrations, edge functions, Studio, UIKit, CPU/background (all 27
+renderer harnesses), Python workers, iOS static, upload-gateway, secret scan,
+dependency security (run 39055653756). Red: disposable PostgreSQL and
+tour-host. The audit job was still running when this was written; its result
+is recorded in `CLAUDE-CI-REPAIRS-20261017.md` once terminal.
+
+**Disposable PostgreSQL (job 117462974108) — legitimate guard-order change,
+not a defect.** `tools/audit/run_listing_measurement_cas.py` replays the
+superseded library migration `20261009192550` inside one transaction and
+requires an exact refusal. That migration pins newer authorities in file
+order: `serving_ceiling_spent_cents` at line 1022 (accepts `3e92a419`,
+`d053fe5b`) before `reserve_upload_assets` at line 1416. The pipeline cost
+binding (`20261017115012`) changes the ceiling body to `158bb63c`, so the
+replay is now refused at line 1022 instead of 1416. The refusal is the
+protection working: without it, the replay's `create or replace` at line 1024
+would silently revert the binding summand. Fix `f8b06420` pins the new exact
+first refusal string; the single-transaction rollback and the
+catalog-unchanged-after-restore assertions are untouched. Proven locally: the
+whole harness passes, and every later harness in that CI step (which hosted CI
+never reached) passes on the merged tree.
+
+**Tour-host (job 117462973869) — product guard refused correctly; hosted
+runner reliability issue, causality not yet established.**
+`apps/studio/tests/cloud-editor-browser.mjs:292` found no Download MP4 because
+the RecordingClock guard refused the 4 s agent export. The suite's own
+capture (`mediaTiming[1].clockRefusals[0]`) shows timeline and audio frozen
+together at 2.981333 s (143,104 samples = 1,118 render quanta at 48 kHz) while
+wall time went 3.0275 → 3.0763 → 3.1549 s (drift 0.046 / 0.095 / 0.174 s;
+guard = two consecutive readings over 2/30 s). The main thread kept sampling
+at 49–79 ms intervals (normal ≈ 35 ms): the audio render thread stopped, the
+page did not. Same family as run 39040282783. Runner: `VirtualMac2,1`, 3 vCPU,
+Apple Virtual Sound Device as default output; load average 7.85/7.25/7.62 in
+the same job three minutes earlier, right after HD master encoding. The editor
+export path (`src/editor/*`) is unchanged since `9670ddd`. Instrumentation
+added (tests only, `102219ca`, `ee39ca95`): runner facts, load + top-process
+snapshot (basename and %CPU only) before and after the export, the passive
+native webaudio render trace and the Atomics.wait Node probe around that one
+export. The page spin probe is excluded here because it costs ≈ 0.2 core on an
+already oversubscribed runner. No threshold, timeout, control or product code
+changed; a refusal still creates no download. Preserved receipts:
+`launch-evidence/.../tour-host/run39055656587/` and `STALL-LEDGER.md`.
+
+### 7.2 Production reconciliation (project `ymgqpbnjpztwjsyvceld`)
+
+The owner's screenshot ended mid-apply, so the live state was re-read before
+anything else. At 19:02:27Z: migration ledger 183 rows, latest
+`20261017175731 conservative_pipeline_cost_binding` (recorded once);
+`serving_ceiling_spent_cents` `158bb63c`, `serving_cost_finish` `46474c45`,
+`pipeline_record_provider_cost` `5500cfe7`, `pipeline_cost_covered_cents`
+`80187fb4` — identical to the 17:57:46Z post-apply readback and to the
+disposable-PG proof; `cost_ledger` 306 rows / 10471.2124 / digest `9aeb16c4…`
+and `serving_cost_reservations` 208 rows (2 uncertain) / digest `eb344146…`
+unchanged since the pre-apply readback; binding table 0 rows, RLS on, no
+policies, `service_role` SELECT only; 0 `pipeline:%` ledger rows. Conclusion:
+the migration committed exactly once; no reapply and no rollback. **SQL
+capability deployed; writer integration not live**: the only caller is
+`services/pipeline` via the render worker, which has no deployment (none of the
+31 deployed edge functions is a worker). E3/E8 are not live (8-arg
+`provider_attempt_finish` still `7516d4d9`, `app_video_cost_reserve` still
+`9828980a`). Evidence: `b-lane-evidence/production/{PRE-APPLY-READBACK.json,
+LIVE-LEDGER-20261017T175508Z.json, PREFLIGHT-LEDGER-20261017T1755Z.json,
+POST-APPLY-READBACK.json}`.
+
+### 7.3 Migration order now matches production apply order
+
+Production recorded the binding as `20261017175731`, and
+`tools/deploy/check-migration-ledger.mjs` refuses an unapplied file older than
+a live record. `11cce8aa` renames the unapplied E3/E8 files to
+`20261017190000_provider_attempt_supplier_reference.sql` and
+`20261017190100_app_video_rp402_copy.sql` (content byte-identical, sha256
+`15114cb3…` / `4af2aa46…`). Re-proven after the rename: receipts harness 42/42
+fresh and replay with 8 compiled controls and the 6-session race;
+launch_blockers; RentCast binding (legacy phase); api_cost_report; the
+db-migrations mirror (186 migrations, 270 invariants fresh and after replay).
+The video lane's `20261017120000_property_video_temporal_verdict.sql` moves to
+`…191000` and the photo-feedback migration uses `…200000`.
+
+### 7.4 Source preservation
+
+- `rendprop-all-refs-20261017T1755Z.bundle` (147,487,050 B, sha256
+  `4c9c69d7…`) in six parts `.00`–`.05` (00–04: 29,360,128 B each; 05:
+  686,410 B), assembled in order 00→05; verified here (parts OK, sha256 OK,
+  `git bundle verify`: complete history, 140 heads). Written to
+  `/Volumes/Rendprop Files/Builds/Active/build88-claude-source-backup-all-refs-20261017T1755Z/`
+  by the device bridge at 18:06Z; presence on the Mac is **not yet confirmed
+  by anyone looking at it**.
+- `rendprop-all-refs-20261017T1905Z.bundle` (147,555,691 B, sha256
+  `61c42f4e…`) supersedes it: every lane head plus WIP refs
+  `refs/wip/claude/web-map-gallery-20261017/20261017T1905Z` and
+  `refs/wip/claude/photo-feedback-20261017/20261017T1905Z` for uncommitted
+  work left by rate-limited agents (no branch, index or file touched).
+- The older `build88-claude-source-backup-9670ddd` folder is untouched.
