@@ -1,6 +1,6 @@
 """Actual Python pipeline and server accounting, against an owned PG fixture only."""
 from pathlib import Path
-import concurrent.futures,copy,hashlib,io,json,os,subprocess,sys,unittest,urllib.error,uuid
+import concurrent.futures,copy,datetime,hashlib,io,json,os,subprocess,sys,unittest,urllib.error,uuid
 from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'services/pipeline'))
@@ -41,6 +41,22 @@ def finish_attempt(t,state='uncertain',refusal=None):
  return rpc('serving_cost_finish',{'p_actor':t['actor_id'],'p_org':t['org_id'],'p_key':t['request_key'],'p_stage':t['stage'],'p_state':state,'p_rejection_status':429 if state=='rejected'else None},refusal)
 def cost_args(c,t,total=4):
  return {'p_actor':t['actor_id'],'p_org':t['org_id'],'p_reservation':t['reservation_id'],'p_key':t['request_key'],'p_stage':t['stage'],'p_provider':t['provider'],'p_model':t['model'],'p_input_sha256':t['input_sha256'],'p_job':c['job'],'p_feature':'restage','p_units':1,'p_unit_cost':total,'p_total':total,'p_meta':{'fallback':'flux_kontext','pipeline_funding':copy.deepcopy(t)}}
+def month_window(offset_months=0):
+ """UTC calendar-month [start,end) derived from the clock, never hardcoded."""
+ first=datetime.datetime.now(datetime.timezone.utc).replace(day=1,hour=0,minute=0,second=0,microsecond=0)
+ for _ in range(abs(offset_months)):first=(first-datetime.timedelta(days=1)).replace(day=1)if offset_months<0 else(first+datetime.timedelta(days=32)).replace(day=1)
+ return first.isoformat(),(first+datetime.timedelta(days=32)).replace(day=1).isoformat()
+TEAM_INVITE_ROLE='agent'
+def team(owner_scope,agent_scope):
+ """Bind agent_scope's private library to owner_scope's Team through the real invite RPCs."""
+ code=uuid.uuid4().hex*2
+ query("update public.orgs set plan='team',plan_source='manual' where id="+lit(owner_scope['org']),False)
+ query('select public.create_org_invite('+','.join(map(lit,[owner_scope['actor'],owner_scope['org'],None,TEAM_INVITE_ROLE,code]))+')')
+ query('select public.accept_org_invite('+lit(agent_scope['actor'])+','+lit(code)+')')
+ assert query('select to_jsonb(public.library_billing_org('+lit(agent_scope['org'])+'))')==owner_scope['org'],'Team binding must make the owner org the payer'
+def serving_mode(mode):
+ query("update public.app_config set value=value||jsonb_build_object('mode',"+lit(mode)+") where key='serving_mode'",False)
+ assert query('select to_jsonb(public.serving_mode())',False)==mode
 def state(c,start=None,end=None):
  return query("select jsonb_build_object('ledger_count',(select count(*)from public.cost_ledger where billing_org_id="+lit(c.get('payer',c['org']))+"),'ledger_cents',(select coalesce(sum(total_cents),0)from public.cost_ledger where billing_org_id="+lit(c.get('payer',c['org']))+"),'spent',public.serving_ceiling_spent_cents("+lit(c.get('payer',c['org']))+','+lit(start)+','+lit(end)+"),'holds',(select coalesce(jsonb_agg(jsonb_build_object('id',id,'state',state,'bound',hold_cents,'payer',billing_org_id)),\'[]\')from public.serving_cost_reservations where org_id="+lit(c['org'])+"),'links',(select count(*)from public.pipeline_provider_cost_bindings b join public.serving_cost_reservations r on r.id=b.reservation_id where r.org_id="+lit(c['org'])+"))")
 class Response:
@@ -51,8 +67,8 @@ class Response:
 class PipelineCostTests(unittest.TestCase):
  def tearDown(self):
   if hasattr(self,'observation'):RECORDS.append({'case':self.id(),'observed':self.observation})
- def actual(self,c,lose_reply=False,provider_error=None):
-  sent=[];lost=[False]
+ def actual(self,c,lose_reply=False,provider_error=None,sent=None):
+  sent=[]if sent is None else sent;lost=[False]
   def closed(req,timeout=None):
    url=req.full_url;method=req.get_method();sent.append({'method':method,'url':url})
    if method=='POST'and url=='https://queue.fal.run/fal-ai/flux-pro/kontext':
@@ -105,7 +121,11 @@ class PipelineCostTests(unittest.TestCase):
  def test_old_period_ledger_cannot_subtract_current_unknown_bound(self):
   c=scope();t=reserve(c,20);rpc('pipeline_record_provider_cost',cost_args(c,t))
   query('update public.cost_ledger set created_at=now()-interval\'2 months\' where idempotency_key='+lit('pipeline:'+t['reservation_id']),False)
-  s=state(c,'2026-10-01T00:00:00Z','2026-11-01T00:00:00Z');self.observation=s;self.assertEqual(s['spent'],20)
+  current=state(c,*month_window());older=state(c,*month_window(-2));self.observation={'current_month':current,'ledger_month':older}
+  # The current period cannot be discounted by an older ledger row: the whole
+  # 20-cent bound stays held. The ledger's own month counts it once (4) plus
+  # the still-uncovered 16, never 24.
+  self.assertEqual(current['spent'],20);self.assertEqual(older['spent'],20);self.assertEqual(older['ledger_cents'],4)
  def test_concurrent_duplicate_costs_return_same_receipt(self):
   c=scope();t=reserve(c);args=cost_args(c,t)
   with concurrent.futures.ThreadPoolExecutor(max_workers=2)as pool:out=list(pool.map(lambda _:rpc('pipeline_record_provider_cost',args),range(2)))
@@ -145,6 +165,78 @@ class PipelineCostTests(unittest.TestCase):
   rpc('pipeline_record_provider_cost',args,'RP409')
   after=query('select to_jsonb(md5(row_to_json(l)::text))from public.cost_ledger l where idempotency_key='+lit('pipeline:'+t['reservation_id']))
   self.assertEqual(before,after);self.observation=state(c);self.assertEqual(self.observation['links'],0)
+ def test_same_actor_same_library_other_request_cannot_borrow_the_attempt(self):
+  # The existing foreign-request case changes the actor too. Here only the
+  # request differs: same actor, same library, a second job of the same listing.
+  c=scope();other=str(uuid.uuid4())
+  query('insert into public.render_jobs(id,listing_id,status,source)values('+','.join(map(lit,[other,c['listing'],'created','worker']))+')',False)
+  t=reserve(c);args=cost_args(c,t)
+  for label,key,job,code in [('other request and job',other,other,'RP403'),('admitted key but other job',c['job'],other,'RP400'),('other key but admitted job',other,c['job'],'RP400')]:
+   bad=copy.deepcopy(args);bad['p_key']=key;bad['p_job']=job
+   with self.subTest(label=label):rpc('pipeline_record_provider_cost',bad,code)
+  self.observation=state(c);self.assertEqual((self.observation['ledger_count'],self.observation['links'],self.observation['spent']),(0,0,4))
+  self.assertEqual(self.observation['holds'][0]['state'],'uncertain')
+ def test_stable_team_payer_is_the_admitted_parent(self):
+  owner=scope();agent=scope();team(owner,agent);agent['payer']=owner['org']
+  data,ctx,sent=self.actual(agent);s=state(agent);self.observation=s
+  self.assertEqual((s['ledger_count'],s['ledger_cents'],s['links'],s['spent']),(1,4,1,4));self.assertEqual(s['holds'][0]['payer'],owner['org'])
+  self.assertEqual(query('select to_jsonb(public.serving_ceiling_spent_cents('+lit(agent['org'])+',null,null))'),4,'the private library projects the same parent liability')
+  self.assertEqual(query('select to_jsonb(billing_org_id)from public.cost_ledger where idempotency_key='+lit('pipeline:'+s['holds'][0]['id'])),owner['org'])
+  self.assertEqual(sum(r['url'].startswith('https://queue.fal.run')for r in sent),1);self.assertEqual(ctx.budget.spent_cents,4)
+ def test_in_flight_team_payer_removal_keeps_the_admitted_payer(self):
+  owner=scope();agent=scope();team(owner,agent);t=reserve(agent,finish=None)
+  self.assertEqual(query('select to_jsonb(billing_org_id)from public.serving_cost_reservations where id='+lit(t['reservation_id'])),owner['org'])
+  # The real seat-removal trigger revokes the Team binding while the attempt is in flight.
+  query('delete from public.memberships where org_id='+lit(owner['org'])+' and user_id='+lit(agent['actor']),False)
+  self.assertEqual(query('select to_jsonb(public.library_billing_org('+lit(agent['org'])+'))'),agent['org'],'after removal the private library pays for itself')
+  saved=rpc('pipeline_record_provider_cost',cost_args(agent,t));finish_attempt(t,'uncertain')
+  self.assertEqual(saved['billing_org_id'],owner['org'],'the cost lands on the payer who admitted the attempt, never a newly selected one')
+  parent=state({**agent,'payer':owner['org']});private=state(agent);self.observation={'parent':parent,'private':private}
+  self.assertEqual((parent['ledger_count'],parent['ledger_cents'],parent['links'],parent['spent']),(1,4,1,4))
+  self.assertEqual((private['ledger_count'],private['ledger_cents'],private['spent']),(0,0,0));self.assertEqual(private['holds'][0]['payer'],owner['org'])
+ def test_funded_mode_without_funding_or_grant_never_submits_or_records(self):
+  c=scope();serving_mode('funded')
+  try:
+   for name in ('org_has_internal_testing_grant','org_has_private_internal_testing'):self.assertIs(rpc(name,{'p_org':c['org']}),False)
+   # The server refusal surfaces through the worker's rpc transport before any
+   # supplier request; production's db._check raises the same way as this fixture.
+   sent=[]
+   with self.assertRaises(Exception)as refused:self.actual(c,sent=sent)
+   self.assertIn('RP402: This workspace has no funded serving allowance',str(refused.exception));self.assertEqual(sent,[])
+   a={'p_actor':c['actor'],'p_org':c['org'],'p_key':c['job'],'p_stage':'worker:'+'a'*48,'p_provider':'fal','p_model':'fal-ai/flux-pro/kontext','p_input_sha256':'a'*64,'p_hold_cents':4,'p_tariff_version':funding.VERSION}
+   rpc('serving_cost_reserve',a,'RP402');a['p_tariff_version']='unpriced-private-sponsorship';rpc('serving_cost_reserve',a,'RP403')
+  finally:serving_mode('ceiling')
+  self.observation=state(c);self.assertEqual((self.observation['ledger_count'],self.observation['links'],self.observation['spent'],self.observation['holds']),(0,0,0,[]))
+ def test_funded_slice_gross_hold_and_reserve_authority_unchanged(self):
+  c=scope();serving_mode('funded')
+  try:
+   t0=datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=1);t1=t0+datetime.timedelta(days=31)
+   components='{"storage":5,"delivery":5,"compute":5,"email":5,"support":5,"retention":5,"uncertainty":0}'
+   got=query('select public.provision_serving_funding('+','.join(map(lit,[c['org'],'retail','synthetic-collection-'+c['org'],None,400,0,t0.isoformat(),t1.isoformat(),1,components,'b'*64]))+')')
+   fund=got['funding_id'];t=reserve(c,finish=None)
+   self.assertEqual(query('select to_jsonb(budget_source)from public.serving_cost_reservations where id='+lit(t['reservation_id'])),'funding')
+   rpc('pipeline_record_provider_cost',cost_args(c,t));finish_attempt(t,'uncertain')
+   gross=query('select to_jsonb(coalesce(sum(hold_cents),0))from public.serving_cost_reservations where funding_id='+lit(fund)+" and state<>'rejected'")
+  finally:serving_mode('ceiling')
+  s=state(c);self.observation={'slice_gross':gross,'state':s}
+  # The funded-slice authority is the gross hold, unchanged by the binding; only the ceiling projection discounts.
+  self.assertEqual((gross,s['ledger_count'],s['links']),(4,1,1))
+  pins=query("select jsonb_build_object('reserve',(select md5(prosrc)from pg_proc where oid='public.serving_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,text)'::regprocedure),'trial',(select md5(prosrc)from pg_proc where oid='public.trial_sponsor_spent_cents()'::regprocedure),'envelope',(select md5(prosrc)from pg_proc where oid='public.library_serving_envelope_admit(uuid,uuid,numeric,text)'::regprocedure))",False)
+  self.assertEqual(pins,{'reserve':'cb21cbb5723dbc3cddb6fa5d7b5a7895','trial':'69a9c6f22be06ded89cf6d9aaa82b1e6','envelope':'6aa21e77680f2e8f4b479b9a9b24fc7b'},'funded-slice, trial-gross and envelope authorities must be byte-identical to the launch head')
+ def test_new_relation_and_rpc_are_service_only_and_unique(self):
+  rel='public.pipeline_provider_cost_bindings';rec='public.pipeline_record_provider_cost(uuid,uuid,uuid,text,text,text,text,text,uuid,text,numeric,numeric,numeric,jsonb)';cov='public.pipeline_cost_covered_cents(uuid,timestamptz,timestamptz)'
+  acl=query("select jsonb_build_object('anon_table',has_table_privilege('anon',"+lit(rel)+",'SELECT,INSERT,UPDATE,DELETE'),'authenticated_table',has_table_privilege('authenticated',"+lit(rel)+",'SELECT,INSERT,UPDATE,DELETE'),'service_write',has_table_privilege('service_role',"+lit(rel)+",'INSERT,UPDATE,DELETE'),'service_select',has_table_privilege('service_role',"+lit(rel)+",'SELECT'),'rls',(select relrowsecurity from pg_class where oid="+lit(rel)+"::regclass),'policies',(select count(*)from pg_policy where polrelid="+lit(rel)+"::regclass),'anon_rpc',has_function_privilege('anon',"+lit(rec)+",'execute')or has_function_privilege('anon',"+lit(cov)+",'execute'),'authenticated_rpc',has_function_privilege('authenticated',"+lit(rec)+",'execute')or has_function_privilege('authenticated',"+lit(cov)+",'execute'),'service_rpc',has_function_privilege('service_role',"+lit(rec)+",'execute')and has_function_privilege('service_role',"+lit(cov)+",'execute'),'definer',(select bool_and(prosecdef and proconfig=array['search_path=\"\"'])from pg_proc where oid in("+lit(rec)+"::regprocedure,"+lit(cov)+"::regprocedure)))",False)
+  self.assertEqual(acl,{'anon_table':False,'authenticated_table':False,'service_write':False,'service_select':True,'rls':True,'policies':0,'anon_rpc':False,'authenticated_rpc':False,'service_rpc':True,'definer':True})
+  c=scope();t=reserve(c);args=cost_args(c,t);call='select public.pipeline_record_provider_cost('+','.join(k+'=>'+(lit(json.dumps(v))+'::jsonb'if isinstance(v,dict)else lit(v))for k,v in args.items())+')'
+  query('set role authenticated;'+call,False,'permission denied');query('set role anon;'+call,False,'permission denied')
+  query(call,False,'insufficient_privilege')  # the migrating/owner role without the service role is refused too
+  self.assertEqual(state(c)['ledger_count'],0)
+  saved=rpc('pipeline_record_provider_cost',args);other=scope();u=reserve(other);second=rpc('pipeline_record_provider_cost',cost_args(other,u))
+  query('insert into public.pipeline_provider_cost_bindings(reservation_id,ledger_id)values('+lit(u['reservation_id'])+','+lit(saved['ledger_id'])+')',refusal='permission denied')
+  query('insert into public.pipeline_provider_cost_bindings(reservation_id,ledger_id)values('+lit(t['reservation_id'])+','+lit(second['ledger_id'])+')',False,'pipeline_provider_cost_bindings_pkey')
+  query('insert into public.pipeline_provider_cost_bindings(reservation_id,ledger_id)values('+lit(str(uuid.uuid4()))+','+lit(saved['ledger_id'])+')',False,'pipeline_provider_cost_bindings_ledger_id_key')
+  query('insert into public.pipeline_provider_cost_bindings(reservation_id,ledger_id)values('+lit(str(uuid.uuid4()))+','+lit(str(uuid.uuid4()))+')',False,'violates foreign key constraint')
+  self.observation={'acl':acl,'first':state(c),'second':state(other)};self.assertEqual((self.observation['first']['links'],self.observation['second']['links']),(1,1))
 
 if __name__=='__main__':
  try:unittest.main()
