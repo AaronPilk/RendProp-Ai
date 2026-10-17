@@ -12,7 +12,9 @@ here is operator activation of anything outside this throwaway database.
 from pathlib import Path
 import argparse,hashlib,json,os,re,shutil,subprocess,tempfile,time,sys,signal
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase';HANDOFF=ROOT/'docs/handoff'
-p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path,required=True);a=p.parse_args();OUT=a.evidence_dir.resolve();OUT.mkdir(exist_ok=False,parents=True);OUT.chmod(0o700)
+p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path,required=True);p.add_argument('--port',default='55791',help='socket port of the owned cluster (Unix socket in a private directory; no TCP listener)');a=p.parse_args()
+assert re.fullmatch(r'[1-9][0-9]{3,4}',a.port)and 1024<int(a.port)<65536,'A bounded owned-cluster port is required'
+OUT=a.evidence_dir.resolve();OUT.mkdir(exist_ok=False,parents=True);OUT.chmod(0o700)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 WHOLE_SECONDS=450;DATA_PREFIX='kie-seed-owned-pg-';SOCK_PREFIX='kie-seed-sock-'
 os.umask(0o077)
@@ -80,7 +82,7 @@ BASE=SQL/'tests/property_video_jobs.sql';KIE=SQL/'tests/property_video_kie_profi
 ACTIVATION=HANDOFF/'KIE-ACTIVATION.sql';ROLLBACK=HANDOFF/'KIE-ROLLBACK.sql'
 SOURCES=[*MIGS,SQL/'tests/ci-bootstrap.sql',BASE,KIE,SCOPE,FIX,IDENT,ACTIVATION,ROLLBACK,Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):sha(f)for f in SOURCES}
-PORT='55791';PSQL=[];t0=time.monotonic()
+PORT=a.port;PSQL=[];t0=time.monotonic()
 DISCLOSURE='owned-db-fixture-privacy-policy-2026-10-17%23processors'
 CONTRACT='{"token":"property-video-jobs-v2","disclosure_revision":"owned-db-fixture-r1","processors":["fal","kie"],"profiles":["kie-kling3-4k-steady-v1"]}'
 r={'passed':False,'scope':'owned local PG: actual KIE-ACTIVATION.sql seed shape, v2/v1 admission, KIE-ROLLBACK.sql; synthetic contract only, no provider or owner approval','networkCalls':0,'providerCalls':0,'sourceHashes':hashes(),'commands':[],'checks':[],'refusals':[]}

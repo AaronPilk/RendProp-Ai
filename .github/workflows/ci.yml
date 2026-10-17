@@ -1793,6 +1793,7 @@ jobs:
             services/supabase/functions/property-video-worker/engine.ts \
             services/supabase/functions/ai-video/property-video-kie-dispatch.test.ts \
             services/supabase/functions/property-video-worker/kie-dispatch-authority.test.ts \
+            services/supabase/functions/property-video-worker/kie-uhd-rehearsal.test.ts \
             services/supabase/functions/property/index.ts \
             services/supabase/tests/rentcast_billing_binding.fixture.ts
       - name: Install actual CPU, font and isolated database test dependencies
@@ -1880,6 +1881,30 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/property_video_kie_scope_consent_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-kie-scope-pg"
+      - name: Kie activation script seeds its exact record, v2 admits and v1 refuses, rollback restores (owned disposable DB)
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_kie_consent_seed_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-kie-consent-seed-pg"
+      # The edge job has no ffmpeg, so there these media cases report as ignored;
+      # here ffmpeg is installed and KIE_REHEARSAL_REQUIRE_FFMPEG turns a missing
+      # ffmpeg into a failure. Closed transport: no network, no provider, no key.
+      - name: Offline Kie whole-chain rehearsal with synthetic native-UHD media
+        timeout-minutes: 10
+        shell: bash
+        env:
+          KIE_REHEARSAL_REQUIRE_FFMPEG: "1"
+          NO_COLOR: "1"
+        run: |
+          set -euo pipefail
+          export TMPDIR="$RUNNER_TEMP/kie-uhd-rehearsal-tmp"
+          mkdir -p "$TMPDIR"
+          deno test --no-config --no-lock --node-modules-dir=none --cached-only --deny-net \
+            --allow-run=ffmpeg --allow-env --allow-read=services/supabase/functions,"$TMPDIR" --allow-write="$TMPDIR" \
+            services/supabase/functions/property-video-worker/kie-uhd-rehearsal.test.ts 2>&1 | tee "$RUNNER_TEMP/kie-uhd-rehearsal.log"
+          if grep -q ' ignored' "$RUNNER_TEMP/kie-uhd-rehearsal.log"; then echo "::error::native-UHD rehearsal cases were ignored"; exit 1; fi
       - name: Actual saved photo background judge race and no-repeat control
         timeout-minutes: 10
         run: |

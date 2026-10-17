@@ -20,6 +20,8 @@ import*as H from"./kie-rehearsal-harness.ts";
 Deno.env.set("KIE_API_KEY",H.FIXTURE_KIE_KEY);
 const{KIE_PROPERTY_PROFILE,KIE_PROPERTY_IDENTITY,KIE_PROPERTY_MODEL,PROPERTY_VIDEO_STEADY_PROFILE,common,r2,kieAdapter,buildSteadyPropertyReelPrompt,probeRetainedProviderMP4Video,kieProperty4KFacts,kiePropertyPromptPinned}=H;
 const ffmpeg=await H.ffmpegAvailable();
+// The CI media job sets KIE_REHEARSAL_REQUIRE_FFMPEG=1: there a missing ffmpeg fails, never ignores.
+if(Deno.env.get("KIE_REHEARSAL_REQUIRE_FFMPEG")==="1")assert(ffmpeg,"ffmpeg is required for the native-UHD rehearsal in this job");
 const sha=async(bytes:Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new Uint8Array(bytes))),b=>b.toString(16).padStart(2,"0")).join("");
 const OWNED_SOURCE_URL=`https://private-media.fixture.invalid/uploads/${H.ORG}/${H.LISTING}/source.jpg?cap=owned`;
 const routedModule=await H.compileRoutedStatus();
