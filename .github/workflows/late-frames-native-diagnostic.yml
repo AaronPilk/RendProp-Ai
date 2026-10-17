@@ -1,0 +1,142 @@
+# PREPARED ONLY. Root may place exactly this test/workflow closure on the named
+# diagnostic branch. A push there creates one diagnostic run, never feature CI.
+name: Late-frame native video-stage diagnostic
+on:
+  push:
+    branches: [diagnostic/late-frames-video-stages-20261017]
+permissions:
+  contents: read
+concurrency:
+  group: late-frames-video-stages-20261017
+  cancel-in-progress: false
+jobs:
+  exact-late-frames-pair:
+    if: github.ref == 'refs/heads/diagnostic/late-frames-video-stages-20261017'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/studio
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # existing v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # existing v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+      - name: Locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Same locked Chrome153 and synthetic-media tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --no-install playwright install chromium --no-shell
+          browser_path="$(node --input-type=module -e "import { chromium } from '@playwright/test'; console.log(chromium.executablePath());")"
+          test -x "$browser_path"
+          "$browser_path" --version
+          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$browser_path" >> "$GITHUB_ENV"
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+          ffmpeg -version
+          ffprobe -version
+      - name: Pure native trace parser and source controls, no browser
+        run: |
+          node --check tests/export-resume-browser.mjs
+          node tests/export-late-frames-trace-projection.mjs > "$RUNNER_TEMP/late-frames-parser.json"
+      - name: One cold late-frames case with native video stages, strict positive oracles
+        timeout-minutes: 6
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          python3 - <<'PYGUARD'
+          import hashlib,json,os,pathlib,platform,signal,subprocess,time
+          repo=pathlib.Path.cwd().parents[1]
+          temp=pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
+          out=temp/('late-frames-pair-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
+          out.mkdir(mode=0o700,exist_ok=False)
+          result={'status':'initializing','diagnosticOnly':True,'featureCIAccepted':False,
+            'runID':os.environ['GITHUB_RUN_ID'],'attempt':os.environ['GITHUB_RUN_ATTEMPT'],
+            'head':os.environ['GITHUB_SHA'],'python':platform.python_version(),'testProcessStarts':0,
+            'limits':{'wholeSeconds':300,'repoReserveBytes':3*1024**3,'tempReserveBytes':8*1024**3,'logBytes':12*1024**2},
+            'caseOrder':['getters-on'],'retries':0}
+          pins={'apps/studio/package.json': 'ed16965e68cd94221b28e705ea0e9abc3d1b90a338d1a6f27e3b900143b8d119', 'apps/studio/package-lock.json': 'f22adcbbf1c0686e46ab41f16fa23114946a2376d6d08b8f3ba330363a8a485e', 'apps/studio/tests/export-baseline-refusal.mjs': '8d889100f54ba8fa7fd8c0318de27846250dc90d921fc533d582bb1a2724b44e', 'apps/studio/src/editor/export.ts': 'f9a6aa712267fb30932d609694e103e7f820701bdfcae60a92651b767d21b774', 'apps/studio/src/editor/recording-clock.ts': '7d804d9d46135ee740b70affbefdc88fe3dd77e2b4fcd799e2165fe0b4e0a5f8', 'apps/studio/src/editor/media.ts': '82353070aaa85733ad89583fc52dedef36a9296cd6e4f594910571e7597b939b', 'apps/studio/src/editor/model.ts': '9696653581899e097d0b0e8ce395c9c80d5e6f264cd8f17411a6ff5545dfa8dd', 'apps/studio/src/editor/music.ts': 'c3ec1ecc81a7b7337bb1f56ab51713312fa80e6e9c848f16a3b3318fbfe7c203', 'apps/studio/src/editor/finishing.ts': '6e57bfe7397decf591732f5411c244f3c6ffcf4745820a2efba5f36d5548a789', 'apps/studio/src/editor/overlay-renderer.ts': 'a926d2621fc31e2753859c7c7fd66be019a93262cb34c8973126b11cf9ae8832', 'apps/studio/src/editor/overlays.ts': '0e2ffafa0d2812c836202621aef5a6f51309009c762d8cea635845fcc9fed0a6', 'apps/studio/tests/export-resume-browser.mjs': '1a05b918868d3259107400741b25437f356cc88f59fca5969ffa8a37fafb292b', 'apps/studio/tests/export-late-frames-trace-projection.mjs': '23d89c9f55802be1732168c08cc8a2db19792510f48146c4b1082b85b9163e0a'}
+          def actual():
+              return {p:hashlib.sha256((repo/p).read_bytes()).hexdigest() for p in pins}
+          def checkpoint():
+              result['sourceSHA256']=actual()
+              assert result['sourceSHA256']==pins,'Exact unchanged shipping/test closure refused'
+          def reserves():
+              for name,path,floor in [('repository',repo,3*1024**3),('ownedTemp',temp,8*1024**3)]:
+                  v=os.statvfs(path);free=v.f_bavail*v.f_frsize
+                  result.setdefault('minimumFreeBytes',{})[name]=min(result.get('minimumFreeBytes',{}).get(name,free),free)
+                  assert free>=floor,'Hosted reserve refused'
+          child=None;started=time.monotonic();exitcode=1
+          try:
+              assert os.environ['GITHUB_RUN_ATTEMPT']=='1','No retry of this diagnostic pair'
+              assert platform.system()=='Darwin','Same hosted Mac platform required'
+              checkpoint();reserves()
+              env=dict(os.environ);env['TMPDIR']=os.environ['RUNNER_TEMP']
+              with (out/'pair.log').open('xb') as log:
+                  child=subprocess.Popen(['node','tests/export-resume-browser.mjs','--diagnostic-video-stages'],
+                    stdout=log,stderr=subprocess.STDOUT,env=env,start_new_session=True)
+                  result['testProcessStarts']=1
+                  while child.poll() is None:
+                      reserves()
+                      assert time.monotonic()-started<300,'Whole diagnostic deadline'
+                      assert (out/'pair.log').stat().st_size<=12*1024**2,'Bounded diagnostic log'
+                      time.sleep(.25)
+                  result['childExitCode']=child.returncode;exitcode=child.returncode
+              # BEGIN closed terminal admission
+              checkpoint();reserves()
+              assert time.monotonic()-started<300,'Whole diagnostic deadline'
+              assert (out/'pair.log').stat().st_size<=12*1024**2,'Bounded diagnostic log'
+              result['status']='single-strict-case-passed-cause-still-unknown' if exitcode==0 else 'actual-diagnostic-refusal-or-failure'
+              # END closed terminal admission
+          except BaseException as error:
+              exitcode=1
+              result['status']='guard-or-admission-refusal';result['errorClass']=type(error).__name__
+              result['error']=str(error) if isinstance(error,AssertionError) else None
+          finally:
+              # BEGIN closed owned cleanup
+              try:
+                  if child is not None and child.poll() is None:
+                      exitcode=1
+                      result['ownedCleanupAttempted']=True
+                      try:os.killpg(child.pid,signal.SIGTERM)
+                      except ProcessLookupError:result['ownedExitRaceObserved']=True
+                      try:child.wait(timeout=5)
+                      except subprocess.TimeoutExpired:
+                          try:os.killpg(child.pid,signal.SIGKILL)
+                          except ProcessLookupError:result['ownedExitRaceObserved']=True
+                          child.wait(timeout=5)
+              except BaseException as cleanup_error:
+                  exitcode=1
+                  result['status']='owned-cleanup-error'
+                  result['cleanupErrorClass']=type(cleanup_error).__name__
+              # END closed owned cleanup
+              # BEGIN closed receipt finalization
+              result['elapsedSeconds']=time.monotonic()-started
+              result['childExitCode']=None if child is None else child.returncode
+              with (out/'GUARD-RESULT.json').open('x') as f:
+                  json.dump(result,f,indent=2);f.write('\n');f.flush();os.fsync(f.fileno())
+              # END closed receipt finalization
+          raise SystemExit(exitcode)
+          PYGUARD
+      - name: Retain only explicit synthetic diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # existing v4.6.2
+        with:
+          name: late-frames-native-pair-synthetic-${{ github.run_id }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/late-frames-parser.json
+            ${{ runner.temp }}/late-frames-pair-*/GUARD-RESULT.json
+            ${{ runner.temp }}/late-frames-pair-*/pair.log
+            ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-resume-*/private-diagnostics/*.partial.mp4
+          # Native raw *.private.json stays local and is not uploaded. This is
+          # an artifact-path decision, not an access/privacy guarantee. Safe
+          # projected spans/time bridge live in receipt.json. No customer media.
