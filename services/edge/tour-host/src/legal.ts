@@ -414,10 +414,11 @@ ever combined with data from another company's app or website, or given to a dat
   it is not the identifier any other app can see, it is not shared with anyone, and it never
   leaves our own systems.</li>
   <li><b>Crash and performance diagnostics.</b> Delivered by <b>MetricKit</b>, which is part of
-  iOS. We receive <b>summaries only</b>: what kind of crash or hang it was, a signal or exception
-  number, a short termination reason with file paths removed, a single frame name, and timing
-  figures such as a median launch time. We never receive a full call stack — that stays in
-  Apple's own developer tools — and there is no third-party crash reporting SDK in the app.</li>
+  iOS. We receive <b>summaries only</b>: what kind of crash, hang, CPU or disk-write problem it
+  was, a signal or exception number, a short termination reason with file paths removed, a
+  single frame name, and for a hang, how long it lasted. The app does not currently send
+  launch-time figures. We never receive a full call stack — that stays in Apple's own developer
+  tools — and there is no third-party crash reporting SDK in the app.</li>
   <li><b>Ad attribution.</b> When Rendprop is advertised, iOS itself measures whether an ad
   worked, using Apple's <b>SKAdNetwork</b>. The app tells iOS a number from 0 to 5 marking how far
   a new install has got — installed, signed up, created a space, published a tour, opened the
