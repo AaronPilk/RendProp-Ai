@@ -350,6 +350,29 @@ export async function exportLocalVideo(options: {
       drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore, localTime: 0, previous: hasPrevious ? previous : undefined});
       await overlays.paint(canvas, elapsedBefore);
       throwIfAborted(renderSignal);
+      const duration = clipDuration(clip);
+      // Prepare bounded gain data while capture is still stopped/paused. The
+      // curve retains the nominal 30 Hz targets and existing 25 ms smoothing,
+      // with four interpolation points per capture interval (at most 21,601).
+      const musicEnvelope = musicGain ? (() => {
+        const points = Math.ceil(duration * 120), values = new Float32Array(points + 1);
+        let position = 0, target = musicGainAt(draft, clip, elapsedBefore, 0, voiceBuffer?.duration);
+        let value = target, nextTarget = 1 / 30;
+        values[0] = value;
+        for (let i = 1; i <= points; i++) {
+          const end = duration * i / points;
+          while (nextTarget < end) {
+            value = target + (value - target) * Math.exp(-(nextTarget - position) / .025);
+            position = nextTarget;
+            target = musicGainAt(draft, clip, elapsedBefore + position, position, voiceBuffer?.duration);
+            nextTarget += 1 / 30;
+          }
+          value = target + (value - target) * Math.exp(-(end - position) / .025);
+          position = end; values[i] = value;
+        }
+        return values;
+      })() : undefined;
+      // Gain preparation is complete before capture starts or resumes.
       if (!recorder) {
         if (audio) await awaitAudioStartup(audio, renderSignal,
           () => assertCurrentRevision(draft, currentDraft(), renderSignal), async () => {
@@ -413,12 +436,43 @@ export async function exportLocalVideo(options: {
       // Start recording before advancing the source, so startup cannot discard speech.
       // Buffered audio starts before play() resolves. Its capture wall clock
       // must share that origin; a slow play promise does not mean sound was lost.
-      const originalWallStart = originalSource && audio ? performance.now() : undefined;
-      const originalClockStart = originalSource && audio ? audio.currentTime : undefined;
+      const originalWallStart = performance.now();
+      const segmentAudioStart = audio?.currentTime;
+      const originalClockStart = originalSource && audio ? segmentAudioStart : undefined;
+      // At the fixed origin, submit one prepared curve and at most two
+      // narration boundaries; no clip-length event queue delays source starts.
+      if (originalGain && draft.narration && segmentAudioStart !== undefined) {
+        const begin = draft.narration.offset - elapsedBefore;
+        const end = begin + (voiceBuffer?.duration ?? 0);
+        originalGain.gain.setValueAtTime(begin <= 0 && end > 0 ? .22 : 1, segmentAudioStart);
+        if (begin > 0 && begin < duration) originalGain.gain.setTargetAtTime(.22, segmentAudioStart + begin, .025);
+        if (end > 0 && end < duration) originalGain.gain.setTargetAtTime(1, segmentAudioStart + end, .025);
+      }
+      if (musicGain && musicEnvelope && segmentAudioStart !== undefined) {
+        musicGain.gain.cancelScheduledValues(0);
+        musicGain.gain.setValueCurveAtTime(musicEnvelope, segmentAudioStart, duration);
+      }
       if (originalSource) {
         originalSource.start(originalClockStart!, clip.start, clip.end - clip.start);
         originalSourceStarted = true;
       }
+      // BEGIN optional buffered tracks at the fixed segment origin
+      if (draft.narration && voiceBuffer && audio && voiceGain) {
+        const offset = Math.max(0, elapsedBefore - draft.narration.offset), delay = Math.max(0, draft.narration.offset - elapsedBefore);
+        if (offset < voiceBuffer.duration && delay < clipDuration(clip)) {
+          voiceSource = audio.createBufferSource(); voiceSource.buffer = voiceBuffer; voiceSource.connect(voiceGain);
+          voiceSource.start(segmentAudioStart! + delay, offset);
+        }
+      }
+      if (draft.music && musicBuffer && audio && musicGain) {
+        const elapsed = Math.max(0, elapsedBefore - draft.music.offset), delay = Math.max(0, draft.music.offset - elapsedBefore);
+        const remaining = Math.min(draft.music.end - draft.music.start - elapsed, clipDuration(clip) - delay);
+        if (remaining > 0) {
+          musicSource = audio.createBufferSource(); musicSource.buffer = musicBuffer; musicSource.connect(musicGain);
+          musicSource.start(segmentAudioStart! + delay, draft.music.start + elapsed, remaining);
+        }
+      }
+      // END optional buffered tracks
       // Live media audio: both clocks are read together once playback is
       // actually running, so later readings measure sound lost since then.
       let mediaClockStart: number | undefined;
@@ -439,28 +493,12 @@ export async function exportLocalVideo(options: {
           removeOriginalVideoListeners = () => video.removeEventListener("playing", realign);
         }
       }
-      if (draft.narration && voiceBuffer && audio && voiceGain) {
-        const offset = Math.max(0, elapsedBefore - draft.narration.offset), delay = Math.max(0, draft.narration.offset - elapsedBefore);
-        if (offset < voiceBuffer.duration && delay < clipDuration(clip)) {
-          voiceSource = audio.createBufferSource(); voiceSource.buffer = voiceBuffer; voiceSource.connect(voiceGain);
-          voiceSource.start(audio.currentTime + delay, offset);
-        }
-      }
-      if (draft.music && musicBuffer && audio && musicGain) {
-        const elapsed = Math.max(0, elapsedBefore - draft.music.offset), delay = Math.max(0, draft.music.offset - elapsedBefore);
-        const remaining = Math.min(draft.music.end - draft.music.start - elapsed, clipDuration(clip) - delay);
-        if (remaining > 0) {
-          musicSource = audio.createBufferSource(); musicSource.buffer = musicBuffer; musicSource.connect(musicGain);
-          musicGain.gain.setValueAtTime(musicGainAt(draft, clip, elapsedBefore + delay, delay, voiceBuffer?.duration), audio.currentTime + delay);
-          musicSource.start(audio.currentTime + delay, draft.music.start + elapsed, remaining);
-        }
-      }
+      // PLAYBACK confirmed; all buffered sources are already scheduled.
       const start = originalWallStart ?? performance.now();
       const recordingClock = new RecordingClock();
-      const recordingAudioStart = originalClockStart ?? audio?.currentTime;
+      const recordingAudioStart = segmentAudioStart;
       let lastVideoTime = video?.currentTime ?? 0;
       let lastVideoAdvance = start;
-      const duration = clipDuration(clip);
       let lastPaintedBucket = -1;
       while (true) {
         assertCurrentRevision(draft, currentDraft(), renderSignal);
@@ -494,14 +532,6 @@ export async function exportLocalVideo(options: {
         } else lossReadings = 0;
         recordingClock.read((now - start) / 1000, elapsed,
           recordingAudioStart !== undefined && audio ? audio.currentTime - recordingAudioStart : undefined);
-        if (audio) {
-          const timelineTime = elapsedBefore + elapsed;
-          if (musicGain) musicGain.gain.setTargetAtTime(musicGainAt(draft, clip, timelineTime, elapsed, voiceBuffer?.duration), audio.currentTime, .025);
-          if (originalGain) {
-            const speaking = !!draft.narration && timelineTime >= draft.narration.offset && timelineTime < draft.narration.offset + (voiceBuffer?.duration ?? 0);
-            originalGain.gain.setTargetAtTime(speaking ? .22 : 1, audio.currentTime, .025);
-          }
-        }
         // The capture stream is30fps. Keep every clock/safety reading above,
         // while avoiding repeated HD paints inside the same capture interval.
         const paintBucket = Math.floor(elapsed * 30);

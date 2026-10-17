@@ -83,6 +83,9 @@ protection has not changed yet.
 
 ## Remaining acceptance
 
+The following was the earlier source checkpoint. The October 17 section below
+supersedes its repository-settings and hosted-enforcement status.
+
 Hosted push workflow38998994789 at5121609 passes the inventory and all four
 include-development npm audits. PR-only dependency review correctly skips on a
 push; its dependency-graph access is still unproved. Read-only GitHub metadata
@@ -103,3 +106,35 @@ Official references:
 
 - [GitHub dependency review](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependency-review)
 - [npm audit semantics and scopes](https://docs.npmjs.com/cli/v11/commands/npm-audit/)
+
+
+## October 17 hosted enforcement and default-branch findings
+
+PR39 dependency security39003478845 atb1 completed all7 jobs, including actual
+PR dependency review and the stable aggregate (receipt e2abaa09). Main now requires
+all16 full-CI contexts plus `Dependency security required`, with GitHub Actions
+app15368, strict freshness and administrator enforcement (acf1a03a). Auto-merge
+remains off. The full CI has an independent audio failure; no merge was performed.
+
+Dependency alerts/graph and automatic security-update PRs are enabled/read back
+(12e26b2a). Enabling them exposed62 findings on older main:46pip/16npm. Candidate
+recursive direct requirements and all matching npm lock versions lie outside every
+reported vulnerable range (c92c3e7b, independent09b3a7f3). These alerts remain OPEN
+on main until reviewed integration; none were dismissed or assigned zero risk.
+
+## October 17 additional backend dependency scope
+
+One bounded public OSV batch found no matching records for `aws4fetch1.0.20`
+and `jpeg-js0.4.4`. Nine other mirrored Deno npm identities exactly match the
+already-audited Studio lockfile. This adds those exact observations, not complete
+Deno coverage: tests have floating JSR imports, preparation uses `--no-lock`, and
+a cache inventory does not establish the active resolver graph. The CPU image's
+selected runtime version probe and SLSA descriptor are not a complete installed
+Python/OS inventory. No package was installed or automatically upgraded.
+
+Evidence: `/Volumes/Rendprop Files/Builds/Active/build88-o12-deno-installed-image-feasibility/FEASIBILITY.md`
+(`b1391069`) and the exact query result (`1b4f12ae`). A metadata-only image
+inventory plan is prepared but remains unexecuted at this checkpoint. O12 stays
+open for the broader scopes named above.
+This is reported-range reconciliation, not a complete transitive Python/Deno/OS,
+publisher, license or arbitrary-code audit. Retain those open scopes.

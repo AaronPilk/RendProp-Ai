@@ -7,15 +7,21 @@ import {createServer} from "node:http";
 import {execFileSync} from "node:child_process";
 import {build} from "vite";
 import {chromium,expect} from "@playwright/test";
-const fault=process.argv[2]??null;assert(fault===null||["--fault=live-original-audio","--fault=late-buffered-wall-origin","--fault=omit-bucket-pacing"].includes(fault));
+const alignmentOnly=process.argv.includes("--alignment-only"),originalOnly=process.argv.includes("--original-only");assert(!(alignmentOnly&&originalOnly));const fault=process.argv.find(x=>x.startsWith("--fault="))??null;assert(fault===null||["--fault=live-original-audio","--fault=late-buffered-wall-origin","--fault=omit-bucket-pacing","--fault=late-optional-track-schedule"].includes(fault));
 const root=resolve(import.meta.dirname,".."), artifacts=await mkdtemp(join(tmpdir(),"rendprop-export-original-audio-")),dist=join(artifacts,"dist");
-const paths=["src/editor/export.ts","src/editor/recording-clock.ts","src/editor/media.ts","src/editor/model.ts","tests/export-audio-fixture.ts","tests/export-audio-browser.mjs"];
+const paths=["src/editor/export.ts","src/editor/recording-clock.ts","src/editor/media.ts","src/editor/model.ts","src/editor/music.ts","src/editor/finishing.ts","tests/export-audio-fixture.ts","tests/export-audio-browser.mjs"];
 const hashes=async()=>Object.fromEntries(await Promise.all(paths.map(async path=>[path,createHash("sha256").update(await readFile(join(root,path))).digest("hex")])));
 const receipt={status:"running",fault,proof:"Actual browser exporter/MediaRecorder with generated H264/AAC source, real100ms video pause and a transient waiting notification without loss. No live accounts/providers. RMS>.03 retained.",sourceHashes:await hashes(),checks:[],cases:[],externalRequests:[],errors:[]};
 let browser,server,page,mutated=false;
 try{
- await build({configFile:false,root,publicDir:false,logLevel:"error",plugins:fault?[{name:"live-original-audio-regression",enforce:"pre",transform(code,id){
+ await build({configFile:false,root,publicDir:false,logLevel:"error",plugins:[{name:"passive-gain-preparation-budget",enforce:"pre",transform(code,id){if(!id.endsWith("/src/editor/export.ts"))return;const a="      const musicEnvelope = musicGain ? (() => {",b="      // Gain preparation is complete before capture starts or resumes.";if(!code.includes(a))return;assert.equal(code.split(a).length,2);assert.equal(code.split(b).length,2);return code.replace(a,"      const gainPreparationBegan = performance.now();\n"+a).replace(b,"      globalThis.audioGainPreparationEvidence = {costMs: performance.now() - gainPreparationBegan, points: musicEnvelope?.length ?? 0, recorderState: recorder?.state ?? null};\n"+b);}},...(fault?[{name:"live-original-audio-regression",enforce:"pre",transform(code,id){
   if(!id.endsWith("/src/editor/export.ts"))return;
+  if(fault==="--fault=late-optional-track-schedule"){
+    const begin="      // BEGIN optional buffered tracks at the fixed segment origin\n",end="      // END optional buffered tracks\n",after="      // PLAYBACK confirmed; all buffered sources are already scheduled.\n";
+    assert.equal(code.split(begin).length,2);assert.equal(code.split(end).length,2);assert.equal(code.split(after).length,2);
+    const start=code.indexOf(begin),stop=code.indexOf(end,start)+end.length,block=code.slice(start,stop);mutated=true;
+    return code.slice(0,start)+code.slice(stop).replace(after,after+block);
+  }
   if(fault==="--fault=omit-bucket-pacing"){
     const gate='if (paintBucket !== lastPaintedBucket || elapsed >= duration) {';
     assert.equal(code.split(gate).length,2,"Paint bucket mutation sentinel missing");mutated=true;
@@ -34,7 +40,7 @@ try{
   // actually sees it. Shipping clock safety is independently tested in the
   // resume suite; retaining it here would intercept the mutant before audio.
   return code.replace(buffer,'if (false && originalAudio && audio && clip.source.kind === "video" && (clip.speed ?? 1) === 1 &&').replace(stall,'const refuseStall = () => {};').replace(clock,'const recordingClock = { read: () => {} };');
- }}]:[],build:{outDir:dist,rollupOptions:{input:join(root,"tests/export-audio-fixture.html")}}});
+ }}]:[])],build:{outDir:dist,rollupOptions:{input:join(root,"tests/export-audio-fixture.html")}}});
  if(fault)assert(mutated,"Negative control did not compile the product mutation");
  server=createServer(async(req,res)=>{const path=resolve(dist,`.${new URL(req.url,"http://localhost").pathname}`);if(!path.startsWith(`${dist}/`)||req.method!=="GET")return res.writeHead(400).end();try{res.setHeader("Content-Type",({".html":"text/html",".js":"application/javascript"})[extname(path)]??"application/octet-stream");res.end(await readFile(path));}catch{res.writeHead(404).end();}});
  await new Promise(done=>server.listen(0,"127.0.0.1",done));const origin=`http://127.0.0.1:${server.address().port}`;
@@ -150,6 +156,7 @@ try{
   await run("delayed-buffered-start",{playResolutionDelayMs:120});
   assert.fail("Late buffered clock-origin negative control unexpectedly passed");
  }
+ if(!alignmentOnly){
  await run("normal-speed-stall",{stall:true});receipt.checks.push("A real100ms video stall preserves uninterrupted normal-speed original audio with exact trim/duration");
  await run("delayed-buffered-start",{playResolutionDelayMs:120});receipt.checks.push("A delayed play-promise delivery preserves buffered speech, original pitch and exact duration without misclassifying a constant startup phase as media loss");
  await run("split-segments",{split:true});receipt.checks.push("Adjacent trimmed source segments export once without overlapping sound or a cut gap");
@@ -160,6 +167,53 @@ try{
  await run("decode-failure-stall",{decodeFailure:true,stall:true},{refused:true});receipt.checks.push("Unsupported decoding preserves source audio; speed-adjusted and unsupported audio stalls refuse download");
  await run("cancel-before-audio-start",{cancelAfterBuffer:true},{cancelled:true});receipt.checks.push("Cancellation before scheduled audio start preserves its abort reason and produces no download");
  await run("silent-video",{},{silentAudio:true});receipt.checks.push("A genuinely silent video stays exportable without fabricating or dropping sound");
+ }
+ if(!originalOnly){
+  const marker=join(artifacts,"original-opening-marker.mp4");
+  execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","color=c=green:s=640x360:r=30:d=3","-f","lavfi","-i","aevalsrc=if(between(t\\,0.5\\,0.65)\\,0.25*sin(2*PI*990*t)\\,0.25*sin(2*PI*880*t)):s=48000:d=3","-c:v","libx264","-pix_fmt","yuv420p","-c:a","aac","-shortest",marker]);
+  const toneAt=(pcm,hz,start,end)=>{const first=Math.round(start*48000),count=Math.round((end-start)*48000);assert(first>=0&&first+count<=pcm.length/4,"Fixed PCM window must exist");let real=0,imaginary=0;for(let i=0;i<count;i++){const sample=pcm.readFloatLE((first+i)*4);assert(Number.isFinite(sample));real+=sample*Math.cos(2*Math.PI*hz*i/48000);imaginary+=sample*Math.sin(2*Math.PI*hz*i/48000);}return 2*Math.hypot(real,imaginary)/count;};
+  for(const mix of ["opening","offset-fade"]){
+   await page.goto(`${origin}/tests/export-audio-fixture.html`);await page.getByLabel("Synthetic source").setInputFiles(marker);
+   await page.evaluate(mix=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,playResolutionDelayMs:250,mix},mix);
+   await page.getByRole("button",{name:"Export fixture",exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result)).not.toBeNull();
+   const result=await page.evaluate(()=>window.audioExportFixture.result),row={name:"alignment-"+mix,ok:result.ok,error:result.error,cause:result.cause,playEvidence:result.playEvidence,gainEvidence:result.gainEvidence,sourceEvidence:result.sourceEvidence,gainPreparation:await page.evaluate(()=>globalThis.audioGainPreparationEvidence??null)};receipt.cases.push(row);
+   assert.equal(result.ok,true,result.error);assert(result.injected);assert.equal(result.playEvidence.length,2);assert(result.playEvidence[1].media-result.playEvidence[0].media>.15,"Native video must actually run while only promise delivery is held");
+   const path=join(artifacts,`alignment-${mix}.mp4`);await writeFile(path,Buffer.from(result.base64,"base64"));row.path=path;
+   const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_streams","-show_format","-of","json",path],{encoding:"utf8"}));row.probe=probe;assert(Math.abs(Number(probe.format.duration)-2)<.18,"Existing trim/duration bound");assert.equal(probe.streams.filter(x=>x.codec_type==="audio"&&x.codec_name==="aac").length,1);
+   const pcm=execFileSync("ffmpeg",["-v","error","-i",path,"-vn","-ac","1","-ar","48000","-f","f32le","pipe:1"]);row.pcmSHA256=createHash("sha256").update(pcm).digest("hex");
+   const voiceOffset=mix==="offset-fade"?.35:0,voiceRef=toneAt(pcm,660,.75,.95),voiceEarly=toneAt(pcm,660,voiceOffset+.055,voiceOffset+.175),voiceTail=toneAt(pcm,660,voiceOffset+1.01,voiceOffset+1.13),voiceAfter=toneAt(pcm,660,voiceOffset+1.31,voiceOffset+1.43);
+   const originalOpening=toneAt(pcm,990,.04,.12),originalEarly=toneAt(pcm,880,.2,.3),originalSpeaking=toneAt(pcm,880,.75,.95),originalAfter=toneAt(pcm,880,1.8,1.9),musicEarly=toneAt(pcm,220,.16,.24),musicRef=toneAt(pcm,220,.75,.95);row.pcm={voiceOffset,voiceRef,voiceEarly,voiceTail,voiceAfter,originalOpening,originalEarly,originalSpeaking,originalAfter,musicEarly,musicRef};
+   assert(voiceRef>.15,"Narration reference must be genuinely audible");assert(voiceEarly>voiceRef*.7,"Narration onset must honor its saved offset before delayed play delivery");assert(voiceTail>voiceRef*.7,"Narration tail must retain its saved last words");assert(voiceAfter<voiceRef*.08,"Narration must not shift its ending later");assert(originalOpening>.03,"Distinct original opening tone must survive");assert(originalSpeaking/originalAfter>.12&&originalSpeaking/originalAfter<.4,"Original must duck during narration and restore after it");
+   if(mix==="opening"){assert(originalEarly/originalAfter<.4,"Early original ducking must apply before play promise resolves");assert(musicEarly>musicRef*.7,"Music onset must honor its saved offset before delayed play delivery");}
+   else{
+    // Fixed independent PCM oracle: locate the source's first 990 Hz marker
+    // within the unchanged two-frame onset bound, never retime the recording.
+    // Integral of a linear .5 s fade through the existing .025 s smoothing is
+    // u-tau*(1-exp(-u/tau)); allow one30Hz target interval and one5ms onset bin.
+    const onsetStep=.005,onsetWindow=.02;let originalOnset;
+    for(let time=0;time<=2/30;time+=onsetStep)if(toneAt(pcm,990,time,time+onsetWindow)>originalOpening*.2){originalOnset=time;break;}
+    assert(originalOnset!==undefined&&originalOnset<=2/30,"Original encoded onset must stay within two capture intervals");
+    const musicOffset=.1,fade=.5,tau=.025,lag=1/30+onsetStep;
+    const integral=u=>u*u/2-tau*u-tau*tau*Math.exp(-u/tau);
+    const lowerMean=(integral(.2-lag)-integral(.1-lag))/(.1*fade);
+    const musicFadeEarly=toneAt(pcm,220,originalOnset+musicOffset+.1,originalOnset+musicOffset+.2);
+    const musicFadeLater=toneAt(pcm,220,originalOnset+musicOffset+.3,originalOnset+musicOffset+.4);
+    row.fadeOracle={originalOnset,onsetStep,musicOffset,fade,tau,maximumTargetLag:lag,lowerMean,musicFadeEarly,musicFadeLater,codecAmplitudeAllowance:.2};
+    assert(musicRef>.015&&musicFadeEarly>=musicRef*lowerMean*.8,"Saved music fade must already be audible before the late-promise music start");
+    assert(musicFadeLater>musicFadeEarly*1.5&&musicFadeLater<musicRef*.9,"Saved music fade must increase toward its full ducked gain");
+   }
+   if(row.gainPreparation){
+    assert.equal(row.gainPreparation.recorderState,null,"Gain curve must be prepared before first capture");
+    assert(row.gainPreparation.points<=21601,"Bounded music envelope allocation");
+    const curves=row.gainEvidence.filter(x=>x.method==="setValueCurveAtTime"),targets=row.gainEvidence.filter(x=>x.method==="setTargetAtTime");
+    assert.equal(curves.length,1,"One prepared curve must replace clip-length scheduling");assert(targets.length<=2,"Only exact narration boundaries may be queued");
+    const first=row.sourceEvidence[0].when;
+    assert(row.sourceEvidence.every(x=>x.currentTime-first<=2/30),"All buffered sources must be scheduled before two capture intervals pass");
+    row.setupBudget={calls:row.gainEvidence.length,curveCalls:curves.length,targetCalls:targets.length,nativeMethodCostMs:row.gainEvidence.reduce((sum,x)=>sum+x.costMs,0),maximumSourceSchedulingLagSeconds:Math.max(...row.sourceEvidence.map(x=>x.currentTime-first))};
+   }
+   receipt.checks.push(`Saved optional-track onset/tail/trim and original opening/ducking/music${mix} remain aligned under250ms native-play promise delivery delay`);
+  }
+ }
  assert.deepEqual(receipt.errors,[]);assert.deepEqual(receipt.externalRequests,[]);receipt.sourceBoundAtEnd=JSON.stringify(await hashes())===JSON.stringify(receipt.sourceHashes);assert(receipt.sourceBoundAtEnd);receipt.status="passed";
 }catch(error){receipt.status="failed";receipt.failure=String(error.stack??error);process.exitCode=1;}
 finally{await browser?.close();if(server)await new Promise(done=>server.close(done));await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));console.log(JSON.stringify({...receipt,artifacts},null,2));}

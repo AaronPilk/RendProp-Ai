@@ -1,5 +1,7 @@
 # App Privacy questionnaire — exact answers
 
+> **October 17 source correction — no published-answer change.** The Audio Data rationale below now includes the demonstrated Rendprop narration-upload path. Other Diagnostic Data is explicitly unresolved beyond MetricKit. This document still describes the last verified October 2 questionnaire; it is not a fresh authenticated read. The reviewed backend is deployed with Kie inactive. The attempted fresh Apple privacy read on October 17 reached the App Store Connect sign-in page; no sign-in or answer change was performed.
+
 > **October 16 integration note — not a new published questionnaire.** The 14-type answers below describe the verified October 2 state. The photo-first/Kie candidate is not live. Selected property photos map to Photos or Videos; camera-motion/source text maps to the existing Other User Content category. Adding a processor does not by itself prove that existing data-use answers remain complete. Kie's operating/improvement license and lack of an express training exclusion require the provider-use purpose reconciliation before activation; do not certify App Functionality-only from the source code. Additional purposes may need declaration. No App Store Connect answer or native privacy manifest was changed in this pass. The draft notice is [RENDPROP-KIE-NOTICE-DRAFT-20261016](../legal/RENDPROP-KIE-NOTICE-DRAFT-20261016.md); the current workflow draft is [photo-first-review-draft-20261016](photo-first-review-draft-20261016.md). Apple requires partners' relevant collection/use and optional primary-function data to be considered: [official App Privacy guidance](https://developer.apple.com/app-store/app-privacy-details/), checked October 16. Consent alone does not exempt this primary function from disclosure, and possible model improvement is not automatically cross-company advertising tracking. No ATT change is inferred.
 
 App Store Connect → your app → **App Privacy**. Reconciled for regular
@@ -39,7 +41,7 @@ Every row: **Not used for tracking**. See §3.
 | Usage Data → **Product Interaction** | **Linked** | App Functionality, **Analytics**, **Developer's Advertising or Marketing** | First-party funnel (`POST /events`): an allowlisted event vocabulary plus a few enum/count props. The server attaches the account id when signed in, which is what makes it Linked. Also the tour-page view counter. |
 | Diagnostics → **Crash Data** | Linked | App Functionality, Analytics | MetricKit crash summaries only — kind, signal/exception number, a termination reason clipped to 120 chars with path-shaped tokens removed, and one frame name. Never a full call stack. No third-party crash SDK. |
 | Diagnostics → **Performance Data** | Linked | App Functionality, Analytics | MetricKit hang / CPU / disk-write exceptions and a median launch time, one small number or category each. |
-| Audio Data | Linked | App Functionality | The voiceover recording, submitted to `SFSpeechRecognizer` for captions (`Voice/SpeechTranscriber.swift`). `requiresOnDeviceRecognition` is **not** forced true — it tracks `supportsOnDeviceRecognition`, and even an on-device attempt that fails retries once with it set to `false` — so on a device/locale without an on-device model, or after that retry, the recording is sent to **Apple's** speech-recognition servers over the network (Apple's own docs: `requiresOnDeviceRecognition = true` is what "prevent[s] ... sending audio over the network" — false is the alternative). `NSSpeechRecognitionUsageDescription` in `Info.plist` already tells the user this can happen. Added 2026-09 — previously undeclared; see §6. |
+| Audio Data | Linked | App Functionality | Owned voice narration is uploaded through `Networking/PropertyVideoNarrationUpload.swift` using prepare / immutable audio PUT / complete, bound to the exact account, library and property, for the property-video compositor. This is an independent Rendprop collection path. Apple Speech transcription is a separate platform path; it is not the basis for declaring Apple's own collection as Rendprop collection. See §6. |
 | Purchases → **Purchase History** | Linked | App Functionality | StoreKit 2. The app posts Apple's signed transaction (JWS) to our server, which stores **Apple's transaction id, original transaction id, product id, environment, and expiry** in `apple_subscriptions` in order to unlock the plan. We never see or store card details, and we do not use purchase data for advertising. |
 
 ## 2. Data types to answer NO to — and the reason, if asked
@@ -50,10 +52,10 @@ Every row: **Not used for tracking**. See §3.
 | Contacts | The app never reads the address book. |
 | Browsing History, Search History | Neither exists in the app. |
 | Health, Fitness, Sensitive Info | Never touched. The "gym" mode describes a *venue*, not a person's fitness. |
-| ~~Audio Data~~ | **Moved to §1, 2026-09.** Previously answered No here on the reasoning that the recording only leaves as part of an already-declared video. That covers the publish path, but misses that transcription itself can send the raw recording to **Apple's** servers (§6) — which is collection, just not collection *by us*. See §6 for the full reasoning. |
+| ~~Audio Data~~ | **Already declared in §1.** The current source independently uploads retained narration to Rendprop. The older explanation relying solely on Apple Speech is superseded by §6. |
 | Coarse Location | We store a coordinate at Precise resolution, so it is declared as Precise instead. Declaring both is wrong. |
 | Advertising Data | No ad SDK, no ad inventory, no IDFA. |
-| Other Diagnostic Data | Everything MetricKit gives us is already declared as Crash or Performance Data. |
+| Other Diagnostic Data | **OPEN — do not certify No from MetricKit alone.** MetricKit is covered by Crash and Performance Data, but retained backend/vendor technical logs require a separate collection, linkage, retention and purpose assessment. Functional job/cost receipts are not automatically diagnostic data. No checkbox or manifest change is made by this source note. |
 | Other Data Types | Nothing left over. |
 
 Motion / gyroscope data is processed on-device for stabilization and never leaves the
@@ -100,43 +102,54 @@ App Functionality. It contains fourteen collected-data declarations, including
 Purchase History and Audio Data. The older instruction to add a missing purchase
 entry is resolved; do not add a duplicate.
 
-## 6. Audio Data is declared and published
+## 6. Audio Data: published state and current source rationale
 
-**The manifest now declares `NSPrivacyCollectedDataTypeAudioData`** (Linked, Not used for
-tracking, App Functionality). The App Store Connect answer was published on 2 October 2026: **Audio Data
-→ Yes / Linked / Not tracking / App Functionality.**
+The existing manifest declares `NSPrivacyCollectedDataTypeAudioData`, Linked,
+not used for tracking, for App Functionality. The retained October 2 receipt
+records that published answer. This source correction does not republish it.
 
-The evidence, so this isn't taken on faith:
+The current feature has an independent Rendprop audio path:
 
-* `Voice/SpeechTranscriber.swift` sets `request.requiresOnDeviceRecognition = onDevice`, where
-  `onDevice = recognizer.supportsOnDeviceRecognition` — it does **not** force on-device
-  recognition. A device or locale without an on-device model gets `false` immediately, and a
-  device that *does* support on-device recognition still retries once with `false` if the
-  on-device attempt fails outright (see the `catch` in `transcribe(_:)`).
-* Apple's own documentation for `requiresOnDeviceRecognition` says: "Set this property to
-  `true` to prevent an `SFSpeechRecognitionRequest` from sending audio over the network." The
-  converse is stated plainly: `false` sends audio over the network.
-* `Info.plist`'s own `NSSpeechRecognitionUsageDescription` — shown to the user in the
-  permission prompt — already says this out loud: *"Transcription runs on this iPhone when the
-  device supports it; otherwise the recording is sent to Apple's speech recognition service to
-  be turned into text."*
-* Rendprop's own backend is not part of this path. `SpeechTranscriber` only calls into Apple's
-  `Speech` framework; no `LiveAPIClient`/network call to our own domain carries the audio. Only
-  the transcript text comes back into the app.
+- `apps/ios/Rendprop/Networking/PropertyVideoNarrationUpload.swift` validates an
+  owned narration file, records its digest and exact property/account context,
+  calls audio prepare, transfers the audio bytes, then confirms completion.
+- `services/supabase/functions/property-video-jobs/index.ts` handles the
+  owned narration preparation/completion contract. The worker compositor consumes
+  the selected narration asset for the requested video.
+- This supports retaining Audio Data / Linked / App Functionality without
+  treating Apple's own Speech collection as collection by Rendprop. The Kie
+  property-video request has `sound:false` and contains no narration/music field;
+  narration is a separate Rendprop/compositor flow.
 
-The previous "No" answer reasoned that the recording only leaves the device as part of an
-already-declared, published video (still true, and still covered under **Photos or Videos** —
-not double-declared here). What it missed is that *transcription itself* — which runs whether
-or not the reel is ever published — can send the raw recording off-device to a third party
-(Apple). "Not collected by us" is not the same as "not collected" for this questionnaire: the
-data still leaves the device, off to a service Rendprop's own feature code invoked.
+`Voice/SpeechTranscriber.swift` can use Apple's network recognition when on-device
+recognition is unavailable or its attempt fails. Its permission explanation remains
+relevant to that feature. The older claim that Apple's own collection alone
+requires this developer label is superseded. Native manifest comments still carry
+that historical explanation; the declaration itself is retained, and the comment
+correction should accompany the next deliberately bound native source revision.
 
-One open judgment call for the app owner, not resolvable from the code alone: this entry is
-declared **Linked**, matching every other row in this manifest (there is currently no
-`Linked: false` row at all) and on the reasoning that the recording is a specific signed-in
-user's own voice, captured against their own listing. Apple's Speech framework may or may not
-tie the recognition request itself to the user's Apple ID on Apple's end — that is Apple's
-practice, not something this app's code controls or can inspect, and it does not change what
-*this app* should declare about data its own feature caused to be collected. If the app owner's
-own reading of Apple's guidance differs, this is the row to revisit — not whether Audio Data
-should be declared at all.
+Apple's questionnaire concerns developer/partner collection and use. Its treatment
+of Apple's own collection is distinct. Review the actual app and vendor paths,
+rather than inferring all purposes or linkage from a framework flag. See
+[App Privacy definitions](https://developer.apple.com/app-store/app-privacy-details/)
+and [Manage App Privacy](https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy/),
+checked October 17, 2026. Keeping a source manifest aligned does not establish a new
+published questionnaire.
+
+## 7. Remaining privacy reconciliation before Kie activation
+
+- Obtain a fresh complete authenticated questionnaire read; the October 17 attempt
+  reached sign-in, so the October 2 evidence remains the latest verified answers.
+- Map retained technical error/diagnostic logs separately from operational job,
+  payment and consent records. `propertyVideoPollDiagnostic` emits a closed event,
+  phase, allowlisted error name and HTTP status; it intentionally excludes provider
+  bodies, media URLs, tokens and IDs. Source logging alone does not establish the
+  hosting/vendor retention or whether platform metadata permits linkage.
+- Confirm API/account-specific input and log retention, deletion, improvement,
+  training, human review, downstream processors and advertising/broker uses.
+  Neither a no-training guarantee nor actual training is established by the
+  reviewed general Terms. Keep unspecified purposes unknown.
+- Reconcile verified purposes, public notice and the frozen client/server
+  permission revision before any activation. Keep Kie inactive and the draft
+  notice unpublished while those decisions remain open. No new ATT inference or
+  App Store Connect change is authorized by this document.

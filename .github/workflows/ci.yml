@@ -1226,6 +1226,37 @@ jobs:
             exit 1
           fi
           grep -q "Duplicate30fps timeline bucket was repainted" "$RUNNER_TEMP/export-paint-budget-defect.log"
+          control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-optional-control.XXXXXX")
+          set +e
+          TMPDIR="$control_root" node tests/export-audio-browser.mjs --alignment-only --fault=late-optional-track-schedule > "$control_root/run.log" 2>&1
+          control_status=$?
+          set -e
+          test "$control_status" -eq 1
+          python3 - "$control_root" <<'PYCONTROL'
+          import hashlib, json, sys
+          from pathlib import Path
+          receipts = list(Path(sys.argv[1]).glob('rendprop-export-original-audio-*/receipt.json'))
+          assert len(receipts) == 1, receipts
+          receipt = json.loads(receipts[0].read_text())
+          assert receipt['status'] == 'failed' and receipt['fault'] == '--fault=late-optional-track-schedule'
+          assert receipt['errors'] == [] and receipt['externalRequests'] == []
+          assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Narration onset must honor its saved offset before delayed play delivery')
+          assert len(receipt['cases']) == 1
+          case = receipt['cases'][0]
+          assert case['name'] == 'alignment-opening' and case['ok'] is True
+          assert len(case['playEvidence']) == 2
+          assert case['playEvidence'][1]['media'] - case['playEvidence'][0]['media'] > .15
+          assert case['pcm']['voiceRef'] > .15
+          assert case['pcm']['voiceEarly'] <= case['pcm']['voiceRef'] * .7
+          assert abs(float(case['probe']['format']['duration']) - 2) < .18
+          assert sum(x['codec_type'] == 'audio' and x['codec_name'] == 'aac' for x in case['probe']['streams']) == 1
+          expected = {'tests/export-audio-fixture.ts', 'tests/export-audio-browser.mjs'}
+          expected.update(f'src/editor/{name}.ts' for name in ('export', 'recording-clock', 'media', 'model', 'music', 'finishing'))
+          assert set(receipt['sourceHashes']) == expected
+          for path, digest in receipt['sourceHashes'].items():
+              assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
+          print('Late optional-track control reaches its encoded narration-onset assertion')
+          PYCONTROL
           node tests/cloud-editor-browser.mjs
           node tests/conversation-browser.mjs
           node tests/finishing-audio-probe-controls.mjs
@@ -1258,6 +1289,10 @@ jobs:
             ${{ runner.temp }}/rendprop-export-startup-control.*/run.log
             ${{ runner.temp }}/rendprop-export-startup-control.*/rendprop-export-startup-*/receipt.json
             ${{ runner.temp }}/export-clock-origin-defect.log
+            ${{ runner.temp }}/export-paint-budget-defect.log
+            ${{ runner.temp }}/rendprop-export-optional-control.*/run.log
+            ${{ runner.temp }}/rendprop-export-optional-control.*/rendprop-export-original-audio-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-optional-control.*/rendprop-export-original-audio-*/*.mp4
             ${{ runner.temp }}/rendprop-finishing-*/receipt.json
             ${{ runner.temp }}/rendprop-finishing-*/*.png
             ${{ runner.temp }}/rendprop-finishing-*/*.mp4
