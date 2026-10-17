@@ -183,7 +183,7 @@ def render(source: Path, output: Path, aspect, finish, source_width, source_heig
               "-vf", f"scale={work_width}:{work_height}:flags=lanczos,format=yuv420p", "-frames:v", str(frames),
               "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"]
     encode = [shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-              "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{width}x{height}", "-r", str(fps), "-protocol_whitelist", "file,pipe", "-i", "-", *encode_tail]
+              "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{width}x{height}", "-r", str(fps), "-protocol_whitelist", "file,pipe", "-i", "pipe:0", *encode_tail]
     luma_size, chroma_size = work_width * work_height, (work_width // 2) * (work_height // 2)
     out_chroma = (width // 2, height // 2)
     written = 0

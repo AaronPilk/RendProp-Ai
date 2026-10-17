@@ -22,7 +22,11 @@ def decoded_srgb(source):
     """Shared actual decode/orientation/color admission for both workingcopies."""
     with warnings.catch_warnings():
         warnings.simplefilter('error', Image.DecompressionBombWarning)
-        with Image.open(source, formats=('JPEG', 'PNG', 'WEBP')) as raw:
+        try:
+            raw = Image.open(source, formats=('JPEG', 'PNG', 'WEBP'))
+        except Image.UnidentifiedImageError as error:
+            raise ValueError('single_supported_photo_required') from error
+        with raw:
             if raw.format not in {'JPEG', 'PNG', 'WEBP'} or getattr(raw, 'n_frames', 1) != 1:
                 raise ValueError('single_supported_photo_required')
             if raw.width < 1 or raw.height < 1 or raw.width * raw.height > MAX_PIXELS:

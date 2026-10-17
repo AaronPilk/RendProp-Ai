@@ -14,6 +14,7 @@ document.querySelector("button")!.addEventListener("click",async()=>{
   const gainEvidence:Array<Record<string,unknown>>=[],sourceEvidence:Array<Record<string,unknown>>=[];
   const play=HTMLMediaElement.prototype.play, decode=AudioContext.prototype.decodeAudioData, createBuffer=AudioContext.prototype.createBufferSource;
   let injected=false, decodeCalls=0; const playEvidence:Array<{event:string;wall:number;media:number}>=[];
+  const playHoldEvidence:Array<Record<string,unknown>>=[];
   const nativeClockRead=RecordingClock.prototype.read;
   RecordingClock.prototype.read=function(...args: Parameters<RecordingClock["read"]>){
     (window as unknown as {audioExportObserveClock?:(args: Parameters<RecordingClock["read"]>)=>void}).audioExportObserveClock?.(args);
@@ -52,7 +53,39 @@ document.querySelector("button")!.addEventListener("click",async()=>{
       // delivery, exposing a mismatched clock origin without injecting media loss.
       if(fixture.config.playResolutionDelayMs){
         injected=true;
-        return result.then(()=>{playEvidence.push({event:"native-play-resolved",wall:performance.now(),media:this.currentTime});return new Promise<void>(resolve=>timers.push(setTimeout(()=>{playEvidence.push({event:"delayed-promise-delivered",wall:performance.now(),media:this.currentTime});resolve();},fixture.config.playResolutionDelayMs)));});
+        return result.then(()=>{
+          const began=performance.now(), initialMedia=this.currentTime;
+          playEvidence.push({event:"native-play-resolved",wall:began,media:initialMedia});
+          if(fixture.config.mix){
+            // Alignment requires real native playback during the hold, not
+            // only elapsed wall time. No seek/rate/pause or clock is changed.
+            const hold={minimumWallMs:fixture.config.playResolutionDelayMs,minimumMediaAdvanceSeconds:.15,deadlineMs:1500,samples:0,elapsedMs:0,mediaAdvanceSeconds:0,readyState:this.readyState,paused:this.paused,seeking:this.seeking,ended:this.ended,status:"pending"};
+            playHoldEvidence.push(hold);
+            return new Promise<void>((resolve,reject)=>{
+              let timer:ReturnType<typeof setTimeout>|undefined,settled=false;
+              const finish=(error?:unknown)=>{
+                if(settled)return;settled=true;
+                if(timer!==undefined)clearTimeout(timer);
+                controller.signal.removeEventListener("abort",aborted);
+                if(error!==undefined)reject(error);else resolve();
+              };
+              const aborted=()=>{hold.status="aborted";finish(controller.signal.reason??new DOMException("Synthetic alignment readiness aborted","AbortError"));};
+              const poll=()=>{
+                hold.samples++;hold.elapsedMs=performance.now()-began;hold.mediaAdvanceSeconds=this.currentTime-initialMedia;
+                hold.readyState=this.readyState;hold.paused=this.paused;hold.seeking=this.seeking;hold.ended=this.ended;
+                if(controller.signal.aborted){aborted();return;}
+                // Check terminal budget before admitting even a late-ready sample.
+                if(hold.elapsedMs>=hold.deadlineMs){hold.status="timed-out";finish(new Error("Synthetic alignment play readiness timed out before promise delivery",{cause:{...hold}}));return;}
+                if(hold.elapsedMs>=hold.minimumWallMs&&hold.mediaAdvanceSeconds>hold.minimumMediaAdvanceSeconds&&!this.paused&&!this.ended&&!this.seeking&&this.readyState>=HTMLMediaElement.HAVE_FUTURE_DATA){
+                  hold.status="delivered";playEvidence.push({event:"delayed-promise-delivered",wall:performance.now(),media:this.currentTime});finish();return;
+                }
+                timer=setTimeout(poll,10);timers.push(timer);
+              };
+              controller.signal.addEventListener("abort",aborted,{once:true});poll();
+            });
+          }
+          return new Promise<void>(resolve=>timers.push(setTimeout(()=>{playEvidence.push({event:"delayed-promise-delivered",wall:performance.now(),media:this.currentTime});resolve();},fixture.config.playResolutionDelayMs)));
+        });
       }
       return result;
     };
@@ -78,8 +111,8 @@ document.querySelector("button")!.addEventListener("click",async()=>{
     const format=exportFormats().find(format=>format.extension==="mp4")!;
     const result=await exportLocalVideo({draft,media,narrationBlob,musicBlob,format,signal:controller.signal,currentDraft:()=>draft,onProgress:()=>{}});
     const bytes=new Uint8Array(await result.blob.arrayBuffer());let binary="";for(const byte of bytes)binary+=String.fromCharCode(byte);
-    fixture.result={ok:true,base64:btoa(binary),duration:result.duration,decodeCalls,injected,playEvidence,gainEvidence,sourceEvidence};
+    fixture.result={ok:true,base64:btoa(binary),duration:result.duration,decodeCalls,injected,playEvidence,playHoldEvidence,gainEvidence,sourceEvidence};
     URL.revokeObjectURL(local.url);
-  }catch(error){fixture.result={ok:false,error:String(error),cause:error instanceof Error?error.cause:undefined,decodeCalls,injected};}
+  }catch(error){fixture.result={ok:false,error:String(error),cause:error instanceof Error?error.cause:undefined,decodeCalls,injected,playEvidence,playHoldEvidence};}
   finally{gainMethods.forEach((name,index)=>{(AudioParam.prototype as unknown as Record<string,unknown>)[name]=nativeGains[index];});AudioBufferSourceNode.prototype.start=nativeSourceStart;for(const timer of timers)clearTimeout(timer);RecordingClock.prototype.read=nativeClockRead;HTMLMediaElement.prototype.play=play;AudioContext.prototype.decodeAudioData=decode;AudioContext.prototype.createBufferSource=createBuffer;controller.abort();}
 });
