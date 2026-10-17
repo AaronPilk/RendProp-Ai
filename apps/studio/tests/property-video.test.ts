@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import {decodeSources,selectedSources,decodeJob,planVideoSources,saveVideoJournal,readVideoJournal,enqueueVideo,recoverVideo,inspectVideoOperation,retainRejectedVideo,videoScopeKey,resumeVideo,publishVideo,MUSIC,type VideoScope,type VideoJournal,type VideoInput} from "../src/features/sync/property-video";
+import {decodeSources,selectedSources,decodeJob,planVideoSources,fallbackVideoMotion,FALLBACK_MOTION_ROTATION,saveVideoJournal,readVideoJournal,enqueueVideo,recoverVideo,inspectVideoOperation,retainRejectedVideo,videoScopeKey,resumeVideo,publishVideo,MUSIC,type VideoScope,type VideoJournal,type VideoInput} from "../src/features/sync/property-video";
 
 const actor="11111111-1111-4111-8111-111111111111",org="22222222-2222-4222-8222-222222222222",library="33333333-3333-4333-8333-333333333333",listing="44444444-4444-4444-8444-444444444444",operation="55555555-5555-4555-8555-555555555555",jobID="66666666-6666-4666-8666-666666666666",asset="77777777-7777-4777-8777-777777777777",poster="88888888-8888-4888-8888-888888888888";
 const scope:VideoScope={actor,org,library,listing,identityVersion:1};
@@ -40,6 +40,21 @@ test("all100 photos keep exact input order across20-photo plans, even with rever
  await assert.rejects(()=>planVideoSources(service(async()=>({listing_id:listing,org_id:library,photos:[]})),scope,frozen,operation,true),/omitted/);
  for(const fault of ["duplicate","wrong-asset"]){await assert.rejects(()=>planVideoSources(service(async(_path,options)=>({listing_id:listing,org_id:library,photos:options.body.photos.map((p:any,index:number)=>({...p,...(index===1?(fault==="duplicate"?{photo_id:options.body.photos[0].photo_id}:{asset_id:poster}):{}),scene:"living",confidence:.9,motion:"push_in"}))})),scope,frozen,operation,true),/repeats|changed/);}
  assert.deepEqual(frozen,selectedSources(photos,photos.map(s=>s.photo_id)),"planning cannot mutate selected source/version identity");
+});
+
+test("planner-unavailable fallback rotates push_in → side_glide → pull_back by index, keeps order and never fly_through",()=>{
+ const frozen=selectedSources(photos,photos.slice(0,14).map(s=>s.photo_id));
+ assert(frozen.every(s=>s.motion==="push_in"),"selectedSources still freezes push_in before planning");
+ const fallback=fallbackVideoMotion(frozen);
+ assert.deepEqual(fallback.map(s=>s.motion),["push_in","side_glide","pull_back","push_in","side_glide","pull_back","push_in","side_glide","pull_back","push_in","side_glide","pull_back","push_in","side_glide"]);
+ assert.deepEqual(fallback.map(s=>s.photo_id),frozen.map(s=>s.photo_id),"photo order is preserved");
+ assert.deepEqual(fallback.map(s=>[s.photo_asset_id,s.photo_version_id,s.photo_provenance_id]),frozen.map(s=>[s.photo_asset_id,s.photo_version_id,s.photo_provenance_id]),"identity is untouched");
+ assert(fallback.every((s,i)=>i===0||s.motion!==fallback[i-1]!.motion),"no two adjacent shots share a move");
+ assert(!fallback.some(s=>s.motion==="fly_through"));assert.equal(new Set(fallback.map(s=>s.motion)).size,3);
+ assert.deepEqual(fallbackVideoMotion(frozen),fallback,"deterministic for retry safety");
+ assert(frozen.every(s=>s.motion==="push_in"),"fallback does not mutate its input");
+ assert.deepEqual(fallbackVideoMotion([]),[]);assert.deepEqual(fallbackVideoMotion(frozen.slice(0,1)).map(s=>s.motion),["push_in"]);
+ assert.deepEqual(FALLBACK_MOTION_ROTATION,["push_in","side_glide","pull_back"]);
 });
 
 test("late identity and aborted planner replies cannot populate a new account",async()=>{

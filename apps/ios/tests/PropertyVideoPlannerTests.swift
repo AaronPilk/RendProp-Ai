@@ -113,12 +113,18 @@ __ACTUAL_PLAN_WIRE__
                 documents: otherRoot, requireCurrent: { try scope.requireCurrent() })
             check(fallback.usedFallback && fallback.photos.map(\.input) == small && bad.calls.count == 1,
                 "invalid or unavailable batch falls back exactly once to complete original order")
+            check(fallback.photos.map(\.motion) == ["push_in", "side_glide", "pull_back", "push_in"],
+                "fallback rotates push_in, side_glide, pull_back by index instead of freezing every shot as push_in")
         }
         let failedLater = ClosedPlanner(); failedLater.callToFail = 2
         let later = try await PropertyVideoPlanner.plan(inputs: inputs, context: context, api: failedLater, automaticOrder: true,
             documents: root.appendingPathComponent("later"), requireCurrent: { try scope.requireCurrent() })
         check(later.usedFallback && later.photos.map(\.input) == inputs && failedLater.calls.count == 2,
             "a later batch failure never partially reorders or repeats paid planning")
+        let rotation = ["push_in", "side_glide", "pull_back"]
+        check(later.photos.enumerated().allSatisfy { $0.element.motion == rotation[$0.offset % rotation.count] }
+            && !later.photos.contains { $0.motion == "fly_through" } && later.photos.allSatisfy { !$0.confident },
+            "a whole-selection fallback keeps the deterministic rotation across every batch and never fly_through")
         let switched = ClosedPlanner(); switched.afterCall = { scope.current = false }
         do {
             _ = try await PropertyVideoPlanner.plan(inputs: small, context: context, api: switched, automaticOrder: true,

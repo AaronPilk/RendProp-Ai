@@ -3,7 +3,7 @@ import type {Listing,Workspace} from "../../data/contracts";
 import {belongsToLibrary,canEditListing} from "../../data/contracts";
 import type {StudioServices} from "../../data/services";
 import {decodeResult} from "../creative/model";
-import {abandonVideoOperation,assertVideoScope,decodeJob,decodeSources,enqueueVideo,MUSIC,planVideoSources,publishVideo,readVideoJournal,inspectVideoOperation,retainAbandonedVideo,retainRejectedVideo,resumeVideo,saveVideoJournal,selectedSources,videoClosure,videoScopeKey,type VideoClosure,type VideoInput,type VideoJob,type VideoJournal,type VideoPurpose,type VideoScope,type VideoSource,type VideoPresentation,type VideoPreparation} from "./property-video";
+import {abandonVideoOperation,assertVideoScope,decodeJob,decodeSources,enqueueVideo,fallbackVideoMotion,MUSIC,planVideoSources,publishVideo,readVideoJournal,inspectVideoOperation,retainAbandonedVideo,retainRejectedVideo,resumeVideo,saveVideoJournal,selectedSources,videoClosure,videoScopeKey,type VideoClosure,type VideoInput,type VideoJob,type VideoJournal,type VideoPurpose,type VideoScope,type VideoSource,type VideoPresentation,type VideoPreparation} from "./property-video";
 import {appendVisibleSelection,filterByOrientation,framingSummary,orientationCounts,orientationLabel,orientationSummary,PHOTO_ORIENTATIONS,photoFrame,recordPreviewGeometry,withPreviewGeometry,type PhotoGeometry,type PhotoOrientationFilter} from "./video-framing";
 import {prepareVideoSources} from "./source-preparation";
 import {CONSENT_V2,PROCESSOR_DISCLOSURE,fetchProcessorAvailability,knownVideoPermission,permissionBeforePaidWork,permissionForSavedJob,sameVideoPermission,readVideoStops,reconcileVideoStop,saveVideoStop,type ProcessorAvailability,type VideoPermission} from "./processor-consent";
@@ -209,9 +209,10 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
   if(framing.unknown){setNotice('Your selected photo previews are still loading or unavailable. No AI video has started. Reopen this property or choose another saved photo if a preview cannot load.');return;}
   if(framing.majorCrop&&!next.preparation?.framingReviewed&&!framingReviewed){setNotice('Review the final frames below, then keep this framing to create the video. No AI video has started.');return;}
   if(next.preparation&&framingReviewed&&!next.preparation.framingReviewed){next={...next,preparation:{...next.preparation,framingReviewed:true}};updateJournal(next);}
+  let plannerNotice="";
   if(next.preparation&&!next.preparation.planned){
    const frozen=next.preparation;let planned=next.input.sources;setBusy("Choosing movement for your photos…");
-   if(frozen.camera==="automatic"){try{planned=await planVideoSources(services,scope,planned,next.input.operation_id,false,phase.signal);}catch{prospectiveCurrent();setNotice("Automatic planning is unavailable. This video keeps your selected order with gentle push-in movement.");}}
+   if(frozen.camera==="automatic"){try{planned=await planVideoSources(services,scope,planned,next.input.operation_id,false,phase.signal);}catch{prospectiveCurrent();planned=fallbackVideoMotion(planned);plannerNotice="Automatic planning was unavailable, so this video keeps your selected order and alternates gentle push-in, side-glide and pull-back movement.";setNotice(plannerNotice);}}
    else planned=planned.map(source=>({...source,motion:frozen.camera as FrozenMotion}));
    prospectiveCurrent();
    const labelsByID=new Map(next.input.sources.map((source,index)=>[source.photo_id,next!.input.presentation.shot_labels[index]??null]));
@@ -233,7 +234,7 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
    else throw value;
   }
   current();
-  updateJournal({...next,job_id:accepted.job_id});setAllowedProcessor(null);setJob(accepted);setReviewed(false);setShare("");setNotice("Your video is creating on the server. You can leave Studio or lock your phone; open this property to check its progress.");void refresh().catch(()=>{/* The accepted job is retained; manual refresh reports any outage. */});
+  updateJournal({...next,job_id:accepted.job_id});setAllowedProcessor(null);setJob(accepted);setReviewed(false);setShare("");setNotice(`Your video is creating on the server. You can leave Studio or lock your phone; open this property to check its progress.${plannerNotice?` ${plannerNotice}`:""}`);void refresh().catch(()=>{/* The accepted job is retained; manual refresh reports any outage. */});
  }finally{sessionSignal.removeEventListener("abort",abortPhase);if(prospective.current===phase)prospective.current=null;}
  }
  async function recover(){if(!journal)return;const operation=await inspectVideoOperation(services,scope,journal,control.current.signal);current();if(operation.job){updateJournal({...journal,job_id:operation.job.job_id});setAllowedProcessor(null);setJob(operation.job);setClosed(null);setNotice("Recovered the same saved server job. No new video was started.");}else if(videoClosure(operation))closeSaved(journal,videoClosure(operation)!);else setNotice("No job was found for that saved operation. Resume the same request after confirming consent, or discard it to change photos or options.");}
