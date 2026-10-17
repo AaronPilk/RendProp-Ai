@@ -68,7 +68,7 @@ def framing(aspect):
 def probe_stream(path: Path):
     out = subprocess.run([shutil.which("ffprobe"), "-v", "error", "-select_streams", "v:0", "-count_packets",
                           "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate,nb_read_packets",
-                          "-of", "json", str(path)], check=True, capture_output=True, timeout=60).stdout
+                          "-of", "json", "-protocol_whitelist", "file,pipe", str(path)], check=True, capture_output=True, timeout=60).stdout
     streams = json.loads(out).get("streams", [])
     if len(streams) != 1:
         raise MotionError("one_video_stream_required")
@@ -95,7 +95,7 @@ def framed_gray_frames(path: Path, width: int, height: int, max_frames: int | No
     w, h = width // ANALYSIS_DOWNSCALE, height // ANALYSIS_DOWNSCALE
     filters = (f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
                f"scale={w}:{h}:flags=area,format=gray")
-    args = [shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", str(path),
+    args = [shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-protocol_whitelist", "file,pipe", "-i", str(path),
             "-map", "0:v:0", "-an", "-vf", filters]
     # One extra frame detects an unbounded input instead of silently declaring
     # a truncated prefix smooth. Explicit prefix measurements are labelled by

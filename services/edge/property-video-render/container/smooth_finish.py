@@ -147,7 +147,7 @@ def render(source: Path, output: Path, aspect, finish, source_width, source_heig
     if finish["strength"] == 0 and finish["zoom"] == 1.0:
         # Nothing to correct within real pixels: v1 framing, native cadence, no warp.
         try:
-            with BoundedProcess([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(source), "-map", "0:v:0",
+            with BoundedProcess([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-protocol_whitelist", "file,pipe", "-i", str(source), "-map", "0:v:0",
                                  "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,format=yuv420p",
                                  *encode_tail], timeout=600) as encoder:
                 if encoder.finish() != 0:
@@ -179,11 +179,11 @@ def render(source: Path, output: Path, aspect, finish, source_width, source_heig
         plans.append((_affine(luma, luma_shift), _affine(luma, chroma_shift)))
     if len(plans) < frames:
         raise FinishError("too_few_source_frames")
-    decode = [shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", str(source), "-map", "0:v:0", "-an",
+    decode = [shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-protocol_whitelist", "file,pipe", "-i", str(source), "-map", "0:v:0", "-an",
               "-vf", f"scale={work_width}:{work_height}:flags=lanczos,format=yuv420p", "-frames:v", str(frames),
               "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"]
     encode = [shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-              "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{width}x{height}", "-r", str(fps), "-i", "-", *encode_tail]
+              "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{width}x{height}", "-r", str(fps), "-protocol_whitelist", "file,pipe", "-i", "-", *encode_tail]
     luma_size, chroma_size = work_width * work_height, (work_width // 2) * (work_height // 2)
     out_chroma = (width // 2, height // 2)
     written = 0

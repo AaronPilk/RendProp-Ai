@@ -35,7 +35,7 @@ def run(args, timeout=300):
 
 
 def probe(path: Path):
-    result = run([shutil.which("ffprobe"), "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)], timeout=30)
+    result = run([shutil.which("ffprobe"), "-v", "error", "-show_streams", "-show_format", "-of", "json", "-protocol_whitelist", "file,pipe", str(path)], timeout=30)
     return json.loads(result.stdout)
 
 
@@ -67,7 +67,7 @@ def require_cfr24(source, facts, *, exact_frames=None):
     if video.get('avg_frame_rate') != '24/1' or video.get('r_frame_rate') != '24/1':
         raise QualityError('steady_v2_requires_native_cfr24')
     packets = json.loads(run([shutil.which('ffprobe'), '-v', 'error', '-select_streams', 'v:0',
-                            '-show_entries', 'packet=pts,duration', '-of', 'json', str(source)]).stdout)['packets']
+                            '-show_entries', 'packet=pts,duration', '-of', 'json', '-protocol_whitelist', 'file,pipe', str(source)]).stdout)['packets']
     if not 1 <= len(packets) <= 12000:
         raise QualityError('steady_v2_bounded_cfr24_required')
     unit = Fraction(video['time_base'])
@@ -130,7 +130,7 @@ def compose(clips: list[Path], directory: Path, *, aspect="16:9", narration: Pat
         if fps == 24:
             filters = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,format=yuv420p"
         filters = sdr_colorspace_conversion(video) + filters
-        run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(source),
+        run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-protocol_whitelist", "file,pipe", "-i", str(source),
              "-map", "0:v:0", "-an", "-t", "5", "-vf", filters,
              "-c:v", "libx264", "-preset", "ultrafast" if test_fast else "medium", "-crf", "18", "-maxrate", "24M", "-bufsize", "48M", "-threads", "2",
              "-pix_fmt", "yuv420p", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
@@ -145,11 +145,11 @@ def compose(clips: list[Path], directory: Path, *, aspect="16:9", narration: Pat
     manifest = directory / "concat.txt"
     manifest.write_text("".join(f"file '{path.name}'\n" for path in canonical))
     clean = directory / "clean.mp4"
-    run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "concat", "-safe", "1", "-i", str(manifest),
+    run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "concat", "-safe", "1", "-protocol_whitelist", "file,pipe", "-i", str(manifest),
          "-map", "0:v:0", "-an", "-c:v", "copy", "-movflags", "+faststart", *(["-movie_timescale", "24000"] if fps == 24 else []), str(clean)])
     visual = overlay(clean, directory, width, height, presentation, starts, elapsed_duration, words or [], fps=fps)
     master = directory / "master.mp4"
-    args = [shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(visual)]
+    args = [shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-protocol_whitelist", "file,pipe", "-i", str(visual)]
     if narration is not None:
         # Muxed once at final output; missing/short narration cannot shorten video.
         audio = probe(narration)
@@ -157,9 +157,9 @@ def compose(clips: list[Path], directory: Path, *, aspect="16:9", narration: Pat
             raise QualityError("one verified narration stream required")
         if float(audio["format"]["duration"]) > elapsed_duration + .1:
             raise QualityError("narration exceeds video; refuse cutting spoken words")
-        args += ["-i", str(narration)]
+        args += ["-protocol_whitelist", "file,pipe", "-i", str(narration)]
     if music is not None:
-        args += ["-stream_loop", "-1", "-i", str(music.path)]
+        args += ["-stream_loop", "-1", "-protocol_whitelist", "file,pipe", "-i", str(music.path)]
         music_index = 2 if narration is not None else 1
         music_chain = f"[{music_index}:a]aresample=48000,aformat=channel_layouts=stereo,volume={music_gain},atrim=duration={elapsed_duration},asetpts=PTS-STARTPTS[m]"
         if narration is not None:
@@ -189,7 +189,7 @@ def compose(clips: list[Path], directory: Path, *, aspect="16:9", narration: Pat
     if fps == 24:
         require_cfr24(master, final, exact_frames={round(elapsed_duration * 24)})
     poster = directory / "poster.jpg"
-    run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", "0.25", "-i", str(master), "-frames:v", "1", "-q:v", "2", str(poster)], timeout=30)
+    run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", "0.25", "-protocol_whitelist", "file,pipe", "-i", str(master), "-frames:v", "1", "-q:v", "2", str(poster)], timeout=30)
     return {"master": master, "poster": poster, "width": width, "height": height, "duration_s": elapsed_duration,
             "source_count": len(canonical), "facts": final,
             "music": None if music is None else {"track_id": music.track_id, "sha256": music.sha256,

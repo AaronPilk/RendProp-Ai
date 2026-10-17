@@ -75,7 +75,7 @@ def prepare_photo_quality(task,directory,hosts):
         for role,field in (('source','prepared_source'),('candidate','candidate')):
             path = directory/f'{role}-master'
             input_sha = download(task[field],path,hosts,max_bytes=MAX_PREPARED_SOURCE_BYTES if field == 'prepared_source' else MAX_SOURCE_BYTES)
-            with Image.open(path) as header:
+            with Image.open(path, formats=('JPEG', 'PNG', 'WEBP')) as header:
                 if min(header.size)<2 or max(header.size)>16384 or header.width*header.height>24_000_000:
                     raise ValueError('photo_quality_parent_geometry_refused')
             image,profile = decoded_srgb(path)

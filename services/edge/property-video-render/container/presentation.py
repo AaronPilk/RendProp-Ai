@@ -39,7 +39,7 @@ def timeline(clips, directory, name, *, fps=30):
         start = duration if i else 0
         end = 5.0 - (duration if i < len(clips) - 1 else 0)
         body = directory / f"body-{i:03d}.mp4"
-        run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", str(start), "-i", str(clip),
+        run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", str(start), "-protocol_whitelist", "file,pipe", "-i", str(clip),
              "-an", "-t", str(end - start), "-vf", f"setpts=PTS-STARTPTS,fps={fps},setsar=1", *encode_args(fps), str(body)])
         segments.append(body)
         if i < len(clips) - 1:
@@ -55,8 +55,8 @@ def timeline(clips, directory, name, *, fps=30):
                            f"[1:v]trim=end_frame={frames},setpts=PTS-STARTPTS,settb=1/24,tpad=stop_mode=clone:stop=1[b];"
                            f"[a][b]xfade=transition={effect}:duration={duration}:offset=0,fps=24,format=yuv420p[v]")
             length = ["-frames:v", str(frames)] if fps == 24 else ["-t", str(duration)]
-            run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", str(5.0 - duration), "-i", str(clip),
-                 "-i", str(clips[i + 1]), "-filter_complex_threads", "1", "-filter_complex", filters, "-map", "[v]", "-an", *length, *encode_args(fps), str(bridge)])
+            run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", str(5.0 - duration), "-protocol_whitelist", "file,pipe", "-i", str(clip),
+                 "-protocol_whitelist", "file,pipe", "-i", str(clips[i + 1]), "-filter_complex_threads", "1", "-filter_complex", filters, "-map", "[v]", "-an", *length, *encode_args(fps), str(bridge)])
             segments.append(bridge)
     return segments, 5.0 * len(clips) - duration * (len(clips) - 1), [(5.0 - duration) * i for i in range(len(clips))]
 
@@ -135,6 +135,6 @@ def overlay(source, directory, width, height, presentation, starts, elapsed, wor
     output = directory / "presented.mp4"
     script = directory / "overlays.txt"
     script.write_text(",".join(filters))
-    run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(source),
+    run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-protocol_whitelist", "file,pipe", "-i", str(source),
          "-an", "-filter_script:v", str(script), *encode_args(fps), str(output)], timeout=1200)
     return output

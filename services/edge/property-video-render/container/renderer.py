@@ -105,7 +105,7 @@ def inspect_audio(task, directory, hosts):
         raise QualityError("narration_duration_required")
     # Read the real audio packets before any paid clip. Extra album-art streams
     # are ignored just as they are by the final audio-only mux.
-    run([shutil.which("ffmpeg"), "-v", "error", "-nostdin", "-xerror", "-err_detect", "explode", "-i", str(source),
+    run([shutil.which("ffmpeg"), "-v", "error", "-nostdin", "-xerror", "-err_detect", "explode", "-protocol_whitelist", "file,pipe", "-i", str(source),
          "-map", "0:a:0", "-vn", "-sn", "-dn", "-f", "null", "-"], timeout=60)
     # A valid but overlong narration is reported to the fenced authority. It is
     # a definitive user correction, not three retries of the same CPU probe.
@@ -130,7 +130,7 @@ def extract(task, directory, hosts):
     for i, position in enumerate((.25, duration / 2, duration - .25)):
         image = directory / f"frame-{i}.jpg"
         run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", str(position),
-             "-i", str(clip), "-frames:v", "1", "-vf", "scale=1024:1024:force_original_aspect_ratio=decrease", "-q:v", "3", str(image)], timeout=30)
+             "-protocol_whitelist", "file,pipe", "-i", str(clip), "-frames:v", "1", "-vf", "scale=1024:1024:force_original_aspect_ratio=decrease", "-q:v", "3", str(image)], timeout=30)
         if image.stat().st_size > 384 * 1024:
             raise QualityError("bounded_qc_frame")
         frames.append({"image_b64": base64.b64encode(image.read_bytes()).decode(), "mime": "image/jpeg"})

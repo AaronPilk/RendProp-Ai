@@ -46,7 +46,7 @@ def encode_photo_motion(photo, clip, aspect, motion, *, fps=30):
     if source['width']*source['height']>100_000_000:
         raise QualityError('bounded_photo_pixels_required')
     filters=motion_filter(source['width'],source['height'],width,height,motion,fps=fps)
-    run([shutil.which('ffmpeg'),'-hide_banner','-loglevel','error','-nostdin','-y','-i',str(photo),'-vf',filters,
+    run([shutil.which('ffmpeg'),'-hide_banner','-loglevel','error','-nostdin','-y','-protocol_whitelist','file,pipe','-i',str(photo),'-vf',filters,
          '-an','-frames:v',str(5*fps),'-c:v','libx264','-crf','18','-maxrate','24M','-bufsize','48M','-threads','2',
          '-movflags','+faststart',str(clip)])
     return filters
@@ -88,7 +88,7 @@ def encode_static_saved_photo(photo, clip, aspect, *, fps=30):
         raise QualityError('bounded_photo_pixels_required')
     filters=static_saved_photo_filter(source['width'],source['height'],width,height,fps=fps)
     run([shutil.which('ffmpeg'),'-hide_banner','-loglevel','error','-nostdin','-y',
-         '-loop','1','-framerate',str(fps),'-i',str(photo),'-vf',filters,'-an',
+         '-loop','1','-framerate',str(fps),'-protocol_whitelist','file,pipe','-i',str(photo),'-vf',filters,'-an',
          '-frames:v',str(5*fps),'-c:v','libx264','-crf','18','-maxrate','24M','-bufsize','48M',
          '-threads','2','-movflags','+faststart',str(clip)])
     return filters

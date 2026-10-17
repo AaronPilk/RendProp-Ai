@@ -700,6 +700,7 @@ jobs:
           node tests/make-video-status-browser.mjs
           node tests/make-video-discard-browser.mjs
           node tests/listing-upload-order-browser.mjs
+          node tests/listing-large-import-browser.mjs
           node tests/photo-recovery-browser.mjs
           node tests/photo-delivery-browser.mjs
           node tests/photo-output-browser.mjs
@@ -812,15 +813,16 @@ jobs:
           assert.deepEqual(receipt.errors,[]);
           assert.deepEqual(receipt.externalRequests,[]);
           NODE
-      - name: C2 discard and upload-order compiled browser faults
+      - name: Discard, upload-order and partial-import compiled browser faults
         timeout-minutes: 5
         run: |
           set -euo pipefail
-          for control in client-only-discard forget-after-lost-reply discard-hides-accepted-job uuid-tie-break; do
+          for control in client-only-discard forget-after-lost-reply discard-hides-accepted-job uuid-tie-break omit-partial-refresh; do
             evidence_root="$RUNNER_TEMP/rendprop-c2-browser-control-$control"
             mkdir -p "$evidence_root"
             script=make-video-discard-browser.mjs
             if [ "$control" = "uuid-tie-break" ]; then script=listing-upload-order-browser.mjs; fi
+            if [ "$control" = "omit-partial-refresh" ]; then script=listing-large-import-browser.mjs; fi
             set +e
             TMPDIR="$evidence_root" node "tests/$script" --fault="$control" > "$evidence_root/run.log" 2>&1
             control_status=$?
@@ -839,6 +841,7 @@ jobs:
             'forget-after-lost-reply':'lost discard response',
             'discard-hides-accepted-job':'already accepted this request',
             'uuid-tie-break':'earlier photos keep their upload order',
+            'omit-partial-refresh':'Saved prefix must remain visible immediately after a later upload fails',
           };
           assert.equal(receipt.status,'failed');
           assert.equal(receipt.fault,control);

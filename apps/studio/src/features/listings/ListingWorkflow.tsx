@@ -269,6 +269,8 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
   };
   const upload = async (files: File[], purpose: "media" | "master" | "floorplan", resume?: UploadJournal) => run("upload", async (signal) => {
     if (files.length > 200) throw new Error("Import up to 200 files at a time.");
+    const uploadIdentity = services.getSnapshot().identityVersion;
+    try {
     for (const file of files) {
       if (signal.aborted) break;
       const meta = validateUpload(file);
@@ -285,6 +287,13 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
       if (signal.aborted) return;
       persist(journalsRef.current.filter((j) => j.operationId !== operationId));
       if (purpose === "master") { setAssetId(result.assetId); setDuration(String(metadata.duration_s ?? "")); setChapters(""); setPosterAssetId(""); setTab("tour"); }
+    }
+    } catch (reason) {
+      // Earlier files can already be saved when a later upload stops. Read
+      // those results without replaying uploads or hiding the original error.
+      if (alive.current && services.getSnapshot().identityVersion === uploadIdentity)
+        await refresh();
+      throw reason;
     }
     if (!signal.aborted) { setNotice(purpose === "floorplan" ? "Floor plan saved to this property." : "Your media is uploaded and available in the workspace."); onChanged(); await refresh(); }
   });
