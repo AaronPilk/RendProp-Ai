@@ -51,17 +51,28 @@ try:
   old={x['signature']:x for x in before};new={x['signature']:x for x in after}
   assert all(new[k]==v for k,v in old.items()),label+' changed an existing helper'
   added=set(new)-set(old);assert {x.split('(')[0]for x in added}==set(names)and len(added)==len(names),(label,added)
-  receipt[label]={'unchanged_existing':len(old),'exact_added':sorted(added)}
+  receipt[label]={'unchanged_existing':len(old),'exact_added':sorted(added)};return sorted(added)
+ OWNED=[]
  for i,m in enumerate(MIGRATIONS):
   if m==MIG:before=catalog('before-own')
   if m==NEW:before_v2=catalog('before-v2')
   run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
   if m==MIG:
-   own_after=catalog('immediate-after-own');preserves(before,own_after,['native_gallery_selection_ids','native_gallery_selection_target','native_gallery_selection_snapshot','native_gallery_selection_change'],'legacy_migration_catalog')
+   own_after=catalog('immediate-after-own');OWNED+=preserves(before,own_after,['native_gallery_selection_ids','native_gallery_selection_target','native_gallery_selection_snapshot','native_gallery_selection_change'],'legacy_migration_catalog')
   if m==NEW:
-   v2_after=catalog('immediate-after-v2');preserves(before_v2,v2_after,['native_gallery_selection_request_v2','native_gallery_selection_reject_abandoned','native_gallery_selection_snapshot_v2','native_gallery_selection_change_v2','native_gallery_selection_abandon'],'additive_migration_catalog')
+   v2_after=catalog('immediate-after-v2');OWNED+=preserves(before_v2,v2_after,['native_gallery_selection_request_v2','native_gallery_selection_reject_abandoned','native_gallery_selection_snapshot_v2','native_gallery_selection_change_v2','native_gallery_selection_abandon'],'additive_migration_catalog')
   if i%40==0:print('Applied',i+1,'of',len(MIGRATIONS),flush=True)
- after=catalog('after-all');final_map={x['signature']:x for x in after};assert all(final_map[x['signature']]==x for x in v2_after),'Later migration changed an owned helper'
+ # Later migrations may legitimately rewrite unrelated public functions (each carries its own
+ # replay guard); only the nine introduced native helpers must survive byte-exact, with the
+ # same owner, ACL, security and config, from their introducing migration to the final catalog.
+ after=catalog('after-all');final_map={x['signature']:x for x in after};v2_map={x['signature']:x for x in v2_after}
+ assert len(OWNED)==9 and len(set(OWNED))==9 and all(x in v2_map for x in OWNED),('Owned helper authority incomplete',OWNED)
+ for signature in OWNED:
+  assert signature in final_map,'Later migration dropped an owned helper: '+signature
+  assert final_map[signature]==v2_map[signature],'Later migration changed an owned helper: '+signature
+ later=[m.name for m in MIGRATIONS[MIGRATIONS.index(NEW)+1:]]
+ receipt['owned_helper_authority']={'signatures':OWNED,'later_migrations':later,'later_rewrites_outside_owned':sorted(k for k,v in v2_map.items()if final_map.get(k)!=v),'later_added_outside_owned':sorted(set(final_map)-set(v2_map)),'owned_unchanged':True}
+ assert not set(receipt['owned_helper_authority']['later_rewrites_outside_owned'])&set(OWNED)
  run('own-replay',[*PSQL,'-q','-1','-f',MIG]);assert catalog('after-replay')==after
  trigger_baseline=triggers('before-v2-replay-triggers');run('v2-replay',[*PSQL,'-q','-1','-f',NEW]);assert catalog('after-v2-replay')==after;assert triggers('after-v2-replay-triggers')==trigger_baseline
  for label in ['fresh','repeated']:
