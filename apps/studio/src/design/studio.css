@@ -333,6 +333,7 @@ main { padding: var(--space-8) var(--page-gutter) 0; }
 .studio-shell .make-video > p, .studio-shell .make-video h3 + p { color: var(--muted); font-size: var(--text-sm); }
 .studio-shell .video-options { padding: var(--space-4); border: var(--hairline); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--elev-1); }
 .studio-shell .video-options legend { font-size: var(--text-sm); padding: 0 6px; }
+.studio-shell .video-options label small { display: block; margin-top: 4px; color: var(--muted); font-weight: 400; font-size: var(--text-xs); }
 .studio-shell .video-purpose { gap: var(--space-3); }
 .studio-shell .video-purpose label {
   position: relative; display: grid; grid-template-columns: 44px 1fr; align-items: center; column-gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); cursor: pointer; font-size: var(--text-md); font-weight: 600;
