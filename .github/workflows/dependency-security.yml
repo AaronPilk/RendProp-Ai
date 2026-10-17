@@ -78,3 +78,23 @@ jobs:
       - name: Require audit to leave package inputs unchanged
         if: always()
         run: git diff --exit-code -- package.json package-lock.json
+
+  security-required:
+    name: Dependency security required
+    if: always()
+    needs: [inventory, npm-audit, dependency-review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Verify security-result admission
+        run: python3 tools/audit/test_dependency_security_status.py
+      - name: Require inventory, all matrix audits and applicable PR review
+        env:
+          SECURITY_EVENT: ${{ github.event_name }}
+          INVENTORY_RESULT: ${{ needs.inventory.result }}
+          AUDIT_RESULT: ${{ needs.npm-audit.result }}
+          REVIEW_RESULT: ${{ needs.dependency-review.result }}
+        run: python3 tools/audit/dependency_security_status.py

@@ -68,14 +68,28 @@ vulnerability records use OSV, so these are overlapping sources. Unresolved
 transitives, the Git-pinned pycolmap dependency, CI-only Modal and native/OS/FFmpeg
 remain unqueried or unknown. The new normal training CI must confirm integration.
 
+## Stable required check
+
+`Dependency security required` now combines inventory, every npm matrix audit
+and the PR-only dependency review into one stable context for merge protection.
+Its `always()` job refuses failed, cancelled, missing or unexpectedly skipped
+prerequisites. Push/scheduled/manual runs require the PR review to be explicitly
+skipped; PRs require it to succeed. Four focused local tests cover these admission
+rules. The new aggregate still requires a real hosted run before enforcement is
+claimed. A separate scoped repository change enabled dependency alerts/graph and reviewed
+Dependabot security-update PRs. Both read back enabled; auto-merge and secret
+scanning/push-protection settings stayed unchanged. Receipt12e26b2a. Branch
+protection has not changed yet.
+
 ## Remaining acceptance
 
 Hosted push workflow38998994789 at5121609 passes the inventory and all four
 include-development npm audits. PR-only dependency review correctly skips on a
 push; its dependency-graph access is still unproved. Read-only GitHub metadata
 confirms secret scanning/push protection enabled, main unprotected and no
-rulesets. No repository-admin settings were changed. Required-check/PR graph
-enforcement therefore remains open; a successful push scan is not merge blocking.
+rulesets. Dependency alerts/graph and security-update PRs were subsequently enabled and
+read back; all other security settings and auto-merge stayed unchanged. Branch
+protection and actual PR graph enforcement therefore remain open; a successful push scan is not merge blocking.
 
 Python update PRs alone do not constitute a vulnerability audit; the direct-pin
 review above does not resolve transitive/Git/native coverage. Deno imports

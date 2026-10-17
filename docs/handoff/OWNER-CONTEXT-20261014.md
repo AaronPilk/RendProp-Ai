@@ -1,3 +1,17 @@
+## Deployment and dependency hardening — October17, 2026, 00:40 EDT
+
+O17 reusable file-only rollout comparator is implemented with57 meaningful closed controls; independent92e9e5fd. It preserves full supplied control documents and rejects identity/freshness/permissions/binding/route/artifact drift. Historical CPU17 is explicitly labelled replay; actual current UTC refuses stale evidence. New CI step registers the suite without changing the16 job gates.
+
+GitHub dependency alerts/graph and Dependabot security-update PRs are enabled/read back in repository1294228098; receipt12e26b2a. Auto-merge and secret-scanning/push-protection are unchanged. Stable security-required aggregate combines inventory/all npm matrix jobs/PR review with4 controls and independent060e27d2. New aggregate/PR graph/branch-required enforcement still awaits actual hosted proof.
+
+The owner-request checklist retains80unique requests; no new broad feature closure or perfect/launch-ready claim. Website legal-preserving sibling worker2473972f compiles offline from113current+1explicit deployed77 legal source; canonical draft unchanged. Runtime-only/physical/new-apartment/privacy/quality/onboarding gates remain separate.
+
+## CPU deployment acceptance — October17, 2026, 00:34 EDT
+
+CPU17 source and full policy readback accepted after exact retained-source proof: sole index.js ES module38663B matches tested2533f951 hash and deployed version etag; exact testedb402 image at100%, prior16/new17 history and settings preserved. Independent6ea2f617/root ece5341a. Original parser refusal803dbacc is preserved; no second deployment/rollback or paid generation.
+
+Website78 packaging would have published the Kie draft privacy/terms, so that artifact is held. A separate explicitly bound release variant will preserve the deployed77 legal source/public bytes and leave the canonical draft intact. It must not be called114current source or legal publication approved. Studio currentbbf build passes39files/393382bytes with unchanged462consumed sources; new frontend rollout and coherent hosted CI remain pending. O12 stable security-result aggregate is built/tested locally, hosted/branch enforcement pending. TestFlight two-GET refresh04:26UTC shows the same three build82 reports/zero new submitted crashes.
+
 ## Verified backend rollout and export update — October 17, 2026, 00:23 EDT
 
 Three exact reviewed migrations and all six backend functions are now live, applied once and read back. Actual SQL history040043/040214/040320; tours70/me70/Studio39/ai-video88/worker13/jobs13. Exact runtime closure accepts only independently proved type-only import elision; all returned runtime bytes match. The26 unselected functions and FAL selector remain unchanged; Kie OFF, no grant/activation/disclosure publication. Full catalog/security proof and final advisor comparison retain only two expected server-only RLS information additions; existing warnings remain open. Final receipt2dcfd482 in build88-inactive-backend-rollout-5121609. Existing public Signature gallery still renders200.
