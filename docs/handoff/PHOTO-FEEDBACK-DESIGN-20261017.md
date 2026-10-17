@@ -402,4 +402,248 @@ recipe, which this version deliberately does not schedule.
 ---
 
 ## Amendments
-(none yet)
+
+Sections 1–6 are unchanged. Everything below is additive or a clarification
+made while implementing and proving the backend (branch
+`claude/photo-feedback-20261017`). Where an amendment conflicts with the
+frozen text, the amendment wins. A1, A3.4 and A3.6 are the items client
+lanes must act on.
+
+### A1. Selected-library header (correction to §4)
+The selected library travels in **`X-Org-Id`**: that is the header
+`preferredOrg()` reads and the header every Studio and iOS call already
+sends. `x-rendprop-org` is accepted as an alias. When both are present they
+must name the same library. Missing or non-UUID → `400 invalid_request`.
+CORS allows both headers.
+
+### A2. Which outputs can be rated (clarifies §3.5)
+- Rateable: an **accepted prospective output** (its `photo_edit_evidence`
+  row is `purpose='prospective'`, `state='accept'`, the same output the
+  requester was delivered), or a **historical photo output** (a
+  `media_provenance` row of kind `photo_edit`, `virtual_stage` or
+  `declutter` with no prospective evidence).
+- `404 output_not_found` for everything else: pending, held or refused
+  quarantine (never shown to anyone), calibration copies, video or other
+  provenance kinds, an unknown id, another library, a trashed listing or
+  deleted library, or a selected library that is neither the photo's org nor
+  its owner library.
+- `403 forbidden` for a member who can read the library but not write it
+  (marketing role), an anonymous user, or a user with a pending account
+  deletion. Read access already reveals the photo, so this 403 confirms
+  nothing new.
+- A timeout or outage is **never** reported as 404: the SQL translates only
+  its own deliberate refusals, and anything else becomes
+  `503 upstream`. Clients therefore keep the item queued (§4.6.3) and never
+  drop it by mistake (§4.6.5).
+
+### A3. Submit, signal, state and case details (clarifies §4)
+1. Reasons are stored in the scope's canonical order, so the same set sent
+   in a different order on the same revision is a replay. Notes are
+   trimmed, a blank note is `null`, and the maximum is 500 characters.
+2. `platform` accepts `ios`, `studio` or `other`. When omitted it is
+   `null`.
+3. The response also carries `updated_at`. `attribution` also carries
+   `provenance_model_id`. For `provenance_only` rows that is the model string
+   the historical provenance row recorded, shown separately because no attempt
+   receipt verifies it. `provider`, `model`, `generation_stage`,
+   `recipe_revision` and `prompt_sha256` stay `null` (unknown) for those rows.
+   The table enforces this too: a provenance-only row cannot hold any of them.
+4. **Correction to §4.6.7.** `409 feedback_exists` returns
+   `{client_key, revision, revision_count, feedback_id, provenance_id}`.
+   Adopt `client_key` and resend with **`revision = returned.revision + 1`**,
+   not `revision_count + 1`. Revisions are client-chosen and may skip
+   numbers, so `revision_count + 1` can be lower than the stored revision.
+   It would then come back as `replayed` and never be applied.
+5. For a provenance-only output, a later revision under the same key that
+   pins a different `output_sha256` from the first one is
+   `409 output_mismatch`. A key can never drift to other bytes.
+6. A signal `client_key` is bound to exactly one (output, signal, detail).
+   Reusing it for another output, signal or detail is
+   `409 feedback_key_conflict`, never a silent replay that would drop the
+   other event.
+7. Rate limits: all POST routes share 120 per 10 minutes per user, and
+   `GET` allows 600 per 10 minutes. An unavailable limiter is
+   `503 upstream`.
+8. `GET /photo-feedback`: `feedback.state` is always `"recorded"` and the
+   object includes `client_key` (the key a new device adopts).
+   `regression_case` is the library's case and is visible to the library's
+   editors.
+9. Regression cases. Only `owner` or `admin` of the photo's library may mark
+   or withdraw a case; delegated team-owner access does not count. Withdrawal
+   needs no consent flag. Withdrawing a case that never existed returns
+   `state:"withdrawn"` with `case_id:null`. A new case, a changed
+   defect or expectation, or re-marking after withdrawal answers
+   `"recorded"`; an identical mark answers `"replayed"`. There is no
+   `"revised"` state. `personal_style_preference` is not an allowed defect
+   (taste is not a regression).
+10. Other codes: `404 not_found` (unknown route), `405 method_not_allowed`.
+    An oversized body (over 16 KiB) or non-JSON content is
+    `400 invalid_request`.
+
+### A4. Recipe identity (clarifies §2.1 and §3.1)
+- `PHOTO_RECIPE_REVISION = "photo-recipe/2026-10-17.1"`.
+  `prompt_sha256` is the SHA-256 of the UTF-8 bytes of
+  `GenerateInput.prompt`, the exact string the provider adapter receives
+  (Gemini sends it verbatim).
+- It is recorded after `beginPhotoQuality` (the prepared source is already
+  retained) and before `runChain`. On any failure: evidence
+  `hold` with phase `recipe_recording`, quota refunded, operation fenced as
+  never dispatched, `503 upstream` with `no_provider_dispatch:true` and
+  `failure_phase:"recipe_recording"`, and no provider call. `ai-photo-v2`
+  bundles the same handler.
+- `photo_quality_set_recipe` refuses calibration evidence, anything already
+  past `input_ready`, and any change once set. A table check requires the
+  revision and hash together.
+- `ai-photo/photo-recipe.test.ts` pins a fingerprint of the recipe sources:
+  the `PROFILES`, the locks and prompt builders, `customPrompt` and the
+  handler's prompt composition in `ai-photo/index.ts`; the guardrail block
+  of `_shared/fairhousing.ts`; and `_shared/custom-photo-prompt.ts`,
+  `photo-stage-prompt.ts` and `photo-declutter-prompt.ts`. Changing any of
+  them fails CI until the revision is bumped. `prompt_sha256` stays the
+  exact per-generation identity either way.
+
+### A5. Report semantics (additive keys and exact definitions for §5)
+- **Cohort.** Prospective generations whose evidence was created in
+  `[from, to)`. Verdicts given later on those outputs count. Calibration
+  re-checks are excluded and reported as
+  `generated.excluded_calibration_checks`.
+- `generated.outputs` = every generation in the cohort, in any state (as
+  frozen). Also `retained_candidates`.
+- `explicit.reviewable_outputs` = accepted outputs, i.e. what was actually
+  delivered. This is the denominator for `coverage`.
+  `unreviewed_outputs` = reviewable outputs without a verdict.
+  `feedback_rows` = verdicts, one per (output, person) at the latest
+  revision. `useful` and `needs_work` count verdicts.
+  `useful_rate = useful / feedback_rows`.
+  `explicitly_useful_outputs` = outputs with at least one Useful and no
+  Needs work verdict. `contested_outputs` and `revised_rows` are also
+  reported.
+- `historical` = verdicts recorded in the window on provenance-only
+  outputs. They are excluded from every rate and cost.
+- `signals.*` = distinct cohort outputs per signal, plus `signal_rows`.
+  These are client-reported and never quality judgments.
+- `reasons` lists all eight reasons with their `group`, most common first.
+  `fidelity_vs_taste` adds `taste_and_fidelity`.
+- Each breakdown cell (`by_edit`, `by_provider_model`,
+  `by_recipe_revision`) carries `generated, reviewable, reviewed, useful,
+  needs_work, useful_rate, fidelity_rows, taste_rows, attempts,
+  recorded_cents, small_sample` (fewer than 30 reviewed outputs). Failed
+  generations fall under the provider/model key `no_retained_output`;
+  generations without a recorded recipe fall under `unknown`.
+- `cost`:
+  - Attempts are the cohort's `serving_cost_reservations` with stage
+    `photo.*` plus each automatic check's judge reservation
+    (`photo-qc:<check>` / `photo.qc:0`), each counted once.
+  - Attempt states: `failed_or_rejected_attempts` = definitively rejected
+    before work (no cost); `uncertain_attempts` = failed after dispatch,
+    possibly charged; `open_attempts` = still reserved.
+  - Also reported: `judge_attempts`, and `retried_outputs` (more than one
+    generation attempt).
+  - `recorded_ledger_rows` / `recorded_cents` count distinct `cost_ledger`
+    ids reached by `reservation.ledger_id`, by `meta.request_key` +
+    `meta.stage`, or by the check's `qc_ledger_id`. A settlement reached
+    several ways counts once.
+  - `outstanding_hold_cents` / `unsettled_attempts` = non-rejected holds
+    with no ledger row.
+  - `attempts_with_multiple_ledger_rows` is a data-quality flag.
+  - `unknown_attribution_outputs` = historical outputs with verdicts in the
+    window. `generated_without_attempt_records` is reported too.
+  - The per-useful figures (`attempts_per_useful`,
+    `recorded_cents_per_useful`, `outstanding_hold_cents_per_useful`)
+    divide what sits behind **explicitly reviewed** outputs
+    (`reviewed_attempts`, `reviewed_recorded_cents`,
+    `reviewed_outstanding_hold_cents`) by `explicitly_useful_outputs`.
+    `window_recorded_cents_per_useful` divides all window spend and is an
+    upper bound while coverage is below 1. These are modeled estimates,
+    never invoices.
+- `regression_cases` covers all consented active cases, regardless of
+  window.
+- `data_range` gives the first and last generation and verdict in the
+  cohort.
+- The report is one read-only SQL query (no temp tables, no dynamic SQL)
+  and returns aggregates only: no ids, request keys, notes, prompts or media
+  keys. The admin route adds `generated_at` and `window` and sends
+  `Cache-Control: no-store`.
+
+### A6. Data model additions (to §3)
+- `photo_regression_cases.style`.
+- Checks:
+  - provenance-only feedback cannot carry provider, model, stage, request
+    key, recipe or hash;
+  - `revision_count <= revision`;
+  - the evidence revision and hash are required together.
+- Indexes:
+  - feedback: `(evidence_id)`, `(listing_id)`;
+  - signals: `(provenance_id, actor_id)`, `(evidence_id)`, `(listing_id)`;
+  - plus the unique keys.
+- `photo_regression_cases_for_review(p_recipe_revision)` is service-role
+  only, for an operator reviewing a proposed recipe or provider change. It
+  lists active consented cases with their object references and no org or
+  listing ids, and excludes trashed listings and deleted libraries. It copies
+  nothing and schedules nothing.
+- Migration `20261017200000_photo_output_feedback.sql`.
+  - It sorts after production's `20261017175731` and staging's
+    `20261017190000`, `20261017190100` and `20261017191000`.
+  - An own-replay guard pins every body, relation shape, constraint set,
+    index set and ACL.
+  - The pinned rollback is
+    `services/supabase/tests/fixtures/photo_output_feedback_rollback.sql`.
+    It refuses to discard recorded observations unless the operator sets
+    `rendprop.photo_feedback_rollback='discard-observations'`.
+
+### A7. Expected incremental database and storage usage
+Measured on PostgreSQL 16 with this migration. 100,000 synthetic rows per
+table (10,000 cases), realistic field lengths, after `VACUUM`, heap +
+indexes + TOAST (`/home/claude/feedback-evidence/sizing-measurement.txt`):
+
+| Object | Bytes per row | Of which indexes |
+|---|---|---|
+| `photo_output_feedback` | ~1,120 | ~430 (5 btree: pk, 2 unique keys, evidence, listing) |
+| `photo_output_signals` | ~760 | ~450 (6 btree incl. the unique text key) |
+| `photo_regression_cases` | ~1,250 | ~80 |
+| `photo_edit_evidence` recipe columns | ~100 per recorded generation | none |
+
+Existing evidence rows gain nothing: the new columns are null, nothing is
+back-filled, and adding them does not rewrite the table.
+
+**Assumptions for rows per generated photo:**
+- about 85% of generations are accepted and delivered;
+- explicit-review coverage is 40%, with 1.1 reviewers per reviewed output;
+- 2 client signals per delivered output;
+- regression cases for well under 1% of Needs work verdicts.
+
+| Scenario | Per generated photo | 10,000 generations / month | 100,000 / month |
+|---|---|---|---|
+| Typical | ~0.1 KB recipe + ~0.4 KB feedback + ~1.3 KB signals ≈ **1.8 KB** | ≈ 18 MB / month (≈ 0.2 GB / year) | ≈ 180 MB / month |
+| Heavy (coverage 100%, 1.5 reviewers, 4 signals) | ≈ **4.1 KB** | ≈ 41 MB / month (≈ 0.5 GB / year) | ≈ 410 MB / month |
+
+Rows live as long as the photo, listing, library and author do. Every
+deletion path cascades, so steady-state size tracks retained photos, not
+lifetime volume.
+
+**Other usage. None of it is free; it counts against the project's existing
+plan quotas.**
+- Write-ahead log and backups grow in proportion to these writes.
+- Each feedback, signal or case submit is one edge-function invocation and
+  three database calls (Auth, `bump_rate`, the RPC). Expect about 0.4 to 3
+  invocations per generated photo, depending on how often clients send
+  signals.
+- Each admin report is one read-only query, limited to 60 per minute per
+  admin. It scans the window's `photo_edit_evidence`, which has no
+  `created_at` index; add one if that table passes about a million rows.
+- **No object storage growth.** No bytes are copied, and regression cases
+  only reference evidence objects the library already retains.
+- **No paid AI or provider calls** and no background jobs: nothing
+  recurring, no evaluator, no training.
+
+### A8. Deploy order and rollback
+1. SQL migration.
+2. `photo-feedback` (new, `verify_jwt=true`: `--create-new photo-feedback`).
+3. `admin`.
+4. `ai-photo` and `ai-photo-v2` (v2 bundles the same handler).
+
+Deploying ai-photo before the SQL would make every new generation fail
+safely with `503 recipe_recording`: no provider call, but no edits either.
+Rollback runs in reverse: previous ai-photo and ai-photo-v2, then previous
+admin, then remove photo-feedback, then the rollback SQL with explicit
+discard confirmation.
