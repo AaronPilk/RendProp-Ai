@@ -64,8 +64,15 @@ async function exercise(kind: Kind, transport: (init: RequestInit) => Promise<Re
 
 for (const kind of ["voice","helper","chapters"] as const) {
   for (const phase of ["headers","body"] as const) Deno.test(`${kind}: actual paid response deadline covers stalled ${phase} and retains uncertain hold`,async()=>{
-    const nativeTimeout=AbortSignal.timeout;const budgets:number[]=[];let aborts=0;const release:(()=>void)[]=[];
-    AbortSignal.timeout=(ms:number)=>{budgets.push(ms);return nativeTimeout(20);};
+    const nativeTimeout=AbortSignal.timeout,nativeTimer=globalThis.setTimeout;const budgets:number[]=[];let aborts=0;const release:(()=>void)[]=[];
+    if(kind==="chapters"){
+      // The absolute-deadline scope owns this real timer. Accelerate only its
+      // unchanged nominal90s budget; the fixture watchdog and other timers stay real.
+      globalThis.setTimeout=((handler:Parameters<typeof setTimeout>[0],ms?:number,...args:unknown[])=>{
+        if(typeof ms==="number"&&ms>=89_000&&ms<=90_000){budgets.push(ms);return nativeTimer(handler,20,...args);}
+        return nativeTimer(handler,ms,...args);
+      }) as typeof setTimeout;
+    }else AbortSignal.timeout=(ms:number)=>{budgets.push(ms);return nativeTimeout(20);};
     let watchdog:ReturnType<typeof setTimeout>|undefined;let flight:ReturnType<typeof exercise>|undefined;
     try {
       const work=flight=exercise(kind,async(init)=>{
@@ -81,8 +88,10 @@ for (const kind of ["voice","helper","chapters"] as const) {
       const outcome=await Promise.race([work,new Promise<null>(resolve=>{watchdog=setTimeout(()=>resolve(null),150);})]);
       assert(outcome!==null,`${kind} stalled ${phase} must settle before fixture watchdog`);
       assert(outcome.error);assertEquals(outcome.calls,1);assertEquals(outcome.finishes.map(x=>x.p_state),["uncertain"]);
-      assertEquals(aborts,1);assertEquals(budgets,[kind==="helper"?30_000:90_000]);
-    }finally{AbortSignal.timeout=nativeTimeout;if(watchdog)clearTimeout(watchdog);if(aborts===0)release.forEach(stop=>stop());await flight;}
+      assertEquals(aborts,1);
+      if(kind==="chapters")assert(budgets.length===1&&budgets[0]>=89_000&&budgets[0]<=90_000,"actual absolute timer retains its90s ceiling");
+      else assertEquals(budgets,[kind==="helper"?30_000:90_000]);
+    }finally{AbortSignal.timeout=nativeTimeout;globalThis.setTimeout=nativeTimer;if(watchdog)clearTimeout(watchdog);if(aborts===0)release.forEach(stop=>stop());await flight;}
   });
   Deno.test(`${kind}: actual submit refusal releases only a validated no-receipt response`,async()=>{
     const refusal=await exercise(kind,async()=>Response.json({error:"synthetic refusal"},{status:422}));

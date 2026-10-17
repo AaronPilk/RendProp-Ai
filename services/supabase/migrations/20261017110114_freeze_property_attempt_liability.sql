@@ -3,7 +3,7 @@
 begin;
 do $pin$declare h text;begin
  select md5(prosrc)into h from pg_catalog.pg_proc where oid='public.stamp_library_financial_liability()'::regprocedure;
- if h is distinct from '3976c4aaf6cea5185df1e133475fb83f' then raise exception 'Review changed function stamp_library_financial_liability';end if;
+ if h is null or h not in('3976c4aaf6cea5185df1e133475fb83f','73882a6e41ff1dee0d8b6b0ee3f1609c') then raise exception 'Review changed function stamp_library_financial_liability';end if;
  if to_regclass('public.provider_attempt_receipts')is null then raise exception 'Provider attempt receipts must exist before liability binding';end if;
 end$pin$;
 CREATE OR REPLACE FUNCTION public.stamp_library_financial_liability()

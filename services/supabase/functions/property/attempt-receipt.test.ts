@@ -14,7 +14,7 @@ const mod = await import("data:application/typescript," + encodeURIComponent(`
   import {recordAppAiCost} from ${actual("../_shared/ledger.ts")};
   import {addressKey,hasSubstance,PropertyLookupFailure,type PropertyLookupResponse,type PropertyProvider} from ${actual("../_shared/property/provider.ts")};
   import {rentcast} from ${actual("../_shared/property/rentcast.ts")};
-  import {beginPropertyAttempt,finishPropertyAttempt} from ${actual("../_shared/provider-attempt-receipt.ts")};
+  import {beginPropertyAttempt,finishPropertyAttempt,recordPropertyAttemptCost} from ${actual("../_shared/provider-attempt-receipt.ts")};
   const PROVIDERS:PropertyProvider[]=[rentcast],CACHE_DAYS=30,RATE_MAX=40,RATE_WINDOW_S=3600;
   export function make(state:any){
     const handleOptions=()=>new Response(null,{status:204}),preferredOrg=()=>${JSON.stringify(org)};
