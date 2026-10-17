@@ -41,6 +41,10 @@ assert all(tool(name) for name in ["initdb", "pg_ctl", "createdb", "psql"]), "Po
 DATA = Path(tempfile.mkdtemp(prefix="provider-receipt-owned-pg-", dir=OUT))
 SOCK = Path(tempfile.mkdtemp(prefix="provider-receipt-sock-", dir="/tmp"))
 MIG = SQL / "migrations/20261016192846_provider_attempt_receipts.sql"
+# Supplier reference column + nine-argument finish; the eight-argument RPC
+# becomes a wrapper. Replaying MIG restores the original eight-argument body,
+# so the reference migration is replayed right after it, as production would.
+REF = SQL / "migrations/20261017170000_provider_attempt_supplier_reference.sql"
 FIX = SQL / "tests/provider_attempt_receipts.sql"
 MIGRATIONS = sorted((SQL / "migrations").glob("*.sql"))
 SOURCES = [*MIGRATIONS, SQL / "tests/ci-bootstrap.sql", FIX, Path(__file__).resolve()]
@@ -106,18 +110,25 @@ try:
         if migration == MIG:
             assert json.loads(run("after-own-boundary", [*PSQL, "-Atq", "-c", catalog])) == boundary, "Existing authority/config/routes changed"
     for stage in ["fresh", "replay"]:
-        if stage == "replay": run("replay-own", [*PSQL, "-q", "-1", "-f", MIG])
+        if stage == "replay":
+            run("replay-own", [*PSQL, "-q", "-1", "-f", MIG])
+            run("replay-own-reference", [*PSQL, "-q", "-1", "-f", REF])
         out = run(stage + "-actual", [*PSQL, "-Atq", "-f", FIX])
         rows = [json.loads(line) for line in out.splitlines() if line.startswith('{') and 'assertions' in line]
         assert len(rows) == 1 and rows[0]["passed"]
         r[stage] = rows[0]
     before = "public.provider_attempt_begin(uuid,uuid,text,text)"
-    finish = "public.provider_attempt_finish(uuid,uuid,uuid,text,integer,uuid,numeric,text)"
+    finish = "public.provider_attempt_finish(uuid,uuid,uuid,text,integer,uuid,text,numeric,text)"
+    legacy = "public.provider_attempt_finish(uuid,uuid,uuid,text,integer,uuid,numeric,text)"
     for label, signature, anchor, replacement, oracle in [
         ("duplicate-dispatch", before, "dispatch boolean:=false", "dispatch boolean:=true", "duplicate intent cannot dispatch"),
         ("changed-input", before, "if r.input_sha256<>p_input_sha256 then", "if false then", "altered input cannot reuse operation"),
         ("finish-scope", finish, "where id=p_attempt and actor_id=p_actor and org_id=p_org for update", "where id=p_attempt for update", "foreign actor cannot finish receipt"),
         ("immutable-terminal", finish, "if r.outcome<>'intent'then", "if false then", "identical terminal receipt replays"),
+        # Without the RPC's shape check the table constraint still refuses the URL.
+        ("reference-shape", finish, "or(p_provider_request_ref is not null and p_provider_request_ref !~ '^[a-f0-9]{32}$')", "or false", 'violates check constraint "provider_attempt_receipts_request_ref_shape"'),
+        ("immutable-reference", finish, "r.provider_request_id,r.provider_request_ref,r.estimated_cents", "r.provider_request_id,p_provider_request_ref,r.estimated_cents", "terminal receipt cannot change supplier reference"),
+        ("legacy-invents-reference", legacy, "p_provider_request_id,null::text,", "p_provider_request_id,'00000000000000000000000000000000'::text,", "legacy writer stores no invented supplier reference"),
     ]:
         original = run("read-" + label, [*PSQL, "-Atq", "-c", f"select pg_get_functiondef('{signature}'::regprocedure)"])
         assert original.count(anchor) == 1
