@@ -343,3 +343,12 @@ Owner / root decisions before integration (not routine, so not taken here):
   external volume, which this session cannot reach.
 - Nothing was deployed, uploaded to Apple, generated with paid providers, or
   changed in production data.
+
+## Run 39055656587 at `b57ba713` — final (completed 2026-10-17 19:21Z)
+
+| Result | Jobs |
+|---|---|
+| success (14) | Offline audit evidence (105/105 steps, incl. `run-property-video-planner.py`: V3 fallback rotation compiled with `xcrun swiftc` on the macOS runner, 9 compiled negative controls), All native audit gates, UIKit photo exports, Paid reel recovery, Private property video CPU + background authority (all 27 renderer harnesses), Python workers, Supabase migrations, Supabase edge functions, Studio contracts, Web parity, Reel-style preservation, upload-gateway, iOS static, secret scan; dependency security run 39055653756 |
+| failure (2) | Disposable PostgreSQL (job 117462974108): `run_listing_measurement_cas.py` expected the old first refusal; the pipeline cost binding legitimately moved it to line 1022 (`serving_ceiling_spent_cents`) — fixed in `f8b06420`, all later harnesses of that step pass locally. Tour-host (job 117462973869): cloud-editor agent export refused by the product RecordingClock guard after the audio render thread stopped ≥127 ms on a 3-vCPU, load-7.8 runner; unresolved hosted-runner reliability issue, instrumented in `102219ca` + `ee39ca95` (see `CLAUDE-INTEGRATED-AUDIT-20261017.md` §7.1) |
+
+Next run: 39062185061 at `317b6a1e` (adds web1, E3/E7/E8 with renamed migrations, the harness fix, the instrumentation, proven rollbacks).
