@@ -45,6 +45,8 @@ import { isDemoSlug } from "./demo";
 import { propertyPage, propertyPageHref, PROPERTY_SITE_CSS, PROPERTY_SITE_JS, NEARBY_PLACES_JS, type PropertyPage } from "./property-site";
 import { websiteTheme, previewWebsiteTheme, websiteThemeName, PROPERTY_DESIGN_CSS, type WebsiteTheme } from "./property-design";
 import { listingVideo, listingVideoStage, PROPERTY_VIDEO_CSS, PROPERTY_VIDEO_JS } from "./property-video";
+import { renderNearbyList, renderNearbyMap } from "./nearby-map";
+import type { NearbyPlacesResult } from "./nearby-places";
 import { spatialAnchor } from "./spatial-manifest";
 import { APP_STORE_ID, appStoreUrl, siteUrl } from "./attribution";
 import { tourJsonLd } from "./jsonld";
@@ -2567,10 +2569,33 @@ function mediaDateNote(tour: Tour): string {
   return `<p class="lp-fine lp-mediadate"><time datetime="${escapeAttr(when.toISOString().slice(0, 10))}">This tour was published on ${escapeHtml(text)}.</time> Ask the agent before assuming anything shown here is still current.</p>`;
 }
 
-function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", page: PropertyPage | null = null, publicBase: "/f" | "/property" = "/f", previewTheme: WebsiteTheme | null = null, addressPath?: string): string {
+/** Premium Gallery pages group photos by their published room label. Classic
+ *  keeps its flat grid; so does any gallery with fewer than two distinct labels,
+ *  and any gallery where no label repeats: those labels are per-photo captions
+ *  (the hosted demo's "Twilight arrival", "Chef's kitchen"…), and grouping them
+ *  would give every photo its own heading and leave the captioned grid behind. */
+const GROUPED_GALLERY_THEMES: ReadonlySet<WebsiteTheme> = new Set(["signature-estate", "coastal-luxe"]);
+function galleryRoomGroups<T extends { label: string }>(items: T[]): Array<{ title: string; items: T[] }> | null {
+  const groups = new Map<string, { title: string; items: T[] }>();
+  const unlabelled: T[] = [];
+  for (const item of items) {
+    const title = (item.label || "").replace(/\s+/g, " ").trim();
+    if (!title) { unlabelled.push(item); continue; }
+    const key = title.toLowerCase();
+    const group = groups.get(key);
+    if (group) group.items.push(item); else groups.set(key, { title, items: [item] });
+  }
+  if (groups.size < 2 || ![...groups.values()].some(group => group.items.length > 1)) return null;
+  const out = [...groups.values()];
+  if (unlabelled.length) out.push({ title: "More of the home", items: unlabelled });
+  return out;
+}
+
+function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", page: PropertyPage | null = null, publicBase: "/f" | "/property" = "/f", previewTheme: WebsiteTheme | null = null, addressPath?: string, nearbyPlaces: NearbyPlacesResult | null = null): string {
   const l = tour.listing;
   const isRE = isRealEstate(tour);
   const sold = isSoldOrArchived(tour);
+  const theme = previewTheme || websiteTheme(tour.website_theme);
   const out: string[] = [];
   // Lead with selected media; attaching a video remains an explicit tap.
   if (mediaCover) out.push(mediaCover);
@@ -2617,14 +2642,36 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
     // Home is a preview. The full Gallery keeps every published selection and
     // its exact full-size URL; offscreen photos need not compete with the hero.
     const preview = page === "home" ? imgs.slice(0, 4) : imgs;
-    const photo = (g: { url: string; label: string; thumb?: string }) => {
+    const photo = (g: { url: string; label: string; thumb?: string }, caption = true) => {
       const alt = escapeAttr(g.label || headingRaw);
       const image = `<img src="${escapeAttr(page ? g.thumb || g.url : g.url)}" alt="${alt}" loading="lazy" decoding="async">`;
-      if (!page) return `<figure class="lp-gcell">${image}${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`;
-      return `<figure class="lp-gcell"><a class="property-photo" data-property-photo href="${escapeAttr(g.url)}" aria-label="${escapeAttr(`View full photo: ${g.label || headingRaw}`)}"><img class="property-thumb" data-property-src="${escapeAttr(g.thumb || g.url)}" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="${alt}" loading="lazy" decoding="async" fetchpriority="low"><noscript>${image}</noscript></a>${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`;
+      const figcaption = caption && g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : "";
+      if (!page) return `<figure class="lp-gcell">${image}${figcaption}</figure>`;
+      return `<figure class="lp-gcell"><a class="property-photo" data-property-photo href="${escapeAttr(g.url)}" aria-label="${escapeAttr(`View full photo: ${g.label || headingRaw}`)}"><img class="property-thumb" data-property-src="${escapeAttr(g.thumb || g.url)}" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="${alt}" loading="lazy" decoding="async" fetchpriority="low"><noscript>${image}</noscript></a>${figcaption}</figure>`;
     };
+    // Editorial room grouping on the premium Gallery page only. Groups keep
+    // first-appearance order and photos keep their published order inside a
+    // group, so document order (which the photo viewer follows) is the visual
+    // order. A single room, or unlabelled photos, keep the flat grid.
+    const rooms = page === "gallery" && GROUPED_GALLERY_THEMES.has(theme) ? galleryRoomGroups(preview) : null;
+    let grid: string;
+    if (!rooms) grid = `<div class="lp-gal">${preview.map(g => photo(g)).join("")}${mediaDateNote(tour)}</div>`;
+    else {
+      // Consecutive one-photo rooms share one row grid (`lp-gal-run`) on the
+      // same columns as a room's photos, so they sit side by side at the
+      // ordinary size instead of each leaving a row of empty columns.
+      const blocks: string[] = [];
+      let run: string[] = [];
+      const endRun = () => { if (run.length) blocks.push(`<div class="lp-gal-run">${run.join("")}</div>`); run = []; };
+      rooms.forEach((room, i) => {
+        const html = `<section class="lp-gal-room" aria-labelledby="lp-gal-room-${i + 1}"><h2 class="lp-gal-room-title" id="lp-gal-room-${i + 1}">${escapeHtml(room.title)}${room.items.length > 1 ? `<span class="lp-gal-room-count">${room.items.length} photos</span>` : ""}</h2><div class="lp-gal">${room.items.map(g => photo(g, false)).join("")}</div></section>`;
+        if (room.items.length === 1) run.push(html); else { endRun(); blocks.push(html); }
+      });
+      endRun();
+      grid = `<div class="lp-gal-rooms">${blocks.join("")}${mediaDateNote(tour)}</div>`;
+    }
     out.push(sec("gallery", "Gallery", "A closer look",
-      `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p><noscript><style>.property-thumb{display:none!important}</style></noscript>' : ""}<div class="lp-gal">${preview.map(photo).join("")}${mediaDateNote(tour)}</div>${page === "home" && imgs.length > preview.length ? `<p><a class="lp-btn ghost" href="${escapeAttr(propertyPageHref(tour.slug, "gallery", publicBase, previewTheme, addressPath))}">View all ${imgs.length} photos</a></p>` : ""}`, page !== "gallery"));
+      `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p><noscript><style>.property-thumb{display:none!important}</style></noscript>' : ""}${grid}${page === "home" && imgs.length > preview.length ? `<p><a class="lp-btn ghost" href="${escapeAttr(propertyPageHref(tour.slug, "gallery", publicBase, previewTheme, addressPath))}">View all ${imgs.length} photos</a></p>` : ""}`, page !== "gallery"));
   } else if (Array.isArray(tour.chapters) && tour.chapters.length) {
     out.push(sec("gallery", "Inside the tour", isRE ? "Explore the rooms" : "Explore the space",
       `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>${spatialButton(c)}`).join("")}</div>${mediaDateNote(tour)}`));
@@ -2669,12 +2716,26 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
       `${locationCard}${nb ? `<div class="lp-prose"><p>${escapeHtml(nb)}</p></div>` : ""}${c}`));
   }
   if (page === "location" && tour.slug !== "estate-demo" && tour.slug !== "demo") {
-    out.push(`<section class="lp-sec" id="property-nearby" data-endpoint="/f/${encodeURIComponent(tour.slug)}/nearby"><div class="lp-wrap">
+    // Already-cached places render as static markup: the neighbourhood map
+    // (inline SVG, no tiles or coordinates) and the list need no script and
+    // make no further request. Otherwise the page keeps its scripted lookup,
+    // which receives the same server-drawn map with the places.
+    // The map shows where the property sits among named places, so it appears
+    // only when this page already publishes the address (and, with it, the
+    // coarse coordinates in its map link). Without a published address the
+    // section keeps the list alone, as before: no visual pointer to a
+    // location the listing withholds. `data-map` carries this to the script.
+    const mapAllowed = !!first(l.address);
+    const origin = { lat: typeof l.lat === "number" ? Math.round(l.lat * 1000) / 1000 : null, lng: typeof l.lng === "number" ? Math.round(l.lng * 1000) / 1000 : null };
+    const staticPlaces = nearbyPlaces?.status === "available" && nearbyPlaces.places.length ? nearbyPlaces.places : null;
+    const staticMap = staticPlaces && mapAllowed && nearbyPlaces ? renderNearbyMap(nearbyPlaces, origin) : "";
+    out.push(`<section class="lp-sec" id="property-nearby"${staticPlaces ? "" : ` data-endpoint="/f/${encodeURIComponent(tour.slug)}/nearby"`}${mapAllowed ? " data-map" : ""}><div class="lp-wrap">
       <div class="lp-eyebrow">Around the address</div><h2 class="lp-h">Explore nearby</h2>
-      <p id="property-nearby-status" class="lp-tag" role="status">Loading nearby places…</p>
-      <ul class="property-nearby-list" id="property-nearby-list" hidden></ul>
-      <noscript><p class="lp-tag">Open the map above to explore nearby restaurants, cafés and shops.</p></noscript>
-      <p class="lp-fine">Approximate straight-line distances from the published location, not travel times. Map data may be incomplete or out of date. <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a></p>
+      <p id="property-nearby-status" class="lp-tag" role="status">${staticPlaces ? "Restaurants, cafés and shops listed in OpenStreetMap. Confirm current details before visiting." : "Loading nearby places…"}</p>
+      <div class="property-nearby-map-slot" id="property-nearby-map"${staticMap ? ">" + staticMap : " hidden>"}</div>
+      <ul class="property-nearby-list" id="property-nearby-list"${staticPlaces ? ">" + renderNearbyList(staticPlaces) : " hidden>"}</ul>
+      ${staticPlaces ? "" : '<noscript><p class="lp-tag">Open the map above to explore nearby restaurants, cafés and shops.</p></noscript>'}
+      <p class="lp-fine">Approximate straight-line distances from the published location, not travel times. Map positions are approximate and the data may be incomplete or out of date. <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a></p>
     </div></section>`);
   }
 
@@ -3026,6 +3087,9 @@ export interface RenderOpts {
   addressUrls?: boolean;
   /** Presentation-only preview of already-published data; grants no design. */
   previewTheme?: WebsiteTheme | null;
+  /** Already-cached nearby places for the Location page, rendered as static
+   *  markup (map + list) so no script or further request is needed. */
+  nearby?: NearbyPlacesResult | null;
 }
 
 export function renderTourPage(input: Tour, functionsBase: string, anonKey: string, turnstileSiteKey = "", opts: RenderOpts = {}): string {
@@ -3214,7 +3278,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
     ${primaryVideo && hasVideo ? `<details class="property-recorded-option"><summary>Optional recorded walkthrough</summary><p>Explore the separately recorded tour.</p><button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Open recorded walkthrough</button></details>` : ""}
     ${polished ? "</div>" : ""}
   </section>`;
-  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, page && page !== "home" ? "" : coverHtml, page, publicBase, previewTheme, addressPath);
+  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, page && page !== "home" ? "" : coverHtml, page, publicBase, previewTheme, addressPath, page === "location" ? opts.nearby || null : null);
   // The end card IS the branding: agent card + CTA/lead form. `/u/` has none.
   const endcardHtml = embed || unbranded || (page && page !== "home" && page !== "contact") ? "" : `<section id="endcard"${polished ? ' aria-label="Contact the listing agent"' : ""}>
   <div class="panel">

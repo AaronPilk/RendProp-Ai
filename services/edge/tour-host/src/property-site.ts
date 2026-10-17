@@ -76,6 +76,42 @@ export const PROPERTY_SITE_CSS = `
   .property-site .property-nearby-list li { padding:20px; border:1px solid rgba(23,23,28,.12); background:#fff; border-radius:6px; }
   .property-site .property-nearby-list a { display:block; color:#38224e; font-weight:600; overflow-wrap:anywhere; }
   .property-site .property-nearby-list span { display:block; color:var(--ink-dim); font-size:12px; margin-top:8px; }
+  /* Neighbourhood map: one inline SVG, themed through custom properties so each
+     design recolours it without touching the markup. Shapes differ per category. */
+  .property-site .property-nearby-map-slot[hidden] { display:none; }
+  .property-site .property-nearby-map { --nearby-paper:#f6f3f9; --nearby-ring:rgba(56,34,78,.22); --nearby-ink:#38224e; --nearby-dim:#62616b; --nearby-home:#6b3bb4; --nearby-restaurant:#b7472a; --nearby-cafe:#8a6a1f; --nearby-shop:#2f6b8f; margin:24px 0 0; max-width:560px; }
+  .property-site .property-nearby-map-svg { display:block; width:100%; height:auto; aspect-ratio:1; font:500 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .property-site .property-nearby-map .nm-paper { fill:var(--nearby-paper); }
+  .property-site .property-nearby-map .nm-ring { fill:none; stroke:var(--nearby-ring); stroke-width:1; stroke-dasharray:3 4; }
+  .property-site .property-nearby-map .nm-ring-label,.property-site .property-nearby-map .nm-compass { fill:var(--nearby-dim); font-size:10px; }
+  .property-site .property-nearby-map .nm-compass-arrow { fill:var(--nearby-dim); }
+  .property-site .property-nearby-map .nm-label { fill:var(--nearby-ink); stroke:var(--nearby-paper); stroke-width:3px; stroke-linejoin:round; paint-order:stroke fill; }
+  .property-site .property-nearby-map .nm-restaurant { fill:var(--nearby-restaurant); }
+  .property-site .property-nearby-map .nm-cafe { fill:var(--nearby-cafe); }
+  .property-site .property-nearby-map .nm-shop { fill:var(--nearby-shop); }
+  .property-site .property-nearby-map .nm-dot { stroke:var(--nearby-paper); stroke-width:1.5px; }
+  .property-site .property-nearby-map .nm-home-halo { fill:var(--nearby-home); opacity:.18; }
+  .property-site .property-nearby-map .nm-home-dot { fill:var(--nearby-home); stroke:var(--nearby-paper); stroke-width:2px; }
+  .property-site .property-nearby-legend { display:flex; flex-wrap:wrap; gap:8px 18px; margin-top:12px; color:var(--ink-dim); font-size:12px; }
+  .property-site .property-nearby-legend .nm-key { display:inline-flex; align-items:center; gap:7px; }
+  .property-site .property-nearby-legend svg { width:16px; height:16px; flex:none; }
+  /* Wide screens: map beside a two-column list, both starting on one line (the
+     list keeps the same top margin as the map). Source order is unchanged. */
+  @media(min-width:1000px) {
+    .property-site #property-nearby .lp-wrap { display:grid; grid-template-columns:minmax(0,480px) minmax(0,1fr); grid-template-areas:"eyebrow eyebrow" "title title" "status status" "map list" "fine fine"; column-gap:56px; }
+    .property-site #property-nearby .lp-eyebrow { grid-area:eyebrow; }
+    .property-site #property-nearby .lp-h { grid-area:title; }
+    .property-site #property-nearby #property-nearby-status { grid-area:status; }
+    .property-site #property-nearby .property-nearby-map-slot { grid-area:map; }
+    .property-site #property-nearby .property-nearby-map-slot[hidden] { display:none; }
+    .property-site #property-nearby .property-nearby-list { grid-area:list; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:24px; align-content:start; }
+    .property-site #property-nearby .property-nearby-list[hidden] { display:none; }
+    /* No map (no published address): the list takes the whole row. */
+    .property-site #property-nearby .property-nearby-map-slot[hidden] + .property-nearby-list { grid-area:map-start / map-start / list-end / list-end; grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .property-site #property-nearby > .lp-wrap > .lp-fine { grid-area:fine; }
+  }
+  @media(prefers-reduced-motion:no-preference) { .property-site .property-nearby-map .nm-home-halo { transform-origin:50% 50%; transform-box:fill-box; animation:nearby-home-pulse 2.6s ease-in-out infinite; } }
+  @keyframes nearby-home-pulse { 0%,100% { opacity:.18; transform:scale(1); } 50% { opacity:.3; transform:scale(1.15); } }
   .property-site #endcard { padding:60px 0; }
   .property-site #endcard .panel { max-width:1120px; padding:32px; border:1px solid rgba(23,23,28,.12); background:#fff; border-radius:8px; }
   .property-site .panel h2 { font:400 30px/1.2 Georgia,"Times New Roman",serif; margin-top:20px; }
@@ -222,8 +258,10 @@ export const PROPERTY_SITE_JS = `
 export const NEARBY_PLACES_JS = `
 (function(){
   var panel=document.getElementById('property-nearby');
-  if (!panel) return;
-  var status=document.getElementById('property-nearby-status'), list=document.getElementById('property-nearby-list');
+  // A server-rendered section (cached places, static map and list) has no
+  // endpoint: nothing further to request.
+  if (!panel || !panel.getAttribute('data-endpoint')) return;
+  var status=document.getElementById('property-nearby-status'), list=document.getElementById('property-nearby-list'), map=document.getElementById('property-nearby-map');
   var controller=new AbortController(), deadline=setTimeout(function(){controller.abort();},9000);
   addEventListener('pagehide',function(){controller.abort();},{once:true});
   function unavailable(){status.textContent='Nearby places are unavailable right now. Open the map above to explore the area.';}
@@ -243,6 +281,13 @@ export const NEARBY_PLACES_JS = `
         note.textContent=place.category+' · approximately '+(place.distance_m/1609.344).toFixed(1)+' mi away';
         item.appendChild(link);item.appendChild(note);list.appendChild(item);
       });
+      // The map is drawn on the server from these same places (inline SVG,
+      // no tiles, script or coordinates). Accept only that exact static shape,
+      // and only where the page publishes the address (data-map).
+      var drawing=result.map_html;
+      if (map && panel.getAttribute('data-map')!=null && typeof drawing==='string' && drawing.length<=32768 && /^<figure class="property-nearby-map"><svg class="property-nearby-map-svg" [\\s\\S]*<\\/figure>$/.test(drawing) && !/<script|<foreignobject|<iframe|<object|<embed|<image|<use|<a\\b|<style|javascript:|\\son[a-z]+=|href=|xlink:|<!--/i.test(drawing)){
+        map.innerHTML=drawing; map.hidden=false;
+      }
       list.hidden=false;status.textContent='Restaurants, cafés and shops listed in OpenStreetMap. Confirm current details before visiting.';
     }).catch(function(){if(panel.isConnected)unavailable();}).finally(function(){clearTimeout(deadline);});
 })();

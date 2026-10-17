@@ -21,20 +21,31 @@ const load = buildSrc("property-site-browser-" + process.pid);
 const { renderTourPage } = await load("player");
 const { buildDemoTour } = await load("demo");
 const { propertyPage } = await load("property-site");
+const { renderNearbyMap } = await load("nearby-map");
 
 const checks = [];
 const check = (condition, label) => { assert.ok(condition, label); checks.push(label); };
 const svg = (label, color, portrait = false) => `<svg xmlns="http://www.w3.org/2000/svg" width="${portrait ? 900 : 1600}" height="${portrait ? 1600 : 1200}"><rect width="100%" height="100%" fill="${color}"/><text x="80" y="600" font-size="96" fill="white">SYNTHETIC ${label}</text></svg>`;
 const PHOTOS = [["Front exterior", "#264653"], ["Living room", "#2a9d8f"], ["Kitchen", "#8a5a44"], ["Primary bedroom", "#6d597a"], ["Terrace", "#355070"], ["Broken file", "#000000"]];
 const photoPath = (i) => i === 5 ? "/photos/missing-5.svg" : `/photos/photo-${i}.svg`;
-let theme = "basic", useThumbs = false, thumbFailure = false, presentation = "video", longAddress = false;
+let theme = "basic", useThumbs = false, thumbFailure = false, presentation = "video", longAddress = false, roomLabels = false, noAddress = false;
+// Nine synthetic places around the coarsened fixture origin; the map is
+// drawn by the real server function and served the way the Worker serves it.
+const mapOrigin = { lat: 27.9, lng: -82.5 }, degree = 6_371_008.8 * Math.PI / 180;
+const nearbyPlace = (name, category, bearing, metres, id) => { const rad = bearing * Math.PI / 180; return { name, category, lat: mapOrigin.lat + metres * Math.cos(rad) / degree, lng: mapOrigin.lng + metres * Math.sin(rad) / (degree * Math.cos(mapOrigin.lat * Math.PI / 180)), distance_m: metres, source_url: `https://www.openstreetmap.org/node/${id}` }; };
+const nearbyResult = { status: "available", attribution: "© OpenStreetMap contributors", places: [nearbyPlace("Harbor Grill & Oyster House", "Restaurant", 35, 420, 1), nearbyPlace("Trattoria Luna", "Restaurant", 120, 760, 2), nearbyPlace("The Longest Restaurant Name In Town Ever", "Restaurant", 200, 1180, 3), nearbyPlace("Kahwa Coffee", "Cafe", 60, 300, 4), nearbyPlace("Bandit Coffee Co.", "Cafe", 250, 640, 5), nearbyPlace("Black Crow Café", "Cafe", 300, 1320, 6), nearbyPlace("Publix", "Shop", 170, 980, 7), nearbyPlace("Rollin' Oats Market", "Shop", 320, 450, 8), nearbyPlace("Haslam's Books", "Shop", 90, 1450, 9)] };
+const nearbyMapHtml = renderNearbyMap(nearbyResult, mapOrigin);
+// A dense downtown block: nine places within 300 m with long names, the case
+// where the original label layout overlapped names and covered a ring distance.
+const downtownResult = { status: "available", attribution: "© OpenStreetMap contributors", places: [nearbyPlace("Central Oyster Bar & Grill", "Restaurant", 60, 140, 21), nearbyPlace("Harborside Trattoria", "Restaurant", 125, 210, 22), nearbyPlace("Mezcal Cantina", "Restaurant", 300, 260, 23), nearbyPlace("Morning Ritual Coffee Roasters", "Cafe", 20, 95, 24), nearbyPlace("Banyan Tree Café", "Cafe", 160, 120, 25), nearbyPlace("Black Crow Coffee", "Cafe", 235, 230, 26), nearbyPlace("Downtown Fresh Market", "Shop", 95, 175, 27), nearbyPlace("Tombolo Books", "Shop", 275, 110, 28), nearbyPlace("Waterfront Gallery Shop", "Shop", 345, 300, 29)] };
 function fixture() {
   const t = buildDemoTour();
   t.slug = "synthetic-site"; t.website_theme = theme;
   t.listing = { address: "123 Synthetic Lane, Example, FL 33000", tagline: null, details: { story: "Synthetic description.", show_app_cta: false, show_partners: false }, beds: 3, baths: 2, sqft: 1800, price_cents: 50000000, price: null, lat: 27.9, lng: -82.5 };
   if (longAddress) { t.listing.address = "12345 Synthetic Architectural Promenade, Residence Twelve, Example, FL 33000"; t.listing.price_cents = null; }
+  if (noAddress) t.listing.address = null;
   t.cover_url = photoPath(0); t.poster = "/posters/poster.svg";
-  t.gallery = PHOTOS.map(([label], i) => ({ url: photoPath(i), label, ...(useThumbs ? { thumb_url: photoPath(i).replace("/photos/", "/thumbs/") } : {}) }));
+  t.gallery = PHOTOS.map(([label], i) => ({ url: photoPath(i), label: roomLabels ? ["Kitchen", "Living room", "Kitchen", "Primary bedroom", "Terrace", "Kitchen"][i] : label, ...(useThumbs ? { thumb_url: photoPath(i).replace("/photos/", "/thumbs/") } : {}) }));
   t.listing_video = { url: "/media/master.mp4", poster_url: "/posters/poster.svg", width: 1920, height: 1080, duration_s: 30, disclosure: "Synthetic photo-based video.", branding_policy: "unbranded" };
   if (presentation === "photo") t.listing_video = null;
   t.video_url = t.scrub_url = "/media/recorded.mp4"; t.hls_url = null; t.duration_s = 30; t.chapters = [];
@@ -51,9 +62,10 @@ const server = createServer((req, res) => {
   if (url.pathname === "/posters/poster.svg") { res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end(svg("POSTER", "#333333")); return; }
   const photo = url.pathname.match(/^\/(?:photos|thumbs)\/photo-(\d)\.svg$/);
   if (photo) { res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-store" }); res.end(svg(PHOTOS[Number(photo[1])][0], PHOTOS[Number(photo[1])][1], Number(photo[1]) === 1)); return; }
-  if (url.pathname === "/f/synthetic-site/nearby") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ status: "available", places: [{ name: "Synthetic Café", category: "Cafe", distance_m: 300, source_url: "https://www.openstreetmap.org/node/1" }] })); return; }
+  if (url.pathname === "/f/synthetic-site/nearby") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ...nearbyResult, map_html: nearbyMapHtml, license_url: "https://www.openstreetmap.org/copyright" })); return; }
   if (url.pathname === "/property/synthetic-site") {
-    let html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin, page: propertyPage(url.searchParams.get("page")), publicBase: "/property", previewTheme:url.searchParams.get("preview_theme") });
+    noAddress = url.searchParams.has("noaddress");
+    let html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin, page: propertyPage(url.searchParams.get("page")), publicBase: "/property", previewTheme:url.searchParams.get("preview_theme"), nearby: url.searchParams.get("cached") === "downtown" ? downtownResult : url.searchParams.has("cached") ? nearbyResult : null });
     if (arg("--fault") === "omit-preview-offset") {
       assert.equal(html.split("Math.max(navHeight,previewHeight)").length - 1, 1, "one exact preview-offset expression is omitted");
       html = html.replace("Math.max(navHeight,previewHeight)", "navHeight");
@@ -414,6 +426,162 @@ try {
     await context.close();
   }
   useThumbs = false;
+
+  // Neighbourhood map on the Location page: the server-drawn SVG arrives with
+  // the nearby reply (scripts on) or as static markup from a cached lookup
+  // (scripts off); it fits the phone and desktop viewports, the nine markers
+  // and their labels stay inside the paper and legible, the halo animation
+  // yields to reduced motion, and no request leaves the loopback origin.
+  presentation = "photo";
+  for (const width of [390, 1440]) for (theme of ["basic", "signature-estate", "coastal-luxe"]) for (const scripted of [true, false]) {
+    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 1000 }, javaScriptEnabled: scripted, reducedMotion: scripted ? "no-preference" : "reduce" });
+    const external = [];
+    await context.route("**/*", route => { const u = new URL(route.request().url()); if (u.origin === origin || u.protocol === "data:") return route.continue(); external.push(u.href); return route.abort(); });
+    const page = await context.newPage(); page.on("pageerror", e => errors.push("nearby-map " + theme + ": " + e));
+    await page.goto(origin + "/property/synthetic-site?page=location" + (scripted ? "" : "&cached=1"), { waitUntil: "networkidle" });
+    const tag = `${theme}/${width}/${scripted ? "scripted" : "no-script-cached"}`;
+    if (scripted) await page.waitForSelector("#property-nearby-map:not([hidden]) svg", { timeout: 5000 });
+    await page.locator("#property-nearby").scrollIntoViewIfNeeded();
+    const map = await page.evaluate(() => {
+      const svg = document.querySelector("#property-nearby-map svg"), rect = svg.getBoundingClientRect();
+      const paper = svg.querySelector(".nm-paper").getBoundingClientRect();
+      const inPaper = el => { const r = el.getBoundingClientRect(); return r.left >= paper.left - .5 && r.right <= paper.right + .5 && r.top >= paper.top - .5 && r.bottom <= paper.bottom + .5; };
+      const labels = [...svg.querySelectorAll(".nm-label")].map(el => ({ text: el.textContent, box: el.getBoundingClientRect(), font: parseFloat(getComputedStyle(el).fontSize), inside: inPaper(el) }));
+      const overlaps = labels.flatMap((a, i) => labels.slice(i + 1).filter(b => !(a.box.right <= b.box.left || b.box.right <= a.box.left || a.box.bottom <= b.box.top || b.box.bottom <= a.box.top)).map(b => a.text + " / " + b.text));
+      return { role: svg.getAttribute("role"), label: svg.getAttribute("aria-label"), places: svg.querySelectorAll(".nm-place").length, rings: svg.querySelectorAll(".nm-ring").length, markersInside: [...svg.querySelectorAll(".nm-dot")].every(inPaper), labelsInside: labels.every(l => l.inside), minFont: Math.min(...labels.map(l => l.font)) * rect.width / 360, overlaps,
+        x: rect.left, right: rect.right, width: rect.width, height: rect.height, top: rect.top, figureBottom: svg.closest("figure").getBoundingClientRect().bottom, listTop: document.getElementById("property-nearby-list").getBoundingClientRect().top, overflow: document.documentElement.scrollWidth > innerWidth, list: document.querySelectorAll("#property-nearby-list li").length, endpoint: document.getElementById("property-nearby").hasAttribute("data-endpoint"),
+        status: document.getElementById("property-nearby-status").textContent, legend: document.querySelectorAll(".property-nearby-legend .nm-key").length, halo: getComputedStyle(svg.querySelector(".nm-home-halo")).animationName, fill: getComputedStyle(svg.querySelector(".nm-restaurant")).fill, attribution: !!document.querySelector("#property-nearby a[href='https://www.openstreetmap.org/copyright']"), googleLink: !!document.querySelector(".property-location-copy a[href^='https://www.google.com/maps/']") };
+    });
+    measurements.push({ tag, type: "nearby-map", ...map });
+    check(map.role === "img" && map.label.startsWith("Map of 9 nearby places within 1 mi of the property: 3 restaurants, 3 cafés, 3 shops."), tag + ": map is an image with an accessible summary");
+    check(map.places === 9 && map.rings === 2 && map.legend === 4 && map.list === 9, tag + ": nine markers, two rings, legend and nine list items");
+    check(map.x >= 0 && map.right <= width && !map.overflow && map.width >= (width === 390 ? 300 : 440) && Math.abs(map.width - map.height) < 1, tag + ": square map fits the viewport without horizontal overflow");
+    check(width === 390 ? map.listTop >= map.figureBottom : Math.abs(map.listTop - map.top) <= 1, tag + (width === 390 ? ": the list follows the map and its legend" : ": map and list start on the same line beside each other"));
+    check(map.markersInside && map.labelsInside && map.overlaps.length === 0 && map.minFont >= 10, tag + ": markers and labels stay on the paper, do not overlap, and remain legible (" + map.minFont.toFixed(1) + "px)");
+    check(map.attribution && map.googleLink && map.fill !== "rgb(0, 0, 0)" && map.fill !== "none", tag + ": OSM attribution and the external map link remain; markers take the theme colour");
+    check(map.endpoint === scripted && map.status.startsWith("Restaurants, cafés and shops listed in OpenStreetMap"), tag + (scripted ? ": scripted lookup filled the section" : ": cached places render as static markup with no endpoint left"));
+    if (!scripted) check(map.halo === "none", tag + ": reduced motion stops the property-marker pulse");
+    if (scripted) check(map.halo === "nearby-home-pulse", tag + ": the property marker pulses when motion is allowed");
+    check(external.length === 0 && !requests.some(path => path.startsWith("/tile") || path.includes("openstreetmap")), tag + ": no request leaves the loopback origin and no tile is fetched");
+    // Evidence: the section at real size, captured from the top of the page so
+    // sticky navigation stays at the top instead of painting over the map.
+    const clip = await page.evaluate(() => { scrollTo(0, 0); const r = document.getElementById("property-nearby").getBoundingClientRect(); return { x: 0, y: Math.floor(r.top + scrollY), width: innerWidth, height: Math.ceil(r.height) }; });
+    await page.screenshot({ path: join(evidence, `nearby-map-${theme}-${width}-${scripted ? "scripted" : "no-script"}.png`), fullPage: true, clip });
+    await context.close();
+  }
+
+  // Dense downtown block (cached static markup, scripts off): the real glyph
+  // boxes of the names, ring distances and north mark never collide or leave
+  // the paper, and the rings fit the block in tenth-mile steps.
+  for (const width of [390, 1440]) for (theme of ["basic", "signature-estate", "coastal-luxe"]) {
+    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 1000 }, javaScriptEnabled: false });
+    await context.route("**/*", route => { const u = new URL(route.request().url()); return u.origin === origin || u.protocol === "data:" ? route.continue() : route.abort(); });
+    const page = await context.newPage();
+    await page.goto(origin + "/property/synthetic-site?page=location&cached=downtown", { waitUntil: "networkidle" });
+    const tag = `downtown/${theme}/${width}`;
+    const dense = await page.evaluate(() => {
+      const svg = document.querySelector("#property-nearby-map svg"), rect = svg.getBoundingClientRect(), paper = svg.querySelector(".nm-paper").getBoundingClientRect();
+      const boxes = selector => [...svg.querySelectorAll(selector)].map(el => ({ text: el.textContent, box: el.getBoundingClientRect() }));
+      const names = boxes(".nm-label"), marks = boxes(".nm-ring-label, .nm-compass");
+      const hit = (a, b) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
+      const onPaper = b => b.left >= paper.left - .5 && b.right <= paper.right + .5 && b.top >= paper.top - .5 && b.bottom <= paper.bottom + .5;
+      return { places: svg.querySelectorAll(".nm-place").length, rings: marks.filter(m => m.text !== "N").map(m => m.text), summary: svg.getAttribute("aria-label"), labels: names.map(n => n.text),
+        collisions: names.flatMap((a, i) => [...names.slice(i + 1), ...marks].filter(b => hit(a.box, b.box)).map(b => a.text + " / " + b.text)),
+        offPaper: [...names, ...marks].filter(n => !onPaper(n.box)).map(n => n.text), minFont: Math.min(...[...svg.querySelectorAll(".nm-label")].map(el => parseFloat(getComputedStyle(el).fontSize))) * rect.width / 360 };
+    });
+    measurements.push({ tag, type: "downtown-map", ...dense });
+    check(dense.places === 9 && JSON.stringify(dense.rings) === JSON.stringify(["0.1 mi", "0.2 mi"]) && dense.summary.startsWith("Map of 9 nearby places within 0.2 mi of the property"), tag + ": a dense block gets tenth-mile rings that fit its nine places");
+    check(dense.collisions.length === 0 && dense.offPaper.length === 0 && dense.minFont >= 10, tag + ": names, ring distances and the north mark never collide or leave the paper " + JSON.stringify(dense.collisions.concat(dense.offPaper)));
+    const clip = await page.evaluate(() => { const r = document.getElementById("property-nearby").getBoundingClientRect(); return { x: 0, y: Math.floor(r.top + scrollY), width: innerWidth, height: Math.ceil(r.height) }; });
+    await page.screenshot({ path: join(evidence, `nearby-map-downtown-${theme}-${width}.png`), fullPage: true, clip });
+    await context.close();
+  }
+
+  // No published address: the page withholds the location, so neither path
+  // draws the map; the list alone takes the whole row and nothing leaves the
+  // loopback origin.
+  for (const width of [390, 1440]) for (theme of ["basic", "signature-estate", "coastal-luxe"]) for (const scripted of [true, false]) {
+    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 1000 }, javaScriptEnabled: scripted });
+    const external = [];
+    await context.route("**/*", route => { const u = new URL(route.request().url()); if (u.origin === origin || u.protocol === "data:") return route.continue(); external.push(u.href); return route.abort(); });
+    const page = await context.newPage(); page.on("pageerror", e => errors.push("unaddressed " + theme + ": " + e));
+    await page.goto(origin + "/property/synthetic-site?page=location&noaddress=1" + (scripted ? "" : "&cached=1"), { waitUntil: "networkidle" });
+    if (scripted) await page.waitForFunction(() => document.querySelectorAll("#property-nearby-list li").length === 9);
+    const tag = `unaddressed/${theme}/${width}/${scripted ? "scripted" : "no-script-cached"}`;
+    const shown = await page.evaluate(() => { const list = document.getElementById("property-nearby-list"), wrap = list.parentElement.getBoundingClientRect(), pad = getComputedStyle(list.parentElement), box = list.getBoundingClientRect();
+      return { notice: document.body.innerText.includes("An address has not been published for this listing."), maps: document.querySelectorAll("#property-nearby svg, a[href*='google.com/maps']").length, slotHidden: document.getElementById("property-nearby-map").hidden, items: list.querySelectorAll("li").length, visible: box.height > 0, left: box.left - (wrap.left + parseFloat(pad.paddingLeft)), right: wrap.right - parseFloat(pad.paddingRight) - box.right, overflow: document.documentElement.scrollWidth > innerWidth }; });
+    measurements.push({ tag, type: "unaddressed", ...shown });
+    check(shown.notice && shown.maps === 0 && shown.slotHidden && shown.items === 9 && shown.visible && !shown.overflow, tag + ": no published address means no map, only the list");
+    check(Math.abs(shown.left) <= 1 && Math.abs(shown.right) <= 1, tag + ": the list takes the whole row, with no empty map column");
+    check(external.length === 0, tag + ": no request leaves the loopback origin");
+    await context.close();
+  }
+  presentation = "video";
+
+  // Room-grouped Gallery on the premium designs: the headings follow label
+  // first appearance, the on-screen order (rows top to bottom, left to right)
+  // equals document order, and the full-size viewer's Next/Previous walk that
+  // same order. Classic keeps the flat published order.
+  roomLabels = true;
+  const expectedGrouped = [0, 2, 5, 1, 3, 4].map(photoPath), expectedFlat = PHOTOS.map((_, i) => photoPath(i));
+  for (const width of [390, 1440]) for (theme of ["basic", "signature-estate", "coastal-luxe"]) {
+    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 1000 } });
+    await context.route("**/*", route => new URL(route.request().url()).origin === origin || route.request().url().startsWith("data:") ? route.continue() : route.abort());
+    const page = await context.newPage(); page.on("pageerror", e => errors.push("rooms " + theme + ": " + e));
+    await page.goto(origin + "/property/synthetic-site?page=gallery", { waitUntil: "networkidle" });
+    const tag = `rooms/${theme}/${width}`;
+    const grouped = theme !== "basic";
+    const layout = await page.evaluate(() => {
+      const links = [...document.querySelectorAll("[data-property-photo]")].map(a => ({ href: new URL(a.href).pathname, box: a.getBoundingClientRect() }));
+      const rows = []; for (const link of [...links].sort((a, b) => a.box.top - b.box.top)) { const row = rows.find(r => Math.abs(r.top - link.box.top) < link.box.height * .5); if (row) row.items.push(link); else rows.push({ top: link.box.top, items: [link] }); }
+      const visual = rows.sort((a, b) => a.top - b.top).flatMap(r => r.items.sort((a, b) => a.box.left - b.box.left).map(l => l.href));
+      // Every row grid (a room's photos, or a run of one-photo rooms): the gap
+      // between each row's outer cells and the grid edges, and cells per row.
+      const fill = [...document.querySelectorAll(".lp-gal-room > .lp-gal, .lp-gal-run")].flatMap(grid => {
+        const box = grid.getBoundingClientRect(), lines = [];
+        for (const cell of [...grid.children].map(c => c.getBoundingClientRect())) { const line = lines.find(l => Math.abs(l.top - cell.top) < cell.height * .5); if (line) line.cells.push(cell); else lines.push({ top: cell.top, cells: [cell] }); }
+        return lines.map(l => ({ kind: grid.classList.contains("lp-gal-run") ? "run" : "room", left: Math.min(...l.cells.map(c => c.left)) - box.left, right: box.right - Math.max(...l.cells.map(c => c.right)), photos: l.cells.length }));
+      });
+      const rules = [...document.querySelectorAll(".lp-gal-room-title")].map(h => { const after = getComputedStyle(h, "::after"); return after.display === "none" ? null : parseFloat(after.width); }).filter(w => w !== null);
+      return { dom: links.map(l => l.href), visual, fill, rules, headings: [...document.querySelectorAll("h2.lp-gal-room-title")].map(h => h.textContent), captions: document.querySelectorAll("#gallery figcaption").length, overflow: document.documentElement.scrollWidth > innerWidth };
+    });
+    measurements.push({ tag, type: "rooms", ...layout });
+    check(JSON.stringify(layout.dom) === JSON.stringify(grouped ? expectedGrouped : expectedFlat), tag + (grouped ? ": photos are grouped by room in document order" : ": Classic keeps the published order"));
+    check(JSON.stringify(layout.visual) === JSON.stringify(layout.dom) && !layout.overflow, tag + ": on-screen order equals document order");
+    if (grouped) {
+      check(layout.fill.length >= 4 && layout.fill.every(row => Math.abs(row.left) <= 1 && Math.abs(row.right) <= 1), tag + ": every row of every room is filled edge to edge, with no empty column beside a photo");
+      // Living room, Primary bedroom and Terrace hold one photo each: they share
+      // rows at the ordinary photo size; only a run's leftover photo widens.
+      const runRows = layout.fill.filter(row => row.kind === "run").map(row => row.photos), expectedRun = { "signature-estate": { 390: [1, 1, 1], 1440: [2, 1] }, "coastal-luxe": { 390: [2, 1], 1440: [3] } }[theme][width];
+      check(JSON.stringify(runRows) === JSON.stringify(expectedRun), tag + ": consecutive one-photo rooms sit side by side (" + JSON.stringify(runRows) + ")");
+      check(layout.rules.length >= 2 && layout.rules.every(w => w >= 24), tag + ": every visible room-heading rule is a real line, never a stub (" + layout.rules.map(w => Math.round(w)).join(",") + "px)");
+    }
+    check(JSON.stringify(layout.headings) === JSON.stringify(grouped ? ["Kitchen3 photos", "Living room", "Primary bedroom", "Terrace"] : []) && layout.captions === (grouped ? 0 : PHOTOS.length), tag + (grouped ? ": room headings replace captions" : ": no room headings or lost captions on Classic"));
+    const links = page.locator("[data-property-photo]");
+    await links.nth(0).click();
+    await page.waitForFunction(() => document.querySelector("#property-photo-modal").open);
+    const walked = [await page.locator("#property-photo-full").evaluate(img => new URL(img.getAttribute("src"), location.href).pathname)];
+    for (let step = 1; step < PHOTOS.length; step++) {
+      await page.keyboard.press("ArrowRight");
+      walked.push(await page.locator("#property-photo-full").evaluate((img, n) => { const src = img.getAttribute("src"); if (!src) throw new Error("viewer lost its photo at step " + n); return new URL(src, location.href).pathname; }, step));
+    }
+    check(JSON.stringify(walked) === JSON.stringify(layout.visual) && await page.locator("#property-photo-next").isDisabled(), tag + ": viewer Next walks the on-screen order and stops at the last photo");
+    await page.keyboard.press("ArrowLeft");
+    check(await page.locator("#property-photo-full").evaluate(img => new URL(img.getAttribute("src"), location.href).pathname) === layout.visual[PHOTOS.length - 2] && (await page.locator("#property-photo-count").innerText()) === `${PHOTOS.length - 1} of ${PHOTOS.length}`, tag + ": viewer Previous returns along the same order");
+    await page.keyboard.press("Escape");
+    // Evidence capture: every thumb has been handed its file and has settled,
+    // loaded or failed (the fixture's sixth file is deliberately missing, and
+    // its error may already have fired, so no event is awaited). Bounded, so a
+    // stuck image fails loudly instead of hanging the suite.
+    for (const image of await page.locator("img.property-thumb").all()) {
+      await image.scrollIntoViewIfNeeded();
+      await image.evaluate(img => new Promise((resolve, reject) => { const limit = performance.now() + 8000; const poll = () => { if (!img.hasAttribute("data-property-src") && img.complete) resolve(); else if (performance.now() > limit) reject(new Error("gallery thumb did not settle: " + img.alt)); else requestAnimationFrame(poll); }; poll(); }));
+    }
+    await page.evaluate(() => { document.activeElement?.blur(); scrollTo(0, 0); });
+    await page.screenshot({ path: join(evidence, `gallery-rooms-${theme}-${width}.png`), fullPage: true });
+    await context.close();
+  }
+  roomLabels = false;
   check(errors.length === 0, "No page JavaScript errors: " + errors.join("; "));
   writeFileSync(join(evidence, "receipt.json"), JSON.stringify({ passed: true, checks, measurements, scope: "Synthetic loopback pages and SVG photos; no customer media, phone or production request." }, null, 2));
   console.log(`Property site browser: ${checks.length} real-browser assertions passed; receipt ${join(evidence, "receipt.json")}`);

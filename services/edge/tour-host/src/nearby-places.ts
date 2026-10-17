@@ -133,6 +133,34 @@ function cacheEntry(raw: unknown, lat: number, lng: number): CacheEntry | null {
       ...(typeof r.fetched_at === "string" ? { fetched_at: r.fetched_at } : {}) } };
 }
 
+/** Cache-only read for the server-rendered Location page, so the map and list
+ * exist as static markup (no script needed) once an area has been looked up.
+ * Never leases the area, never counts against the daily budget and never calls
+ * the provider; a cold or expired cache simply returns null and the page keeps
+ * its scripted lookup. Bounded so storage can never delay the listing HTML. */
+export const NEARBY_PEEK_TIMEOUT_MS = 1_500;
+export async function peekNearbyPlaces(tour: Pick<PublicLocation, "space_type" | "published_at" | "listing">, env: Env, dependencies: Pick<NearbyDependencies, "now" | "timeoutMs"> = {}): Promise<NearbyPlacesResult | null> {
+  const now = dependencies.now || Date.now;
+  if (tour.space_type !== "real_estate" || !tour.published_at || !Number.isFinite(Date.parse(tour.published_at)) ||
+      Date.parse(tour.published_at) > now() || !number(tour.listing.lat, 90) || !number(tour.listing.lng, 180) ||
+      !env.MEDIA_RENDERS) return null;
+  // Same coarsened cell as the lookup; only that cell's cached file is read.
+  const [lat, lng] = [tour.listing.lat, tour.listing.lng].map(v => Math.round(v * 1000) / 1000);
+  const bucket = env.MEDIA_RENDERS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<null>(resolve => {
+    timer = setTimeout(() => resolve(null), Math.min(NEARBY_PEEK_TIMEOUT_MS, Math.max(1, dependencies.timeoutMs || NEARBY_PEEK_TIMEOUT_MS)));
+  });
+  const work = async (): Promise<NearbyPlacesResult | null> => {
+    const cached = await bucket.get(`${PREFIX}pois/${lat.toFixed(3)},${lng.toFixed(3)}.json`);
+    if (!cached || !Number.isFinite(cached.size) || cached.size > 32 * 1024) return null;
+    const entry = cacheEntry(JSON.parse(await cached.text()), lat, lng);
+    return entry && entry.expires_at > now() && entry.result.status === "available" ? entry.result : null;
+  };
+  try { return await Promise.race([work().catch(() => null), deadline]); }
+  finally { if (timer !== undefined) clearTimeout(timer); }
+}
+
 /** Caller must run this only on the branded Location GET after a fresh public
  * /tours lookup. The additional publication/type checks fail closed if reused.
  * The cache contains ODbL POIs only, not addresses, accounts or listing IDs.

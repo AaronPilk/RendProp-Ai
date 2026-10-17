@@ -85,6 +85,56 @@ export const PROPERTY_DESIGN_CSS = `
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-location-visual { background-color:var(--accent-soft); }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-location-visual span { background:var(--accent-3); }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-nearby-list li { border:0; border-top:1px solid var(--premium-line); border-radius:0; background:transparent; padding:20px 0; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-nearby-list a { color:var(--ink); }
+  /* Neighbourhood map takes each design's paper, ink and accent; marker shapes stay.
+     The list keeps the map's top margin, so on wide screens both start on one line. */
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-nearby-map { --nearby-paper:var(--premium-paper); --nearby-ring:var(--premium-line); --nearby-ink:var(--ink); --nearby-dim:var(--ink-dim); --nearby-home:var(--accent-3); margin-top:32px; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-nearby-list { margin-top:32px; }
+  .property-site.site-theme-signature-estate .property-nearby-map { --nearby-restaurant:#9a4a2c; --nearby-cafe:#7d613f; --nearby-shop:#4d6b5a; }
+  /* Square paper inside the fine frame even where CSS rx is not applied. */
+  .property-site.site-theme-signature-estate .property-nearby-map-svg { border:1px solid var(--premium-line); border-radius:2px; background:var(--nearby-paper); }
+  .property-site.site-theme-signature-estate .property-nearby-map .nm-paper { rx:0; }
+  .property-site.site-theme-coastal-luxe .property-nearby-map { --nearby-restaurant:#a9532f; --nearby-cafe:#8c6d2c; --nearby-shop:#216b58; }
+  .property-site.site-theme-coastal-luxe .property-nearby-map-svg { border-radius:22px; }
+  .property-site.site-theme-coastal-luxe .property-nearby-map .nm-paper { rx:22; }
+  /* Room-grouped editorial Gallery: a small rule-led heading above each room. */
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-rooms { display:grid; gap:56px; margin-top:28px; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-room-title { display:flex; align-items:baseline; gap:14px; margin:0 0 18px; font:600 12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; letter-spacing:.16em; text-transform:uppercase; color:var(--accent-3); }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-room-title::after { content:""; flex:1; height:1px; background:var(--premium-line); align-self:center; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-room-count { order:1; color:var(--ink-dim); font-weight:400; letter-spacing:0; text-transform:none; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-rooms .lp-mediadate { margin-top:0; }
+  /* Rows fill edge to edge in document order (the order the photo viewer
+     walks). Two kinds of row: the photos of a room with several photos, and a
+     run of consecutive one-photo rooms (.lp-gal-run), which shares the same
+     columns so those rooms sit side by side at the ordinary size. A short last
+     row widens instead of leaving empty columns; widened photos take a 16:9
+     crop, and the viewer always opens the complete photo. Within a run, each
+     room's photo sits at the foot of its cell, so photos in a row stay aligned
+     even when one heading wraps. */
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-run { display:grid; row-gap:56px; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-run > .lp-gal-room { display:flex; flex-direction:column; justify-content:flex-end; min-width:0; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-gal-run .lp-gal { grid-template-columns:minmax(0,1fr); }
+  @media(min-width:760px) {
+    /* Signature: two columns. */
+    .property-site.site-theme-signature-estate .lp-gal-run { grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:32px; }
+    .property-site.site-theme-signature-estate :is(.lp-gal-rooms > .lp-gal-room > .lp-gal > .lp-gcell,.lp-gal-run > .lp-gal-room):nth-child(odd):last-child { grid-column:1/-1; }
+    .property-site.site-theme-signature-estate :is(.lp-gal-rooms > .lp-gal-room > .lp-gal > .lp-gcell,.lp-gal-run > .lp-gal-room):nth-child(odd):last-child img { aspect-ratio:16/9; }
+    /* Coastal: three columns as six tracks, so a last row of two shares the width. */
+    .property-site.site-theme-coastal-luxe :is(.lp-gal-rooms > .lp-gal-room > .lp-gal,.lp-gal-run) { grid-template-columns:repeat(6,minmax(0,1fr)); }
+    .property-site.site-theme-coastal-luxe .lp-gal-run { column-gap:24px; }
+    .property-site.site-theme-coastal-luxe :is(.lp-gal-rooms > .lp-gal-room > .lp-gal > .lp-gcell,.lp-gal-run > .lp-gal-room) { grid-column:span 2; }
+    .property-site.site-theme-coastal-luxe :is(.lp-gal-rooms > .lp-gal-room > .lp-gal > .lp-gcell,.lp-gal-run > .lp-gal-room):is(:nth-child(3n+1):nth-last-child(2),:nth-child(3n+2):last-child) { grid-column:span 3; }
+    .property-site.site-theme-coastal-luxe :is(.lp-gal-rooms > .lp-gal-room > .lp-gal > .lp-gcell,.lp-gal-run > .lp-gal-room):nth-child(3n+1):last-child { grid-column:1/-1; }
+    .property-site.site-theme-coastal-luxe :is(.lp-gal-rooms > .lp-gal-room > .lp-gal > .lp-gcell,.lp-gal-run > .lp-gal-room):is(:nth-child(3n+1):nth-last-child(-n+2),:nth-child(3n+2):last-child) img { aspect-ratio:16/9; }
+  }
+  @media(max-width:759px) {
+    /* Coastal phones: two columns. Signature phones are one column already. */
+    .property-site.site-theme-coastal-luxe .lp-gal-run { grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:16px; }
+    /* Half-width cells have no room for the heading rule; never leave a stub. */
+    .property-site.site-theme-coastal-luxe .lp-gal-run > .lp-gal-room:not(:nth-child(odd):last-child) .lp-gal-room-title::after { display:none; }
+    .property-site.site-theme-coastal-luxe :is(.lp-gal-rooms > .lp-gal-room > .lp-gal > .lp-gcell,.lp-gal-run > .lp-gal-room):nth-child(odd):last-child { grid-column:1/-1; }
+    .property-site.site-theme-coastal-luxe :is(.lp-gal-rooms > .lp-gal-room > .lp-gal > .lp-gcell,.lp-gal-run > .lp-gal-room):nth-child(odd):last-child img { aspect-ratio:16/9; }
+  }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) #endcard .panel { max-width:1160px; padding:40px; border:1px solid var(--premium-line); border-radius:0; box-shadow:none; background:var(--premium-paper); }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .field input,.property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .field textarea { background:var(--bg); border-color:#a8afa5; border-radius:6px; }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-btn,.property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .cta { color:white; background:var(--accent-3); border-radius:6px; box-shadow:none; }
