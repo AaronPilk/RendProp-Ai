@@ -1792,7 +1792,9 @@ jobs:
             services/supabase/functions/ai-video/index.ts \
             services/supabase/functions/property-video-worker/engine.ts \
             services/supabase/functions/ai-video/property-video-kie-dispatch.test.ts \
-            services/supabase/functions/property-video-worker/kie-dispatch-authority.test.ts
+            services/supabase/functions/property-video-worker/kie-dispatch-authority.test.ts \
+            services/supabase/functions/property/index.ts \
+            services/supabase/tests/rentcast_billing_binding.fixture.ts
       - name: Install actual CPU, font and isolated database test dependencies
         run: |
           sudo apt-get update
@@ -1837,6 +1839,15 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/provider_attempt_receipts_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-provider-attempt-receipts-pg"
+      - name: RentCast settlement keeps admitted billing across binding changes and lost replies
+        timeout-minutes: 7
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 -m unittest discover -s services/supabase/tests -p test_rentcast_billing_binding_driver.py -v
+          deno_cache_dir="$(deno info --no-config --no-lock --json | python3 -c 'import json,pathlib,sys; v=json.load(sys.stdin); assert type(v) is dict and type(v.get("denoDir")) is str; p=pathlib.Path(v["denoDir"]); assert p.is_absolute() and p.is_dir(); print(p)')"
+          python3 services/supabase/tests/rentcast_billing_binding_pg.py --deno-cache-dir "$deno_cache_dir" --evidence-dir "$RUNNER_TEMP/rendprop-rentcast-billing-binding-pg"
       - name: Exact-byte gallery copies retain source history and serialize completion
         timeout-minutes: 10
         run: |
@@ -2026,6 +2037,7 @@ jobs:
             ${{ runner.temp }}/rendprop-property-video-abandon-pg/**
             ${{ runner.temp }}/rendprop-studio-gallery-order-pg/**
             ${{ runner.temp }}/rendprop-provider-attempt-receipts-pg/**
+            ${{ runner.temp }}/rendprop-rentcast-billing-binding-pg/**
             ${{ runner.temp }}/rendprop-gallery-source-copy-pg/**
             ${{ runner.temp }}/rendprop-direct-property-source-pg/**
             ${{ runner.temp }}/rendprop-property-steady-v2-pg/**

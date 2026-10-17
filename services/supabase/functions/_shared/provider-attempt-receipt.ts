@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { HttpError, throwRpc } from "./http.ts";
 import { propertyRequestId } from "./property/provider.ts";
 
@@ -54,4 +55,49 @@ export async function finishPropertyAttempt(admin: Authority, attempt: PropertyA
   } catch { /* Only bounded, content-free failure information is logged below. */ }
   console.error("Property provider outcome could not be persisted; durable intent remains unresolved.");
   return false;
+}
+
+
+/** A lost insert reply is uncertain until this exact server-stamped row can be
+ * read back. Never resend a supplier request or accept a foreign ledger row. */
+export async function recordPropertyAttemptCost(admin: SupabaseClient, attempt: PropertyAttempt, unitCents: number, result: Record<string, unknown>): Promise<{ recorded: boolean; total_cents: number }> {
+  const total_cents = Math.round(unitCents * 10_000) / 10_000;
+  const meta = { ...result, provider_attempt_id: attempt.id, actor_id: attempt.actor, cost_basis: "configured_per_call_estimate" };
+  const row = { job_id: null, org_id: attempt.org, feature: "property_lookup", provider: "rentcast", model: "properties", units: 1, unit_cost_cents: unitCents, total_cents, meta };
+  try {
+    const written = await admin.from("cost_ledger").insert(row);
+    if (!written.error) return { recorded: true, total_cents };
+  } catch { /* The write may have committed. Verify without repeating it. */ }
+  try {
+    const authority = await admin.from("provider_attempt_receipts")
+      .select("id,actor_id,org_id,billing_org_id,provider,model,stage,outcome,http_status,estimated_cents,ledger_status,terminal_at")
+      .eq("id", attempt.id).eq("actor_id", attempt.actor).eq("org_id", attempt.org).maybeSingle();
+    const receipt = authority.data as Record<string, unknown> | null;
+    const intent = receipt?.outcome === "intent" && receipt.http_status === null && receipt.estimated_cents === null
+      && receipt.ledger_status === "not_booked" && receipt.terminal_at === null;
+    const terminal = receipt !== null && receipt.outcome === result.result && ["hit", "no_record"].includes(String(receipt.outcome))
+      && typeof receipt.http_status === "number" && Number.isInteger(receipt.http_status)
+      && ((receipt.http_status >= 200 && receipt.http_status <= 299) || (receipt.outcome === "no_record" && receipt.http_status === 404))
+      && receipt.estimated_cents === total_cents && ["recorded", "unconfirmed"].includes(String(receipt.ledger_status))
+      && typeof receipt.terminal_at === "string" && receipt.terminal_at.length > 0;
+    if (authority.error || !receipt || receipt.id !== attempt.id || receipt.actor_id !== attempt.actor || receipt.org_id !== attempt.org
+      || typeof receipt.billing_org_id !== "string" || !UUID.test(receipt.billing_org_id)
+      || receipt.provider !== "rentcast" || receipt.model !== "properties" || receipt.stage !== "property.lookup" || !(intent || terminal))
+      throw new Error("Unconfirmed immutable property attempt identity");
+    const read = await admin.from("cost_ledger").select("id,job_id,org_id,billing_org_id,feature,provider,model,units,unit_cost_cents,total_cents,meta,idempotency_key")
+      .eq("org_id", attempt.org).eq("idempotency_key", "provider-attempt:" + attempt.id).maybeSingle();
+    const saved = read.data as Record<string, unknown> | null;
+    const savedMeta = saved?.meta as Record<string, unknown> | null;
+    if (!read.error && saved && savedMeta && typeof saved.id === "string" && UUID.test(saved.id)
+      && saved.billing_org_id === receipt.billing_org_id
+      && saved.job_id === null && saved.org_id === attempt.org && saved.feature === row.feature
+      && saved.provider === row.provider && saved.model === row.model && saved.units === row.units
+      && saved.unit_cost_cents === unitCents && saved.total_cents === total_cents
+      && saved.idempotency_key === "provider-attempt:" + attempt.id
+      && savedMeta.provider_attempt_id === attempt.id && savedMeta.actor_id === attempt.actor
+      && savedMeta.result === result.result && savedMeta.cost_basis === meta.cost_basis)
+      return { recorded: true, total_cents };
+  } catch { /* Unknown stays unconfirmed; no insertion or supplier retry. */ }
+  console.error("Property provider cost could not be confirmed; durable attempt retains unconfirmed accounting.");
+  return { recorded: false, total_cents };
 }

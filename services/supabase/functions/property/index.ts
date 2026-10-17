@@ -37,10 +37,9 @@ import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, respondError } from "../_shared/http.ts";
 import { adminClient, assertPaidAiIdentity, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
-import { recordAppAiCost } from "../_shared/ledger.ts";
 import { addressKey, hasSubstance, PropertyLookupFailure, PropertyLookupResponse, PropertyProvider } from "../_shared/property/provider.ts";
 import { rentcast } from "../_shared/property/rentcast.ts";
-import { beginPropertyAttempt, finishPropertyAttempt } from "../_shared/provider-attempt-receipt.ts";
+import { beginPropertyAttempt, finishPropertyAttempt, recordPropertyAttemptCost } from "../_shared/provider-attempt-receipt.ts";
 
 /** Tried in order; the first CONFIGURED one answers. An MLS/IDX provider slots
  *  in at the front of this array and nothing else changes. */
@@ -121,11 +120,7 @@ Deno.serve(async (req: Request) => {
     if (!facts || !hasSubstance(facts)) {
       // Preserve the existing catalog estimate for a genuine miss. A received
       // response and this modeled price are not a reconciled supplier bill.
-      const cost = await recordAppAiCost(admin, {
-        orgId, provider: provider.id, feature: "property_lookup",
-        model: "properties", units: 1, unitCents: provider.unitCents,
-        meta: { result: "no_record", provider_attempt_id: attempt.id, cost_basis: "configured_per_call_estimate" },
-      });
+      const cost = await recordPropertyAttemptCost(admin, attempt, provider.unitCents, { result: "no_record" });
       await finishPropertyAttempt(admin, attempt, { outcome: "no_record", status: lookup.status, requestId: lookup.requestId, estimatedCents: provider.unitCents, ledgerStatus: cost.recorded ? "recorded" : "unconfirmed" });
       return json({ configured: true, cached: false, source: provider.id, facts: null });
     }
@@ -133,11 +128,7 @@ Deno.serve(async (req: Request) => {
     // 4 — ledger, terminal evidence, then cache. In that order: a ledger failure must not stop the
     // agent getting the answer they are waiting for, and a cache row written
     // before the charge is recorded would hide the charge forever.
-    const cost = await recordAppAiCost(admin, {
-      orgId, provider: provider.id, feature: "property_lookup",
-      model: "properties", units: 1, unitCents: provider.unitCents,
-      meta: { result: "hit", has_sqft: facts.sqft != null, has_beds: facts.beds != null, provider_attempt_id: attempt.id, cost_basis: "configured_per_call_estimate" },
-    });
+    const cost = await recordPropertyAttemptCost(admin, attempt, provider.unitCents, { result: "hit", has_sqft: facts.sqft != null, has_beds: facts.beds != null });
     await finishPropertyAttempt(admin, attempt, { outcome: "hit", status: lookup.status, requestId: lookup.requestId, estimatedCents: provider.unitCents, ledgerStatus: cost.recorded ? "recorded" : "unconfirmed" });
 
     await admin.from("property_lookups").upsert({
