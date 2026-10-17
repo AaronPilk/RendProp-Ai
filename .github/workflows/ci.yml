@@ -1085,6 +1085,38 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           node services/edge/tour-host/scripts/check-property-site-browser.mjs --evidence="$RUNNER_TEMP/rendprop-property-site-browser"
+          control_dir="$RUNNER_TEMP/rendprop-property-site-browser-omit-preview-offset"
+          test ! -e "$control_dir"
+          preview_control_status=0
+          node services/edge/tour-host/scripts/check-property-site-browser.mjs --fault=omit-preview-offset --evidence="$control_dir" || preview_control_status=$?
+          test "$preview_control_status" -eq 1
+          node --input-type=module - "$control_dir/failure.json" <<'NODE'
+          import assert from 'node:assert/strict';
+          import { existsSync, lstatSync, readFileSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          const path = process.argv[2], file = lstatSync(path);
+          assert(file.isFile() && !file.isSymbolicLink() && file.size <= 2 * 1024 ** 2, 'bounded regular omission receipt');
+          assert(!existsSync(join(dirname(path), 'receipt.json')), 'no positive receipt for omission');
+          const q = JSON.parse(readFileSync(path, 'utf8'));
+          assert.equal(q.passed, false);
+          assert.equal(q.error, 'scripted/signature-estate/home/390/preview: script-enabled main target clears actual sticky navigation/preview chrome');
+          assert(Array.isArray(q.errors) && q.errors.length === 0, 'no runtime errors');
+          assert(Array.isArray(q.checks) && q.checks.every(x => typeof x === 'string'));
+          assert(q.checks.includes('scripted/signature-estate/home/390/preview: native Enter focuses main with JavaScript enabled'), 'native main focus passed before refusal');
+          assert(Array.isArray(q.measurements));
+          const witnesses = q.measurements.filter(x => x.tag === 'scripted/signature-estate/home/390/preview' && x.type === 'scripted-skip-clearance');
+          assert.equal(witnesses.length, 1);
+          const g = witnesses[0];
+          assert.equal(q.measurements.at(-1), g, 'failure immediately follows recorded geometry');
+          assert(g.active === true && g.top === 72 && g.obstruction === 74 && g.scrollMargin === '72px' && g.top < g.obstruction - 1, 'exact retained72/74 strict clearance failure');
+          assert(Array.isArray(g.surfaces) && g.surfaces.length === 2);
+          const banners = g.surfaces.filter(x => x.selector === '.property-preview-banner'), navs = g.surfaces.filter(x => x.selector === '#listing-nav');
+          assert.equal(banners.length, 1); assert.equal(navs.length, 1);
+          const banner = banners[0], nav = navs[0];
+          assert(banner.position === 'sticky' && banner.top === 0 && banner.bottom === 74 && banner.height === 74, 'actual74px sticky preview banner');
+          assert(nav.position === 'relative' && nav.height === 56 && nav.top === -2 && nav.bottom === 54, 'actual56px relative navigation');
+          console.log('Exact preview-offset omission witnessed: focused main72, sticky banner74, no runtime errors.');
+          NODE
           node services/edge/tour-host/scripts/check-property-video-browser.mjs
           node services/edge/tour-host/scripts/check-property-video-controls.mjs
       - name: Chapter seek and Explore handoff reject missing seek, stale timing and rewind
@@ -1271,6 +1303,7 @@ jobs:
           name: studio-macos-media-export-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/rendprop-property-site-browser/**
+            ${{ runner.temp }}/rendprop-property-site-browser-omit-preview-offset/**
             ${{ runner.temp }}/rendprop-property-video-*/**
             ${{ runner.temp }}/rendprop-export-original-audio-*/receipt.json
             ${{ runner.temp }}/rendprop-export-original-audio-*/*.mp4

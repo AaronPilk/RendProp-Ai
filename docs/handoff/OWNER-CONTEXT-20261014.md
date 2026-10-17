@@ -1,3 +1,17 @@
+# Current source and verification — October 17, 04:15 EDT
+
+Architecture remains native iPhone plus Studio/shared backend. Feature HEAD54a7b72 is committed locally and not pushed/deployed; the additional reviewed website CI omission guard is still a tracked worktree change. Source backup2026-10-17-075326Z-54a7b72 is independently restored/fsck-verified (b89e8c52), preserving all three diagnostic refs. It does not include subsequent dirty CI/docs or prove whole-Mac coverage.
+
+Website79 packaging is verified offline: full canonical predeploy passes all19 groups; separate actual shipping artifact413789bytes includes24 bound source inputs,45 unchanged public files and accepted historical legal, with canonical draft outputs quarantined. Root independently verifies116current/116canonical/114shipping source maps,59 tools and config changes limited to artifact paths. Packetc3ed596b; live78 remains unchanged. Fresh typed full-policy/source/legal readback and scoped rollout are separate, as is the complete public browser matrix.
+
+Native88 file-only binding now matches212 current files/Git blobs and26 retained proofs;210 files are byte-identical and two have comment-only changes. Root73118651. No compiler, archive, export, upload or Apple action ran; old helpers and current all16-CI delivery remain held. The old Studio393537-byte package remains stale after importer changes.
+
+O12 static supplement expands the four opaque npm terminals to a131-file literal candidate union with25 conditional ambiguities, without evaluating third-party code. Root84c9c57e verifies583 files/8,144,306bytes and ten evidence hashes. This is not runtime resolution, license compliance or security clearance; optional peers,151 computed first-party test imports and as-time graph limits remain. See DEPENDENCY-SECURITY-20261016.md.
+
+One local CPU capture-staging sequence ran once and is REFUSED under its declared admission: old and candidate both pass applicable media checks, but the omitted-copy output fails the earlier unchanged A/V duration gate, not its required pixel assertion. No demonstrated repair or integration follows. Candidate copy overhead and the separate hosted136ms timing refusal remain under review. No further runtime is implied.
+
+Paid AI paused/KieOFF, no new paid call or processor-notice publication. Owner-away/new-house/phone, genuine per-property Sandbox purchase, Messages link, authorized enquiry, account isolation and motion-quality acceptance remain open. Onboarding remains LAST using accepted final Realtor app/URL screens. No App Store attachment/submission/release and no original/archive deletion or move.
+
 # Website and diagnostic corrections — October 17, 03:51 EDT
 
 Native iPhone plus Studio/shared backend remains the architecture. Local base is1bb247cd, with new reviewed changes integrated but not yet committed/pushed/deployed. Website preview sticky offset passes558 browser assertions (474 existing+84 new); original and exact omission both reproduce main72/banner74. Root verified129proofs/114root+228snapshot/77tool pins before integration35f43f9b. Earlier public attempts preserve DNS/setup stops and a real177-check geometry failure. Website78 remains live;79 artifact/rollout and full live matrix are pending.
