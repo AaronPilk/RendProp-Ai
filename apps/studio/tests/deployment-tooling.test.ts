@@ -132,6 +132,24 @@ test("CLI 2.101.0 upload walk misses compact imports; the staged plan uploads ea
   assert.deepEqual(manifest.cliUpload, { version: "2.101.0", byFunction: { jobs: plan } });
   await verifyStagedSnapshot(stage, manifest);
 }));
+test("readback accepts a static upload's second copy only as an exact byte copy of a planned static source", async () => fixture(async (root) => {
+  const functions = path.join(root, "functions");
+  for (const [name, text] of Object.entries(CLI_WALK_FIXTURE)) await file(functions, name, text);
+  const closure = await sourceClosure(functions, ["jobs"]), manifest = await stageDeployment(path.join(root, "stage"), closure, { jobs: true });
+  const readback = path.join(root, "readback");
+  for (const name of closure.runtimeByFunction.jobs) await file(readback, `supabase/functions/${name}`, closure.files.get(name).toString());
+  assert.equal((await verifyDownloadedSources(readback, "jobs", manifest)).staticCopies, undefined);
+  const copy = "supabase/functions/jobs/static:supabase/functions/_shared/a.ts";
+  await file(readback, copy, closure.files.get("_shared/a.ts").toString());
+  const result = await verifyDownloadedSources(readback, "jobs", manifest);
+  assert.deepEqual(result.staticCopies, [{ file: "jobs/static:supabase/functions/_shared/a.ts", of: "_shared/a.ts" }]);
+  assert.equal(result.matchedSourceFiles, closure.runtimeByFunction.jobs.length);
+  await file(readback, copy, "export const a = 'changed';\n");
+  await assert.rejects(verifyDownloadedSources(readback, "jobs", manifest), /Unexpected deployed source jobs: jobs\/static:/);
+  await rm(path.join(readback, copy));
+  await file(readback, "supabase/functions/jobs/static:supabase/functions/_shared/b.ts", closure.files.get("_shared/b.ts").toString());
+  await assert.rejects(verifyDownloadedSources(readback, "jobs", manifest), /Unexpected deployed source/, "b.ts was walked, not a static upload");
+}));
 test("upload plan refuses where the CLI walk would upload staging metadata, abort, or leak another function's file", async () => fixture(async (root) => {
   const functions = path.join(root, "functions");
   for (const [source, error] of [["export const note = \"../../config.toml\";", /staging metadata/], ["export const route = '/v1/x.json';", /would abort reading \/v1\/x\.json/]] as const) {

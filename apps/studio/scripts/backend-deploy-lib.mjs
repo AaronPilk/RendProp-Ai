@@ -306,9 +306,20 @@ export async function verifyDownloadedSources(downloadDir, name, manifest) {
   // Type-only modules may be retained by future bundlers. Permit them only when
   // they were explicitly staged; every runtime module must be present.
   for (const file of expected) assert(present.includes(file), `Readback omitted runtime source ${name}: ${file}.`);
+  // A source uploaded as a static file may also come back under a server-specific prefix.
+  // Such an extra file passes only as an exact byte copy of one of this function's planned
+  // static sources; anything else is unexpected deployed code.
+  const statics = (manifest.cliUpload?.byFunction?.[name]?.static ?? []).map((file) => file.slice("supabase/functions/".length));
+  const staticCopies = [];
   for (const file of present) {
-    assert(manifest.sourcesByFunction[name].includes(file), `Unexpected deployed source ${name}: ${file}.`);
-    assert.equal(sha256(await readFile(path.join(root, file))), manifest.hashes[file], `Deployed source mismatch ${name}: ${file}.`);
+    const hash = sha256(await readFile(path.join(root, file)));
+    if (manifest.sourcesByFunction[name].includes(file)) {
+      assert.equal(hash, manifest.hashes[file], `Deployed source mismatch ${name}: ${file}.`);
+      continue;
+    }
+    const of = statics.find((source) => file.endsWith(`/${source}`) && hash === manifest.hashes[source]);
+    assert(of, `Unexpected deployed source ${name}: ${file}.`);
+    staticCopies.push({ file, of });
   }
-  return { matchedSourceFiles: present.length, runtimeSourceFiles: expected.length, stagedTypeOnlyNotInRuntime: manifest.sourcesByFunction[name].filter((file) => !present.includes(file) && !expected.includes(file)) };
+  return { matchedSourceFiles: present.length - staticCopies.length, runtimeSourceFiles: expected.length, stagedTypeOnlyNotInRuntime: manifest.sourcesByFunction[name].filter((file) => !present.includes(file) && !expected.includes(file)), ...(staticCopies.length ? { staticCopies } : {}) };
 }
