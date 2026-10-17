@@ -3527,6 +3527,9 @@ struct RendpropApp: App {
             // exactly one more try now that the app is back up (audit finding
             // 8 / TN3194). No-op when nothing was left pending.
             .task { await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded() }
+            // Optional photo feedback queued earlier (offline, or a killed app)
+            // is retried with its original keys. Sending never blocks anything.
+            .task { PhotoFeedbackQueue.shared.start() }
             // Backgrounding is the one moment we KNOW the person is done, so it
             // is the most valuable flush there is.
             .onChange(of: scenePhase) { phase in

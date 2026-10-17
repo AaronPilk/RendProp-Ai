@@ -139,6 +139,10 @@ final class PhotoEditService {
             stagingReferenceID: stagingReferenceID, stagingBrief: edit == "stage" ? prompt : nil,
             imageExtension: imageExtension)
         let output = directory.appendingPathComponent(version.imageFile)
+        // Observed by optional photo feedback (Notification.Name.rendpropPhotoEditSaved)
+        // to note an automatic listing selection; it cannot change this edit.
+        NotificationCenter.default.post(name: Notification.Name("rendprop.photoEditSaved"), object: nil,
+                                        userInfo: ["directory": directory, "versionID": version.id])
         if let pending { try? PhotoPendingEdit.finish(pending) }
         if wasMain && version.canAutomaticallySelectForListing
             && model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath == FileStore.relativePath(for: p.enhancedURL) {

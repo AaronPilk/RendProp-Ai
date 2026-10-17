@@ -2901,3 +2901,38 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
         }
     }
 }
+
+// MARK: - Photo feedback (photo-feedback edge function — docs/handoff/PHOTO-FEEDBACK-DESIGN-20261017.md §4)
+
+extension LiveAPIClient: PhotoFeedbackAPI {
+    /// Optional photo feedback keeps the server's error body: a 409
+    /// `feedback_exists` carries the client key this phone has to adopt, which
+    /// `execute` does not return. The account fences match `execute`: a fresh
+    /// bearer for the account that queued the item, checked again before the
+    /// request leaves and after the answer arrives. A 401 is not refreshed or
+    /// turned into a sign-out here; the item waits for the next pass.
+    @MainActor func photoFeedbackExchange(_ route: PhotoFeedback.Route, body: [String: Any],
+                                          libraryOrgID: UUID, actorID: String) async throws -> PhotoFeedback.Reply {
+        let revision = AuthStore.shared.syncSessionRevision
+        guard let actor = AuthStore.shared.userID, actor.lowercased() == actorID.lowercased(),
+              let actorUUID = UUID(uuidString: actor) else { throw CloudSyncError.identityChanged }
+        var request = makeRequest(url: url(route.pathSegments), method: "POST", json: body)
+        // Contract amendment A1: the library is `X-Org-Id` only, read by the
+        // server's shared preferredOrg() like every library-scoped route. It is
+        // the library the item was queued in; a later switch never redirects it.
+        let library = libraryOrgID.uuidString.lowercased()
+        request.setValue(library, forHTTPHeaderField: "X-Org-Id")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 30
+        guard let token = await AuthStore.validAccessToken(),
+              AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              AnonymousAdoptionRecovery.identity(token)?.id == actorUUID else { throw CloudSyncError.identityChanged }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else {
+            throw CloudSyncError.identityChanged
+        }
+        guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+        return PhotoFeedback.Reply(status: http.statusCode, data: data)
+    }
+}
