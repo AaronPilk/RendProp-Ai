@@ -1,0 +1,38 @@
+{
+  "fixture": "SYNTHETIC FIXTURE: invented counts in the GET /admin/photo-feedback shape (feedback contract section 5). Not production data; produced without any provider call.",
+  "generated_at": "2026-10-17T15:00:00Z",
+  "window": "30d",
+  "from": "2026-09-17T15:00:00Z",
+  "to": "2026-10-17T15:00:00Z",
+  "basis": "Generated = photo_edit_evidence rows created in the window (all states). Explicitly reviewed = distinct outputs with at least one explicit verdict. Ledger amounts are internal modeled estimates, not supplier invoices. Observational breakdowns are not evidence that one setting is better.",
+  "generated": { "outputs": 42, "accepted": 36, "refused": 3, "held": 1, "pending": 2 },
+  "explicit": { "feedback_rows": 13, "reviewed_outputs": 12, "useful": 8, "needs_work": 5, "useful_rate": 0.6154, "coverage": 0.2619, "unreviewed_outputs": 31, "reviewers": 2, "revised_rows": 1 },
+  "signals": { "accuracy_ack": 4, "manual_selection": 9, "automatic_selection": 0, "export": 6, "publication": 2, "note": "Selection, export and publication are not quality judgments." },
+  "reasons": [
+    { "reason": "changed_permanent_features", "group": "fidelity", "feedback_rows": 3, "outputs": 3 },
+    { "reason": "personal_style_preference", "group": "taste", "feedback_rows": 2, "outputs": 2 },
+    { "reason": "moved_or_changed_appliance", "group": "fidelity", "feedback_rows": 1, "outputs": 1 },
+    { "reason": "other", "group": "other", "feedback_rows": 1, "outputs": 1 }
+  ],
+  "fidelity_vs_taste": { "needs_work_rows": 5, "with_fidelity_reason": 3, "taste_only": 1, "other_only": 1 },
+  "by_edit": [
+    { "key": "stage", "generated": 30, "reviewed": 9, "useful": 5, "needs_work": 4, "useful_rate": 0.5556 },
+    { "key": "declutter", "generated": 12, "reviewed": 4, "useful": 3, "needs_work": 1, "useful_rate": 0.75 }
+  ],
+  "by_provider_model": [
+    { "key": "gemini/gemini-2.5-flash-image", "generated": 40, "reviewed": 12, "useful": 8, "needs_work": 4, "useful_rate": 0.6667 },
+    { "key": "unknown", "generated": 2, "reviewed": 1, "useful": 0, "needs_work": 1, "useful_rate": 0 }
+  ],
+  "by_recipe_revision": [
+    { "key": "photo-recipe/2026-10-17.1", "generated": 40, "reviewed": 12, "useful": 8, "needs_work": 4, "useful_rate": 0.6667 },
+    { "key": "unknown", "generated": 2, "reviewed": 1, "useful": 0, "needs_work": 1, "useful_rate": 0 }
+  ],
+  "cost": {
+    "attributable_attempts": 51, "succeeded_attempts": 44, "failed_or_rejected_attempts": 5, "uncertain_attempts": 2,
+    "recorded_cents": 1264, "outstanding_hold_cents": 80, "unknown_attribution_outputs": 1,
+    "attempts_per_useful": 6.375, "recorded_cents_per_useful": 158,
+    "basis": "recorded_cents = cost_ledger rows bound to this window's generation attempts (photo_edit + photo-qc), each settlement counted once by ledger id. outstanding_hold_cents = reservations not yet bound to a ledger row and not rejected. Internal modeled estimates, never invoices."
+  },
+  "regression_cases": { "active": 2, "withdrawn": 1, "by_defect": [{ "key": "blocked_doorway_or_opening", "n": 1 }, { "key": "changed_permanent_features", "n": 1 }], "by_recipe_revision": [{ "key": "photo-recipe/2026-10-17.1", "n": 2 }] },
+  "sample_note": "n < 30 reviewed outputs in any cell is too small to read as a rate."
+}
