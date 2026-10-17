@@ -11,7 +11,8 @@ Audit and proposal: `docs/handoff/CLAUDE-STUDIO-DESIGN-AUDIT-20261016.md`.
 
 | # | Commit | Files | What |
 |---|---|---|---|
-| 1 | `1e50609` studio: Apple-inspired design layer | `apps/studio/src/design/studio.css` (new, 42.9 kB / 7.8 kB gzip), `src/main.tsx`, `tests/fixtures/{connected,appearance,branded}.tsx` (one import line each), `src/features/listings/GalleryPhotoCard.tsx` (one line) | One stylesheet loaded after `styles.css` that restyles every surface; orientation chip class + `data-orientation` on the existing span |
+| 1 | `1e50609` studio: Apple-inspired design layer | `apps/studio/src/design/studio.css` (new, ≈9.0 kB gzip after both passes), `src/main.tsx`, `tests/fixtures/{connected,appearance,branded}.tsx` (one import line each), `src/features/listings/GalleryPhotoCard.tsx` (one line) | One stylesheet loaded after `styles.css` that restyles every surface; orientation chip class + `data-orientation` on the existing span |
+| 1b | studio: interaction pass ("the Apple feel") | `apps/studio/src/design/studio.css` only | Pointer-down press feedback on every pressable surface (nav rows, cards, tabs, format/preset cards, gate rows), dialogs and the phone "More tools" menu materialize in (opacity + scale + blur via `@starting-style`, origin anchored to the source), views settle in with a 6px rise, scroll-edge gradients instead of hard topbar/tab-bar dividers, vibrancy weight on text over materials, `touch-action: manipulation` and no tap highlight, thin overlay scrollbars, `text-wrap: balance/pretty`; reduced motion keeps 160ms cross-fades and removes every transform and blur |
 | 2 | `140933b` studio tests: design review scripts | `apps/studio/tests/design-screenshots.mjs`, `apps/studio/tests/design-a11y-probe.mjs` (new) | Before/after screenshot rig and accessibility/responsive probe over the synthetic fixture; not wired into CI |
 | 3 | docs | this file, the audit | — |
 
@@ -63,12 +64,13 @@ specificity.
 |---|---|
 | `npm run typecheck` | pass |
 | `npm test` (`tsx --test tests/*.test.ts`) | 726 pass, 0 fail (same count as base) |
-| `npx vite build` + `node scripts/check-dist.mjs` | passed; all-assets gzip **392,636 B** (base 385,885 B, +6,751 B) against the 400,000 budget; initial 146,838 / create 217,881 / with-large-video 224,156 (budgets 160,000 / 260,000). `connectedConfigVerified:false` is the usual no-env result, same as base. |
+| `npx vite build` + `node scripts/check-dist.mjs` | passed; all-assets gzip **393,357 B** (base 385,885 B, +7,472 B) against the 400,000 budget; initial 147,560 / create 218,601 / with-large-video 224,877 (budgets 160,000 / 260,000). `connectedConfigVerified:false` is the usual no-env result, same as base. |
 | Browser suites, this lane | pass: `theme-browser`, `browser-connected`, `listing-selection-browser`, `gallery-copy-browser`, `make-video-browser`, `make-video-consent-browser`, `listing-finish-browser`, `listing-workflow-browser`, `business-browser`, `creation-shell-browser`, `photo-preparation-browser` (11). fail: `creative-browser` (`Property accuracy review passed.` not found), `feature-entry-browser` (`Staging style › Scandinavian` button not found) |
 | Same two suites at untouched base `160efdc` | fail with the **identical** locator errors → pre-existing, not caused by this lane (logs in evidence `browser-logs/base-*.log`) |
 | `tests/design-a11y-probe.mjs`, this lane | passed: contrast light/dark 465 samples each, 0 below WCAG AA; focus 72 tab stops all with a ≥2px ring; 0 horizontal overflow at 390px across 6 views; 190 phone controls all ≥40px; reduced-motion hover: transition 0s, transform none |
 | Same probe at base | failed: 128 light-mode samples below AA (80 below 3:1 — mostly white text on gradient cards, which the probe cannot credit because it reads `background-color` only; treat as "unmeasurable", not "1:1"); 11 phone controls <40px (36px text buttons, 20–32px disclosure summaries); feature card still translates −3px on hover under reduced motion |
-| Screenshots | 32 before + 32 after (8 views × desktop 1440 / phone 390 × light / dark), 0 page errors, 0 external requests |
+| Materialize check | after `networkidle`, every view root reads opacity <1 mid-transition and 1 / `transform: none` 600ms later on desktop and phone; phone "More tools" menu 0.56 → 1 | 
+| Screenshots | 32 before + 32 after (+ `after-phone-more-tools-open.png`) (8 views × desktop 1440 / phone 390 × light / dark), 0 page errors, 0 external requests |
 
 Not executed: the remaining 39 browser suites (time-boxed; none touch styling
 contracts beyond those above), a build with the connected config, the real
@@ -89,11 +91,18 @@ drive was not a connected folder, so nothing was written there.
 1. `git am patches/0001-*.patch patches/0002-*.patch` on top of `160efdc`
    (or cherry-pick `1e50609`, `140933b`). The docs commit can be dropped or kept.
 2. Rebuild and re-run `node scripts/check-dist.mjs`; expect ≈392.6 kB total
-   gzip. Headroom is now ~7 kB, so any later CSS should replace rather than add.
+   gzip. Headroom is now ~6.6 kB, so any later CSS should replace rather than add.
 3. Re-run the two pre-existing failures after Codex's App.tsx work lands; they
    fail identically at base and look like fixture/copy drift, not styling.
 4. Optional: run `STUDIO_BROWSER_EXECUTABLE=<chromium> node tests/design-a11y-probe.mjs --out=…`
    as a manual gate before release.
+
+Interaction notes: CSS transitions animate from the presented value, so every
+hover/press here is interruptible by construction. Studio has no drag gestures
+(photo order moves through buttons), so no spring/velocity JS was added; if a
+drag-to-reorder lands later, use Pointer Events with capture, a critically
+damped spring (damping 1.0, response 0.3–0.4) and momentum projection per the
+Apple fluid-interfaces guidance rather than CSS transitions.
 
 ## Behaviour proposals for Codex (not implemented here)
 
