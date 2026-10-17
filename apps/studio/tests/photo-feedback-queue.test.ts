@@ -260,11 +260,14 @@ test("definitive refusals stop, an unrecognized 404 waits, and another account's
     f.server.evidence.delete(P2);
     f.queue.signal(P2, "export"); await f.queue.flush(); f.queue.signal(P2, "export"); await f.queue.flush();
     assert.equal(f.server.requests.filter(request => request.body?.output?.provenance_id === P2).length, 1, "a refused signal is kept as refused and not resent");
-    const delays = f.delays.length;
-    f.queue.submit({ provenance_id: P1, output_sha256: SHA1, verdict: "useful", reasons: [] });
-    const realHandle = f.server.handle; f.server.handle = () => json({ code: "NOT_FOUND", message: "Requested function was not found" }, 404);
-    await f.queue.flush();
+    const delays = f.delays.length, realHandle = f.server.handle;
+    // A Studio release ahead of the function: the gateway's own 404 keeps everything, and each trigger costs one request.
+    let missing = 0; f.server.handle = () => { missing++; return json({ code: "NOT_FOUND", message: "Requested function was not found" }, 404); };
+    f.queue.submit({ provenance_id: P1, output_sha256: SHA1, verdict: "useful", reasons: [] }); f.queue.signal(P1, "export"); f.queue.signal(P1, "manual_selection");
+    await f.queue.flush(); assert.equal(missing, 1, "the first undelivered item ends the pass");
+    await f.queue.flush(); assert.equal(missing, 2);
     assert.equal(f.queue.entry(P1)!.state, "queued", "a 404 without output_not_found keeps the verdict"); assert.equal(f.delays.length, delays, "and schedules no timer");
+    assert.deepEqual(queuedFeedback(f.storage, f.scope).length, 3);
     f.server.handle = realHandle;
     f.switchAccount(); const before = f.server.requests.length; await f.queue.flush();
     assert.equal(f.server.requests.length, before, "nothing is sent once the account changed"); assert.equal(f.queue.entry(P1)!.state, "queued");

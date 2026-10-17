@@ -101,7 +101,7 @@ export function createPhotoFeedbackQueue(services: Pick<StudioServices, "api" | 
       if (!current()) return "wait";
       const body = item.body, feedback = !item.path;
       try {
-        const reply = await services.api(`/functions/v1/photo-feedback${item.path}`, { orgId: scope.library, expectedLibraryOrgId: scope.library, method: "POST", body, signal: abort.signal }) as Record<string, unknown> | null;
+        const reply = await services.api(`/functions/v1/photo-feedback${item.path}`, { orgId: scope.library, method: "POST", body, signal: abort.signal }) as Record<string, unknown> | null;
         const theirs = content(reply), revision = count(reply?.revision);
         if (feedback ? !theirs || !revision || String(reply!.provenance_id).toLowerCase() !== item.id : !reply?.signal_id) throw new StudioError("invalid-response", "unconfirmed answer");
         // A newer tap during the request is sent next, never overwritten.
@@ -136,19 +136,18 @@ export function createPhotoFeedbackQueue(services: Pick<StudioServices, "api" | 
     if (running) { again = true; return running; }
     cancel();
     return running = (async () => {
-      let retry = false, stuck = false;
+      let outcome: Outcome = "sent", stop = false;
       do {
         again = false;
         for (const key of queuedFeedback(storage, scope)) {
           if (!current()) return;
-          const outcome = await deliver(key);
-          stuck ||= outcome === "wait";
-          // One transport failure means the rest would fail too; wait for the retry.
-          if (retry = outcome === "retry") break;
+          // An item neither delivered nor refused ends the pass: the rest would most
+          // likely fail the same way, so one trigger costs at most one such request.
+          if (stop = (outcome = await deliver(key)) === "retry" || outcome === "wait") break;
         }
-      } while (again && !retry && current());
-      failures = retry || stuck ? failures + 1 : 0;
-      if (retry && current() && navigator.onLine !== false) cancel = schedule(Math.min(300_000, 2_500 * 2 ** failures), () => void flush());
+      } while (again && !stop && current());
+      failures = stop ? failures + 1 : 0;
+      if (outcome === "retry" && current() && navigator.onLine !== false) cancel = schedule(Math.min(300_000, 2_500 * 2 ** failures), () => void flush());
     })().catch(() => { /* Items stay queued for the next trigger. */ }).finally(() => { running = null; notify(); });
   }
   return {
