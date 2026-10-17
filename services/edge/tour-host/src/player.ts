@@ -2570,7 +2570,10 @@ function mediaDateNote(tour: Tour): string {
 }
 
 /** Premium Gallery pages group photos by their published room label. Classic
- *  keeps its flat grid; so does any gallery with fewer than two distinct labels. */
+ *  keeps its flat grid; so does any gallery with fewer than two distinct labels,
+ *  and any gallery where no label repeats: those labels are per-photo captions
+ *  (the hosted demo's "Twilight arrival", "Chef's kitchen"…), and grouping them
+ *  would give every photo its own heading and leave the captioned grid behind. */
 const GROUPED_GALLERY_THEMES: ReadonlySet<WebsiteTheme> = new Set(["signature-estate", "coastal-luxe"]);
 function galleryRoomGroups<T extends { label: string }>(items: T[]): Array<{ title: string; items: T[] }> | null {
   const groups = new Map<string, { title: string; items: T[] }>();
@@ -2582,7 +2585,7 @@ function galleryRoomGroups<T extends { label: string }>(items: T[]): Array<{ tit
     const group = groups.get(key);
     if (group) group.items.push(item); else groups.set(key, { title, items: [item] });
   }
-  if (groups.size < 2) return null;
+  if (groups.size < 2 || ![...groups.values()].some(group => group.items.length > 1)) return null;
   const out = [...groups.values()];
   if (unlabelled.length) out.push({ title: "More of the home", items: unlabelled });
   return out;
@@ -2651,9 +2654,22 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
     // group, so document order (which the photo viewer follows) is the visual
     // order. A single room, or unlabelled photos, keep the flat grid.
     const rooms = page === "gallery" && GROUPED_GALLERY_THEMES.has(theme) ? galleryRoomGroups(preview) : null;
-    const grid = rooms
-      ? `<div class="lp-gal-rooms">${rooms.map((room, i) => `<section class="lp-gal-room" aria-labelledby="lp-gal-room-${i + 1}"><h2 class="lp-gal-room-title" id="lp-gal-room-${i + 1}">${escapeHtml(room.title)}${room.items.length > 1 ? `<span class="lp-gal-room-count">${room.items.length} photos</span>` : ""}</h2><div class="lp-gal">${room.items.map(g => photo(g, false)).join("")}</div></section>`).join("")}${mediaDateNote(tour)}</div>`
-      : `<div class="lp-gal">${preview.map(g => photo(g)).join("")}${mediaDateNote(tour)}</div>`;
+    let grid: string;
+    if (!rooms) grid = `<div class="lp-gal">${preview.map(g => photo(g)).join("")}${mediaDateNote(tour)}</div>`;
+    else {
+      // Consecutive one-photo rooms share one row grid (`lp-gal-run`) on the
+      // same columns as a room's photos, so they sit side by side at the
+      // ordinary size instead of each leaving a row of empty columns.
+      const blocks: string[] = [];
+      let run: string[] = [];
+      const endRun = () => { if (run.length) blocks.push(`<div class="lp-gal-run">${run.join("")}</div>`); run = []; };
+      rooms.forEach((room, i) => {
+        const html = `<section class="lp-gal-room" aria-labelledby="lp-gal-room-${i + 1}"><h2 class="lp-gal-room-title" id="lp-gal-room-${i + 1}">${escapeHtml(room.title)}${room.items.length > 1 ? `<span class="lp-gal-room-count">${room.items.length} photos</span>` : ""}</h2><div class="lp-gal">${room.items.map(g => photo(g, false)).join("")}</div></section>`;
+        if (room.items.length === 1) run.push(html); else { endRun(); blocks.push(html); }
+      });
+      endRun();
+      grid = `<div class="lp-gal-rooms">${blocks.join("")}${mediaDateNote(tour)}</div>`;
+    }
     out.push(sec("gallery", "Gallery", "A closer look",
       `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p><noscript><style>.property-thumb{display:none!important}</style></noscript>' : ""}${grid}${page === "home" && imgs.length > preview.length ? `<p><a class="lp-btn ghost" href="${escapeAttr(propertyPageHref(tour.slug, "gallery", publicBase, previewTheme, addressPath))}">View all ${imgs.length} photos</a></p>` : ""}`, page !== "gallery"));
   } else if (Array.isArray(tour.chapters) && tour.chapters.length) {

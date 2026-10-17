@@ -145,12 +145,20 @@ for (const theme of ["signature-estate", "coastal-luxe"]) {
   const gallerySection = html.slice(html.indexOf('id="gallery"'), html.indexOf('id="disclosure"'));
   check(!gallerySection.includes("<figcaption>") && html.includes('alt="Kitchen"') && html.includes('aria-label="View full photo: Kitchen"'), `${theme}: the room heading replaces per-photo captions while alt text and viewer titles keep the label`);
   check(gallerySection.includes('class="lp-fine lp-mediadate"') && gallerySection.indexOf("lp-mediadate") > gallerySection.lastIndexOf('<section class="lp-gal-room"'), `${theme}: the media date note follows the last room`);
+  const blockOrder = h => [...h.matchAll(/<div class="lp-gal-run">|<section class="lp-gal-room" aria-labelledby="lp-gal-room-(\d)">/g)].map(m => m[1] ? "room" + m[1] : "run");
+  check(JSON.stringify(blockOrder(html)) === JSON.stringify(["room1", "room2", "run", "room3", "room4"]) && html.includes('</section></div><p class="lp-fine lp-mediadate">'), `${theme}: consecutive one-photo rooms share one row grid, after the multi-photo rooms`);
+  const split = renderTourPage({ ...roomed, website_theme: theme, gallery: ["Den", "Kitchen", "Kitchen", "Bath"].map((label, n) => ({ url: `/split-${n}.jpg`, label })) }, "", "", "", { page: "gallery" });
+  check(JSON.stringify(blockOrder(split)) === JSON.stringify(["run", "room1", "room2", "run", "room3"]) && JSON.stringify(hrefOrder(split)) === JSON.stringify(["/split-0.jpg", "/split-1.jpg", "/split-2.jpg", "/split-3.jpg"]), `${theme}: a multi-photo room ends a run of one-photo rooms and document order is kept`);
   const home = renderTourPage({ ...roomed, website_theme: theme }, "", "", "", { page: "home" });
   check(!home.includes('<section class="lp-gal-room"') && hrefOrder(home).length === 4, `${theme}: Home keeps its flat four-photo preview`);
   const oneRoom = renderTourPage({ ...roomed, website_theme: theme, gallery: roomLabels.map((_, n) => ({ url: `/room-${n}.jpg`, label: n === 1 ? "" : "Kitchen" })) }, "", "", "", { page: "gallery" });
   check(!oneRoom.includes('<section class="lp-gal-room"') && hrefOrder(oneRoom).length === 7 && oneRoom.includes("<figcaption>Kitchen</figcaption>"), `${theme}: fewer than two distinct labels keeps the flat grid`);
   const unlabelled = renderTourPage({ ...roomed, website_theme: theme, gallery: roomLabels.map((_, n) => ({ url: `/room-${n}.jpg` })) }, "", "", "", { page: "gallery" });
   check(!unlabelled.includes('<section class="lp-gal-room"') && hrefOrder(unlabelled).length === 7, `${theme}: real listings without labels keep the flat grid`);
+  const captions = ["Twilight arrival", "Chef's kitchen", "Great room", "Primary bath", "", "Sunken lounge", "The estate"];
+  const captioned = renderTourPage({ ...roomed, website_theme: theme, gallery: captions.map((label, n) => ({ url: `/room-${n}.jpg`, label })) }, "", "", "", { page: "gallery" });
+  const captionedSection = captioned.slice(captioned.indexOf('id="gallery"'), captioned.indexOf('id="disclosure"'));
+  check(!captioned.includes('<section class="lp-gal-room"') && JSON.stringify(hrefOrder(captioned)) === JSON.stringify(captions.map((_, n) => `/room-${n}.jpg`)) && (captionedSection.match(/<figcaption>/g) || []).length === 6 && captionedSection.includes("<figcaption>Chef&#39;s kitchen</figcaption>"), `${theme}: labels that never repeat are captions, so the captioned flat grid stays (no one-photo rooms)`);
   const previewed = renderTourPage(roomed, "", "", "", { page: "gallery", previewTheme: theme });
   check((previewed.match(/<section class="lp-gal-room"/g) || []).length === 4, `${theme}: design preview shows the grouped gallery`);
 }

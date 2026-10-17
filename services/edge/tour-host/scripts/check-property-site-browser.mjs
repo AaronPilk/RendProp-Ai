@@ -479,11 +479,27 @@ try {
       const links = [...document.querySelectorAll("[data-property-photo]")].map(a => ({ href: new URL(a.href).pathname, box: a.getBoundingClientRect() }));
       const rows = []; for (const link of [...links].sort((a, b) => a.box.top - b.box.top)) { const row = rows.find(r => Math.abs(r.top - link.box.top) < link.box.height * .5); if (row) row.items.push(link); else rows.push({ top: link.box.top, items: [link] }); }
       const visual = rows.sort((a, b) => a.top - b.top).flatMap(r => r.items.sort((a, b) => a.box.left - b.box.left).map(l => l.href));
-      return { dom: links.map(l => l.href), visual, headings: [...document.querySelectorAll("h2.lp-gal-room-title")].map(h => h.textContent), captions: document.querySelectorAll("#gallery figcaption").length, overflow: document.documentElement.scrollWidth > innerWidth };
+      // Every row grid (a room's photos, or a run of one-photo rooms): the gap
+      // between each row's outer cells and the grid edges, and cells per row.
+      const fill = [...document.querySelectorAll(".lp-gal-room > .lp-gal, .lp-gal-run")].flatMap(grid => {
+        const box = grid.getBoundingClientRect(), lines = [];
+        for (const cell of [...grid.children].map(c => c.getBoundingClientRect())) { const line = lines.find(l => Math.abs(l.top - cell.top) < cell.height * .5); if (line) line.cells.push(cell); else lines.push({ top: cell.top, cells: [cell] }); }
+        return lines.map(l => ({ kind: grid.classList.contains("lp-gal-run") ? "run" : "room", left: Math.min(...l.cells.map(c => c.left)) - box.left, right: box.right - Math.max(...l.cells.map(c => c.right)), photos: l.cells.length }));
+      });
+      const rules = [...document.querySelectorAll(".lp-gal-room-title")].map(h => { const after = getComputedStyle(h, "::after"); return after.display === "none" ? null : parseFloat(after.width); }).filter(w => w !== null);
+      return { dom: links.map(l => l.href), visual, fill, rules, headings: [...document.querySelectorAll("h2.lp-gal-room-title")].map(h => h.textContent), captions: document.querySelectorAll("#gallery figcaption").length, overflow: document.documentElement.scrollWidth > innerWidth };
     });
     measurements.push({ tag, type: "rooms", ...layout });
     check(JSON.stringify(layout.dom) === JSON.stringify(grouped ? expectedGrouped : expectedFlat), tag + (grouped ? ": photos are grouped by room in document order" : ": Classic keeps the published order"));
     check(JSON.stringify(layout.visual) === JSON.stringify(layout.dom) && !layout.overflow, tag + ": on-screen order equals document order");
+    if (grouped) {
+      check(layout.fill.length >= 4 && layout.fill.every(row => Math.abs(row.left) <= 1 && Math.abs(row.right) <= 1), tag + ": every row of every room is filled edge to edge, with no empty column beside a photo");
+      // Living room, Primary bedroom and Terrace hold one photo each: they share
+      // rows at the ordinary photo size; only a run's leftover photo widens.
+      const runRows = layout.fill.filter(row => row.kind === "run").map(row => row.photos), expectedRun = { "signature-estate": { 390: [1, 1, 1], 1440: [2, 1] }, "coastal-luxe": { 390: [2, 1], 1440: [3] } }[theme][width];
+      check(JSON.stringify(runRows) === JSON.stringify(expectedRun), tag + ": consecutive one-photo rooms sit side by side (" + JSON.stringify(runRows) + ")");
+      check(layout.rules.length >= 2 && layout.rules.every(w => w >= 24), tag + ": every visible room-heading rule is a real line, never a stub (" + layout.rules.map(w => Math.round(w)).join(",") + "px)");
+    }
     check(JSON.stringify(layout.headings) === JSON.stringify(grouped ? ["Kitchen3 photos", "Living room", "Primary bedroom", "Terrace"] : []) && layout.captions === (grouped ? 0 : PHOTOS.length), tag + (grouped ? ": room headings replace captions" : ": no room headings or lost captions on Classic"));
     const links = page.locator("[data-property-photo]");
     await links.nth(0).click();
