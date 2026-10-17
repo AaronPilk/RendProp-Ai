@@ -70,14 +70,18 @@ try {
     const record = {scenario, extension, ...result, events}; delete record.base64; receipt.cases.push(record);
     const content = events.filter(event => event.kind.startsWith("user.") || event.kind === "recorder.start");
     assert.deepEqual(content.filter(event => event.held), [], "Content and recording must not start while startup clock is frozen");
-    assert(result.tracks.length >= 2 && result.tracks.every(state => state === "ended"), "Every capture track must end");
+    assert(result.tracks.length >= 1 && result.tracks.every(state => state === "ended"), "Every created audio/capture track must end");
     assert.equal(result.audioState, "closed", "The owned audio context must close");
     if (["permanent", "abort", "stale", "suspended"].includes(scenario)) {
       assert.equal(result.ok, false); assert.equal(result.base64, undefined); assert.equal(content.length, 0);
+      assert.deepEqual(result.trackKinds, ["audio"], "A pre-capture refusal creates only the owned audio destination");
+      assert.deepEqual(events.filter(event => event.kind === "capture.create" || event.kind === "recorder.construct"), [],
+        "Refused readiness must create no canvas capture track or recorder");
       assert.match(result.error, ({permanent: /Audio did not begin advancing/, abort: /Fixture startup cancelled/, stale: /edit changed/, suspended: /Audio stopped before recording/})[scenario]);
       return;
     }
     assert.equal(result.ok, true, result.error);
+    assert.deepEqual([...result.trackKinds].sort(), ["audio", "video"], "The successful export must retain both real capture tracks");
     assert.equal(content.filter(event => event.kind === "recorder.start").length, 1);
     assert.equal(content.filter(event => event.kind === "user.buffer.start").length, 1);
     const output = join(artifacts, `${scenario}.${extension}`); await writeFile(output, Buffer.from(result.base64, "base64"));
@@ -108,6 +112,11 @@ try {
       assert(record.pcm[index].rms > .03, "The original opening/middle/tail audio must all survive startup");
       assert(Math.abs(record.pcm[index].frequency - frequency) < 65, "Opening/middle/tail timing and pitch must remain unchanged");
     }
+    const capture = events.filter(event => event.kind === "capture.create"), constructed = events.filter(event => event.kind === "recorder.construct");
+    assert.equal(capture.length, 1); assert.equal(constructed.length, 1);
+    const released = events.find(event => event.kind === "startup.released"), start = events.find(event => event.kind === "recorder.start");
+    assert(released && start && capture[0].wall >= released.wall && constructed[0].wall >= capture[0].wall && start.wall >= constructed[0].wall,
+      "Fresh capture and recorder must be constructed after startup release and before recording starts");
   };
   await run("freeze"); receipt.checks.push("A held observed running clock permits no content/recorder start; actual MP4 retains opening, middle and tail PCM with exact planned duration");
   await run("freeze", "webm"); receipt.checks.push("The same startup admits an offered WebM without awaiting its start event or losing original PCM");

@@ -54,7 +54,7 @@ const server = createServer((req, res) => {
   if (url.pathname === "/f/synthetic-site/nearby") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ status: "available", places: [{ name: "Synthetic Café", category: "Cafe", distance_m: 300, source_url: "https://www.openstreetmap.org/node/1" }] })); return; }
   if (url.pathname === "/property/synthetic-site") {
     const html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin, page: propertyPage(url.searchParams.get("page")), publicBase: "/property", previewTheme:url.searchParams.get("preview_theme") });
-    res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" }); res.end(html); return;
+    res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" }); res.end(arg("--fault")==="skip-target" ? html.replace('class="property-skip-link" href="#property-content"','class="property-skip-link" href="#listing-top"') : html); return;
   }
   res.writeHead(404); res.end("not found");
 });
@@ -64,6 +64,19 @@ const browser = await chromium.launch({ headless: true, executablePath: process.
 const errors = [];
 const measurements = [];
 const presentationChecks = [];
+function withoutPropertyBypass(html) {
+  const legacyMain='<main id="listing-page">';
+  if (html.includes(legacyMain)) {
+    check(html.split(legacyMain).length===2 && (html.match(/<main\b/g)||[]).length===1 && html.split("</main>").length===2, "Classic comparison relocates only the one existing listing-page landmark");
+    html=html.replace(legacyMain,'<div id="listing-page">').replace("</main>","</div>");
+  }
+  const parts = ['<a class="property-skip-link" href="#property-content">Skip to property content</a>\n', '<main id="property-content" tabindex="-1">\n', '</main>\n'];
+  const counts=parts.map(part=>html.split(part).length-1);
+  if (counts.every(count=>count===0)) return html;
+  check(counts.every(count=>count===1), "Classic comparison permits only one exact skip link and main wrapper");
+  return parts.reduce((value,part)=>value.replace(part,""),html);
+}
+
 try {
   // Same actual listing/media rendered in each composition. This regression
   // fails the former phone layout where both premiums put film before copy.
@@ -92,7 +105,7 @@ try {
       if (theme === "basic") {
         const html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin,page:"home",publicBase:"/property" }).replace(/<style>[\s\S]*?<\/style>/g,"<style></style>").replaceAll(origin,"http://closed-loopback.invalid");
         writeFileSync(join(evidence,tag+".html"),html);
-        if(arg("--classic-baseline")) check(html === readFileSync(join(resolve(arg("--classic-baseline")),tag+".html"),"utf8"),tag+": Classic HTML and behavior remain byte-identical outside premium-only CSS");
+        if(arg("--classic-baseline")) check(withoutPropertyBypass(html) === withoutPropertyBypass(readFileSync(join(resolve(arg("--classic-baseline")),tag+".html"),"utf8")),tag+": Classic markup changes only by the exact semantic bypass link/main wrapper outside existing CSS checks");
       }
       check(!composition.overflow,tag+": no horizontal overflow");
       if(presentation === "video") check(composition.contain === "contain" && Math.abs(composition.media.width/composition.media.height-16/9)<.01,tag+": full16:9 film remains contain, independent of page height");
@@ -216,6 +229,37 @@ try {
       check(/Georgia|Palatino|Iowan/.test(display.family) && display.weight === "400", "Signature contact keeps its editorial serif instead of being reset by shared sans rules");
     }
     await page.screenshot({ path: join(evidence, theme + "-mobile-contact.png") });
+    await context.close();
+  }
+
+  // Native anchor navigation must work without scripts in every page/theme.
+  // The link cannot play media, submit a form, or depend on an onclick hook.
+  for (const width of [390,1440]) for (theme of ["basic","signature-estate","coastal-luxe"]) for (const target of width===390 ? ["home","gallery","location","contact"] : ["home"]) {
+    const context=await browser.newContext({viewport:{width,height:844},javaScriptEnabled:false});
+    await context.route("**/*",route=>new URL(route.request().url()).origin===origin || route.request().url().startsWith("data:") ? route.continue() : route.abort());
+    const page=await context.newPage();
+    for (const preview of target==="home" ? [false,true] : [false]) {
+      const params=new URLSearchParams();if(target!=="home")params.set("page",target);if(preview)params.set("preview_theme",theme);
+      await page.goto(origin+"/property/synthetic-site"+(params.size?"?"+params:""),{waitUntil:"networkidle"});
+      const tag=`${theme}/${target}/${width}/${preview?"preview":"published"}`;
+      const main=page.getByRole("main"),skip=page.getByRole("link",{name:"Skip to property content",exact:true});
+      check(await main.count()===1 && await skip.count()===1,tag+": one semantic main and native bypass");
+      await page.keyboard.press("Tab");
+      check(await skip.evaluate(el=>document.activeElement===el),tag+": first Tab reaches bypass before repeated navigation");
+      const visible=await skip.evaluate(el=>{const r=el.getBoundingClientRect();return r.top>=0 && r.left>=0 && r.right<=innerWidth && r.height>=44 && el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));});
+      check(visible,tag+": focused bypass is visible, unobscured and44px");
+      const mediaBefore=requests.filter(path=>path.startsWith("/media/")).length;
+      await page.keyboard.press("Enter");
+      check(await main.evaluate(el=>document.activeElement===el),tag+": native Enter focuses main with JavaScript disabled");
+      const geometry=await main.evaluate(el=>{const top=el.getBoundingClientRect().top;const obstruction=[...document.querySelectorAll('#listing-nav,.property-preview-banner')].filter(node=>getComputedStyle(node).position==='sticky').reduce((max,node)=>Math.max(max,node.getBoundingClientRect().bottom),0);return{top,obstruction};});
+      measurements.push({tag,...geometry});
+      check(geometry.top>=geometry.obstruction-1,tag+": main target clears sticky navigation/preview chrome");
+      const tabbable=await main.locator('a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),summary,video[controls]').count();
+      if(tabbable){await page.keyboard.press("Tab");check(await main.evaluate(el=>el.contains(document.activeElement)),tag+": next Tab stays in property content");}
+      check(requests.filter(path=>path.startsWith("/media/")).length===mediaBefore,tag+": bypass does not start opt-in media");
+      check(await main.locator("nav,footer,dialog").count()===0,tag+": page chrome and dialogs stay outside main");
+      check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),tag+": semantic wrapper adds no horizontal overflow");
+    }
     await context.close();
   }
 

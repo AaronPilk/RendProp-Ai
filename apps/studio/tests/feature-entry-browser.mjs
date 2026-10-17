@@ -36,7 +36,8 @@ try {
   await expect(page.getByText("Your saved draft is ready", { exact: true })).toBeVisible();
   await entry("photo-studio", { preset: "stage" });
   const styles = page.getByRole("group", { name: "Staging style", exact: true });
-  for (const name of ["Modern", "Rustic", "Minimalist", "Scandinavian"]) await expect(styles.getByRole("button", { name, exact: true })).toBeVisible();
+  for (const name of ["Modern", "Rustic", "Minimalist", "Contemporary"]) await expect(styles.getByRole("button", { name, exact: true })).toBeVisible();
+  await expect(styles.getByRole("button", { name: "Scandinavian", exact: true })).toHaveCount(0);
   await styles.getByRole("button", { name: "Rustic", exact: true }).click();
   await entry("scripts"); await page.getByLabel("Property video script").fill("Keep my unfinished desktop script.");
   await entry("aerial", { id: "aerial-card-once" });

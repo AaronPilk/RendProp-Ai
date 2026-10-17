@@ -5,6 +5,7 @@ import type { Workspace, Listing } from "../src/data/contracts";
 import type { SessionSnapshot, StudioServices } from "../src/data/services";
 import type { Asset } from "../src/features/listings/model";
 import "../src/styles.css";
+import "../src/design/studio.css";
 const org = "10000000-0000-4000-8000-000000000001", id = "20000000-0000-4000-8000-000000000002", assetId = "30000000-0000-4000-8000-000000000003", jobId = "40000000-0000-4000-8000-000000000004";
 const scenario = new URLSearchParams(location.search).get("scenario") ?? "photos";
 const workspace: Workspace = { user: { id: "50000000-0000-4000-8000-000000000005", email: "fixture@example.invalid", name: "Fixture Agent", avatarUrl: null }, org: { id: org, name: "Fixture office", handle: "office", spaceType: "real_estate" }, memberships: [{ orgId: org, orgName: "Fixture office", role: scenario === "readonly" ? "marketing" : "owner", spaceType: "real_estate" }], plan: "team", planRaw: "team", planDegraded: false, planExpiresAt: null, trialEndsAt: null, usage: { listings: 1, leads: 0, leadsNew: 0, renders: 0 } };
@@ -36,4 +37,4 @@ function Fixture() {
   Object.assign(window, { finishFixture: { calls: () => structuredClone(calls) } });
   return <main style={{ padding: 24 }}><p role="status" aria-label="Opened tool">{opened}</p><ListingWorkflow services={services} workspace={workspace} listings={[listing]} listingId={id} onChanged={() => {}} onOpenFeature={(feature, listingId) => setOpened(`${feature}:${listingId}`)} /></main>;
 }
-createRoot(document.getElementById("root")!).render(<Fixture />);
+createRoot(document.getElementById("root")!).render(<div className="studio-shell" style={{display:"block"}}><Fixture /></div>);

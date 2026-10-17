@@ -203,7 +203,7 @@ main { padding: var(--space-8) var(--page-gutter) 0; }
 .login-dialog, .app-feature-gate { border-radius: var(--radius-xl); border: 1px solid var(--material-line); background: var(--material-strong); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); box-shadow: var(--elev-3); padding: var(--space-8); }
 .app-feature-gate h2 { font-size: var(--text-xl); }
 .app-gate-list button { min-height: var(--control-lg); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); }
-.close-button, .app-feature-gate .app-section-heading > button { width: 32px; height: 32px; min-height: 0; padding: 0; border-radius: 50%; font-size: 14px; }
+.close-button, .app-feature-gate .app-section-heading > button { width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; border-radius: 50%; font-size: 14px; }
 
 /* ── Home (overview) ─────────────────────────────────────────────────── */
 .app-dashboard { gap: var(--space-8); }
@@ -516,10 +516,12 @@ p, li, .subtitle { text-wrap: pretty; }
 
 /* Touch: 44px targets win over the compact pointer sizes above (same specificity, later source order) */
 @media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea { min-height: 44px; }
   button, .button, .text-button, button.text-button, select,
   .studio-shell .lw-finish-checklist .text-button, .studio-shell .lw-photo-actions button, .studio-shell .lw-gallery-photo > div > button:not(.primary), .studio-shell .lw-share-links button, .studio-shell .lw-job button,
   .studio-shell .lw-tabs button, .studio-shell .creative-tabs button, .studio-shell .video-photo-actions button, .studio-shell .video-photo-actions > button[aria-pressed], .studio-shell .video-job button,
   .studio-shell .creative-workspace button, .studio-shell .creative-actions button, .studio-shell .creative-sync button, .studio-shell .make-video details > summary,
-  .account-button, .device-card button, .notice button, .studio-shell .lw-error button, .app-selected-property select, .appearance-selector select { min-height: 44px; }
-  .studio-shell .make-video details > summary, .app-handoff-guide details > summary, .lw-recovery summary { min-height: 0; padding: 12px 0; }
+  .content-planner .planner-backups .button-row button, .account-button, .device-card button, .notice button, .studio-shell .lw-error button, .app-selected-property select, .appearance-selector select { min-height: 44px; }
+  .app-handoff-guide details > summary, .lw-recovery summary { min-height: 0; padding: 12px 0; }
+  .studio-shell .make-video details > summary { min-height: 44px; padding: 12px 0; }
 }

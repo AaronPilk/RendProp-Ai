@@ -2708,8 +2708,8 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
   if (page === "gallery" && !imgs.length && !tour.chapters?.length) visible.unshift(sec("gallery", "Gallery", "Photos coming soon", '<p class="lp-tag">No property photos have been published yet.</p>'));
   const pageTitle = page === "gallery" ? "A closer look" : page === "location" ? "The location" : sold && isRE ? "Ask about similar homes" : "Arrange a visit";
   const pageHead = page && page !== "home" ? `<header class="property-page-head"><div class="lp-wrap"><div class="lp-eyebrow">${escapeHtml(page === "contact" ? sold ? "Contact" : "Private showing enquiry" : page)}</div><h1>${pageTitle}</h1><p>${escapeHtml(headingRaw)}</p></div></header>` : "";
-  const container = page ? "main" : "div";
-  return `<${container} id="listing-page">${pageHead}${visible.join("")}</${container}>`;
+  // The outer property landmark also includes the enquiry and disclosures.
+  return `<div id="listing-page">${pageHead}${visible.join("")}</div>`;
 }
 
 /**
@@ -3307,7 +3307,8 @@ ${EDITORIAL_CSS}${embed ? "" : LISTING_PLAYER_CSS}${embed || unbranded ? "" : "#
 ${accentOverride}
 </head>
 <body${polished ? ` class="property-site property-page-${page} site-theme-${theme}${preview ? " site-preview" : ""}"` : ""}>
-${preview ? `<aside class="property-preview-banner" role="status">${escapeHtml(websiteThemeName(theme))} · Design preview<span>Preview only. This does not change your published website or unlock a paid design.</span></aside><div class="property-preview-watermark" aria-hidden="true">DESIGN PREVIEW</div>` : ""}
+${polished ? `<a class="property-skip-link" href="#property-content">Skip to property content</a>
+` : ""}${preview ? `<aside class="property-preview-banner" role="status">${escapeHtml(websiteThemeName(theme))} · Design preview<span>Preview only. This does not change your published website or unlock a paid design.</span></aside><div class="property-preview-watermark" aria-hidden="true">DESIGN PREVIEW</div>` : ""}
 
 ${embed ? `<div id="track">
   <div id="stage"${hasStrip ? ` class="hasstrip"` : ""}>
@@ -3381,10 +3382,11 @@ ${footerHtml}
   <a href="#listing-top" class="listing-backtop">Top ↑</a>
   </div>
 </div></nav>
-${sectionsHtml}
+${polished ? `<main id="property-content" tabindex="-1">
+` : ""}${sectionsHtml}
 ${endcardHtml}
 ${page === "contact" ? renderDisclosureSection(tour) : ""}
-${getAppHtml}
+${polished ? "</main>\n" : ""}${getAppHtml}
 ${footerHtml}
 ${polished ? `<dialog id="property-photo-modal" aria-labelledby="property-photo-title"><div class="property-photo-head"><p id="property-photo-title">Property photo</p><button type="button" id="property-photo-close">Close photo ×</button></div><img id="property-photo-full" alt=""><p id="property-photo-status" role="status" aria-live="polite"></p><div class="property-photo-nav" hidden><button type="button" id="property-photo-prev" aria-label="Previous photo">‹ Previous</button><span id="property-photo-count"></span><button type="button" id="property-photo-next" aria-label="Next photo">Next ›</button></div>${page === "home" && galleryItems(tour).length > 4 ? `<a class="property-photo-all" href="${escapeAttr(pageHref("gallery"))}">View all ${galleryItems(tour).length} photos</a>` : ""}${hasDisclosureSection ? '<a href="#disclosure" onclick="document.getElementById(\'property-photo-close\').click()">See disclosures and originals</a>' : ""}</dialog>` : ""}
 <dialog id="flythrough-modal" aria-labelledby="flythrough-title" aria-modal="true">

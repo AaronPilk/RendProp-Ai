@@ -4,6 +4,7 @@ import BusinessWorkspace, {type BusinessSectionRequest} from "../src/features/bu
 import type { StudioServices } from "../src/data/services";
 import type { Workspace, Listing } from "../src/data/contracts";
 import "../src/styles.css";
+import "../src/design/studio.css";
 
 const user = "11111111-1111-4111-8111-111111111111", org = "22222222-2222-4222-8222-222222222222", listing = "33333333-3333-4333-8333-333333333333", id = "44444444-4444-4444-8444-444444444444";
 const teamPersona = new URLSearchParams(window.location.search).get("teamPersona");
@@ -62,4 +63,4 @@ function Fixture() {
   Object.assign(window, { businessFixture: { calls: () => structuredClone(calls), trial: (value: unknown) => { trialUsage = structuredClone(value); }, activation: (value: unknown, plan?: string, expiresAt?: string) => { servingActivation = structuredClone(value); accountPlan = plan; accountExpiry = expiresAt; }, card: () => structuredClone(publicCard), brand: () => structuredClone(me.org.brand_kit), failPersonal: () => {failPersonal=true;}, mismatchPersonal: () => {mismatchPersonal=true;}, phoneCard: (changes:Record<string,string>) => {publicCard={...publicCard,...changes};}, marketing: () => {serverRole="marketing";setRole("marketing");}, section: (section: BusinessSectionRequest["section"], id = crypto.randomUUID()) => setSectionRequest({id,section}), refreshWorkspace: () => setVersion(version + 1) } });
   return <div style={{ padding: 30 }}><BusinessWorkspace sectionRequest={sectionRequest} services={services} workspace={teamPersona ? workspace : { ...workspace, memberships: [{ ...workspace.memberships[0], role }] }} listings={listings} onChanged={() => {}} /></div>;
 }
-createRoot(document.getElementById("root")!).render(<Fixture />);
+createRoot(document.getElementById("root")!).render(<div className="studio-shell" style={{display:"block"}}><Fixture /></div>);

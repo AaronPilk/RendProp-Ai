@@ -630,8 +630,8 @@ function landingPage(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Rendprop — drone-style tours from a phone walkthrough</title>
-<meta name="description" content="Film a walkthrough on your phone. Rendprop turns it into a smooth, drone-style tour buyers scroll through — with AI photos, reels and aerial intros.">
+<title>Rendprop — Property Photos, Videos &amp; Websites for iPhone</title>
+<meta name="description" content="Start with property photos, review optional AI edits, create a listing or social video, and publish a property website. Recorded walkthroughs are optional. Aerial intros are Coming soon.">
 <meta name="theme-color" content="#0e0d14">
 <style>
   :root { --accent:#7c3aed; --accent2:#9b6dff; --bg:#faf9fc; --ink:#1c192d; --dim:rgba(28,25,45,.6); --card:#fff; }
@@ -661,8 +661,9 @@ function landingPage(): string {
 <body>
   <div class="mark">RENDPROP</div>
   <h1>Win the listing.<br>Skip the film crew.</h1>
-  <p class="sub">A walkthrough video goes in. A smooth, drone-style tour comes out — with AI-enhanced
-  photos, social reels, aerial intros, and a link buyers scroll through like it's social.</p>
+  <p class="sub">Start with landscape property photos, review optional AI edits, create a listing video or a
+  vertical social video, then review and publish your property website. Recorded walkthroughs are optional
+  and separate. Aerial intros are Coming soon; new aerial creation is not available or included in any plan.</p>
   <div>
     <a class="pill" href="${appStoreUrl("site")}">Download on the App Store</a>
     <a class="soon" href="https://studio.rendprop.com/">Open Studio</a>

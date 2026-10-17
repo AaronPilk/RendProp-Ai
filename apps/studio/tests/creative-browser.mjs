@@ -4,7 +4,7 @@ import {tmpdir} from "node:os";import {join,resolve,extname} from "node:path";im
 import {build} from "vite";import {chromium,expect} from "@playwright/test";
 const root=resolve(import.meta.dirname,".."),artifacts=await mkdtemp(join(tmpdir(),"rendprop-creative-browser-")),dist=join(artifacts,"dist");
 const receipt={proof:"Real Creative Studio UI with isolated native-contract fixtures; no paid provider calls or public publishing",checks:[],externalRequests:[],errors:[]};
-let browser,server;
+let browser,server,diagnosticPage;
 const png=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=","base64");
 try{
  const videoFile=join(artifacts,"clip.mp4");const ff=spawnSync("ffmpeg",["-v","error","-f","lavfi","-i","color=c=gray:s=64x64:d=1","-c:v","libx264","-pix_fmt","yuv420p","-movflags","+faststart","-y",videoFile],{encoding:"utf8"});if(ff.status!==0)throw new Error(`Fixture video failed: ${ff.stderr}`);const mp4=await readFile(videoFile);
@@ -12,7 +12,7 @@ try{
  server=createServer(async(req,res)=>{const path=resolve(dist,`.${new URL(req.url,"http://localhost").pathname}`);if(!path.startsWith(`${dist}/`))return res.writeHead(400).end();try{res.setHeader("Content-Type",({".html":"text/html",".js":"application/javascript",".css":"text/css"})[extname(path)]??"application/octet-stream");res.end(await readFile(path));}catch{res.writeHead(404).end();}});await new Promise(done=>server.listen(0,"127.0.0.1",done));const origin=`http://127.0.0.1:${server.address().port}`;
  browser=await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:"block"});
  await context.route("**/*",route=>{const url=new URL(route.request().url());if(url.origin===origin)return route.continue();if(url.hostname==="012345678901234567890123456789ab.r2.cloudflarestorage.com")return route.fulfill({status:200,contentType:url.pathname.endsWith(".mp4")?"video/mp4":url.pathname.endsWith(".mp3")?"audio/mpeg":"image/png",headers:{"Access-Control-Allow-Origin":"*"},body:url.pathname.endsWith(".mp4")?mp4:png});receipt.externalRequests.push(url.origin);return route.abort();});
- const page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(12000);const nav=name=>page.getByRole("navigation",{name:"Creative tools"}).getByRole("button",{name,exact:true});
+ const page=await context.newPage();diagnosticPage=page;page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(12000);const nav=name=>page.getByRole("navigation",{name:"Creative tools"}).getByRole("button",{name,exact:true});
  await page.goto(`${origin}/tests/creative-fixture.html`);await expect(page.getByText("Your saved draft is ready",{exact:true})).toBeVisible();
  await page.locator('input[type="file"]').setInputFiles({name:"kitchen.png",mimeType:"image/png",buffer:png});await expect(page.getByAltText("Selected source property")).toBeVisible();
  await page.getByRole("button",{name:"Suggest an edit",exact:true}).click();await expect(page.getByRole("button",{name:/Declutter.*Clear the movable/})).toBeVisible();
@@ -46,4 +46,17 @@ try{
  await nav("AI Photo Studio").click();await page.screenshot({path:join(artifacts,"creative-desktop.png"),fullPage:true});await page.setViewportSize({width:390,height:844});await expect(page.getByRole("heading",{name:"Creative Studio",exact:true})).toBeVisible();receipt.layout=await page.evaluate(()=>({width:window.innerWidth,scroll:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll("body *")].filter(e=>e.getBoundingClientRect().right>innerWidth+2).slice(0,15).map(e=>({tag:e.tagName,cls:e.className,width:e.getBoundingClientRect().width,right:e.getBoundingClientRect().right}))}));await page.screenshot({path:join(artifacts,"creative-mobile.png"),fullPage:true});assert.ok(receipt.layout.scroll<=receipt.layout.width+2);await page.screenshot({path:join(artifacts,"creative-mobile.png"),fullPage:true});receipt.checks.push("Desktop and narrow-screen layout fit without horizontal overflow");
  await nav("Scripts & shot plans").click();await page.getByText("Plan an agent-on-camera reel",{exact:true}).click();await page.screenshot({path:join(artifacts,"creative-plans-mobile.png"),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
  await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));console.log(JSON.stringify({...receipt,artifacts},null,2));
-}catch(error){console.error(JSON.stringify({...receipt,artifacts,error:error.stack},null,2));throw error;}finally{await browser?.close();await new Promise(resolve=>server?.close(resolve)??resolve());}
+}catch(error){
+ if(diagnosticPage)try{
+  receipt.failureDiagnostic=await diagnosticPage.evaluate(()=>({
+   alerts:[...document.querySelectorAll('[role="alert"],.creative-error,.creative-notice,[role="status"]')].filter(e=>e.getClientRects().length).map(e=>e.textContent?.trim()),
+   fixtureCalls:window.creativeFixture.calls().map(c=>({path:c.path,method:c.method,bodyKeys:c.body&&Object.keys(c.body),result_id:c.body?.result_id,request_id:c.body?.request_id,frameCount:Array.isArray(c.body?.frames)?c.body.frames.length:null,frames:Array.isArray(c.body?.frames)?c.body.frames.map(f=>({at:f.at,mime:f.mime,encodedLength:f.b64?.length})):null,seconds:c.body?.seconds})),
+   visibleVideos:[...document.querySelectorAll('video')].map(v=>({duration:v.duration,currentTime:v.currentTime,readyState:v.readyState,networkState:v.networkState,error:v.error&&{code:v.error.code,message:v.error.message}})),
+   buttons:[...document.querySelectorAll('button')].filter(e=>e.getClientRects().length).map(e=>({label:e.textContent?.trim(),disabled:e.disabled})),
+   frameEvidenceLimit:'Detached sampler video is not in the DOM. A drift-call frames array is direct evidence of sampled frames; absent drift call does not prove zero successful internal seeks.'
+  }));
+  await diagnosticPage.screenshot({path:join(artifacts,'creative-failure-viewport.png')});
+ }catch(diagnosticError){receipt.failureDiagnosticError=String(diagnosticError);}
+ await writeFile(join(artifacts,'failed-receipt.json'),JSON.stringify({...receipt,status:'failed',error:error.stack},null,2),{flag:'wx'});
+ console.error(JSON.stringify({...receipt,artifacts,error:error.stack},null,2));throw error;
+}finally{await browser?.close();await new Promise(resolve=>server?.close(resolve)??resolve());}

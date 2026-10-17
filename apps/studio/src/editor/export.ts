@@ -302,38 +302,6 @@ export async function exportLocalVideo(options: {
       musicGain = audio.createGain(); musicGain.gain.value = 0; musicGain.connect(destination!);
     }
     throwIfAborted(renderSignal);
-    stream = canvas.captureStream(30);
-    if (destination)
-      for (const track of destination.stream.getAudioTracks())
-        stream.addTrack(track);
-    recorder = new MediaRecorder(stream, {
-      mimeType: format.mime,
-      videoBitsPerSecond: 5_000_000,
-      ...(withAudio ? { audioBitsPerSecond: 128_000 } : {}),
-    });
-    stopped = new Promise((resolve) =>
-      recorder!.addEventListener("stop", () => resolve(), { once: true }),
-    );
-    recorder.addEventListener("error", () =>
-      controller.abort(
-        new Error(
-          "The browser encoder failed. Try the other offered format or a smaller edit.",
-        ),
-      ),
-    );
-    recorder.addEventListener("dataavailable", (event) => {
-      if (renderSignal.aborted || !event.data.size) return;
-      outputBytes += event.data.size;
-      if (outputBytes > EDIT_LIMITS.outputBytes) {
-        controller.abort(
-          new Error(
-            "The output exceeded the 128 MiB local memory limit. Shorten the edit.",
-          ),
-        );
-        return;
-      }
-      chunks.push(event.data);
-    });
     let elapsedBefore = 0;
     let lastProgressAt = 0;
     // Keep only the current source and one decoded/seeked successor. Prepare
@@ -382,22 +350,55 @@ export async function exportLocalVideo(options: {
       drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore, localTime: 0, previous: hasPrevious ? previous : undefined});
       await overlays.paint(canvas, elapsedBefore);
       throwIfAborted(renderSignal);
-      if (recorder.state === "inactive") {
+      if (!recorder) {
         if (audio) await awaitAudioStartup(audio, renderSignal,
           () => assertCurrentRevision(draft, currentDraft(), renderSignal), async () => {
             drawFrame(canvas, decoded!, clip, draft, {time: elapsedBefore, localTime: 0});
             await overlays.paint(canvas, elapsedBefore);
-            (stream!.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined)?.requestFrame?.();
           });
         assertCurrentRevision(draft, currentDraft(), renderSignal);
         if (audio && audio.state !== "running") throw new Error("Audio stopped before recording could start. No download was created.");
+        // A canvas track can retain timestamps from its creation. Open it only
+        // after readiness, so pre-content preparation cannot become a video prefix.
+        stream = canvas.captureStream(30);
+        if (destination)
+          for (const track of destination.stream.getAudioTracks())
+            stream.addTrack(track);
+        recorder = new MediaRecorder(stream, {
+          mimeType: format.mime,
+          videoBitsPerSecond: 5_000_000,
+          ...(withAudio ? { audioBitsPerSecond: 128_000 } : {}),
+        });
+        stopped = new Promise((resolve) =>
+          recorder!.addEventListener("stop", () => resolve(), { once: true }),
+        );
+        recorder.addEventListener("error", () =>
+          controller.abort(
+            new Error(
+              "The browser encoder failed. Try the other offered format or a smaller edit.",
+            ),
+          ),
+        );
+        recorder.addEventListener("dataavailable", (event) => {
+          if (renderSignal.aborted || !event.data.size) return;
+          outputBytes += event.data.size;
+          if (outputBytes > EDIT_LIMITS.outputBytes) {
+            controller.abort(
+              new Error(
+                "The output exceeded the 128 MiB local memory limit. Shorten the edit.",
+              ),
+            );
+            return;
+          }
+          chunks.push(event.data);
+        });
         // start() changes state synchronously. Some WebM encoders emit `start`
         // only after receiving a fresh frame; awaiting that event before the
         // render loop deadlocks. Submit a frame and let the loop feed the encoder.
         recorder.start(500);
         drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore, localTime: 0, previous: hasPrevious ? previous : undefined});
         await overlays.paint(canvas, elapsedBefore);
-        const track = stream.getVideoTracks()[0] as
+        const track = stream!.getVideoTracks()[0] as
           CanvasCaptureMediaStreamTrack | undefined;
         track?.requestFrame?.();
       } else {
@@ -405,7 +406,7 @@ export async function exportLocalVideo(options: {
         // notification. Waiting for that event records an idle frame/audio gap
         // before this segment's clock and source playback begin on busy devices.
         recorder.resume();
-        const track = stream.getVideoTracks()[0] as
+        const track = stream!.getVideoTracks()[0] as
           CanvasCaptureMediaStreamTrack | undefined;
         track?.requestFrame?.();
       }
@@ -527,11 +528,11 @@ export async function exportLocalVideo(options: {
       elapsedBefore += duration;
     }
     assertCurrentRevision(draft, currentDraft(), renderSignal);
-    const finished = waitForEvent(recorder, "stop", renderSignal);
-    recorder.stop();
+    const finished = waitForEvent(recorder!, "stop", renderSignal);
+    recorder!.stop();
     await finished;
     throwIfAborted(renderSignal);
-    const mime = recorder.mimeType;
+    const mime = recorder!.mimeType;
     const extension = mime.startsWith("video/mp4")
       ? "mp4"
       : mime.startsWith("video/webm")

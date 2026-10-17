@@ -1,0 +1,80 @@
+name: Dependency security
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '19 8 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    name: Discover locked npm projects
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      directories: ${{ steps.packages.outputs.directories }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Test missing-lock and omitted-project refusals
+        run: python3 tools/audit/test_npm_package_inventory.py
+      - id: packages
+        name: Include every tracked package manifest
+        run: python3 tools/audit/npm_package_inventory.py --github-output "$GITHUB_OUTPUT"
+
+  dependency-review:
+    name: Review new dependency vulnerabilities
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # No checkout or package execution: inspect the PR's dependency graph.
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime, development, unknown
+          vulnerability-check: true
+          license-check: false
+          warn-only: false
+          comment-summary-in-pr: never
+
+  npm-audit:
+    name: Audit all npm dependencies (${{ matrix.directory }})
+    needs: inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: ${{ fromJSON(needs.inventory.outputs.directories) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Audit the committed lockfile, including development tools
+        env:
+          NPM_CONFIG_USERCONFIG: /dev/null
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-audit-cache
+          NPM_CONFIG_UPDATE_NOTIFIER: 'false'
+        run: >-
+          npm audit --package-lock-only --ignore-scripts --include=dev
+          --audit-level=high --registry=https://registry.npmjs.org
+          --fetch-retries=0 --fetch-timeout=20000
+      - name: Require audit to leave package inputs unchanged
+        if: always()
+        run: git diff --exit-code -- package.json package-lock.json

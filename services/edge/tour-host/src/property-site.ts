@@ -15,6 +15,9 @@ export function propertyPageHref(slug: string, page: PropertyPage, publicBase: "
 }
 
 export const PROPERTY_SITE_CSS = `
+  .property-site .property-skip-link { position:fixed; z-index:1000; top:0; left:max(8px,env(safe-area-inset-left)); transform:translateY(-200%); display:inline-flex; align-items:center; min-height:44px; max-width:calc(100vw - 32px); padding:10px 16px; border:2px solid currentColor; border-radius:4px; background:#fff; color:#17171c; font-size:14px; font-weight:700; line-height:1.4; text-decoration:underline; }
+  .property-site .property-skip-link:focus { top:max(8px,env(safe-area-inset-top)); transform:none; outline:3px solid currentColor; outline-offset:3px; }
+  .property-site #property-content { scroll-margin-top:var(--listing-nav-offset,9rem); }
   body.property-site { --bg:#f7f5f1; --ink:#17171c; --ink-dim:#62616b; --faint:#6a6872; --card:#fff;
     --accent-3:#6b3bb4; --accent-soft:rgba(124,58,237,.07); --grad-text:linear-gradient(#17171c,#17171c);
     line-height:1.65; background:var(--bg); }

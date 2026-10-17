@@ -664,6 +664,11 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Install synthetic video and archive verification tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg unzip
+      - name: Styled Studio accessibility and beginner entry points
+        timeout-minutes: 5
+        run: |
+          node tests/design-a11y-probe.mjs --out="$RUNNER_TEMP/rendprop-design-a11y.json"
+          node tests/feature-entry-browser.mjs
       - name: Property switching, recovery and listing completion
         run: |
           node tests/property-reels-browser.mjs
@@ -930,6 +935,8 @@ jobs:
         with:
           name: studio-property-workflows-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/rendprop-design-a11y.json
+            /tmp/rendprop-design-a11y-*/*.png
             /tmp/rendprop-creative-pages-*/receipt.json
             /tmp/rendprop-creative-pages-*/*.png
             /tmp/rendprop-make-video-*/receipt.json
@@ -1030,8 +1037,8 @@ jobs:
       - name: Bundle (deploy --dry-run, no credentials needed)
         run: npx wrangler deploy --dry-run --outdir /tmp/wrangler-dry
 
-      # Production dependencies must be clean. Dev-tool advisories (miniflare,
-      # sharp, ws) don't ship in the Worker bundle, so they don't fail the build.
+      # Keep this fast runtime-only check. The separate Dependency security
+      # workflow audits every tracked npm project, including development tools.
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 

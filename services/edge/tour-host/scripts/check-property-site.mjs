@@ -53,6 +53,32 @@ for (const page of ["home", "gallery", "location", "contact"]) {
   check(revoked.status === 404 && !(await revoked.text()).includes("123 Synthetic"), `${page} cannot retain revoked customer HTML`);
   upstreamStatus = 200;
 }
+// A main landmark and native keyboard bypass belong only to polished pages.
+// These are actual renderer outputs; neither modal nor page chrome is moved.
+for (const theme of ["basic", "signature-estate", "coastal-luxe"]) for (const page of ["home", "gallery", "location", "contact"]) {
+  const html = renderTourPage({ ...fixture(), website_theme:theme }, "", "", "", { page });
+  const main = '<main id="property-content" tabindex="-1">', skip = '<a class="property-skip-link" href="#property-content">Skip to property content</a>';
+  check((html.match(/<main\b/g) || []).length === 1 && html.includes(main), `${theme}/${page} has one focusable main landmark`);
+  check((html.match(/class="property-skip-link"/g) || []).length === 1 && html.includes(skip), `${theme}/${page} has one exact native bypass link`);
+  const body = html.slice(html.indexOf("<body"));
+  check(body.match(/<(?:a|button|input|textarea|select|summary)\b[^>]*>/)?.[0] === skip.slice(0, skip.indexOf(">") + 1), `${theme}/${page} bypass is the first keyboard control`);
+  const start=html.indexOf(main), end=html.indexOf("</main>");
+  check(html.indexOf("</nav>") < start && start < end, `${theme}/${page} navigation stays outside main`);
+  for (const id of ["overview", "endcard", "disclosure"]) {
+    const at=html.indexOf(`id="${id}"`);
+    check(at < 0 || at > start && at < end, `${theme}/${page} ${id} content stays inside main`);
+  }
+  for (const marker of ["<footer", '<dialog id="property-photo-modal"', '<dialog id="flythrough-modal"']) {
+    check(html.indexOf(marker) > end, `${theme}/${page} ${marker} stays outside main`);
+  }
+}
+for (const opts of [{embed:true}, {unbranded:true}]) {
+  const html=renderTourPage(fixture(), "", "", "", opts);
+  check(!html.includes('<main id="property-content"') && !html.includes('class="property-skip-link"'), "Embed/unbranded do not receive the polished bypass wrapper");
+}
+const nonProperty=renderTourPage({...fixture(),space_type:"venue"},"","","",{});
+check(!nonProperty.includes('<main id="property-content"') && !nonProperty.includes('class="property-skip-link"'), "Non-property renderer does not receive the polished wrapper");
+
 const gallery = renderTourPage(fixture(), "", "", "", { page: "gallery" });
 check(gallery.includes('data-property-photo href="/published-photo.jpg"'), "Gallery complete-photo anchor works without JS");
 check(gallery.includes('<noscript><img src="/published-photo.jpg"'), "No-JS Gallery displays the real image, not a placeholder");

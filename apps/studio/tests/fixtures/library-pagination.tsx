@@ -3,6 +3,7 @@ import type {Session, AuthChangeEvent} from "@supabase/auth-js";
 import App from "../../src/App";
 import {createStudioServices, type StudioAuth} from "../../src/data/services";
 import "../../src/styles.css";
+import "../../src/design/studio.css";
 
 // Test entry only: actual App and typed services, inert Auth/HTTP, no model or writes.
 const A="11111111-1111-4111-8111-111111111111",B="22222222-2222-4222-8222-222222222222";
