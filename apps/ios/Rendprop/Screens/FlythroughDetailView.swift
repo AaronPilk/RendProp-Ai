@@ -7922,6 +7922,14 @@ struct PhotoCompareView: View {
                     }.font(.caption).foregroundStyle(Theme.inkDim).padding(.top, 6)
                 }.font(.subheadline).foregroundStyle(Theme.ink)
             }
+            // Optional feedback on this exact AI version. It sits after the
+            // required checks and never changes them or any action above.
+            if !showOriginal, let feedbackVersion = viewed.savedVersion, PhotoFeedbackQueue.shared.canRecord(feedbackVersion) {
+                PhotoFeedbackControl(version: feedbackVersion, directory: viewed.enhancedURL.deletingLastPathComponent(),
+                                     cloudListing: isCloudListing, listingSelected: publicationSelected,
+                                     exportOpened: exporting != nil)
+                    .id(feedbackVersion.id)
+            }
         }.accessibilityIdentifier("photoVersion.reviewControls")
     }
 
