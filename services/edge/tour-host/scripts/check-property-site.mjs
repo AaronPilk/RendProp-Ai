@@ -131,6 +131,31 @@ checkPhotoLoading(PROPERTY_SITE_JS); assertions += 10;
 checkPhotoLoading(PROPERTY_SITE_JS, false); assertions++;
 assert.throws(() => checkPhotoLoading(PROPERTY_SITE_JS.replace("propertyThumbs.forEach(function(image){propertyPhotoObserver.observe(image);});", "propertyThumbs.forEach(loadPropertyThumb);")), /Offscreen sources are not eagerly assigned/); assertions++;
 assert.throws(() => checkPhotoLoading(PROPERTY_SITE_JS.replace("if(entry.isIntersecting)", "if(true)")), /Non-intersection cannot fetch a master/); assertions++;
+// Room-grouped editorial Gallery on the premium designs. Groups follow the
+// first appearance of each label and photos keep their published order inside
+// a group, so the document order the photo viewer walks is the visual order.
+const roomLabels = ["Kitchen", "Living room", "Kitchen", "Primary bedroom", "", "kitchen ", "Living room"];
+const roomed = fixture(); roomed.gallery = roomLabels.map((label, n) => ({ url: `/room-${n}.jpg`, label }));
+const hrefOrder = html => [...html.matchAll(/data-property-photo href="([^"]+)"/g)].map(m => m[1]);
+for (const theme of ["signature-estate", "coastal-luxe"]) {
+  const html = renderTourPage({ ...roomed, website_theme: theme }, "", "", "", { page: "gallery" });
+  const titles = [...html.matchAll(/<h2 class="lp-gal-room-title" id="lp-gal-room-(\d)">([^<]+)(?:<span class="lp-gal-room-count">([^<]+)<\/span>)?<\/h2>/g)].map(m => [m[1], m[2], m[3] || ""]);
+  check(JSON.stringify(titles) === JSON.stringify([["1", "Kitchen", "3 photos"], ["2", "Living room", "2 photos"], ["3", "Primary bedroom", ""], ["4", "More of the home", ""]]), `${theme}: rooms are grouped by label in first-appearance order, case/space-insensitively, unlabelled photos last`);
+  check(JSON.stringify(hrefOrder(html)) === JSON.stringify(["/room-0.jpg", "/room-2.jpg", "/room-5.jpg", "/room-1.jpg", "/room-6.jpg", "/room-3.jpg", "/room-4.jpg"]) && (html.match(/<section class="lp-gal-room" aria-labelledby="lp-gal-room-\d">/g) || []).length === 4, `${theme}: every photo is kept once, in group order`);
+  const gallerySection = html.slice(html.indexOf('id="gallery"'), html.indexOf('id="disclosure"'));
+  check(!gallerySection.includes("<figcaption>") && html.includes('alt="Kitchen"') && html.includes('aria-label="View full photo: Kitchen"'), `${theme}: the room heading replaces per-photo captions while alt text and viewer titles keep the label`);
+  check(gallerySection.includes('class="lp-fine lp-mediadate"') && gallerySection.indexOf("lp-mediadate") > gallerySection.lastIndexOf('<section class="lp-gal-room"'), `${theme}: the media date note follows the last room`);
+  const home = renderTourPage({ ...roomed, website_theme: theme }, "", "", "", { page: "home" });
+  check(!home.includes('<section class="lp-gal-room"') && hrefOrder(home).length === 4, `${theme}: Home keeps its flat four-photo preview`);
+  const oneRoom = renderTourPage({ ...roomed, website_theme: theme, gallery: roomLabels.map((_, n) => ({ url: `/room-${n}.jpg`, label: n === 1 ? "" : "Kitchen" })) }, "", "", "", { page: "gallery" });
+  check(!oneRoom.includes('<section class="lp-gal-room"') && hrefOrder(oneRoom).length === 7 && oneRoom.includes("<figcaption>Kitchen</figcaption>"), `${theme}: fewer than two distinct labels keeps the flat grid`);
+  const unlabelled = renderTourPage({ ...roomed, website_theme: theme, gallery: roomLabels.map((_, n) => ({ url: `/room-${n}.jpg` })) }, "", "", "", { page: "gallery" });
+  check(!unlabelled.includes('<section class="lp-gal-room"') && hrefOrder(unlabelled).length === 7, `${theme}: real listings without labels keep the flat grid`);
+  const previewed = renderTourPage(roomed, "", "", "", { page: "gallery", previewTheme: theme });
+  check((previewed.match(/<section class="lp-gal-room"/g) || []).length === 4, `${theme}: design preview shows the grouped gallery`);
+}
+const classicRooms = renderTourPage(roomed, "", "", "", { page: "gallery" });
+check(!classicRooms.includes('<section class="lp-gal-room"') && JSON.stringify(hrefOrder(classicRooms)) === JSON.stringify(roomLabels.map((_, n) => `/room-${n}.jpg`)) && (classicRooms.slice(classicRooms.indexOf('id="gallery"'), classicRooms.indexOf('id="disclosure"')).match(/<figcaption>/g) || []).length === 6, "Classic Gallery is unchanged: flat grid, published order, captions");
 check(gallery.indexOf('id="gallery"') < gallery.indexOf('id="plan"'), "Dedicated Gallery leads with photos, ahead of floor plans");
 check(!gallery.includes('id="endcard"') && !gallery.includes('class="listing-cover"'), "Gallery is its own page, not the Home content repeated");
 const location = renderTourPage(fixture(), "", "", "", { page: "location" });
@@ -138,7 +163,65 @@ check(location.includes("maps/search/?api=1&amp;query=27.771234%2C-82.641234"), 
 check(location.includes("An owner-reviewed place note."), "Location keeps owner-reviewed context");
 check(location.includes("not travel times") && location.includes("© OpenStreetMap contributors"), "Location declares distance limitations/map attribution");
 check(location.includes('<noscript>') && location.includes('data-endpoint="/f/synthetic-polish/nearby"'), "Optional nearby data leaves a no-JS map fallback");
+check(location.includes('id="property-nearby-map" hidden>') && !location.includes('<g class="nm-place">'), "Cold cache renders no map and no coordinates, only the scripted lookup");
 for (const page of ["home", "gallery", "contact"]) check(!renderTourPage(fixture(), "", "", "", { page }).includes('id="property-nearby"'), `${page} cannot initiate nearby requests`);
+// Neighbourhood map: a static inline SVG drawn only from the nearby result.
+// Already-cached places render as markup needing neither script nor request;
+// the scripted path receives the same drawing from the nearby endpoint.
+const { renderNearbyMap, nearbyMapSummary, labelBox: nearbyLabelBox } = await load("nearby-map");
+const mapOrigin = { lat: 27.771, lng: -82.641 };
+const mapPlace = (name, category, bearing, metres, id) => {
+  const rad = bearing * Math.PI / 180;
+  const degree = 6_371_008.8 * Math.PI / 180;
+  return { name, category, lat: mapOrigin.lat + metres * Math.cos(rad) / degree, lng: mapOrigin.lng + metres * Math.sin(rad) / (degree * Math.cos(mapOrigin.lat * Math.PI / 180)), distance_m: metres, source_url: `https://www.openstreetmap.org/node/${id}` };
+};
+const ninePlaces = [mapPlace("Harbor <Grill> & \"Oyster\" House", "Restaurant", 35, 420, 1), mapPlace("Trattoria Luna", "Restaurant", 120, 760, 2), mapPlace("The Longest Restaurant Name In Town Ever", "Restaurant", 200, 1180, 3),
+  mapPlace("Kahwa Coffee", "Cafe", 60, 300, 4), mapPlace("Bandit Coffee Co.", "Cafe", 250, 640, 5), mapPlace("Black Crow Café", "Cafe", 300, 1320, 6),
+  mapPlace("Publix", "Shop", 170, 980, 7), mapPlace("Rollin' Oats Market", "Shop", 320, 450, 8), mapPlace("Haslam's Books", "Shop", 90, 1450, 9)];
+const nineResult = { status: "available", places: ninePlaces, attribution: "© OpenStreetMap contributors" };
+const mapHtml = renderNearbyMap(nineResult, mapOrigin);
+check(/^<figure class="property-nearby-map"><svg class="property-nearby-map-svg" viewBox="0 0 360 360" role="img" aria-label="[^"]+" focusable="false">/.test(mapHtml) && mapHtml.endsWith("</figure>"), "Map is one inline SVG figure with an image role and label");
+const drawing = mapHtml.slice(0, mapHtml.indexOf("</svg>")), legend = mapHtml.slice(mapHtml.indexOf("<figcaption"));
+check((drawing.match(/<g class="nm-place">/g) || []).length === 9 && (drawing.match(/<circle class="nm-dot nm-restaurant"/g) || []).length === 3 && (drawing.match(/<rect class="nm-dot nm-cafe"/g) || []).length === 3 && (drawing.match(/<polygon class="nm-dot nm-shop"/g) || []).length === 3, "Map draws nine places with a distinct shape per category");
+check(["nm-restaurant", "nm-cafe", "nm-shop", "nm-home-dot"].every(c => legend.split(c).length === 2) && legend.includes(">Restaurants</span>") && legend.includes(">Cafés</span>") && legend.includes(">Shops</span>") && legend.includes(">The property</span>"), "Legend explains each marker shape and the property marker");
+check(mapHtml.includes('aria-label="Map of 9 nearby places within 1 mi of the property: 3 restaurants, 3 cafés, 3 shops. Positions are approximate."') && nearbyMapSummary(ninePlaces.slice(0, 1)).startsWith("Map of 1 nearby place within 0.5 mi of the property: 1 restaurant."), "Accessible name states count, radius and categories");
+check((mapHtml.match(/<circle class="nm-ring"/g) || []).length === 2 && mapHtml.includes(">0.5 mi<") && mapHtml.includes(">1 mi<") && (renderNearbyMap({ status: "available", places: ninePlaces.filter(p => p.distance_m <= 1100) }, mapOrigin).match(/<circle class="nm-ring"/g) || []).length === 3, "Distance rings scale to the furthest place in quarter- or half-mile steps");
+check(mapHtml.includes("Harbor &lt;Grill&gt; &amp; &quot;Oyste…") && !mapHtml.includes("<Grill>"), "Place names are escaped and shortened in the drawing");
+check(!/https?:|xlink|<image|<use|<script|<foreignObject|<a\b|href=|url\(|27\.7|-82\.6|\b-?\d{2}\.\d{4,}/.test(mapHtml), "Map embeds no external host, link, script, tile or coordinate");
+const labels = [...mapHtml.matchAll(/<text class="nm-label" x="([\d.]+)" y="([\d.]+)" text-anchor="(\w+)">([^<]+)</g)].map(m => ({ x: +m[1], y: +m[2], anchor: m[3], text: m[4].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&") }));
+const labelBox = l => nearbyLabelBox(l.text, l.x, l.y, l.anchor);
+check(labels.length === 9 && labels.every((a, i) => labels.slice(i + 1).every(b => { const p = labelBox(a), q = labelBox(b); return p.x + p.w <= q.x || q.x + q.w <= p.x || p.y + p.h <= q.y || q.y + q.h <= p.y; })) && labels.every(l => { const b = labelBox(l); return b.x >= 0 && b.y >= 0 && b.x + b.w <= 360 && b.y + b.h <= 360; }), "Nine labels stay on the paper without overlapping each other");
+check(renderNearbyMap(nineResult, mapOrigin) === mapHtml, "Map rendering is deterministic");
+for (const [why, result, origin] of [["empty", { status: "empty", places: [] }, mapOrigin], ["unavailable", { status: "unavailable", places: [] }, mapOrigin], ["no places", { status: "available", places: [] }, mapOrigin], ["no origin", nineResult, { lat: null, lng: null }]]) {
+  check(renderNearbyMap(result, origin) === "", `No map without places (${why})`);
+}
+const staticLocation = renderTourPage(fixture(), "", "", "", { page: "location", nearby: nineResult });
+check(staticLocation.includes(mapHtml.slice(0, 120)) && (staticLocation.match(/<g class="nm-place">/g) || []).length === 9 && !staticLocation.includes("data-endpoint=") && !staticLocation.includes("<noscript><p class=\"lp-tag\">Open the map above"), "Cached places render the map and list as static markup with no further request");
+check((staticLocation.match(/<li><a href="https:\/\/www\.openstreetmap\.org\/node\/\d+" target="_blank" rel="noopener nofollow">/g) || []).length === 9 && staticLocation.includes("Harbor &lt;Grill&gt; &amp; &quot;Oyster&quot; House</a><span>Restaurant · approximately 0.3 mi away</span>") && !staticLocation.includes("Loading nearby places"), "Static list matches the scripted list shape and escapes names");
+check(staticLocation.includes("© OpenStreetMap contributors") && staticLocation.includes("maps/search/?api=1&amp;query=27.771234%2C-82.641234"), "Static map keeps the OSM attribution and the external map link");
+for (const page of ["home", "gallery", "contact"]) check(!renderTourPage(fixture(), "", "", "", { page, nearby: nineResult }).includes('<g class="nm-place">'), `${page} never renders the neighbourhood map`);
+for (const theme of ["basic", "signature-estate", "coastal-luxe"]) {
+  const themed = renderTourPage({ ...fixture(), website_theme: theme }, "", "", "", { page: "location", nearby: nineResult });
+  check((themed.match(/<g class="nm-place">/g) || []).length === 9 && !/style="/.test(themed.slice(themed.indexOf("property-nearby-map"), themed.indexOf("</figure>"))), `${theme}: map is themed through CSS, not inline styles`);
+}
+const nearbyScript = (await load("property-site")).NEARBY_PLACES_JS;
+new vm.Script(nearbyScript); assertions++;
+check(nearbyScript.includes("if (!panel || !panel.getAttribute('data-endpoint')) return;"), "Scripted lookup stands down when the server already rendered the places");
+// The scripted path accepts only the server's exact static figure.
+function runNearbyScript(payload) {
+  const elements = { "property-nearby": { attrs: { "data-endpoint": "/f/x/nearby" }, isConnected: true, getAttribute(n) { return this.attrs[n]; } }, "property-nearby-status": { textContent: "" }, "property-nearby-list": { hidden: true, children: [], appendChild(c) { this.children.push(c); } }, "property-nearby-map": { hidden: true, innerHTML: "" } };
+  const el = () => ({ children: [], appendChild(c) { this.children.push(c); } });
+  const context = { document: { getElementById: id => elements[id], createElement: el }, AbortController: class { signal = { aborted: false }; abort() {} }, setTimeout: () => 0, clearTimeout() {}, addEventListener() {}, URL, Number, Array, Error, Math,
+    fetch: async () => ({ ok: true, json: async () => payload }) };
+  vm.runInNewContext(nearbyScript, context);
+  return new Promise(resolve => setImmediate(() => setImmediate(() => resolve(elements))));
+}
+const accepted = await runNearbyScript({ status: "available", places: ninePlaces, map_html: mapHtml });
+check(accepted["property-nearby-map"].hidden === false && accepted["property-nearby-map"].innerHTML === mapHtml && accepted["property-nearby-list"].children.length === 9, "Scripted path inserts the server-drawn map with the list");
+for (const [why, bad] of [["script", mapHtml.replace("</svg>", "<script>1</script></svg>")], ["link", mapHtml.replace("</svg>", "<a href=\"https://evil.invalid\">x</a></svg>")], ["image", mapHtml.replace("</svg>", "<image href=\"https://evil.invalid/t.png\"/></svg>")], ["handler", mapHtml.replace("<circle class=\"nm-ring\"", "<circle onload=\"1\" class=\"nm-ring\"")], ["foreign", mapHtml.replace("</svg>", "<foreignObject></foreignObject></svg>")], ["prefix", "<div>" + mapHtml + "</div>"], ["type", 42], ["oversize", mapHtml.replace("</figure>", " ".repeat(40000) + "</figure>")]]) {
+  const rejected = await runNearbyScript({ status: "available", places: ninePlaces, map_html: bad });
+  check(rejected["property-nearby-map"].hidden === true && rejected["property-nearby-map"].innerHTML === "" && rejected["property-nearby-list"].children.length === 9, `Scripted path refuses a tampered drawing (${why}) and keeps the list`);
+}
 const contact = renderTourPage(fixture(), "", "", "", { page: "contact" });
 check(contact.includes('id="leadform"') && contact.includes('name="showing_date"'), "Contact retains actual enquiry/showing fields");
 check(contact.indexOf('id="endcard"') < contact.indexOf('id="disclosure"'), "Contact form comes before detailed disclosures");
@@ -187,6 +270,41 @@ check((await get("/f/synthetic-polish/nearby")).status === 404, "Unrounded priva
 locationOverride = { ...publicLocation(), published_at: null };
 check((await get("/f/synthetic-polish/nearby")).status === 404, "Missing fresh publication evidence cannot authorize enrichment");
 locationOverride = undefined;
+// Warm private cache: the nearby endpoint returns the server-drawn map with
+// the places, and the Location page itself renders both as static markup
+// through a cache-only read (no lease, budget, provider call or write).
+class WarmBucket {
+  constructor() { this.objects = new Map(); this.puts = 0; this.gets = []; this.hang = false; }
+  seed(key, value) { this.objects.set(key, JSON.stringify(value)); }
+  async get(key) { this.gets.push(key); if (this.hang) return new Promise(() => {}); const text = this.objects.get(key); return text ? { etag: "e1", size: Buffer.byteLength(text), body: new Response(text).body, text: async () => text } : null; }
+  async put() { this.puts++; return { etag: "e2" }; }
+}
+const warm = new WarmBucket();
+warm.seed("public-location-v1/pois/27.771,-82.641.json", { version: 1, provider: "https://overpass-api.de/api/interpreter", expires_at: Date.now() + 3_600_000, license: "https://www.openstreetmap.org/copyright", result: { ...nineResult, fetched_at: "2026-10-13T12:00:00.000Z" } });
+const warmEnv = { ...env, MEDIA_RENDERS: warm };
+const getWarm = (path) => worker.fetch(new Request("https://rendprop.com" + path), warmEnv, ctx);
+before = fetches.length;
+const warmJson = await (await getWarm("/f/synthetic-polish/nearby")).json();
+check(warmJson.status === "available" && warmJson.places.length === 9 && warmJson.map_html === mapHtml && warmJson.license_url === "https://www.openstreetmap.org/copyright", "Nearby endpoint ships the identical server-drawn map with cached places");
+check(fetches.length === before + 1 && warm.puts === 0, "Cached nearby reply makes no provider call or write");
+before = fetches.length; warm.gets.length = 0;
+const warmPage = await getWarm("/f/synthetic-polish?page=location");
+const warmHtml = await warmPage.text();
+check(warmPage.status === 200 && warmPage.headers.get("cache-control") === "no-store" && warmHtml.includes(mapHtml) && (warmHtml.match(/<li><a href="https:\/\/www\.openstreetmap\.org\/node\/\d+"/g) || []).length === 9 && !warmHtml.includes("data-endpoint="), "Location page renders cached places as static map and list, with no scripted request left");
+check(fetches.length === before + 1 && fetches.at(-1).url.endsWith("/tours/synthetic-polish") && warm.puts === 0 && JSON.stringify(warm.gets) === JSON.stringify(["public-location-v1/pois/27.771,-82.641.json"]), "Static render reads only the one coarsened cache cell: no location projection, provider, lease or budget write");
+for (const path of ["/f/synthetic-polish", "/f/synthetic-polish?page=gallery", "/f/synthetic-polish?page=contact", "/u/synthetic-polish", "/f/synthetic-polish?embed=1"]) {
+  warm.gets.length = 0;
+  const other = await (await getWarm(path)).text();
+  check(warm.gets.length === 0 && !other.includes('<g class="nm-place">'), `${path} never reads or renders nearby places`);
+}
+const expired = new WarmBucket(); expired.seed("public-location-v1/pois/27.771,-82.641.json", { version: 1, provider: "https://overpass-api.de/api/interpreter", expires_at: Date.now() - 1, license: "https://www.openstreetmap.org/copyright", result: nineResult });
+const expiredHtml = await (await worker.fetch(new Request("https://rendprop.com/f/synthetic-polish?page=location"), { ...env, MEDIA_RENDERS: expired }, ctx)).text();
+check(!expiredHtml.includes('<g class="nm-place">') && expiredHtml.includes('data-endpoint="/f/synthetic-polish/nearby"') && expired.puts === 0, "An expired cache entry is not rendered and leaves the scripted lookup in place");
+warm.hang = true;
+const hungStart = Date.now();
+const hungHtml = await (await getWarm("/f/synthetic-polish?page=location")).text();
+check(Date.now() - hungStart < 2_500 && hungHtml.includes('data-endpoint="/f/synthetic-polish/nearby"') && !hungHtml.includes('<g class="nm-place">'), "Unresponsive storage cannot delay the Location page beyond the bounded peek; the scripted path remains");
+warm.hang = false;
 for (const page of ["home", "gallery", "location", "contact"]) {
   const path = "/f/estate-demo" + (page === "home" ? "" : "?page=" + page);
   const first = await get(path), second = await get(path);
