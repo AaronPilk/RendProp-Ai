@@ -46,9 +46,16 @@ export const UHD_PORTRAIT:ClipSpec={width:2160,height:3840,rate:"24",frames:120,
 export const HD_PRO_SUBSTITUTE:ClipSpec={width:1920,height:1080,rate:"24",frames:120,name:"hd-pro-substitute"};
 export const UHD_NTSC:ClipSpec={width:3840,height:2160,rate:"24000/1001",frames:120,name:"uhd-23976"};
 let ffmpegChecked:boolean|null=null;
+/** Why the probe said no (null when it said yes or has not run). */
+export let ffmpegProbeIssue:string|null=null;
+// ffmpeg runs with PATH only. Deno refuses a scoped --allow-run=ffmpeg spawn
+// while LD_LIBRARY_PATH or LD_PRELOAD is in the child environment (CI's
+// setup-python exports LD_LIBRARY_PATH), and the system ffmpeg needs neither.
+const ffmpegEnv=()=>({clearEnv:true,env:{PATH:Deno.env.get("PATH")??"/usr/local/bin:/usr/bin:/bin"}});
 export async function ffmpegAvailable():Promise<boolean>{
  if(ffmpegChecked!==null)return ffmpegChecked;
- try{const out=await new Deno.Command("ffmpeg",{args:["-version"],stdout:"null",stderr:"null"}).output();ffmpegChecked=out.success;}catch{ffmpegChecked=false;}
+ try{const out=await new Deno.Command("ffmpeg",{args:["-version"],stdout:"null",stderr:"null",...ffmpegEnv()}).output();ffmpegChecked=out.success;if(!out.success)ffmpegProbeIssue=`ffmpeg -version exited ${out.code}`;}
+ catch(error){ffmpegChecked=false;ffmpegProbeIssue=`${(error as Error)?.name??"Error"}: ${String((error as Error)?.message??error).slice(0,200)}`;}
  return ffmpegChecked;
 }
 const clips=new Map<string,Uint8Array>();
@@ -61,7 +68,7 @@ export async function syntheticClip(spec:ClipSpec):Promise<Uint8Array>{
  const dir=await Deno.makeTempDir({prefix:"kie-rehearsal-"});
  try{
   const file=`${dir}/${spec.name}.mp4`;
-  const out=await new Deno.Command("ffmpeg",{args:["-loglevel","error","-y","-f","lavfi","-i",`color=c=0x334455:size=${spec.width}x${spec.height}:rate=${spec.rate}`,"-frames:v",String(spec.frames),"-c:v","libx264","-preset","ultrafast","-crf","30","-g","48","-bf","0","-pix_fmt","yuv420p","-movflags","+faststart","-an",file],stdout:"null",stderr:"piped"}).output();
+  const out=await new Deno.Command("ffmpeg",{args:["-loglevel","error","-y","-f","lavfi","-i",`color=c=0x334455:size=${spec.width}x${spec.height}:rate=${spec.rate}`,"-frames:v",String(spec.frames),"-c:v","libx264","-preset","ultrafast","-crf","30","-g","48","-bf","0","-pix_fmt","yuv420p","-movflags","+faststart","-an",file],stdout:"null",stderr:"piped",...ffmpegEnv()}).output();
   assert(out.success,"ffmpeg could not make the synthetic clip: "+new TextDecoder().decode(out.stderr));
   const bytes=await Deno.readFile(file);assert(bytes.length>0&&bytes.length<1024*1024,"synthetic clip stays under 1 MiB: "+bytes.length);
   clips.set(spec.name,bytes);return bytes;
