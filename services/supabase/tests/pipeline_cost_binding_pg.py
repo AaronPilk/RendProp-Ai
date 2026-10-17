@@ -14,7 +14,9 @@ OWN='20261017115012_conservative_pipeline_cost_binding.sql'
 CHANGED={'serving_ceiling_spent_cents(uuid,timestamp with time zone,timestamp with time zone)','serving_cost_finish(uuid,uuid,text,text,text,integer)'}
 ADDED={'pipeline_record_provider_cost(uuid,uuid,uuid,text,text,text,text,text,uuid,text,numeric,numeric,numeric,jsonb)','pipeline_cost_covered_cents(uuid,timestamp with time zone,timestamp with time zone)'}
 RELATION='public.pipeline_provider_cost_bindings'
-CATALOG="select coalesce(jsonb_object_agg(oid::regprocedure::text,jsonb_build_object('definition',pg_get_functiondef(oid),'owner',pg_get_userbyid(proowner),'acl',proacl,'security',prosecdef,'config',proconfig)),'{}')from pg_proc where pronamespace='public'::regnamespace and prokind='f'"
+# One digest per public function (definition, owner, ACL, security, config) keeps
+# every catalog comparison exact while the retained logs stay a few KB each.
+CATALOG="select coalesce(jsonb_object_agg(oid::regprocedure::text,md5(pg_get_functiondef(oid)||pg_get_userbyid(proowner)||coalesce(proacl::text,'')||prosecdef::text||coalesce(proconfig::text,''))),'{}')from pg_proc where pronamespace='public'::regnamespace and prokind='f'"
 TABLES="select coalesce(jsonb_agg(relname order by relname),'[]')from pg_class where relnamespace='public'::regnamespace and relkind='r'"
 SHAPE=("select jsonb_build_object('columns',(select string_agg(a.attname||' '||format_type(a.atttypid,a.atttypmod)||a.attnotnull::text||coalesce(pg_get_expr(d.adbin,d.adrelid),''),','order by a.attnum)from pg_attribute a left join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum where a.attrelid=%s::regclass and a.attnum>0 and not a.attisdropped),"
  "'constraints',(select string_agg(conname||':'||pg_get_constraintdef(oid),';'order by conname)from pg_constraint where conrelid=%s::regclass),'indexes',(select string_agg(indexrelid::regclass::text,','order by 1)from pg_index where indrelid=%s::regclass),"
