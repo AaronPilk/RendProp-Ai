@@ -86,10 +86,13 @@ export const PROPERTY_DESIGN_CSS = `
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-location-visual span { background:var(--accent-3); }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-nearby-list li { border:0; border-top:1px solid var(--premium-line); border-radius:0; background:transparent; padding:20px 0; }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-nearby-list a { color:var(--ink); }
-  /* Neighbourhood map takes each design's paper, ink and accent; marker shapes stay. */
+  /* Neighbourhood map takes each design's paper, ink and accent; marker shapes stay.
+     The list keeps the map's top margin, so on wide screens both start on one line. */
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-nearby-map { --nearby-paper:var(--premium-paper); --nearby-ring:var(--premium-line); --nearby-ink:var(--ink); --nearby-dim:var(--ink-dim); --nearby-home:var(--accent-3); margin-top:32px; }
+  .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-nearby-list { margin-top:32px; }
   .property-site.site-theme-signature-estate .property-nearby-map { --nearby-restaurant:#9a4a2c; --nearby-cafe:#7d613f; --nearby-shop:#4d6b5a; }
-  .property-site.site-theme-signature-estate .property-nearby-map-svg { border:1px solid var(--premium-line); border-radius:2px; }
+  /* Square paper inside the fine frame even where CSS rx is not applied. */
+  .property-site.site-theme-signature-estate .property-nearby-map-svg { border:1px solid var(--premium-line); border-radius:2px; background:var(--nearby-paper); }
   .property-site.site-theme-signature-estate .property-nearby-map .nm-paper { rx:0; }
   .property-site.site-theme-coastal-luxe .property-nearby-map { --nearby-restaurant:#a9532f; --nearby-cafe:#8c6d2c; --nearby-shop:#216b58; }
   .property-site.site-theme-coastal-luxe .property-nearby-map-svg { border-radius:22px; }

@@ -95,7 +95,8 @@ export const PROPERTY_SITE_CSS = `
   .property-site .property-nearby-legend { display:flex; flex-wrap:wrap; gap:8px 18px; margin-top:12px; color:var(--ink-dim); font-size:12px; }
   .property-site .property-nearby-legend .nm-key { display:inline-flex; align-items:center; gap:7px; }
   .property-site .property-nearby-legend svg { width:16px; height:16px; flex:none; }
-  /* Wide screens: map beside a single-column list. Source order is unchanged. */
+  /* Wide screens: map beside a two-column list, both starting on one line (the
+     list keeps the same top margin as the map). Source order is unchanged. */
   @media(min-width:1000px) {
     .property-site #property-nearby .lp-wrap { display:grid; grid-template-columns:minmax(0,480px) minmax(0,1fr); grid-template-areas:"eyebrow eyebrow" "title title" "status status" "map list" "fine fine"; column-gap:56px; }
     .property-site #property-nearby .lp-eyebrow { grid-area:eyebrow; }
@@ -103,7 +104,7 @@ export const PROPERTY_SITE_CSS = `
     .property-site #property-nearby #property-nearby-status { grid-area:status; }
     .property-site #property-nearby .property-nearby-map-slot { grid-area:map; }
     .property-site #property-nearby .property-nearby-map-slot[hidden] { display:none; }
-    .property-site #property-nearby .property-nearby-list { grid-area:list; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:24px; align-content:start; margin-top:0; }
+    .property-site #property-nearby .property-nearby-list { grid-area:list; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:24px; align-content:start; }
     .property-site #property-nearby .property-nearby-list[hidden] { display:none; }
     .property-site #property-nearby > .lp-wrap > .lp-fine { grid-area:fine; }
   }
