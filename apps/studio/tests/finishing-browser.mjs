@@ -19,18 +19,56 @@ const receipt = {proof: "Real editor UI, synthetic original footage and licensed
 let browser, server, page;
 // Retain the actual clock guard's cause without changing its readings,
 // scheduling, thresholds or error. A missing download alone cannot explain a
-// refused export.
+// refused export. Each reading is also enriched, test-only, with the wall gap
+// since the previous reading on the same clock and a snapshot of the page's
+// most recent running AudioContext (state, currentTime, latencies and
+// getOutputTimestamp), taken from the init-script registry below so no
+// product code changes. The last 16 enriched readings travel with a refusal;
+// a per-clock summary (window.exportClockObservations) is kept for every
+// clock whether or not it refuses. getOutputTimestamp() per reading is the
+// one extra call on the export path; it reads, never writes, the context.
 const clockReceiptPlugin = {name: "finishing-clock-refusal-receipt", enforce: "pre", transform(code, id) {
   if (!id.endsWith("/src/editor/recording-clock.ts")) return;
   const seam = "export class RecordingClock {";
   assert.equal(code.split(seam).length, 2, "Actual recording-clock observation anchor missing");
   return code.replace(seam, "class ShippingRecordingClock {") + `
 export class RecordingClock extends ShippingRecordingClock {
+  private enriched: unknown[] = [];
+  private previousAtMs?: number;
+  private previousAudio?: number;
+  private plateauStartMs?: number;
+  private summary = {reads: 0, maxInterReadMs: 0, longestAudioPlateauMs: 0, firstAtMs: null as number | null, lastAtMs: null as number | null, refused: false};
+  constructor() {
+    super();
+    ((window as any).exportClockObservations ??= []).push(this.summary);
+  }
   read(wall: number, timeline: number, audio?: number): void {
+    const atMs = performance.now();
+    const interReadMs = this.previousAtMs === undefined ? null : atMs - this.previousAtMs;
+    const contexts: AudioContext[] = (window as any).finishingAudioContexts ?? [];
+    const sound = [...contexts].reverse().find(context => context.state === "running") ?? contexts[contexts.length - 1];
+    let snapshot: any = null;
+    if (sound) {
+      snapshot = {state: sound.state, currentTime: sound.currentTime, sampleRate: sound.sampleRate, baseLatency: sound.baseLatency, outputLatency: sound.outputLatency, outputTimestamp: null};
+      try {const value = sound.getOutputTimestamp(); snapshot.outputTimestamp = {contextTime: value.contextTime, performanceTime: value.performanceTime};}
+      catch {snapshot.outputTimestampUnavailable = true;}
+    }
+    // Plateau: wall time across consecutive readings whose audio value did not change.
+    if (audio !== undefined && this.previousAudio === audio) {
+      this.plateauStartMs ??= this.previousAtMs;
+      this.summary.longestAudioPlateauMs = Math.max(this.summary.longestAudioPlateauMs, atMs - (this.plateauStartMs as number));
+    } else this.plateauStartMs = undefined;
+    this.previousAtMs = atMs; this.previousAudio = audio;
+    this.summary.reads++; this.summary.firstAtMs ??= atMs; this.summary.lastAtMs = atMs;
+    if (interReadMs !== null) this.summary.maxInterReadMs = Math.max(this.summary.maxInterReadMs, interReadMs);
+    this.enriched.push({atMs, interReadMs, wall, timeline, audio, visibilityState: document.visibilityState, audioSnapshot: snapshot});
+    if (this.enriched.length > 16) this.enriched.shift();
     try { super.read(wall, timeline, audio); }
     catch(error) {
+      this.summary.refused = true;
       const observations = (window as any).exportClockRefusals ??= [];
-      observations.push({atMs: performance.now(), message: (error as Error).message, cause: (error as Error).cause});
+      observations.push({atMs: performance.now(), message: (error as Error).message, cause: (error as Error).cause,
+        enrichedReadings: [...this.enriched], clockSummary: {...this.summary}, observationMayPerturbTiming: true});
       throw error;
     }
   }
@@ -139,6 +177,7 @@ try {
     await nativeTrace.finish();
     receipt.schedulingProbe.page = await stopPageSchedulingProbe(page, receipt.schedulingProbe.page);
     receipt.schedulingProbe.node = await nodeProbe.stop();
+    receipt.clockObservations = await page.evaluate(() => window.exportClockObservations ?? []).catch(() => null);
   }
   const download = page.waitForEvent("download"); await page.getByRole("link", {name:/Download MP4/}).click();
   const output=join(artifacts,"music-captions-mix.mp4"); await (await download).saveAs(output);
@@ -279,6 +318,7 @@ try {
         progress: [...document.querySelectorAll("progress")].map(node => ({value: node.value, max: node.max})),
         fixture: window.finishingFixture?.snapshot(),
         clockRefusals: window.exportClockRefusals ?? [],
+        clockObservations: window.exportClockObservations ?? [],
         audioEvents: window.finishingAudioEvents ?? [],
         audioContexts: (window.finishingAudioContexts ?? []).map(audio => ({
           state: audio.state, currentTime: audio.currentTime, sampleRate: audio.sampleRate,
