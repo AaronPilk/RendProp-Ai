@@ -106,6 +106,8 @@ export const PROPERTY_SITE_CSS = `
     .property-site #property-nearby .property-nearby-map-slot[hidden] { display:none; }
     .property-site #property-nearby .property-nearby-list { grid-area:list; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:24px; align-content:start; }
     .property-site #property-nearby .property-nearby-list[hidden] { display:none; }
+    /* No map (no published address): the list takes the whole row. */
+    .property-site #property-nearby .property-nearby-map-slot[hidden] + .property-nearby-list { grid-area:map-start / map-start / list-end / list-end; grid-template-columns:repeat(3,minmax(0,1fr)); }
     .property-site #property-nearby > .lp-wrap > .lp-fine { grid-area:fine; }
   }
   @media(prefers-reduced-motion:no-preference) { .property-site .property-nearby-map .nm-home-halo { transform-origin:50% 50%; transform-box:fill-box; animation:nearby-home-pulse 2.6s ease-in-out infinite; } }
@@ -280,9 +282,10 @@ export const NEARBY_PLACES_JS = `
         item.appendChild(link);item.appendChild(note);list.appendChild(item);
       });
       // The map is drawn on the server from these same places (inline SVG,
-      // no tiles, script or coordinates). Accept only that exact static shape.
+      // no tiles, script or coordinates). Accept only that exact static shape,
+      // and only where the page publishes the address (data-map).
       var drawing=result.map_html;
-      if (map && typeof drawing==='string' && drawing.length<=32768 && /^<figure class="property-nearby-map"><svg class="property-nearby-map-svg" [\\s\\S]*<\\/figure>$/.test(drawing) && !/<script|<foreignobject|<iframe|<object|<embed|<image|<use|<a\\b|<style|javascript:|\\son[a-z]+=|href=|xlink:|<!--/i.test(drawing)){
+      if (map && panel.getAttribute('data-map')!=null && typeof drawing==='string' && drawing.length<=32768 && /^<figure class="property-nearby-map"><svg class="property-nearby-map-svg" [\\s\\S]*<\\/figure>$/.test(drawing) && !/<script|<foreignobject|<iframe|<object|<embed|<image|<use|<a\\b|<style|javascript:|\\son[a-z]+=|href=|xlink:|<!--/i.test(drawing)){
         map.innerHTML=drawing; map.hidden=false;
       }
       list.hidden=false;status.textContent='Restaurants, cafés and shops listed in OpenStreetMap. Confirm current details before visiting.';

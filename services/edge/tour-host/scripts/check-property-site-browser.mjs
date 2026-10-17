@@ -28,7 +28,7 @@ const check = (condition, label) => { assert.ok(condition, label); checks.push(l
 const svg = (label, color, portrait = false) => `<svg xmlns="http://www.w3.org/2000/svg" width="${portrait ? 900 : 1600}" height="${portrait ? 1600 : 1200}"><rect width="100%" height="100%" fill="${color}"/><text x="80" y="600" font-size="96" fill="white">SYNTHETIC ${label}</text></svg>`;
 const PHOTOS = [["Front exterior", "#264653"], ["Living room", "#2a9d8f"], ["Kitchen", "#8a5a44"], ["Primary bedroom", "#6d597a"], ["Terrace", "#355070"], ["Broken file", "#000000"]];
 const photoPath = (i) => i === 5 ? "/photos/missing-5.svg" : `/photos/photo-${i}.svg`;
-let theme = "basic", useThumbs = false, thumbFailure = false, presentation = "video", longAddress = false, roomLabels = false;
+let theme = "basic", useThumbs = false, thumbFailure = false, presentation = "video", longAddress = false, roomLabels = false, noAddress = false;
 // Nine synthetic places around the coarsened fixture origin; the map is
 // drawn by the real server function and served the way the Worker serves it.
 const mapOrigin = { lat: 27.9, lng: -82.5 }, degree = 6_371_008.8 * Math.PI / 180;
@@ -43,6 +43,7 @@ function fixture() {
   t.slug = "synthetic-site"; t.website_theme = theme;
   t.listing = { address: "123 Synthetic Lane, Example, FL 33000", tagline: null, details: { story: "Synthetic description.", show_app_cta: false, show_partners: false }, beds: 3, baths: 2, sqft: 1800, price_cents: 50000000, price: null, lat: 27.9, lng: -82.5 };
   if (longAddress) { t.listing.address = "12345 Synthetic Architectural Promenade, Residence Twelve, Example, FL 33000"; t.listing.price_cents = null; }
+  if (noAddress) t.listing.address = null;
   t.cover_url = photoPath(0); t.poster = "/posters/poster.svg";
   t.gallery = PHOTOS.map(([label], i) => ({ url: photoPath(i), label: roomLabels ? ["Kitchen", "Living room", "Kitchen", "Primary bedroom", "Terrace", "Kitchen"][i] : label, ...(useThumbs ? { thumb_url: photoPath(i).replace("/photos/", "/thumbs/") } : {}) }));
   t.listing_video = { url: "/media/master.mp4", poster_url: "/posters/poster.svg", width: 1920, height: 1080, duration_s: 30, disclosure: "Synthetic photo-based video.", branding_policy: "unbranded" };
@@ -63,6 +64,7 @@ const server = createServer((req, res) => {
   if (photo) { res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-store" }); res.end(svg(PHOTOS[Number(photo[1])][0], PHOTOS[Number(photo[1])][1], Number(photo[1]) === 1)); return; }
   if (url.pathname === "/f/synthetic-site/nearby") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ...nearbyResult, map_html: nearbyMapHtml, license_url: "https://www.openstreetmap.org/copyright" })); return; }
   if (url.pathname === "/property/synthetic-site") {
+    noAddress = url.searchParams.has("noaddress");
     let html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin, page: propertyPage(url.searchParams.get("page")), publicBase: "/property", previewTheme:url.searchParams.get("preview_theme"), nearby: url.searchParams.get("cached") === "downtown" ? downtownResult : url.searchParams.has("cached") ? nearbyResult : null });
     if (arg("--fault") === "omit-preview-offset") {
       assert.equal(html.split("Math.max(navHeight,previewHeight)").length - 1, 1, "one exact preview-offset expression is omitted");
@@ -492,6 +494,26 @@ try {
     check(dense.collisions.length === 0 && dense.offPaper.length === 0 && dense.minFont >= 10, tag + ": names, ring distances and the north mark never collide or leave the paper " + JSON.stringify(dense.collisions.concat(dense.offPaper)));
     const clip = await page.evaluate(() => { const r = document.getElementById("property-nearby").getBoundingClientRect(); return { x: 0, y: Math.floor(r.top + scrollY), width: innerWidth, height: Math.ceil(r.height) }; });
     await page.screenshot({ path: join(evidence, `nearby-map-downtown-${theme}-${width}.png`), fullPage: true, clip });
+    await context.close();
+  }
+
+  // No published address: the page withholds the location, so neither path
+  // draws the map; the list alone takes the whole row and nothing leaves the
+  // loopback origin.
+  for (const width of [390, 1440]) for (theme of ["basic", "signature-estate", "coastal-luxe"]) for (const scripted of [true, false]) {
+    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 1000 }, javaScriptEnabled: scripted });
+    const external = [];
+    await context.route("**/*", route => { const u = new URL(route.request().url()); if (u.origin === origin || u.protocol === "data:") return route.continue(); external.push(u.href); return route.abort(); });
+    const page = await context.newPage(); page.on("pageerror", e => errors.push("unaddressed " + theme + ": " + e));
+    await page.goto(origin + "/property/synthetic-site?page=location&noaddress=1" + (scripted ? "" : "&cached=1"), { waitUntil: "networkidle" });
+    if (scripted) await page.waitForFunction(() => document.querySelectorAll("#property-nearby-list li").length === 9);
+    const tag = `unaddressed/${theme}/${width}/${scripted ? "scripted" : "no-script-cached"}`;
+    const shown = await page.evaluate(() => { const list = document.getElementById("property-nearby-list"), wrap = list.parentElement.getBoundingClientRect(), pad = getComputedStyle(list.parentElement), box = list.getBoundingClientRect();
+      return { notice: document.body.innerText.includes("An address has not been published for this listing."), maps: document.querySelectorAll("#property-nearby svg, a[href*='google.com/maps']").length, slotHidden: document.getElementById("property-nearby-map").hidden, items: list.querySelectorAll("li").length, visible: box.height > 0, left: box.left - (wrap.left + parseFloat(pad.paddingLeft)), right: wrap.right - parseFloat(pad.paddingRight) - box.right, overflow: document.documentElement.scrollWidth > innerWidth }; });
+    measurements.push({ tag, type: "unaddressed", ...shown });
+    check(shown.notice && shown.maps === 0 && shown.slotHidden && shown.items === 9 && shown.visible && !shown.overflow, tag + ": no published address means no map, only the list");
+    check(Math.abs(shown.left) <= 1 && Math.abs(shown.right) <= 1, tag + ": the list takes the whole row, with no empty map column");
+    check(external.length === 0, tag + ": no request leaves the loopback origin");
     await context.close();
   }
   presentation = "video";

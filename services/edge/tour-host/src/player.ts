@@ -2720,10 +2720,16 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
     // (inline SVG, no tiles or coordinates) and the list need no script and
     // make no further request. Otherwise the page keeps its scripted lookup,
     // which receives the same server-drawn map with the places.
+    // The map shows where the property sits among named places, so it appears
+    // only when this page already publishes the address (and, with it, the
+    // coarse coordinates in its map link). Without a published address the
+    // section keeps the list alone, as before: no visual pointer to a
+    // location the listing withholds. `data-map` carries this to the script.
+    const mapAllowed = !!first(l.address);
     const origin = { lat: typeof l.lat === "number" ? Math.round(l.lat * 1000) / 1000 : null, lng: typeof l.lng === "number" ? Math.round(l.lng * 1000) / 1000 : null };
-    const staticMap = nearbyPlaces?.status === "available" && nearbyPlaces.places.length ? renderNearbyMap(nearbyPlaces, origin) : "";
-    const staticPlaces = staticMap && nearbyPlaces ? nearbyPlaces.places : null;
-    out.push(`<section class="lp-sec" id="property-nearby"${staticPlaces ? "" : ` data-endpoint="/f/${encodeURIComponent(tour.slug)}/nearby"`}><div class="lp-wrap">
+    const staticPlaces = nearbyPlaces?.status === "available" && nearbyPlaces.places.length ? nearbyPlaces.places : null;
+    const staticMap = staticPlaces && mapAllowed && nearbyPlaces ? renderNearbyMap(nearbyPlaces, origin) : "";
+    out.push(`<section class="lp-sec" id="property-nearby"${staticPlaces ? "" : ` data-endpoint="/f/${encodeURIComponent(tour.slug)}/nearby"`}${mapAllowed ? " data-map" : ""}><div class="lp-wrap">
       <div class="lp-eyebrow">Around the address</div><h2 class="lp-h">Explore nearby</h2>
       <p id="property-nearby-status" class="lp-tag" role="status">${staticPlaces ? "Restaurants, cafés and shops listed in OpenStreetMap. Confirm current details before visiting." : "Loading nearby places…"}</p>
       <div class="property-nearby-map-slot" id="property-nearby-map"${staticMap ? ">" + staticMap : " hidden>"}</div>

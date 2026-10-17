@@ -223,6 +223,16 @@ check(staticLocation.includes(mapHtml.slice(0, 120)) && (staticLocation.match(/<
 check((staticLocation.match(/<li><a href="https:\/\/www\.openstreetmap\.org\/node\/\d+" target="_blank" rel="noopener nofollow">/g) || []).length === 9 && staticLocation.includes("Harbor &lt;Grill&gt; &amp; &quot;Oyster&quot; House</a><span>Restaurant · approximately 0.3 mi away</span>") && !staticLocation.includes("Loading nearby places"), "Static list matches the scripted list shape and escapes names");
 check(staticLocation.includes("© OpenStreetMap contributors") && staticLocation.includes("maps/search/?api=1&amp;query=27.771234%2C-82.641234"), "Static map keeps the OSM attribution and the external map link");
 for (const page of ["home", "gallery", "contact"]) check(!renderTourPage(fixture(), "", "", "", { page, nearby: nineResult }).includes('<g class="nm-place">'), `${page} never renders the neighbourhood map`);
+// No published address: the page withholds the location (no address, no map
+// link), so the map is withheld too. The cached list still renders, and the
+// scripted path is told not to draw (no data-map).
+check(staticLocation.includes('id="property-nearby" data-map>'), "A page that publishes its address marks the section as map-enabled");
+const unaddressed = { ...fixture(), listing: { ...fixture().listing, address: null } };
+const nearbySection = html => html.slice(html.indexOf('<section class="lp-sec" id="property-nearby"'), html.indexOf("</section>", html.indexOf('id="property-nearby"')));
+const unaddressedStatic = renderTourPage(unaddressed, "", "", "", { page: "location", nearby: nineResult }), unaddressedStaticSection = nearbySection(unaddressedStatic);
+check(unaddressedStatic.includes("An address has not been published for this listing.") && !unaddressedStatic.includes("maps/search/") && !unaddressedStatic.includes('<g class="nm-place">') && unaddressedStaticSection.startsWith('<section class="lp-sec" id="property-nearby"><div') && unaddressedStaticSection.includes('id="property-nearby-map" hidden>') && (unaddressedStaticSection.match(/<li><a href="https:\/\/www\.openstreetmap\.org\/node\/\d+"/g) || []).length === 9, "Without a published address the cached list renders but no map is drawn");
+const unaddressedScripted = nearbySection(renderTourPage(unaddressed, "", "", "", { page: "location" }));
+check(unaddressedScripted.startsWith('<section class="lp-sec" id="property-nearby" data-endpoint="/f/synthetic-polish/nearby"><div'), "Without a published address the scripted section is not map-enabled");
 for (const theme of ["basic", "signature-estate", "coastal-luxe"]) {
   const themed = renderTourPage({ ...fixture(), website_theme: theme }, "", "", "", { page: "location", nearby: nineResult });
   check((themed.match(/<g class="nm-place">/g) || []).length === 9 && !/style="/.test(themed.slice(themed.indexOf("property-nearby-map"), themed.indexOf("</figure>"))), `${theme}: map is themed through CSS, not inline styles`);
@@ -231,8 +241,8 @@ const nearbyScript = (await load("property-site")).NEARBY_PLACES_JS;
 new vm.Script(nearbyScript); assertions++;
 check(nearbyScript.includes("if (!panel || !panel.getAttribute('data-endpoint')) return;"), "Scripted lookup stands down when the server already rendered the places");
 // The scripted path accepts only the server's exact static figure.
-function runNearbyScript(payload) {
-  const elements = { "property-nearby": { attrs: { "data-endpoint": "/f/x/nearby" }, isConnected: true, getAttribute(n) { return this.attrs[n]; } }, "property-nearby-status": { textContent: "" }, "property-nearby-list": { hidden: true, children: [], appendChild(c) { this.children.push(c); } }, "property-nearby-map": { hidden: true, innerHTML: "" } };
+function runNearbyScript(payload, attrs = { "data-endpoint": "/f/x/nearby", "data-map": "" }) {
+  const elements = { "property-nearby": { attrs, isConnected: true, getAttribute(n) { return n in this.attrs ? this.attrs[n] : null; } }, "property-nearby-status": { textContent: "" }, "property-nearby-list": { hidden: true, children: [], appendChild(c) { this.children.push(c); } }, "property-nearby-map": { hidden: true, innerHTML: "" } };
   const el = () => ({ children: [], appendChild(c) { this.children.push(c); } });
   const context = { document: { getElementById: id => elements[id], createElement: el }, AbortController: class { signal = { aborted: false }; abort() {} }, setTimeout: () => 0, clearTimeout() {}, addEventListener() {}, URL, Number, Array, Error, Math,
     fetch: async () => ({ ok: true, json: async () => payload }) };
@@ -241,6 +251,8 @@ function runNearbyScript(payload) {
 }
 const accepted = await runNearbyScript({ status: "available", places: ninePlaces, map_html: mapHtml });
 check(accepted["property-nearby-map"].hidden === false && accepted["property-nearby-map"].innerHTML === mapHtml && accepted["property-nearby-list"].children.length === 9, "Scripted path inserts the server-drawn map with the list");
+const withheld = await runNearbyScript({ status: "available", places: ninePlaces, map_html: mapHtml }, { "data-endpoint": "/f/x/nearby" });
+check(withheld["property-nearby-map"].hidden === true && withheld["property-nearby-map"].innerHTML === "" && withheld["property-nearby-list"].children.length === 9, "Scripted path draws no map on a page without a published address, and keeps the list");
 for (const [why, bad] of [["script", mapHtml.replace("</svg>", "<script>1</script></svg>")], ["link", mapHtml.replace("</svg>", "<a href=\"https://evil.invalid\">x</a></svg>")], ["image", mapHtml.replace("</svg>", "<image href=\"https://evil.invalid/t.png\"/></svg>")], ["handler", mapHtml.replace("<circle class=\"nm-ring\"", "<circle onload=\"1\" class=\"nm-ring\"")], ["foreign", mapHtml.replace("</svg>", "<foreignObject></foreignObject></svg>")], ["prefix", "<div>" + mapHtml + "</div>"], ["type", 42], ["oversize", mapHtml.replace("</figure>", " ".repeat(40000) + "</figure>")]]) {
   const rejected = await runNearbyScript({ status: "available", places: ninePlaces, map_html: bad });
   check(rejected["property-nearby-map"].hidden === true && rejected["property-nearby-map"].innerHTML === "" && rejected["property-nearby-list"].children.length === 9, `Scripted path refuses a tampered drawing (${why}) and keeps the list`);
