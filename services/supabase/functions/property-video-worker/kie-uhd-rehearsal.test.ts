@@ -16,6 +16,7 @@
 // never as passed.
 import{assert,assertEquals,assertMatch}from"https://deno.land/std@0.224.0/assert/mod.ts";
 import*as H from"./kie-rehearsal-harness.ts";
+import{TEMPORAL_LIMITS_SHA256,TEMPORAL_QC_PROFILE,temporalTask}from"./temporal.ts";
 // The harness module is shared by every rehearsal file in one run; each file sets and restores the fixture key itself.
 Deno.env.set("KIE_API_KEY",H.FIXTURE_KIE_KEY);
 const{KIE_PROPERTY_PROFILE,KIE_PROPERTY_IDENTITY,KIE_PROPERTY_MODEL,PROPERTY_VIDEO_STEADY_PROFILE,common,r2,kieAdapter,buildSteadyPropertyReelPrompt,probeRetainedProviderMP4Video,kieProperty4KFacts,kiePropertyPromptPinned}=H;
@@ -86,8 +87,16 @@ for(const spec of[H.UHD_LANDSCAPE,H.UHD_PORTRAIT]){
   const source={...ctx.source,clip:{bucket:"renders",storage_key:clipRpc.storage_key,bytes:clipRpc.bytes,etag:clipRpc.etag,content_type:"video/mp4",sha256:clipRpc.sha256},generation_provenance_id:"owned-generation",quality_retries:0};
   const drifts:unknown[]=[];
   const frame={image_b64:btoa("synthetic-review-frame"),mime:"image/jpeg"};
-  const q=await H.withTransport(w,()=>H.runWorker({status:async()=>{throw Error("no status read during quality");},drift:async(body:unknown)=>{drifts.push(body);return{status:200,value:{drift:{action:"accept",publishable:true}}};},row:()=>null,paid:null},async(st)=>{await worker.quality({...ctx,source},{clip_sha256:clipSha,frames:[frame,frame,frame]});return st;}));
-  assertEquals(q.s.rpcs.map(r=>r.name),["property_video_job_qc"],"accepted verdict records QC for this lease/attempt");
+  // The closed report the renderer returns for a steady shot (motion_qc.py temporal-motion-v2), passing.
+  const temporal={profile:TEMPORAL_QC_PROFILE,limits:{profile:TEMPORAL_QC_PROFILE,sha256:TEMPORAL_LIMITS_SHA256},
+   metrics:{profile:TEMPORAL_QC_PROFILE,fps:24,steps:120,frame:[spec.width,spec.height],invalid_ratio:0,bob_pp_px:.3,sway_pp_px:.2,cadence_acf:0,roll_wobble_pp_deg:.01,zoom_pump_pp_pct:.02,roll_drift_deg:.1,duplicate_ratio:0},
+   verdict:{profile:TEMPORAL_QC_PROFILE,pass:true,reasons:[]}};
+  const q=await H.withTransport(w,()=>H.runWorker({status:async()=>{throw Error("no status read during quality");},drift:async(body:unknown)=>{drifts.push(body);return{status:200,value:{drift:{action:"accept",publishable:true}}};},row:()=>null,paid:null},async(st)=>{await worker.quality({...ctx,source},{clip_sha256:clipSha,frames:[frame,frame,frame],temporal});return st;}));
+  // A Kie shot is a steady profile: the extract task asks the CPU for the temporal motion report, and the
+  // passing report is recorded on this exact attempt and clip before the paid drift judge decides.
+  assertEquals(temporalTask(KIE_PROPERTY_PROFILE,aspect),{temporal_qc:{profile:TEMPORAL_QC_PROFILE,aspect}});
+  assertEquals(q.s.rpcs.map(r=>r.name),["property_video_job_temporal","property_video_job_qc"],"accepted verdict records the temporal report, then QC for this lease/attempt");
+  assertEquals(q.s.rpcs[0].args.p_clip_sha256,clipSha);
   assertEquals(q.s.fail,[]);assertEquals(q.s.methods,["POST drift"]);
   const drift=drifts[0] as Record<string,unknown>;assertEquals([drift.request_id,drift.kind,drift.seconds,drift.motion,drift.listing_id,drift.provenance_id,drift.attempt],[H.TASK_ID,"reel",5,"push_in",H.LISTING,"owned-generation",0]);
   assertEquals((drift.frames as unknown[]).length,3);

@@ -213,6 +213,7 @@ import{presignGet as realPresignGet}from ${href("../_shared/providers/common.ts"
 import{probeRetainedProviderMP4Video as realProbe}from ${href("../ai-video/mp4video.ts")};
 import{bytesFrom as realBytesFrom,base64,bucket}from ${href("../property-video-jobs/runtime.ts")};
 import{driftLineageKey}from ${href("../_shared/drift.ts")};
+import{temporalReport,temporalRequired,temporalRoute,temporalTask}from ${href("./temporal.ts")};
 const PROPERTY_VIDEO_STEADY_PROFILE=${JSON.stringify(PROPERTY_VIDEO_STEADY_PROFILE)};
 const seconds=(n)=>new Date(Date.now()+n*1000).toISOString();
 const f=()=>globalThis.__kieRehearsalWorker();
@@ -224,7 +225,9 @@ const bytesFrom=async(...a)=>{f().events.push('bytes');return await realBytesFro
 const callAI=async(_ctx,method,path,body)=>{f().methods.push(method+' '+path.split('?')[0]);if(method==='GET'){f().events.push('status');return await f().status(path);}if(path==='drift'&&f().drift){f().events.push('drift');return await f().drift(body);}throw Error('No supplier POST permitted: '+method+' '+path);};
 const adminClient=()=>({from:table=>{const q={select:()=>q,eq:()=>q,maybeSingle:async()=>{f().events.push(table);if(table==='private_ai_outputs')return{error:null,data:f().row()};if(table==='app_video_cost_reservations')return{error:null,data:f().paid};return{error:null,data:(f().tables??{})[table]??null};}};return q;}});
 const scope=async(..._args)=>{f().events.push('scope');};
-const rpc=async(name,args)=>{f().rpcs.push({name,args});if(name==='property_video_job_provenance')return{id:'owned-generation'};return true;};
+const rpc=async(name,args)=>{f().rpcs.push({name,args});if(name==='property_video_job_provenance')return{id:'owned-generation'};
+ // Mirrors SQL property_video_job_temporal: the recorded row is the report plus attempt, clip and time.
+ if(name==='property_video_job_temporal')return{...args.p_report,attempt_id:args.p_attempt,clip_sha256:args.p_clip_sha256,recorded_at:new Date(0).toISOString()};return true;};
 const fail=async(_ctx,code,ambiguous=false)=>{f().fail.push({code,ambiguous});};
 `;
 export type Worker={poll:(ctx:unknown)=>Promise<void>;quality:(ctx:unknown,raw:unknown)=>Promise<void>;action:(ctx:unknown)=>Promise<Record<string,unknown>>};
