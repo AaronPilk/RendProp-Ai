@@ -87,7 +87,9 @@ def cleanup_owned():
  shutil.rmtree(DATA);shutil.rmtree(SOCK)
  r['ownedClusterRemoved']=not DATA.exists() and not SOCK.exists()
 
-MIGS=sorted((SQL/'migrations').glob('*.sql'));assert len(MIGS)==181
+# The whole current catalog is applied; the floor refuses a branch that lost
+# migrations, while later migrations (added after this harness) still apply.
+MIGS=sorted((SQL/'migrations').glob('*.sql'));assert len(MIGS)>=181,len(MIGS)
 OWN=SQL/'migrations/20261016110000_property_video_kie_scope_consent_drain.sql';assert OWN in MIGS
 BASE=SQL/'tests/property_video_jobs.sql';KIE=SQL/'tests/property_video_kie_profile.sql';FIX=SQL/'tests/property_video_kie_scope_consent.sql';IDENT=SQL/'functions/_shared/property-video-kie-identity.json'
 SOURCES=[*MIGS,SQL/'tests/ci-bootstrap.sql',BASE,KIE,FIX,IDENT,SQL/'tests/property_video_quality_profile.sql',SQL/'tests/property_video_steady_v2.sql',Path(__file__).resolve(),SQL/'functions/ai-video/index.ts',SQL/'functions/property-video-worker/engine.ts']
@@ -95,7 +97,7 @@ CLOSED_TESTS=[SQL/'functions/ai-video/property-video-kie-dispatch.test.ts',SQL/'
 SOURCES.extend(sorted(f for f in(SQL/'functions').rglob('*')if f.is_file()and f.suffix in['.ts','.json']and'node_modules'not in f.parts))
 hashes=lambda:{str(f.relative_to(ROOT)):sha(f)for f in SOURCES}
 PORT='55783';PSQL=[];t0=time.monotonic()
-r={'passed':False,'scope':'owned local PG181 consent/grant/dispatch authority; closed actual handler tests, no provider or owner approval','networkCalls':0,'providerCalls':0,'sourceHashes':hashes(),'commands':[],'regressions':{},'races':[],'productFindings':[],'checks':[]}
+r={'passed':False,'scope':'owned local PG consent/grant/dispatch authority; closed actual handler tests, no provider or owner approval','networkCalls':0,'providerCalls':0,'sourceHashes':hashes(),'commands':[],'regressions':{},'races':[],'productFindings':[],'checks':[]}
 def run(name,cmd,body=None,expect=None,require=True):
  try:c=execute(cmd,body,timeout=60)
  except BaseException as error:
@@ -144,10 +146,10 @@ try:
  assert sql('owned-cluster-identity',"select current_setting('data_directory'),current_setting('listen_addresses')").stdout.strip()==str(DATA)+'|'
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
  for m in MIGS:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
- r['migrationCount']=181;baseline=catalog('all-181-final-catalog')
+ r['migrationCount']=len(MIGS);baseline=catalog('all-final-catalog')
  one('review-helper-metadata',"select jsonb_build_object('helpers',(select jsonb_agg(jsonb_build_object('sig',p.oid::regprocedure::text,'body_md5',md5(p.prosrc),'owner',pg_get_userbyid(p.proowner),'security_definer',p.prosecdef,'volatility',p.provolatile,'config',p.proconfig,'acl',p.proacl::text,'result',pg_get_function_result(p.oid),'arguments',p.proargnames,'strict',p.proisstrict,'parallel',p.proparallel))from pg_proc p where p.pronamespace='public'::regnamespace and p.proname in('property_video_kie_test_grant_guard','property_video_kie_test_grant_use_guard','property_video_processor_consent_current','property_video_processor_consent_record','property_video_kie_test_grant_scope','property_video_quality_profile_for','property_video_job_admit_v2','property_video_kie_dispatch_authority')));")
  functional_output=sql('actual-scope-consent-fixture',prefix+ftext).stdout;functional_rows=[json.loads(l)for l in functional_output.splitlines()if l.startswith('{')and'assertions'in l];assert len(functional_rows)==1;functional=functional_rows[0];check('actual consent scope authority fixture',functional['passed'],functional);r['functional']=functional
- check('functional rollback preserves all181 finalcatalog',catalog('after-functional-catalog')==baseline)
+ check('functional rollback preserves all finalcatalog',catalog('after-functional-catalog')==baseline)
  # Historical FAL requests retain their original v1 API and saved identity.
  for label,file,prep in [('v1',SQL/'tests/property_video_quality_profile.sql','begin;'+seed),('steady',SQL/'tests/property_video_steady_v2.sql','begin;'+seed+basehelpers),('jobs',BASE,'')]:
   out=sql('final-schema-regression-'+label,prep+file.read_text()).stdout;lines=[json.loads(l)for l in out.splitlines()if l.startswith('{')and'assertions'in l];assert len(lines)==1 and lines[0]['passed'];r['regressions'][label]=lines[0]
