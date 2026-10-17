@@ -40,6 +40,8 @@ import {
 import "./creative.css";
 import BatchPhotoStudio from "./BatchPhotoStudio";
 import PhotoExportPanel from "./PhotoExportPanel";
+import PhotoFeedbackControl from "./PhotoFeedbackControl";
+import { createPhotoFeedbackQueue } from "./photo-feedback-queue";
 import CoordinatorPhotoExportPanel from "./CoordinatorPhotoExportPanel";
 import {retainedPhotoRequest,resumePhotoRequest} from "./creative-request";
 import {savedPhotoRequests,matchingPhotoRequest,finishPhotoRequest,type SavedPhotoRequest} from "./photo-request-journal";
@@ -273,6 +275,18 @@ function ListingCreative(
   const member = workspace.memberships.find((m) => m.orgId === (workspace.libraryOrgId ?? orgId));
   const role = member?.role, canCreate = canEditListing(workspace, listing);
   const signal = abort.current.signal;
+  // Optional output feedback keeps its own durable queue, flushed on open, on
+  // reconnect and when the tab is shown. It never runs through run() and never
+  // changes when or whether a review action happens. (Studio already requires
+  // localStorage for its session, so the queue can rely on it.)
+  const [feedback] = useState(() => createPhotoFeedbackQueue(services, { actor: workspace.user.id, library: workspace.libraryOrgId ?? orgId }, localStorage));
+  useEffect(() => { feedback.start(); return feedback.dispose; }, [feedback]);
+  const reviewedOutput = photoResult?.provenanceId;
+  useEffect(() => {
+    if (!reviewedOutput) return;
+    if (photoResult?.edit === "custom" && photoResult.reviewed) feedback.signal(reviewedOutput, "accuracy_ack");
+    if (photoResult?.saved) feedback.signal(reviewedOutput, "manual_selection");
+  }, [feedback, reviewedOutput, photoResult?.reviewed, photoResult?.saved]);
   const api = useCallback(
     (
       path: string,
@@ -1446,8 +1460,10 @@ function ListingCreative(
                   setPhotoTab("original");
                   await chooseSource(next);
                 })}>Edit original again</button>
-                <PhotoExportPanel photos={[photoResult]} assertScope={() => assertPhotoScope(false)} disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed} />
+                <PhotoExportPanel photos={[photoResult]} assertScope={() => assertPhotoScope(false)} disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed}
+                  onDownloaded={reviewedOutput ? () => feedback.signal(reviewedOutput, "export") : undefined} />
               </div>
+              {reviewedOutput && <PhotoFeedbackControl key={reviewedOutput} queue={feedback} provenanceId={reviewedOutput} file={photoResult.file} />}
             </section>
           )}
         </div>
