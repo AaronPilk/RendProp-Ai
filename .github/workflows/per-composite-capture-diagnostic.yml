@@ -1,0 +1,246 @@
+# PREPARED ONLY. Root may place exactly this test/workflow closure on the named
+# diagnostic branch. A push there creates one diagnostic run, never feature CI.
+name: Per-composite canvas capture request diagnostic
+on:
+  push:
+    branches: [diagnostic/per-composite-capture-request-20261017]
+permissions:
+  contents: read
+concurrency:
+  group: per-composite-capture-request-20261017
+  cancel-in-progress: false
+jobs:
+  candidate-and-exact-omission:
+    if: github.ref == 'refs/heads/diagnostic/per-composite-capture-request-20261017'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/studio
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # existing v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # existing v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+      - name: Locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Same locked Chrome153 and synthetic-media tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --no-install playwright install chromium --no-shell
+          browser_path="$(node --input-type=module -e "import { chromium } from '@playwright/test'; console.log(chromium.executablePath());")"
+          test -x "$browser_path"
+          "$browser_path" --version
+          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$browser_path" >> "$GITHUB_ENV"
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+          ffmpeg -version
+          ffprobe -version
+      - name: Pure native trace parser and source controls, no browser
+        run: |
+          node --check tests/export-resume-browser.mjs
+          node tests/export-late-frames-trace-projection.mjs > "$RUNNER_TEMP/capture-request-parser.json"
+      - name: Candidate then exact omission, fresh browsers, strict media/native oracles
+        timeout-minutes: 6
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          python3 - <<'PYGUARD'
+          import hashlib,json,math,os,pathlib,platform,signal,subprocess,time
+          repo=pathlib.Path.cwd().parents[1]
+          temp=pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
+          out=temp/('capture-request-pair-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
+          out.mkdir(mode=0o700,exist_ok=False)
+          result={'status':'initializing','diagnosticOnly':True,'featureCIAccepted':False,
+           'runID':os.environ['GITHUB_RUN_ID'],'attempt':os.environ['GITHUB_RUN_ATTEMPT'],
+           'head':os.environ['GITHUB_SHA'],'python':platform.python_version(),'testProcessStarts':0,
+           'limits':{'mediaBudgetSeconds':300,'ownedCleanupGraceSeconds':10,'repoReserveBytes':3*1024**3,'tempReserveBytes':8*1024**3,'combinedLogBytes':12*1024**2,'receiptBytes':12*1024**2},
+           'caseOrder':['candidate','omit-per-paint-request'],'retries':0,'cases':[]}
+          pins={'apps/studio/package.json': 'ed16965e68cd94221b28e705ea0e9abc3d1b90a338d1a6f27e3b900143b8d119', 'apps/studio/package-lock.json': 'f22adcbbf1c0686e46ab41f16fa23114946a2376d6d08b8f3ba330363a8a485e', 'apps/studio/tests/export-baseline-refusal.mjs': '8d889100f54ba8fa7fd8c0318de27846250dc90d921fc533d582bb1a2724b44e', 'apps/studio/src/editor/export.ts': 'a3e66ca223d0f04f2a3126e91215770c7f5aaf5e5a2008b7b748cf03f00a1f4d', 'apps/studio/src/editor/recording-clock.ts': '7d804d9d46135ee740b70affbefdc88fe3dd77e2b4fcd799e2165fe0b4e0a5f8', 'apps/studio/src/editor/media.ts': '82353070aaa85733ad89583fc52dedef36a9296cd6e4f594910571e7597b939b', 'apps/studio/src/editor/model.ts': '9696653581899e097d0b0e8ce395c9c80d5e6f264cd8f17411a6ff5545dfa8dd', 'apps/studio/src/editor/music.ts': 'c3ec1ecc81a7b7337bb1f56ab51713312fa80e6e9c848f16a3b3318fbfe7c203', 'apps/studio/src/editor/finishing.ts': '6e57bfe7397decf591732f5411c244f3c6ffcf4745820a2efba5f36d5548a789', 'apps/studio/src/editor/overlay-renderer.ts': 'a926d2621fc31e2753859c7c7fd66be019a93262cb34c8973126b11cf9ae8832', 'apps/studio/src/editor/overlays.ts': '0e2ffafa0d2812c836202621aef5a6f51309009c762d8cea635845fcc9fed0a6', 'apps/studio/tests/export-resume-browser.mjs': '7dbe870e5b08d2ed2fcbec5029cdc5751ed9c6c2df8ed99df40308ed607c028b', 'apps/studio/tests/export-late-frames-trace-projection.mjs': 'a48566ef4c78c824677a3a02cfc4285be4f0a1d7844b9a95a0701ee6209f905f'}
+          expected_source={p.removeprefix('apps/studio/'):v for p,v in pins.items() if p.startswith('apps/studio/') and p not in ['apps/studio/package.json','apps/studio/package-lock.json','apps/studio/src/editor/overlays.ts','apps/studio/tests/export-late-frames-trace-projection.mjs']}
+          # BEGIN pure exact receipt admission
+          
+          def finite(value):return type(value) in (int,float) and math.isfinite(value)
+          def admit_receipt(receipt,kind,code,expected_source):
+              assert kind in ['candidate','omit-per-paint-request']
+              assert receipt['sourceHashes']==expected_source,'Exact nine-key current source binding'
+              assert receipt['variants']==['late-frames'] and receipt['preparationFailures']==[],'One declared late-frames case only'
+              assert receipt['errors']==[] and receipt['externalRequests']==[],'No browser or external failure admitted'
+              assert receipt['diagnosticRuntime']['platform']=='darwin' and receipt['diagnosticRuntime']['browserVersion']=='153.0.8010.12','Exact hosted browser runtime'
+              pair=receipt['diagnosticPair']
+              assert pair['order']==['getters-on'] and pair['videoStages'] is True,'Exact native-video diagnostic mode'
+              assert len(receipt['attempts'])==1 and len(receipt['runs'])==1,'One real MP4 attempt/run required'
+              attempt=receipt['attempts'][0];run=receipt['runs'][0]
+              for entry in [attempt,run]:
+                  assert entry['variant']=='late-frames' and entry['narrated'] is True and entry['observerMode']=='getters-on','Exact narrated late-frame mode'
+              assert attempt['error'] is None and attempt.get('errorName') is None and attempt.get('errorCause') is None,'Safety refusal cannot masquerade as expected control'
+              assert attempt['downloadHidden'] is False and attempt['tracks']==['ended','ended'],'Real result with both tracks ended'
+              assert set(attempt['result'])=={'duration','bytes'} and attempt['result']['duration']==3 and type(attempt['result']['bytes']) is int and attempt['result']['bytes']>0,'Actual three-second product result'
+              native=attempt['nativeTrace']
+              assert native['status']=='captured-required-spans' and native['videoStageStatus']=='captured-required-video-stages' and native['issues']==[] and native['dataLossOccurred'] is False,'Complete source-backed native evidence'
+              assert native['sourceHashes']==expected_source and native['clockAlignment']['available'] is True,'Bound native source and clock bridge'
+              assert attempt['diagnosticPartial']['status']=='stop-flushed-native-bytes','Stop-flushed diagnostic evidence required'
+              obs=attempt['captureSupplyObservation']
+              assert obs['available'] is True,'Native opening supply unavailable'
+              bracket=obs['firstInputPageBracketMs'];pause=obs['firstPauseMs']
+              assert len(bracket)==2 and all(finite(x) for x in bracket+[pause]) and bracket[0]<=bracket[1],'Finite ordered native/page bracket'
+              groups=[g for g in native['videoStageGroups'] if g['name']=='VideoTrackRecorderImpl::OnVideoFrame']
+              bridge=native['clockAlignment'];trace=attempt['trace']
+              starts=[e for e in trace if e['event']=='start.call'];pauses=[e for e in trace if e['event']=='pause.call']
+              assert len(groups)==1 and len(starts)==1 and len(pauses)==3,'Exact recorder/native input identities'
+              delta=(groups[0]['firstStartUs']-bridge['traceMarkerUs'])/1000
+              assert bracket==[bridge['pageWallBeforeMs']+delta,bridge['pageWallAfterMs']+delta] and pause==pauses[0]['at'],'Native/page bracket and first pause recompute exactly'
+              assert type(obs['openingInputObserved']) is bool and obs['openingInputObserved']==(bracket[1]<pause),'No invented opening supply'
+              assert attempt['diagnosticPaintsCapped'] is False and attempt['diagnosticRequestsCapped'] is False,'No capped paint or request evidence'
+              paints=attempt['diagnosticPaints'];requests=attempt['diagnosticRequests']
+              assert 0<len(paints)<=256 and 0<len(requests)<=256,'Bounded observed paint/request lists'
+              assert all(request['available'] is True and request['trackLive'] is True for request in requests),'Real live explicit-request path required for this experiment'
+              initial=[q for q in requests if q['phase']=='recorder-start']
+              assert len(initial)==1 and len([q for q in requests if q['phase']=='resume'])==2,'Original start/resume request sites remain present'
+              assert obs['initialRequestAfterMs']==initial[0]['afterMs'] and obs['requestToFirstInputBracketMs']==[v-initial[0]['afterMs'] for v in bracket],'Request-to-input bracket recomputes exactly'
+              assert obs['completedOpeningPaintsBeforeFirstInput']==sum(p['index']==0 and p['afterMs']>starts[0]['at'] and p['afterMs']<bracket[0] for p in paints),'Completed opening paint count recomputes exactly'
+              expected_requests=3 if kind=='omit-per-paint-request' else 3+sum(paint['phase']=='segment-frame' for paint in paints)
+              assert len(requests)==expected_requests,'Actual per-paint request counts must match completed paints'
+              assert run['plannedSeconds']==3 and finite(run['duration']) and abs(run['duration']-3)<.4,'Unchanged real duration bounds'
+              streams=run['probe']['streams'];audio=[s for s in streams if s.get('codec_type')=='audio'];video=[s for s in streams if s.get('codec_type')=='video']
+              assert len(audio)==len(video)==1 and audio[0]['codec_name']=='aac' and video[0]['codec_name']=='h264','Real H264/AAC output required'
+              assert len(run['decodedFrames'])>0,'Decoded frame evidence required'
+              gap=abs(float(audio[0]['duration'])-float(video[0]['duration']))
+              assert finite(gap) and finite(run['avDurationGap']) and abs(gap-run['avDurationGap'])<1e-9,'Stream duration witness must recompute exactly'
+              failures=pair['strictFailures']
+              if kind=='candidate':
+                  assert code==0 and receipt['fault'] is None and receipt['status']=='passed' and failures==[],'Candidate must pass every unchanged media and native oracle'
+                  assert pair['status']=='declared-strict-positives-passed-cause-still-unknown' and obs['openingInputObserved'] is True,'Candidate must supply opening input before pause'
+                  assert gap<=2/30,'Candidate A/V duration remains within two frames'
+                  return {'status':'strict-candidate-passed','nativeOpeningInputObserved':True,'avDurationGap':gap}
+              assert code==1 and receipt['fault']=='omit-per-paint-request' and receipt['status']=='failed','Exact omission must really fail'
+              control=receipt['compiledControl']
+              assert control=={'name':'omit-per-paint-request','candidateSHA256':expected_source['src/editor/export.ts'],'restoredProductSHA256':'f9a6aa712267fb30932d609694e103e7f820701bdfcae60a92651b767d21b774','removedBlockSHA256':'4ace2cd5ef46c3af27efe4db4d59c2021187b856ef7f84d1b1d046582afec024'},'Omission must restore exact old exporter'
+              assert obs['openingInputObserved'] is False and bracket[0]>pause and type(obs['completedOpeningPaintsBeforeFirstInput']) is int and obs['completedOpeningPaintsBeforeFirstInput']>=2,'Definite late native input after completed opening paints required'
+              native_witness='Native canvas input did not reach the recorder before its first clip paused'
+              if failures==[]:
+                  assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: '+native_witness),'Exact native supply assertion required'
+                  assert pair['status']=='declared-strict-positives-passed-cause-still-unknown' and gap<=2/30,'Native gate follows every unchanged media oracle'
+                  return {'status':'exact-omission-detected','witness':'native-opening-input-after-first-pause','nativeOpeningInputObserved':False,'avDurationGap':gap,'laterChecks':'Only final native/cap admission follows the failed native assertion.'}
+              assert len(failures)==1 and failures[0]['observerMode']=='getters-on' and pair['status']=='strict-positive-failure','Exactly one actual strict media failure'
+              error=failures[0]['error'];prefix='AssertionError [ERR_ASSERTION]: '
+              assert type(error) is str and error.startswith(prefix),'Exact assertion failure, never generic exception'
+              if error.startswith(prefix+'Audio and picture stream durations must agree within two frames: '):
+                  actual_text=error.split('\n')[0].removeprefix(prefix+'Audio and picture stream durations must agree within two frames: ')
+                  assert actual_text.endswith('s') and abs(float(actual_text[:-1])-gap)<1e-9 and gap>2/30,'Numeric A/V failure must match actual streams'
+                  return {'status':'exact-omission-detected','witness':'unchanged-av-duration-with-late-native-input','nativeOpeningInputObserved':False,'avDurationGap':gap,'laterChecks':'Later pixel/PCM/native assertions were skipped and remain unproved for this omission.'}
+              assert error.startswith(prefix+'Dissolve must progress within the bounded window: '),'Only the exact progressing-dissolve media witness is admissible'
+              assert gap<=2/30,'Dissolve gate is after unchanged A/V gate'
+              dissolve=run['pixels']['dissolve'];samples=dissolve['samples']
+              assert [s['time'] for s in samples]==[.54,.58,.62,.66,.70,.74,.78,.82,.86],'Exact independent pixel sampling window'
+              assert all(len(s['rgb'])==3 and all(finite(x) and 0<=x<=255 for x in s['rgb']) for s in samples),'Finite decoded RGB evidence'
+              blends=[s for s in samples if 20<s['rgb'][0]<100 and 170<s['rgb'][2]<245]
+              progresses=any(s['rgb'][0]-t['rgb'][0]>=8 and t['rgb'][2]-s['rgb'][2]>=8 for i,s in enumerate(blends) for t in blends[i+1:])
+              assert not progresses,'Actual decoded dissolve must fail the unchanged progression criterion'
+              # This is the literal assertion's own serialized sample evidence, not a loose error prefix.
+              assert json.loads(error.split('\n')[0].removeprefix(prefix+'Dissolve must progress within the bounded window: '))==samples,'Pixel witness must match saved decoded samples'
+              return {'status':'exact-omission-detected','witness':'unchanged-dissolve-with-late-native-input','nativeOpeningInputObserved':False,'avDurationGap':gap,'laterChecks':'Later whip/PCM/native assertions were skipped and remain unproved for this omission.'}
+          # END pure exact receipt admission
+          
+          def actual():return {p:hashlib.sha256((repo/p).read_bytes()).hexdigest() for p in pins}
+          def checkpoint():
+              result['sourceSHA256']=actual()
+              assert result['sourceSHA256']==pins,'Exact candidate/test closure refused'
+          def reserves():
+              for name,path,floor in [('repository',repo,3*1024**3),('ownedTemp',temp,8*1024**3)]:
+                  v=os.statvfs(path);free=v.f_bavail*v.f_frsize
+                  result.setdefault('minimumFreeBytes',{})[name]=min(result.get('minimumFreeBytes',{}).get(name,free),free)
+                  assert free>=floor,'Hosted reserve refused'
+          def logs_size():return sum(path.stat().st_size for path in out.glob('*.log'))
+          def terminal_admission():
+              # BEGIN closed terminal admission
+              checkpoint();reserves()
+              assert time.monotonic()-started<300,'Whole diagnostic media deadline'
+              assert logs_size()<=12*1024**2,'Bounded combined diagnostic logs'
+              # END closed terminal admission
+          child=None;started=time.monotonic();exitcode=1
+          try:
+              assert os.environ['GITHUB_RUN_ATTEMPT']=='1','No retry of this diagnostic pair'
+              assert platform.system()=='Darwin','Same hosted Mac platform required'
+              checkpoint();reserves()
+              for kind in result['caseOrder']:
+                  terminal_admission()
+                  before=set(temp.glob('rendprop-export-resume-*'))
+                  command=['node','tests/export-resume-browser.mjs','--diagnostic-video-stages']+(['--fault=omit-per-paint-request'] if kind!='candidate' else [])
+                  env=dict(os.environ);env['TMPDIR']=os.environ['RUNNER_TEMP']
+                  with (out/(kind+'.log')).open('xb') as log:
+                      child=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT,env=env,start_new_session=True)
+                      result['testProcessStarts']+=1
+                      while child.poll() is None:
+                          reserves()
+                          assert time.monotonic()-started<300,'Whole diagnostic media deadline'
+                          assert logs_size()<=12*1024**2,'Bounded combined diagnostic logs'
+                          time.sleep(.25)
+                  terminal_admission()
+                  row={'kind':kind,'childExitCode':child.returncode,'command':command};result['cases'].append(row)
+                  fresh=set(temp.glob('rendprop-export-resume-*'))-before
+                  assert len(fresh)==1,'One fresh isolated browser receipt directory per process'
+                  directory=fresh.pop().resolve();path=directory/'receipt.json'
+                  assert path.is_file() and path.stat().st_size<=12*1024**2,'Bounded actual receipt required'
+                  raw=path.read_bytes();receipt=json.loads(raw)
+                  row['receipt']={'path':str(path),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()}
+                  # Require the one actual product MP4; no partial/fixture file may impersonate it.
+                  expected_output=directory/'late-frames-narrated-getters-on.mp4'
+                  try:
+                      assert len(receipt['runs'])==1 and pathlib.Path(receipt['runs'][0]['output']).resolve()==expected_output,'Exact actual output path binding'
+                      assert expected_output.is_file() and expected_output.stat().st_size<=8*1024**2 and expected_output.stat().st_size==receipt['attempts'][0]['result']['bytes'],'Actual bounded MP4 bytes match product result'
+                      row['output']={'path':str(expected_output),'bytes':expected_output.stat().st_size,'sha256':hashlib.sha256(expected_output.read_bytes()).hexdigest()}
+                      row['admission']=admit_receipt(receipt,kind,child.returncode,expected_source)
+                  except BaseException as error:
+                      row['admission']={'status':'not-admitted','errorClass':type(error).__name__,'error':str(error) if isinstance(error,AssertionError) else None}
+                  child=None
+              terminal_admission()
+              assert [row.get('admission',{}).get('status') for row in result['cases']]==['strict-candidate-passed','exact-omission-detected'],'Candidate/control evidence incomplete or not causal; no fix admission'
+              exitcode=0;result['status']='candidate-strict-pass-and-exact-omission-detected'
+          except BaseException as error:
+              exitcode=1;result['status']='actual-diagnostic-or-guard-refusal';result['errorClass']=type(error).__name__
+              result['error']=str(error) if isinstance(error,AssertionError) else None
+          finally:
+              # BEGIN closed owned cleanup
+              try:
+                  if child is not None and child.poll() is None:
+                      exitcode=1;result['ownedCleanupAttempted']=True
+                      try:os.killpg(child.pid,signal.SIGTERM)
+                      except ProcessLookupError:result['ownedExitRaceObserved']=True
+                      try:child.wait(timeout=5)
+                      except subprocess.TimeoutExpired:
+                          try:os.killpg(child.pid,signal.SIGKILL)
+                          except ProcessLookupError:result['ownedExitRaceObserved']=True
+                          child.wait(timeout=5)
+              except BaseException as cleanup_error:
+                  exitcode=1;result['status']='owned-cleanup-error';result['cleanupErrorClass']=type(cleanup_error).__name__
+              # END closed owned cleanup
+              # BEGIN closed receipt finalization
+              result['elapsedSeconds']=time.monotonic()-started
+              result['activeChildExitCode']=None if child is None else child.returncode
+              with (out/'GUARD-RESULT.json').open('x') as f:
+                  json.dump(result,f,indent=2);f.write('\n');f.flush();os.fsync(f.fileno())
+              # END closed receipt finalization
+          raise SystemExit(exitcode)
+          PYGUARD
+      - name: Retain only explicit synthetic diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # existing v4.6.2
+        with:
+          name: capture-request-candidate-omission-synthetic-${{ github.run_id }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/capture-request-parser.json
+            ${{ runner.temp }}/capture-request-pair-*/GUARD-RESULT.json
+            ${{ runner.temp }}/capture-request-pair-*/*.log
+            ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-resume-*/private-diagnostics/*.partial.mp4
+          # Native raw *.private.json stays local and is not uploaded. This is
+          # an artifact-path decision, not an access/privacy guarantee. Safe
+          # projected spans/time bridge live in receipt.json. No customer media.

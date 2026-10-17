@@ -538,6 +538,11 @@ export async function exportLocalVideo(options: {
         if (paintBucket !== lastPaintedBucket || elapsed >= duration) {
           drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore + elapsed, localTime: elapsed, previous: hasPrevious ? previous : undefined});
           await overlays.paint(canvas, elapsedBefore + elapsed);
+          // Request each completed 30 Hz composite alongside its paint,
+          // retaining timed capture when requestFrame is unavailable.
+          const track = stream!.getVideoTracks()[0] as
+            CanvasCaptureMediaStreamTrack | undefined;
+          track?.requestFrame?.();
           lastPaintedBucket = paintBucket;
         }
         if (now - lastProgressAt > 150) {
