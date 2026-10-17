@@ -28,6 +28,7 @@
 // also what ai-photo already speaks, so there is one Gemini dialect in the repo.
 
 import { HttpError } from "../_shared/http.ts";
+import { ProviderError, ProviderHttpError, classifyStatus, definitiveSubmitRejection } from "../_shared/providers/common.ts";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com";
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY")?.trim() || undefined;
@@ -52,11 +53,19 @@ function keyHeader(): Record<string, string> {
 type GeminiFailurePhase = "files:start" | "files:upload" | "files:get" | "generateContent";
 function upstream(what: GeminiFailurePhase, status: number, _body: string): HttpError {
   console.error(JSON.stringify({ event: "ai_chapters_provider_failure", phase: what, http_status: status }));
-  return new HttpError(
+  const error = new HttpError(
     502,
     `The video model could not be reached (${what} returned ${status}). Try again in a moment.`,
     "upstream",
   );
+  // File upload/poll failures are never evidence about a paid model submit.
+  if (what === "generateContent") {
+    let body: unknown;
+    try { body = JSON.parse(_body); } catch { return error; }
+    if (body && typeof body === "object" && !Array.isArray(body)) return new ProviderHttpError(error,
+      new ProviderError("gemini", classifyStatus(status), "Gemini chapter submit failed", status, definitiveSubmitRejection(status, body)));
+  }
+  return error;
 }
 
 // ── Files API ────────────────────────────────────────────────────────────────
@@ -330,6 +339,7 @@ export async function generateChapters(args: GenerateArgs): Promise<GenerateResu
     method: "POST",
     headers: { ...keyHeader(), "content-type": "application/json" },
     body: JSON.stringify(buildGenerateBody(args)),
+    signal: AbortSignal.timeout(90_000),
   });
   const text = await res.text().catch(() => "");
   if (!res.ok) throw upstream("generateContent", res.status, text);

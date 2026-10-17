@@ -71,6 +71,14 @@ export class ProviderError extends Error {
   }
 }
 
+/** Internal provider evidence without adding fields to an existing public
+ * HttpError envelope. Only the funded submit boundary consumes this evidence. */
+export class ProviderHttpError extends HttpError {
+  constructor(error: HttpError, readonly providerFailure: ProviderError) {
+    super(error.status, error.message, error.code, error.details);
+  }
+}
+
 /** A dispatched supplier response exceeded its explicitly opted-in wire bound.
  * No later paid fallback is authorized; its reservation remains uncertain. */
 export class ProviderResponseLimitError extends ProviderError {

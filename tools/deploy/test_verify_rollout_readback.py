@@ -210,4 +210,39 @@ class Readback(unittest.TestCase):
         self.assertEqual(r.returncode,2);self.assertEqual(json.loads(r.stdout)['code'],'snapshot_not_fresh')
 
 
+    def install_real_cloudflare_asset_policy(self):
+        # Exact already-retained Studio47 asset policy; synthetic fixture identity above.
+        assets = {'not_found_handling': 'none', 'headers': {'version': 2, 'rules': {'/*': {'set': {'cache-control': 'no-store, no-transform', 'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https://rendprop.com https://*.r2.cloudflarestorage.com https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev; media-src 'self' blob: https://rendprop.com https://*.r2.cloudflarestorage.com https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev; connect-src 'self' https://rendprop.com https://uploads.rendprop.com https://ymgqpbnjpztwjsyvceld.supabase.co https://*.r2.cloudflarestorage.com https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev; font-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; upgrade-insecure-requests", 'permissions-policy': 'camera=(), microphone=(), geolocation=()', 'referrer-policy': 'no-referrer', 'strict-transport-security': 'max-age=31536000; includeSubDomains', 'x-content-type-options': 'nosniff', 'x-robots-tag': 'noindex, nofollow, noarchive'}, 'unset': []}}}, 'raw_headers': "/*\n  X-Robots-Tag: noindex, nofollow, noarchive\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: no-referrer\n  Cache-Control: no-store, no-transform\n  Permissions-Policy: camera=(), microphone=(), geolocation=()\n  Strict-Transport-Security: max-age=31536000; includeSubDomains\n  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https://rendprop.com https://*.r2.cloudflarestorage.com https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev; media-src 'self' blob: https://rendprop.com https://*.r2.cloudflarestorage.com https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev; connect-src 'self' https://rendprop.com https://uploads.rendprop.com https://ymgqpbnjpztwjsyvceld.supabase.co https://*.r2.cloudflarestorage.com https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev; font-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; upgrade-insecure-requests\n", 'redirects': {'version': 1, 'rules': {}, 'staticRules': {'/auth/callback': {'to': '/index.html', 'status': 200, 'lineNumber': 2}}}, 'raw_redirects': '# Known OAuth entry only. Missing hashed assets must stay 404, never SPA HTML.\n/auth/callback /index.html 200\n', 'serve_directly': True, 'raw_run_worker_first': False, 'base_path': '/'}
+        for snapshot in [self.baseline, self.actual]:
+            snapshot['control']['management'] = {'version': {'resources': {'script_runtime': {'assets': copy.deepcopy(assets)}}}}
+
+    def asset_header_rules(self, snapshot):
+        return snapshot['control']['management']['version']['resources']['script_runtime']['assets']['headers']['rules']
+
+    def test_real_cloudflare_global_asset_header_policy(self):
+        self.install_real_cloudflare_asset_policy()
+        result = self.run_gate()
+        self.assertEqual(result['status'], 'HISTORICAL_REPLAY')
+        self.assertEqual(result['expectedControlSHA256'], result['actualControlSHA256'])
+
+    def test_real_cloudflare_unapproved_header_drift_refused(self):
+        self.install_real_cloudflare_asset_policy()
+        self.asset_header_rules(self.actual)['/*']['set']['x-robots-tag'] = 'index, follow'
+        self.refuses('control_document_drift')
+
+    def test_global_wildcard_key_outside_asset_header_rules_refused(self):
+        self.actual['control']['unrelated_rules'] = {'/*': {'enabled': True}}
+        self.refuses('unsafe_field_name')
+
+    def test_other_wildcard_pattern_inside_asset_header_rules_refused(self):
+        self.install_real_cloudflare_asset_policy()
+        self.asset_header_rules(self.actual)['/admin/*'] = {'set': {'x-robots-tag': 'noindex'}}
+        self.refuses('unsafe_field_name')
+
+    def test_secret_under_known_global_header_rule_refused(self):
+        self.install_real_cloudflare_asset_policy()
+        self.asset_header_rules(self.actual)['/*']['set']['authorization'] = 'Bearer' + ' ' + 'synthetic-not-a-credential'
+        self.refuses('credential_value_field')
+
+
 if __name__=='__main__':unittest.main(verbosity=2)

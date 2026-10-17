@@ -683,9 +683,12 @@ Deno.serve(async (req) => {
           : null;
 
         const data = await fundedAttempt(funding, "voice.tts", {provider: "elevenlabs", model}, payload, quote, async () => {
-          const res = await fetch(url, {method:"POST",headers:elevenHeaders(),body:JSON.stringify(payload)});
-          const data=await res.json().catch(()=>({} as Record<string,unknown>));
-          if(!res.ok)throw new ProviderError("elevenlabs","upstream","The voice service could not accept this request.",res.status,definitiveSubmitRejection(res.status,data) && !data.audio_base64);
+          // The signal remains attached while JSON/audio arrives, not only
+          // until response headers. A deadline is uncertain, never a refund.
+          const res = await fetch(url, {method:"POST",headers:elevenHeaders(),body:JSON.stringify(payload),signal:AbortSignal.timeout(90_000)});
+          let parsed=true;
+          const data=await res.json().catch(()=>{parsed=false;return {} as Record<string,unknown>;});
+          if(!res.ok)throw new ProviderError("elevenlabs","upstream","The voice service could not accept this request.",res.status,parsed && !!data && typeof data==="object" && !Array.isArray(data) && definitiveSubmitRejection(res.status,data) && !data.audio_base64);
           if(typeof data.audio_base64!=="string"||!data.audio_base64.length)throw new ProviderError("elevenlabs","upstream","The voice service returned no confirmed audio.");
           try { if(!atob(data.audio_base64).length)throw new Error(); } catch {throw new ProviderError("elevenlabs","upstream","The voice service returned unreadable audio.");}
           return data;

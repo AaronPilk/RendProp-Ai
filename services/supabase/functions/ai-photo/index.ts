@@ -102,6 +102,7 @@ import { supportsStagingReference,submitPreparedGeminiPhoto4K } from "../_shared
 import {
   BUDGETS,
   ProviderError,
+  ProviderHttpError, definitiveSubmitRejection, classifyStatus,
   awaitJob,
   inlineBase64,
   inlineImageResult,
@@ -1154,10 +1155,14 @@ async function geminiText(payload:PhotoHelperPayload): Promise<string> {
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_KEY! },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(30_000),
   });
-  const data = await res.json().catch(() => ({} as Record<string, unknown>));
+  let parsed = true;
+  const data = await res.json().catch(() => { parsed = false; return {} as Record<string, unknown>; });
   if (!res.ok) {
-    throw new HttpError(502, `Gemini ${res.status}: ${JSON.stringify(data).slice(0, 300)}`, "upstream");
+    const rejected = parsed && !!data && typeof data === "object" && !Array.isArray(data) && definitiveSubmitRejection(res.status, data);
+    throw new ProviderHttpError(new HttpError(502, `Gemini ${res.status}: ${JSON.stringify(data).slice(0, 300)}`, "upstream"),
+      new ProviderError("gemini", classifyStatus(res.status), "Gemini helper submit failed", res.status, rejected));
   }
   // deno-lint-ignore no-explicit-any
   for (const cand of ((data as any).candidates ?? [])) {

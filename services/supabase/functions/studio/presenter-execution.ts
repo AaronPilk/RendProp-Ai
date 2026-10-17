@@ -90,7 +90,7 @@ export function createPresenterExecution(deps: PresenterExecutionDeps) {
     try { ref = await deps.submit(verified.input, job); }
     catch (error) {
       const beforeDispatch = !!error && typeof error === "object" && "funding_admission" in error && error.funding_admission === true;
-      const rejected = beforeDispatch || error instanceof ProviderError && [400, 401, 402, 403, 404, 405, 413, 415, 422, 429].includes(error.status ?? 0);
+      const rejected = beforeDispatch || error instanceof ProviderError && error.dispatch_rejected && [0, 400, 401, 402, 403, 404, 405, 413, 415, 422, 429].includes(error.status ?? -1);
       await deps.worker(jobId, rejected ? "failed" : "ambiguous", rejected
         ? { dispatch_token: token, charged_cents: 0, billing_final: true, billing_reference: beforeDispatch ? "funding_admission_refused" : `rejected_http_${(error as ProviderError).status}` }
         : { dispatch_token: token });
@@ -128,7 +128,9 @@ export function createPresenterExecution(deps: PresenterExecutionDeps) {
       }
       const status = await deps.poll(ref);
       if (["failed", "nsfw", "canceled"].includes(status.status)) {
-        await deps.worker(jobId, status.status === "canceled" ? "cancelled" : "failed", { charged_cents: 0, billing_final: true, billing_reference: `higgsfield:${ref.request_id}:${status.status}` });
+        // Terminal compute status is not final billing evidence. Preserve the
+        // existing hold until an authoritative settlement supplies its charge.
+        await deps.worker(jobId, status.status === "canceled" ? "cancelled" : "failed");
       } else if (status.status === "queued" || status.status === "in_progress") {
         await deps.worker(jobId, "status", { state: status.status === "queued" ? "queued" : "processing" });
       } else if (status.status === "completed") {

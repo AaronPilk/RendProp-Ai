@@ -4,7 +4,7 @@ import { HttpError, throwRpc, isTrialCapacityRefusal, TRIAL_CAPACITY_UNAVAILABLE
 import { adminClient } from "./supabase.ts";
 import type { RouteStep } from "./router.ts";
 import { paramsOf } from "./router.ts";
-import { ProviderError } from "./providers/common.ts";
+import { ProviderError, ProviderHttpError } from "./providers/common.ts";
 import { anthropicMaxTokens } from "./providers/anthropic.ts";
 import { openaiChatConfig } from "./providers/openai.ts";
 import { geminiImageGenerationConfig } from "./providers/gemini.ts";
@@ -353,8 +353,9 @@ export async function fundedAttempt<T>(context: FundingContext,stage: string,ste
  }
  catch(error){
   const details=error instanceof HttpError?error.details:undefined;
-  const rejected=error instanceof ProviderError?error.dispatch_rejected:details?.dispatch_rejected===true;
-  const status=error instanceof ProviderError?error.status:details?.provider_status;
+  const providerFailure=error instanceof ProviderHttpError?error.providerFailure:error instanceof ProviderError?error:null;
+  const rejected=providerFailure?providerFailure.dispatch_rejected:details?.dispatch_rejected===true;
+  const status=providerFailure?providerFailure.status:details?.provider_status;
   if(rejected&&typeof status==="number"&&[0,400,401,402,403,404,405,413,415,422,429].includes(status))await finish("rejected",status);
   else await finish("uncertain");
   throw error;

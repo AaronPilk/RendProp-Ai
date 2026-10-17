@@ -107,7 +107,7 @@ def secret_safe(value, path="", depth=0, budget=None):
         elif isinstance(name, str) and re.search(r"SECRET|TOKEN|PASSWORD|API_KEY|PRIVATE_KEY|CREDENTIAL", name.upper()):
             raise Refusal("secret_binding_type", [path])
         for key, item in value.items():
-            require(isinstance(key, str) and re.fullmatch(r"[A-Za-z0-9_.$:~/-]{1,256}", key),
+            require(isinstance(key, str) and (re.fullmatch(r"[A-Za-z0-9_.$:~/-]{1,256}", key) or (key == "/*" and path.endswith("/assets/headers/rules"))),
                     "unsafe_field_name", path)
             require(not re.search(r"\b(?:sk_live_|sk-proj-)[A-Za-z0-9_-]{12,}|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}", key),
                     "unsafe_field_name", path)
