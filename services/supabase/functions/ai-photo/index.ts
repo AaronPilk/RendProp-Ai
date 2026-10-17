@@ -123,6 +123,7 @@ import {lookupPhotoQuality,statusPhotoQuality,photoQualityScope,beginPhotoQualit
 import {waitForPhotoQuality,PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from "./photo-qc-wait.ts";
 import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
 import {assertPhotoRecoveryProtocol,hasPhotoRecoveryProtocol} from "./protocol.ts";
+import {recordPhotoRecipe} from "./photo-recipe.ts";
 
 // Money admission uses the actual conservative payload hold independently of
 // these burst/monthly feature counters.
@@ -950,6 +951,17 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
         return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null,{space_type:space});
       }
     }catch(error){await refundEditCharge(charge);await abortFundingOperationBeforeDispatch(funding);throw error;}
+
+    // Record this generation's immutable recipe identity (PHOTO_RECIPE_REVISION
+    // and the SHA-256 of the exact final prompt handed to the provider adapter)
+    // BEFORE any provider dispatch. A failure aborts exactly like a failed
+    // begin: evidence closed, quota refunded, operation fenced as never
+    // dispatched, and no provider is called.
+    try{await recordPhotoRecipe(adminClient(),quality,genInput.prompt??"");}
+    catch(error){
+      try{quality=await failPhotoQuality(adminClient(),quality,"recipe_recording",{provider_cost_incurred:false,no_provider_dispatch:true,retained_output:false,message:"The edit recipe could not be recorded. No edit was sent."});}catch{/* The evidence row still prevents another generator. */}
+      await refundEditCharge(charge);await abortFundingOperationBeforeDispatch(funding);throw error;
+    }
 
     // The chain throwing means every step failed (or a validation/nsfw refusal
     // fired) — no image was produced, so hand the quota back (audit item 2 /

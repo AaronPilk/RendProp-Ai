@@ -5,8 +5,11 @@ const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
 // Complete structural JPEG geometry fixture, not a decoded/visual quality proof.
 const outputJPEG=(width=2048,height=2048)=>btoa(String.fromCharCode(...[255,216,255,192,0,11,8,height>>8,height&255,width>>8,width&255,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]));
 const OUTPUT=outputJPEG(4096,4096);
-async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|"protocol"|"declutter_prompt"|null=null,actualEvidence=false){
+async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|"protocol"|"declutter_prompt"|"recipe"|null=null,actualEvidence=false){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
+ if(removeAdmission==="recipe"){
+  const anchor="try{await recordPhotoRecipe(adminClient(),quality,genInput.prompt??\"\");}";assertEquals(source.split(anchor).length-1,1);source=source.replace(anchor,"try{/* compiled recipe omission */}");
+ }
  if(removeAdmission==="protocol"){
   const anchor="try { assertPhotoRecoveryProtocol(req); }";assertEquals(source.split(anchor).length-1,1);source=source.replace(anchor,"try { /* compiled protocol bypass */ }");
  }
@@ -97,9 +100,10 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {photoJsonResponse} from ${url("./photo-response.ts")};
  import * as actualQualityStore from ${url("./photo-qc-store.ts")};
  import {inlineImageResult,inlineBase64,ProviderError,BUDGETS} from ${url("../_shared/providers/common.ts")};
+ import {recordPhotoRecipe} from ${url("./photo-recipe.ts")};
  import {runChain} from ${url("../_shared/providers/chain.ts")};
  const actualEvidence=${actualEvidence};
- export const state={objects:new Map(),actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,quality:null,qualityEnabled:true,qualityPending:false,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0};
+ export const state={objects:new Map(),actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,quality:null,qualityEnabled:true,qualityPending:false,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0,recipes:[],events:[],recipeFail:false,noDispatch:0};
  const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{}};
  ${source.slice(locksStart,locksEnd)}
  ${source.slice(reflectionStart,reEnd)}
@@ -113,7 +117,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const step={route_id:"fixture-route",provider:"gemini",model:MODEL,task:"photo.twilight",unit:"output_image",unit_cents:1,capabilities:[],max_latency_s:60,min_plan:"free",privacy_tier:"retained_30d",enabled:true};
  const routerEnabled=async()=>state.router,resolveChain=async(task)=>state.routes??[{...step,task}],legacyPhotoStep=(task)=>({...step,task}),needsForPhotoEdit=()=>[];
  const guardEdit=async()=>{state.charges++;return{orgId:state.org,plan:state.plan??"pro",monthlyKey:"monthly",burstKey:"burst"};},refundEditCharge=async()=>{state.refunds++;};
- const adapterFor=()=>({submit:async(_step,input)=>{state.submits++;state.prompts.push(input.prompt);state.inputs.push(structuredClone(input));state.afterSubmit?.();if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/jpeg",result_url:"data:image/jpeg;base64,"+state.output};};
+ const adapterFor=()=>({submit:async(_step,input)=>{state.events.push("submit");state.submits++;state.prompts.push(input.prompt);state.inputs.push(structuredClone(input));state.afterSubmit?.();if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/jpeg",result_url:"data:image/jpeg;base64,"+state.output};};
  const submitPreparedGeminiPhoto4K=(step,input,budget)=>{state.providerDeadline=budget.deadline;state.providerSignal=budget.signal;return adapterFor().submit(step,input);};
  const recordRoutedAiCost=async(_db,args)=>{state.costs.push(structuredClone(args));},recordProvenance=async()=>({id:"synthetic-provenance",recorded:true,disclosure:"Synthetic disclosure"});
  const admin={from:(table)=>{let filters=[];const q={select:()=>q,eq:(key,value)=>{filters.push([key,[value]]);return q;},is:(key,value)=>{filters.push([key,[value]]);return q;},in:(key,value)=>{filters.push([key,value]);return q;},limit:async()=>({data:state.journal&&filters.every(([key,values])=>values.includes(state.journal[key]))?[state.journal]:[],error:null}),maybeSingle:async()=>({data:table==="private_ai_outputs"?state.journal:{user_id:state.actor,org_id:state.org,role:state.role},error:null})};return q;},rpc:async(name,args)=>{
@@ -135,6 +139,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
   e.output={...facts,bucket:"renders",key:"ai-router/"+state.org+"/photo-evidence/"+state.actor+"/"+e.id+"/candidate."+ext};e.generation_stage=generation_stage;e.generation_provider=provider;e.generation_model=model;return{data:structuredClone(e),error:null};
  }
  if(name==="photo_quality_set_context"){state.quality.evidence.judge_context=args.p_context;return{data:structuredClone(state.quality),error:null};}
+ if(name==="photo_quality_set_recipe"){state.events.push("recipe");state.recipes.push(structuredClone(args));if(state.recipeFail)return{data:null,error:{message:"RP409: Synthetic recipe refusal"}};return{data:{evidence_id:args.p_evidence,recipe_revision:args.p_revision,prompt_sha256:args.p_prompt_sha256,replay:false},error:null};}
  if(name==="photo_quality_evidence_receipt"){
   const e=state.quality.evidence;if(args.p_kind==="input"){e.input_etag=args.p_etag;e.state="input_ready";}else{e.output_etag=args.p_etag;e.state="evidence_ready";e.provenance_id="ea100606-0000-4000-8000-000000000008";state.quality.can_continue=true;}return{data:structuredClone(state.quality),error:null};
  }
@@ -155,7 +160,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const row={org_id:args.p_org,user_id:args.p_user,listing_id:args.p_listing,bucket:args.p_bucket,storage_key:args.p_key,bytes:args.p_bytes};
  if(state.journal&&JSON.stringify(state.journal)!==JSON.stringify(row))return{data:null,error:{message:"RP409: foreign receipt"}};
  state.journal??=row;return{data:{ok:true,key:args.p_key},error:null};}
- if(name==="serving_operation_no_dispatch")return{data:{retryable:false},error:null};
+ if(name==="serving_operation_no_dispatch"){state.noDispatch++;return{data:{retryable:false},error:null};}
  throw Error("Unexpected RPC "+name);
  }};
  const adminClient=()=>admin;
@@ -168,7 +173,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const statusPhotoQuality=actualEvidence?actualQualityStore.statusPhotoQuality:async()=>state.quality;
  const beginPhotoQuality=actualEvidence?actualQualityStore.beginPhotoQuality:async(_admin,identity,args)=>{
   if(!state.qualityEnabled)throw new HttpError(503,"Photo quality review is not active yet.","upstream");
-  state.quality={identity,args,created:true,evidence:{id:"synthetic-evidence",request_sha256:state.operationInputHash},check:{state:"pending"}};return state.quality;
+  state.quality={identity,args,created:true,evidence:{id:"synthetic-evidence",actor_id:state.actor,request_sha256:state.operationInputHash},check:{state:"pending"}};return state.quality;
  };
  const retainPhotoCandidate=actualEvidence?actualQualityStore.retainPhotoCandidate:async(_admin,row,decoded)=>{
   row.saved=await persistOwnedPhotoResult(admin,row.identity,{status:"done",mime:decoded.mime,result_url:"data:"+decoded.mime+";base64,"+state.output},undefined,decoded.data);
@@ -743,3 +748,41 @@ async function removalPromptHandlerOracle(remove=false){
 }
 Deno.test("actual real-estate Declutter dispatches the new remove-only prompt with exact source/funding and no replay generation",()=>removalPromptHandlerOracle());
 Deno.test("compiled old broad Declutter prompt cannot pass actual new request/source oracle",async()=>{await assertRejects(()=>removalPromptHandlerOracle(true),AssertionError);});
+
+// AI photo feedback loop: the recipe identity is recorded on the exact new
+// evidence row before any provider dispatch; a failure aborts with no provider
+// call, a refunded quota and a fenced operation.
+const {PHOTO_RECIPE_REVISION,photoPromptSha256}=await import("./photo-recipe.ts");
+async function recipeOracle(f:Awaited<ReturnType<typeof fixture>>,body:Record<string,unknown>,actualEvidence:boolean){
+ const response=await f.run(f.request(body));assertEquals(response.status,actualEvidence?409:200,await response.text());
+ assertEquals(f.state.recipes.length,1,"Exactly one recipe identity is recorded before generation");
+ const args=f.state.recipes[0];
+ assertEquals(args.p_revision,PHOTO_RECIPE_REVISION);assertEquals(args.p_actor,actor);
+ assertEquals(args.p_evidence,actualEvidence?f.state.quality.evidence.id:"synthetic-evidence");
+ assertEquals(args.p_prompt_sha256,await photoPromptSha256(f.state.prompts[0]),"The hash is of the exact prompt the provider adapter received");
+ assert(f.state.events.indexOf("recipe")>=0&&f.state.events.indexOf("recipe")<f.state.events.indexOf("submit"),"The recipe is recorded before the provider dispatch");
+ assertEquals(f.state.submits,1);
+}
+Deno.test("actual photo handler records the recipe revision and exact prompt hash before any provider dispatch",async()=>{
+ for(const [body,actualEvidence] of [[{},false],[{edit:"stage",style:"modern"},false],[{edit:"custom",prompt:"Improve brightness and exposure only."},false],[{edit:"declutter"},true]] as const){
+  for(const router of [false,true]){const f=await fixture(false,null,actualEvidence);try{f.state.router=router;await recipeOracle(f,body,actualEvidence);}finally{f.close();}}
+ }
+});
+Deno.test("compiled omission of the recipe step fails the unchanged before-dispatch recipe oracle",async()=>{
+ const f=await fixture(false,"recipe");try{await assertRejects(()=>recipeOracle(f,{},false),AssertionError,"Exactly one recipe identity");assertEquals(f.state.submits,1);}finally{f.close();}
+});
+Deno.test("a recipe recording failure aborts before any provider call, refunds the quota and fences the operation",async()=>{
+ for(const actualEvidence of [false,true]){const f=await fixture(false,null,actualEvidence);try{
+  f.state.recipeFail=true;
+  const response=await f.run(f.request({edit:"stage",style:"modern"}));assertEquals(response.status,503);
+  const body=await response.json();assertEquals(body.code,"upstream");assertEquals(body.no_provider_dispatch,true);assertEquals(body.failure_phase,"recipe_recording");
+  assertEquals(f.state.recipes.length,1);assertEquals(f.state.submits,0);assertEquals(f.state.polls,0);assertEquals(f.state.holds,0);assertEquals(f.state.costs.length,0);
+  assertEquals(f.state.prompts.length,0,"No prompt reached any provider adapter");assert(!f.state.events.includes("submit"));
+  assertEquals(f.state.refunds,1,"The quota charged for this request is returned");assertEquals(f.state.noDispatch,1,"The operation is fenced as never dispatched");
+  if(actualEvidence){
+   assertEquals(f.state.quality.evidence.state,"hold");assertEquals(f.state.quality.evidence.failure.phase,"recipe_recording");assertEquals(f.state.quality.evidence.failure.facts.no_provider_dispatch,true);
+   assertEquals(f.state.puts,1,"Only the prepared source was retained");
+   const retry=await f.run(f.request({edit:"stage",style:"modern"}));assert(retry.status!==200);assertEquals(f.state.submits,0,"A retry of the same request never dispatches");
+  }
+ }finally{f.close();}}
+});
