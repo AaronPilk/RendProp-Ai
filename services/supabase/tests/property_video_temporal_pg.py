@@ -15,7 +15,7 @@ assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve internal3GiB reserve'
 DATA=Path(tempfile.mkdtemp(prefix='temporal-verdict-owned-pg-',dir='/Volumes/Rendprop Files/Builds/Active' if Path('/Volumes/Rendprop Files/Builds/Active').is_dir()else None));SOCK=Path(tempfile.mkdtemp(prefix='temporal-verdict-socket-',dir='/tmp'))
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)
-MIG=SQL/'migrations/20261017120000_property_video_temporal_verdict.sql';FIX=SQL/'tests/property_video_temporal.sql';BASE=SQL/'tests/property_video_jobs.sql'
+MIG=SQL/'migrations/20261017191000_property_video_temporal_verdict.sql';FIX=SQL/'tests/property_video_temporal.sql';BASE=SQL/'tests/property_video_jobs.sql'
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'));SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',BASE,FIX,SQL/'tests/property_video_derived_retry.sql',Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in SOURCES}
 receipt={'passed':False,'scope':'disposable actual PostgreSQL/schema/roles/concurrency, synthetic receipts only','networkCalls':0,'providerCalls':0,'sourceHashes':hashes(),'commands':[],'controls':[],'races':[]}
