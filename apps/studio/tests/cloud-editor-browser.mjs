@@ -8,10 +8,11 @@ import { build } from "vite";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chromium, expect } from "@playwright/test";
+import { collectRunnerFacts, quickLoad } from "./runner-facts.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-cloud-editor-")), dist = join(artifacts, "dist");
-const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx",...['export','recording-clock','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
+const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx","tests/runner-facts.mjs",...['export','recording-clock','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
 const sourceHashes=async()=>Object.fromEntries(await Promise.all(sourcePaths.map(async path=>[path,createHash('sha256').update(await readFile(join(root,path))).digest('hex')])));
-const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
+const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), runnerFacts: collectRunnerFacts(), loadBeforeExport: [], checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
 let browser, server, page;
 const timingDevices=[];
 // Test-only observation: every wrapper returns the original native result and
@@ -288,6 +289,7 @@ try {
   await expect(fourth.getByRole("button",{name:"Export MP4",exact:true})).toBeEnabled();
   assert.equal((await fourth.evaluate(() => window.cloudFixture.snapshot())).tickets,agentSaved.tickets);
   await closeDevice(fourth);await second.bringToFront();
+  receipt.loadBeforeExport.push({export:"agent-continuous",...quickLoad()});
   await second.getByRole("button",{name:"Export MP4",exact:true}).click();
   await expect(second.getByRole("link",{name:/Download MP4/})).toBeVisible({timeout:20000});
   const agentDownload=second.waitForEvent("download");await second.getByRole("link",{name:/Download MP4/}).click();const agentExport=join(artifacts,"agent-continuous.mp4");await (await agentDownload).saveAs(agentExport);
