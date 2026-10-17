@@ -406,15 +406,18 @@ recipe, which this version deliberately does not schedule.
 Sections 1–6 are unchanged. Everything below is additive or a clarification
 made while implementing and proving the backend (branch
 `claude/photo-feedback-20261017`). Where an amendment conflicts with the
-frozen text, the amendment wins. A1, A3.4 and A3.6 are the items client
-lanes must act on.
+frozen text, the amendment wins. A1, A3.4, A3.6 and A9 are the items
+client lanes must act on.
 
 ### A1. Selected-library header (correction to §4)
-The selected library travels in **`X-Org-Id`**: that is the header
-`preferredOrg()` reads and the header every Studio and iOS call already
-sends. `x-rendprop-org` is accepted as an alias. When both are present they
-must name the same library. Missing or non-UUID → `400 invalid_request`.
-CORS allows both headers.
+The selected library travels in **`X-Org-Id`**. The function reads it with
+the shared `preferredOrg(req)` (`_shared/supabase.ts`), exactly like every
+other library-scoped function, and every Studio and iOS call already sends
+it. §4 named `x-rendprop-org` while describing `preferredOrg`; that name was
+an error and **no other header is read**. A request that carries only
+`x-rendprop-org` has no selected library. Missing or non-UUID →
+`400 invalid_request`. CORS is the shared allow-list, which already
+includes `x-org-id`; methods are `GET, POST, OPTIONS`.
 
 ### A2. Which outputs can be rated (clarifies §3.5)
 - Rateable: an **accepted prospective output** (its `photo_edit_evidence`
@@ -448,12 +451,19 @@ CORS allows both headers.
    receipt verifies it. `provider`, `model`, `generation_stage`,
    `recipe_revision` and `prompt_sha256` stay `null` (unknown) for those rows.
    The table enforces this too: a provenance-only row cannot hold any of them.
-4. **Correction to §4.6.7.** `409 feedback_exists` returns
-   `{client_key, revision, revision_count, feedback_id, provenance_id}`.
-   Adopt `client_key` and resend with **`revision = returned.revision + 1`**,
-   not `revision_count + 1`. Revisions are client-chosen and may skip
-   numbers, so `revision_count + 1` can be lower than the stored revision.
-   It would then come back as `replayed` and never be applied.
+4. **Correction to §4.6.7.** `409 feedback_exists` returns, at the top
+   level of the shared error body `{...details, error, code}`:
+   `client_key, revision, revision_count, feedback_id, provenance_id` and
+   the caller's own stored `verdict, reasons, note`. These are the same
+   person's opinion on the same output, so nothing new is revealed. Adopt
+   `client_key`. If the stored verdict, reasons and note equal the local
+   ones, nothing needs resending. Otherwise resend with a revision **above
+   `returned.revision`**, for example `returned.revision + 1` or
+   `max(revision, revision_count) + 1` (the same number, because
+   `revision_count <= revision`), not `revision_count + 1`. Revisions are
+   client-chosen and may skip numbers, so `revision_count + 1` can be lower
+   than the stored revision. It would then come back as `replayed` and never
+   be applied.
 5. For a provenance-only output, a later revision under the same key that
    pins a different `output_sha256` from the first one is
    `409 output_mismatch`. A key can never drift to other bytes.
@@ -647,3 +657,43 @@ safely with `503 recipe_recording`: no provider call, but no edits either.
 Rollback runs in reverse: previous ai-photo and ai-photo-v2, then previous
 admin, then remove photo-feedback, then the rollback SQL with explicit
 discard confirmation.
+
+### A9. Client alignment (checked against the Studio lane at `34285dc5`)
+What the clients rely on. Proven by `photo-feedback/handler.test.ts`
+("Studio queue contract"), `photo-feedback/index.test.ts` and the PG harness.
+- The library comes from `X-Org-Id` only (A1).
+- Every refusal is the shared error body `{...details, error, code}`.
+  Clients branch on `code`:
+  - `404 output_not_found`: drop the item;
+  - `409 feedback_key_conflict`: drop it and use a new key;
+  - `409 feedback_revision_conflict`: raise the revision and resend;
+  - `409 feedback_exists`: adopt the key (A3.4).
+  Any other 404 (`not_found`, an unknown route) is no reason to drop an
+  item.
+- Revisions. Any strictly greater revision is applied in place. An equal
+  or lower revision never creates or changes a row:
+  - equal and identical → `200 replayed`;
+  - equal and different → `409 feedback_revision_conflict`;
+  - lower → `200 replayed`, carrying the newer stored opinion (§4.1).
+- Studio's signals use keys `studio:<signal>:<provenance_id>`: the pairs
+  `accuracy_ack/custom_review`, `manual_selection/gallery_save` and
+  `export/download`. Each signal has one fixed detail, so the same key never
+  arrives with a different detail and A3.6's conflict cannot arise.
+
+**Report decoding rules (§5 and A5) that every client must follow.**
+1. Money fields (`*_cents`) are cents with up to four decimal places, the
+   same as `/admin/spend`. Modeled estimates are fractional, so a decoder
+   must accept any finite non-negative number. Requiring whole numbers
+   rejects real reports.
+2. Coverage is `explicit.reviewed_outputs / explicit.reviewable_outputs`,
+   which is the server's `explicit.coverage`.
+   `generated.outputs − explicit.unreviewed_outputs` is not a reviewed
+   count: it adds refused, held and pending generations that were never
+   delivered.
+3. Per-useful figures divide by `explicit.explicitly_useful_outputs`, not
+   by Useful verdicts; several reviewers, or a contested output, would
+   inflate that divisor. The server's `recorded_cents_per_useful` and
+   `attempts_per_useful` use what sits behind reviewed outputs.
+   `recorded_cents / explicitly_useful_outputs` is
+   `window_recorded_cents_per_useful`, an upper bound while coverage is
+   below 1.
