@@ -1,6 +1,12 @@
 -- Prospective pipeline modeled-cost linkage. No historical DML, prices or grants.
 -- Generic HTTP acceptance remains uncertain; a linked attempt counts the larger
 -- of its admitted bound and modeled ledger cost, not both amounts added together.
+-- Owner decision (2026-10-17): while the supplier cost is still an estimate
+-- (unsettled, no invoice), the ceiling retains max(admitted bound, modeled cost)
+-- EVEN WHEN the attempt finished `succeeded` — succeeded-but-estimated keeps the
+-- larger value. This is internal allowance accounting (serving ceiling headroom),
+-- never a customer charge. Ambiguous multi-attempt aggregates (several admitted
+-- attempts behind one result) get no binding and stay fully held (conservative).
 begin;
 -- Before ANY DDL, replay accepts only this migration's exact own objects: the
 -- relation's exact shape, constraints, RLS and ACL, and each helper's exact
