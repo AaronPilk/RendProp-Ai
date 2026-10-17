@@ -1,0 +1,80 @@
+# DRAFT ONLY: root must review and place this on the named diagnostic branch.
+name: Passive audio clock diagnostic
+on:
+  push:
+    branches: [diagnostic/audio-post-start-clock-20261017]
+permissions:
+  contents: read
+concurrency:
+  group: passive-audio-clock-diagnostic
+  cancel-in-progress: false
+jobs:
+  single-freeze-mp4:
+    # Root permits public artifacts ONLY for the generated solid-color / known-tone fixture.
+    if: github.ref == 'refs/heads/diagnostic/audio-post-start-clock-20261017'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/studio
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # existing v4.4.0 pin
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # existing v4.4.0 pin
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+      - name: Locked dependencies, no lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Locked full Chromium and media tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --no-install playwright install chromium --no-shell
+          browser_path="$(node --input-type=module -e "import { chromium } from '@playwright/test'; console.log(chromium.executablePath());")"
+          test -x "$browser_path"
+          "$browser_path" --version
+          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$browser_path" >> "$GITHUB_ENV"
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+          ffmpeg -version
+          ffprobe -version
+      - name: One passive freeze MP4 diagnostic, preserve actual refusal
+        timeout-minutes: 6
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          python3 - <<'PYGUARD'
+          import os, pathlib, signal, subprocess, time
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          assert root.is_dir()
+          child = None
+          try:
+              for p in (root, pathlib.Path.cwd()):
+                  v = os.statvfs(p); assert v.f_bavail*v.f_frsize >= 8*1024**3, 'disk reserve'
+              child = subprocess.Popen(['node','tests/export-startup-diagnostic-browser.mjs'], start_new_session=True)
+              end = time.monotonic()+300
+              while child.poll() is None:
+                  v = os.statvfs(root)
+                  if time.monotonic()>=end or v.f_bavail*v.f_frsize < 8*1024**3:
+                      raise RuntimeError('diagnostic deadline/reserve')
+                  time.sleep(1)
+              raise SystemExit(child.returncode)
+          finally:
+              if child is not None and child.poll() is None:
+                  os.killpg(child.pid, signal.SIGTERM)
+                  try: child.wait(timeout=5)
+                  except subprocess.TimeoutExpired:
+                      os.killpg(child.pid, signal.SIGKILL); child.wait(timeout=5)
+          PYGUARD
+      - name: Retain synthetic diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # existing v4.6.2 pin
+        with:
+          name: passive-audio-clock-diagnostic-synthetic-${{ github.run_id }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/rendprop-export-startup-diagnostic-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-startup-diagnostic-*/*.mp4
