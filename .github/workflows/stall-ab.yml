@@ -1,0 +1,93 @@
+name: Stall A/B experiment (evidence only, not a gate)
+
+# Discriminating experiment for the hosted macOS Studio export drift refusals
+# (runs 39055656587, 39062185061). Same code as launch head 317b6a1e. Arm A runs
+# the unchanged cloud-editor suite on a quiet runner; arm B runs it right after
+# the same HD master encoding CI runs before step 17. Pass/fail is recorded,
+# never retried into a pass; no guard, threshold, timeout or control changes.
+on:
+  push:
+    branches: [claude/stall-ab-20261017]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stall-ab-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  stall-ab:
+    name: Studio export stall A/B (quiet vs after HD encoding)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+      - name: Install locked Studio dependencies
+        working-directory: apps/studio
+        run: npm ci --ignore-scripts
+      - name: Verify locked full Chromium and synthetic media tools
+        working-directory: apps/studio
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright install chromium --no-shell
+          browser_path="$(node --input-type=module -e "import { chromium } from '@playwright/test'; console.log(chromium.executablePath());")"
+          test -x "$browser_path"
+          "$browser_path" --version
+          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$browser_path" >> "$GITHUB_ENV"
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+          ffmpeg -version | head -1
+      - name: A — unchanged cloud-editor suite on a quiet runner (5 runs)
+        working-directory: apps/studio
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/A"
+          for i in 1 2 3 4 5; do
+            mkdir -p "$RUNNER_TEMP/A/run-$i"
+            { date -u +%FT%TZ; uptime; sysctl -n vm.loadavg; sysctl vm.swapusage; vm_stat | head -12; } > "$RUNNER_TEMP/A/run-$i/host-before.txt" 2>&1
+            if TMPDIR="$RUNNER_TEMP/A/run-$i" node tests/cloud-editor-browser.mjs > "$RUNNER_TEMP/A/run-$i/suite.log" 2>&1; then r=PASS; else r=FAIL; fi
+            echo "A run-$i $r $(uptime)" | tee -a "$RUNNER_TEMP/A/summary.txt"
+          done
+      - name: B — HD master encoding, then the unchanged cloud-editor suite (5 runs)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/B"
+          for i in 1 2 3 4 5; do
+            mkdir -p "$RUNNER_TEMP/B/run-$i"
+            ( export TMPDIR="$RUNNER_TEMP/B/run-$i"; python3 tools/audit/run_render_quality.py > "$RUNNER_TEMP/B/run-$i/encoding.log" 2>&1; python3 tools/audit/run_render_review_fences.py >> "$RUNNER_TEMP/B/run-$i/encoding.log" 2>&1 ) || echo "B run-$i encoding exit $?" >> "$RUNNER_TEMP/B/summary.txt"
+            { date -u +%FT%TZ; uptime; sysctl -n vm.loadavg; sysctl vm.swapusage; vm_stat | head -12; } > "$RUNNER_TEMP/B/run-$i/host-before.txt" 2>&1
+            if ( cd apps/studio && TMPDIR="$RUNNER_TEMP/B/run-$i" node tests/cloud-editor-browser.mjs > "$RUNNER_TEMP/B/run-$i/suite.log" 2>&1 ); then r=PASS; else r=FAIL; fi
+            echo "B run-$i $r $(uptime)" | tee -a "$RUNNER_TEMP/B/summary.txt"
+          done
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          cat "$RUNNER_TEMP/A/summary.txt" "$RUNNER_TEMP/B/summary.txt" 2>/dev/null || true
+      - name: Retain receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stall-ab-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/A/**/summary.txt
+            ${{ runner.temp }}/A/**/host-before.txt
+            ${{ runner.temp }}/A/**/suite.log
+            ${{ runner.temp }}/A/**/rendprop-cloud-editor-*/receipt.json
+            ${{ runner.temp }}/A/**/rendprop-cloud-editor-*/failure.png
+            ${{ runner.temp }}/B/**/summary.txt
+            ${{ runner.temp }}/B/**/host-before.txt
+            ${{ runner.temp }}/B/**/suite.log
+            ${{ runner.temp }}/B/**/encoding.log
+            ${{ runner.temp }}/B/**/rendprop-cloud-editor-*/receipt.json
+            ${{ runner.temp }}/B/**/rendprop-cloud-editor-*/failure.png
+          if-no-files-found: warn
+          retention-days: 14
