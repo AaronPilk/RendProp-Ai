@@ -5,10 +5,51 @@ import {join} from "node:path";
 // Passive native Web Audio tracing shared by the Studio export suites. This
 // owns no product clock/source/graph and never turns an export refusal into
 // success. It was extracted unchanged from export-startup-browser.mjs; the
-// only additions are the parameters (sync id, raw file name, source hashes).
+// only additions are the parameters (sync id, raw file name, source hashes)
+// and the pure render-gap summary derived from the projected spans.
 export const NATIVE_TRACE_CATEGORIES = ["webaudio", "disabled-by-default-webaudio.audionode"];
 export const NATIVE_TRACE_SPAN_NAMES = ["AudioDestination::RequestRender", "RealtimeAudioDestinationHandler::Render", "MediaStreamAudioDestinationHandler::Process"];
 export const NATIVE_TRACE_LIMITS = {bufferKiB: 1024, rawBytes: 2 * 1024 * 1024, events: 10000, captureMs: 20000, finishMs: 10000};
+const RENDER_GAP_THRESHOLDS_MS = [33, 100];
+
+// Pure: longest idle gap between consecutive AudioDestination::RequestRender
+// spans on one render thread, with counts above the fixed thresholds. The
+// page-wall placement uses the clock-sync bracket only when it is available
+// and carries that bracket's uncertainty. Evidence, not a verdict.
+export function summarizeRenderGaps(spans, clockAlignment) {
+  const name = NATIVE_TRACE_SPAN_NAMES[0];
+  const threads = new Map();
+  for (const span of spans) {
+    if (span.name !== name) continue;
+    const key = `${span.pid}:${span.tid}`;
+    (threads.get(key) ?? threads.set(key, []).get(key)).push(span);
+  }
+  const summary = {spanName: name, thresholdsMs: RENDER_GAP_THRESHOLDS_MS, threads: [], longestGap: null};
+  for (const [thread, list] of threads) {
+    list.sort((a, b) => a.startUs - b.startUs);
+    const counts = Object.fromEntries(RENDER_GAP_THRESHOLDS_MS.map(limit => [`over${limit}Ms`, 0]));
+    let longest = null, longestInterval = 0;
+    for (let index = 1; index < list.length; index++) {
+      const previous = list[index - 1], current = list[index];
+      const gapMs = (current.startUs - (previous.startUs + previous.durationUs)) / 1000;
+      const intervalMs = (current.startUs - previous.startUs) / 1000;
+      longestInterval = Math.max(longestInterval, intervalMs);
+      for (const limit of RENDER_GAP_THRESHOLDS_MS) if (gapMs > limit) counts[`over${limit}Ms`]++;
+      if (!longest || gapMs > longest.gapMs) longest = {gapMs, intervalMs, previousEndUs: previous.startUs + previous.durationUs, nextStartUs: current.startUs, index};
+    }
+    const entry = {thread, spans: list.length, longestGapMs: longest?.gapMs ?? null, longestStartToStartMs: list.length > 1 ? longestInterval : null, ...counts};
+    summary.threads.push(entry);
+    if (longest && (!summary.longestGap || longest.gapMs > summary.longestGap.gapMs)) summary.longestGap = {thread, ...longest};
+  }
+  if (summary.longestGap && clockAlignment?.available) {
+    const {traceMarkerUs, pageWallBeforeMs, uncertaintyMs} = clockAlignment;
+    const toPage = us => pageWallBeforeMs + (us - traceMarkerUs) / 1000;
+    summary.longestGap.pageWall = {fromMs: toPage(summary.longestGap.previousEndUs), toMs: toPage(summary.longestGap.nextStartUs),
+      bracketUncertaintyMs: uncertaintyMs, exactMappingClaim: false};
+  }
+  return summary;
+}
+
 // Returns {facts, finish}. `onFacts` runs synchronously before any await so a
 // caller can attach the facts object to its receipt exactly as the startup
 // suite did when this code lived there.
@@ -91,6 +132,7 @@ export async function startNativeTraceObserver({context, page, artifacts, syncId
       facts.spans = spans;
       facts.spanCounts = Object.fromEntries(names.map(name => [name, spans.filter(span => span.name === name).length]));
       facts.unmatchedRequiredBegins = [...stacks.values()].flat().filter(event => names.includes(event.name)).length;
+      facts.renderGapSummary = summarizeRenderGaps(spans, facts.clockAlignment);
       facts.status = facts.dataLossOccurred !== false || facts.stopReason !== "case-finished" || !facts.clockAlignment.available || facts.unmatchedRequiredBegins ||
         names.some(name => !facts.spanCounts[name]) ? "captured-incomplete" : "captured-required-spans";
       facts.causalConclusion = "UNKNOWN: native spans require time-aligned offline review; a passing export is not a plateau repair";
