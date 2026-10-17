@@ -1,3 +1,7 @@
+## October 17, 07:28 EDT — chapter deadline delivery and Studio removal review
+
+The owner confirms native iPhone plus shared-backend Studio; no PWA/Capacitor rewrite. ai-chapters44 is delivered with exactly two reviewed Files deadline overlays,22 preserved files and31 unchanged function metadata rows; independent root receipt165f52cd. Actual deployed package normal check plus17 focused tests pass. The Studio removal candidate is reviewed/integrated with795 proofs and413 root inputs verified; browser tests and rollout are still open. The real RentCast billing-membership race correction remains isolated under review. Native CI fecb has reached step94 after completing93; original UIKit setup timeout remains eligible for only a job-specific retry after terminal sole-failure status. Paid AI/Kie activation and App Store release stay off.
+
 ## October 17, 06:59 EDT — CPU18, Studio47 and cost adapters delivered
 
 Architecture remains native iPhone plus Studio/shared backend; no PWA rewrite. Feature HEAD remains pushedfecbfa0 while reviewed cost/guard/docs source is integrated locally. Do not push during the long native CI audit. Current CI39022740808 has13 successful jobs, the original UIKit simulator-inventory setup failure, and native step93 running. That step contains21 serial fault compilations; elapsed time alone does not prove a stall. Only after terminal CI with UIKit the sole underlying failure may its exact same job be retried once. No whole-green claim yet.

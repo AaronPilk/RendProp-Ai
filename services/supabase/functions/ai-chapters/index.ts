@@ -526,6 +526,9 @@ Deno.serve(async (req) => {
     const space = spaceTypeOf(asset.spaceType);
     const labels = allowedLabels(space);
     const startedAt = Date.now();
+    const geminiDeadlineMs = startedAt + GEMINI_DEADLINE_MS;
+    // Reserve the last five seconds of the existing 110s leg for media cleanup.
+    const workDeadlineMs = geminiDeadlineMs - 5_000;
     let uploadedName: string | null = null;
     let route: ChosenRoute = LEGACY_ROUTE;
     let winningStage = "";
@@ -553,9 +556,10 @@ Deno.serve(async (req) => {
         // someone else's server.
         displayName: `walkthrough-${asset.id.slice(0, 8)}`,
         maxBytes: MAX_VIDEO_BYTES,
+        deadlineMs: workDeadlineMs,
       });
       uploadedName = uploaded.name;
-      await waitForActive(uploaded.name, startedAt + GEMINI_DEADLINE_MS);
+      await waitForActive(uploaded.name, workDeadlineMs);
 
       // Walk the router's chain in order. Every attempt is reported so the
       // circuit breaker sees the truth; only an UPSTREAM failure is worth
@@ -574,6 +578,7 @@ Deno.serve(async (req) => {
             systemInstruction: system,
             prompt,
             fps: SAMPLE_FPS,
+            deadlineMs: workDeadlineMs,
           }));
           route = candidate;
           winningStage = `chapters:${i}`;
@@ -585,7 +590,7 @@ Deno.serve(async (req) => {
           const cls = errorClassOf(e);
           await reportOutcome(router, candidate, false, Date.now() - attemptAt, cls);
           const retryable = cls === "upstream" || cls === "rate_limit";
-          const timeLeft = Date.now() < startedAt + GEMINI_DEADLINE_MS;
+          const timeLeft = Date.now() < workDeadlineMs;
           if (!retryable || i === chain.length - 1 || !timeLeft) throw e;
           console.log(`ai-chapters: ${candidate.model} failed (${cls}); trying ${chain[i + 1].model}`);
         }
@@ -600,7 +605,7 @@ Deno.serve(async (req) => {
       throw e;
     } finally {
       // Customer media does not sit on a third party's disk for 48 hours.
-      if (uploadedName) await deleteFile(uploadedName);
+      if (uploadedName) await deleteFile(uploadedName, Math.min(geminiDeadlineMs, Date.now() + 5_000));
     }
 
     // ── Parse + post-process ────────────────────────────────────────────────
