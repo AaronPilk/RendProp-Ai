@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chromium, expect } from "@playwright/test";
 import { collectRunnerFacts, quickLoad } from "./runner-facts.mjs";
-import { startNativeTraceObserver, NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
+import { startNativeTraceObserver, summarizeRecordingSilence, NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
 import { startNodeSchedulingProbe } from "./scheduling-probe.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-cloud-editor-")), dist = join(artifacts, "dist");
 const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx","tests/runner-facts.mjs","tests/native-trace-observer.mjs","tests/scheduling-probe.mjs",...['export','recording-clock','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
@@ -300,8 +300,15 @@ try {
   // The page spin probe is deliberately NOT used here: it costs ~1/5 of a core
   // on a 3-vCPU runner that is already oversubscribed. Nothing here owns a
   // clock, threshold, timeout or oracle, or can turn a refusal into a download.
+  // RENDPROP_TRACE_AUDIO_SERVICE=1 (set only by the stall experiment workflow)
+  // traces through the browser target and adds the "audio" category, so the
+  // audio service's own device callbacks sit beside the renderer's. Off by
+  // default; the gate and its thresholds are identical either way.
+  const traceAudioService = process.env.RENDPROP_TRACE_AUDIO_SERVICE === "1";
+  receipt.nativeTraceDeviceId = timingDevices.find(entry => entry.tab === second)?.id ?? null;
   const agentTrace = await startNativeTraceObserver({context: second.context(), page: second, artifacts, syncId: "cloud-editor-agent-export-before-click",
     rawFileName: "native-trace-cloud-editor-agent-export.raw.private.json", sourceHashes: receipt.sourceHashes, limits: NATIVE_TRACE_EXPORT_LIMITS,
+    ...(traceAudioService ? {browser, extraCategories: ["audio"]} : {}),
     onFacts: facts => {receipt.nativeTrace = facts;}});
   const agentNodeProbe = startNodeSchedulingProbe();
   receipt.schedulingProbe = {node: agentNodeProbe.facts, page: "not-used: spin probe would add load on an oversubscribed runner"};
@@ -362,4 +369,8 @@ try {
   await second.screenshot({ path: join(artifacts, "cloud-editor.png"), fullPage: true });
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); receipt.visibleText = await page?.locator("body").innerText().catch(()=>""); process.exitCode = 1; if (page) await page.screenshot({ path: join(artifacts, "failure.png"), fullPage: true }).catch(() => {}); }
-finally { await captureMediaTiming(); await browser?.close(); if (server) await new Promise(done => server.close(done)); receipt.sourceBoundAtEnd=JSON.stringify(await sourceHashes())===JSON.stringify(receipt.sourceHashes); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }
+finally { await captureMediaTiming();
+  // Render silence inside each recording window of the traced device, edges
+  // included. Evidence only; computed after the verdict above is final.
+  if (receipt.nativeTrace?.renderGapSummary) try { receipt.renderSilenceInRecordings = summarizeRecordingSilence(receipt.nativeTrace, receipt.mediaTiming.find(entry => entry.id === receipt.nativeTraceDeviceId)); } catch (error) { receipt.renderSilenceInRecordings = {issue: error?.name ?? "Error"}; }
+  await browser?.close(); if (server) await new Promise(done => server.close(done)); receipt.sourceBoundAtEnd=JSON.stringify(await sourceHashes())===JSON.stringify(receipt.sourceHashes); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }
