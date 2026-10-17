@@ -1,38 +1,346 @@
 {
-  "fixture": "SYNTHETIC FIXTURE: invented counts in the GET /admin/photo-feedback shape (feedback contract section 5). Not production data; produced without any provider call.",
-  "generated_at": "2026-10-17T15:00:00Z",
+  "fixture": "SYNTHETIC: the answer of SQL photo_feedback_report on services/supabase/tests/photo_feedback_report_demo.py's labelled synthetic rows; not real data",
+  "generated_at": "2026-10-17T20:28:08.000Z",
   "window": "30d",
-  "from": "2026-09-17T15:00:00Z",
-  "to": "2026-10-17T15:00:00Z",
-  "basis": "Generated = photo_edit_evidence rows created in the window (all states). Explicitly reviewed = distinct outputs with at least one explicit verdict. Ledger amounts are internal modeled estimates, not supplier invoices. Observational breakdowns are not evidence that one setting is better.",
-  "generated": { "outputs": 42, "accepted": 36, "refused": 3, "held": 1, "pending": 2 },
-  "explicit": { "feedback_rows": 13, "reviewed_outputs": 12, "useful": 8, "needs_work": 5, "useful_rate": 0.6154, "coverage": 0.2619, "unreviewed_outputs": 31, "reviewers": 2, "revised_rows": 1 },
-  "signals": { "accuracy_ack": 4, "manual_selection": 9, "automatic_selection": 0, "export": 6, "publication": 2, "note": "Selection, export and publication are not quality judgments." },
-  "reasons": [
-    { "reason": "changed_permanent_features", "group": "fidelity", "feedback_rows": 3, "outputs": 3 },
-    { "reason": "personal_style_preference", "group": "taste", "feedback_rows": 2, "outputs": 2 },
-    { "reason": "moved_or_changed_appliance", "group": "fidelity", "feedback_rows": 1, "outputs": 1 },
-    { "reason": "other", "group": "other", "feedback_rows": 1, "outputs": 1 }
-  ],
-  "fidelity_vs_taste": { "needs_work_rows": 5, "with_fidelity_reason": 3, "taste_only": 1, "other_only": 1 },
-  "by_edit": [
-    { "key": "stage", "generated": 30, "reviewed": 9, "useful": 5, "needs_work": 4, "useful_rate": 0.5556 },
-    { "key": "declutter", "generated": 12, "reviewed": 4, "useful": 3, "needs_work": 1, "useful_rate": 0.75 }
-  ],
-  "by_provider_model": [
-    { "key": "gemini/gemini-2.5-flash-image", "generated": 40, "reviewed": 12, "useful": 8, "needs_work": 4, "useful_rate": 0.6667 },
-    { "key": "unknown", "generated": 2, "reviewed": 1, "useful": 0, "needs_work": 1, "useful_rate": 0 }
-  ],
-  "by_recipe_revision": [
-    { "key": "photo-recipe/2026-10-17.1", "generated": 40, "reviewed": 12, "useful": 8, "needs_work": 4, "useful_rate": 0.6667 },
-    { "key": "unknown", "generated": 2, "reviewed": 1, "useful": 0, "needs_work": 1, "useful_rate": 0 }
-  ],
+  "to": "2026-10-17T20:28:08+00:00",
   "cost": {
-    "attributable_attempts": 51, "succeeded_attempts": 44, "failed_or_rejected_attempts": 5, "uncertain_attempts": 2,
-    "recorded_cents": 1264, "outstanding_hold_cents": 80, "unknown_attribution_outputs": 1,
-    "attempts_per_useful": 6.375, "recorded_cents_per_useful": 158,
-    "basis": "recorded_cents = cost_ledger rows bound to this window's generation attempts (photo_edit + photo-qc), each settlement counted once by ledger id. outstanding_hold_cents = reservations not yet bound to a ledger row and not rejected. Internal modeled estimates, never invoices."
+    "basis": "Attempts are the paid generation steps (each retry is its own attempt) and the paid quality check behind this window's generations, each reservation counted once. recorded_cents = distinct cost_ledger rows reached from those attempts by reservation binding, by request key and stage, or by the check's judge receipt; a settlement reached several ways is counted once. outstanding_hold_cents = holds not definitively rejected that have no ledger row (in flight, uncertain after dispatch, or succeeded but not yet settled). Rejected attempts were refused before work and carry no cost. Per-useful figures divide the attempts and costs behind explicitly reviewed outputs by explicitly useful outputs (at least one Useful and no Needs work verdict); window_recorded_cents_per_useful divides all window spend and is an upper bound while coverage is below 1. Internal modeled estimates, never invoices.",
+    "open_attempts": 0,
+    "judge_attempts": 18,
+    "recorded_cents": 348.0772,
+    "retried_outputs": 2,
+    "reviewed_attempts": 32,
+    "succeeded_attempts": 37,
+    "uncertain_attempts": 2,
+    "unsettled_attempts": 3,
+    "attempts_per_useful": 4.5714,
+    "recorded_ledger_rows": 36,
+    "attributable_attempts": 40,
+    "outstanding_hold_cents": 50.2752,
+    "reviewed_recorded_cents": 297.8014,
+    "explicitly_useful_outputs": 7,
+    "recorded_cents_per_useful": 42.5431,
+    "failed_or_rejected_attempts": 1,
+    "unknown_attribution_outputs": 2,
+    "reviewed_outstanding_hold_cents": 16.7584,
+    "window_recorded_cents_per_useful": 49.7253,
+    "generated_without_attempt_records": 0,
+    "outstanding_hold_cents_per_useful": 2.3941,
+    "attempts_with_multiple_ledger_rows": 0
   },
-  "regression_cases": { "active": 2, "withdrawn": 1, "by_defect": [{ "key": "blocked_doorway_or_opening", "n": 1 }, { "key": "changed_permanent_features", "n": 1 }], "by_recipe_revision": [{ "key": "photo-recipe/2026-10-17.1", "n": 2 }] },
-  "sample_note": "n < 30 reviewed outputs in any cell is too small to read as a rate."
+  "from": "2026-09-17T20:28:08+00:00",
+  "basis": "Generated = prospective photo generations started in this window (all states; calibration re-checks excluded). Reviewable = accepted results that were delivered to the requester. Explicitly reviewed = reviewable outputs with at least one Useful or Needs work verdict; each person's verdict on an output counts once, at its latest revision. Useful rate = Useful verdicts / explicit verdicts, among explicitly reviewed outputs only. Coverage = explicitly reviewed / reviewable; unreviewed outputs are not rejections. Acknowledgments, selection, export and publication are separate signals and never count as Useful. Historical outputs without attribution are reported apart and excluded from every rate. Ledger amounts are internal modeled estimates, not supplier invoices. Breakdowns are observational: differences between edits, providers, models or recipe revisions are not evidence that one setting is better.",
+  "by_edit": [
+    {
+      "key": "declutter",
+      "useful": 3,
+      "attempts": 12,
+      "reviewed": 5,
+      "generated": 6,
+      "needs_work": 2,
+      "reviewable": 6,
+      "taste_rows": 0,
+      "useful_rate": 0.6,
+      "small_sample": true,
+      "fidelity_rows": 2,
+      "recorded_cents": 114.3468
+    },
+    {
+      "key": "stage",
+      "useful": 2,
+      "attempts": 12,
+      "reviewed": 5,
+      "generated": 5,
+      "needs_work": 5,
+      "reviewable": 5,
+      "taste_rows": 2,
+      "useful_rate": 0.2857,
+      "small_sample": true,
+      "fidelity_rows": 3,
+      "recorded_cents": 116.4202
+    },
+    {
+      "key": "custom",
+      "useful": 1,
+      "attempts": 5,
+      "reviewed": 2,
+      "generated": 3,
+      "needs_work": 1,
+      "reviewable": 2,
+      "taste_rows": 0,
+      "useful_rate": 0.5,
+      "small_sample": true,
+      "fidelity_rows": 1,
+      "recorded_cents": 33.5172
+    },
+    {
+      "key": "twilight",
+      "useful": 2,
+      "attempts": 6,
+      "reviewed": 2,
+      "generated": 3,
+      "needs_work": 0,
+      "reviewable": 2,
+      "taste_rows": 0,
+      "useful_rate": 1.0,
+      "small_sample": true,
+      "fidelity_rows": 0,
+      "recorded_cents": 50.2758
+    },
+    {
+      "key": "sky",
+      "useful": 0,
+      "attempts": 4,
+      "reviewed": 1,
+      "generated": 2,
+      "needs_work": 1,
+      "reviewable": 2,
+      "taste_rows": 0,
+      "useful_rate": 0.0,
+      "small_sample": true,
+      "fidelity_rows": 0,
+      "recorded_cents": 33.5172
+    },
+    {
+      "key": "lawn",
+      "useful": 0,
+      "attempts": 1,
+      "reviewed": 0,
+      "generated": 1,
+      "needs_work": 0,
+      "reviewable": 0,
+      "taste_rows": 0,
+      "useful_rate": null,
+      "small_sample": true,
+      "fidelity_rows": 0,
+      "recorded_cents": 0.0
+    }
+  ],
+  "reasons": [
+    {
+      "group": "fidelity",
+      "reason": "requested_edit_incomplete",
+      "outputs": 2,
+      "feedback_rows": 2
+    },
+    {
+      "group": "taste",
+      "reason": "personal_style_preference",
+      "outputs": 2,
+      "feedback_rows": 2
+    },
+    {
+      "group": "fidelity",
+      "reason": "changed_permanent_features",
+      "outputs": 1,
+      "feedback_rows": 1
+    },
+    {
+      "group": "fidelity",
+      "reason": "moved_or_changed_appliance",
+      "outputs": 1,
+      "feedback_rows": 1
+    },
+    {
+      "group": "fidelity",
+      "reason": "blocked_doorway_or_opening",
+      "outputs": 1,
+      "feedback_rows": 1
+    },
+    {
+      "group": "fidelity",
+      "reason": "inconsistent_furniture_between_views",
+      "outputs": 1,
+      "feedback_rows": 1
+    },
+    {
+      "group": "fidelity",
+      "reason": "visible_visual_artifacts",
+      "outputs": 1,
+      "feedback_rows": 1
+    },
+    {
+      "group": "other",
+      "reason": "other",
+      "outputs": 1,
+      "feedback_rows": 1
+    }
+  ],
+  "signals": {
+    "note": "Counts are distinct outputs with each client-reported signal. Selection, export and publication are not quality judgments and are never added to the useful rate. Some outputs are selected automatically. Missing feedback is not rejection.",
+    "export": 2,
+    "publication": 1,
+    "signal_rows": 7,
+    "accuracy_ack": 1,
+    "manual_selection": 1,
+    "automatic_selection": 2,
+    "outputs_with_signal_and_no_feedback": 2
+  },
+  "explicit": {
+    "useful": 8,
+    "coverage": 0.8824,
+    "reviewers": 2,
+    "needs_work": 9,
+    "useful_rate": 0.4706,
+    "revised_rows": 1,
+    "feedback_rows": 17,
+    "reviewed_outputs": 15,
+    "contested_outputs": 1,
+    "reviewable_outputs": 17,
+    "unreviewed_outputs": 2,
+    "explicitly_useful_outputs": 7
+  },
+  "generated": {
+    "held": 1,
+    "outputs": 20,
+    "pending": 1,
+    "refused": 1,
+    "accepted": 17,
+    "retained_candidates": 19,
+    "excluded_calibration_checks": 0
+  },
+  "data_range": {
+    "last_feedback_at": "2026-10-16T20:28:06.554573+00:00",
+    "first_feedback_at": "2026-09-26T20:28:06.554573+00:00",
+    "last_generated_at": "2026-10-17T18:28:06.554573+00:00",
+    "first_generated_at": "2026-09-26T18:28:06.554573+00:00"
+  },
+  "historical": {
+    "basis": "Verdicts recorded in this window on outputs generated before attribution existed. Provider, model, recipe, attempts and cost are unknown for them, so they are excluded from every rate and cost above.",
+    "useful": 1,
+    "outputs": 2,
+    "needs_work": 1,
+    "feedback_rows": 2
+  },
+  "sample_note": "Every cell carries its own n. A cell with fewer than 30 explicitly reviewed outputs (small_sample) is too small to read as a rate, and coverage below 1 means rates describe the people who chose to review, not every output.",
+  "regression_cases": {
+    "note": "All consented, active cases regardless of window.",
+    "active": 2,
+    "by_defect": [
+      {
+        "n": 1,
+        "key": "blocked_doorway_or_opening"
+      },
+      {
+        "n": 1,
+        "key": "moved_or_changed_appliance"
+      }
+    ],
+    "withdrawn": 0,
+    "by_recipe_revision": [
+      {
+        "n": 2,
+        "key": "photo-recipe/2026-10-17.1"
+      }
+    ]
+  },
+  "by_provider_model": [
+    {
+      "key": "gemini/gemini-3.1-flash-image",
+      "useful": 5,
+      "attempts": 27,
+      "reviewed": 10,
+      "generated": 14,
+      "needs_work": 5,
+      "reviewable": 12,
+      "taste_rows": 1,
+      "useful_rate": 0.5,
+      "small_sample": true,
+      "fidelity_rows": 3,
+      "recorded_cents": 217.8618
+    },
+    {
+      "key": "gemini/gemini-3-pro-image",
+      "useful": 3,
+      "attempts": 9,
+      "reviewed": 4,
+      "generated": 4,
+      "needs_work": 2,
+      "reviewable": 4,
+      "taste_rows": 0,
+      "useful_rate": 0.6,
+      "small_sample": true,
+      "fidelity_rows": 2,
+      "recorded_cents": 122.2152
+    },
+    {
+      "key": "fal/flux-kontext-pro",
+      "useful": 0,
+      "attempts": 3,
+      "reviewed": 1,
+      "generated": 1,
+      "needs_work": 2,
+      "reviewable": 1,
+      "taste_rows": 1,
+      "useful_rate": 0.0,
+      "small_sample": true,
+      "fidelity_rows": 1,
+      "recorded_cents": 8.0002
+    },
+    {
+      "key": "no_retained_output",
+      "useful": 0,
+      "attempts": 1,
+      "reviewed": 0,
+      "generated": 1,
+      "needs_work": 0,
+      "reviewable": 0,
+      "taste_rows": 0,
+      "useful_rate": null,
+      "small_sample": true,
+      "fidelity_rows": 0,
+      "recorded_cents": 0.0
+    }
+  ],
+  "fidelity_vs_taste": {
+    "other_only": 1,
+    "taste_only": 2,
+    "needs_work_rows": 9,
+    "taste_and_fidelity": 0,
+    "with_fidelity_reason": 6
+  },
+  "by_recipe_revision": [
+    {
+      "key": "photo-recipe/2026-10-17.1",
+      "useful": 7,
+      "attempts": 32,
+      "reviewed": 11,
+      "generated": 16,
+      "needs_work": 6,
+      "reviewable": 13,
+      "taste_rows": 1,
+      "useful_rate": 0.5385,
+      "small_sample": true,
+      "fidelity_rows": 5,
+      "recorded_cents": 281.0428
+    },
+    {
+      "key": "photo-recipe/2026-10-16.9",
+      "useful": 0,
+      "attempts": 4,
+      "reviewed": 2,
+      "generated": 2,
+      "needs_work": 2,
+      "reviewable": 2,
+      "taste_rows": 1,
+      "useful_rate": 0.0,
+      "small_sample": true,
+      "fidelity_rows": 1,
+      "recorded_cents": 33.5172
+    },
+    {
+      "key": "unknown",
+      "useful": 1,
+      "attempts": 4,
+      "reviewed": 2,
+      "generated": 2,
+      "needs_work": 1,
+      "reviewable": 2,
+      "taste_rows": 0,
+      "useful_rate": 0.5,
+      "small_sample": true,
+      "fidelity_rows": 0,
+      "recorded_cents": 33.5172
+    }
+  ]
 }

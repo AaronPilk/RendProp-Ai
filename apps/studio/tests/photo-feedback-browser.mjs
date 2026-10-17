@@ -197,11 +197,11 @@ try {
   // Admin report: the server gates it, and every figure shows its denominator.
   await page.goto(`${origin}/tests/photo-feedback-fixture.html?view=report`);
   await expect(page.getByRole("heading", { name: "Photo feedback report", exact: true })).toBeVisible();
-  for (const text of ["Observational, not proof", "internal ledger estimates, not reconciled supplier invoices", "26.2% (11 of 42)", "61.5% (8 of 13) · small sample", "$1.58", "$12.64 ÷ 8 useful",
-    "31 unreviewed", "Reason mentions: Property fidelity 4 · Personal style 2 · Other 1", "2026-09-17 to 2026-10-17 (UTC), 30d window", report.basis, report.cost.basis, report.sample_note, report.signals.note])
+  for (const text of ["Observational, not proof", "internal ledger estimates, not reconciled supplier invoices", "88.2% (15 of 17)", "47.1% (8 of 17) · small sample", "$0.43", "$2.98 behind reviewed results ÷ 7 results judged useful",
+    "2 delivered results without a verdict", "Reason mentions: Property fidelity 7 · Personal style 2 · Other 1", "2026-09-17 to 2026-10-17 (UTC), 30d window", report.basis, report.cost.basis, report.sample_note, report.signals.note])
     await expect(page.getByText(text, { exact: false }).first()).toBeVisible();
-  await expect(page.getByRole("row", { name: /stage 30 9 55\.6% \(5 of 9\) · small sample/ })).toBeVisible();
-  await expect(page.getByRole("row", { name: /Unknown \(not recorded\) 2 1 0% \(0 of 1\)/ }).first()).toBeVisible();
+  await expect(page.getByRole("row", { name: /stage 5 5 28\.6% \(2 of 7\) · small sample/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /Unknown \(not recorded\) 2 2 50% \(1 of 2\)/ }).first()).toBeVisible();
   assert.deepEqual(state.admin.at(-1), { window: "30d", org: ORG });
   await shot(page, "feedback-report-desktop.png", true);
   await page.getByRole("button", { name: "7 days", exact: true }).click();
@@ -212,7 +212,7 @@ try {
   receipt.checks.push("Admin report renders the synthetic §5 answer with date range, coverage, unreviewed count, useful rate with n, small-sample flags, fidelity/style split, breakdowns, cost per useful and the honesty wording; window switch refetches; fits 390px");
   state.reportMode = "deny"; await page.reload();
   await expect(page.getByRole("alert")).toHaveText("This report is only available to Rendprop administrators.");
-  await expect(page.getByRole("heading", { name: "Explicit feedback" })).toHaveCount(0); await expect(page.getByText("26.2%", { exact: false })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Explicit feedback" })).toHaveCount(0); await expect(page.getByText("88.2%", { exact: false })).toHaveCount(0);
   receipt.checks.push("A 403 from GET /admin/photo-feedback shows only an access message and no report content");
 
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []);
