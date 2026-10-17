@@ -21,7 +21,7 @@ begin
   ('public.photo_quality_set_recipe(uuid,uuid,text,text)','a0da42a32dfd40ed164661174d4c26e1'),
   ('public.photo_feedback_resolve(uuid,uuid,uuid)','1949e0d144fe8a538baf34a0d15f82d7'),
   ('public.photo_feedback_attribution(uuid,uuid)','5e189f1e47ece7566c493aef4c5ec9d2'),
-  ('public.photo_feedback_submit(uuid,uuid,uuid,text,text,integer,text,text[],text,text)','10fd653227b7438fd093546bfe2b7a13'),
+  ('public.photo_feedback_submit(uuid,uuid,uuid,text,text,integer,text,text[],text,text)','a4a4e1e536010c4690d35fa940fa4bc4'),
   ('public.photo_feedback_signal(uuid,uuid,uuid,text,text,text,text)','3bb19af4fb47ebe00f0f6be690f339fb'),
   ('public.photo_feedback_state(uuid,uuid,uuid)','5d04e0ac05c04c506ed0a53b63042164'),
   ('public.photo_regression_case_mark(uuid,uuid,uuid,text,text,boolean,boolean)','d6d2f35d63e5e1f3962d787928f0a514'),

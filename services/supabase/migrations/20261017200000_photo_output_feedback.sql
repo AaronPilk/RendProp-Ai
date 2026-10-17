@@ -26,7 +26,7 @@ begin
   ('public.photo_quality_set_recipe(uuid,uuid,text,text)','a0da42a32dfd40ed164661174d4c26e1','plpgsql','v','jsonb',array['p_actor','p_evidence','p_revision','p_prompt_sha256']),
   ('public.photo_feedback_resolve(uuid,uuid,uuid)','1949e0d144fe8a538baf34a0d15f82d7','plpgsql','s','jsonb',array['p_actor','p_selected','p_provenance']),
   ('public.photo_feedback_attribution(uuid,uuid)','5e189f1e47ece7566c493aef4c5ec9d2','sql','s','jsonb',array['p_provenance','p_evidence']),
-  ('public.photo_feedback_submit(uuid,uuid,uuid,text,text,integer,text,text[],text,text)','10fd653227b7438fd093546bfe2b7a13','plpgsql','v','jsonb',
+  ('public.photo_feedback_submit(uuid,uuid,uuid,text,text,integer,text,text[],text,text)','a4a4e1e536010c4690d35fa940fa4bc4','plpgsql','v','jsonb',
    array['p_actor','p_selected','p_provenance','p_output_sha256','p_client_key','p_revision','p_verdict','p_reasons','p_note','p_platform']),
   ('public.photo_feedback_signal(uuid,uuid,uuid,text,text,text,text)','3bb19af4fb47ebe00f0f6be690f339fb','plpgsql','v','jsonb',
    array['p_actor','p_selected','p_provenance','p_client_key','p_signal','p_detail','p_platform']),
@@ -295,8 +295,10 @@ begin
  if f.id is null then
   select*into f from public.photo_output_feedback where actor_id=p_actor and provenance_id=p_provenance for update;
   if f.id is not null then
+   -- The caller's own stored opinion (one row per output and person), so a
+   -- client adopting the key can skip an identical resend.
    return jsonb_build_object('state','conflict','code','feedback_exists','feedback_id',f.id,'provenance_id',f.provenance_id,
-    'client_key',f.client_key,'revision',f.revision,'revision_count',f.revision_count);
+    'client_key',f.client_key,'revision',f.revision,'revision_count',f.revision_count,'verdict',f.verdict,'reasons',to_jsonb(f.reasons),'note',f.note);
   end if;
   insert into public.photo_output_feedback(provenance_id,evidence_id,org_id,listing_id,actor_id,client_key,idempotency_key,output_sha256,edit,
    provider,model,generation_stage,request_key,recipe_revision,prompt_sha256,attribution,verdict,reasons,note,revision,platform)

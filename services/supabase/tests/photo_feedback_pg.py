@@ -25,7 +25,7 @@ OUT.mkdir(parents=True, exist_ok=False)
 OUT.chmod(0o700)
 PORT = "55741"
 DB = "photo_feedback_proof"
-EXPECTED_ASSERTIONS = 118
+EXPECTED_ASSERTIONS = 119
 DEADLINE = time.monotonic() + 1500
 EXTERNAL = Path("/Volumes/Rendprop Files")
 MIG = SQL / "migrations/20261017200000_photo_output_feedback.sql"
@@ -217,6 +217,8 @@ commit;""")
         ("accepted-only", "resolve", [("or e.state<>'accept'", "")], "an output awaiting its quality check is not rateable"),
         ("key-binding", "submit", [("if f.id is not null and f.provenance_id<>p_provenance then", "if false then")], "a feedback key is bound to one photo"),
         ("revision-conflict", "submit", [("if f.verdict<>p_verdict or f.reasons<>v_reasons or f.note is distinct from v_note then", "if false then")], "changed content needs a new revision"),
+        ("exists-carries-verdict", "submit", [("'revision_count',f.revision_count,'verdict',f.verdict,'reasons',to_jsonb(f.reasons),'note',f.note);", "'revision_count',f.revision_count);")],
+         "feedback_exists carries the stored verdict, reasons and note"),
         ("evidence-bytes", "submit", [("if e is not null and p_output_sha256 is not null and p_output_sha256 is distinct from e#>>'{output,sha256}'then", "if false then")], "bytes of the sibling version are refused"),
         ("recipe-before-dispatch", "recipe", [("if e.purpose<>'prospective'or e.output is not null or e.output_etag is not null or e.state not in('pending','input_ready')then", "if e.purpose<>'prospective'then")], "a recipe cannot be invented after the candidate exists"),
         ("historical-unknown", "attribution", [("'provider',e.generation_provider,", "'provider',coalesce(e.generation_provider,m.model_id),")], "historical output stays provenance-only with unknown provider, recipe and attempts"),

@@ -241,6 +241,10 @@ select pg_temp.ok((select verdict='needs_work'and revision=2 and revision_count=
 -- A key is bound to one output forever; a second key for the same output is answered with the existing one.
 select pg_temp.no($q$select photo_feedback_submit((select a from f),(select o from f),pg_temp.prov((select b from ev)),null,'k-a-00000001',3,'useful','{}',null,'studio')$q$,'FEEDBACK_KEY_CONFLICT','a feedback key is bound to one photo');
 select pg_temp.ok((select x->>'state'='conflict'and x->>'code'='feedback_exists'and x->>'client_key'='k-a-00000001'and x->>'revision'='2'from photo_feedback_submit((select a from f),(select o from f),pg_temp.prov((select a from ev)),null,'k-a-00000002',1,'useful','{}',null,'ios')x),'a second key for the same output returns the existing key');
+select pg_temp.ok((select x->>'verdict'='needs_work'and x->'reasons'='["blocked_doorway_or_opening","visible_visual_artifacts"]'::jsonb and x->>'note'='Doorway on the right is covered'
+ and x->>'revision_count'='2'and x->>'provenance_id'=pg_temp.prov((select a from ev))::text
+ from photo_feedback_submit((select a from f),(select o from f),pg_temp.prov((select a from ev)),null,'k-a-00000003',1,'needs_work','{other}',null,'studio')x),
+ 'feedback_exists carries the stored verdict, reasons and note so a client can skip an identical resend');
 select pg_temp.ok((select count(*)=1 from photo_output_feedback where actor_id=(select a from f)),'the conflicting key wrote nothing');
 -- Each reviewer has their own row; the owner's opinion is untouched.
 select photo_feedback_submit((select e from f),(select o from f),pg_temp.prov((select a from ev)),null,'k-editor-0001',1,'useful','{}',null,'ios');
