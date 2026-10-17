@@ -8,7 +8,7 @@ import { photoFeedbackReport, REPORT_WINDOWS, type Fact, type ReportView, type R
 const muted = (value: string) => <p className="muted">{value}</p>;
 const facts = (items: Fact[]) => <div className="settings-grid">{items.map(([label, value, detail]) =>
   <section key={label} className="panel">{muted(label)}<h3>{value}</h3>{detail && muted(detail)}</section>)}</div>;
-const table = (head: string[], rows: Row[]) => rows.length ? <div style={{ overflowX: "auto" }}><table style={{ borderSpacing: "16px 8px" }}>
+const table = (head: string[], rows: Row[]) => rows.length ? <div style={{ overflowX: "auto" }}><table style={{ borderSpacing: "16px 8px", whiteSpace: "nowrap", textAlign: "left" }}>
   <thead><tr>{head.map(name => <th key={name} scope="col">{name}</th>)}</tr></thead>
   <tbody>{rows.map(row => <tr key={row[0]}>{row.map((cell, index) => index ? <td key={index}>{cell}</td> : <th key={index} scope="row">{cell}</th>)}</tr>)}</tbody>
 </table></div> : muted("None in this window.");
