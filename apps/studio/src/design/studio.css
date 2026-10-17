@@ -460,6 +460,60 @@ main { padding: var(--space-8) var(--page-gutter) 0; }
   .nav-item.active, .studio-shell .lw-tabs button[aria-selected="true"] { outline: 2px solid Highlight; }
 }
 
+/* ── Interaction pass: the "Apple feel" ──────────────────────────────────
+ * Respond on pointer-down, materialize rather than fade, scroll edges instead
+ * of hard dividers, vibrancy on translucent chrome, no tap delay, and reduced
+ * motion as a cross-fade rather than nothing. CSS transitions start from the
+ * current presented value, so every press/hover here is interruptible. */
+html { -webkit-tap-highlight-color: transparent; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--ink) 22%, transparent) transparent; }
+button, a, summary, label, [role="tab"], .nav-item, .app-feature-card, .app-property-card, .lw-media-card, .space-row { touch-action: manipulation; }
+h1, h2, h3 { text-wrap: balance; }
+p, li, .subtitle { text-wrap: pretty; }
+
+/* Pointer-down feedback on every pressable surface, not only buttons */
+.nav-item, .app-property-card, .app-leads-banner, .space-row, .studio-shell .lw-tabs button, .studio-shell .creative-tabs button, .studio-shell .video-purpose label, .studio-shell .creative-preset-grid button, .studio-shell .batch-photo-choice, .studio-shell .video-photo-grid label, .app-gate-list button, .app-all-tools > summary, .secondary-navigation summary {
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+.nav-item:active, .app-property-card:active, .app-leads-banner:active, .space-row:active, .studio-shell .video-purpose label:active, .studio-shell .creative-preset-grid button:active, .studio-shell .batch-photo-choice:active, .studio-shell .video-photo-grid label:active, .app-gate-list button:active { transform: scale(.985); transition-duration: 70ms; }
+.studio-shell .lw-tabs button:active, .studio-shell .creative-tabs button:active, .studio-shell .video-photo-actions > button[aria-pressed]:active { transform: scale(.96); transition-duration: 70ms; }
+.nav-item:active { background: var(--accent-soft); }
+.app-feature-card, .app-property-card, .lw-media-card, .app-leads-banner { transform-origin: center; }
+
+/* Materialize: dialogs and menus scale + unblur in from their source; views settle in */
+.app-feature-gate, .login-dialog {
+  transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out), filter var(--dur-slow) var(--ease-out), overlay var(--dur-slow) allow-discrete, display var(--dur-slow) allow-discrete;
+  transform-origin: 50% 40%;
+}
+@starting-style { .app-feature-gate[open], .login-dialog { opacity: 0; transform: scale(.96) translateY(6px); filter: blur(6px); } }
+.app-feature-gate::backdrop, .modal-backdrop { transition: opacity var(--dur-slow) var(--ease-out), overlay var(--dur-slow) allow-discrete, display var(--dur-slow) allow-discrete; }
+@starting-style { .app-feature-gate[open]::backdrop, .modal-backdrop { opacity: 0; } }
+.secondary-navigation-menu { transform-origin: 100% 100%; transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }
+@starting-style { .secondary-navigation[open] .secondary-navigation-menu { opacity: 0; transform: scale(.94) translateY(6px); } }
+.app-dashboard, .listing-workflow, .make-video, .creative-workspace, .business-workspace, .library-layout, .planner-grid, .lw-empty, .video-job, .notice, .studio-shell .lw-error, .studio-shell .video-message { transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out); }
+@starting-style { .app-dashboard, .listing-workflow, .make-video, .creative-workspace, .business-workspace, .library-layout, .planner-grid { opacity: 0; transform: translateY(6px); } .lw-empty, .video-job, .notice, .studio-shell .lw-error, .studio-shell .video-message { opacity: 0; transform: translateY(4px); } }
+
+/* Scroll edges, not hard dividers: the topbar and tab bar blend into content */
+.topbar { border-bottom-color: transparent; box-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 7%, transparent); }
+.topbar::after { content: ""; position: absolute; inset: auto 0 -12px; height: 12px; background: linear-gradient(color-mix(in srgb, var(--bg) 70%, transparent), transparent); pointer-events: none; }
+@media (max-width: 800px) {
+  .sidebar { border-top-color: transparent; box-shadow: 0 -1px 0 color-mix(in srgb, var(--ink) 7%, transparent); }
+  .sidebar::before { content: ""; position: absolute; inset: -12px 0 auto; height: 12px; background: linear-gradient(transparent, color-mix(in srgb, var(--bg) 70%, transparent)); pointer-events: none; }
+}
+
+/* Vibrancy: text sitting on a material is slightly heavier and tighter */
+.topbar .breadcrumb, .topbar .account-button, .topbar .connection, .app-feature-gate, .login-dialog, .secondary-navigation-menu { -webkit-font-smoothing: antialiased; }
+.topbar .breadcrumb strong, .topbar .account-button { font-weight: 650; letter-spacing: .005em; }
+@media (max-width: 800px) { .nav-item { font-weight: 650; letter-spacing: .01em; } }
+
+/* Selected states cross-fade; the segmented thumb and selection tint never snap */
+.studio-shell .lw-tabs button, .studio-shell .creative-tabs button, .studio-shell .video-photo-actions > button[aria-pressed], .studio-shell .video-purpose label, .studio-shell .creative-preset-grid button, .nav-item { transition-property: background, border-color, color, box-shadow, transform; }
+
+/* Reduced motion: keep the cross-fades, drop every transform and blur */
+@media (prefers-reduced-motion: reduce) {
+  .app-feature-gate, .login-dialog, .secondary-navigation-menu, .app-dashboard, .listing-workflow, .make-video, .creative-workspace, .business-workspace, .library-layout, .planner-grid, .lw-empty, .video-job, .notice, .studio-shell .lw-error, .studio-shell .video-message { transition-property: opacity, overlay, display; transition-duration: 160ms; transform: none !important; filter: none !important; }
+  .nav-item:active, .app-property-card:active, .app-leads-banner:active, .space-row:active, .studio-shell .video-purpose label:active, .studio-shell .creative-preset-grid button:active, .studio-shell .batch-photo-choice:active, .studio-shell .video-photo-grid label:active, .app-gate-list button:active, .studio-shell .lw-tabs button:active, .studio-shell .creative-tabs button:active, .studio-shell .video-photo-actions > button[aria-pressed]:active { transform: none; }
+}
+
 /* Touch: 44px targets win over the compact pointer sizes above (same specificity, later source order) */
 @media (pointer: coarse) {
   button, .button, .text-button, button.text-button, select,
