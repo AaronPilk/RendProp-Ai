@@ -161,7 +161,11 @@ enum PropertyVideoPlanner {
               Set(inputs.map(\.photoID)).count == inputs.count,
               inputs.allSatisfy({ !$0.photoID.isEmpty && $0.photoID.utf8.count <= 200 && $0.jpegDigest.count == 64 && $0.jpegDigest.allSatisfy(\.isHexDigit) }) else { throw Failure.invalidInput }
         func fallback() -> Result {
-            Result(photos: inputs.map { Planned(input: $0, scene: .unknown, confidence: 0, motion: "push_in") },
+            // Planner unavailable (V3): rotate restrained moves by index so an outage never
+            // yields a run of identical push-ins. Order is preserved; never fly_through.
+            let rotation = ["push_in", "side_glide", "pull_back"]
+            return Result(photos: inputs.enumerated().map { index, input in
+                Planned(input: input, scene: .unknown, confidence: 0, motion: rotation[index % rotation.count]) },
                 usedFallback: true, classifiedBatches: 0)
         }
         var rows: [String: PropertyVideoSceneRow] = [:]
