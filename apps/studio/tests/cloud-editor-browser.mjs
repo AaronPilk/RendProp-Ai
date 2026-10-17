@@ -9,8 +9,10 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chromium, expect } from "@playwright/test";
 import { collectRunnerFacts, quickLoad } from "./runner-facts.mjs";
+import { startNativeTraceObserver, NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
+import { startNodeSchedulingProbe } from "./scheduling-probe.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-cloud-editor-")), dist = join(artifacts, "dist");
-const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx","tests/runner-facts.mjs",...['export','recording-clock','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
+const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx","tests/runner-facts.mjs","tests/native-trace-observer.mjs","tests/scheduling-probe.mjs",...['export','recording-clock','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
 const sourceHashes=async()=>Object.fromEntries(await Promise.all(sourcePaths.map(async path=>[path,createHash('sha256').update(await readFile(join(root,path))).digest('hex')])));
 const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), runnerFacts: collectRunnerFacts(), loadBeforeExport: [], checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
 let browser, server, page;
@@ -290,8 +292,27 @@ try {
   assert.equal((await fourth.evaluate(() => window.cloudFixture.snapshot())).tickets,agentSaved.tickets);
   await closeDevice(fourth);await second.bringToFront();
   receipt.loadBeforeExport.push({export:"agent-continuous",...quickLoad()});
-  await second.getByRole("button",{name:"Export MP4",exact:true}).click();
-  await expect(second.getByRole("link",{name:/Download MP4/})).toBeVisible({timeout:20000});
+  // Passive evidence around the one guarded export hosted CI refused (run
+  // 39055656587: timeline and audio froze at a render-quantum boundary for
+  // >=127 ms while the main thread kept sampling). The native webaudio trace
+  // shows whether the audio render thread stopped; the Node probe sleeps on
+  // Atomics.wait and shows whether the host stopped scheduling this process.
+  // The page spin probe is deliberately NOT used here: it costs ~1/5 of a core
+  // on a 3-vCPU runner that is already oversubscribed. Nothing here owns a
+  // clock, threshold, timeout or oracle, or can turn a refusal into a download.
+  const agentTrace = await startNativeTraceObserver({context: second.context(), page: second, artifacts, syncId: "cloud-editor-agent-export-before-click",
+    rawFileName: "native-trace-cloud-editor-agent-export.raw.private.json", sourceHashes: receipt.sourceHashes, limits: NATIVE_TRACE_EXPORT_LIMITS,
+    onFacts: facts => {receipt.nativeTrace = facts;}});
+  const agentNodeProbe = startNodeSchedulingProbe();
+  receipt.schedulingProbe = {node: agentNodeProbe.facts, page: "not-used: spin probe would add load on an oversubscribed runner"};
+  try {
+    await second.getByRole("button",{name:"Export MP4",exact:true}).click();
+    await expect(second.getByRole("link",{name:/Download MP4/})).toBeVisible({timeout:20000});
+  } finally {
+    receipt.loadAfterExport = {export:"agent-continuous",...quickLoad()};
+    await agentTrace.finish();
+    receipt.schedulingProbe.node = await agentNodeProbe.stop();
+  }
   const agentDownload=second.waitForEvent("download");await second.getByRole("link",{name:/Download MP4/}).click();const agentExport=join(artifacts,"agent-continuous.mp4");await (await agentDownload).saveAs(agentExport);
   const agentProbe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_streams","-show_format","-of","json",agentExport],{encoding:"utf8"}));await saveExportDiagnostics("agent-continuous",agentExport,agentProbe);assert(Math.abs(Number(agentProbe.format.duration)-4)<.4);
   const agentPixel=time=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",agentExport,"-frames:v","1","-vf","format=rgb24,crop=1:1:100:300","-f","rawvideo","pipe:1"])];

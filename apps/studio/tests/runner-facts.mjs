@@ -25,8 +25,23 @@ export function sanitizeAudioItems(items, depth = 0) {
   });
 }
 
+// The busiest processes at this instant: executable basename and %CPU only.
+// No arguments, PIDs, users or paths reach the receipt. This is what tells a
+// host-contention stall (another process eating the runner's few vCPUs) from a
+// stall inside the browser.
+export function topProcesses(limit = 6) {
+  try {
+    const out = execFileSync("ps", ["-Ao", "pcpu=,comm="], {encoding: "utf8", timeout: 3000, maxBuffer: 1 << 20});
+    return out.split("\n").map(line => /^\s*([\d.]+)\s+(.+?)\s*$/.exec(line)).filter(Boolean)
+      .map(match => ({cpu: Number(match[1]), name: match[2].split("/").pop().slice(0, 48)}))
+      .filter(entry => Number.isFinite(entry.cpu)).sort((a, b) => b.cpu - a.cpu).slice(0, limit);
+  } catch (error) {
+    return [{issue: error?.name ?? "Error"}];
+  }
+}
+
 export function quickLoad() {
-  return {atIso: new Date().toISOString(), loadavg: os.loadavg(), freemem: os.freemem()};
+  return {atIso: new Date().toISOString(), loadavg: os.loadavg(), freemem: os.freemem(), top: topProcesses()};
 }
 
 export function collectRunnerFacts() {
