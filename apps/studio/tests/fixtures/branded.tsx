@@ -3,6 +3,7 @@ import type { Session, AuthChangeEvent } from "@supabase/supabase-js";
 import App from "../../src/App";
 import { createStudioServices, type StudioAuth } from "../../src/data";
 import "../../src/styles.css";
+import "../../src/design/studio.css";
 
 // Separately bundled test entry, never imported by src/main.tsx. No real Auth,
 // provider redirect, customer fixture, remote request or secret is used here.
