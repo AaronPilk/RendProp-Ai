@@ -3154,6 +3154,8 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const cfg = {
     slug: tour.slug,
     listingVideo: primaryVideo,
+    // Premium designs present the video as a film (W1): loading-only status copy.
+    filmHero: !!primaryVideo && premiumPresentation,
     preview,
     functionsBase,
     anonKey: anonKey || "",
@@ -3188,7 +3190,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const hasVideo = !!(scrubUrl || hlsUrl);
   // Presentation reuses the same resolved media and safe listing values. The
   // included Classic markup is unchanged; neither theme changes source order.
-  const coverMediaHtml = primaryVideo ? listingVideoStage(primaryVideo, coverImage, header.entityName) : coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`;
+  const coverMediaHtml = primaryVideo ? listingVideoStage(primaryVideo, coverImage, header.entityName, premiumPresentation) : coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`;
   const premiumHeroCopy = premiumPresentation ? `<div class="property-hero-copy"><div class="lp-eyebrow">${escapeHtml(isSoldOrArchived(tour) ? "Sold property" : "Discover the residence")}</div><h1 class="property-hero-title">${escapeHtml(header.entityName)}</h1>${priceText(tour) ? `<p class="property-hero-price">${escapeHtml(priceText(tour))}</p>` : ""}
     <div class="listing-cover-actions">
       ${hasVideo && !primaryVideo ? `<button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button><p>Open the video when you want to explore.</p>` : primaryVideo ? "" : `<p>Photos and location details are available below.</p>`}
