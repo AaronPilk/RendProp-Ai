@@ -196,9 +196,8 @@ git reset --hard origin/feature/launch-checklist82-20261014
 
 ## Run 39040282783 at `7130625` (all repairs + the owner's recovered Codex commits)
 
-Observed to completion before any further push. Result: **13 green, 2 red**
-(the audit-evidence gate result is recorded in the table once it finished;
-see the final line of this section).
+Observed to completion before any further push. Result: **14 green, 2 red** (audit-evidence gate and "All native audit
+gates required" both success; run conclusion failure).
 
 | Job | Result |
 |---|---|

@@ -31,8 +31,7 @@ deploy, no upload, no paid provider call, no production data change.
 
 ## 2. Hosted CI, exact
 
-- Run **39040282783** at `7130625`: 13 success, 2 failure, audit-evidence gate
-  — see §2.1. Failures: tour-host (`finishing-browser.mjs:118`, product clock
+- Run **39040282783** at `7130625`: 14 success, 2 failure — see §2.1. Failures: tour-host (`finishing-browser.mjs:118`, product clock
   guard refused a runner audio-sink stall; environmental, analysed in
   `CLAUDE-CI-REPAIRS-20261017.md`), CPU/background (`rentcast_billing_binding_pg`
   TS2322, fixed in `770e7ac`).
@@ -41,7 +40,8 @@ deploy, no upload, no paid provider call, no production data change.
 
 ### 2.1 Audit-evidence gate on 39040282783
 
-(recorded when the run concluded — see the handoff's run table)
+Success (completed 15:5xZ), as did "All native audit gates required". The run's
+conclusion is failure because of tour-host and CPU/background only.
 
 ### 2.2 Next run
 
