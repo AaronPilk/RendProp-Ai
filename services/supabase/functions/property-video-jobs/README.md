@@ -5,6 +5,14 @@ order/motion, presentation, narration and optional pinned licensed music. It
 continues after the app exits only after a successful durable enqueue. It never
 publishes automatically. The separate service-only worker is the sole dispatcher.
 
+Camera moves are the one recipe field the server rewrites before freezing:
+`variety.ts` keeps photo identity and order but guarantees no two adjacent
+photos share a move and every four photos hold three distinct moves, never
+introduces `fly_through`, and records `requested`/`chosen`/`changed` under
+`manifest.motion_variety` (seed: the operation id). Steady profiles also record
+a temporal motion verdict per shot (`property_video_job_sources.temporal`,
+`property-video-worker/temporal.ts`) before the paid drift judge decides.
+
 ## Client contract
 
 All client routes require a fresh named-user JWT. Listing routes check current
