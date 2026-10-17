@@ -2314,6 +2314,36 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
   try {
     return completed(await output.complete(state));
   } catch (e) {
+    // Kie only: a completed result that can never be retained (an image or
+    // other non-video extension, or more bytes than the edge persist limit) is
+    // terminal here, so the worker fails the attempt once instead of re-polling
+    // the same receipt to its 24 h deadline. Kie's work is finished and its
+    // result is immutable; nothing is downloaded again. Every other provider
+    // keeps the retryable 503 exactly as before.
+    if (job.p === "kie" && e instanceof HttpError && e.details?.result_unretainable === true) {
+      // Terminal only once this exact receipt's accepted payment is booked: one
+      // settled, unreleased reservation with its ledger row. A priced hold whose
+      // settlement failed after acceptance keeps the retryable 503 below, so a
+      // poll after the token expiry can still settle that exact admission once
+      // (paidRoutedReceiptMatches(routed,true)); answering terminal first would
+      // stop every poll and leave the hold neither booked nor released.
+      // Read-only; a read failure or any other shape is "not yet".
+      let paid = false;
+      try {
+        let query = adminClient().from("app_video_cost_reservations")
+          .select("provider_request_id,cost_ledger_id,settled_at,released_at")
+          .eq("org_id", job.o).eq("actor_id", job.usr).eq("provider", job.p).eq("model", job.m);
+        query = job.a ? query.eq("idempotency_key", job.a) : query.eq("provider_request_id", job.i);
+        const { data, error } = await query.limit(2);
+        const row = !error && Array.isArray(data) && data.length === 1 ? data[0] : null;
+        paid = !!row && row.provider_request_id === job.i && typeof row.cost_ledger_id === "string" && row.cost_ledger_id.length > 0 &&
+          typeof row.settled_at === "string" && Number.isFinite(Date.parse(row.settled_at)) && row.released_at === null;
+      } catch { paid = false; }
+      if (paid) {
+        console.error("ai-video routed Kie result cannot be retained", { provider: job.p, model: job.m, error_class: "upstream" });
+        return json({ status: "failed", error: "The generated result cannot be retained as a video.", error_class: "upstream", provider: job.p, failure_phase: "persistence", result_unretainable: true });
+      }
+    }
     console.error("ai-video result persistence failed", { provider: job.p, model: job.m, error_class: "upstream" });
     throw new HttpError(503, "The clip was generated but could not be stored yet. Retry the saved request shortly.", "upstream",
       { provider: job.p, error_class: "upstream", failure_phase: "persistence", retry_existing_job: true });

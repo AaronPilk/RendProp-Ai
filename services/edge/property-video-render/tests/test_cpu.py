@@ -282,6 +282,71 @@ class SteadyCadence(unittest.TestCase):
                 self.assertLess(volume(.5,200),volume(3.5,200)-5)
                 self.assertGreater(volume(result['duration_s']-.7,200),-70)
 
+    def test_native_uhd_sources_scale_down_centre_crop_and_keep_every_frame(self):
+        # A Kie native-4K source (3840x2160 or 2160x3840, CFR24, 120 frames) is
+        # scaled DOWN to the canvas, never padded or upscaled; a source whose
+        # aspect differs from the canvas is centre-cropped. Synthetic clips only.
+        def uhd(name, small, size, pattern):
+            # Drawn at a small size, enlarged x10 with neighbour sampling (crisp
+            # edges, cheap to make). Enlarging a generated pattern is not a claim
+            # about customer source detail; the gate reads geometry and cadence.
+            source = self.root / f'{name}.mp4'
+            run([shutil.which('ffmpeg'), '-v', 'error', '-f', 'lavfi', '-i', f'nullsrc=s={small}:r=24:d=5',
+                 '-vf', f'{pattern},scale={size.replace("x", ":")}:flags=neighbor', '-frames:v', '120', '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-threads', '2', str(source)])
+            video = next(s for s in probe(source)['streams'] if s['codec_type'] == 'video')
+            self.assertEqual((video['width'], video['height'], video['avg_frame_rate']), tuple(int(v) for v in size.split('x')) + ('24/1',))
+            return source
+        # Eight-bit frame numbers as eight columns across the full width.
+        numbered = "geq=lum='if(gt(bitand(N,pow(2,floor(X*8/W))),0),235,16)':cb=128:cr=128"
+        # A centred white square (a quarter of the width) on black: the only bright pixels.
+        boxed = lambda w, h: f"geq=lum=16:cb=128:cr=128,drawbox=x={w//2-w//8}:y={h//2-w//8}:w={w//4}:h={w//4}:color=white:t=fill"
+        sources = {
+            'uhd-landscape-numbered': uhd('uhd-landscape-numbered', '384x216', '3840x2160', numbered),
+            'uhd-portrait-numbered': uhd('uhd-portrait-numbered', '216x384', '2160x3840', numbered),
+            'uhd-landscape-box': uhd('uhd-landscape-box', '384x216', '3840x2160', boxed(384, 216)),
+            'uhd-portrait-box': uhd('uhd-portrait-box', '216x384', '2160x3840', boxed(216, 384)),
+        }
+        before = {k: hashlib.sha256(v.read_bytes()).hexdigest() for k, v in sources.items()}
+        # Same aspect: pure scale-down, every native frame once, in order.
+        for name, aspect, size in [('uhd-landscape-numbered', '16:9', (1920, 1080)), ('uhd-portrait-numbered', '9:16', (1080, 1920))]:
+            result = compose([sources[name]], self.root / ('compose-' + name), aspect=aspect, composition_profile='steady-v2-cfr24', test_fast=True)
+            self.measured(result, 120)
+            self.assertEqual((result['width'], result['height']), size)
+            self.assertEqual(self.frame_numbers(result['master']), list(range(120)), 'every native UHD frame survives the scale-down exactly once')
+            print('NATIVE_UHD_COMPOSE ' + json.dumps({'source': name, 'canvas': aspect, 'frames': 120, 'scaled_down_to': size}))
+        # Cross aspect: scale-down then an exact CENTRE crop. The centred square
+        # stays centred and symmetric; nothing is padded (the edges stay black).
+        def gray_frame(path, w, h):
+            raw = run([shutil.which('ffmpeg'), '-v', 'error', '-ss', '2', '-i', str(path), '-frames:v', '1', '-vf', f'scale={w}:{h}:flags=neighbor,format=gray', '-f', 'rawvideo', '-']).stdout
+            self.assertEqual(len(raw), w * h)
+            return lambda x, y: raw[y * w + x]
+        for name, aspect, (cw, ch) in [('uhd-landscape-box', '9:16', (1080, 1920)), ('uhd-portrait-box', '16:9', (1920, 1080)),
+                                       ('uhd-landscape-box', '16:9', (1920, 1080)), ('uhd-portrait-box', '9:16', (1080, 1920))]:
+            result = compose([sources[name]], self.root / f'compose-{name}-{aspect.replace(":", "x")}', aspect=aspect, composition_profile='steady-v2-cfr24', test_fast=True)
+            self.measured(result, 120)
+            self.assertEqual((result['width'], result['height']), (cw, ch))
+            sw, sh = (3840, 2160) if 'landscape' in name else (2160, 3840)
+            scale = max(cw / sw, ch / sh)  # force_original_aspect_ratio=increase, then crop
+            side = round(sw / 4 * scale)   # the square's side on the canvas
+            w, h = cw // 4, ch // 4        # read at quarter resolution
+            pixel = gray_frame(result['master'], w, h)
+            cx, cy, half = w // 2, h // 2, side // 8
+            self.assertGreater(pixel(cx, cy), 200, f'{name}->{aspect}: centre stays centred')
+            for dx, dy in [(half - 3, 0), (-(half - 3), 0), (0, half - 3), (0, -(half - 3))]:
+                self.assertGreater(pixel(cx + dx, cy + dy), 200, f'{name}->{aspect}: square interior symmetric about the centre')
+            for dx, dy in [(half + 3, 0), (-(half + 3), 0), (0, half + 3), (0, -(half + 3))]:
+                self.assertLess(pixel(cx + dx, cy + dy), 60, f'{name}->{aspect}: square ends symmetrically; no stretch')
+            for x, y in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]:
+                self.assertLess(pixel(x, y), 60, f'{name}->{aspect}: corners are source pixels, never padding')
+            print('NATIVE_UHD_COMPOSE ' + json.dumps({'source': name, 'canvas': aspect, 'frames': 120, 'scaled_down_to': [cw, ch], 'centre_crop': scale * sw > cw + 1 or scale * sh > ch + 1}))
+        self.assertEqual({k: hashlib.sha256(v.read_bytes()).hexdigest() for k, v in sources.items()}, before, 'sources are never rewritten')
+        # A 23.976 fps UHD clip is refused by the same cadence gate, before any encode.
+        ntsc = self.root / 'uhd-23976.mp4'
+        run([shutil.which('ffmpeg'), '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=3840x2160:r=24000/1001:d=5.05',
+             '-frames:v', '120', '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-threads', '2', str(ntsc)])
+        with self.assertRaisesRegex(QualityError, 'steady_v2_requires_native_cfr24'):
+            compose([ntsc], self.root / 'compose-uhd-23976', composition_profile='steady-v2-cfr24', test_fast=True)
+
     def test_native121st_endpoint_sample_trims_only_outside_five_second_window(self):
         source=self.root/'numbered121.mp4'
         pattern="geq=lum='if(gt(bitand(N,pow(2,floor(X/24))),0),235,16)':cb=128:cr=128,scale=1920:1080:flags=neighbor"

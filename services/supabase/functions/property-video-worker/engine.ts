@@ -61,7 +61,9 @@ export async function poll(ctx:any){
    if(out.status!==200)console.warn(JSON.stringify(propertyVideoPollDiagnostic('status_response',new HttpError(out.status,'Provider status is unavailable.'))));
    await rpc('property_video_job_poll_release',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});return;
   }
-  if(out.value.status==='failed'){await fail(ctx,out.value.error_class==='nsfw'?'provider_safety_refused':'provider_terminal_failed');return;}
+  // Kie: a completed result that could never be retained (image extension, over the
+  // persist limit) is the same terminal unverifiable outcome as the stored-object gate below.
+  if(out.value.status==='failed'){await fail(ctx,out.value.error_class==='nsfw'?'provider_safety_refused':kie&&out.value.result_unretainable===true?'source_video_unverifiable':'provider_terminal_failed');return;}
   phase='status_response';assert(out.value.status==='completed'&&out.value.persisted===true&&typeof out.value.asset_key==='string',503,'Completed private media could not be retained.');
   phase='private_output';const saved=await adminClient().from('private_ai_outputs').select('storage_key,bytes').eq('org_id',j.org_id).eq('user_id',j.actor_id).eq('listing_id',j.listing_id).eq('bucket','renders').eq('storage_key',out.value.asset_key).maybeSingle();
   assert(!saved.error&&saved.data,503,'The generated clip is not owned by this property.');

@@ -1,4 +1,4 @@
-import { assert } from "../_shared/http.ts";
+import { assert, HttpError } from "../_shared/http.ts";
 import type { DoneState } from "../_shared/providers/types.ts";
 type Row = Record<string, unknown>;
 export interface RoutedOutputIdentity { orgId:string; userId:string; listingId:string|null; provider:string; model:string; requestId:string; submittedAt:string; kind:string }
@@ -33,12 +33,20 @@ export async function createRoutedOutput(identity:RoutedOutputIdentity,deps:Depe
     await deps.register(key,bytes);
     return{key,url};
   }
+  /** The provider's completed result itself can never become this output: a
+   * format with no video extension (an image), or a result over the persist
+   * limit. Same 503 as before; details.result_unretainable lets a caller that
+   * knows the provider's work is finished (a Kie routed status) decide it is
+   * terminal instead of a retry. The journal, CAS and signing are untouched. */
+  const unretainable=(message:string)=>new HttpError(503,message,"upstream",{failure_phase:"persistence",result_unretainable:true});
   async function complete(state:DoneState):Promise<{key:string;url:string}>{
     const saved=await existing();if(saved)return saved;
     const extension=extensions[state.mime.split(";")[0].trim().toLowerCase()];
-    assert(extension,503,"The video service returned an unsupported saved format","upstream");
+    if(!extension)throw unretainable("The video service returned an unsupported saved format");
     const key=`${stem}.${extension}`;
-    const stored=await deps.persist(state,key,async intent=>{assert(intent.key===key,503,"The saved video identity changed","upstream");await deps.register(key,intent.bytes);});
+    let stored:{key:string;bytes:number};
+    try{stored=await deps.persist(state,key,async intent=>{assert(intent.key===key,503,"The saved video identity changed","upstream");await deps.register(key,intent.bytes);});}
+    catch(error){if((error as {result_unretainable?:unknown}|null)?.result_unretainable===true)throw unretainable("The video service result is over the saved video size limit");throw error;}
     assert(stored.key===key,503,"The saved video identity changed","upstream");
     const result=await existing();assert(result&&result.key===key,503,"The saved video output could not be verified","upstream");return result;
   }
