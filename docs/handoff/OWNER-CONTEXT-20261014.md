@@ -1,3 +1,17 @@
+## October 17, 04:59 EDT — backend completion verified; live website oracle corrected next
+
+The remaining7 backend cases and32/32normalroute checks pass in one69.86sV6 sequence. Root verifies161proofs/37terminal phases/source506+697manual/currentcachetools; d248d558. Composed2778PASS withoneexistingPostgresfixture unexecuted; privacy106 is a subset, notaddedagain. Earlier setup refusals retained. LocalDeno2.7.13 is distinctfromCI2.9.6; no whole-green/deployclaim. Read-only32functionmetadata/15deployedsource loggingbaseline is next, no blindcurrent-source overlay.
+
+Live79 renderedmatrix passes its formerstickyclearance failure thenstopsafter199checks on an oracle bug: the existingBacktotopfragment resolvesagainstactualpageURL, but the harnessusedquerylessbase andlostpreview_theme. Actualfourpagelinks pass; no productlink/deployfixrequired. Narrowtest-onlycorrection pending; originalreceipt4fe3be9a/PNG981c0f95 retained. Website79d598delivery remainsaccepted. Featureexport f9frozen; Studiofreshartifactpreparation continues. No source/APIpaid/userdata changes in this checkpoint.
+
+## October 17, 04:56 EDT — website79 delivered; exporter source frozen
+
+Website79/be21eeae-bf18-40c2-9805-eccc4cbf4488 is live at100% after one scoped CLI. Root independently verified74proofs, exact413789B/d244 remote module, before/after/final full policy, five public bodies/security, unchanged accepted legal and12preview source/noindex checks. Finald5983027; rendered22-state matrix remains pending. No whole-app CI or phone acceptance follows.
+
+The generated-track experiment is rejected: actual narratedMP4 fails the original progressing-dissolve test, with real write waits/max158ms and encoded gaps. Reference bothpass and intended stale-pixel controlRED do not repair the hosted issue. Root verified19proofs/4outputs, aed5ec5c. Featureexport f9 remains unchanged; no experimentalcapturecode integrated. Deterministicoffline feasibility is documented41b2ab35, but full current parity needs mux/demux and pitch-preserving speed-adjusted source audio.
+
+Current-source diagnostic106cases pass together (aa2ffbfb), independently verified against stdout; overall2770PASS/sixsetupFAIL/oneknownPGunexecuted. One completionprovider case addsPASS; remaining6cases+32checks+onefinaldeadlinefixture run separately. Missingfixture/profile setup failures are retained, not product failures or whole-green proof. Native212file-only binding and Studio freshartifact requirements remain. PaidAIpaused/KieOFF/owneraway/newhouseacceptance/onboardingLAST/AppStorehold unchanged.
+
 # Current source and verification — October 17, 04:15 EDT
 
 Architecture remains native iPhone plus Studio/shared backend. Feature HEAD54a7b72 is committed locally and not pushed/deployed; the additional reviewed website CI omission guard is still a tracked worktree change. Source backup2026-10-17-075326Z-54a7b72 is independently restored/fsck-verified (b89e8c52), preserving all three diagnostic refs. It does not include subsequent dirty CI/docs or prove whole-Mac coverage.
@@ -8,7 +22,7 @@ Native88 file-only binding now matches212 current files/Git blobs and26 retained
 
 O12 static supplement expands the four opaque npm terminals to a131-file literal candidate union with25 conditional ambiguities, without evaluating third-party code. Root84c9c57e verifies583 files/8,144,306bytes and ten evidence hashes. This is not runtime resolution, license compliance or security clearance; optional peers,151 computed first-party test imports and as-time graph limits remain. See DEPENDENCY-SECURITY-20261016.md.
 
-One local CPU capture-staging sequence ran once and is REFUSED under its declared admission: old and candidate both pass applicable media checks, but the omitted-copy output fails the earlier unchanged A/V duration gate, not its required pixel assertion. No demonstrated repair or integration follows. Candidate copy overhead and the separate hosted136ms timing refusal remain under review. No further runtime is implied.
+One local CPU capture-staging sequence ran once and is REFUSED under its declared admission: old and candidate both pass applicable media checks, but the omitted-copy output fails the earlier unchanged A/V duration gate, not its required pixel assertion. No demonstrated repair or integration follows. Its maximum synchronous readback is108.5ms, and the encoded frame gap grows to145.1ms versus75.367ms in the reference. Root verified14 retained proof files and kept the candidate out. A smaller generated-track experiment is being prepared from pinned browser source; this is not an offline encoder or a repair of the separate hosted136ms clock refusal.
 
 Paid AI paused/KieOFF, no new paid call or processor-notice publication. Owner-away/new-house/phone, genuine per-property Sandbox purchase, Messages link, authorized enquiry, account isolation and motion-quality acceptance remain open. Onboarding remains LAST using accepted final Realtor app/URL screens. No App Store attachment/submission/release and no original/archive deletion or move.
 
