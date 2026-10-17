@@ -1,9 +1,11 @@
 // photo-feedback edge function. Closed: the RPCs, Auth and the limiter are
-// synthetic; every test also installs a fetch that refuses any network, and
-// the production-wiring test only answers the exact Supabase Auth/RPC paths.
+// synthetic, and every test installs a fetch that refuses any network. The
+// production wiring (index.ts through the real client) is index.test.ts.
 // No provider, generation, quality, funding or publication RPC is reachable.
 import {assert,assertEquals,assertStringIncludes} from "https://deno.land/std@0.224.0/assert/mod.ts";
+import {corsHeaders} from "../_shared/cors.ts";
 import {HttpError} from "../_shared/http.ts";
+import {preferredOrg} from "../_shared/supabase.ts";
 import {createPhotoFeedbackHandler,FEEDBACK_REASONS,mapRpcError,SUBMITS_PER_WINDOW,SUBMIT_WINDOW_SECONDS,READS_PER_WINDOW,type FeedbackDeps} from "./handler.ts";
 
 const id=(n:number)=>`f8500000-0000-4000-8000-${String(n).padStart(12,"0")}`;
@@ -37,9 +39,10 @@ async function closed<T>(work:()=>Promise<T>):Promise<T>{
 }
 async function send(f:Fixture,req:Request){return await closed(async()=>{const response=await createPhotoFeedbackHandler(f.deps)(req);return {response,body:response.status===200&&req.method==="OPTIONS"?null:await response.json()};});}
 
-Deno.test("preflight answers without auth and allows the selected-library headers",async()=>{
+Deno.test("preflight answers without auth with the shared allow-list (x-org-id, no other library header)",async()=>{
  const f=fixture();const response=await closed(()=>createPhotoFeedbackHandler(f.deps)(request("OPTIONS")));
- assertEquals(response.status,200);assertStringIncludes(response.headers.get("access-control-allow-headers")!,"x-org-id");assertStringIncludes(response.headers.get("access-control-allow-headers")!,"x-rendprop-org");
+ assertEquals(response.status,200);assertEquals(response.headers.get("access-control-allow-headers"),corsHeaders["Access-Control-Allow-Headers"]);
+ assertStringIncludes(response.headers.get("access-control-allow-headers")!,"x-org-id");assert(!response.headers.get("access-control-allow-headers")!.includes("rendprop-org"));
  assertEquals(response.headers.get("access-control-allow-methods"),"GET, POST, OPTIONS");assertEquals(response.headers.get("cache-control"),"no-store");assertEquals(f.calls.length,0);
 });
 Deno.test("submit sends exactly the validated body with the caller and selected library",async()=>{
@@ -55,13 +58,17 @@ Deno.test("a useful verdict needs no reasons and optional fields default to null
  assertEquals(response.status,200);
  assertEquals(f.calls[0].args,{p_actor:actor,p_selected:org,p_provenance:prov,p_output_sha256:null,p_client_key:"ios-key-0001",p_revision:3,p_verdict:"useful",p_reasons:[],p_note:null,p_platform:null});
 });
-Deno.test("x-rendprop-org is accepted as an alias and must agree with X-Org-Id",async()=>{
+Deno.test("the selected library is X-Org-Id read by the shared preferredOrg; no other header selects one",async()=>{
  const f=fixture();
- assertEquals((await send(f,request("POST","",submitBody(),{"x-org-id":"","x-rendprop-org":org}))).response.status,200);
- assertEquals(f.calls[0].args.p_selected,org);
- const bad=await send(f,request("POST","",submitBody(),{"x-rendprop-org":id(99)}));assertEquals(bad.response.status,400);assertEquals(bad.body.code,"invalid_request");
- const missing=await send(f,request("POST","",submitBody(),{"x-org-id":""}));assertEquals(missing.response.status,400);
- assertEquals(f.calls.length,1);
+ assertEquals((await send(f,request("POST","",submitBody(),{"x-org-id":"  "+org.toUpperCase()+" "}))).response.status,200);
+ assertEquals(f.calls[0].args.p_selected,org);assertEquals(preferredOrg(request("POST","",submitBody(),{"x-org-id":org.toUpperCase()})),org);
+ for(const headers of [{"x-org-id":"","x-rendprop-org":org},{"x-org-id":"not-a-uuid"},{"x-org-id":org+"0"}] as Record<string,string>[]){
+  const refused=await send(f,request("POST","",submitBody(),headers));
+  assertEquals([refused.response.status,refused.body.code],[400,"invalid_request"],JSON.stringify(headers));
+ }
+ const unsent=new Request("https://db.fixture.invalid/functions/v1/photo-feedback",{method:"POST",headers:{authorization:"Bearer fixture","content-type":"application/json","x-rendprop-org":org},body:JSON.stringify(submitBody())});
+ const missing=await send(f,unsent);assertEquals([missing.response.status,missing.body.code],[400,"invalid_request"]);
+ assertEquals(f.calls.length,1,"refused requests never reach an RPC");
 });
 Deno.test("signal, state and regression-case routes call only their own RPC",async()=>{
  const f=fixture();
@@ -145,42 +152,36 @@ Deno.test("deliberate SQL refusals map to contract codes and raw database text n
  const f=fixture();f.state.reply=()=>{throw new Error("socket hang up");};
  const {response,body}=await send(f,request("GET","?provenance_id="+prov));assertEquals([response.status,body.code],[503,"upstream"]);
 });
-Deno.test("an existing verdict under another key answers 409 feedback_exists with the key to adopt",async()=>{
- const f=fixture();f.state.reply=()=>({data:{state:"conflict",code:"feedback_exists",feedback_id:feedbackId,provenance_id:prov,client_key:"ios:original-key",revision:4,revision_count:2},error:null});
+Deno.test("an existing verdict under another key answers 409 feedback_exists with the key to adopt and the stored verdict at the top level",async()=>{
+ const f=fixture();f.state.reply=()=>({data:{state:"conflict",code:"feedback_exists",feedback_id:feedbackId,provenance_id:prov,client_key:"ios:original-key",revision:4,revision_count:2,
+  verdict:"needs_work",reasons:["blocked_doorway_or_opening"],note:null},error:null});
  const {response,body}=await send(f,request("POST","",submitBody({client_key:"studio:another-key"})));
- assertEquals(response.status,409);assertEquals(body.code,"feedback_exists");assertEquals(body.client_key,"ios:original-key");assertEquals(body.revision,4);assertEquals(body.revision_count,2);
+ assertEquals(response.status,409);
+ assertEquals(body,{client_key:"ios:original-key",revision:4,revision_count:2,feedback_id:feedbackId,provenance_id:prov,verdict:"needs_work",reasons:["blocked_doorway_or_opening"],note:null,
+  error:"Feedback for this photo already exists under another key; adopt it and send a higher revision.",code:"feedback_exists"});
+});
+// The exact fields Studio's queue reads (apps/studio/src/features/creative/photo-feedback-queue.ts
+// at the Studio lane's 34285dc5): success carries the stored opinion at the top level, a signal
+// carries signal_id, and refusals carry the codes it branches on.
+Deno.test("Studio queue contract: answers carry the fields and codes the client branches on",async()=>{
+ const f=fixture();
+ const ok=await send(f,request("POST","",submitBody()));
+ assertEquals([ok.body.provenance_id,ok.body.revision,ok.body.verdict,ok.body.reasons,ok.body.note],[prov,1,"needs_work",["blocked_doorway_or_opening"],"Door covered"]);
+ for(const [signal,detail] of [["accuracy_ack","custom_review"],["manual_selection","gallery_save"],["export","download"]]){
+  const sent=await send(f,request("POST","/signal",{output:{provenance_id:prov},client_key:`studio:${signal}:${prov}`,signal,detail,platform:"studio"}));
+  assertEquals([sent.response.status,sent.body.signal_id],[200,signalId],signal);
+ }
+ const older=fixture();older.state.reply=(_,args)=>({data:{...defaultReply("photo_feedback_submit",args) as Record<string,unknown>,state:"replayed",revision:5,revision_count:3,verdict:"useful",reasons:[],note:null},error:null});
+ const late=await send(older,request("POST","",submitBody({revision:2})));
+ assertEquals([late.response.status,late.body.state,late.body.revision,late.body.verdict],[200,"replayed",5,"useful"],"a lower revision returns the newer stored opinion and writes nothing");
+ for(const [message,status,code] of [["RP404: gone",404,"output_not_found"],["RP409: FEEDBACK_KEY_CONFLICT other photo",409,"feedback_key_conflict"],["RP409: FEEDBACK_REVISION_CONFLICT bump",409,"feedback_revision_conflict"]] as [string,number,string][]){
+  const g=fixture();g.state.reply=()=>({data:null,error:{message}});
+  const refused=await send(g,request("POST","",submitBody()));assertEquals([refused.response.status,refused.body.code],[status,code]);assert(typeof refused.body.error==="string");
+ }
 });
 Deno.test("an unconfirmable RPC answer is a retryable 503, never a false success",async()=>{
  for(const data of [null,[],{state:"recorded",provenance_id:id(42),feedback_id:feedbackId},{state:"saved",provenance_id:prov,feedback_id:feedbackId},{state:"recorded",provenance_id:prov}]){
   const f=fixture();f.state.reply=()=>({data,error:null});
   const {response,body}=await send(f,request("POST","",submitBody()));assertEquals([response.status,body.code],[503,"upstream"],JSON.stringify(data));
- }
-});
-
-// The production wiring (index.ts) through the real Supabase client and
-// limiter, against a closed transport that answers only the exact Auth/RPC paths.
-Deno.test("production wiring authenticates, rate-limits and calls only the feedback RPC with the service key",async()=>{
- const serviceKey="sb_secret_"+"f".repeat(24);
- const env={SUPABASE_URL:"https://feedback-db.fixture.invalid",SUPABASE_ANON_KEY:"public-fixture",SUPABASE_SERVICE_ROLE_KEY:"service-fixture",SUPABASE_SECRET_KEYS:JSON.stringify({default:serviceKey}),RENDPROP_SECRET_KEY_NAME:"default"};
- const previous=Object.fromEntries(Object.keys(env).map(k=>[k,Deno.env.get(k)]));for(const [k,v] of Object.entries(env))Deno.env.set(k,v);
- const seen:string[]=[];let rpcBody:unknown=null;
- const priorFetch=globalThis.fetch;
- globalThis.fetch=(async(raw:Request|URL|string,init?:RequestInit)=>{
-  const req=new Request(raw,init),url=new URL(req.url);seen.push(req.method+" "+url.pathname);
-  if(url.hostname!=="feedback-db.fixture.invalid")throw new Error("Unexpected network host "+url.hostname);
-  if(url.pathname==="/auth/v1/user")return Response.json({id:actor,is_anonymous:false,aud:"authenticated"});
-  assertEquals(req.headers.get("apikey"),serviceKey);
-  if(url.pathname==="/rest/v1/rpc/bump_rate")return Response.json(true);
-  if(url.pathname==="/rest/v1/rpc/photo_feedback_submit"){rpcBody=await req.json();return Response.json(defaultReply("photo_feedback_submit",rpcBody as Record<string,unknown>));}
-  throw new Error("Unexpected path "+url.pathname);
- }) as typeof fetch;
- try{
-  const {handler}=await import("./index.ts");
-  const response=await handler(request("POST","",submitBody()));
-  assertEquals(response.status,200,await response.clone().text());assertEquals((await response.json()).state,"recorded");
-  assertEquals(rpcBody,{p_actor:actor,p_selected:org,p_provenance:prov,p_output_sha256:"b".repeat(64),p_client_key:"studio:k-0001",p_revision:1,p_verdict:"needs_work",p_reasons:["blocked_doorway_or_opening"],p_note:"Door covered",p_platform:"studio"});
-  assertEquals(seen,["GET /auth/v1/user","POST /rest/v1/rpc/bump_rate","POST /rest/v1/rpc/photo_feedback_submit"]);
- }finally{
-  globalThis.fetch=priorFetch;for(const [k,v] of Object.entries(previous))if(v===undefined)Deno.env.delete(k);else Deno.env.set(k,v);
  }
 });

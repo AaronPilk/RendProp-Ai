@@ -7,17 +7,18 @@
 //   POST /photo-feedback/regression-case   keep or withdraw a private evaluation case
 //   GET  /photo-feedback?provenance_id=…   the caller's current state for one output
 //
-// Auth: the user's bearer JWT; the selected library comes from X-Org-Id (the
-// header every library-scoped client call already sends; x-rendprop-org is
-// accepted as an alias and must agree). Every decision about the photo is made
-// by the service-only SQL RPCs under the same library authorization as the
-// media itself; this handler only validates shapes and maps refusals.
+// Auth: the user's bearer JWT; the selected library is X-Org-Id, read with the
+// shared preferredOrg() exactly like every other library-scoped function (no
+// other header is read). Every decision about the photo is made by the
+// service-only SQL RPCs under the same library authorization as the media
+// itself; this handler only validates shapes and maps refusals.
 //
 // Nothing here generates, judges, publishes or charges anything, and feedback
 // never triggers a regeneration: the only side effects are rows in the three
 // feedback tables. No provider is reachable from this function.
 import {corsHeaders} from "../_shared/cors.ts";
 import {HttpError,json,pathSegments,readJsonLimited} from "../_shared/http.ts";
+import {preferredOrg} from "../_shared/supabase.ts";
 
 export const FEEDBACK_REASONS=["changed_permanent_features","moved_or_changed_appliance","blocked_doorway_or_opening","inconsistent_furniture_between_views",
  "visible_visual_artifacts","requested_edit_incomplete","personal_style_preference","other"] as const;
@@ -32,7 +33,8 @@ const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CLIENT_KEY=/^[A-Za-z0-9:_-]{8,128}$/;
 const SHA256=/^[a-f0-9]{64}$/;
 
-const headers={...corsHeaders,"Access-Control-Allow-Headers":corsHeaders["Access-Control-Allow-Headers"]+", x-rendprop-org","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Cache-Control":"no-store"};
+// The shared allow-list (it already carries x-org-id); only the methods are narrowed.
+const headers={...corsHeaders,"Access-Control-Allow-Methods":"GET, POST, OPTIONS","Cache-Control":"no-store"};
 
 export type FeedbackCode="invalid_request"|"unauthorized"|"forbidden"|"evaluation_consent_required"|"output_not_found"|"feedback_key_conflict"
  |"feedback_revision_conflict"|"feedback_exists"|"output_mismatch"|"evidence_unavailable"|"conflict"|"rate_limited"|"upstream"|"not_found"|"method_not_allowed";
@@ -51,11 +53,12 @@ export interface FeedbackDeps{
  rateLimit(key:string,max:number,windowSeconds:number):Promise<boolean>;
 }
 
-/** The selected library. X-Org-Id is canonical; x-rendprop-org is an alias. */
+/** The selected library: X-Org-Id via the shared preferredOrg() (trimmed and
+ * lowercased when it is a uuid). Missing or not a uuid is a 400. */
 export function selectedLibrary(req:Request):string{
- const raw=[req.headers.get("x-org-id"),req.headers.get("x-rendprop-org")].map(v=>v?.trim().toLowerCase()).filter((v):v is string=>!!v);
- if(raw.length===0||!UUID.test(raw[0])||raw.some(v=>v!==raw[0]))throw invalid("Select the photo's library (X-Org-Id).");
- return raw[0];
+ const org=preferredOrg(req);
+ if(!org||!UUID.test(org))throw invalid("Select the photo's library (X-Org-Id).");
+ return org;
 }
 
 function object(value:unknown,field:string):Record<string,unknown>{
@@ -189,9 +192,13 @@ export function createPhotoFeedbackHandler(deps:FeedbackDeps){
    if(route==="submit"){
     const args=parseSubmit(body);
     const data=await call(deps,"photo_feedback_submit",{...identity,...args});
+    // Top-level adoption fields (shared error body {...details, error, code}):
+    // the key to adopt, its revision, and the caller's own stored verdict so an
+    // identical resend can be skipped.
     if(data.state==="conflict"&&data.code==="feedback_exists")
      throw new FeedbackError(409,"feedback_exists","Feedback for this photo already exists under another key; adopt it and send a higher revision.",
-      {client_key:data.client_key,revision:data.revision,revision_count:data.revision_count,feedback_id:data.feedback_id,provenance_id:data.provenance_id});
+      {client_key:data.client_key,revision:data.revision,revision_count:data.revision_count,feedback_id:data.feedback_id,provenance_id:data.provenance_id,
+       verdict:data.verdict,reasons:data.reasons,note:data.note??null});
     if(!["recorded","replayed","revised"].includes(String(data.state))||data.provenance_id!==args.p_provenance||typeof data.feedback_id!=="string")
      throw new FeedbackError(503,"upstream","Feedback could not be confirmed. Please retry with the same request.");
     return respond(data);
