@@ -186,7 +186,7 @@ def provider_attempt_journal(attempts, ledger_by_attempt):
         line = {"attempt": scope(row["id"]), "account": scope(row.get("billing_org_id") or row.get("org_id")), "library": scope(row.get("org_id")),
                 "provider": token(row.get("provider")), "stage": token(row.get("stage")), "model": token(row.get("model")), "outcome": outcome,
                 "http_status": row.get("http_status") if isinstance(row.get("http_status"), int) and not isinstance(row.get("http_status"), bool) else None,
-                "supplier_request_id": request_id(row.get("provider_request_id")), "created_at": row.get("created_at"), "terminal_at": row.get("terminal_at"),
+                "supplier_request_id": request_id(row.get("provider_request_id")) or request_id(row.get("provider_request_ref")), "created_at": row.get("created_at"), "terminal_at": row.get("terminal_at"),
                 "invoice_verified": False}
         if outcome in ATTEMPT_UNKNOWN_OUTCOMES:
             if row.get("estimated_cents") is not None:

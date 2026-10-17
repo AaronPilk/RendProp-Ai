@@ -51,7 +51,9 @@ spatial as(
 provider_attempts as(
  select id,actor_id,org_id,billing_org_id,provider,stage,model,outcome,http_status,
   provider_request_id::text,estimated_cents::text,price_basis,ledger_status,actual_cents::text,
-  created_at,terminal_at
+  created_at,terminal_at,
+  -- 20261017190000: RentCast's Google Frontend trace id (32 hex); requires that migration.
+  provider_request_ref
  from public.provider_attempt_receipts order by created_at,id limit(select n+1 from limits)
 ),
 other_journals as(

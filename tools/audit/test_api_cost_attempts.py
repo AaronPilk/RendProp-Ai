@@ -76,6 +76,23 @@ class ProviderAttemptJournalTests(unittest.TestCase):
         self.assertFalse(retained["invoice_verified"])
         self.assertEqual(r["ledger"][0]["cost_basis"], "catalog_estimate")
 
+    def test_supplier_reference_is_reported_when_the_supplier_sent_no_uuid(self):
+        # E3: RentCast answers with a 32-hex Google Frontend trace id and no
+        # x-request-id. The uuid column stays null; the text reference is shown.
+        trace = "0f1e2d3c4b5a49688776655443322110"
+        for uuid_value, ref, expected in [(None, trace, trace),
+                                          ("0f1e2d3c-4b5a-4968-8776-655443322110", trace, "0f1e2d3c-4b5a-4968-8776-655443322110"),
+                                          (None, None, None)]:
+            with self.subTest(uuid=uuid_value, ref=ref):
+                f = fixture()
+                f["provider_attempts"] = [attempt(id="attempt-hit", outcome="hit", http_status=200, estimated_cents="7.0000",
+                    price_basis="configured_catalog_estimate_not_invoice", ledger_status="recorded", terminal_at="2026-10-16T00:00:01Z",
+                    provider_request_id=uuid_value, provider_request_ref=ref)]
+                f["ledger"] = [ledger()]
+                entry = accounting_report(counted(f))["provider_attempt_journal"]["priced_attempts"][0]
+                self.assertEqual(entry["supplier_request_id"], expected, "uuid wins; the trace id fills in; nothing is invented")
+                self.assertFalse(entry["invoice_verified"])
+
     def test_attempt_id_alone_cannot_reconcile_another_library_provider_model_or_stage(self):
         for changed in [{"org_id": "other-org"}, {"provider": "fal"}, {"model": "other-model"},
                         {"meta": {"provider_attempt_id": "attempt-hit", "stage": "different.stage"}}]:
