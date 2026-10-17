@@ -1839,6 +1839,18 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/provider_attempt_receipts_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-provider-attempt-receipts-pg"
+      # AI photo feedback loop (migration 20261017200000): exact-version
+      # attribution, idempotent offline resends, honest report denominators and
+      # cost, unchanged publication safeguards, compiled controls, real races,
+      # and the pinned rollback; then the labeled synthetic report demo.
+      - name: AI photo feedback binds exact versions, keeps honest denominators and rolls back cleanly
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/photo_feedback_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-feedback-pg"
+          python3 services/supabase/tests/photo_feedback_report_demo.py --out "$RUNNER_TEMP/rendprop-photo-feedback-report-demo"
       - name: RentCast settlement keeps admitted billing across binding changes and lost replies
         timeout-minutes: 7
         shell: bash
@@ -2045,6 +2057,8 @@ jobs:
             ${{ runner.temp }}/rendprop-property-video-abandon-pg/**
             ${{ runner.temp }}/rendprop-studio-gallery-order-pg/**
             ${{ runner.temp }}/rendprop-provider-attempt-receipts-pg/**
+            ${{ runner.temp }}/rendprop-photo-feedback-pg/**
+            ${{ runner.temp }}/rendprop-photo-feedback-report-demo/**
             ${{ runner.temp }}/rendprop-rentcast-billing-binding-pg/**
             ${{ runner.temp }}/rendprop-gallery-source-copy-pg/**
             ${{ runner.temp }}/rendprop-direct-property-source-pg/**
