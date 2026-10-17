@@ -208,6 +208,8 @@ jobs:
         run: python3 apps/ios/tests/run-photo-cloud-automatic-sync.py --output-dir "$RUNNER_TEMP/rendprop-photo-cloud-automatic"
       - name: Local photo selection retains version review and removal controls
         run: python3 apps/ios/tests/run-photo-listing-selection.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-local-selection"
+      - name: Optional photo feedback queues exact outputs offline and leaves review, save and publish unchanged
+        run: python3 apps/ios/tests/run-photo-feedback.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-feedback"
       - name: Retain exact cloud selection and local selection evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -226,6 +228,7 @@ jobs:
             ${{ runner.temp }}/rendprop-photo-local-selection/receipt.json
             ${{ runner.temp }}/rendprop-photo-local-selection/*/*.log
             ${{ runner.temp }}/rendprop-photo-local-selection/*/*.swift
+            ${{ runner.temp }}/rendprop-photo-feedback/**
       - name: Branded quick-start video stays within two minutes with a readable transcript
         run: |
           if ! command -v ffprobe >/dev/null; then
