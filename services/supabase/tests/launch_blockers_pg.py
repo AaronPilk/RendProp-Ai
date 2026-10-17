@@ -131,8 +131,19 @@ try:
                 f"select app_video_cost_reserve('{actor}','{org}','race-video-{suffix}','reel','fal','bytedance/seedance/v1/pro/fast/image-to-video',repeat('b',64),6,2,3,'{{}}'::jsonb);"]
     outcomes = race("mixed-writer-envelope-race", requests(starter, "a"))
     assert sorted(code for code, _ in outcomes) == [0, 3], outcomes
-    assert sum("RP402: AI usage limit reached" in output for _, output in outcomes) == 1, outcomes
-    receipt["mixedWriterEnvelopeRace"] = {"accepted": 1, "refused": 1, "ceilingCents": 2032, "spentCents": 2021, "attemptCents": 6, "writers": ["serving_cost_reserve", "app_video_cost_reserve"]}
+    # Either writer may take the money lock first. A losing photo writer is
+    # refused by the envelope; a losing video writer is refused by its own
+    # legacy COGS pre-check (same 2032c ceiling, evaluated before the envelope
+    # in app_video_cost_reserve). Both are RP402 refusals of exactly one writer.
+    refusals = ("RP402: AI usage limit reached", "RP402: Workspace monthly processing budget would be exceeded")
+    assert sum(any(message in output for message in refusals) for _, output in outcomes) == 1, outcomes
+    winner = "serving_cost_reserve" if outcomes[0][0] == 0 else "app_video_cost_reserve"
+    refusal = next(message for _, output in outcomes for message in refusals if message in output)
+    # The winner's hold is committed, the loser left no hold behind, and 2021 + 6 stays inside 2032.
+    state = run("mixed-writer-envelope-state", [*psql, "-Atq", "-c", f"select (select count(*) from serving_cost_reservations where org_id='{starter}'),(select count(*) from app_video_cost_reservations where org_id='{starter}'),public.serving_ceiling_spent_cents('{starter}',null,null)"]).strip().split("|")
+    assert state[:2] == (["1", "0"] if winner == "serving_cost_reserve" else ["0", "1"]) and float(state[2]) == 2027 <= 2032, state
+    receipt["mixedWriterEnvelopeRace"] = {"accepted": 1, "refused": 1, "ceilingCents": 2032, "spentCents": 2021, "attemptCents": 6, "writers": ["serving_cost_reserve", "app_video_cost_reserve"],
+                                         "winner": winner, "refusal": refusal, "spentAfterCents": state[2]}
     # Same-writer race (two photo attempts) through the same authority.
     photo_pair = [f"select serving_cost_reserve('{actor}','{negative}','race-photo-{i}','{stage}','gemini','gemini-3.1-flash-image',repeat('a',64),6,'verified');" for i, stage in enumerate(("photo.stage:0", "photo.sky:0"))]
     outcomes = race("ceiling-budget-race", photo_pair)
