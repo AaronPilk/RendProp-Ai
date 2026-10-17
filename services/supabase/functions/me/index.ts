@@ -1031,7 +1031,9 @@ async function handleAppleCode(req: Request, userId: string): Promise<Response> 
     if (error) return json({ ok: true, stored: false, reason: error.message });
     return json({ ok: true, stored: true });
   } catch (e) {
-    console.error("apple code exchange failed:", e);
+    const name = e instanceof Error ? e.name : "";
+    const errorName = ["Error", "TypeError", "RangeError", "SyntaxError", "TimeoutError", "AbortError"].includes(name) ? name : "Other";
+    console.error(JSON.stringify({ event: "apple_code_exchange_failed", error_name: errorName }));
     return json({ ok: true, stored: false, reason: "exchange failed" });
   }
 }

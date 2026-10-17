@@ -197,14 +197,12 @@ export async function recordAppAiCost(
       meta: args.meta ?? {},
     });
     if (error) {
-      console.error("recordAppAiCost: cost_ledger insert failed:", error.message);
       console.error(JSON.stringify(ledgerInsertFailure(args, (error as { code?: unknown }).code, error.message)));
       return { recorded: false, total_cents, reason: error.message };
     }
     return { recorded: true, total_cents };
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
-    console.error("recordAppAiCost threw:", reason);
     console.error(JSON.stringify(ledgerInsertFailure(args, "exception", reason)));
     return { recorded: false, total_cents, reason };
   }
@@ -217,16 +215,18 @@ export async function recordAppAiCost(
  * meta.request_key + meta.stage, so those two — the key as a prefix only — plus
  * the provider and the database error code are what make a failed row
  * attributable to its hold. No prompt, no user, no amount beyond the ledger's
- * own vocabulary; the message is bounded because it is the provider's text.
+ * own vocabulary. Never log database/transport text: it can echo row data or keys.
  */
 export function ledgerInsertFailure(
   args: Pick<AppAiCostArgs, "feature" | "provider" | "model" | "meta">,
   code: unknown,
-  message: string,
+  _message: string,
 ): Record<string, string | null> {
   const meta = args.meta ?? {};
   const text = (value: unknown, limit: number): string | null =>
     typeof value === "string" && value.length > 0 ? value.slice(0, limit) : null;
+  const safeCode = typeof code === "string" && /^(?:[0-9A-Z]{5}|PGRST[0-9]{3})$/.test(code)
+    ? code : code === "exception" ? "exception" : "unknown";
   return {
     event: "cost_ledger_insert_failed",
     request_key_prefix: text(meta.request_key, 8),
@@ -235,8 +235,7 @@ export function ledgerInsertFailure(
     feature: text(args.feature, 64),
     provider: text(args.provider, 32),
     model: text(args.model, 96),
-    code: text(typeof code === "number" ? String(code) : code, 32) ?? "unknown",
-    message: text(message, 200),
+    code: safeCode,
   };
 }
 

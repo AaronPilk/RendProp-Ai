@@ -51,7 +51,7 @@ Deno.test("a failed cost_ledger insert is swallowed and leaves one correlatable 
     assertEquals(lines.length, 1);
     assertEquals(lines[0], {
       event: "cost_ledger_insert_failed", request_key_prefix: "owned-ph", stage: "photo.custom", route_id: "route-photo-1",
-      feature: "photo_edit", provider: "gemini", model: "gemini-3.1-flash-image", code: "42501", message: "permission denied for table cost_ledger",
+      feature: "photo_edit", provider: "gemini", model: "gemini-3.1-flash-image", code: "42501",
     });
     // The full request key and the request's own text never reach the log line.
     const raw = errors.lines.join("\n");
@@ -93,6 +93,6 @@ Deno.test("a successful insert and a missing org write no failure line, and the 
 Deno.test("ledgerInsertFailure bounds every field and tolerates missing meta", () => {
   const line = ledgerInsertFailure({ feature: "reel", provider: "fal", model: null }, undefined, "x".repeat(500));
   assertEquals(line.request_key_prefix, null); assertEquals(line.stage, null); assertEquals(line.code, "unknown");
-  assertEquals(line.message?.length, 200); assertEquals(line.model, null);
-  assertEquals(ledgerInsertFailure({ feature: "reel", provider: "fal", meta: { request_key: 42, stage: "" } }, 500, "m").code, "500");
+  assert(!("message" in line)); assertEquals(line.model, null);
+  assertEquals(ledgerInsertFailure({ feature: "reel", provider: "fal", meta: { request_key: 42, stage: "" } }, 500, "m").code, "unknown");
 });

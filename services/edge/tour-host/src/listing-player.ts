@@ -67,11 +67,20 @@ export const LISTING_PLAYER_JS = `
   'use strict';
   var CFG = window.__CFG__ || {};
   var listingNav = document.getElementById('listing-nav');
+  var previewBanner = document.querySelector('.property-preview-banner');
   function updateNavOffset(){
-    if (listingNav) document.documentElement.style.setProperty('--listing-nav-offset',(Math.ceil(listingNav.getBoundingClientRect().height)+16)+'px');
+    if (listingNav) {
+      var navHeight = listingNav.getBoundingClientRect().height;
+      var previewHeight = previewBanner ? previewBanner.getBoundingClientRect().height : 0;
+      document.documentElement.style.setProperty('--listing-nav-offset',(Math.ceil(Math.max(navHeight,previewHeight))+16)+'px');
+    }
   }
   updateNavOffset();
-  if (listingNav && window.ResizeObserver) new ResizeObserver(updateNavOffset).observe(listingNav);
+  if (window.ResizeObserver) {
+    var chromeObserver = new ResizeObserver(updateNavOffset);
+    if (listingNav) chromeObserver.observe(listingNav);
+    if (previewBanner) chromeObserver.observe(previewBanner);
+  }
   addEventListener('resize',updateNavOffset);
   var modal = document.getElementById('flythrough-modal');
   var video = document.getElementById('flythrough-video');

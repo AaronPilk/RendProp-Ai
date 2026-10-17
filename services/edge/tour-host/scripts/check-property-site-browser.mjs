@@ -53,7 +53,11 @@ const server = createServer((req, res) => {
   if (photo) { res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-store" }); res.end(svg(PHOTOS[Number(photo[1])][0], PHOTOS[Number(photo[1])][1], Number(photo[1]) === 1)); return; }
   if (url.pathname === "/f/synthetic-site/nearby") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ status: "available", places: [{ name: "Synthetic Café", category: "Cafe", distance_m: 300, source_url: "https://www.openstreetmap.org/node/1" }] })); return; }
   if (url.pathname === "/property/synthetic-site") {
-    const html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin, page: propertyPage(url.searchParams.get("page")), publicBase: "/property", previewTheme:url.searchParams.get("preview_theme") });
+    let html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin, page: propertyPage(url.searchParams.get("page")), publicBase: "/property", previewTheme:url.searchParams.get("preview_theme") });
+    if (arg("--fault") === "omit-preview-offset") {
+      assert.equal(html.split("Math.max(navHeight,previewHeight)").length - 1, 1, "one exact preview-offset expression is omitted");
+      html = html.replace("Math.max(navHeight,previewHeight)", "navHeight");
+    }
     res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" }); res.end(arg("--fault")==="skip-target" ? html.replace('class="property-skip-link" href="#property-content"','class="property-skip-link" href="#listing-top"') : html); return;
   }
   res.writeHead(404); res.end("not found");
@@ -259,6 +263,45 @@ try {
       check(requests.filter(path=>path.startsWith("/media/")).length===mediaBefore,tag+": bypass does not start opt-in media");
       check(await main.locator("nav,footer,dialog").count()===0,tag+": page chrome and dialogs stay outside main");
       check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),tag+": semantic wrapper adds no horizontal overflow");
+    }
+    await context.close();
+  }
+
+  // Real script-enabled anchors must clear whichever preview/header surface
+  // actually remains sticky. A short premium nav must not hide a taller banner.
+  // The existing no-script, full-size viewer, media and header checks stay below.
+  for (const width of [390,1440]) for (theme of ["basic","signature-estate","coastal-luxe"]) {
+    const context=await browser.newContext({viewport:{width,height:844}});
+    await context.route("**/*",route=>new URL(route.request().url()).origin===origin || route.request().url().startsWith("data:") ? route.continue() : route.abort());
+    const page=await context.newPage();page.on("pageerror",error=>errors.push("scripted-skip: "+error));
+    for (const preview of [false,true]) {
+      await page.goto(origin+"/property/synthetic-site"+(preview?"?preview_theme="+theme:""),{waitUntil:"networkidle"});
+      const tag=`scripted/${theme}/home/${width}/${preview?"preview":"published"}`;
+      const main=page.getByRole("main"),skip=page.getByRole("link",{name:"Skip to property content",exact:true});
+      const chrome=await page.evaluate(()=>{
+        const box=node=>{if(!node)return null;const rect=node.getBoundingClientRect(),style=getComputedStyle(node);return{height:rect.height,top:rect.top,bottom:rect.bottom,position:style.position,stickyTop:style.top};};
+        return{nav:box(document.getElementById("listing-nav")),banner:box(document.querySelector(".property-preview-banner")),offset:getComputedStyle(document.documentElement).getPropertyValue("--listing-nav-offset")};
+      });
+      measurements.push({tag,type:"scripted-skip-before",...chrome});
+      check(preview ? chrome.nav.position==="relative" && chrome.banner?.position==="sticky" && chrome.banner.stickyTop==="0px" : chrome.nav.position==="sticky" && chrome.banner===null,tag+": preview banner and published navigation retain their actual separate positioning");
+      check(await main.count()===1 && await skip.count()===1,tag+": one real main and native bypass");
+      await page.keyboard.press("Tab");check(await skip.evaluate(el=>document.activeElement===el),tag+": first Tab reaches bypass");
+      const mediaBefore=requests.filter(path=>path.startsWith("/media/")).length;
+      await page.keyboard.press("Enter");
+      check(await main.evaluate(el=>document.activeElement===el),tag+": native Enter focuses main with JavaScript enabled");
+      await main.evaluate(el=>new Promise((resolve,reject)=>{
+        let previous=null,stable=0;const deadline=performance.now()+3000;
+        function frame(){const top=el.getBoundingClientRect().top;stable=previous!==null&&Math.abs(top-previous)<.01?stable+1:0;previous=top;if(stable>=3)return resolve();if(performance.now()>deadline)return reject(Error("Main scroll did not settle"));requestAnimationFrame(frame);}
+        requestAnimationFrame(frame);
+      }));
+      const geometry=await main.evaluate(el=>{
+        const surfaces=[...document.querySelectorAll("#listing-nav,.property-preview-banner")].map(node=>{const rect=node.getBoundingClientRect();return{selector:node.id?"#"+node.id:".property-preview-banner",position:getComputedStyle(node).position,top:rect.top,bottom:rect.bottom,height:rect.height};});
+        return{top:el.getBoundingClientRect().top,obstruction:surfaces.filter(node=>node.position==="sticky").reduce((max,node)=>Math.max(max,node.bottom),0),surfaces,active:document.activeElement===el,scrollMargin:getComputedStyle(el).scrollMarginTop};
+      });
+      measurements.push({tag,type:"scripted-skip-clearance",...geometry});
+      check(geometry.active && geometry.top>=geometry.obstruction-1,tag+": script-enabled main target clears actual sticky navigation/preview chrome");
+      check(requests.filter(path=>path.startsWith("/media/")).length===mediaBefore,tag+": native bypass does not start opt-in media");
+      check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),tag+": header clearance adds no horizontal overflow");
     }
     await context.close();
   }

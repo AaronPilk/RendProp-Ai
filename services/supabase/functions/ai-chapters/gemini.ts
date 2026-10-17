@@ -49,8 +49,9 @@ function keyHeader(): Record<string, string> {
 }
 
 /** Never let a provider body reach the client verbatim — it can echo a key. */
-function upstream(what: string, status: number, body: string): HttpError {
-  console.error(`ai-chapters ${what} failed (${status}): ${body.slice(0, 400)}`);
+type GeminiFailurePhase = "files:start" | "files:upload" | "files:get" | "generateContent";
+function upstream(what: GeminiFailurePhase, status: number, _body: string): HttpError {
+  console.error(JSON.stringify({ event: "ai_chapters_provider_failure", phase: what, http_status: status }));
   return new HttpError(
     502,
     `The video model could not be reached (${what} returned ${status}). Try again in a moment.`,
@@ -235,9 +236,11 @@ export async function deleteFile(name: string): Promise<void> {
       headers: keyHeader(),
     });
     await res.body?.cancel().catch(() => {});
-    if (!res.ok) console.error(`ai-chapters files:delete returned ${res.status} for ${path}`);
+    if (!res.ok) console.error(JSON.stringify({ event: "ai_chapters_provider_failure", phase: "files:delete", http_status: res.status }));
   } catch (e) {
-    console.error("ai-chapters files:delete threw:", e instanceof Error ? e.message : String(e));
+    const name = e instanceof Error ? e.name : "";
+    const errorName = ["Error", "TypeError", "RangeError", "SyntaxError", "TimeoutError", "AbortError"].includes(name) ? name : "Other";
+    console.error(JSON.stringify({ event: "ai_chapters_provider_failure", phase: "files:delete", http_status: null, error_name: errorName }));
   }
 }
 

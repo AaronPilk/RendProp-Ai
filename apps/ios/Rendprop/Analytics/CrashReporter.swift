@@ -4,16 +4,17 @@ import MetricKit
 // MARK: - CrashReporter
 //
 // Crash and hang reporting with no crash-reporting SDK. MetricKit is Apple's
-// own channel: iOS collects diagnostics for us and hands them over on the NEXT
-// launch (usually within 24 h), already anonymised at the source. We turn each
-// one into a single tiny `crash` or `error` event on our own pipeline.
+// own channel. We reduce each delivered diagnostic to a small `crash` or
+// `error` event on our first-party pipeline. Those events carry device/session
+// identifiers and are linked to the signed-in account by the server.
 //
 // ── WHY NOT A REAL CRASH REPORTER ────────────────────────────────────────────
 //
 // Because the question this has to answer is "is the app breaking for the
 // people my ads are sending?", not "give me a symbolicated stack". MetricKit
-// answers the first question for free, ships nothing third-party, and adds
-// nothing to the privacy manifest. When a number here starts climbing, the fix
+// answers the first question without a third-party crash SDK. Uploaded crash
+// and performance data are declared as linked in the privacy manifest. When
+// a number here starts climbing, the fix
 // is to go and look at the full diagnostic in Xcode's Organizer — which has the
 // symbolicated stack this deliberately does not send.
 //
