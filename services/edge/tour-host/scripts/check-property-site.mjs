@@ -176,7 +176,7 @@ for (const page of ["home", "gallery", "contact"]) check(!renderTourPage(fixture
 // Neighbourhood map: a static inline SVG drawn only from the nearby result.
 // Already-cached places render as markup needing neither script nor request;
 // the scripted path receives the same drawing from the nearby endpoint.
-const { renderNearbyMap, nearbyMapSummary, labelBox: nearbyLabelBox } = await load("nearby-map");
+const { renderNearbyMap, renderNearbyList, nearbyMapSummary, labelBox: nearbyLabelBox, ringLabelBox: nearbyRingLabelBox } = await load("nearby-map");
 const mapOrigin = { lat: 27.771, lng: -82.641 };
 const mapPlace = (name, category, bearing, metres, id) => {
   const rad = bearing * Math.PI / 180;
@@ -192,7 +192,7 @@ check(/^<figure class="property-nearby-map"><svg class="property-nearby-map-svg"
 const drawing = mapHtml.slice(0, mapHtml.indexOf("</svg>")), legend = mapHtml.slice(mapHtml.indexOf("<figcaption"));
 check((drawing.match(/<g class="nm-place">/g) || []).length === 9 && (drawing.match(/<circle class="nm-dot nm-restaurant"/g) || []).length === 3 && (drawing.match(/<rect class="nm-dot nm-cafe"/g) || []).length === 3 && (drawing.match(/<polygon class="nm-dot nm-shop"/g) || []).length === 3, "Map draws nine places with a distinct shape per category");
 check(["nm-restaurant", "nm-cafe", "nm-shop", "nm-home-dot"].every(c => legend.split(c).length === 2) && legend.includes(">Restaurants</span>") && legend.includes(">Cafés</span>") && legend.includes(">Shops</span>") && legend.includes(">The property</span>"), "Legend explains each marker shape and the property marker");
-check(mapHtml.includes('aria-label="Map of 9 nearby places within 1 mi of the property: 3 restaurants, 3 cafés, 3 shops. Positions are approximate."') && nearbyMapSummary(ninePlaces.slice(0, 1)).startsWith("Map of 1 nearby place within 0.5 mi of the property: 1 restaurant."), "Accessible name states count, radius and categories");
+check(mapHtml.includes('aria-label="Map of 9 nearby places within 1 mi of the property: 3 restaurants, 3 cafés, 3 shops. Positions are approximate."') && nearbyMapSummary(ninePlaces.slice(0, 1)).startsWith("Map of 1 nearby place within 0.3 mi of the property: 1 restaurant."), "Accessible name states count, radius and categories");
 check((mapHtml.match(/<circle class="nm-ring"/g) || []).length === 2 && mapHtml.includes(">0.5 mi<") && mapHtml.includes(">1 mi<") && (renderNearbyMap({ status: "available", places: ninePlaces.filter(p => p.distance_m <= 1100) }, mapOrigin).match(/<circle class="nm-ring"/g) || []).length === 3, "Distance rings scale to the furthest place in quarter- or half-mile steps");
 check(mapHtml.includes("Harbor &lt;Grill&gt; &amp; &quot;Oyste…") && !mapHtml.includes("<Grill>"), "Place names are escaped and shortened in the drawing");
 check(!/https?:|xlink|<image|<use|<script|<foreignObject|<a\b|href=|url\(|27\.7|-82\.6|\b-?\d{2}\.\d{4,}/.test(mapHtml), "Map embeds no external host, link, script, tile or coordinate");
@@ -200,6 +200,21 @@ const labels = [...mapHtml.matchAll(/<text class="nm-label" x="([\d.]+)" y="([\d
 const labelBox = l => nearbyLabelBox(l.text, l.x, l.y, l.anchor);
 check(labels.length === 9 && labels.every((a, i) => labels.slice(i + 1).every(b => { const p = labelBox(a), q = labelBox(b); return p.x + p.w <= q.x || q.x + q.w <= p.x || p.y + p.h <= q.y || q.y + q.h <= p.y; })) && labels.every(l => { const b = labelBox(l); return b.x >= 0 && b.y >= 0 && b.x + b.w <= 360 && b.y + b.h <= 360; }), "Nine labels stay on the paper without overlapping each other");
 check(renderNearbyMap(nineResult, mapOrigin) === mapHtml, "Map rendering is deterministic");
+// A dense downtown block: nine places within 300 m with long names. The rings
+// fit the places in tenth-mile steps, and names, ring distances and the paper
+// edge never collide. The original layout overlapped two names and covered a
+// ring distance with a third on exactly this block.
+const downtown = [mapPlace("Central Oyster Bar & Grill", "Restaurant", 60, 140, 21), mapPlace("Harborside Trattoria", "Restaurant", 125, 210, 22), mapPlace("Mezcal Cantina", "Restaurant", 300, 260, 23),
+  mapPlace("Morning Ritual Coffee Roasters", "Cafe", 20, 95, 24), mapPlace("Banyan Tree Café", "Cafe", 160, 120, 25), mapPlace("Black Crow Coffee", "Cafe", 235, 230, 26),
+  mapPlace("Downtown Fresh Market", "Shop", 95, 175, 27), mapPlace("Tombolo Books", "Shop", 275, 110, 28), mapPlace("Waterfront Gallery Shop", "Shop", 345, 300, 29)];
+const downtownHtml = renderNearbyMap({ status: "available", places: downtown }, mapOrigin);
+check((downtownHtml.match(/<circle class="nm-ring"/g) || []).length === 2 && downtownHtml.includes(">0.1 mi<") && downtownHtml.includes(">0.2 mi<") && downtownHtml.includes('aria-label="Map of 9 nearby places within 0.2 mi of the property: 3 restaurants, 3 cafés, 3 shops.'), "A dense block gets tenth-mile rings that fit its places, not an oversized half-mile circle");
+const unescape = s => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+const downtownNames = [...downtownHtml.matchAll(/<text class="nm-label" x="([\d.]+)" y="([\d.]+)" text-anchor="(\w+)">([^<]+)</g)].map(m => nearbyLabelBox(unescape(m[4]), +m[1], +m[2], m[3]));
+const downtownRings = [...downtownHtml.matchAll(/<text class="nm-ring-label" x="([\d.]+)" y="([\d.]+)"( text-anchor="end")?>([^<]+)</g)].map(m => nearbyRingLabelBox(unescape(m[4]), +m[1], +m[2], !!m[3]));
+const apart = (p, q) => p.x + p.w <= q.x || q.x + q.w <= p.x || p.y + p.h <= q.y || q.y + q.h <= p.y, onPaper = b => b.x >= 0 && b.y >= 0 && b.x + b.w <= 360 && b.y + b.h <= 360;
+check(downtownNames.length === 9 && downtownRings.length === 2 && downtownNames.every((a, i) => downtownNames.slice(i + 1).every(b => apart(a, b)) && downtownRings.every(r => apart(a, r))) && [...downtownNames, ...downtownRings].every(onPaper), "A dense block's names keep clear of each other, of the ring distances and of the paper edge");
+check(downtownHtml.includes(">Harborside…<") && !downtownHtml.includes(">Harborside Trattoria<") && renderNearbyList(downtown).includes(">Harborside Trattoria</a>"), "A name with no clear spot in a crowded block is shortened on the map, and the list keeps it in full");
 for (const [why, result, origin] of [["empty", { status: "empty", places: [] }, mapOrigin], ["unavailable", { status: "unavailable", places: [] }, mapOrigin], ["no places", { status: "available", places: [] }, mapOrigin], ["no origin", nineResult, { lat: null, lng: null }]]) {
   check(renderNearbyMap(result, origin) === "", `No map without places (${why})`);
 }

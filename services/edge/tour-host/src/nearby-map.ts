@@ -18,14 +18,41 @@ const CATEGORY_PLURAL: Record<NearbyPlace["category"], string> = { Restaurant: "
 interface Ring { metres: number; label: string }
 interface Box { x: number; y: number; w: number; h: number }
 interface Dot { x: number; y: number; place: NearbyPlace; label: string; tx: number; ty: number; anchor: "start" | "end" | "middle"; }
-const LABEL_EM = 6.4;
-const LABEL_H = 14;
+// Advance widths of the 12-unit label text, by character class. Measured on
+// Inter 500, a slightly wide member of the system UI sans family the map uses,
+// and rounded up, so the estimate errs wide rather than letting names collide.
+const NARROW = new Set([..."iljI.,'’:;|!"]), SEMI = new Set([..."tfr()[]/"]);
+function textWidth(text: string): number {
+  let w = 0;
+  for (const ch of text) {
+    w += ch === " " ? 3.2 : ch === "…" ? 11 : NARROW.has(ch) ? 3.4 : SEMI.has(ch) ? 4.6 : ch === "-" ? 5.6
+      : ch === "m" || ch === "w" ? 10.4 : ch === "M" || ch === "W" ? 11.6 : ch >= "0" && ch <= "9" ? 7.6
+      : ch.codePointAt(0)! >= 0x2e80 ? 12 : ch !== ch.toLowerCase() ? 8.6 : 7;
+  }
+  return w;
+}
+// Glyph box of a 12-unit label from its baseline. The usual UI sans faces
+// measure 14.3–14.6 units (ascent about 11.4–11.7, descent about 2.9–3.2), so
+// the box spans 12 above and 3.5 below the baseline.
+const LABEL_ASCENT = 12;
+const LABEL_H = 15.5;
+// Clear space kept between a label and any other label or marker when its
+// spot is chosen: flush labels touch once a real font's metrics apply, and
+// two stacked names read as one.
+const LABEL_CLEAR = 3;
 const overlap = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
-const inside = (b: Box) => b.x >= 4 && b.y >= 4 && b.x + b.w <= SIZE - 4 && b.y + b.h <= SIZE - 4;
+const grow = (b: Box, by: number): Box => ({ x: b.x - by, y: b.y - by, w: b.w + 2 * by, h: b.h + 2 * by });
+/** How far a box reaches past the 4-unit paper margin (0 when inside). */
+const outside = (b: Box) => Math.max(0, 4 - b.x) + Math.max(0, 4 - b.y) + Math.max(0, b.x + b.w - (SIZE - 4)) + Math.max(0, b.y + b.h - (SIZE - 4));
 /** Text box from its baseline anchor: the same arithmetic the checks use. */
 export function labelBox(text: string, tx: number, ty: number, anchor: Dot["anchor"]): Box {
-  const w = text.length * LABEL_EM + 4;
-  return { x: anchor === "end" ? tx - w : anchor === "middle" ? tx - w / 2 : tx, y: ty - 11, w, h: LABEL_H };
+  const w = textWidth(text) + 4;
+  return { x: anchor === "end" ? tx - w : anchor === "middle" ? tx - w / 2 : tx, y: ty - LABEL_ASCENT, w, h: LABEL_H };
+}
+/** Box of a 10-unit ring distance label from its baseline anchor. */
+export function ringLabelBox(text: string, x: number, y: number, end: boolean): Box {
+  const w = textWidth(text) * 10 / 12 + 2;
+  return { x: end ? x - w : x, y: y - 10, w, h: 12.5 };
 }
 
 const fmt = (n: number) => String(Math.round(n * 10) / 10);
@@ -34,10 +61,12 @@ const miles = (metres: number) => {
   return `${Number.isInteger(mi) ? mi : mi.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")} mi`;
 };
 
-/** Two or three rings in quarter- or half-mile steps that enclose every place. */
+/** Two or three rings that enclose every place, in the smallest of tenth-,
+ *  quarter- or half-mile steps that needs no more than three: the scale fits
+ *  the places, so a dense block spreads across the paper instead of crowding
+ *  its labels into the middle of an oversized circle. */
 function ringsFor(maxMetres: number): Ring[] {
-  const quarter = MILE / 4, half = MILE / 2;
-  const step = maxMetres <= quarter * 3 ? quarter : half;
+  const step = [MILE / 10, MILE / 4].find(s => maxMetres <= s * 3) ?? MILE / 2;
   const count = Math.min(3, Math.max(2, Math.ceil(maxMetres / step)));
   return Array.from({ length: count }, (_, i) => ({ metres: step * (i + 1), label: miles(step * (i + 1)) }));
 }
@@ -50,9 +79,9 @@ function marker(category: NearbyPlace["category"], x: number, y: number): string
   return `<polygon ${c} points="${fmt(x)},${fmt(y - 7)} ${fmt(x + 7)},${fmt(y)} ${fmt(x)},${fmt(y + 7)} ${fmt(x - 7)},${fmt(y)}"/>`;
 }
 
-function shorten(name: string): string {
+function shorten(name: string, max = LABEL_MAX): string {
   const clean = name.replace(/\s+/g, " ").trim();
-  return clean.length > LABEL_MAX ? clean.slice(0, LABEL_MAX - 1).trimEnd() + "…" : clean;
+  return clean.length > max ? clean.slice(0, max - 1).trimEnd() + "…" : clean;
 }
 
 export function nearbyMapSummary(places: NearbyPlace[]): string {
@@ -75,35 +104,66 @@ export function renderNearbyMap(result: Pick<NearbyPlacesResult, "status" | "pla
   const scale = OUTER / rings[rings.length - 1].metres;
   const cosLat = Math.cos(lat0 * Math.PI / 180);
   // Label layout: each label tries the spots around its marker and takes the
-  // one that stays on the paper and clears every marker and label placed so
-  // far; two refinement passes then let earlier labels move out of the way of
-  // later ones. Deterministic: same places, same drawing.
+  // one that stays on the paper and keeps clear of every other marker and
+  // label; three passes let earlier labels move out of the way of later ones.
+  // A label still crowded after that is shortened (the list below keeps the
+  // full name) and placed again. Ring distance labels go last, to the clearest
+  // of six points on their ring. Deterministic: same places, same drawing.
   const positioned = places.map(place => {
     const east = (place.lng - lng0) * cosLat, north = place.lat - lat0;
     const bearing = east === 0 && north === 0 ? 0 : Math.atan2(east, north);
     const r = Math.min(OUTER, place.distance_m * scale);
     return { place, x: CENTER + r * Math.sin(bearing), y: CENTER - r * Math.cos(bearing), label: shorten(place.name) };
   }).sort((a, b) => a.y - b.y || a.x - b.x);
-  const fixed: Box[] = [{ x: CENTER - 16, y: CENTER - 16, w: 32, h: 32 }, ...positioned.map(p => ({ x: p.x - 8, y: p.y - 8, w: 16, h: 16 }))];
+  // Obstacles: the property marker, each place's marker (index i + 1 for
+  // place i) and the north arrow.
+  const fixed: Box[] = [{ x: CENTER - 16, y: CENTER - 16, w: 32, h: 32 }, ...positioned.map(p => ({ x: p.x - 8, y: p.y - 8, w: 16, h: 16 })), { x: SIZE - 22, y: 6, w: 16, h: 24 }];
   const spots = (p: { x: number; y: number }): Array<{ tx: number; ty: number; anchor: Dot["anchor"] }> => [
     { tx: p.x + 11, ty: p.y + 4, anchor: "start" }, { tx: p.x - 11, ty: p.y + 4, anchor: "end" },
     { tx: p.x, ty: p.y + 21, anchor: "middle" }, { tx: p.x, ty: p.y - 13, anchor: "middle" },
     { tx: p.x + 9, ty: p.y - 9, anchor: "start" }, { tx: p.x - 9, ty: p.y - 9, anchor: "end" },
     { tx: p.x + 9, ty: p.y + 17, anchor: "start" }, { tx: p.x - 9, ty: p.y + 17, anchor: "end" },
     { tx: p.x, ty: p.y + 35, anchor: "middle" }, { tx: p.x, ty: p.y - 27, anchor: "middle" },
+    // Farther fallbacks, chosen only when every nearer spot collides.
+    { tx: p.x + 9, ty: p.y + 31, anchor: "start" }, { tx: p.x - 9, ty: p.y + 31, anchor: "end" },
+    { tx: p.x + 9, ty: p.y - 23, anchor: "start" }, { tx: p.x - 9, ty: p.y - 23, anchor: "end" },
   ];
   const chosen: Array<{ tx: number; ty: number; anchor: Dot["anchor"]; box: Box } | null> = positioned.map(() => null);
   const settle = (i: number) => {
-    const p = positioned[i];
-    const others = [...fixed, ...chosen.filter((c, j): c is NonNullable<typeof c> => c !== null && j !== i).map(c => c.box)];
-    chosen[i] = spots(p).map(c => { const box = labelBox(p.label, c.tx, c.ty, c.anchor); return { ...c, box, score: others.reduce((sum, other) => sum + overlap(box, other), 0) + (inside(box) ? 0 : 1_000) }; })
-      .sort((a, b) => a.score - b.score)[0];
+    const p = positioned[i], own = fixed[i + 1];
+    // A label may sit right beside its own marker; everything else keeps the clearance.
+    const others = [...fixed.filter(box => box !== own), ...chosen.filter((c, j): c is NonNullable<typeof c> => c !== null && j !== i).map(c => c.box)];
+    // Staying on the paper comes first (an off-paper label is cropped), then
+    // the least overlap; ties keep the nearest spot, in the order listed.
+    chosen[i] = spots(p).map(c => { const box = labelBox(p.label, c.tx, c.ty, c.anchor), clear = grow(box, LABEL_CLEAR); return { ...c, box, off: outside(box), score: overlap(box, own) + others.reduce((sum, other) => sum + overlap(clear, other), 0) }; })
+      .sort((a, b) => a.off - b.off || a.score - b.score)[0];
   };
   for (let pass = 0; pass < 3; pass++) for (let i = 0; i < positioned.length; i++) settle(i);
+  // Crowded fallback: a label that still touches another label or marker is
+  // shortened, first to 16 characters and then to 11, and everything settles again.
+  const crowded = (i: number) => { const box = chosen[i]!.box, own = fixed[i + 1]; return fixed.some(f => f !== own && overlap(box, f) > 0) || chosen.some((c, j) => j !== i && c !== null && overlap(box, c.box) > 0); };
+  for (const max of [16, 11]) {
+    const tight = positioned.map((_, i) => i).filter(i => crowded(i) && positioned[i].label.length > max);
+    if (!tight.length) continue;
+    for (const i of tight) positioned[i].label = shorten(positioned[i].place.name, max);
+    for (let pass = 0; pass < 2; pass++) for (let i = 0; i < positioned.length; i++) settle(i);
+  }
   const dots: Dot[] = positioned.map((p, i) => ({ x: p.x, y: p.y, place: p.place, label: p.label, tx: chosen[i]!.tx, ty: chosen[i]!.ty, anchor: chosen[i]!.anchor }));
+  // Ring distance labels (10-unit text): just north of the centre when that
+  // is clear, otherwise beside the clearest of eleven other points on their
+  // ring (outside the line, on the side away from the centre), never off the paper.
+  const taken: Box[] = [...fixed, ...chosen.map(c => c!.box)];
   const ringMarkup = rings.map(ring => {
     const r = ring.metres * scale;
-    return `<circle class="nm-ring" cx="${CENTER}" cy="${CENTER}" r="${fmt(r)}"/><text class="nm-ring-label" x="${fmt(CENTER + 4)}" y="${fmt(CENTER - r - 4)}">${escapeHtml(ring.label)}</text>`;
+    const around = [180, 45, 315, 135, 225, 90, 270, 30, 330, 150, 210].map(deg => {
+      const a = deg * Math.PI / 180, px = CENTER + r * Math.sin(a), py = CENTER - r * Math.cos(a), east = Math.sin(a) >= -1e-9;
+      return { x: east ? px + 3 : px - 3, y: Math.cos(a) >= -1e-9 ? py - 3 : py + 11, end: !east };
+    });
+    const best = [{ x: CENTER + 4, y: CENTER - r - 4, end: false }, ...around]
+      .map(o => { const box = ringLabelBox(ring.label, o.x, o.y, o.end); return { ...o, box, off: outside(box), score: taken.reduce((sum, other) => sum + overlap(grow(box, 2), other), 0) }; })
+      .sort((a, b) => a.off - b.off || a.score - b.score)[0];
+    taken.push(best.box);
+    return `<circle class="nm-ring" cx="${CENTER}" cy="${CENTER}" r="${fmt(r)}"/><text class="nm-ring-label" x="${fmt(best.x)}" y="${fmt(best.y)}"${best.end ? ' text-anchor="end"' : ""}>${escapeHtml(ring.label)}</text>`;
   }).join("");
   const placeMarkup = dots.map(dot => `<g class="nm-place">${marker(dot.place.category, dot.x, dot.y)}<text class="nm-label" x="${fmt(dot.tx)}" y="${fmt(dot.ty)}" text-anchor="${dot.anchor}">${escapeHtml(dot.label)}</text></g>`).join("");
   const home = `<g class="nm-home"><title>The property</title><circle class="nm-home-halo" cx="${CENTER}" cy="${CENTER}" r="14"/><circle class="nm-home-dot" cx="${CENTER}" cy="${CENTER}" r="7"/></g>`;

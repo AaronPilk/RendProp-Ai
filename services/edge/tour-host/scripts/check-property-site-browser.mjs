@@ -35,6 +35,9 @@ const mapOrigin = { lat: 27.9, lng: -82.5 }, degree = 6_371_008.8 * Math.PI / 18
 const nearbyPlace = (name, category, bearing, metres, id) => { const rad = bearing * Math.PI / 180; return { name, category, lat: mapOrigin.lat + metres * Math.cos(rad) / degree, lng: mapOrigin.lng + metres * Math.sin(rad) / (degree * Math.cos(mapOrigin.lat * Math.PI / 180)), distance_m: metres, source_url: `https://www.openstreetmap.org/node/${id}` }; };
 const nearbyResult = { status: "available", attribution: "© OpenStreetMap contributors", places: [nearbyPlace("Harbor Grill & Oyster House", "Restaurant", 35, 420, 1), nearbyPlace("Trattoria Luna", "Restaurant", 120, 760, 2), nearbyPlace("The Longest Restaurant Name In Town Ever", "Restaurant", 200, 1180, 3), nearbyPlace("Kahwa Coffee", "Cafe", 60, 300, 4), nearbyPlace("Bandit Coffee Co.", "Cafe", 250, 640, 5), nearbyPlace("Black Crow Café", "Cafe", 300, 1320, 6), nearbyPlace("Publix", "Shop", 170, 980, 7), nearbyPlace("Rollin' Oats Market", "Shop", 320, 450, 8), nearbyPlace("Haslam's Books", "Shop", 90, 1450, 9)] };
 const nearbyMapHtml = renderNearbyMap(nearbyResult, mapOrigin);
+// A dense downtown block: nine places within 300 m with long names, the case
+// where the original label layout overlapped names and covered a ring distance.
+const downtownResult = { status: "available", attribution: "© OpenStreetMap contributors", places: [nearbyPlace("Central Oyster Bar & Grill", "Restaurant", 60, 140, 21), nearbyPlace("Harborside Trattoria", "Restaurant", 125, 210, 22), nearbyPlace("Mezcal Cantina", "Restaurant", 300, 260, 23), nearbyPlace("Morning Ritual Coffee Roasters", "Cafe", 20, 95, 24), nearbyPlace("Banyan Tree Café", "Cafe", 160, 120, 25), nearbyPlace("Black Crow Coffee", "Cafe", 235, 230, 26), nearbyPlace("Downtown Fresh Market", "Shop", 95, 175, 27), nearbyPlace("Tombolo Books", "Shop", 275, 110, 28), nearbyPlace("Waterfront Gallery Shop", "Shop", 345, 300, 29)] };
 function fixture() {
   const t = buildDemoTour();
   t.slug = "synthetic-site"; t.website_theme = theme;
@@ -60,7 +63,7 @@ const server = createServer((req, res) => {
   if (photo) { res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-store" }); res.end(svg(PHOTOS[Number(photo[1])][0], PHOTOS[Number(photo[1])][1], Number(photo[1]) === 1)); return; }
   if (url.pathname === "/f/synthetic-site/nearby") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ...nearbyResult, map_html: nearbyMapHtml, license_url: "https://www.openstreetmap.org/copyright" })); return; }
   if (url.pathname === "/property/synthetic-site") {
-    let html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin, page: propertyPage(url.searchParams.get("page")), publicBase: "/property", previewTheme:url.searchParams.get("preview_theme"), nearby: url.searchParams.has("cached") ? nearbyResult : null });
+    let html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin, page: propertyPage(url.searchParams.get("page")), publicBase: "/property", previewTheme:url.searchParams.get("preview_theme"), nearby: url.searchParams.get("cached") === "downtown" ? downtownResult : url.searchParams.has("cached") ? nearbyResult : null });
     if (arg("--fault") === "omit-preview-offset") {
       assert.equal(html.split("Math.max(navHeight,previewHeight)").length - 1, 1, "one exact preview-offset expression is omitted");
       html = html.replace("Math.max(navHeight,previewHeight)", "navHeight");
@@ -457,7 +460,37 @@ try {
     if (!scripted) check(map.halo === "none", tag + ": reduced motion stops the property-marker pulse");
     if (scripted) check(map.halo === "nearby-home-pulse", tag + ": the property marker pulses when motion is allowed");
     check(external.length === 0 && !requests.some(path => path.startsWith("/tile") || path.includes("openstreetmap")), tag + ": no request leaves the loopback origin and no tile is fetched");
-    await page.locator("#property-nearby").screenshot({ path: join(evidence, `nearby-map-${theme}-${width}-${scripted ? "scripted" : "no-script"}.png`) });
+    // Evidence: the section at real size, captured from the top of the page so
+    // sticky navigation stays at the top instead of painting over the map.
+    const clip = await page.evaluate(() => { scrollTo(0, 0); const r = document.getElementById("property-nearby").getBoundingClientRect(); return { x: 0, y: Math.floor(r.top + scrollY), width: innerWidth, height: Math.ceil(r.height) }; });
+    await page.screenshot({ path: join(evidence, `nearby-map-${theme}-${width}-${scripted ? "scripted" : "no-script"}.png`), fullPage: true, clip });
+    await context.close();
+  }
+
+  // Dense downtown block (cached static markup, scripts off): the real glyph
+  // boxes of the names, ring distances and north mark never collide or leave
+  // the paper, and the rings fit the block in tenth-mile steps.
+  for (const width of [390, 1440]) for (theme of ["basic", "signature-estate", "coastal-luxe"]) {
+    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 1000 }, javaScriptEnabled: false });
+    await context.route("**/*", route => { const u = new URL(route.request().url()); return u.origin === origin || u.protocol === "data:" ? route.continue() : route.abort(); });
+    const page = await context.newPage();
+    await page.goto(origin + "/property/synthetic-site?page=location&cached=downtown", { waitUntil: "networkidle" });
+    const tag = `downtown/${theme}/${width}`;
+    const dense = await page.evaluate(() => {
+      const svg = document.querySelector("#property-nearby-map svg"), rect = svg.getBoundingClientRect(), paper = svg.querySelector(".nm-paper").getBoundingClientRect();
+      const boxes = selector => [...svg.querySelectorAll(selector)].map(el => ({ text: el.textContent, box: el.getBoundingClientRect() }));
+      const names = boxes(".nm-label"), marks = boxes(".nm-ring-label, .nm-compass");
+      const hit = (a, b) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
+      const onPaper = b => b.left >= paper.left - .5 && b.right <= paper.right + .5 && b.top >= paper.top - .5 && b.bottom <= paper.bottom + .5;
+      return { places: svg.querySelectorAll(".nm-place").length, rings: marks.filter(m => m.text !== "N").map(m => m.text), summary: svg.getAttribute("aria-label"), labels: names.map(n => n.text),
+        collisions: names.flatMap((a, i) => [...names.slice(i + 1), ...marks].filter(b => hit(a.box, b.box)).map(b => a.text + " / " + b.text)),
+        offPaper: [...names, ...marks].filter(n => !onPaper(n.box)).map(n => n.text), minFont: Math.min(...[...svg.querySelectorAll(".nm-label")].map(el => parseFloat(getComputedStyle(el).fontSize))) * rect.width / 360 };
+    });
+    measurements.push({ tag, type: "downtown-map", ...dense });
+    check(dense.places === 9 && JSON.stringify(dense.rings) === JSON.stringify(["0.1 mi", "0.2 mi"]) && dense.summary.startsWith("Map of 9 nearby places within 0.2 mi of the property"), tag + ": a dense block gets tenth-mile rings that fit its nine places");
+    check(dense.collisions.length === 0 && dense.offPaper.length === 0 && dense.minFont >= 10, tag + ": names, ring distances and the north mark never collide or leave the paper " + JSON.stringify(dense.collisions.concat(dense.offPaper)));
+    const clip = await page.evaluate(() => { const r = document.getElementById("property-nearby").getBoundingClientRect(); return { x: 0, y: Math.floor(r.top + scrollY), width: innerWidth, height: Math.ceil(r.height) }; });
+    await page.screenshot({ path: join(evidence, `nearby-map-downtown-${theme}-${width}.png`), fullPage: true, clip });
     await context.close();
   }
   presentation = "video";
