@@ -123,6 +123,7 @@ class CostLedger:
         job_id: str | None = None,
         org_id: str | None = None,
         meta: dict | None = None,
+        funding_attempt=None,
     ) -> dict:
         """Persist one cost_ledger row for money already spent.
 
@@ -131,6 +132,9 @@ class CostLedger:
         is never lost. The caller keeps the produced media (it was paid for) and
         stops making further paid calls.
         """
+        metadata = dict(meta or {})
+        if funding_attempt is not None:
+            metadata["pipeline_funding"] = funding_attempt.metadata()
         row = {
             "job_id": job_id,
             "org_id": org_id,
@@ -140,13 +144,13 @@ class CostLedger:
             "units": round(float(units), 4),
             "unit_cost_cents": round(float(unit_cost_cents), 6),
             "total_cents": round(float(total_cents), 4),
-            "meta": meta or {},
+            "meta": metadata,
             # Generated ONCE, here, before any attempt — every retry in
             # `_insert_with_retry` and every later `flush_spool()` replay of
             # this exact row carries the SAME key, so a resubmission 409s
             # instead of double-counting REAL provider spend (audit finding 6;
             # migration 0025_cost_ledger_idempotency.sql).
-            "idempotency_key": str(uuid.uuid4()),
+            "idempotency_key": ("pipeline:" + funding_attempt.reservation_id) if funding_attempt is not None else str(uuid.uuid4()),
         }
         self.rows.append(row)
         self.running_cents = round(self.running_cents + row["total_cents"], 4)
@@ -209,6 +213,30 @@ class CostLedger:
         this is the piece that makes the idempotency key actually PREVENT a
         double-counted charge rather than merely making one detectable later.
         """
+        attempt = (row.get("meta") or {}).get("pipeline_funding")
+        if attempt is not None:
+            fields = {"reservation_id", "actor_id", "org_id", "request_key", "stage", "provider", "model", "input_sha256"}
+            if not isinstance(attempt, dict) or set(attempt) != fields:
+                raise ProviderError("Invalid immutable pipeline cost identity")
+            payload = {"p_actor": attempt["actor_id"], "p_org": row["org_id"],
+                "p_reservation": attempt["reservation_id"], "p_key": attempt["request_key"],
+                "p_stage": attempt["stage"], "p_provider": row["provider"], "p_model": row["model"],
+                "p_input_sha256": attempt["input_sha256"], "p_job": row["job_id"],
+                "p_feature": row["feature"], "p_units": row["units"],
+                "p_unit_cost": row["unit_cost_cents"], "p_total": row["total_cents"], "p_meta": row["meta"]}
+            saved = request_json(f"{self.supabase_url}/rest/v1/rpc/pipeline_record_provider_cost",
+                method="POST", payload=payload, headers=self._headers(), timeout=30, follow_redirects=False)
+            if (not isinstance(saved, dict) or saved.get("recorded") is not True
+                    or saved.get("reservation_id") != attempt["reservation_id"]
+                    or saved.get("idempotency_key") != row["idempotency_key"]
+                    or any(saved.get(k) != attempt[k] for k in ("actor_id", "org_id", "request_key", "stage", "provider", "model", "input_sha256"))):
+                raise ProviderError("Pipeline cost receipt was not confirmed")
+            try:
+                if any(str(uuid.UUID(saved[k])) != saved[k] for k in ("ledger_id", "billing_org_id")):
+                    raise ValueError("Noncanonical receipt identity")
+            except (KeyError, TypeError, ValueError, AttributeError) as error:
+                raise ProviderError("Pipeline cost receipt identity unavailable") from error
+            return
         try:
             request_json(
                 f"{self.supabase_url}/rest/v1/cost_ledger",

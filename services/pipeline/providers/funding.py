@@ -10,9 +10,11 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+import uuid
 from urllib.parse import urlsplit
 
 _CURRENT = ContextVar("rendprop_provider_funding", default=None)
+_CAPTURE = ContextVar("rendprop_provider_cost_capture", default=None)
 VERSION = "published-standard-20261006"
 IMAGE_MAX_OUTPUT_TOKENS = 4096
 
@@ -59,6 +61,41 @@ def quote(provider, model, payload):
     return None
 
 
+
+@dataclass(frozen=True)
+class ProviderFundingAttempt:
+    reservation_id: str
+    actor_id: str
+    org_id: str
+    request_key: str
+    stage: str
+    provider: str
+    model: str
+    input_sha256: str
+
+    def metadata(self):
+        return dict(self.__dict__)
+
+
+@contextmanager
+def capture_provider_attempts():
+    """Collect only this adapter call's immutable admissions, never raw inputs."""
+    attempts = []
+    token = _CAPTURE.set(attempts)
+    try:
+        yield attempts
+    finally:
+        _CAPTURE.reset(token)
+
+
+def result_funding(attempts, provider, model):
+    # An aggregate/ambiguous result never guesses which supplier attempt it bills.
+    if len(attempts) != 1:
+        return None
+    attempt = attempts[0]
+    return attempt if (attempt.provider, attempt.model) == (provider, model) else None
+
+
 @dataclass
 class ServingSession:
     actor_id: str
@@ -93,6 +130,17 @@ class ServingSession:
         })
         if not isinstance(result, dict) or result.get("reserved") is not True:
             raise FundingUnavailable("Provider funding was not confirmed; no generation submitted")
+        capture = _CAPTURE.get()
+        if capture is not None:
+            reservation = result.get("id")
+            try:
+                valid = isinstance(reservation, str) and str(uuid.UUID(reservation)) == reservation
+            except (ValueError, TypeError, AttributeError):
+                valid = False
+            if not valid:
+                raise FundingUnavailable("Immutable provider funding receipt unavailable; no generation submitted")
+            capture.append(ProviderFundingAttempt(reservation, self.actor_id, self.org_id,
+                self.job_id, stage, provider, model, digest))
         return stage
 
     def finish(self, stage, state, rejection=None):

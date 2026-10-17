@@ -2020,6 +2020,14 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s tools/audit -p 'test_api_cost*.py' -v 2>&1 | tee "$RUNNER_TEMP/rendprop-api-cost-report-unit.log"
+          python3 tools/audit/test_pipeline_cost_residual_report.py -v 2>&1 | tee -a "$RUNNER_TEMP/rendprop-api-cost-report-unit.log"
+      - name: Pipeline hold-to-ledger binding on an owned PostgreSQL (first apply, replay, refusals, 18 actual cases, omission witness)
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/pipeline_cost_binding_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-pipeline-cost-binding-pg"
       - name: Cost export preserves real attempt journals and billing attribution
         timeout-minutes: 15
         shell: bash
@@ -2069,6 +2077,12 @@ jobs:
             ${{ runner.temp }}/rendprop-property-static-compose-repair-pg/**
             ${{ runner.temp }}/rendprop-video-submission-receipts-pg/**
             ${{ runner.temp }}/rendprop-api-cost-report-unit.log
+            ${{ runner.temp }}/rendprop-pipeline-cost-binding-pg/receipt.json
+            ${{ runner.temp }}/rendprop-pipeline-cost-binding-pg/INTENT.json
+            ${{ runner.temp }}/rendprop-pipeline-cost-binding-pg/fixture.json
+            ${{ runner.temp }}/rendprop-pipeline-cost-binding-pg/positive-cases.json
+            ${{ runner.temp }}/rendprop-pipeline-cost-binding-pg/omission-cases.json
+            ${{ runner.temp }}/rendprop-pipeline-cost-binding-pg/*.log
             ${{ runner.temp }}/rendprop-api-cost-report-pg/receipt.json
             ${{ runner.temp }}/rendprop-api-cost-report-pg/*.log
           if-no-files-found: warn
@@ -2134,6 +2148,7 @@ jobs:
           python3 services/worker/tests/test_verification_prerequisites.py
           python3 services/worker/tests/test_stream_fallback.py
           python3 services/worker/tests/test_provider_funding.py
+          python3 services/worker/tests/test_pipeline_cost_binding.py
           python3 services/worker/tests/test_lease_probe_fail_closed.py
           python3 services/worker/tests/test_process_specific.py
           python3 services/worker/tests/test_cost_spool.py
