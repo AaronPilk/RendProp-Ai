@@ -16,6 +16,7 @@
   "listings": true,
   "me": false,
   "notify": false,
+  "photo-feedback": true,
   "photo-quality-review": true,
   "photo-quality-worker": false,
   "portfolio": false,
