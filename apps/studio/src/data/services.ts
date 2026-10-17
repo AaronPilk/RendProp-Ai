@@ -459,6 +459,9 @@ export function createStudioServices(
               // echo provider/5xx bodies or URLs, which may contain signed capabilities.
               const savedVideoAction = method === "POST" && (path === "/functions/v1/property-video-jobs" || /^\/functions\/v1\/property-video-jobs\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}\/resume$/.test(path));
               const processorFailure = response.status === 403 && savedVideoAction || response.status === 404 && method === "GET" && path === "/functions/v1/property-video-jobs/processor-consent";
+              // The photo feedback queue branches on its own 4xx codes and the 409
+              // adoption fields; it validates them itself and never displays them.
+              const feedbackRoute = path.startsWith("/functions/v1/photo-feedback");
               if (processorFailure) {
                 try {
                   const detail = await boundedJson(response, controller.signal, 8192) as { code?: unknown };
@@ -466,11 +469,11 @@ export function createStudioServices(
                   else if (response.status === 403 && detail.code === "processor_consent_required") { failureCode = detail.code; message = "This video requires its reviewed AI processor permission. Recover the saved request before changing its permission."; }
                   else if (response.status === 403 && detail.code === "consent_required") { failureCode = detail.code; message = "Allow AI processing before starting this saved video action."; }
                 } catch { /* An unrecognized or unreadable403 remains an access error. */ }
-              } else if ([400, 402, 409, 413, 422].includes(response.status)) {
+              } else if ([400, 402, 409, 413, 422].includes(response.status) || feedbackRoute && response.status < 500) {
                 try {
                   const detail = await boundedJson(response, controller.signal, 8192) as { error?: unknown; code?: unknown; [key:string]:unknown };
-                  if (["photo_quality_pending","photo_quality_hold","photo_quality_closed","photo_quality_refused","photo_clarification_required","unsupported_edit"].includes(String(detail.code))) failureCode=String(detail.code);
-                  failureDetails=Object.fromEntries(Object.entries(detail).filter(([key,value])=>
+                  if (feedbackRoute ? /^[a-z_]{1,48}$/.test(String(detail.code)) : ["photo_quality_pending","photo_quality_hold","photo_quality_closed","photo_quality_refused","photo_clarification_required","unsupported_edit"].includes(String(detail.code))) failureCode=String(detail.code);
+                  failureDetails=feedbackRoute?detail:Object.fromEntries(Object.entries(detail).filter(([key,value])=>
                     ["no_provider_dispatch","retry_existing_job","recovery_protocol_required","operation_closed"].includes(key)&&typeof value==="boolean"
                     ||key==="provider_cost_incurred"&&(typeof value==="boolean"||value==="possible")
                     ||["check_id","evidence_id"].includes(key)&&typeof value==="string"&&/^[a-f0-9-]{36}$/i.test(value)));

@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { buildPhotoDownload, renderPhoto, type PhotoDestination, type PhotoRatio } from "./photo-export";
 import type { PhotoDelivery } from "./photo-lineage";
 
-export default function PhotoExportPanel({ photos: incomingPhotos, assertScope, disabled = false }: {
+export default function PhotoExportPanel({ photos: incomingPhotos, assertScope, disabled = false, onDownloaded }: {
   photos: readonly PhotoDelivery[]; assertScope: () => void; disabled?: boolean;
+  /** Told after the browser was handed the file; it cannot change the download. */
+  onDownloaded?: () => void;
 }) {
   const stablePhotos = useRef(incomingPhotos);
   if (stablePhotos.current.length !== incomingPhotos.length || stablePhotos.current.some((photo, index) => photo !== incomingPhotos[index])) stablePhotos.current = incomingPhotos;
@@ -42,6 +44,7 @@ export default function PhotoExportPanel({ photos: incomingPhotos, assertScope, 
       const url = URL.createObjectURL(result.blob), link = document.createElement("a");
       link.href = url; link.download = result.filename; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+      try { onDownloaded?.(); } catch { /* A signal never fails a download that happened. */ }
     } catch (reason) { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Download could not be prepared."); }
     finally { if (!controller.signal.aborted) setBusy(false); }
   }
