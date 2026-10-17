@@ -1,10 +1,15 @@
-name: Stall A/B experiment (evidence only, not a gate)
+name: Stall experiment (evidence only, not a gate)
 
 # Discriminating experiment for the hosted macOS Studio export drift refusals
 # (runs 39055656587, 39062185061). Same code as launch head 317b6a1e. Arm A runs
 # the unchanged cloud-editor suite on a quiet runner; arm B runs it right after
 # the same HD master encoding CI runs before step 17. Pass/fail is recorded,
 # never retried into a pass; no guard, threshold, timeout or control changes.
+# Run 39063330792 (A/B) did not support the load hypothesis. Arm C keeps the
+# same suite and adds a browser-target trace with the "audio" category so the
+# audio service's device callbacks are visible beside the renderer's
+# RequestRender spans: if both stop, the device callback stopped upstream of
+# the renderer; if only RequestRender stops, the renderer side stalled.
 on:
   push:
     branches: [claude/stall-ab-20261017]
@@ -18,7 +23,7 @@ concurrency:
 
 jobs:
   stall-ab:
-    name: Studio export stall A/B (quiet vs after HD encoding)
+    name: Studio export stall C (renderer vs audio service callbacks)
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -45,49 +50,44 @@ jobs:
             brew install ffmpeg
           fi
           ffmpeg -version | head -1
-      - name: A — unchanged cloud-editor suite on a quiet runner (5 runs)
+      - name: C — unchanged cloud-editor suite, browser-target trace with the audio service (10 runs)
         working-directory: apps/studio
         shell: bash
+        env:
+          RENDPROP_TRACE_AUDIO_SERVICE: "1"
         run: |
-          mkdir -p "$RUNNER_TEMP/A"
-          for i in 1 2 3 4 5; do
-            mkdir -p "$RUNNER_TEMP/A/run-$i"
-            { date -u +%FT%TZ; uptime; sysctl -n vm.loadavg; sysctl vm.swapusage; vm_stat | head -12; } > "$RUNNER_TEMP/A/run-$i/host-before.txt" 2>&1
-            if TMPDIR="$RUNNER_TEMP/A/run-$i" node tests/cloud-editor-browser.mjs > "$RUNNER_TEMP/A/run-$i/suite.log" 2>&1; then r=PASS; else r=FAIL; fi
-            echo "A run-$i $r $(uptime)" | tee -a "$RUNNER_TEMP/A/summary.txt"
-          done
-      - name: B — HD master encoding, then the unchanged cloud-editor suite (5 runs)
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/B"
-          for i in 1 2 3 4 5; do
-            mkdir -p "$RUNNER_TEMP/B/run-$i"
-            ( export TMPDIR="$RUNNER_TEMP/B/run-$i"; python3 tools/audit/run_render_quality.py > "$RUNNER_TEMP/B/run-$i/encoding.log" 2>&1; python3 tools/audit/run_render_review_fences.py >> "$RUNNER_TEMP/B/run-$i/encoding.log" 2>&1 ) || echo "B run-$i encoding exit $?" >> "$RUNNER_TEMP/B/summary.txt"
-            { date -u +%FT%TZ; uptime; sysctl -n vm.loadavg; sysctl vm.swapusage; vm_stat | head -12; } > "$RUNNER_TEMP/B/run-$i/host-before.txt" 2>&1
-            if ( cd apps/studio && TMPDIR="$RUNNER_TEMP/B/run-$i" node tests/cloud-editor-browser.mjs > "$RUNNER_TEMP/B/run-$i/suite.log" 2>&1 ); then r=PASS; else r=FAIL; fi
-            echo "B run-$i $r $(uptime)" | tee -a "$RUNNER_TEMP/B/summary.txt"
+          mkdir -p "$RUNNER_TEMP/C"
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            mkdir -p "$RUNNER_TEMP/C/run-$i"
+            { date -u +%FT%TZ; uptime; sysctl -n vm.loadavg; sysctl vm.swapusage; vm_stat | head -12; } > "$RUNNER_TEMP/C/run-$i/host-before.txt" 2>&1
+            if TMPDIR="$RUNNER_TEMP/C/run-$i" node tests/cloud-editor-browser.mjs > "$RUNNER_TEMP/C/run-$i/suite.log" 2>&1; then r=PASS; else r=FAIL; fi
+            echo "C run-$i $r $(uptime)" | tee -a "$RUNNER_TEMP/C/summary.txt"
+            for f in "$RUNNER_TEMP"/C/run-$i/rendprop-cloud-editor-*/receipt.json; do
+              node --input-type=module -e '
+                import {readFileSync} from "node:fs";
+                const r = JSON.parse(readFileSync(process.argv[1], "utf8")), s = r.renderSilenceInRecordings ?? {}, nt = r.nativeTrace ?? {};
+                const w = (s.render?.windows ?? []).map(x => `${(x.longestSilenceMs ?? 0).toFixed(1)}ms/${x.longestSilence?.kind ?? "-"}`).join(" ");
+                const longestGap = nt.renderGapSummary?.longestGap;
+                console.log(`   trace=${nt.status} scope=${nt.sessionScope} extra=${JSON.stringify(nt.extraCategorySupport ?? {})} aux-series=${nt.auxiliary?.seriesSeen ?? 0} render-window-silence=[${w}] refusals=${(s.refusalsAtMs ?? []).length} longest-pair-gap=${longestGap?.gapMs?.toFixed?.(1)}ms@${longestGap?.pageWall?.fromMs?.toFixed?.(0)}`);
+                for (const a of (nt.auxiliary?.series ?? []).slice(0, 12)) console.log(`   aux ${a.name} [${a.processLabel ?? "?"}/${a.threadLabel ?? "?"}] spans=${a.spans} gaps>33=${a.gapsOverLowerThreshold} top=${(a.listedGaps ?? []).slice(0, 2).map(g => `${g.gapMs.toFixed(1)}@${g.fromMs?.toFixed?.(0)}`).join(",")}`);
+              ' "$f" | tee -a "$RUNNER_TEMP/C/summary.txt" || true
+            done
           done
       - name: Summary
         if: always()
         shell: bash
         run: |
-          cat "$RUNNER_TEMP/A/summary.txt" "$RUNNER_TEMP/B/summary.txt" 2>/dev/null || true
+          cat "$RUNNER_TEMP/C/summary.txt" 2>/dev/null || true
       - name: Retain receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: stall-ab-${{ github.run_attempt }}
+          name: stall-c-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/A/**/summary.txt
-            ${{ runner.temp }}/A/**/host-before.txt
-            ${{ runner.temp }}/A/**/suite.log
-            ${{ runner.temp }}/A/**/rendprop-cloud-editor-*/receipt.json
-            ${{ runner.temp }}/A/**/rendprop-cloud-editor-*/failure.png
-            ${{ runner.temp }}/B/**/summary.txt
-            ${{ runner.temp }}/B/**/host-before.txt
-            ${{ runner.temp }}/B/**/suite.log
-            ${{ runner.temp }}/B/**/encoding.log
-            ${{ runner.temp }}/B/**/rendprop-cloud-editor-*/receipt.json
-            ${{ runner.temp }}/B/**/rendprop-cloud-editor-*/failure.png
+            ${{ runner.temp }}/C/**/summary.txt
+            ${{ runner.temp }}/C/**/host-before.txt
+            ${{ runner.temp }}/C/**/suite.log
+            ${{ runner.temp }}/C/**/rendprop-cloud-editor-*/receipt.json
+            ${{ runner.temp }}/C/**/rendprop-cloud-editor-*/failure.png
           if-no-files-found: warn
           retention-days: 14
