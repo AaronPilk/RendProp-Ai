@@ -194,6 +194,74 @@ git status   # expect: clean apart from the three intentional node_modules symli
 git reset --hard origin/feature/launch-checklist82-20261014
 ```
 
+## Run 39040282783 at `7130625` (all repairs + the owner's recovered Codex commits)
+
+Observed to completion before any further push. Result: **13 green, 2 red**
+(the audit-evidence gate result is recorded in the table once it finished;
+see the final line of this section).
+
+| Job | Result |
+|---|---|
+| Supabase migrations (fresh replay + invariants) | success (item 1 closed on the hosted runner) |
+| Disposable PostgreSQL publication, invariant and deletion regression | success (item 1; includes the repaired `launch_blockers_pg.py` race, both orderings) |
+| Supabase edge functions (deno check + tests) | success (item 2 closed) |
+| Studio contracts, build and property workflows (offline) | success (item 3 closed) |
+| UIKit exports, paid reel, reel-style, python workers, upload-gateway, secret scan, web parity, iOS static | success |
+| Private property video CPU and actual background authority | **failure** — the `native_photo_family_selection_pg.py` repair (item 5) passed; the job then failed at Codex's new RentCast billing-binding step (`rentcast_billing_binding.fixture.ts` lines 43/73, TS2322 `Timeout` not assignable to `number` under Deno 2.9.6 with `--node-modules-dir=auto`). Fixed in `770e7ac` (`ReturnType<typeof setTimeout>`, two declarations, no behaviour change); the harness passes locally as `claude` (`/home/claude/rentcast-evidence/run1/receipt.json`). Hosted proof: next run. |
+| Cloudflare Worker (tour-host) | **failure** — the previous export-resume stall (item 4) did NOT repeat: `export-resume-browser.mjs` passed including the current `fixed` and `late-frames` variants. The red step moved to `finishing-browser.mjs:118`: the product's `RecordingClock` refused with "Audio and picture timing drifted during export". See the analysis below. |
+
+### Finishing refusal — analysis of the retained evidence (no change applied)
+
+Full write-up: `FINISHING-TIMING-DRIFT-ANALYSIS.md` in the evidence folder
+(246 lines, read-only; sources verified against the run's recorded
+`sourceHashes`). Verdict: **environmental runner audio-sink stall**, not a
+product defect and not the 8328dce origin change.
+
+- All eight readings have `wall === timeline`, so the refusal happened in the
+  photo segment whose timeline is the wall clock; the audio reading is
+  `AudioContext.currentTime − segmentAudioStart`.
+- The audio clock tracked wall within 1–5 ms until page time 8516 ms, then
+  froze at exactly 5.738667 s absolute = 538 × 512 frames (an output-buffer
+  boundary, not a graph boundary — narration, music and the original clip all
+  start/end elsewhere) for ≥ 168 ms across five main-thread readings. The guard
+  tolerated 0.041/0.050 and threw at 0.137/0.174.
+- `outputTimestamp` froze at `performanceTime` 8554.6 with `contextTime`
+  537 × 512 frames; the context closed at 8732.4 with no later sink callback.
+  Main-thread read gaps were also late (36–88 ms vs ≤ 33 nominal): a CPU burst
+  on the 3-vCPU arm64 runner.
+- Origin change refuted: the three readings before the stall show 2.4/1.1/3.1 ms
+  drift, not a constant offset.
+- Had the guard not fired, the AAC track would have been ≈ 0.17 s short and the
+  suite's own `avDurationGap ≤ 2/30` oracle (line 126) would have failed —
+  the Build 60 failure mode the guard was written for.
+- The passing `export-resume` receipt from the same run (36 s of readings) has
+  max |wall − audio| 6.7 ms and no plateau ≥ 33 ms. The previous run's
+  guard-isolated historical variant recorded the same frozen-`outputTimestamp`
+  signature. Six of the last seven hosted tour-host runs hit a media/audio
+  stall somewhere; none reproduced locally; only fecbfa0 (run 39022740808) was
+  16/16 with editor source identical to HEAD.
+
+Options, none of which weaken thresholds or skip controls: (i) re-observe
+as-is and record a pass as "stall did not recur", not a repair; (ii) a
+test-only, evidence-gated single retry in `finishing-browser.mjs` keyed on the
+three-part stall signature (audio identical across ≥ 3 readings while wall
+advances ≥ 2/30, `outputTimestamp.performanceTime` ≥ 100 ms older than the
+refusal, first refusal kept in the receipt, every oracle unchanged on the
+retry) — the owner declined the equivalent for item 4, so it is not applied;
+(iii) a product pause-on-stall — rejected: it re-bases the origins the export
+invariant forbids re-basing and changes what the 2/30 guard measures;
+(iv) recommended instrumentation first: attach the existing CDP webaudio trace
+observer (`export-startup-browser.mjs:21-134`) to the finishing export and
+record the longest gap between `AudioDestination::RequestRender` spans, log
+the runner's audio device and `hw.ncpu`, and record inter-read and
+output-latency per reading in the finishing receipt. (iv) is test-only
+instrumentation and can be done in this lane; it does not change the oracle.
+
+Unknowns stated plainly: why the sink stalled (real device vs Chromium fake
+sink, audio-service starvation); whether a user Mac can show it; the 500 ms
+`dataavailable` slice near page time 8550 is a coincidence that was not ruled
+out.
+
 ## Not done / honest limits
 
 - No push happened until every affected proof above was in hand; the new CI
