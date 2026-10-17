@@ -1049,7 +1049,8 @@ struct FlythroughDetailView: View {
             PhotoExportSheet(photos: selection.photos, includeOriginals: true,
                              archiveName: currentListing.address, extras: filePackageExtras,
                              coordinatorPackage: !filePackageExtras.isEmpty,
-                             canExport: filePhotoExportAdmission ?? { false })
+                             canExport: filePhotoExportAdmission ?? { false },
+                             onExported: PhotoFeedbackQueue.recordExport)
         }
         .onChange(of: auth.userID) { _ in
             if !hasCurrentPresentationContext { invalidatePresentation() }
@@ -2664,6 +2665,7 @@ struct FlythroughDetailView: View {
                         republishedAt = Date()
                         playerRefresh = UUID()
                         Haptics.success()
+                        PhotoFeedbackQueue.shared.recordPublication(listingID: id, model: model)
                     }
                 } catch {
                     await MainActor.run {
@@ -2694,6 +2696,7 @@ struct FlythroughDetailView: View {
                     playerRefresh = UUID()
                     Haptics.success()
                     ReviewPrompter.shared.tourPublished()
+                    PhotoFeedbackQueue.shared.recordPublication(listingID: id, model: model)
                 }
             } catch {
                 await MainActor.run {
@@ -5008,6 +5011,11 @@ struct PhotoStudioView: View {
                 do {
                     _ = try await model.makeCloudPhotoCover(listingID: listing.id, versionID: p.id, reviewed: false)
                     if context.isCurrent { Haptics.success() }
+                    if context.isCurrent {
+                        PhotoFeedbackQueue.shared.recordListingSelection(of: p.savedVersion, stagingAcknowledged: false,
+                            customAcknowledged: false,
+                            listingIsLive: model.listings.first(where: { $0.id == listing.id })?.serverShareURL != nil)
+                    }
                 } catch { if context.isCurrent { photoSaveError = error.localizedDescription } }
             }
             return
@@ -5027,6 +5035,7 @@ struct PhotoStudioView: View {
         loadExisting()
         model.setMainPhoto(FileStore.relativePath(for: p.enhancedURL), for: listing.id)
         Haptics.success()
+        PhotoFeedbackQueue.shared.recordSignal(.manualSelection, detail: .listingSelection, for: p.savedVersion)
     }
 
     /// The business type the copy speaks in (samples follow the current type).
@@ -5706,7 +5715,10 @@ struct PhotoStudioView: View {
 
     var body: some View {
         editFeedbackDialogs
-        .sheet(item: $exportingPhotos) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original, archiveName: listing.address) }
+        .sheet(item: $exportingPhotos) { selection in
+            PhotoExportSheet(photos: selection.photos, original: selection.original, archiveName: listing.address,
+                             onExported: PhotoFeedbackQueue.recordExport)
+        }
         // Third-party processing consent is asked at AI entry or immediately
         // before an edit; viewing, importing and exporting ordinary photos
         // remains available without opting into AI processing.
@@ -7565,7 +7577,9 @@ struct PhotoCompareView: View {
                     showOriginal: $showOriginal)
             }
         }
-        .sheet(item: $exporting) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original) }
+        .sheet(item: $exporting) { selection in
+            PhotoExportSheet(photos: selection.photos, original: selection.original, onExported: PhotoFeedbackQueue.recordExport)
+        }
         .alert("Photo action needs attention", isPresented: Binding(get: { selectionError != nil }, set: { if !$0 { selectionError = nil } })) {
             Button("OK") { selectionError = nil }
         } message: { Text(selectionError ?? "") }
@@ -8020,6 +8034,10 @@ struct PhotoCompareView: View {
                     guard !needsCustomReview || customReview.isComplete else { throw PhotoVersionHistory.Failure.customReviewRequired }
                 }
                 let reviewed = (!needsStagingReview || stagingReview.isComplete) && (!needsCustomReview || customReview.isComplete)
+                // Optional feedback signals describe this exact request after it succeeds.
+                let feedbackVersion = viewed.savedVersion, choosing = !wasSelected || cloudCoverRequested
+                let stagingAcknowledged = needsStagingReview && stagingReview.isComplete
+                let customAcknowledged = needsCustomReview && customReview.isComplete
                 if cloudCoverRequested {
                     _ = try await model.makeCloudPhotoCover(listingID: listingID, versionID: versionID, reviewed: reviewed)
                 } else {
@@ -8027,6 +8045,11 @@ struct PhotoCompareView: View {
                         selecting: !wasSelected, followFamilyCover: followCover, reviewed: reviewed)
                 }
                 guard context.isCurrent, viewed.id == versionID else { throw PhotoCloudSelectionFailure.identityChanged }
+                if choosing {
+                    PhotoFeedbackQueue.shared.recordListingSelection(of: feedbackVersion, stagingAcknowledged: stagingAcknowledged,
+                        customAcknowledged: customAcknowledged,
+                        listingIsLive: model.listings.first(where: { $0.id == listingID })?.serverShareURL != nil)
+                }
             } catch { if context.isCurrent, selectionWorkID == work { selectionError = error.localizedDescription } }
         }
     }

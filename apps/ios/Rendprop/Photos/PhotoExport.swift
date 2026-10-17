@@ -481,14 +481,20 @@ struct PhotoExportSheet: View {
     let extras: [PhotoExportRenderer.Extra]
     let coordinatorPackage: Bool
     private let canExport: () -> Bool
+    /// Told after files were saved to Photos or handed to the share sheet:
+    /// the photos, whether only their originals/sources were exported, and
+    /// whether it was a whole-listing package. Observes; never gates.
+    private let onExported: @MainActor (_ photos: [EnhancedPhoto], _ originalsOnly: Bool, _ listingPackage: Bool) -> Void
     init(photos: [EnhancedPhoto], original: Bool = false, includeOriginals: Bool = true,
          archiveName: String = "Rendprop", extras: [PhotoExportRenderer.Extra] = [], coordinatorPackage: Bool = false,
-         canExport: @escaping () -> Bool = { true }) {
+         canExport: @escaping () -> Bool = { true },
+         onExported: @escaping @MainActor (_ photos: [EnhancedPhoto], _ originalsOnly: Bool, _ listingPackage: Bool) -> Void = { _, _, _ in }) {
         self.photos = photos
         self.archiveName = archiveName
         self.extras = extras
         self.coordinatorPackage = coordinatorPackage
         self.canExport = canExport
+        self.onExported = onExported
         _original = State(initialValue: original)
         _includeOriginals = State(initialValue: includeOriginals)
         // Several photos default to one archive: that is the shape a
@@ -879,6 +885,7 @@ struct PhotoExportSheet: View {
                     prepared = PhotoExportRenderer.Prepared(directory: result.directory, images: result.images,
                                                             files: result.files + packageExtras.map(\.url))
                 }
+                if currentContext { onExported(input, options.original, coordinator || !packageExtras.isEmpty) }
             } catch {
                 if let output { try? FileManager.default.removeItem(at: output.directory) }
                 self.error = error.localizedDescription
