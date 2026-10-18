@@ -292,12 +292,19 @@ node scripts/verify-deployed.mjs
 ```
 
 The verifier compares the custom domain against the exact local build and checks
-response headers. The current 28-asset build has 31 exact files. Its configured
-OAuth callback has only the known 307 canonical redirect to the same-origin root
-with the query preserved; one separate GET must return the identical entry.
-`/workspace` and a missing JavaScript asset must return 404. The complete check
-uses 35 GETs and never follows arbitrary redirects or accepts blanket SPA
-fallback. It handles the known managed robots prefix explicitly.
+response headers. It takes the inventory from the build's own Vite manifest:
+everything `index.html` can load through static or dynamic imports, their CSS
+and emitted assets, plus `index.html`, `robots.txt` and the brand mark.
+`dist/assets` must hold exactly those regular files (no extra, missing, unsafe or
+linked files) or it stops before any request. `--local-only`, also run by
+`npm run verify`, prints that inventory and its hashes without contacting the
+domain. Its configured OAuth callback has only the known 307 canonical redirect
+to the same-origin root with the query preserved; one separate GET must return
+the identical entry. `/workspace` and a missing JavaScript asset must return 404.
+The check reads each inventory file exactly once plus those four route probes,
+so the 33-asset build of 17 October has 36 files and uses exactly 40 GETs. It
+never follows arbitrary redirects or accepts blanket SPA fallback. It handles
+the known managed robots prefix explicitly.
 The 27 September release matched all **30 files** with no verifier warnings. Its
 connected gzip sizes were **135,649 B initial / 216,383 B Create / 318,219 B total**,
 within separate budgets of 160,000 / 260,000 / 350,000 bytes. The editing-copy
