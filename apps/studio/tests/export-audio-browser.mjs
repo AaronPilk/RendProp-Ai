@@ -7,11 +7,13 @@ import {createServer} from "node:http";
 import {execFileSync} from "node:child_process";
 import {build} from "vite";
 import {chromium,expect} from "@playwright/test";
+import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
+const {audioOutput} = testAudioOutputOption(process.argv.slice(2));
 const alignmentOnly=process.argv.includes("--alignment-only"),originalOnly=process.argv.includes("--original-only");assert(!(alignmentOnly&&originalOnly));const fault=process.argv.find(x=>x.startsWith("--fault="))??null;assert(fault===null||["--fault=live-original-audio","--fault=late-buffered-wall-origin","--fault=omit-bucket-pacing","--fault=late-optional-track-schedule"].includes(fault));
 const root=resolve(import.meta.dirname,".."), artifacts=await mkdtemp(join(tmpdir(),"rendprop-export-original-audio-")),dist=join(artifacts,"dist");
 const paths=["src/editor/export.ts","src/editor/recording-clock.ts","src/editor/media.ts","src/editor/model.ts","src/editor/music.ts","src/editor/finishing.ts","tests/export-audio-fixture.ts","tests/export-audio-browser.mjs"];
 const hashes=async()=>Object.fromEntries(await Promise.all(paths.map(async path=>[path,createHash("sha256").update(await readFile(join(root,path))).digest("hex")])));
-const receipt={status:"running",fault,proof:"Actual browser exporter/MediaRecorder with generated H264/AAC source, real100ms video pause and a transient waiting notification without loss. No live accounts/providers. RMS>.03 retained.",sourceHashes:await hashes(),checks:[],cases:[],externalRequests:[],errors:[]};
+const receipt={status:"running",fault,audioOutput,proof:"Actual browser exporter/MediaRecorder with generated H264/AAC source, real100ms video pause and a transient waiting notification without loss. No live accounts/providers. RMS>.03 retained.",sourceHashes:await hashes(),checks:[],cases:[],externalRequests:[],errors:[]};
 let browser,server,page,mutated=false;
 try{
  await build({configFile:false,root,publicDir:false,logLevel:"error",plugins:[{name:"passive-gain-preparation-budget",enforce:"pre",transform(code,id){if(!id.endsWith("/src/editor/export.ts"))return;const a="      const musicEnvelope = musicGain ? (() => {",b="      // Gain preparation is complete before capture starts or resumes.";if(!code.includes(a))return;assert.equal(code.split(a).length,2);assert.equal(code.split(b).length,2);return code.replace(a,"      const gainPreparationBegan = performance.now();\n"+a).replace(b,"      globalThis.audioGainPreparationEvidence = {costMs: performance.now() - gainPreparationBegan, points: musicEnvelope?.length ?? 0, recorderState: recorder?.state ?? null};\n"+b);}},...(fault?[{name:"live-original-audio-regression",enforce:"pre",transform(code,id){
@@ -48,6 +50,7 @@ try{
  execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","color=c=green:s=640x360:r=30:d=3","-f","lavfi","-i","sine=frequency=880:duration=3","-c:v","libx264","-pix_fmt","yuv420p","-c:a","aac","-shortest",tone]);
  execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","color=c=blue:s=640x360:r=30:d=3","-an","-c:v","libx264","-pix_fmt","yuv420p",silent]);
  browser=await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});const context=await browser.newContext({viewport:{width:1000,height:800},serviceWorkers:"block"});
+ await installTestAudioOutput(context,audioOutput);
  await context.route("**/*",route=>{const u=new URL(route.request().url());if(u.origin===origin&&route.request().method()==="GET"||u.protocol==="blob:")return route.continue();receipt.externalRequests.push(u.href);return route.abort();});
  // Test-only, passive lifecycle evidence. Native nodes/promises and their
  // return values remain unchanged; bounded facts are retained only on failure.
@@ -107,10 +110,10 @@ try{
  receipt.passiveRuntime={node:process.version,browser:browser.version(),platform:process.platform,architecture:process.arch};
  page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(15000);
  const run=async(name,config,{refused=false,silentAudio=false,cancelled=false}={})=>{
-  await page.goto(`${origin}/tests/export-audio-fixture.html`);await page.getByLabel("Synthetic source").setInputFiles(silentAudio?silent:tone);
+  await page.goto(`${origin}/tests/export-audio-fixture.html`);await verifyTestAudioOutput(page,audioOutput);await page.getByLabel("Synthetic source").setInputFiles(silentAudio?silent:tone);
   await page.evaluate(config=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,playResolutionDelayMs:0,...config},config);
   await page.getByRole("button",{name:"Export fixture",exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result)).not.toBeNull();
-  const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error,cause:result.cause};receipt.cases.push(record);record.passive=await page.evaluate(()=>window.audioExportPassive());
+  const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,audioOutput:await verifyTestAudioOutput(page,audioOutput),ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error,cause:result.cause};receipt.cases.push(record);record.passive=await page.evaluate(()=>window.audioExportPassive());
   if(!result.ok)record.lifecycle=await page.evaluate(()=>window.audioExportDiagnostics());
   if(config.stall||config.hiccup||config.playResolutionDelayMs)assert(result.injected,"Forced playback fixture not injected");
   if(cancelled){assert.equal(result.ok,false);assert.match(result.error,/Synthetic export cancelled/);assert.equal(result.base64,undefined);return;}
@@ -173,7 +176,7 @@ try{
   execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","color=c=green:s=640x360:r=30:d=3","-f","lavfi","-i","aevalsrc=if(between(t\\,0.5\\,0.65)\\,0.25*sin(2*PI*990*t)\\,0.25*sin(2*PI*880*t)):s=48000:d=3","-c:v","libx264","-pix_fmt","yuv420p","-c:a","aac","-shortest",marker]);
   const toneAt=(pcm,hz,start,end)=>{const first=Math.round(start*48000),count=Math.round((end-start)*48000);assert(first>=0&&first+count<=pcm.length/4,"Fixed PCM window must exist");let real=0,imaginary=0;for(let i=0;i<count;i++){const sample=pcm.readFloatLE((first+i)*4);assert(Number.isFinite(sample));real+=sample*Math.cos(2*Math.PI*hz*i/48000);imaginary+=sample*Math.sin(2*Math.PI*hz*i/48000);}return 2*Math.hypot(real,imaginary)/count;};
   for(const mix of ["opening","offset-fade"]){
-   await page.goto(`${origin}/tests/export-audio-fixture.html`);await page.getByLabel("Synthetic source").setInputFiles(marker);
+   await page.goto(`${origin}/tests/export-audio-fixture.html`);await verifyTestAudioOutput(page,audioOutput);await page.getByLabel("Synthetic source").setInputFiles(marker);
    await page.evaluate(mix=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,playResolutionDelayMs:250,mix},mix);
    await page.getByRole("button",{name:"Export fixture",exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result)).not.toBeNull();
    const result=await page.evaluate(()=>window.audioExportFixture.result),row={name:"alignment-"+mix,ok:result.ok,error:result.error,cause:result.cause,playEvidence:result.playEvidence,playHoldEvidence:result.playHoldEvidence,gainEvidence:result.gainEvidence,sourceEvidence:result.sourceEvidence,gainPreparation:await page.evaluate(()=>globalThis.audioGainPreparationEvidence??null)};receipt.cases.push(row);

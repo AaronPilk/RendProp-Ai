@@ -9,14 +9,17 @@ import {build} from "vite";
 import {chromium, expect} from "@playwright/test";
 import {startNativeTraceObserver} from "./native-trace-observer.mjs";
 import {collectRunnerFacts} from "./runner-facts.mjs";
+import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
 
-const mode = process.argv[2] ?? "actual";
+const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
+assert(args.length <= 1, "Unknown startup test option");
+const mode = args[0] ?? "actual";
 assert(["actual", "--before", "--fault=omit-readiness"].includes(mode));
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-startup-"));
 const paths = ["src/editor/export.ts", "src/editor/recording-clock.ts", "src/editor/media.ts", "src/editor/model.ts",
   "tests/export-startup-fixture.ts", "tests/export-startup-fixture.html", "tests/export-startup-browser.mjs", "tests/native-trace-observer.mjs", "tests/runner-facts.mjs"];
 const hashes = async () => Object.fromEntries(await Promise.all(paths.map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = {status: "running", mode, sourceHashes: await hashes(), runnerFacts: collectRunnerFacts(), cases: [], checks: [], externalRequests: [], errors: [],
+const receipt = {status: "running", mode, audioOutput, sourceHashes: await hashes(), runnerFacts: collectRunnerFacts(), cases: [], checks: [], externalRequests: [], errors: [],
   proof: "Native Web Audio/canvas/MediaRecorder and decoded PCM. Explicit startup currentTime observation hold; real native time retained independently. No claim to reproduce the underlying hosted browser/device cause."};
 let browser, server, page, mutated = false;
 let nativeTraceOwner;
@@ -61,6 +64,7 @@ try {
     "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", source]);
   browser = await chromium.launch({headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE});
   const context = await browser.newContext({serviceWorkers: "block", viewport: {width: 1000, height: 800}});
+  await installTestAudioOutput(context, audioOutput);
   await context.route("**/*", route => {
     const url = new URL(route.request().url());
     if (url.origin === origin && route.request().method() === "GET" || url.protocol === "blob:") return route.continue();
@@ -69,6 +73,7 @@ try {
   page = await context.newPage(); page.setDefaultTimeout(15000); page.on("pageerror", error => receipt.errors.push(error.message));
   const run = async (scenario, extension = "mp4") => {
     await page.goto(`${origin}/tests/export-startup-fixture.html`);
+    await verifyTestAudioOutput(page, audioOutput);
     await page.getByLabel("Synthetic source").setInputFiles(source);
     await page.evaluate(({scenario, extension}) => Object.assign(window.startupFixture, {mode: scenario, extension}), {scenario, extension});
     const nativeTrace = mode === "actual" && receipt.cases.length === 0 && scenario === "freeze" && extension === "mp4"
@@ -88,7 +93,7 @@ try {
       if (nativeTrace) await nativeTrace.finish();
     }
     const result = await page.evaluate(() => window.startupFixture.result), events = await page.evaluate(() => window.startupFixture.events);
-    const record = {scenario, extension, ...result, events}; delete record.base64; receipt.cases.push(record);
+    const record = {scenario, extension, ...result, events, audioOutput: await verifyTestAudioOutput(page, audioOutput)}; delete record.base64; receipt.cases.push(record);
     const content = events.filter(event => event.kind.startsWith("user.") || event.kind === "recorder.start");
     assert.deepEqual(content.filter(event => event.held), [], "Content and recording must not start while startup clock is frozen");
     assert(result.tracks.length >= 1 && result.tracks.every(state => state === "ended"), "Every created audio/capture track must end");

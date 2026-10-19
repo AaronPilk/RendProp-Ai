@@ -13,10 +13,13 @@ import {fixedAACTailWindow, fixedPCMWindow, measureTonePCM, requireAudibleFadeOu
 import {startNativeTraceObserver, NATIVE_TRACE_EXPORT_LIMITS} from "./native-trace-observer.mjs";
 import {startNodeSchedulingProbe, startPageSchedulingProbe, stopPageSchedulingProbe} from "./scheduling-probe.mjs";
 import {collectRunnerFacts, quickLoad} from "./runner-facts.mjs";
+import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
+const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
+assert.equal(args.length, 0, "Unknown finishing test option");
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-finishing-")), dist = join(artifacts, "dist");
 const sourceHashes = Object.fromEntries(await Promise.all(["tests/finishing-browser.mjs", "tests/native-trace-observer.mjs", "tests/scheduling-probe.mjs", "tests/runner-facts.mjs",
   ...["export", "recording-clock", "media", "finishing", "music"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", sourceHashes, runnerFacts: collectRunnerFacts(), checks: [], errors: [], externalRequests: [], status: "running"};
+const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", sourceHashes, audioOutput, runnerFacts: collectRunnerFacts(), checks: [], errors: [], externalRequests: [], status: "running"};
 let browser, server, page;
 // Retain the actual clock guard's cause without changing its readings,
 // scheduling, thresholds or error. A missing download alone cannot explain a
@@ -89,6 +92,7 @@ try {
   for (const [file, frequency, seconds] of [[music,440,10],[voice,880,1]]) execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", `sine=frequency=${frequency}:duration=${seconds}:sample_rate=48000`, "-c:a", "pcm_s16le", file]);
   browser = await chromium.launch({headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE});
   const context = await browser.newContext({viewport:{width:1440,height:1100}, acceptDownloads:true, serviceWorkers:"block"});
+  await installTestAudioOutput(context, audioOutput);
   await context.route("**/*", route => {const url = new URL(route.request().url()); if (url.origin === origin && route.request().method() === "GET" || url.protocol === "blob:") return route.continue(); receipt.externalRequests.push(url.href); return route.abort();});
   page = await context.newPage(); page.setDefaultTimeout(12000); page.on("pageerror", error => receipt.errors.push(error.message));
   receipt.browserVersion = browser.version();
@@ -108,6 +112,7 @@ try {
     };
   });
   await page.goto(`${origin}/tests/finishing-fixture.html`);
+  await verifyTestAudioOutput(page, audioOutput);
   const snapshot = () => page.evaluate(() => window.finishingFixture.snapshot());
   await page.getByLabel("Add photos or videos", {exact:true}).setInputFiles(video);
   await expect.poll(async () => (await snapshot()).draft.clips.length).toBe(1);
@@ -309,6 +314,7 @@ try {
   await page.getByRole("button",{name:"Create editing copy",exact:true}).click();await page.getByRole("button",{name:"Cancel editing copy",exact:true}).click();
   await expect(page.getByRole("region",{name:"Completed editing copy",exact:true})).toHaveCount(0);await expect(page.getByRole("button",{name:"Create editing copy",exact:true})).toBeEnabled();assert.deepEqual((await snapshot()).draft,proxyDraft);
   receipt.checks.push("Canceling large-file preparation leaves the original and current draft unchanged and exposes no partial copy");
+  receipt.audioOutputFinal=await verifyTestAudioOutput(page,audioOutput);
   assert.deepEqual(receipt.errors,[]);assert.deepEqual(receipt.externalRequests,[]);receipt.status="pass";
 } catch(error){
   receipt.status="fail";receipt.failure=String(error.stack??error);
