@@ -1,6 +1,7 @@
 import {decodeMusic} from "./music";
 import {musicGainAt} from "./finishing";
 import {OverlayPainter} from "./overlay-renderer";
+import {AudioStartupClock, RecordingClock} from "./recording-clock";
 import {
   EDIT_LIMITS,
   draftMedia,
@@ -10,12 +11,12 @@ import {
   timelineDuration,
   validateDraft,
   type EditDraft,
+  type EditClip,
 } from "./model";
 import {
   awaitMediaOperation,
   decodeMedia,
   drawFrame,
-  nextFrame,
   seekMedia,
   throwIfAborted,
   waitForEvent,
@@ -72,6 +73,67 @@ export function exportFormats(): ExportFormat[] {
 
 export function supportsOriginalAudio(): boolean {
   return typeof AudioContext !== "undefined";
+}
+
+// Original audio that reaches the recording through the live media element
+// (speed-changed or undecodable sources) loses sound only while the media
+// clock stops but the recording clock keeps running. Chromium reports every
+// decoder or renderer hiccup as a `waiting` event, including ones that cost a
+// few milliseconds and are already over when the event is delivered; those are
+// inaudible and routine on slow or virtualised machines. Refuse only measured
+// loss above two capture intervals, well under the 100 ms interruption that
+// the original-audio regression control injects.
+export const MAX_ORIGINAL_AUDIO_LOSS_SECONDS = 2 / 30;
+
+// Animation callbacks can arrive after a segment's deadline, and their supplied
+// timestamp can precede delivery. Bound the wait by the segment deadline and
+// the existing 30 fps capture interval; use the current clock at delivery.
+export function nextExportFrame(signal: AbortSignal, remainingMs: number): Promise<number> {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      signal.removeEventListener("abort", aborted);
+    };
+    const done = () => { cleanup(); resolve(performance.now()); };
+    const aborted = () => {
+      cleanup();
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException("Operation cancelled.", "AbortError"));
+    };
+    const frame = requestAnimationFrame(done);
+    const timer = setTimeout(done, Math.max(1, Math.min(remainingMs, 1000 / 30)));
+    signal.addEventListener("abort", aborted, { once: true });
+  });
+}
+
+// No recorder or user source is started during this phase. Feed only the
+// prepared first picture and existing zero-valued source until actual Web Audio
+// time advances consistently with the capture wall clock. Once recording starts,
+// its origins and strict drift monitor are never reset to hide lost content.
+async function awaitAudioStartup(audio: AudioContext, signal: AbortSignal,
+  requireCurrent: () => void, paintFirstFrame: () => Promise<void>): Promise<void> {
+  const clock = new AudioStartupClock(), deadline = performance.now() + 2000;
+  while (true) {
+    requireCurrent();
+    if (audio.state !== "running") throw new Error("Audio stopped before recording could start. No download was created.");
+    await paintFirstFrame();
+    requireCurrent();
+    if (audio.state !== "running") throw new Error("Audio stopped before recording could start. No download was created.");
+    const now = performance.now();
+    if (now >= deadline) throw new Error("Audio did not begin advancing before export. No download was created.",
+      {cause: {readings: [...clock.readings]}});
+    if (clock.read(now / 1000, audio.currentTime)) return;
+    // This is pre-content readiness, independent of the timeline frame helper.
+    // The timer and abort listener are owned and removed on every exit.
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); signal.removeEventListener("abort", aborted); };
+      const aborted = () => { cleanup(); reject(signal.reason instanceof Error ? signal.reason : new DOMException("Operation cancelled.", "AbortError")); };
+      const timer = setTimeout(() => { cleanup(); resolve(); }, Math.min(1000 / 30, deadline - now));
+      signal.addEventListener("abort", aborted, {once: true});
+      if (signal.aborted) aborted();
+    });
+  }
 }
 
 /** A real-time local draft export; its bytes are not the canonical server artifact. */
@@ -133,6 +195,7 @@ export async function exportLocalVideo(options: {
     (total * 2 + 60) * 1000,
   );
   const renderSignal = controller.signal;
+  const refuseStall = () => controller.abort(new Error("Original audio playback stalled during export. No download was created. Try a shorter clip or export with audio explicitly muted."));
   const overlays = new OverlayPainter(draft, media, renderSignal);
   const canvas = document.createElement("canvas");
   Object.assign(canvas, renderDimensions(draft.ratio));
@@ -143,6 +206,14 @@ export async function exportLocalVideo(options: {
   let silentSource: ConstantSourceNode | undefined;
   let audioSource: MediaElementAudioSourceNode | undefined;
   let originalGain: GainNode | undefined;
+  let originalSource: AudioBufferSourceNode | undefined;
+  let originalSourceStarted = false;
+  let removeOriginalVideoListeners: (() => void) | undefined;
+  const stopOriginalAudio = () => {
+    if (originalSourceStarted) originalSource?.stop();
+    originalSource?.disconnect(); originalSource = undefined;
+    originalSourceStarted = false;
+  };
   let voiceBuffer: AudioBuffer | undefined;
   let voiceSource: AudioBufferSourceNode | undefined;
   let voiceGain: GainNode | undefined;
@@ -152,6 +223,50 @@ export async function exportLocalVideo(options: {
   const previous = document.createElement("canvas"); Object.assign(previous, renderDimensions(draft.ratio));
   let hasPrevious = false;
   let decoded: DecodedMedia | undefined;
+  type Prepared = { media: DecodedMedia; originalBuffer?: AudioBuffer } | { error: unknown };
+  let lookahead: { result?: Prepared; settled: Promise<Prepared> } | undefined;
+  const prepare = (clip: EditClip) => {
+    const task: NonNullable<typeof lookahead> = { settled: undefined! };
+    task.settled = (async () => {
+      const ready = await decodeMedia(media.get(clip.id)!.url, clip.source.kind, renderSignal);
+      try {
+        if (ready.element instanceof HTMLVideoElement) {
+          await seekMedia(ready.element, clip.start, renderSignal);
+          ready.element.playbackRate = clip.speed ?? 1;
+        }
+        let originalBuffer: AudioBuffer | undefined;
+        // Normal-speed speech must not depend on the live video decoder. Only
+        // the current source and one successor retain PCM, each capped at 32 MiB
+        // after a conservative 96 kHz stereo estimate before decoding. Other
+        // audio keeps the pitch-preserving media path with a stall refusal.
+        if (originalAudio && audio && clip.source.kind === "video" && (clip.speed ?? 1) === 1 &&
+            clip.source.duration * 96_000 * 2 * 4 <= 32 * 1024 * 1024) {
+          try {
+            const bytes = await awaitMediaOperation(media.get(clip.id)!.file.arrayBuffer(), renderSignal, "Reading original audio");
+            const buffer = await awaitMediaOperation(audio.decodeAudioData(bytes), renderSignal, "Decoding original audio");
+            if (Number.isFinite(buffer.duration) && buffer.duration > 0 &&
+                buffer.duration >= clip.end - .05 && buffer.duration <= clip.source.duration + .1 &&
+                buffer.numberOfChannels <= 2 && buffer.sampleRate <= 96_000 &&
+                buffer.length * buffer.numberOfChannels * 4 <= 32 * 1024 * 1024)
+              originalBuffer = buffer;
+          } catch {
+            // A silent video or unsupported container remains usable. Never
+            // infer silence: preserve media audio and refuse any export stall.
+            throwIfAborted(renderSignal);
+          }
+        }
+        throwIfAborted(renderSignal);
+        return { media: ready, originalBuffer };
+      } catch (error) {
+        ready.dispose();
+        throw error;
+      }
+    })().then(
+      result => (task.result = result),
+      error => (task.result = { error }),
+    );
+    return task;
+  };
   let stopped: Promise<void> | undefined;
   const chunks: Blob[] = [];
   let outputBytes = 0;
@@ -187,74 +302,126 @@ export async function exportLocalVideo(options: {
       musicGain = audio.createGain(); musicGain.gain.value = 0; musicGain.connect(destination!);
     }
     throwIfAborted(renderSignal);
-    stream = canvas.captureStream(30);
-    if (destination)
-      for (const track of destination.stream.getAudioTracks())
-        stream.addTrack(track);
-    recorder = new MediaRecorder(stream, {
-      mimeType: format.mime,
-      videoBitsPerSecond: 5_000_000,
-      ...(withAudio ? { audioBitsPerSecond: 128_000 } : {}),
-    });
-    stopped = new Promise((resolve) =>
-      recorder!.addEventListener("stop", () => resolve(), { once: true }),
-    );
-    recorder.addEventListener("error", () =>
-      controller.abort(
-        new Error(
-          "The browser encoder failed. Try the other offered format or a smaller edit.",
-        ),
-      ),
-    );
-    recorder.addEventListener("dataavailable", (event) => {
-      if (renderSignal.aborted || !event.data.size) return;
-      outputBytes += event.data.size;
-      if (outputBytes > EDIT_LIMITS.outputBytes) {
-        controller.abort(
-          new Error(
-            "The output exceeded the 128 MiB local memory limit. Shorten the edit.",
-          ),
-        );
-        return;
-      }
-      chunks.push(event.data);
-    });
     let elapsedBefore = 0;
     let lastProgressAt = 0;
-    for (const clip of draft.clips) {
+    // Keep only the current source and one decoded/seeked successor. Prepare
+    // the first pair before recording so even a short opening photo provides
+    // its full intended span without a cold decoder gap at the next boundary.
+    lookahead = prepare(draft.clips[0]);
+    await lookahead.settled;
+    for (const [index, clip] of draft.clips.entries()) {
       assertCurrentRevision(draft, currentDraft(), renderSignal);
-      decoded = await decodeMedia(
-        media.get(clip.id)!.url,
-        clip.source.kind,
-        renderSignal,
-      );
+      if (!lookahead?.result)
+        throw new Error("The browser could not prepare the next clip in time. Close other busy tabs and retry, or use a smaller edit.");
+      const prepared = lookahead.result;
+      lookahead = undefined;
+      if ("error" in prepared) throw prepared.error;
+      decoded = prepared.media;
+      const originalBuffer = prepared.originalBuffer;
+      const next = draft.clips[index + 1];
+      if (next) {
+        lookahead = prepare(next);
+        if (index === 0) {
+          const preparedNext = await lookahead.settled;
+          if ("error" in preparedNext) throw preparedNext.error;
+        }
+      }
       const video =
         decoded.element instanceof HTMLVideoElement
           ? decoded.element
           : undefined;
       if (video) {
-        await seekMedia(video, clip.start, renderSignal);
-        video.playbackRate = clip.speed ?? 1;
         if (originalAudio && audio && destination) {
-          audioSource = audio.createMediaElementSource(video);
           originalGain = audio.createGain(); originalGain.gain.value = 1;
-          audioSource.connect(originalGain); originalGain.connect(destination);
-          // Sound goes only to the recording destination, avoiding an audible duplicate.
-          video.muted = false;
-          video.volume = 1;
+          originalGain.connect(destination);
+          if (originalBuffer) {
+            originalSource = audio.createBufferSource(); originalSource.buffer = originalBuffer;
+            originalSource.connect(originalGain);
+            video.muted = true;
+          } else {
+            audioSource = audio.createMediaElementSource(video);
+            audioSource.connect(originalGain);
+            // Sound goes only to the recording, avoiding an audible duplicate.
+            video.muted = false;
+            video.volume = 1;
+          }
         }
       }
       drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore, localTime: 0, previous: hasPrevious ? previous : undefined});
       await overlays.paint(canvas, elapsedBefore);
       throwIfAborted(renderSignal);
-      if (recorder.state === "inactive") {
+      const duration = clipDuration(clip);
+      // Prepare bounded gain data while capture is still stopped/paused. The
+      // curve retains the nominal 30 Hz targets and existing 25 ms smoothing,
+      // with four interpolation points per capture interval (at most 21,601).
+      const musicEnvelope = musicGain ? (() => {
+        const points = Math.ceil(duration * 120), values = new Float32Array(points + 1);
+        let position = 0, target = musicGainAt(draft, clip, elapsedBefore, 0, voiceBuffer?.duration);
+        let value = target, nextTarget = 1 / 30;
+        values[0] = value;
+        for (let i = 1; i <= points; i++) {
+          const end = duration * i / points;
+          while (nextTarget < end) {
+            value = target + (value - target) * Math.exp(-(nextTarget - position) / .025);
+            position = nextTarget;
+            target = musicGainAt(draft, clip, elapsedBefore + position, position, voiceBuffer?.duration);
+            nextTarget += 1 / 30;
+          }
+          value = target + (value - target) * Math.exp(-(end - position) / .025);
+          position = end; values[i] = value;
+        }
+        return values;
+      })() : undefined;
+      // Gain preparation is complete before capture starts or resumes.
+      if (!recorder) {
+        if (audio) await awaitAudioStartup(audio, renderSignal,
+          () => assertCurrentRevision(draft, currentDraft(), renderSignal), async () => {
+            drawFrame(canvas, decoded!, clip, draft, {time: elapsedBefore, localTime: 0});
+            await overlays.paint(canvas, elapsedBefore);
+          });
+        assertCurrentRevision(draft, currentDraft(), renderSignal);
+        if (audio && audio.state !== "running") throw new Error("Audio stopped before recording could start. No download was created.");
+        // A canvas track can retain timestamps from its creation. Open it only
+        // after readiness, so pre-content preparation cannot become a video prefix.
+        stream = canvas.captureStream(30);
+        if (destination)
+          for (const track of destination.stream.getAudioTracks())
+            stream.addTrack(track);
+        recorder = new MediaRecorder(stream, {
+          mimeType: format.mime,
+          videoBitsPerSecond: 5_000_000,
+          ...(withAudio ? { audioBitsPerSecond: 128_000 } : {}),
+        });
+        stopped = new Promise((resolve) =>
+          recorder!.addEventListener("stop", () => resolve(), { once: true }),
+        );
+        recorder.addEventListener("error", () =>
+          controller.abort(
+            new Error(
+              "The browser encoder failed. Try the other offered format or a smaller edit.",
+            ),
+          ),
+        );
+        recorder.addEventListener("dataavailable", (event) => {
+          if (renderSignal.aborted || !event.data.size) return;
+          outputBytes += event.data.size;
+          if (outputBytes > EDIT_LIMITS.outputBytes) {
+            controller.abort(
+              new Error(
+                "The output exceeded the 128 MiB local memory limit. Shorten the edit.",
+              ),
+            );
+            return;
+          }
+          chunks.push(event.data);
+        });
         // start() changes state synchronously. Some WebM encoders emit `start`
         // only after receiving a fresh frame; awaiting that event before the
         // render loop deadlocks. Submit a frame and let the loop feed the encoder.
         recorder.start(500);
         drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore, localTime: 0, previous: hasPrevious ? previous : undefined});
         await overlays.paint(canvas, elapsedBefore);
-        const track = stream.getVideoTracks()[0] as
+        const track = stream!.getVideoTracks()[0] as
           CanvasCaptureMediaStreamTrack | undefined;
         track?.requestFrame?.();
       } else {
@@ -262,18 +429,39 @@ export async function exportLocalVideo(options: {
         // notification. Waiting for that event records an idle frame/audio gap
         // before this segment's clock and source playback begin on busy devices.
         recorder.resume();
-        const track = stream.getVideoTracks()[0] as
+        const track = stream!.getVideoTracks()[0] as
           CanvasCaptureMediaStreamTrack | undefined;
         track?.requestFrame?.();
       }
       // Start recording before advancing the source, so startup cannot discard speech.
-      if (video)
-        await awaitMediaOperation(video.play(), renderSignal, "Starting video");
+      // Buffered audio starts before play() resolves. Its capture wall clock
+      // must share that origin; a slow play promise does not mean sound was lost.
+      const originalWallStart = performance.now();
+      const segmentAudioStart = audio?.currentTime;
+      const originalClockStart = originalSource && audio ? segmentAudioStart : undefined;
+      // At the fixed origin, submit one prepared curve and at most two
+      // narration boundaries; no clip-length event queue delays source starts.
+      if (originalGain && draft.narration && segmentAudioStart !== undefined) {
+        const begin = draft.narration.offset - elapsedBefore;
+        const end = begin + (voiceBuffer?.duration ?? 0);
+        originalGain.gain.setValueAtTime(begin <= 0 && end > 0 ? .22 : 1, segmentAudioStart);
+        if (begin > 0 && begin < duration) originalGain.gain.setTargetAtTime(.22, segmentAudioStart + begin, .025);
+        if (end > 0 && end < duration) originalGain.gain.setTargetAtTime(1, segmentAudioStart + end, .025);
+      }
+      if (musicGain && musicEnvelope && segmentAudioStart !== undefined) {
+        musicGain.gain.cancelScheduledValues(0);
+        musicGain.gain.setValueCurveAtTime(musicEnvelope, segmentAudioStart, duration);
+      }
+      if (originalSource) {
+        originalSource.start(originalClockStart!, clip.start, clip.end - clip.start);
+        originalSourceStarted = true;
+      }
+      // BEGIN optional buffered tracks at the fixed segment origin
       if (draft.narration && voiceBuffer && audio && voiceGain) {
         const offset = Math.max(0, elapsedBefore - draft.narration.offset), delay = Math.max(0, draft.narration.offset - elapsedBefore);
         if (offset < voiceBuffer.duration && delay < clipDuration(clip)) {
           voiceSource = audio.createBufferSource(); voiceSource.buffer = voiceBuffer; voiceSource.connect(voiceGain);
-          voiceSource.start(audio.currentTime + delay, offset);
+          voiceSource.start(segmentAudioStart! + delay, offset);
         }
       }
       if (draft.music && musicBuffer && audio && musicGain) {
@@ -281,19 +469,47 @@ export async function exportLocalVideo(options: {
         const remaining = Math.min(draft.music.end - draft.music.start - elapsed, clipDuration(clip) - delay);
         if (remaining > 0) {
           musicSource = audio.createBufferSource(); musicSource.buffer = musicBuffer; musicSource.connect(musicGain);
-          musicGain.gain.setValueAtTime(musicGainAt(draft, clip, elapsedBefore + delay, delay, voiceBuffer?.duration), audio.currentTime + delay);
-          musicSource.start(audio.currentTime + delay, draft.music.start + elapsed, remaining);
+          musicSource.start(segmentAudioStart! + delay, draft.music.start + elapsed, remaining);
         }
       }
-      const start = performance.now();
+      // END optional buffered tracks
+      // Live media audio: both clocks are read together once playback is
+      // actually running, so later readings measure sound lost since then.
+      let mediaClockStart: number | undefined;
+      let mediaTimeStart = 0, lossReadings = 0;
+      if (video) {
+        await awaitMediaOperation(video.play(), renderSignal, "Starting video");
+        if (originalGain && !originalBuffer && audio) {
+          mediaClockStart = audio.currentTime;
+          mediaTimeStart = video.currentTime;
+        }
+        if (originalBuffer && audio && originalClockStart !== undefined) {
+          const clock = audio;
+          const realign = () => {
+            const target = Math.min(clip.end, clip.start + Math.max(0, clock.currentTime - originalClockStart));
+            if (target < clip.end && Math.abs(video.currentTime - target) > .08) video.currentTime = target;
+          };
+          video.addEventListener("playing", realign);
+          removeOriginalVideoListeners = () => video.removeEventListener("playing", realign);
+        }
+      }
+      // PLAYBACK confirmed; all buffered sources are already scheduled.
+      const start = originalWallStart ?? performance.now();
+      const recordingClock = new RecordingClock();
+      const recordingAudioStart = segmentAudioStart;
       let lastVideoTime = video?.currentTime ?? 0;
       let lastVideoAdvance = start;
-      const duration = clipDuration(clip);
+      let lastPaintedBucket = -1;
       while (true) {
         assertCurrentRevision(draft, currentDraft(), renderSignal);
-        const now = await nextFrame(renderSignal);
-        const elapsed = video
-          ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
+        const elapsedAtWait = originalClockStart !== undefined && audio
+          ? Math.max(0, audio.currentTime - originalClockStart)
+          : video ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
+          : (performance.now() - start) / 1000;
+        const now = await nextExportFrame(renderSignal, (duration - elapsedAtWait) * 1000);
+        const elapsed = originalClockStart !== undefined && audio
+          ? Math.max(0, audio.currentTime - originalClockStart)
+          : video ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
           : (now - start) / 1000;
         if (video && video.currentTime > lastVideoTime + 0.001) {
           lastVideoTime = video.currentTime;
@@ -303,27 +519,41 @@ export async function exportLocalVideo(options: {
           throw new Error(
             "Video playback stalled during export. Try a smaller or differently encoded clip.",
           );
-        if (audio) {
-          const timelineTime = elapsedBefore + elapsed;
-          if (musicGain) musicGain.gain.setTargetAtTime(musicGainAt(draft, clip, timelineTime, elapsed, voiceBuffer?.duration), audio.currentTime, .025);
-          if (originalGain) {
-            const speaking = !!draft.narration && timelineTime >= draft.narration.offset && timelineTime < draft.narration.offset + (voiceBuffer?.duration ?? 0);
-            originalGain.gain.setTargetAtTime(speaking ? .22 : 1, audio.currentTime, .025);
+        // Recording seconds that passed without the same amount of media
+        // playing: the total silence stalls left in this clip's original audio.
+        // Lost sound never comes back, so a second consecutive reading excludes
+        // media clock granularity before refusing.
+        if (video && audio && mediaClockStart !== undefined && elapsed < duration && !video.ended &&
+            audio.currentTime - mediaClockStart - Math.max(0, video.currentTime - mediaTimeStart) / (clip.speed ?? 1) > MAX_ORIGINAL_AUDIO_LOSS_SECONDS) {
+          if (++lossReadings > 1) {
+            refuseStall();
+            throwIfAborted(renderSignal);
           }
+        } else lossReadings = 0;
+        recordingClock.read((now - start) / 1000, elapsed,
+          recordingAudioStart !== undefined && audio ? audio.currentTime - recordingAudioStart : undefined);
+        // The capture stream is30fps. Keep every clock/safety reading above,
+        // while avoiding repeated HD paints inside the same capture interval.
+        const paintBucket = Math.floor(elapsed * 30);
+        if (paintBucket !== lastPaintedBucket || elapsed >= duration) {
+          drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore + elapsed, localTime: elapsed, previous: hasPrevious ? previous : undefined});
+          await overlays.paint(canvas, elapsedBefore + elapsed);
+          lastPaintedBucket = paintBucket;
         }
-        drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore + elapsed, localTime: elapsed, previous: hasPrevious ? previous : undefined});
-        await overlays.paint(canvas, elapsedBefore + elapsed);
         if (now - lastProgressAt > 150) {
           onProgress(Math.min(1, (elapsedBefore + elapsed) / total));
           lastProgressAt = now;
         }
-        if (elapsed >= duration || video?.ended) break;
+        if (elapsed >= duration || originalClockStart === undefined && video?.ended) break;
       }
-      // Pausing recording while loading the next source keeps decoder setup out of the edit.
+      // The successor is already prepared. MediaRecorder pause notifications do
+      // not guarantee that MP4 timestamps exclude a long decoder setup gap.
       const paused = waitForEvent(recorder, "pause", renderSignal);
       recorder.pause();
       await paused;
       video?.pause();
+      removeOriginalVideoListeners?.(); removeOriginalVideoListeners = undefined;
+      stopOriginalAudio();
       voiceSource?.stop(); voiceSource?.disconnect(); voiceSource = undefined;
       musicSource?.stop(); musicSource?.disconnect(); musicSource = undefined;
       originalGain?.disconnect(); originalGain = undefined;
@@ -335,11 +565,11 @@ export async function exportLocalVideo(options: {
       elapsedBefore += duration;
     }
     assertCurrentRevision(draft, currentDraft(), renderSignal);
-    const finished = waitForEvent(recorder, "stop", renderSignal);
-    recorder.stop();
+    const finished = waitForEvent(recorder!, "stop", renderSignal);
+    recorder!.stop();
     await finished;
     throwIfAborted(renderSignal);
-    const mime = recorder.mimeType;
+    const mime = recorder!.mimeType;
     const extension = mime.startsWith("video/mp4")
       ? "mp4"
       : mime.startsWith("video/webm")
@@ -372,6 +602,16 @@ export async function exportLocalVideo(options: {
     signal.removeEventListener("abort", forwardAbort);
     document.removeEventListener("visibilitychange", hidden);
     decoded?.dispose();
+    // A pending decoder must not outlive cancellation, a stale revision, or a
+    // failed export. Its rejection is retained above until consumed, and a
+    // successfully prepared successor is always disposed if never consumed.
+    controller.abort();
+    if (lookahead) {
+      const prepared = await lookahead.settled;
+      if ("media" in prepared) prepared.media.dispose();
+    }
+    removeOriginalVideoListeners?.();
+    stopOriginalAudio();
     audioSource?.disconnect();
     originalGain?.disconnect(); voiceSource?.stop(); voiceSource?.disconnect(); voiceGain?.disconnect();
     musicSource?.stop(); musicSource?.disconnect(); musicGain?.disconnect();

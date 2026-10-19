@@ -96,8 +96,11 @@ async function checkRevocation(worker, realTour) {
       calls++;
       expect(url === ENV.SUPABASE_FUNCTIONS_URL + fixture.upstreamPath,
         `[revocation ${fixture.path}] current upstream path`);
-      expect(init.cf.cacheTtl === 0 && init.cf.cacheEverything === false,
-        `[revocation ${fixture.path}] upstream caching remains disabled`);
+      // `cache: "no-store"` is the only cache policy allowed on this request.
+      // The runtime throws when it is paired with cf.cacheTtl/cacheEverything
+      // (every tour 503'd on 2026-10-11), so the cf cache keys must stay absent.
+      expect(init.cache === "no-store" && init.cf?.cacheTtl === undefined && init.cf?.cacheEverything === undefined,
+        `[revocation ${fixture.path}] upstream caching is disabled with cache:"no-store" alone`);
       return new Response(upstreamStatus === 200 ? JSON.stringify(upstreamData) : "not published", {
         status: upstreamStatus, headers: { "Content-Type": "application/json" },
       });
@@ -511,13 +514,13 @@ async function main() {
     expect(p.status === 200, `[/a/meridian] want 200, got ${p.status}`);
     expect(p.body.includes('<link rel="canonical" href="https://rendprop.com/a/meridian">'),
       "[/a/meridian] want a canonical built from the requested handle and origin");
-    expect(!p.h("x-robots-tag"), `[/a/meridian] a portfolio is indexable by default, got ${p.h("x-robots-tag")}`);
-    expect(!p.body.includes('name="robots"'), "[/a/meridian] no robots meta on a portfolio");
+    expect(p.h("x-robots-tag") === "noindex, nofollow", "[/a/meridian] portfolio discovery must require a deliberate opt-in");
+    expect(p.body.includes('name="robots" content="noindex, nofollow"'), "[/a/meridian] noindex meta accompanies the header");
     expect(p.body.includes('id="getapp"') && p.body.includes("apps.apple.com/us/app/id6808982413?ct=portfolio&amp;mt=8"),
       "[/a/meridian] want the shared app CTA, tagged as the portfolio surface");
     expect(p.body.includes('href="https://rendprop.com/?ref=portfolio"'),
       "[/a/meridian] want the outbound attribution on the Made-with link");
-    assertValidJsonLd("/a/meridian", p.body, ["ProfilePage", "ItemList"]);
+    expect(!p.body.includes("application/ld+json"), "[/a/meridian] no listing discovery graph before portfolio consent");
     // A payload the renderer cannot place (no handle, no origin) must emit no
     // canonical and no graph rather than guessing an origin.
     const { renderPortfolioPage } = await load("portfolio");
@@ -526,7 +529,7 @@ async function main() {
     expect(!bare.includes('rel="canonical"') && !bare.includes("application/ld+json"),
       "[portfolio, no origin] must emit no canonical and no JSON-LD rather than a guessed origin");
   }
-  ok("/a/<handle> carries a canonical, ProfilePage + ItemList structured data and the app CTA");
+  ok("/a/<handle> keeps its canonical and app CTA while preventing implicit indexing");
 
   // ---- /sitemap.xml ---------------------------------------------------------
   // Served by the WORKER now (public/sitemap.xml is deleted — an exact file
@@ -534,7 +537,7 @@ async function main() {
   // so the file would have shadowed the route). Two rules are non-negotiable:
   // never an unbranded URL, and never a tour that is not opted into indexing.
   {
-    const sm = await get(worker, "/sitemap.xml");
+    const sm = await get(worker, "/sitemap-site.xml");
     expect(sm.status === 200, `[/sitemap.xml] want 200, got ${sm.status}`);
     expect((sm.h("content-type") || "").includes("application/xml"),
       `[/sitemap.xml] want application/xml, got ${sm.h("content-type")}`);
@@ -615,10 +618,10 @@ async function main() {
 
   // ---- the legal pages match the launch line-up ------------------------------
   const terms = await get(worker, "/terms");
-  expect(/Starter and Pro, billed monthly\s+or yearly, and Team, billed monthly/.test(terms.body),
-    "[/terms] §6 must say Starter and Pro bill monthly or yearly and Team bills monthly (LAUNCH-CONTRACT: Team yearly is not sold)");
-  expect(!/each\s+billed monthly or yearly/.test(terms.body), "[/terms] must not claim every plan bills yearly");
-  expect(terms.body.includes("Effective September 5, 2026"), "[/terms] effective date");
+  expect(/Starter, Pro and Team, each\s+billed monthly\./.test(terms.body),
+    "[/terms] §6 must say every plan bills monthly (2026-10-09: no annual plans are sold)");
+  expect(!/yearly|annual/i.test(terms.body.replace(/changefreq/g, "")), "[/terms] must not offer a yearly or annual plan");
+  expect(terms.body.includes("Effective October 16, 2026"), "[/terms] proposed notice revision date");
   ok("terms reflect the launch plan line-up");
 
   // ── safeUrl scheme allowlist (audit P1 re-open) ──────────────────────────

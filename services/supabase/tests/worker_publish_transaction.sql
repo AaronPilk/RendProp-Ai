@@ -31,6 +31,9 @@ begin
   insert into auth.users(id,email,raw_user_meta_data)
   values(v_user,'worker-publish-fixture@example.invalid','{}');
   select org_id into strict v_org from public.memberships where user_id=v_user;
+  -- These fixtures test publication transaction ownership and input guards,
+  -- not trial funding. Use explicit authority so admission reaches those guards.
+  update public.orgs set plan='pro',plan_source='manual',plan_expires_at=null where id=v_org;
   for n in 1..11 loop
     v_listing := ('a0351000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid;
     v_asset := ('a0352000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid;

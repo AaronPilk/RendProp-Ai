@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "rendprop-property-video-render",
+  "account_id": "9c332c75b96cc642621dad5d86d4bf18",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-14",
+  "workers_dev": true,
+  "containers": [{
+    "class_name": "PropertyVideoCPU",
+    "scheduling_policy": "durable_object",
+    "images": {"cpu": {"dockerfile": "./Dockerfile"}}
+  }],
+  "durable_objects": {"bindings": [{"name": "CPU", "class_name": "PropertyVideoCPU"}]},
+  "exports": {"PropertyVideoCPU": {"type": "durable-object", "storage": "sqlite"}},
+  "triggers": {"crons": ["* * * * *"]},
+  "vars": {
+    "ENABLED": "false",
+    "EDGE_WORKER_URL": "https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1/property-video-worker",
+    "MEDIA_HOSTS": "ymgqpbnjpztwjsyvceld.supabase.co,9c332c75b96cc642621dad5d86d4bf18.r2.cloudflarestorage.com"
+  },
+  "observability": {"enabled": true, "logs": {"enabled": true, "invocation_logs": false}},
+  "limits": {"cpu_ms": 1000}
+}

@@ -1,3 +1,4 @@
+import { belongsToLibrary } from "../../data/contracts";
 import { useEffect, useRef, useState } from "react";
 import type { Listing, StudioPhoto, StudioVideo, Workspace } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
@@ -74,16 +75,16 @@ function ReelMediaPickerContent({ services, workspace, listing, availableSlots, 
   const identityVersion = useRef(services.getSnapshot().identityVersion).current;
   function assertScope() {
     const actor = services.getSnapshot();
-    if (!alive.current || actor.identityVersion !== identityVersion || actor.status !== "signed-in" || actor.identity?.userId !== workspace.user.id || listing.orgId !== workspace.org.id) throw new Error("Your account changed. Reopen the property to choose its media.");
+    if (!alive.current || actor.identityVersion !== identityVersion || actor.status !== "signed-in" || actor.identity?.userId !== workspace.user.id || !belongsToLibrary(listing, workspace)) throw new Error("Your account changed. Reopen the property to choose its media.");
   }
   async function load(nextOffset = 0) {
     if (loadingRef.current || downloadRef.current) return;
     loadingRef.current = true; setLoading(true); setError(null);
     try {
       assertScope();
-      const media = await services.listMedia(workspace.org.id, listing.id, controller.current.signal, nextOffset);
+      const media = await services.listMedia(listing.orgId, listing.id, controller.current.signal, nextOffset);
       assertScope();
-      if (media.orgId !== workspace.org.id || media.listingId !== listing.id) throw new Error("These files belong to another property. Refresh the photos.");
+      if (media.orgId !== listing.orgId || media.listingId !== listing.id) throw new Error("These files belong to another property. Refresh the photos.");
       validateReelMediaPage(nextOffset, media.nextOffset);
       const page = reelMediaItems(media.photos, media.videos, listing.id);
       setItems(old => nextOffset ? [...old, ...page.filter(item => !old.some(previous => previous.id === item.id))] : page);

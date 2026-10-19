@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Actual measurement CAS/legacy preservation in an owned disposable PostgreSQL.
+No inherited credentials, hosted DB, network listener, provider calls or user edits.
+"""
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from threading import Barrier
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import uuid
+
+ROOT = Path(__file__).resolve().parents[2]
+SQL = ROOT / 'services/supabase'
+MIGRATION = SQL / 'migrations/20261004220253_listing_measurement_compare_and_set.sql'
+TERMINAL = SQL / 'migrations/20261006193633_cas_conflicts_terminal.sql'
+FACTS_PREREQUISITE = SQL / 'migrations/20261005150951_nearby_places_reviewed_facts.sql'
+FLOORPLAN_PREREQUISITE = SQL / 'migrations/20261005034754_studio_floorplan_attachment_cas.sql'
+LIBRARY_AUTHORITY = SQL / 'migrations/20261009192550_team_private_listing_libraries.sql'
+FIXTURE = SQL / 'tests/listing_measurement_cas.sql'
+TOOLS = {name: shutil.which(name) or str(Path('/opt/homebrew/opt/postgresql@17/bin') / name)
+         for name in ('initdb', 'pg_ctl', 'psql', 'createdb')}
+assert all(Path(p).is_file() and os.access(p, os.X_OK) for p in TOOLS.values()), 'Use existing PostgreSQL binaries'
+OUT = Path(tempfile.mkdtemp(prefix='rendprop-measurement-cas-pg-', dir='/tmp'))
+DATA, SOCK = OUT / 'data', OUT / 'socket'
+SOCK.mkdir()
+ENV = {'PATH': '/opt/homebrew/bin:/usr/bin:/bin', 'LC_ALL': 'C', 'PGOPTIONS': '-c statement_timeout=30000 -c lock_timeout=15000'}
+PORT = '55479'
+SOURCES = [*sorted((SQL / 'migrations').glob('*.sql')), SQL / 'tests/ci-bootstrap.sql', FIXTURE, Path(__file__).resolve()]
+receipt = {'kind': 'owned disposable local PostgreSQL; no hosted DB/providers', 'output': str(OUT), 'commands': [],
+           'sourceHashes': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}}
+
+def run(name, args, sql=None, refuses=None):
+    p = subprocess.run([str(x) for x in args], input=sql, env=ENV, cwd=ROOT, text=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90)
+    log = OUT / (name + '.log')
+    log.write_text(p.stdout)
+    receipt['commands'].append({'name': name, 'exit': p.returncode, 'log_sha256': hashlib.sha256(log.read_bytes()).hexdigest()})
+    if refuses:
+        assert p.returncode != 0 and refuses in p.stdout, f'{name}: expected {refuses}, got {p.stdout}'
+    elif p.returncode:
+        raise RuntimeError(f'{name} failed: {p.stdout[-2500:]} ({log})')
+    print(name + ': pass', flush=True)
+    return p.stdout
+
+started = False
+try:
+    receipt['postgresVersion'] = run('version', [TOOLS['psql'], '--version']).strip()
+    run('initdb', [TOOLS['initdb'], '-D', DATA, '-U', 'postgres', '-A', 'trust', '--no-locale', '--encoding=UTF8'])
+    run('start', [TOOLS['pg_ctl'], '-D', DATA, '-l', OUT / 'server.log', '-w', '-t', '30', '-o',
+                  f"-k {SOCK} -p {PORT} -c listen_addresses='' -c shared_buffers=16MB", 'start'])
+    started = True
+    conn = ['-h', SOCK, '-p', PORT, '-U', 'postgres']
+    run('createdb', [TOOLS['createdb'], *conn, 'measurement_cas_audit'])
+    psql = [TOOLS['psql'], '-X', '--no-password', *conn, '-d', 'measurement_cas_audit', '-v', 'ON_ERROR_STOP=1']
+    run('bootstrap', [*psql, '-q', '-f', SQL / 'tests/ci-bootstrap.sql'])
+    for m in sorted((SQL / 'migrations').glob('*.sql')):
+        run('apply-' + m.stem, [*psql, '-q', '-1', '-f', m])
+    receipt['fresh'] = json.loads(run('fresh', [*psql, '-Atq', '-f', FIXTURE]).strip())
+    signatures = [
+        'public.save_listing_facts(uuid,uuid,uuid,jsonb,jsonb,jsonb,jsonb)',
+        'public.save_listing_measurements(uuid,uuid,uuid,text,text)',
+        'public.studio_attach_floorplan(uuid,uuid,uuid,uuid,jsonb,text)',
+    ]
+    catalog = "select jsonb_agg(jsonb_build_object('identity',oid::regprocedure::text,'body',prosrc,'owner',proowner,'acl',proacl::text,'config',proconfig,'security',prosecdef,'volatility',provolatile) order by proname) from pg_proc where oid=any(array[" + ','.join("'" + s + "'::regprocedure" for s in signatures) + "]);"
+    final_catalog = run('library-catalog-before-historical-replay', [*psql, '-Atq'], catalog)
+    # Save only this test's three current definitions. Replaying the entire
+    # older library migration would try to overwrite unrelated, newer guarded
+    # upload/render authority and must fail rather than downgrade the schema.
+    current_definitions = run('current-measurement-definitions', [*psql, '-Atq'],
+                              "select pg_get_functiondef(oid)||';' from pg_proc where oid=any(array[" +
+                              ','.join("'" + s + "'::regprocedure" for s in signatures) + "]) order by proname;")
+    # The historical terminal patch pins the three historical prerequisites.
+    # Replay that coherent chain, then restore the final private-library
+    # authority before evaluating current assertions or concurrent writers.
+    run('replay', [*psql, '-q', '-1', '-f', MIGRATION])
+    run('facts-prerequisite-replay', [*psql, '-q', '-1', '-f', FACTS_PREREQUISITE])
+    run('floorplan-prerequisite-replay', [*psql, '-q', '-1', '-f', FLOORPLAN_PREREQUISITE])
+    run('terminal-replay', [*psql, '-q', '-1', '-f', TERMINAL])
+    # The library migration pins several newer authorities in file order. Since
+    # 20261017115012 (pipeline cost binding) patches the serving ceiling body,
+    # its serving_ceiling_spent_cents pin (line ~1022) trips before the gallery
+    # upload pin (reserve_upload_assets, line ~1416) and the render guard.
+    # Require the exact current first refusal, never an unrelated migration error.
+    run('superseded-library-replay-refused', [*psql, '-q', '-1', '-f', LIBRARY_AUTHORITY],
+        refuses='Review changed function serving_ceiling_spent_cents(uuid,timestamp with time zone,timestamp with time zone)')
+    run('restore-current-measurement-definitions', [*psql, '-q', '-1'], current_definitions)
+    assert run('library-catalog-after-replay', [*psql, '-Atq'], catalog) == final_catalog
+    receipt['finalLibraryBodiesAndAuthorityPreserved'] = True
+    receipt['replay'] = json.loads(run('replay-fixture', [*psql, '-Atq', '-f', FIXTURE]).strip())
+    actor, second, org, listing = [str(uuid.uuid4()) for _ in range(4)]
+    old = '{"version":1,"unit":"meters","rooms":[],"updatedAt":812345678}'
+    def plan(room_name):
+        return json.dumps({'version': 2, 'unit': 'meters', 'updatedAt': 812345678, 'outlines': [],
+                           'rooms': [{'id': str(uuid.uuid4()), 'name': room_name, 'floor': 0,
+                                      'widthMeters': 4, 'lengthMeters': 3, 'xMeters': 0, 'yMeters': 0,
+                                      'rotationQuarterTurns': 0, 'source': 'manual'}]}, separators=(',', ':'))
+    left, right = plan('Kitchen'), plan('Bedroom')
+    def quote(s): return "'" + s.replace("'", "''") + "'"
+    run('race-setup', [*psql, '-q'], f"""
+insert into auth.users(id,email) values('{actor}','race-cas-owner@example.invalid'),('{second}','race-cas-second@example.invalid');
+insert into orgs(id,name,plan) values('{org}','Synthetic two writers','pro');
+insert into memberships(user_id,org_id,role) values('{actor}','{org}','owner'),('{second}','{org}','agent');
+insert into listings(id,org_id,agent_id,address,sqft,status,sold_at,price_cents,details)
+values('{listing}','{org}','{actor}','Synthetic race property',2345,'archived','2026-09-30 12:00:00+00',50000000,
+jsonb_build_object('floor_measurements_v1',{quote(old)},'floor_plan_asset_id','studio-attachment','floorMeasurementsV9','future-opaque'));
+""")
+    barrier = Barrier(2)
+    race_label = 'positive-race'
+    def writer(item):
+        i, user, value = item
+        barrier.wait(timeout=10)
+        query = f"begin; set local role service_role; select save_listing_measurements('{user}','{org}','{listing}',{quote(old)},{quote(value)})->'details'->>'floor_measurements_v1'; select pg_sleep(0.2); commit;"
+        p = subprocess.run([str(x) for x in [*psql, '-Atq']], input=query, env=ENV, cwd=ROOT, text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=40)
+        log = OUT / f'{race_label}-writer-{i}.log'; log.write_text(p.stdout)
+        receipt['commands'].append({'name': f'{race_label}-writer-{i}', 'exit': p.returncode, 'log_sha256': hashlib.sha256(log.read_bytes()).hexdigest()})
+        return {'actor': user, 'value': value, 'exit': p.returncode, 'conflict': p.returncode != 0 and 'Measurements changed elsewhere' in p.stdout}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(writer, [(0, actor, left), (1, second, right)]))
+    assert sum(r['exit'] == 0 for r in results) == 1 and sum(r['conflict'] for r in results) == 1, results
+    winning = next(r for r in results if r['exit'] == 0)
+    actual = json.loads(run('race-final', [*psql, '-Atq'], f"select jsonb_build_object('sqft',sqft,'status',status,'sold',sold_at is not null,'price',price_cents,'attachment',details->>'floor_plan_asset_id','future',details->>'floorMeasurementsV9','plan',details->>'floor_measurements_v1') from listings where id='{listing}';").strip())
+    assert actual == {'sqft': 2345, 'status': 'archived', 'sold': True, 'price': 50000000, 'attachment': 'studio-attachment', 'future': 'future-opaque', 'plan': winning['value']}, actual
+    receipt['twoWriterRace'] = {'results': results, 'final': actual}
+    # Actual client roles cannot call the service RPC or exploit the GUC.
+    for role in ('anon', 'authenticated'):
+        auth = f"set role {role}; set request.jwt.claim.sub='{actor}'; set request.jwt.claim.role='{role}';\n"
+        run('rpc-denied-' + role, [*psql, '-Atq'], auth + f"select save_listing_measurements('{actor}','{org}','{listing}',{quote(old)},{quote(left)});", refuses='permission denied')
+    auth = f"set role authenticated; set request.jwt.claim.sub='{actor}'; set request.jwt.claim.role='authenticated'; set rendprop.measurement_cas='allowed';\n"
+    run('client-guc-cannot-bypass', [*psql, '-Atq'], auth + f"update listings set details=jsonb_build_object('floorMeasurementsV1',{quote(old)}) where id='{listing}';", refuses='permission denied')
+    protected = run('guc-final', [*psql, '-Atq'], f"select details->>'floor_measurements_v1' from listings where id='{listing}';").strip()
+    assert protected == winning['value'], protected
+    # Remove the exact production precondition. The same concurrent invariant
+    # must now catch both writers succeeding and one room silently being lost.
+    mutation = MIGRATION.read_text().replace('if current_plan is distinct from p_expected then', 'if false then')
+    assert mutation != MIGRATION.read_text(), 'CAS mutation anchor changed'
+    run('install-missing-precondition-control', [*psql, '-q', '-1'], mutation)
+    listing = str(uuid.uuid4())
+    run('negative-race-setup', [*psql, '-q'], f"""
+insert into listings(id,org_id,agent_id,address,sqft,status,sold_at,price_cents,details)
+values('{listing}','{org}','{actor}','Synthetic negative race',2345,'archived','2026-09-30 12:00:00+00',50000000,
+jsonb_build_object('floor_measurements_v1',{quote(old)},'floor_plan_asset_id','studio-attachment','floorMeasurementsV9','future-opaque'));
+""")
+    barrier = Barrier(2)
+    race_label = 'missing-precondition-control'
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        negative = list(pool.map(writer, [(0, actor, left), (1, second, right)]))
+    try:
+        assert sum(r['exit'] == 0 for r in negative) == 1 and sum(r['conflict'] for r in negative) == 1
+    except AssertionError:
+        assert all(r['exit'] == 0 for r in negative), negative
+        receipt['negativeControl'] = {'removed': 'exact cached-plan precondition', 'caught': True, 'results': negative}
+    else:
+        raise AssertionError('Missing precondition control failed to violate the one-writer invariant')
+    run('restore-cas-after-control', [*psql, '-q', '-1', '-f', MIGRATION])
+    lockless = MIGRATION.read_text().replace(' for update;', ';').replace(
+        "current_plan:=d->>'floor_measurements_v1';", "current_plan:=d->>'floor_measurements_v1'; perform pg_sleep(0.4);")
+    assert lockless != MIGRATION.read_text() and 'perform pg_sleep(0.4)' in lockless
+    run('install-no-locks-control', [*psql, '-q', '-1'], lockless)
+    listing = str(uuid.uuid4())
+    run('no-lock-race-setup', [*psql, '-q'], f"""
+insert into listings(id,org_id,agent_id,address,details)
+values('{listing}','{org}','{actor}','Synthetic no-lock race',jsonb_build_object('floor_measurements_v1',{quote(old)}));
+""")
+    barrier = Barrier(2)
+    race_label = 'no-locks-control'
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        negative = list(pool.map(writer, [(0, actor, left), (1, second, right)]))
+    try:
+        assert sum(r['exit'] == 0 for r in negative) == 1 and sum(r['conflict'] for r in negative) == 1
+    except AssertionError:
+        assert all(r['exit'] == 0 for r in negative), negative
+        receipt['lockingNegativeControl'] = {'removed': 'workspace and listing serialization', 'caught': True, 'results': negative}
+    else:
+        raise AssertionError('Removed-locks control failed to violate the one-writer invariant')
+    run('restore-cas-after-lock-control', [*psql, '-q', '-1', '-f', MIGRATION])
+    run('restore-facts-terminal-prerequisite', [*psql, '-q', '-1', '-f', FACTS_PREREQUISITE])
+    run('restore-floorplan-terminal-prerequisite', [*psql, '-q', '-1', '-f', FLOORPLAN_PREREQUISITE])
+    run('restore-terminal-cas', [*psql, '-q', '-1', '-f', TERMINAL])
+    run('restore-current-measurement-definitions-after-controls', [*psql, '-q', '-1'], current_definitions)
+    assert run('library-catalog-after-controls', [*psql, '-Atq'], catalog) == final_catalog
+    receipt['afterControls'] = json.loads(run('final-library-fixture-after-controls', [*psql, '-Atq', '-f', FIXTURE]).strip())
+    receipt['sourceBoundAtEnd'] = all(hashlib.sha256((ROOT / p).read_bytes()).hexdigest() == h
+                                   for p, h in receipt['sourceHashes'].items())
+    assert receipt['sourceBoundAtEnd']
+    receipt['passed'] = True
+finally:
+    if started:
+        run('stop', [TOOLS['pg_ctl'], '-D', DATA, '-m', 'fast', '-w', 'stop'])
+        assert not (DATA / 'postmaster.pid').exists(), 'Do not delete an active cluster'
+        shutil.rmtree(DATA)
+        receipt['disposableClusterRemoved'] = True
+    (OUT / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    print(str(OUT / 'receipt.json'), flush=True)

@@ -190,7 +190,7 @@ export function openaiChatConfig(
 export async function openaiChat(
   target: string | RouteStep,
   input: unknown,
-  opts: { maxOutputTokens?: number; json?: boolean } = {},
+  opts: { maxOutputTokens?: number; json?: boolean; jsonSchema?: {name:string;schema:Record<string,unknown>}; onUsage?: (usage:{inputTokens:number;outputTokens:number})=>void } = {},
 ): Promise<string> {
   const model = typeof target === "string" ? target : target.model;
   const cfg = openaiChatConfig(typeof target === "string" ? null : paramsOf(target), opts.maxOutputTokens);
@@ -200,13 +200,20 @@ export async function openaiChat(
     reasoning: { effort: cfg.effort },
     max_output_tokens: cfg.maxOutputTokens,
   };
-  if (opts.json) body.text = { format: { type: "json_object" } };
+  if(opts.jsonSchema)body.text={format:{type:"json_schema",name:opts.jsonSchema.name,strict:true,schema:opts.jsonSchema.schema}};
+  else if (opts.json) body.text = { format: { type: "json_object" } };
   const data = await fetchJson<Record<string, unknown>>(
     PROVIDER,
     `${OPENAI_BASE}/v1/responses`,
     { method: "POST", headers: { ...authHeader(), "Content-Type": "application/json" }, body: JSON.stringify(body) },
     BUDGETS.submitMs,
   );
+  // Usage is accounting evidence even if a later completion/shape check fails.
+  // Optional callback changes no historical adapter payload or return contract.
+  const usage=data.usage as Record<string,unknown>|undefined;
+  if(opts.onUsage&&usage&&Number.isSafeInteger(usage.input_tokens)&&Number(usage.input_tokens)>=0&&Number.isSafeInteger(usage.output_tokens)&&Number(usage.output_tokens)>=0){
+    opts.onUsage({inputTokens:Number(usage.input_tokens),outputTokens:Number(usage.output_tokens)});
+  }
   // HTTP 200 is only transport success: a Responses answer can contain usable-
   // looking text (even valid JSON) while its token budget or content filter
   // stopped generation. Returning that prefix would mark an unfinished EDL or

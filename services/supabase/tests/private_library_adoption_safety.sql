@@ -1,0 +1,73 @@
+\set ON_ERROR_STOP on
+-- Actual Auth bootstrap, guest adoption, owner-issued acceptance and retained
+-- content. These are RPC/RLS assertions, not a fabricated directory response.
+begin;
+create temporary table safety_assertions(n integer not null default 0);insert into safety_assertions default values;grant select,update on safety_assertions to service_role;
+create function pg_temp.ok(v boolean,label text)returns void language plpgsql as $$begin if v is distinct from true then raise exception 'ACCOUNT SAFETY FAIL: %',label;end if;update safety_assertions set n=n+1;end$$;
+create function pg_temp.refuse(command text,prefix text,label text)returns void language plpgsql as $$begin begin execute command;exception when raise_exception then if sqlerrm like prefix||'%'then perform pg_temp.ok(true,label);return;end if;raise;end;raise exception 'ACCOUNT SAFETY FAIL: allowed %',label;end$$;
+insert into auth.users(id,email,is_anonymous,email_confirmed_at)values
+ ('f7100000-0000-4000-8000-000000000001','adopt-named@fixture.invalid',false,now()),('f7100000-0000-4000-8000-000000000002','adopt-guest@fixture.invalid',true,null),
+ ('f7100000-0000-4000-8000-000000000003','team-owner@fixture.invalid',false,now()),('f7100000-0000-4000-8000-000000000004','team-admin@fixture.invalid',false,now()),
+ ('f7100000-0000-4000-8000-000000000005','foreign-owner@fixture.invalid',false,now()),('f7100000-0000-4000-8000-000000000006','co-owner@fixture.invalid',false,now());
+create temp table safety_fixture as select (select org_id from memberships where user_id='f7100000-0000-4000-8000-000000000001')named_org,(select org_id from memberships where user_id='f7100000-0000-4000-8000-000000000002')guest_org,(select org_id from memberships where user_id='f7100000-0000-4000-8000-000000000003')team,(select org_id from memberships where user_id='f7100000-0000-4000-8000-000000000005')foreign_org;
+insert into listings(id,org_id,agent_id,address)select 'f7100000-0000-4000-8000-000000000011',guest_org,'f7100000-0000-4000-8000-000000000002','Owned guest fixture'from safety_fixture;
+insert into capture_assets(id,listing_id,kind,storage_key,uploaded,bytes)values('f7100000-0000-4000-8000-000000000012','f7100000-0000-4000-8000-000000000011','photo','uploads/owned-fixture.jpg',true,100);
+update orgs set plan='team',plan_source='manual'where id=(select team from safety_fixture);update plan_entitlements set seats=8 where plan='team';
+grant select on safety_fixture to service_role;
+set local role service_role;
+select adopt_anonymous_org('f7100000-0000-4000-8000-000000000001','f7100000-0000-4000-8000-000000000002',(select guest_org from safety_fixture),'f7100000-0000-4000-8000-000000000020');
+select pg_temp.ok((select count(*)=2 from memberships m join orgs o on o.id=m.org_id where m.user_id='f7100000-0000-4000-8000-000000000001'and m.role='owner'and o.deleted_at is null),'adoption retains both original org IDs');
+select pg_temp.ok(public.agent_private_library('f7100000-0000-4000-8000-000000000001')=(select guest_org from safety_fixture),'validated adopted active library wins');
+select pg_temp.ok((workspace_directory('f7100000-0000-4000-8000-000000000001',null)->>'own_org_id')::uuid=(select guest_org from safety_fixture),'actual directory has a non-null owned library');
+select pg_temp.ok((workspace_directory('f7100000-0000-4000-8000-000000000001',null)->>'active_org_id')::uuid=(select guest_org from safety_fixture),'actual directory preserves adopted active selection');
+select pg_temp.ok(not(workspace_directory('f7100000-0000-4000-8000-000000000001',null)->>'can_switch_agent_libraries')::boolean,'two own orgs do not confer Team-owner switching');
+select pg_temp.ok(exists(select 1 from listings where id='f7100000-0000-4000-8000-000000000011'and org_id=(select guest_org from safety_fixture)and agent_id='f7100000-0000-4000-8000-000000000001'),'adopted listing identity and physical org unchanged');
+select pg_temp.ok(exists(select 1 from capture_assets where id='f7100000-0000-4000-8000-000000000012'and storage_key='uploads/owned-fixture.jpg'),'source media identity and key unchanged');
+select pg_temp.refuse(format('select workspace_directory(%L,%L)','f7100000-0000-4000-8000-000000000001',(select foreign_org from safety_fixture)),'RP403:','foreign preferred directory cannot steer the actor');
+reset role;
+update user_workspace_state set active_org_id=(select foreign_org from safety_fixture)where user_id='f7100000-0000-4000-8000-000000000001';
+select pg_temp.ok(public.resolve_actor_owned_library('f7100000-0000-4000-8000-000000000001',true)=(select guest_org from safety_fixture),'stale foreign active hint ignored and actor-owned content preferred');
+update user_workspace_state set active_org_id=(select named_org from safety_fixture)where user_id='f7100000-0000-4000-8000-000000000001';
+select pg_temp.ok(public.resolve_actor_owned_library('f7100000-0000-4000-8000-000000000001',true)=(select named_org from safety_fixture),'eligible actor-owned active selection preserved');
+update user_workspace_state set active_org_id=(select guest_org from safety_fixture)where user_id='f7100000-0000-4000-8000-000000000001';
+set local role service_role;
+select create_org_invite('f7100000-0000-4000-8000-000000000003',(select team from safety_fixture),null,'admin',repeat('a',64));
+select accept_org_invite('f7100000-0000-4000-8000-000000000004',repeat('a',64));
+select pg_temp.ok(exists(select 1 from team_private_libraries where agent_user_id='f7100000-0000-4000-8000-000000000004'and revoked_at is null),'owner-issued admin seat remains usable');
+select pg_temp.refuse(format('select create_org_invite(%L,%L,null,''agent'',%L)','f7100000-0000-4000-8000-000000000004',(select team from safety_fixture),repeat('b',64)),'RP403: Only the current Team owner','admin cannot mint an unusable single invite');
+select pg_temp.refuse(format('select create_org_invites_bulk(%L,%L,array[''new@fixture.invalid''],''agent'')',(select team from safety_fixture),'f7100000-0000-4000-8000-000000000004'),'RP403: Only the current Team owner','admin cannot mint unusable bulk invites');
+select pg_temp.ok(not exists(select 1 from org_invites where token_hash=repeat('b',64)or email='new@fixture.invalid'),'admin refusal leaves no invite rows');
+select pg_temp.refuse(format('select create_org_invite(%L,%L,null,''agent'',%L)','f7100000-0000-4000-8000-000000000004',agent_private_library('f7100000-0000-4000-8000-000000000004'),repeat('d',64)),'RP403:','projected Team child cannot become a Team host');
+select create_org_invite('f7100000-0000-4000-8000-000000000003',(select team from safety_fixture),null,'agent',repeat('c',64));
+select accept_org_invite('f7100000-0000-4000-8000-000000000001',repeat('c',64));
+select pg_temp.ok(exists(select 1 from team_private_libraries where agent_user_id='f7100000-0000-4000-8000-000000000001'and private_org_id=(select guest_org from safety_fixture)and revoked_at is null),'actual two-org adopted agent can accept owner Team invite');
+select pg_temp.ok((workspace_directory('f7100000-0000-4000-8000-000000000001',null)->>'own_org_id')::uuid=(select guest_org from safety_fixture),'explicit binding remains directory own identity');
+select pg_temp.ok((workspace_directory('f7100000-0000-4000-8000-000000000001',null)->>'billing_org_id')::uuid=(select team from safety_fixture),'adopted content retains finite Team billing parent');
+select pg_temp.ok(not(workspace_directory('f7100000-0000-4000-8000-000000000001',null)->>'can_switch_agent_libraries')::boolean,'accepted beneficiary cannot switch agent libraries');
+select pg_temp.ok((workspace_directory('f7100000-0000-4000-8000-000000000003',null)->>'can_switch_agent_libraries')::boolean,'actual Team owner can switch explicit accepted agent libraries');
+select pg_temp.ok(public.listing_content_access('f7100000-0000-4000-8000-000000000003','f7100000-0000-4000-8000-000000000011',true),'actual Team owner may edit linked adopted listing');
+select pg_temp.ok(not public.listing_content_access('f7100000-0000-4000-8000-000000000004','f7100000-0000-4000-8000-000000000011',false),'accepted sibling admin cannot read adopted listing');
+reset role;
+update user_workspace_state set active_org_id=(select named_org from safety_fixture)where user_id='f7100000-0000-4000-8000-000000000001';
+set local role service_role;
+select accept_org_invite('f7100000-0000-4000-8000-000000000001',repeat('c',64));
+select pg_temp.ok((select private_org_id=(select guest_org from safety_fixture)from team_private_libraries where agent_user_id='f7100000-0000-4000-8000-000000000001'and revoked_at is null),'receipt replay cannot move the explicit content binding');
+select pg_temp.ok((select active_org_id=(select named_org from safety_fixture)from user_workspace_state where user_id='f7100000-0000-4000-8000-000000000001'),'receipt replay does not reset a newer actor selection');
+reset role;
+insert into memberships(user_id,org_id,role)select 'f7100000-0000-4000-8000-000000000006',team,'owner'from safety_fixture;
+set local role service_role;
+select pg_temp.refuse(format('select create_org_invite(%L,%L,null,''agent'',%L)','f7100000-0000-4000-8000-000000000003',(select team from safety_fixture),repeat('e',64)),'RP403:','ambiguous co-owner host cannot mint an owner link');
+reset role;
+delete from memberships where user_id='f7100000-0000-4000-8000-000000000006'and org_id=(select team from safety_fixture);
+set local role service_role;
+select remove_org_member((select team from safety_fixture),'f7100000-0000-4000-8000-000000000003','f7100000-0000-4000-8000-000000000001');
+select pg_temp.ok(public.listing_content_access('f7100000-0000-4000-8000-000000000001','f7100000-0000-4000-8000-000000000011',true),'seat removal retains own adopted listing access');
+select pg_temp.ok(not public.listing_content_access('f7100000-0000-4000-8000-000000000003','f7100000-0000-4000-8000-000000000011',false),'seat removal revokes former Team owner listing access');
+select pg_temp.ok(exists(select 1 from capture_assets where id='f7100000-0000-4000-8000-000000000012'and storage_key='uploads/owned-fixture.jpg'),'seat removal preserves original media key');
+reset role;
+select pg_temp.ok(not exists(select 1 from ai_routes where provider='fal'and model in('flux-pro/v1/fill','fal-ai/flux-pro/v1/fill')and capabilities is distinct from array['mask']::text[]),'rebuilt Fill route has only mask capability');
+select pg_temp.ok(exists(select 1 from ai_routes where provider='fal'and model='flux-pro/v1/fill'),'known Fill seed is present');
+select pg_temp.ok(not has_function_privilege('anon','public.resolve_actor_owned_library(uuid,boolean)','execute')and not has_function_privilege('authenticated','public.resolve_actor_owned_library(uuid,boolean)','execute'),'deterministic resolver is service-only');
+select pg_temp.ok((select prosecdef and proconfig=array['search_path=""']::text[] from pg_proc where oid='public.resolve_actor_owned_library(uuid,boolean)'::regprocedure),'resolver empty search path and definer preserved');
+select jsonb_build_object('suite','private_library_adoption_safety','assertions',n,'real_auth_adoption_acceptance',true,'no_content_moved',true)from safety_assertions;
+rollback;

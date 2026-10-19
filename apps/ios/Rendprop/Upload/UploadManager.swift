@@ -384,7 +384,9 @@ final class UploadManager: NSObject, ObservableObject {
         let relPath = FileStore.relativePath(for: fileURL)
         // The SAME file parked for Wi-Fi earlier: adopt it (the user approved
         // cellular, or asked again before Wi-Fi came back).
-        if let s = state, s.status == .queued, s.filePath == relPath {
+        if let s = state, s.status == .queued, s.filePath == relPath,
+           s.listingID == listingID, s.role == role,
+           listingLocalID == nil || s.listingLocalID == nil || s.listingLocalID == listingLocalID {
             guard cellularApproved else { throw UploadError.cellularConfirmationRequired }
             return try await awaitEngine { self.confirmCellularAndStart() }
         }
@@ -458,24 +460,40 @@ final class UploadManager: NSObject, ObservableObject {
                                      keyPrefix: "poster")
     }
 
-    /// Upload the UNTOUCHED ORIGINAL behind an AI photo edit (contract §2.7 /
+    /// Upload a browser-readable copy of the original behind an AI photo edit (contract §2.7 /
     /// W2-B4): `POST /uploads {kind:"photo", role:"original", content_type,
     /// listing_id}` → one foreground PUT → `/complete`. Returns the SERVER asset
     /// id, which goes to `POST /ai-photo {original_asset_id}` so the tour's
     /// public "View original" link is a real file — California AB 723 requires
     /// access to the unaltered version, not just a disclosure sentence.
     ///
-    /// The server allows jpeg/png/webp ONLY here (a HEIC "View original" link
-    /// would not open in a browser) with the full 50 MB photo ceiling. We refuse
-    /// anything else up front rather than burning a round trip on a 400.
+    /// The exact original file remains in local history and Originals exports.
+    /// The server allows jpeg/png/webp ONLY here (HEIC would not open in a
+    /// browser), with its existing full 50 MB photo ceiling. Other source formats
+    /// get a full-resolution JPEG compatibility copy, with no crop or resize.
+    /// JPEG is re-encoded at quality1.0; it is not byte-identical to a HEIC source.
     /// `listingID` is the SERVER listing id.
     func uploadOriginal(fileURL: URL, listingID: UUID) async throws -> String {
-        let contentType = DirectUploader.uploadContentType(for: fileURL, kind: "photo")
+        try Task.checkCancellation()
+        let context = await MainActor.run {
+            PhotoImportContext(owner: AuthStore.shared.userID,
+                revision: AuthStore.shared.syncSessionRevision, workspace: WorkspaceContext.selectedOrgID)
+        }
+        let prepared = try await Task.detached(priority: .userInitiated) {
+            try PhotoBrowserOriginal.prepare(fileURL)
+        }.value
+        defer { prepared.removeTemporaryFiles() }
+        guard await MainActor.run(body: {
+            context.matches(owner: AuthStore.shared.userID,
+                revision: AuthStore.shared.syncSessionRevision, workspace: WorkspaceContext.selectedOrgID)
+        }) else { throw CancellationError() }
+        try Task.checkCancellation()
+        let contentType = DirectUploader.uploadContentType(for: prepared.url, kind: "photo")
         guard ["image/jpeg", "image/png", "image/webp"].contains(contentType) else {
             throw UploadError.server(
                 "The original has to be a JPEG, PNG or WebP so the public \"View original\" link opens.")
         }
-        return try await uploadBrowserPhoto(fileURL: fileURL, listingID: listingID,
+        return try await uploadBrowserPhoto(fileURL: prepared.url, listingID: listingID,
                                             role: "original", contentType: contentType,
                                             keyPrefix: "original")
     }
@@ -758,6 +776,14 @@ final class UploadManager: NSObject, ObservableObject {
 
     // MARK: - Ticket
 
+    /// Admission refusals need an explicit account, allowance or request change.
+    /// A burst 429 remains transient; the server marks a monthly limit as quota.
+    static func isTerminalAdmissionFailure(_ error: Error) -> Bool {
+        guard let api = error as? APIError else { return false }
+        return api.isValidation || api.isUnauthorized || api.isForbidden || api.isQuota || api.isTrialCapacityUnavailable
+            || api.isNotFound || api.isPayloadTooLarge
+    }
+
     /// New operations persist a UUID key before requesting any ticket. Old
     /// records retain their exact historical path/size key during migration;
     /// changing it before the old cancellation receipt would reserve twice.
@@ -788,14 +814,11 @@ final class UploadManager: NSObject, ObservableObject {
                 await MainActor.run {
                     self.isRequestingTicket = false
                     guard self.state?.id == expectedID else { return }
-                    // 400/401/403/404/413 = the server refused THIS request (bad
-                    // listing id, forbidden role, type not allowed, signed out) —
-                    // retrying on network regain would loop. 429/5xx/offline are
-                    // transient and stay auto-resumable.
-                    let api = error as? APIError
-                    let terminal = api.map { $0.isValidation || $0.isUnauthorized || $0.isForbidden
-                                              || $0.isNotFound || $0.isPayloadTooLarge } ?? false
-                    self.fail(error.localizedDescription, terminal: terminal)
+                    // Sign-in, permission and monthly quota refusals cannot be
+                    // fixed by a network regain. Genuine rate limits, 5xx and
+                    // offline failures remain eligible for bounded recovery.
+                    self.fail(error.localizedDescription,
+                              terminal: Self.isTerminalAdmissionFailure(error))
                 }
             }
         }

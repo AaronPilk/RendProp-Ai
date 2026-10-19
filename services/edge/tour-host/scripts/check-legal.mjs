@@ -2,6 +2,8 @@
 // Exercise the emitted pages, not a second copy of their text. These checks
 // establish disclosure coverage, not vendor contracts or legal compliance.
 import { buildSrc } from "./build-src.mjs";
+import {readFileSync} from "node:fs";
+import {createHash} from "node:crypto";
 
 globalThis.fetch = () => { throw new Error("unexpected network in legal-page check"); };
 const load = buildSrc("legal-flow-check-20260910");
@@ -18,40 +20,93 @@ function provider(name, inputs) {
   expect(matches.length === 1, `${name}: exactly one provider row`);
   for (const input of inputs) expect(matches.length === 1 && matches[0].includes(input), `${name}: ${input}`);
 }
-expect(t.includes("guest session") && t.includes("Apple is optional"), "Terms disclose guest sessions and optional Apple sign-in");
-expect(p.includes("Account and session details") && p.includes("guest session"), "Privacy covers guest identifiers");
+expect(t.includes("account-based workspace") && t.includes("sign in with Apple") && t.includes("one published listing free"), "Terms state the account requirement and the free tier");
+expect(p.includes("Account details") && p.includes("older guest session"), "Privacy covers the account identity and legacy guest sessions");
 expect(p.includes("scripts or transcript excerpts") && p.includes("personal information"), "AI inventory covers text and potentially identifying content");
 provider("Google Gemini", ["Selected photos or video", "text inputs"]);
 provider("fal.ai", ["prompts", "video"]);
+provider("Kie (kie.ai)", ["separate explicit permission", "selected property photos", "temporary download link", "camera-motion instructions"]);
 provider("Anthropic", ["chat history", "source photos", "generated clips"]);
 provider("OpenAI", ["chat history", "photo editing", "generated-clip frames"]);
 provider("ElevenLabs", ["voiceover script", "address", "selected voice"]);
 provider("Apple", ["Speech recognition", "Recorded voiceover audio", "falls back to the server"]);
 provider("Supabase", ["Inputs sent through Rendprop's API", "media and text"]);
-provider("GoHighLevel (LeadConnector)", ["workspace and listing tags", "listing address"]);
-expect(p.includes("When CRM sync is configured"), "CRM delivery is conditional");
-expect(p.includes("message or preferred date remains"), "CRM subset distinguished from stored lead details");
+provider("GoHighLevel (LeadConnector)", ["legacy CRM", "automatic export of new inquiries is disabled"]);
+provider("Resend", ["email-address verification", "verified listing contacts"]);
+provider("RentCast", ["property-record lookups", "listing address"]);
+provider("Bria", ["video masking", "Selected video clips"]);
+provider("cdnjs and jsDelivr", ["viewer’s IP".replace("’", "'"), "player software"]);
+expect(p.includes("Automatic CRM export is disabled"), "No silent export to a global agency CRM");
+expect(p.includes("verified email address") && p.includes("does not subscribe the buyer"), "Inquiry routing and marketing consent are distinct");
 expect(!p.includes("Those same details") && !p.includes("other than the CRM"), "No inaccurate universal CRM recipient claim");
 expect(p.includes("fallback or quality checks"), "Multiple-provider execution is disclosed");
 expect(t.includes("workspaces shared with other members can remain"), "Terms distinguish shared workspace data");
 expect(t.includes("whether further cleanup is pending"), "Terms distinguish request and cleanup completion");
 expect(!t.includes("normally within hours") && !t.includes("everything in it"), "No unsupported immediate/universal deletion promise");
-expect(p.includes("Account deletion and completion of associated cleanup are separate statuses"), "Privacy distinguishes cleanup completion");
+expect(p.includes("Account deletion and associated cleanup are separate statuses"), "Privacy distinguishes cleanup completion");
 expect(!p.includes("account removes your data"), "Summary does not erase deletion qualifications");
 for (const [label, html] of [["Privacy", privacy], ["Terms", terms]]) {
   expect(html.includes("#7c3aed") && html.includes("#9b6dff"), `${label}: existing light/dark brand accents`);
   expect(html.includes('<html lang="en">') && html.includes('name="viewport"'), `${label}: language and mobile viewport`);
   expect(html.includes('href="/support"') && html.includes('mailto:aaron@pilk.ai'), `${label}: support and contact preserved`);
-  expect(html.includes("Effective September 5, 2026"), `${label}: effective date not silently revised`);
+  expect(html.includes("Effective October 16, 2026"), `${label}: proposed notice revision date`);
+  expect(html.includes("RendProp LLC") && html.includes("855 Central Avenue, Saint Petersburg, FL 33701"), `${label}: owner-supplied legal entity and mailing address`);
   expect(!/<script\b/i.test(html), `${label}: no third-party scripts or telemetry added`);
 }
 expect(t.includes("without your written consent") && p.includes("without your written consent"), "Written-consent commitment retained");
-expect(t.includes("Starter and Pro, billed monthly") && t.includes("Team, billed monthly"), "Payment terms not rewritten");
-expect(p.includes("deleted 180 days") && p.includes("short, fixed schedule"), "Retention claims unchanged and still require operational approval");
+expect(t.includes("requires separate permission") && p.includes("not covered by an earlier AI permission"), "Kie never inherits earlier processor permission");
+expect(p.includes("14 days") && p.includes("two months") && p.includes("does not state how long fetched input photos"), "Kie retention separates documented output/log lifetimes from unknown input retention");
+expect(t.includes("do not expressly rule out AI model training") && p.includes("do not expressly rule out AI model training"), "Kie improvement license disclosed without claiming training or a no-training guarantee");
+expect(p.includes("withdraw permission for future requests") && p.includes("already accepted work may finish"), "Withdrawal stops future authority without promising recall");
+expect(t.includes("90-day grace period") && t.includes("advance notices") && t.includes("download your content"), "Prospective hosting grace preserves notice and download opportunity");
+expect(t.includes("Existing testers retain") && p.includes("Existing testers retain"), "Existing tester hosting arrangements remain separate");
+expect(!t.includes("share links you have already sent keep working") && !p.includes("Your content remains until you request deletion"), "No new permanent hosting promise");
+expect(t.includes("at least 18 years old") && p.includes("adults aged 18 or older"), "Adult business audience matches documented AI provider age restrictions");
+expect(p.includes("Settings → Download account data") && p.includes("scope and omissions") && p.includes("separate download controls"), "Account JSON export and binary-media limits are stated");
+expect(p.includes("Provider copies can remain") && p.includes("paid and unpaid processing") && p.includes("video results do not expire by default"), "Provider retention is not inferred from Rendprop URL expiry");
+expect(!p.includes("They process data solely"), "No unsupported universal processor-use guarantee");
+expect(t.includes("Starter, Pro and Team, each") && t.includes("billed monthly.") && !/yearly|annual plan/i.test(t), "Payment terms state monthly-only plans (2026-10-09)");
+expect(t.includes("by confirming an Apple subscription") && t.includes("Downloading or signing in does not activate a trial"), "Trial requires eligible Apple subscription activation");
+expect(t.includes("One introductory") || t.includes("one introductory offer per subscription group"), "Trial eligibility remains Apple subscription-group scoped");
+expect(t.includes("limited to a trial usage ceiling") && t.includes("does not move Apple's renewal date forward"), "Trial usage ceiling and Apple billing date are distinct");
+expect(!t.includes("funded trial offer") && !t.includes("trial reservation"), "Terms describe the launch trial (Apple introductory offer + usage ceiling), not the inert funded-reservation flow");
+expect(p.includes("one-way digest") && p.includes("still account-related data") && p.includes("remain after listing or account deletion"), "Retained trial eligibility metadata and its deletion limit are disclosed");
+expect(t.includes("reinstalling, cancelling or changing workspaces does not create another trial") && p.includes("AI usage holds and costs") && p.includes("does not reset after cancellation, reinstalling or an interrupted"), "One trial per subscription group and the retained account-related usage record are disclosed");
+expect(p.includes("do not keep the deleted photos or videos available"), "Trial tombstones do not promise retained deleted media");
+for (const filename of ["index.html", "pricing.html", "llms.txt"]) {
+  const copy = readFileSync(new URL(`../public/${filename}`, import.meta.url), "utf8");
+  expect(!/every (?:new install|plan) (?:also gets|starts with)|free week with no card/i.test(copy), `${filename}: no automatic signup-week or universal trial promise`);
+  expect(/eligible/i.test(copy) && /confirm/i.test(copy) && /Apple/i.test(copy), `${filename}: eligibility and subscription activation disclosed`);
+  if (filename.endsWith(".html")) for (const [, json] of copy.matchAll(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)) {
+    try { JSON.parse(json); expect(true, `${filename}: valid structured data`); }
+    catch { expect(false, `${filename}: valid structured data`); }
+  }
+}
+for (const filename of ["index.html", "support.html"]) {
+  const copy=readFileSync(new URL(`../public/${filename}`, import.meta.url),"utf8");
+  expect(copy.includes("separate permission before") && copy.includes("Kie"), `${filename}: optional Kie processing asks separately`);
+  expect(!copy.includes("delete your account and everything in it"), `${filename}: no universal deletion promise`);
+}
+expect(p.includes("180 days") && p.includes("applicable retention settings") && !p.includes("short, fixed schedule"), "No invented universal backup/log retention period");
+// E7 (O07): the routine MetricKit payload callback sends nothing, so the notice
+// may not describe launch-time figures. The native source is the oracle: if the
+// callback starts reporting again, this fails until the copy is revised.
+expect(!/median launch time|launch histogram|launch-time figures such as/i.test(p), "No stale launch-time example in the diagnostics copy");
+expect(p.includes("for a hang, how long it lasted") && p.includes("does not currently send launch-time figures"), "Diagnostics copy matches the shipped MetricKit callbacks (hang duration; no launch metrics)");
+expect(p.includes("crash, hang, CPU or disk-write problem"), "Diagnostics copy names the four MetricKit diagnostic categories the app reports");
+const crashReporter = readFileSync(new URL("../../../../apps/ios/Rendprop/Analytics/CrashReporter.swift", import.meta.url), "utf8");
+const metricCallback = /func didReceive\(_ payloads: \[MXMetricPayload\]\) \{([\s\S]*?)\n    \}/.exec(crashReporter)?.[1] ?? null;
+expect(metricCallback !== null && !/\b(report|Analytics\.track|medianMilliseconds)\s*\(/.test(metricCallback), "Native MXMetricPayload callback still reports no launch metrics (copy oracle)");
+expect(/hangDuration/.test(crashReporter) && /cpuExceptionDiagnostics/.test(crashReporter) && /diskWriteExceptionDiagnostics/.test(crashReporter), "Native diagnostics still cover hang duration, CPU and disk-write categories");
 expect(privacy.includes('aria-label="Service providers and data processing"'), "Responsive table keeps a descriptive name");
-expect((privacy.match(/role="row"/g) || []).length === 10, "All header/provider rows retain explicit roles");
-expect((privacy.match(/role="cell"/g) || []).length === 27, "All provider cells retain explicit roles");
+expect((privacy.match(/role="row"/g) || []).length === 15, "All header/provider rows retain explicit roles");
+expect((privacy.match(/role="cell"/g) || []).length === 42, "All provider cells retain explicit roles");
 expect((privacy.match(/scope="col"/g) || []).length === 3, "All table headers retain column scope");
+const processorCopy = JSON.parse(readFileSync(new URL("../../../../packages/client-contracts/property-video-processor-disclosure.json", import.meta.url), "utf8"));
+expect(processorCopy.token === "property-video-jobs-v2" && processorCopy.processors?.length === 1 && processorCopy.processors[0] === "kie", "Supplementary permission is scoped to Kie v2, not earlier AI consent");
+expect(typeof processorCopy.title === "string" && typeof processorCopy.body === "string" && createHash("sha256").update(`${processorCopy.title}\n\n${processorCopy.body}`, "utf8").digest("hex") === processorCopy.copy_sha256, "Native and Studio source copy has a reproducible exact-text digest");
+expect(processorCopy.privacy_url === "https://rendprop.com/privacy" && processorCopy.provider_terms_url === "https://kie.ai/terms-of-use", "Client permission links to Rendprop privacy and the disclosed provider terms");
+expect(processorCopy.body.includes("photos you select") && processorCopy.body.includes("camera-motion instructions") && processorCopy.body.includes("operate and improve") && processorCopy.body.includes("do not expressly rule out AI model training"), "Compact client notice covers selected inputs and provider-use uncertainty");
 if (failures.length) {
   console.error(failures.map((failure) => `FAIL: ${failure}`).join("\n"));
   console.error(`Legal-page check: ${assertions} assertions, ${failures.length} failed, 0 skipped`);

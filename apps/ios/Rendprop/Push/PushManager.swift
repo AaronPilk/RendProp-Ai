@@ -93,24 +93,31 @@ extension MockAPIClient: NotificationPrefsAPI {
 // headers, same auth, same error mapping, no new concepts.
 
 enum PushHTTP {
-    static func send(path: [String], method: String, body: [String: Any]?) async throws -> Data {
-        guard let base = Config.apiBaseURL else { throw APIError.notConfigured }
+    @MainActor static func send(path: [String], method: String, body: [String: Any]?) async throws -> Data {
+        guard let identity = PushManager.currentIdentity,
+              let token = await AuthStore.validAccessToken(),
+              PushManager.currentIdentity == identity else { throw CloudSyncError.identityChanged }
+        let data = try await sendCaptured(path: path, method: method, body: body, accessToken: token)
+        guard PushManager.currentIdentity == identity else { throw CloudSyncError.identityChanged }
+        return data
+    }
+
+    /// A sign-out cleanup uses only its captured credential. It must never
+    /// obtain the replacement account's token or send client-supplied owners.
+    static func sendCaptured(path: [String], method: String, body: [String: Any]?, accessToken: String) async throws -> Data {
+        guard let base = Config.apiBaseURL, !accessToken.isEmpty else { throw APIError.notConfigured }
         var url = base
         for component in path { url.appendPathComponent(component) }
-
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        if let token = await AuthStore.validAccessToken() {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         request.timeoutInterval = 20
-
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         guard (200..<300).contains(http.statusCode) else {
@@ -118,6 +125,21 @@ enum PushHTTP {
         }
         return data
     }
+}
+
+/// Registration acknowledgment belongs to a specific login, not just a token.
+struct PushAccountIdentity: Equatable {
+    let owner: UUID
+    let revision: UInt64
+}
+
+/// Credential-bearing cleanup is retained in Keychain until the exact server
+/// tombstone is acknowledged. Never written to preferences, logs or analytics.
+struct PendingPushUnregister: Codable, Equatable {
+    let owner: UUID
+    let deviceToken: String
+    let environment: String
+    let accessToken: String
 }
 
 // MARK: - Where a tapped notification goes
@@ -151,6 +173,8 @@ final class PushManager: ObservableObject {
     @Published private(set) var prePromptContext: PrePromptContext = .published
     /// Set by a tapped notification; the root consumes it and clears it.
     @Published private(set) var pendingRoute: PushRoute?
+    /// A local completion can reopen only its existing queue-owned job.
+    @Published private(set) var pendingReelJobID: UUID?
 
     /// True once the app has shown its pre-prompt (or established that there is
     /// nothing to ask). Persisted: "we already asked" must survive a relaunch,
@@ -164,11 +188,26 @@ final class PushManager: ObservableObject {
     /// The last device token this launch handed to the server, so a
     /// re-registration with an unchanged token costs nothing.
     private var registeredToken: String?
+    private var registeredIdentity: PushAccountIdentity?
+    private var registrationTask: Task<Void, Never>?
+    private var registrationOperation: UUID?
+    private var unregisterTask: Task<Bool, Never>?
+    private var unretainedCleanups: [PendingPushUnregister] = []
+    private var lastDeviceToken: String? {
+        get { UserDefaults.standard.string(forKey: "push.deviceToken.v1") }
+        set { UserDefaults.standard.set(newValue, forKey: "push.deviceToken.v1") }
+    }
+
+    static var currentIdentity: PushAccountIdentity? {
+        guard AuthStore.shared.isSignedIn,
+              let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return nil }
+        return .init(owner: owner, revision: AuthStore.shared.syncSessionRevision)
+    }
     /// `POST /me/devices` answered 404 — this deployment has no such route.
     /// Not retried this launch; no error is shown, because nothing is wrong
     /// with the phone.
     private var deviceRouteMissing = false
-    private var isRegistering = false
+
 
     /// "Not now" at ONBOARDING, which is deliberately not the same as
     /// `hasAsked`. Declining a sheet before anything has been built is a
@@ -218,6 +257,7 @@ final class PushManager: ObservableObject {
     func start() {
         guard !Self.isSuppressed else { return }
         UNUserNotificationCenter.current().delegate = PushDelegate.shared
+        retryPendingCleanup()
         Task { await refreshAuthorization(registerIfAllowed: true) }
     }
 
@@ -225,10 +265,11 @@ final class PushManager: ObservableObject {
     /// the background, in both directions).
     func refreshAuthorization(registerIfAllowed: Bool = false) async {
         guard !Self.isSuppressed else { return }
+        retryPendingCleanup()
         let status = await Self.currentAuthorization()
         authorization = status
         if registerIfAllowed, Self.allowsNotifications(status) {
-            registerWithAPNs()
+            accountDidChange()
         }
     }
 
@@ -358,11 +399,25 @@ final class PushManager: ObservableObject {
         let hex = token.map { String(format: "%02x", $0) }.joined()
         guard !hex.isEmpty else { return }
         guard !Self.isSuppressed, Config.useLiveBackend else { return }
-        guard !deviceRouteMissing, !isRegistering, registeredToken != hex else { return }
-        isRegistering = true
-        Task {
-            defer { isRegistering = false }
-            guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }
+        lastDeviceToken = hex
+        registerDeviceToken(hex)
+    }
+
+    private func registerDeviceToken(_ hex: String) {
+        guard let identity = Self.currentIdentity, !deviceRouteMissing,
+              registrationOperation == nil,
+              registeredToken != hex || registeredIdentity != identity else { return }
+        let operation = UUID()
+        registrationOperation = operation
+        registrationTask = Task {
+            defer {
+                if registrationOperation == operation {
+                    registrationOperation = nil
+                    registrationTask = nil
+                }
+            }
+            guard await finishPendingUnregisters(), !Task.isCancelled,
+                  Self.currentIdentity == identity, registrationOperation == operation else { return }
             let body: [String: Any] = [
                 "device_token": hex,
                 "environment": Self.apnsEnvironment,
@@ -371,17 +426,109 @@ final class PushManager: ObservableObject {
             ]
             do {
                 _ = try await PushHTTP.send(path: ["me", "devices"], method: "POST", body: body)
+                guard !Task.isCancelled, Self.currentIdentity == identity,
+                      registrationOperation == operation else { return }
                 registeredToken = hex
+                registeredIdentity = identity
             } catch let error as APIError where error.isNotFound {
-                // The route is not deployed yet. That is a fact about the
-                // server, not a failure of this phone: stop for this launch,
-                // say nothing, and try again next launch.
+                guard Self.currentIdentity == identity, registrationOperation == operation else { return }
                 deviceRouteMissing = true
-            } catch {
-                // Offline, a blinked connection, an expired token. The next
-                // launch registers again; nothing is shown and nothing loops.
-            }
+            } catch { }
         }
+    }
+
+    /// Called BEFORE replacing or erasing the outgoing credential. Cancel
+    /// old acknowledgments synchronously, then retain its exact cleanup.
+    func accountWillChange(retainCleanup: Bool = true) {
+        registrationTask?.cancel()
+        registrationTask = nil
+        registrationOperation = nil
+        registeredToken = nil
+        registeredIdentity = nil
+        deviceRouteMissing = false
+        pendingRoute = nil
+        pendingReelJobID = nil
+        showPrePrompt = false
+        if !Self.isSuppressed {
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        }
+        guard retainCleanup, !Self.isSuppressed, Config.useLiveBackend,
+              let identity = Self.currentIdentity, let hex = lastDeviceToken,
+              let access = AuthStore.storedAccessToken(), !access.isEmpty else { return }
+        let cleanup = PendingPushUnregister(owner: identity.owner, deviceToken: hex,
+            environment: Self.apnsEnvironment, accessToken: access)
+        if !AuthStore.retainPushUnregister(cleanup), !unretainedCleanups.contains(cleanup) {
+            unretainedCleanups.append(cleanup)
+        }
+        Task { _ = await finishPendingUnregisters() }
+    }
+
+    func accountDidChange() {
+        guard !Self.isSuppressed else { return }
+        if let hex = lastDeviceToken { registerDeviceToken(hex) }
+        if isAllowed { registerWithAPNs() }
+    }
+
+    func retryPendingCleanup() {
+        guard !Self.isSuppressed else { return }
+        Task { _ = await finishPendingUnregisters() }
+    }
+
+    private(set) var localDataErasureRevision: UInt64 = 0
+
+    /// Stop delivery locally even when the captured server DELETE is offline.
+    /// Its credential stays queued until acknowledgment; the next identified
+    /// session can explicitly register with APNs again via accountDidChange.
+    func prepareForLocalDataErasure() {
+        localDataErasureRevision &+= 1
+        registrationTask?.cancel(); registrationTask = nil; registrationOperation = nil
+        registeredToken = nil; registeredIdentity = nil
+        pendingRoute = nil; pendingReelJobID = nil; showPrePrompt = false
+        guard !Self.isSuppressed else { return }
+        UIApplication.shared.unregisterForRemoteNotifications()
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        retryPendingCleanup()
+    }
+
+    private func finishPendingUnregisters() async -> Bool {
+        if let existing = unregisterTask { return await existing.value }
+        let task = Task { @MainActor () -> Bool in
+            guard AuthStore.recoverPushUnregisterStorage() else { return false }
+            for cleanup in unretainedCleanups {
+                guard AuthStore.retainPushUnregister(cleanup) else { return false }
+            }
+            unretainedCleanups.removeAll()
+            do {
+                while let cleanup = try AuthStore.pendingPushUnregisters().first {
+                    do {
+                        let data = try await PushHTTP.sendCaptured(path: ["me", "devices"], method: "DELETE",
+                            body: ["device_token": cleanup.deviceToken, "environment": cleanup.environment],
+                            accessToken: cleanup.accessToken)
+                        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                        guard object?["ok"] as? Bool == true,
+                              object?["unregistered"] as? Bool == true,
+                              AuthStore.removePushUnregister(cleanup) else { return false }
+                    } catch let api as APIError where api.isUnauthorized || api.isForbidden || api.code == "RP401" {
+                        // This captured credential cannot authenticate again.
+                        // Rebinding the token retires its displaced server
+                        // session; no replacement credential is used to DELETE.
+                        guard AuthStore.removePushUnregister(cleanup) else { return false }
+                    }
+                }
+                // Another account change can append a failed-write cleanup
+                // while this task awaits DELETE. Do not acknowledge that new
+                // barrier as drained; its next retry retains the exact record.
+                guard unretainedCleanups.isEmpty,
+                      !UserDefaults.standard.bool(forKey: "push.unregisterStorageBlocked.v1") else { return false }
+                return true
+            } catch { return false } // network/5xx/incomplete ack: keep and retry
+        }
+        unregisterTask = task
+        let result = await task.value
+        unregisterTask = nil
+        return result
     }
 
     /// iOS could not get a token (no network, no APNs entitlement on this
@@ -406,24 +553,38 @@ final class PushManager: ObservableObject {
     /// Universal Link path would have rejected (an empty slug, a 4 KB slug, a
     /// host this app does not answer for, or the `/u/` unbranded shape, which
     /// `DeepLink` deliberately refuses to open in-app).
-    func handle(payload: [AnyHashable: Any]) {
-        guard !Self.isSuppressed else { return }
-        let bag = (payload["rp"] as? [AnyHashable: Any]) ?? payload
-        let type = (bag["type"] as? String)?.lowercased() ?? ""
+    static func accepts(payload: [AnyHashable: Any], identity: PushAccountIdentity?) -> Bool {
+        guard let identity,
+              let raw = payload["recipient_user_id"] as? String,
+              UUID(uuidString: raw) == identity.owner else { return false }
+        return true
+    }
 
+    func handle(payload: [AnyHashable: Any]) {
+        guard !Self.isSuppressed, Self.accepts(payload: payload, identity: Self.currentIdentity) else { return }
+        let bag = (payload["rp"] as? [AnyHashable: Any]) ?? payload
+        let type = ((payload["category"] as? String) ?? (bag["type"] as? String))?.lowercased() ?? ""
+        let facts = (payload["data"] as? [AnyHashable: Any]) ?? bag
+
+        if type == "reel_done" || (type == "render_ready" && facts["property_video_job_id"] != nil) {
+            if let raw = facts["reel_job_id"] as? String, let jobID = UUID(uuidString: raw) {
+                pendingReelJobID = jobID
+            }
+            return
+        }
         // A lead belongs to the account's inbox, not to one page — and that is
         // the screen the person actually needs to act on it.
-        if type == "lead" || type == "leads" {
+        if type == "lead" || type == "leads" || type == "lead_received" {
             pendingRoute = .leads
             return
         }
-        if let raw = (bag["url"] as? String) ?? (bag["link"] as? String),
+        if let raw = (payload["deep_link"] as? String) ?? (bag["url"] as? String) ?? (bag["link"] as? String),
            let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
            let link = DeepLink.parse(url) {
             pendingRoute = .tour(link)
             return
         }
-        if let slug = (bag["slug"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let slug = (facts["slug"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
            !slug.isEmpty,
            let encoded = slug.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
            let url = URL(string: "rendprop://f/\(encoded)"),
@@ -436,6 +597,7 @@ final class PushManager: ObservableObject {
     }
 
     func clearPendingRoute() { pendingRoute = nil }
+    func clearPendingReelJob() { pendingReelJobID = nil }
 
     // MARK: Small facts
 
@@ -493,6 +655,46 @@ final class PushManager: ObservableObject {
     }
 }
 
+// MARK: - "Your video is ready" (build 61)
+
+/// A local banner when a reel finishes while the app is not in front — the
+/// agent asked to be able to leave the screen while clips generate
+/// (TestFlight 60 feedback). Posted only when notifications are ALREADY
+/// allowed. The reel banner's explicit notification button can request the
+/// iOS permission; completion never prompts. No address or names appear on
+/// the lock screen. A tap can reopen only the same queue-owned job, after
+/// the banner rechecks the current account, workspace and listing.
+enum ReelCompletionNotice {
+    @MainActor static func post(success: Bool, identity: PushAccountIdentity?, listingID: UUID? = nil, jobID: UUID? = nil) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        guard let identity, PushManager.currentIdentity == identity else { return }
+        let erasureRevision = PushManager.shared.localDataErasureRevision
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            guard [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus) else { return }
+            // Settings arrive asynchronously. An account switch can already
+            // have cleared this account's notifications before this callback.
+            Task { @MainActor in
+                guard PushManager.currentIdentity == identity,
+                      PushManager.shared.localDataErasureRevision == erasureRevision,
+                      UIApplication.shared.applicationState != .active else { return }
+                let content = UNMutableNotificationContent()
+                content.title = success ? "Your video is ready" : "Your video couldn't be made"
+                content.body = success
+                    ? "Open Rendprop to watch it and share it."
+                    : "Open Rendprop to see what happened. Finished clips are kept on this phone."
+                content.sound = .default
+                content.userInfo = ["recipient_user_id": identity.owner.uuidString, "category": "reel_done"]
+                if let listingID, let jobID {
+                    content.userInfo["listing_id"] = listingID.uuidString
+                    content.userInfo["reel_job_id"] = jobID.uuidString
+                }
+                center.add(UNNotificationRequest(identifier: "reel-done-\(UUID().uuidString)", content: content, trigger: nil))
+            }
+        }
+    }
+}
+
 // MARK: - The notification-centre delegate
 
 /// Its own object rather than `AppDelegate` so the tap-handling rule sits next
@@ -507,7 +709,11 @@ final class PushDelegate: NSObject, UNUserNotificationCenterDelegate {
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler:
                                     @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .list, .sound])
+        let payload = notification.request.content.userInfo
+        Task { @MainActor in
+            completionHandler(PushManager.accepts(payload: payload, identity: PushManager.currentIdentity)
+                ? [.banner, .list, .sound] : [])
+        }
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,

@@ -188,6 +188,8 @@ Deno.test("returns literal contract, short lifetime, no cache", async () => {
       is_staged: true,
       is_altered: true,
       original_url: "https://objects.example/read",
+      edit_kind: null,
+      original_verified: false,
       sort: 0,
     },
   ]);

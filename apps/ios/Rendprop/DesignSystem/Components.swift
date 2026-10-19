@@ -5,6 +5,7 @@ struct PrimaryButton: View {
     let title: String
     var systemImage: String? = nil
     var isDisabled = false
+    var isCompact = false
     let action: () -> Void
 
     var body: some View {
@@ -19,9 +20,10 @@ struct PrimaryButton: View {
                 Text(title)
                     .fontWeight(.semibold)
             }
-            .font(.body)
+            .font(isCompact ? .subheadline : .body)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
+            .padding(.vertical, isCompact ? 10 : 16)
+            .frame(minHeight: isCompact ? 44 : nil)
             .background(isDisabled ? Theme.disabledFill : Theme.accent)
             .foregroundStyle(isDisabled ? Theme.disabledInk : Color.white)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -125,6 +127,8 @@ struct SecondaryButton: View {
     let title: String
     var systemImage: String? = nil
     var isDisabled = false
+    var isLoading = false
+    var isCompact = false
     let action: () -> Void
 
     var body: some View {
@@ -133,14 +137,18 @@ struct SecondaryButton: View {
             action()
         } label: {
             HStack(spacing: 8) {
-                if let systemImage {
+                if isLoading {
+                    ProgressView()
+                        .tint(isDisabled ? Theme.disabledInk : Theme.accent)
+                } else if let systemImage {
                     Image(systemName: systemImage)
                 }
                 Text(title).fontWeight(.semibold)
             }
-            .font(.rpBody)
+            .font(isCompact ? .subheadline : .rpBody)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 13)
+            .padding(.vertical, isCompact ? 8 : 13)
+            .frame(minHeight: isCompact ? 44 : nil)
             .background(isDisabled ? Theme.disabledFill : Theme.accentSoft)
             .foregroundStyle(isDisabled ? Theme.disabledInk : Theme.accent)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -150,7 +158,7 @@ struct SecondaryButton: View {
             )
         }
         .buttonStyle(ScalePressStyle())
-        .disabled(isDisabled)
+        .disabled(isDisabled || isLoading)
         .accessibilityLabel(Text(title))
     }
 }

@@ -517,7 +517,7 @@ struct CaptureView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("Original recordings are kept here so you can retry a join or save each part to Files.")
+                    Text("Review a saved take, retry an unfinished join, or save each original part to Files.")
                         .font(.subheadline)
                 }
                 ForEach(savedTakes) { take in
@@ -574,13 +574,15 @@ struct CaptureView: View {
                 Label(isDurablySaved(take) ? "Your take is saved" : "Save your video parts", systemImage: "tray.full.fill").font(.rpTitle)
                 Text("\(take.piecePaths.count) \(take.piecePaths.count == 1 ? "part" : "parts") · \(Formatters.duration(take.seconds))")
                     .font(.headline)
-                Text("Retry joining the parts into one video, or save each part to Files. Your originals will stay on this phone.")
+                Text(take.joined == nil
+                     ? "Retry joining the parts into one video, or save each part to Files. Your originals will stay on this phone."
+                     : "Review your saved video, or save each original part to Files. If the saved video needs repair, Rendprop will try joining the originals again.")
                     .font(.rpBody)
                 if let recoveryError { Text(recoveryError).foregroundStyle(Theme.warn) }
                 if isJoining {
                     ProgressView("Checking and joining your take…")
                 } else {
-                    Button(take.piecePaths.count == 1 ? "Review this take" : "Retry join") { joinSavedTake(take) }
+                    Button(take.piecePaths.count == 1 || take.joined != nil ? "Review this take" : "Retry join") { joinSavedTake(take) }
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("capture.retry-join")
                 }
@@ -751,10 +753,12 @@ struct CaptureView: View {
         refreshSavedTakes()
         Task {
             // A single piece still receives the same complete media validation.
-            // A prior joined output is retained; retry never overwrites it.
-            let joined = await TakeJoiner.join(take.pieces)
+            // Revalidate a prior joined output before reusing it. Reopening a
+            // completed take must not allocate another full-size movie.
+            // A failed validation rebuilds to a new path and retains the old one.
+            let joined = await TakeJoiner.join(take.pieces, previouslyJoined: take.joined)
             var completed = take
-            if let joined, let first = take.pieces.first, joined != first,
+            if let joined, let first = take.pieces.first, joined != first, joined != take.joined,
                let copiedSidecar = await MotionRecorder.copySidecar(from: first, to: joined) {
                 completed.sidecarPath = FileStore.relativePath(for: copiedSidecar)
             }
@@ -923,9 +927,23 @@ enum TakeJoiner {
         return reader.status == .completed ? count : nil
     }
 
+    /// Both a cached join and a newly exported join must still account for all
+    /// the original compressed samples, their format and their full duration.
+    private static func matches(_ url: URL, first: Video, samples: Int64, duration: CMTime) async -> Bool {
+        do {
+            guard !Task.isCancelled, let result = try await inspect(url), result.samples == samples,
+                  result.duration.seconds <= MediaImporter.maxDurationSeconds,
+                  abs(result.duration.seconds - duration.seconds) < 0.05,
+                  result.width == first.width, result.height == first.height,
+                  result.codec == first.codec, result.transform == first.transform else { return false }
+            return true
+        } catch { return false }
+    }
+
     /// Returns only a complete, verified output. Missing, damaged or mismatched
     /// pieces fail the whole join and remain available for recovery/export.
-    static func join(_ urls: [URL]) async -> URL? {
+    /// An existing complete output avoids another export and full-size copy.
+    static func join(_ urls: [URL], previouslyJoined: URL? = nil) async -> URL? {
         guard !urls.isEmpty else { return nil }
         let inputPaths = urls.map { $0.resolvingSymlinksInPath().standardizedFileURL.path }
         guard Set(inputPaths).count == urls.count else { return nil }
@@ -942,21 +960,31 @@ enum TakeJoiner {
         } catch { return nil }
         guard let first = videos.first else { return nil }
         if videos.count == 1 { return first.duration.seconds <= MediaImporter.maxDurationSeconds ? urls[0] : nil }
+        var cursor = CMTime.zero
+        var expectedSamples: Int64 = 0
+        for video in videos {
+            cursor = CMTimeAdd(cursor, video.duration)
+            let (next, overflow) = expectedSamples.addingReportingOverflow(video.samples)
+            guard !overflow else { return nil }
+            expectedSamples = next
+        }
+        guard cursor.seconds <= MediaImporter.maxDurationSeconds else { return nil }
+        if let previouslyJoined,
+           !inputPaths.contains(previouslyJoined.resolvingSymlinksInPath().standardizedFileURL.path),
+           await matches(previouslyJoined, first: first, samples: expectedSamples, duration: cursor) {
+            return previouslyJoined
+        }
+        guard !Task.isCancelled else { return nil }
         let composition = AVMutableComposition()
         guard let track = composition.addMutableTrack(withMediaType: .video,
                                                       preferredTrackID: kCMPersistentTrackID_Invalid) else { return nil }
-        var cursor = CMTime.zero
-        var expectedSamples: Int64 = 0
+        var insertionTime = CMTime.zero
         do {
             for video in videos {
-                try track.insertTimeRange(CMTimeRange(start: .zero, duration: video.duration), of: video.track, at: cursor)
-                cursor = CMTimeAdd(cursor, video.duration)
-                let (next, overflow) = expectedSamples.addingReportingOverflow(video.samples)
-                guard !overflow else { return nil }
-                expectedSamples = next
+                try track.insertTimeRange(CMTimeRange(start: .zero, duration: video.duration), of: video.track, at: insertionTime)
+                insertionTime = CMTimeAdd(insertionTime, video.duration)
             }
         } catch { return nil }
-        guard cursor.seconds <= MediaImporter.maxDurationSeconds else { return nil }
         track.preferredTransform = first.transform
         let out = FileStore.newRecordingURL()
         guard !inputPaths.contains(out.resolvingSymlinksInPath().standardizedFileURL.path),
@@ -970,13 +998,7 @@ enum TakeJoiner {
             export.exportAsynchronously { continuation.resume() }
         }
         guard !Task.isCancelled, export.status == .completed else { return nil }
-        do {
-            guard let result = try await inspect(out), result.samples == expectedSamples,
-                  result.duration.seconds <= MediaImporter.maxDurationSeconds,
-                  abs(result.duration.seconds - cursor.seconds) < 0.05,
-                  result.width == first.width, result.height == first.height,
-                  result.codec == first.codec, result.transform == first.transform else { return nil }
-        } catch { return nil }
+        guard await matches(out, first: first, samples: expectedSamples, duration: cursor) else { return nil }
         MediaImporter.excludeFromBackup(FileStore.recordingsDir)
         keepOutput = true
         return out

@@ -39,19 +39,14 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "How Rendprop works",
     source: "description.txt",
     fact:
-      "Film a walkthrough on an iPhone. Tag the rooms or areas to jump to. Rendprop builds a " +
-      "smooth, drone-style flythrough and gives a share link — no drone, no crew, no editor. " +
-      "Sending the link is the whole distribution: anyone who opens it scrolls to fly through " +
-      "the space, and the contact form on that page drops enquiries into the app's inbox.",
+      "Start a home with its address and details. Add landscape property photos, edit from Original if needed, review and select the versions, make and review a landscape property video, then Publish and share the website. Recording/importing a slow, steady walkthrough is optional. These are separate tools; one walkthrough does not automatically produce every asset. Photo reels use simulated AI camera motion or disclosed still-photo motion, not real drone footage or a measured 3D reconstruction. Publishing creates branded and unbranded property links; available branded contact forms send enquiries to the app.",
   },
   {
     topic: "Signing in — what needs an account",
-    source: "GPT-AGENT-BRIEF.md §2 + FlythroughDetailView.swift publishNow/FeatureSessionAction",
+    source:
+      "GPT-AGENT-BRIEF.md §2 + FlythroughDetailView.swift publishNow/FeatureSessionAction",
     fact:
-      "No account is required to record, edit, build or publish a tour, or to use the AI Photo " +
-      "Studio, reels, aerial intros and floor plans. The app connects through an anonymous " +
-      "session. Publishing needs an internet connection. Sign in with Apple is optional " +
-      "for accessing your workspace on another device.",
+      "Local recording and saved photo work can remain on the phone. Cloud publishing and online AI tools require an identified account, an internet connection and the required AI consent/access. Sign in with Apple opens or adopts the account; a guest/anonymous session cannot use paid AI or publish until sign-in. Do not describe Apple sign-in as optional for those online tools.",
   },
   {
     topic: "The two links every published tour gets",
@@ -67,65 +62,57 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "How AI-generated content is disclosed",
     source: "description.txt + support.html + UPLOAD-CONTRACT.md",
     fact:
-      "Every AI photo edit is labelled \"Virtually staged\" on the published tour, and the " +
-      "untouched original is published right beside it so anyone can compare. The AI aerial " +
-      "intro is always disclosed as AI-generated, never presented as real drone footage. A " +
-      "listing's Compliance section lists every AI asset with its disclosure and can export the " +
-      "full audit log for a broker.",
+      "Disclosure describes the actual effects: virtually staged, digitally decluttered, other AI edits, AI aerial/reel motion or still-photo motion. Retained sources and saved versions support comparison; do not claim every edit is staging or that an unverified original is always available. Staged/custom previews require comparison approval before listing/reel/platform use. A label, approval or automated check is not a guarantee that fixed features are unchanged or that every MLS accepts it. Review against the source and follow local broker/MLS requirements.",
   },
   {
     topic: "AI Photo Studio — what it does",
     source: "description.txt + features.html",
     fact:
-      "One tap each for: a blue sky, a twilight sky, a green lawn, a tidied (decluttered) room, " +
-      "or added furniture (virtual staging). A free-text \"custom\" edit is also available, and " +
-      "an \"improve my prompt\" button sharpens rough wording first. Every edit is a COPY — the " +
-      "untouched original photo is always kept and published alongside it, never replaced.",
+      "Start each new edit or staging style from the Original tab. Choose Sky, Twilight, Lawn, Declutter or virtual staging, or type Ask anything instructions. Updated staging choices are Modern, Rustic, Minimalist and Contemporary; retained Scandinavian versions keep their historical style. Use the choices actually shown on the installed app. Decluttered and Staged are finished-result tabs for review, listing selection and sharing; earlier styles remain saved when another style is created. Custom requests may ask one clarification before generation. Changes are saved as separate copies/versions; basic Enhanced is a local brightness/color/sharpness copy, not virtual staging. Original, saved edits and the listing-selected version can differ. Use the comparison/review flow for staged/custom outputs; inspect structure, doors, finishes and property condition before sharing. Ask AI is text-only and cannot visually approve an edit.",
   },
   {
     topic: "Reels — what they do",
     source: "description.txt + features.html",
     fact:
-      "Reels turn a handful of a listing's photos into a short vertical video: each photo " +
-      "becomes a gliding camera move, stitched together with a voiceover (record your own, or " +
-      "let an AI voice read a script) and word-by-word captions that land on the beat. Exports " +
-      "in both 9:16 and 16:9 for Instagram, TikTok, YouTube and the MLS.",
+      "Make a video uses reviewed photos for Listing landscape 16:9 or Social media portrait 9:16. Automatic arranges scenes and chooses gentle movement; four optional motion presets include Fly-through. Each generated shot is five seconds and consumes one applicable generated-shot allowance, not one whole finished-video allowance. AI motion does not prove room-to-room geometry. Review the actual crop and finished output; no platform acceptance is certified. Optional voice, music, text and transitions start as choices, not requirements. A saved operation is not an accepted server job: Check status before generating again. Only an acknowledged saved server job can continue after closing the app or locking the phone; reopen Make a video to refresh it without regeneration. Resume saved video is available only when the returned job explicitly permits it, retaining completed shots. Older device-owned batches and exports may pause in the background and must use their displayed recovery action; never promise durable background completion for those. Eligible disclosed saved-photo motion is different from an AI clip.",
   },
   {
     topic: "Aerial intro — what it does",
-    source: "description.txt + features.html",
+    source: "LaunchFeatureAvailability.swift + ai-video Aerial launch gate (build 72)",
     fact:
-      "The aerial intro is an AI-generated establishing shot — 4 to 8 seconds, in the time of " +
-      "day and camera move the agent picks — that lifts off an exterior photo already in the " +
-      "listing. It is optional and always disclosed as AI-generated, never real drone footage, " +
-      "so a viewer's trust in the rest of the tour stays intact.",
+      "Aerial intro is Coming soon for launch; no launch plan includes new Aerial generation. " +
+      "Previously saved clips and already accepted jobs remain available. Photos, reels and " +
+      "published listings work without an aerial intro. Any existing AI aerial clip must be " +
+      "reviewed and disclosed as AI-generated, never described as real drone footage.",
   },
   {
-    topic: "Floor plans — what they do",
-    source: "description.txt + features.html + support.html",
+    topic: "Measurements and floor plans — current availability",
+    source:
+      "FlythroughDetailView.swift ListingToolboxGrid + RendpropApp.swift Home tiles (build 57) + support.html",
     fact:
-      "Scan a room in 3D with RoomPlan by walking it with the phone — this needs an iPhone with " +
-      "a LiDAR sensor. Any other iPhone can instead upload a floor plan the agent already has " +
-      "(PDF or image) and skip the scan entirely. Either way the output is clean and labelled: " +
-      "rooms, dimensions and furniture footprints, no clutter.",
+      "Measurements, 3D floor plans and 3D walkthroughs are Coming soon. The Measurements card " +
+      "on Home and in each listing's toolbox does not open yet, no plan includes it, and nothing " +
+      "else in the app waits on it: photos, AI Photo Studio, reels and published " +
+      "listings work without any measurements. When measurements ship, the user will be able to " +
+      "enter room dimensions, draw measured outlines and upload an existing PDF or image; app " +
+      "calculations will not be a certified survey or appraisal and will not set advertised " +
+      "living area. The separate TestFlight Lab keeps local capture tests available; it is " +
+      "not the normal listing workflow. The ordinary listing detail no longer has a Plan your " +
+      "video entry; agency and Studio capture planning remain available in their own workflows.",
   },
   {
     topic: "Filming tips for a good walkthrough",
     source: "features.html + SettingsView's own capture guidance",
     fact:
-      "Walk at a normal, steady pace — no fast spins, turn the way you would showing a friend " +
-      "around. Hold the phone upright at chest height and keep it level. Turn the lights on and " +
-      "open the blinds first. The app guides filming at a wide 0.5× lens so rooms read as rooms, " +
-      "not closets. One continuous take, up to about ten minutes, ending on the best shot — the " +
-      "engine enhances real footage, it never invents a room, window or piece of furniture.",
+      "Walk at a normal, steady pace, keep the phone level at chest height, turn lights on and open blinds. Use a wide lens when available and avoid fast spins. Capture one continuous walkthrough, up to the app's displayed limit, ending on the best shot. The walkthrough uses captured footage; this does not guarantee the accuracy of separate AI-generated photo/reel/aerial outputs.",
   },
   {
     topic: "Not only homes — other business types",
     source: "description.txt + INDUSTRY-LOGIC.md + features.html",
     fact:
       "Rendprop ships modes for real estate, event venues, restaurants and bars, retail stores, " +
-      "and gyms and studios (plus a general \"other business\" mode). Switching the business " +
-      "type — from the menu at the top-left of Home — re-themes the whole app: the fields to " +
+      'and gyms and studios (plus a general "other business" mode). Switching the business ' +
+      "type — from the menu at the top-left of Home — re-themes the business-specific fields and words: the fields to " +
       "fill in, the words on screen, the area tags in the room tagger, and the sample tour.",
   },
   {
@@ -141,7 +128,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     source: "support.html + description.txt",
     fact:
       "Subscriptions are sold and billed by Apple, so they are managed through Apple: in the " +
-      "app, Settings → Plan & usage → \"Manage subscription\" opens the same sheet as the " +
+      'app, Settings → Plan & usage → "Manage subscription" opens the same sheet as the ' +
       "device's own Settings → your name → Subscriptions → Rendprop. Cancelling stops the NEXT " +
       "renewal — the plan keeps working until the end of the period already paid for. Deleting " +
       "the app does NOT cancel a subscription. Refunds are handled by Apple at " +
@@ -149,19 +136,20 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Free trial",
-    source: "description.txt + migration 0044 (plan_entitlement_overrides)",
+    source: "Subscription-confirmed trial policy (2026-10-01)",
     fact:
-      "Every plan starts with a 7-day free trial, available once per Apple ID. Any unused " +
-      "portion of a trial is forfeited if the person buys a subscription before it ends. The " +
-      "free week is sized to the business: a real-estate workspace can publish 3 tours during " +
-      "it; a single-location business (venue, restaurant, retail, gym or studio, other) can " +
-      "publish 1 tour. Photo edits, reels and the aerial intro are included in both.",
+      "Eligible customers can start a 7-day introductory trial by choosing a subscription " +
+      "and confirming it in Apple's purchase sheet. Apple determines eligibility; creating " +
+      "an account or installing Rendprop does not start that trial. The selected plan's " +
+      "allowances apply after confirmation, subject to the shared trial AI limit and trial availability. It renews at the displayed subscription price " +
+      "unless cancelled through Apple. Existing previously granted trial windows keep their " +
+      "original end date. Plan & usage shows the current access and Apple's offer terms.",
   },
   {
     topic: "Deleting an account",
     source: "SettingsView.swift deleteAccount + me/index.ts handleDelete",
     fact:
-      "In the app: Settings → \"Your data\" → \"Delete account\". Guests using an anonymous " +
+      'In the app: Settings → "Your data" → "Delete account". Guests using an anonymous ' +
       "session also have a server account: this is not a local-only wipe. Account deletion " +
       "requests removal of that account and its solo-workspace data; the phone clears its " +
       "local data after server confirmation. Shared-team data is not all deleted with your " +
@@ -172,17 +160,15 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "What the app needs to run",
     source: "support.html",
     fact:
-      "An iPhone on iOS 16 or later. The app is free to download. Scanning a room into a floor " +
-      "plan needs an iPhone with a LiDAR sensor; on any other iPhone, upload a plan instead.",
+      "An iPhone on iOS 16 or later. The app is free to download. No LiDAR is needed for " +
+      "anything the app offers today. Measurements, 3D floor plans and 3D walkthroughs are " +
+      "Coming soon; LiDAR capture experiments belong to the separate TestFlight Lab.",
   },
   {
     topic: "A render or upload failed",
     source: "support.html",
     fact:
-      "Uploads resume on their own, so a dropped connection mid-upload is usually fixed by " +
-      "reopening the app on a better connection. A job that fails gives its monthly allowance " +
-      "back automatically. If the same walkthrough fails twice, contact support with the " +
-      "listing name and roughly when it was tried.",
+      "Open the affected project/tool and use its displayed saved recovery action. For a saved video operation, Check status checks the same operation before any new request; a saved operation alone is not proof of server acceptance. Resume saved video requires the acknowledged returned job to permit it. Older local jobs may show Recover request, Finish saved clips or Continue saved reel; follow the displayed action to preserve their sources/options. A quality refusal may offer one explicit safer retry or saved-photo motion. For an upload, reconnect and keep the saved file until it completes. Review access/facts conflicts before trying again. Plan & usage shows allowances and shared AI limits; do not promise every failure is refunded, every retry is free or a completion time. Contact support if the available recovery action still fails.",
   },
   {
     topic: "Your content and privacy",
@@ -190,15 +176,16 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     fact:
       "Videos and photos stay the agent's own. Rendprop never uses them for its own marketing, " +
       "and never to train AI models, without written permission. The app only records spaces " +
-      "the person has the right to record and publish. There is no in-app feed and no way to " +
-      "browse anyone else's content.",
+      "the person has the right to record and publish. There is no public in-app feed. " +
+      "Personal accounts keep their own listings; a team owner can switch authorized agent " +
+      "libraries, while agents cannot browse teammates' listings.",
   },
   {
     topic: "Contacting support",
-    source: "support.html + SettingsView's own \"Contact support\" row",
+    source: 'support.html + SettingsView\'s own "Contact support" row',
     fact:
       "A person answers support email directly — there is no ticket bot. It is the same address " +
-      "as the app's own Settings → \"Contact support\" row. Billing and refunds go through Apple " +
+      'as the app\'s own Settings → "Contact support" row. Billing and refunds go through Apple ' +
       "at reportaproblem.apple.com; everything else about the app or a plan goes to support.",
   },
 ];
@@ -218,16 +205,23 @@ export const PLAN_ALLOWANCES: Array<{
   aerials: number;
   seats?: number;
 }> = [
-  { plan: "Starter", renders: 4, photoEdits: 100, reels: 6, aerials: 2 },
-  { plan: "Pro", renders: 10, photoEdits: 200, reels: 12, aerials: 4 },
-  { plan: "Team", renders: 25, photoEdits: 400, reels: 25, aerials: 8, seats: 2 },
+  { plan: "Starter", renders: 4, photoEdits: 100, reels: 30, aerials: 2 },
+  { plan: "Pro", renders: 10, photoEdits: 200, reels: 60, aerials: 4 },
+  {
+    plan: "Team",
+    renders: 25,
+    photoEdits: 400,
+    reels: 150,
+    aerials: 8,
+    seats: 2,
+  },
 ];
 
-/** One line per plan, e.g. "Pro — 10 tour renders, 200 AI photo edits, 12 reels, 4 aerial intros a month." */
+/** Aerial counters remain internal compatibility data, not a launch allowance. */
 function allowanceLine(a: (typeof PLAN_ALLOWANCES)[number]): string {
   const seats = a.seats ? `, ${a.seats} seats` : "";
-  return `${a.plan} — ${a.renders} tour renders, ${a.photoEdits} AI photo edits, ${a.reels} reels, ` +
-    `${a.aerials} aerial intros${seats} a month.`;
+  return `${a.plan} — ${a.renders} tour renders, ${a.photoEdits} AI photo edits, ${a.reels} generated five-second shots${seats} a month. ` +
+    "Aerial intro is Coming soon.";
 }
 
 /**
@@ -240,10 +234,12 @@ export function knowledgeBlock(): string {
   const allowances = PLAN_ALLOWANCES.map(allowanceLine).join(" ");
   return [
     facts,
+    "• Property websites: Classic is included. One verified per-property website purchase unlocks Signature Estate and Coastal Luxe for that property; switching between the two does not require another purchase. The app shows current StoreKit price and availability. Purchases can be unavailable while the product or server setting is off. Preview uses already-published content, is marked Preview/noindex and has no enquiry form; it neither publishes nor changes the live design. Explicit Publish/Republish is separate. Sites provide Home, Gallery, Location and Contact, the chosen landscape property video, and an optional recorded walkthrough. Never invent nearby businesses, promise automatic MLS/Zillow syndication or guarantee MLS acceptance.",
     "",
     "• Plan allowances (NEVER state a price — every price comes from the App Store, never from " +
-      "you): " + allowances + " Every plan includes a 7-day free trial, once per Apple ID: 3 " +
-      "tours for a real-estate workspace, 1 tour for a single-location business. For " +
-      "the current plan, this month's usage, or any price, tell the user to open Plan & usage.",
+    "you): " + allowances +
+    " These are current catalog examples, not a replacement for the verified account snapshot. Existing funded/grant windows retain their own caps. Use Plan & usage for actual remaining generated-shot/edit allowance and shared AI capacity; never promise all meter maxima can be used together. An eligible trial can have 20 photo edits, 20 generated shots and a shared usage ceiling, but only its effective snapshot grants access. An eligible 7-day introductory trial starts only after the " +
+    "user selects a subscription and confirms Apple's purchase sheet, never on signup. For " +
+    "the current plan, this month's usage, or any price, tell the user to open Plan & usage.",
   ].join("\n");
 }

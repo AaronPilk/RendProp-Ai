@@ -188,6 +188,7 @@ Deno.test("apns.send with no secrets resolves rather than throwing", async () =>
     body: "b",
     deepLink: null,
     category: "render_ready",
+    recipientUserId: "test-user",
     data: {},
   }, forbiddenFetch);
   assertEquals(result.ok, false);
@@ -227,6 +228,7 @@ Deno.test("a 410 Unregistered marks the token dead and does not report success",
     body: "b",
     deepLink: null,
     category: "lead_received",
+    recipientUserId: "test-user",
     data: {},
   }, fake410);
 
@@ -327,12 +329,19 @@ Deno.test("the push payload carries the alert, the category and the deep link", 
     return Promise.resolve(apnsResponse(200));
   };
 
-  await deliverPush(row(), [device], BASE, fake);
+  const sourceRow = row();
+  sourceRow.payload.recipient_user_id = "wrong-account";
+  sourceRow.payload.data = { ...(sourceRow.payload.data as Record<string,unknown>), recipient_user_id: "wrong-account" };
+  await deliverPush(sourceRow, [device], BASE, fake);
 
   const aps = body.aps as { alert: { title: string; body: string } };
-  assertEquals(aps.alert.title, "Nina Patel asked about 412 Marina Blvd");
+  assertEquals(aps.alert, {title:"Rendprop update",body:"Open Rendprop to review it."});
+  assert(!JSON.stringify(body).includes("Nina Patel"));
+  assert(!JSON.stringify(body).includes("412 Marina Blvd"));
+  assertEquals(body.data, { lead_id: "44444444-4444-4444-4444-444444444444" });
   assertEquals(body.category, "lead_received");
   assertEquals(body.deep_link, "https://rendprop.com/f/abc123xyz9");
+  assertEquals(body.recipient_user_id, row().user_id);
   assertEquals(headers["apns-topic"], "com.rendprop.app");
   assertEquals(headers["apns-push-type"], "alert");
   clearSecrets();
@@ -410,4 +419,148 @@ Deno.test("the email body carries the link and how to turn these off", () => {
   const text = emailText({ title: "t", body: "b" }, "https://rendprop.com/f/abc");
   assertStringIncludes(text, "https://rendprop.com/f/abc");
   assertStringIncludes(text, "Settings");
+});
+
+Deno.test("known owner provider warnings replace technical copy with feature, event age and action", () => {
+  const message = render("ops_alert", {code:"provider_dead:fal:bytedance/seedance/v1/pro/fast/image-to-video",
+    title:"Admin alert: AI provider failing: fal / bytedance/seedance/v1/pro/fast/image-to-video",body:"28 failures upstream",
+    observed_at:"2026-10-09T00:07:00Z",data:{provider:"fal",model:"bytedance/seedance/v1/pro/fast/image-to-video",
+      consecutive_failures:28,last_error_class:"upstream",last_fail_at:"2026-10-02T20:44:18Z",last_status:null}});
+  assertEquals(message.title,"Admin: Photo-to-video needs attention");
+  assertStringIncludes(message.body,"FAL: 28 requests failed in a row");
+  assertStringIncludes(message.body,"Last failure 2026-10-02 20:44 UTC");
+  assertStringIncludes(message.body,"Checked 2026-10-09 00:07 UTC");
+  assertStringIncludes(message.body,"Check the connected provider account");
+  assert(!/seedance|upstream|API key|out of balance/.test(message.body));
+  assert(!/output failed|quality|finished video/i.test(message.body));
+});
+
+Deno.test("owner provider warnings distinguish a rejected key from old timeouts without claiming all editing failed", () => {
+  const payload={code:"provider_dead:openai:gpt-image-2",data:{provider:"openai",model:"gpt-image-2",
+    consecutive_failures:3,last_error_class:"timeout",last_status:401,last_fail_at:"2026-10-02T15:34:57Z"}};
+  const rejected=render("ops_alert",payload);
+  assertEquals(rejected.title,"Admin: AI photo editing needs attention");
+  assertStringIncludes(rejected.body,"The service rejected our access key");
+  assert(!rejected.body.includes("took too long"));
+  const timeout=render("ops_alert",{...payload,data:{...payload.data,last_status:null}});
+  assertStringIncludes(timeout.body,"The service took too long to respond");
+  assert(!timeout.body.includes("rejected our access key"));
+  assert(!/all photo|everything|delete|rotate/i.test(timeout.body));
+});
+
+Deno.test("owner ceiling warning says reached when historical spend exceeds cap and does not quote a customer charge", () => {
+  const message=render("ops_alert",{code:"org_near_ceiling:fixture",title:"Workspace near its AI ceiling: Synthetic team",
+    observed_at:"2026-10-08T22:07:00Z",data:{kind:"free",basis:"lifetime",spent_cents:396.06,ceiling_cents:300}});
+  assertEquals(message.title,"Admin: Workspace AI limit reached");
+  assertStringIncludes(message.body,"Synthetic team");
+  assertStringIncludes(message.body,"free AI spending allowance");
+  assertStringIncludes(message.body,"New AI requests are paused");
+  assertStringIncludes(message.body,"Check the account's plan or testing access");
+  assert(!/3\.96|3\.00|\$|charged|invoice|resets/.test(message.body));
+});
+
+Deno.test("owner near-limit warning does not falsely say generation is already paused", () => {
+  const message=render("ops_alert",{code:"org_near_ceiling:fixture",title:"Workspace near its AI envelope: Synthetic brokerage",data:{kind:"retail",spent_cents:80,ceiling_cents:100}});
+  assertEquals(message.title,"Admin: Workspace AI limit nearly used");
+  assertStringIncludes(message.body,"AI generation for Synthetic brokerage");
+  assertStringIncludes(message.body,"pause when it is used up");
+  assert(!message.body.includes("requests are paused"));
+});
+
+Deno.test("owner unlinked-cost warning explains bookkeeping without declaring failed output or refunding it", () => {
+  const message=render("ops_alert",{code:"holds_unledgered",observed_at:"2026-10-09T15:07:00Z",data:{holds:1}});
+  assertEquals(message.title,"Admin: AI cost tracking needs attention");
+  assertStringIncludes(message.body,"1 AI request has an incomplete saved cost record");
+  assertStringIncludes(message.body,"budget reserved");
+  assertStringIncludes(message.body,"account-deletion history");
+  assertStringIncludes(message.body,"2026-10-09 15:07 UTC");
+  assert(!/ledger|envelope|output failed|refund/i.test(message.body));
+});
+
+Deno.test("admin copy has honest fallbacks and leaves unrelated or ordinary messages unchanged", () => {
+  const missing=render("ops_alert",{code:"holds_unledgered",observed_at:"not-a-date",data:{holds:"invalid"}});
+  assertStringIncludes(missing.body,"Some AI requests have");
+  assertStringIncludes(missing.body,"Check time was not recorded");
+  const ordinary={title:"Maintenance",body:"Back soon.",code:"holds_unledgered",data:{holds:1}};
+  assertEquals(render("render_ready",ordinary),{title:"Maintenance",body:"Back soon."});
+  assertEquals(render("ops_alert",{...ordinary,code:"other-alert"}),{title:"Maintenance",body:"Back soon."});
+});
+
+Deno.test("final APNs serializer strips personal fields even when bypassing the delivery helper", async () => {
+  clearSecrets(); await withApnsSecrets();
+  let emitted: Record<string, unknown> = {};
+  try {
+    const id = "de550103-0000-4000-8000-000000000001";
+    const result = await apns.send({deviceToken:device.device_token,environment:"sandbox",
+      title:"Synthetic buyer",body:"Synthetic property",category:"lead_received",deepLink:null,
+      recipientUserId:id,data:{lead_id:id,listing_id:"Synthetic property",render_id:"not-a-uuid",
+        slug:"abc123xyz9",lead_name:"Synthetic buyer",listing_address:"Synthetic property",
+        email:"private@fixture.invalid",phone:"555-private",nested:{private:"private-snapshot"}}},
+      (_url, init) => { emitted=JSON.parse(String((init as RequestInit)?.body)); return Promise.resolve(apnsResponse(200)); });
+    assert(result.ok); assertEquals(emitted.data,{lead_id:id,slug:"abc123xyz9"});
+    assertEquals(emitted.recipient_user_id,id);
+    const raw=JSON.stringify(emitted);
+    for(const value of ["Synthetic buyer","Synthetic property","private@fixture.invalid","555-private","private-snapshot"]) assert(!raw.includes(value));
+    assertEquals(apns.pushRouteData({slug:"invalid path/with private name",lead_id:{id},unknown:id}),{});
+  } finally { clearSecrets(); }
+});
+
+Deno.test("build 57: final APNs serializer bounds the deep link, category and recipient, and never serializes the rendered copy", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const id = "de550103-0000-4000-8000-000000000002";
+    const capture = async (overrides: Partial<apns.ApnsMessage>) => {
+      let emitted: Record<string, unknown> = {};
+      const result = await apns.send({deviceToken:device.device_token,environment:"production",
+        title:"Nina Patel asked about 412 Marina Blvd",body:"They left a phone number.",category:"lead_received",
+        deepLink:"https://rendprop.com/f/abc123xyz9",recipientUserId:id,data:{lead_id:id},...overrides},
+        (_url, init) => { emitted=JSON.parse(String((init as RequestInit)?.body)); return Promise.resolve(apnsResponse(200)); });
+      assert(result.ok);
+      return emitted;
+    };
+    // The exact serialized shape: nothing else rides along.
+    const plain = await capture({});
+    assertEquals(plain, {aps:{alert:{title:"Rendprop update",body:"Open Rendprop to review it."},sound:"default","interruption-level":"active"},
+      category:"lead_received",deep_link:"https://rendprop.com/f/abc123xyz9",recipient_user_id:id,data:{lead_id:id}});
+    assertEquals(Object.keys(plain).sort(), ["aps","category","data","deep_link","recipient_user_id"]);
+    assert(!JSON.stringify(plain).includes("Nina Patel")); assert(!JSON.stringify(plain).includes("412 Marina Blvd"));
+    // A token, query string or e-mail in a deep link never reaches the lock screen.
+    for (const deepLink of ["https://rendprop.com/verify-client-email#token=private-nonce", "/leads?email=private@fixture.invalid", "https://rendprop.com/f/x?lead=Nina%20Patel", "javascript:alert(1)", "rendprop://f/../private", "not a link"]) {
+      const emitted = await capture({deepLink});
+      assertEquals(emitted.deep_link, null, deepLink);
+      assert(!JSON.stringify(emitted).includes("private"), deepLink);
+    }
+    assertEquals((await capture({deepLink:"/f/abc123xyz9"})).deep_link, "/f/abc123xyz9");
+    // Free text cannot ride in the category or recipient slots.
+    const smuggled = await capture({category:"Nina Patel left 555-private", recipientUserId:"private@fixture.invalid"});
+    assertEquals(smuggled.category, "update"); assertEquals(smuggled.recipient_user_id, null);
+    assert(!JSON.stringify(smuggled).includes("Nina")); assert(!JSON.stringify(smuggled).includes("private"));
+    assertEquals(apns.pushDeepLink("https://rendprop.com/f/abc123xyz9"), "https://rendprop.com/f/abc123xyz9");
+    assertEquals(apns.pushDeepLink("https://rendprop.com/f/abc?x=1"), null);
+    assertEquals(apns.pushCategory("render_ready"), "render_ready"); assertEquals(apns.pushCategory("Render ready!"), "update");
+  } finally { clearSecrets(); }
+});
+
+Deno.test("build 57: deliverPush only pushes to the row's own devices and binds the recipient to the row", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const sent: string[] = []; const recipients: unknown[] = [];
+    const fake: typeof fetch = (url, init) => {
+      sent.push(String(url).split("/3/device/")[1]);
+      recipients.push(JSON.parse(String((init as RequestInit).body)).recipient_user_id);
+      return Promise.resolve(apnsResponse(200));
+    };
+    const stranger: DeviceRow = { user_id: "99999999-9999-4999-8999-999999999999", device_token: "ffeeddcc00112233445566778899ffee", environment: "production" };
+    // Only a stranger's device: nothing is sent and the row is closed as skipped, not failed.
+    const none = await deliverPush(row(), [stranger], BASE, fake);
+    assertEquals(none.state, "skipped"); assertEquals(none.reason, "no live device for this user"); assertEquals(sent, []);
+    // Mixed list: the stranger's token is never contacted, the owner's is, and the recipient is the row's user_id
+    // even when the payload claims another account.
+    const sourceRow = row(); sourceRow.payload.recipient_user_id = stranger.user_id;
+    const mixed = await deliverPush(sourceRow, [stranger, device], BASE, fake);
+    assertEquals(mixed.state, "sent"); assertEquals(sent, [device.device_token]); assertEquals(recipients, [row().user_id]);
+    // A userless row cannot be pushed anywhere, whatever devices are offered.
+    const userless = await deliverPush(row({ user_id: null }), [device], BASE, fake);
+    assertEquals(userless.state, "skipped"); assertEquals(sent.length, 1);
+  } finally { clearSecrets(); }
 });

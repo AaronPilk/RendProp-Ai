@@ -1,24 +1,28 @@
 import type { Env } from "./types";
 
 // Operational safety budgets, not provider limits or a promised response SLA.
-// Tours contain metadata/URLs (gallery and disclosures are each capped at 40
+// Tours contain metadata/URLs (gallery and disclosures are each capped at100
 // upstream), not media bytes. Portfolio cardinality/freeform text is not fully
 // bounded upstream: over-cap payloads must fail explicitly, never be truncated.
 const UPSTREAM_TIMEOUT_MS = 8_000;
 const UPSTREAM_JSON_BYTES = 4 * 1024 * 1024;
 const MAX_EMPTY_CHUNKS = 64;
+const READ_REGIONS = new Set(["ap-northeast-1", "ap-northeast-2", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "us-east-1", "us-west-1", "us-west-2", "eu-central-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1"]);
 
 type UpstreamJSON =
   | { kind: "ok"; value: unknown }
   | { kind: "not-found" }
-  | { kind: "error"; status: 502 | 503 };
+  | { kind: "error"; status: 429 | 502 | 503 };
 
 const unavailable: UpstreamJSON = { kind: "error", status: 503 };
 const malformed: UpstreamJSON = { kind: "error", status: 502 };
 
 /** One deadline covers headers AND the decoded response stream. No retries,
  * raw upstream error messages, response bodies or credentials escape to callers. */
-export async function fetchUpstreamJSON(path: string, env: Env): Promise<UpstreamJSON> {
+export async function fetchUpstreamJSON(path: string, env: Env, gateway = false, payload?: Record<string, unknown>): Promise<UpstreamJSON> {
+  // This secret is only used by the server-to-server delivery path. Never
+  // attach it to ordinary tour/portfolio JSON or serialize it into HTML.
+  if (gateway && !/^[a-f0-9]{64}$/.test(env.MEDIA_GATEWAY_SECRET || "")) return unavailable;
   const controller = new AbortController();
   let response: Response | undefined;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -40,20 +44,33 @@ export async function fetchUpstreamJSON(path: string, env: Env): Promise<Upstrea
   const read = async (): Promise<UpstreamJSON> => {
     const key = env.SUPABASE_ANON_KEY || "";
     const base = String(env.SUPABASE_FUNCTIONS_URL || "").replace(/\/+$/, "");
+    // Public metadata requires many fresh DB fences. Colocate those reads;
+    // this is deployment configuration, never a viewer-supplied header.
+    const region = env.SUPABASE_READ_REGION;
     response = await fetch(`${base}${path}`, {
-      method: "GET",
-      headers: { apikey: key, Authorization: `Bearer ${key}`, Accept: "application/json" },
+      method: payload ? "POST" : "GET",
+      headers: { apikey: key, ...(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(key)?{Authorization:`Bearer ${key}`}:{ }), Accept: "application/json",
+        ...(region && READ_REGIONS.has(region) ? { "x-region": region } : {}),
+        ...(gateway ? { "X-Rendprop-Media-Gateway": env.MEDIA_GATEWAY_SECRET! } : {}),
+        ...(payload ? { "Content-Type": "application/json" } : {}) },
+      ...(payload ? {body:JSON.stringify(payload)} : {}),
+      // Publication state must remain fresh; HTML also bypasses customer caches.
+      // `cache: "no-store"` is the whole cache policy for this subrequest. It
+      // must NOT be combined with `cf.cacheTtl`/`cf.cacheEverything`: the
+      // Workers runtime throws `TypeError: CacheTtl: 0, is not compatible with
+      // cache: no-store header` before the request leaves the Worker, which
+      // turned every published tour into a 503 (2026-10-11 incident).
+      cache: "no-store",
       signal: controller.signal,
       // The fixed API route should not redirect. Never forward its auth headers
       // to a Location selected by a bad upstream response.
       redirect: "manual",
-      // Publication state must remain fresh; HTML also bypasses customer caches.
-      cf: { cacheTtl: 0, cacheEverything: false },
     });
     // A nonconforming fetch may resolve after its abort. Do not read late data.
     if (controller.signal.aborted) { cancelBody(); return unavailable; }
     if (response.status === 404) return { kind: "not-found" };
-    if (response.status === 429 || response.status >= 500) return unavailable;
+    if (response.status === 429) return gateway ? {kind:"error",status:429} : unavailable;
+    if (response.status >= 500) return unavailable;
     if (!response.ok || !response.body) return malformed;
 
     reader = response.body.getReader();

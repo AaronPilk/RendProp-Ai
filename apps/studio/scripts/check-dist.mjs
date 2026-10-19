@@ -72,6 +72,17 @@ for (const required of [
 ])
   assert(headers.includes(required));
 assert(!headers.includes("script-src 'self' 'unsafe-inline'"));
+const cspLine = headers.split("\n").find((line) => line.trimStart().startsWith("Content-Security-Policy:"));
+assert(cspLine, "Built Studio must include its content security policy.");
+const cspDirectives = new Map(cspLine.slice(cspLine.indexOf(":") + 1).split(";").map((directive) => {
+  const [name, ...sources] = directive.trim().split(/\s+/);
+  return [name, sources];
+}));
+for (const name of ["img-src", "media-src", "connect-src"]) {
+  const sources = cspDirectives.get(name) ?? [];
+  assert(sources.includes("https://rendprop.com"), `${name} must allow the authenticated Rendprop media gateway.`);
+  assert(!sources.includes("*") && !sources.includes("https:") && !sources.includes("https://*.rendprop.com"), `${name} cannot replace the exact media gateway with a broader origin.`);
+}
 assert.equal(await read("robots.txt"), "User-agent: *\nDisallow: /\n");
 assert(!(await readdir(path.join(root, "dist"))).includes("tests"), "No test entrypoints may be deployed.");
 console.log(

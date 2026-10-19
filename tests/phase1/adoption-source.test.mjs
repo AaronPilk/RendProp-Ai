@@ -26,7 +26,7 @@ test('launch and foreground retry the durable handoff; sign-out discards it thro
   // A signed-out phone has no anonymous source left to hand off; keeping the
   // record made the next Apple sign-in 409 forever. Sign-out must drop it, and
   // only the recovery object may touch the Keychain record (no inline deletes).
-  const signOut = auth.slice(auth.indexOf('func signOut()'), auth.indexOf('func setDisplayName'));
+  const signOut = auth.slice(auth.indexOf('func signOut('), auth.indexOf('func setDisplayName'));
   assert.ok(signOut.includes('discardPendingAdoption()'));
   assert.ok(!signOut.includes('Keys.pendingAdoption'));
 });

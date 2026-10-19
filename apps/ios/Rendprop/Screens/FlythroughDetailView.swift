@@ -13,6 +13,7 @@ import simd
 import UniformTypeIdentifiers
 import AVFoundation   // Reel Studio: composition + stitch + export
 import AVKit          // Reel Studio / Aerial intro: VideoPlayer preview
+import CryptoKit
 
 /// Retains one feature tap while anonymous session creation reconnects. A
 /// second tap cannot enqueue the same paid action twice, and leaving the
@@ -62,34 +63,552 @@ private final class FeatureSessionAction: ObservableObject {
 /// listing's own `allowSearchIndexing`, which is what actually gets sent.
 enum SearchIndexingDefault {
     private static let valueKey = "tour.searchIndexing.default"
-    private static let ownerKey = "tour.searchIndexing.defaultOwner"
 
     /// The current workspace's identity, as far as this device can tell.
     /// Empty before any session exists — which reads as "not the workspace
     /// that saved a default", i.e. OFF.
     @MainActor private static var owner: String {
-        AuthStore.shared.userID ?? ""
+        guard let actor = AuthStore.shared.userID, !actor.isEmpty,
+              let org = WorkspaceContext.selectedOrgID else { return "" }
+        return "\(actor.lowercased()):\(org.uuidString.lowercased())"
     }
 
     @MainActor static var value: Bool {
         let defaults = UserDefaults.standard
-        guard let saved = defaults.string(forKey: ownerKey), !saved.isEmpty, saved == owner else {
-            return false
-        }
-        return defaults.bool(forKey: valueKey)
+        guard !owner.isEmpty else { return false }
+        return defaults.bool(forKey: valueKey + "." + owner)
     }
 
     @MainActor static func remember(_ allowed: Bool) {
+        // Actor-only entries from older builds cannot opt another workspace
+        // into indexing. They read OFF until a choice is made in this scope.
+        guard !owner.isEmpty else { return }
         let defaults = UserDefaults.standard
-        defaults.set(allowed, forKey: valueKey)
-        defaults.set(owner, forKey: ownerKey)
+        defaults.set(allowed, forKey: valueKey + "." + owner)
     }
 }
+
+/// A concrete card keeps its modifier metadata behind one named View type.
+/// The layout, gradient, AI badge and dimming are shared by every tool tile.
+private struct ListingToolCard: View {
+    let title: String
+    let sub: String
+    let icon: String
+    let gradient: LinearGradient
+    var ai = false
+    var dimmed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Color.white)
+                Spacer()
+                if ai { AIPill() }
+            }
+            Spacer(minLength: 8)
+            Text(title)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(Color.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(sub)
+                .font(.caption2)
+                .foregroundStyle(Color.white.opacity(0.88))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.top, 1)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 96)
+        .background(gradient)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        .opacity(dimmed ? 0.45 : 1)
+    }
+}
+
+/// All link tiles have the same small concrete type. Destinations are erased
+/// only inside NavigationLink's builder, so constructing the grid does not
+/// preconstruct screens or perform their appearance/file/network work.
+private struct ListingToolLinkTile: View {
+    let card: ListingToolCard
+    let disabled: Bool
+    let accessibilityID: String
+    let destination: () -> AnyView
+
+    var body: some View {
+        NavigationLink { destination() } label: { card }
+            .buttonStyle(ScalePressStyle())
+            .disabled(disabled)
+            .accessibilityIdentifier(accessibilityID)
+    }
+}
+
+private struct ListingToolButtonTile: View {
+    let card: ListingToolCard
+    let disabled: Bool
+    let accessibilityID: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { card }
+            .buttonStyle(ScalePressStyle())
+            .disabled(disabled)
+            .accessibilityIdentifier(accessibilityID)
+    }
+}
+
+/// This is deliberately a card, not a disabled NavigationLink: a remote tour
+/// cannot be rendered again until its exact source is present on this phone.
+private struct ListingToolUnavailableTile: View {
+    var body: some View {
+        ListingToolCard(title: "Re-render fly-through", sub: "Needs the source video on this phone",
+                        icon: "arrow.clockwise", gradient: RPGradient.drone, dimmed: true)
+            .accessibilityLabel("Re-render fly-through unavailable. Download the source video from Cloud files or add it to this phone.")
+            .accessibilityIdentifier("detail.rerenderUnavailable")
+    }
+}
+
+/// Only app-owned raw recording/import paths can supply a room-tag timeline.
+/// A rendered tour, photo video, cloud render or bundled sample is not a take.
+enum RoomTagWalkthroughPolicy {
+    static func sourceURL(asset: CaptureAsset?, documents: URL, isSample: Bool,
+                          isCurrent: Bool, generatedURLs: [URL] = []) -> URL? {
+        guard isCurrent, !isSample, let asset, asset.localURL.isFileURL,
+              asset.durationS.isFinite, asset.durationS >= 0.2, asset.durationS <= 600,
+              asset.fps.isFinite, asset.fps > 0, asset.width > 0, asset.height > 0,
+              asset.bytes > 0 else { return nil }
+        let url = asset.localURL.standardizedFileURL
+        let base = documents.standardizedFileURL
+        guard !generatedURLs.contains(where: {
+            $0.standardizedFileURL.resolvingSymlinksInPath() == url.resolvingSymlinksInPath()
+        }) else { return nil }
+        let parent = url.deletingLastPathComponent()
+        let name = url.lastPathComponent
+        let isRecording = parent == base.appendingPathComponent("Recordings", isDirectory: true)
+            && name.hasPrefix("walkthrough-") && url.pathExtension.lowercased() == "mov"
+        let importPrefix = "import-"
+        let importParts = String(name.dropFirst(importPrefix.count)).split(separator: "-", maxSplits: 1)
+        let isImport = parent == base.appendingPathComponent("Imports", isDirectory: true)
+            && name.hasPrefix(importPrefix) && importParts.count == 2
+            && importParts[0].utf8.count == 8 && importParts[0].utf8.allSatisfy({
+                (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0)
+            })
+            && !importParts[1].isEmpty
+        guard isRecording || isImport else { return nil }
+        let rawDirectory = isRecording ? "Recordings" : "Imports"
+        guard parent.resolvingSymlinksInPath() == base.resolvingSymlinksInPath()
+            .appendingPathComponent(rawDirectory, isDirectory: true) else { return nil }
+        // Older demo imports had real CaptureAsset rows. Their source name
+        // still identifies the bundled demo rather than the owner's footage.
+        let originalName = isImport ? String(importParts[1]).lowercased() : name.lowercased()
+        guard !["demo.mp4", "sample.mp4", "sample-tour.mp4", "demo-tour.mp4"].contains(originalName),
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true,
+              let size = values.fileSize, Int64(size) == asset.bytes else { return nil }
+        return url
+    }
+}
+
+private struct ListingToolboxGrid: View {
+    let listing: Listing
+    // Preserve the detail screen's live read when a destination is built.
+    let destinationListing: () -> Listing
+    let space: SpaceType
+    let asset: CaptureAsset?
+    let canRerender: Bool
+    let canTagRooms: Bool
+    let hasPublishedTour: Bool
+    let photoCount: Int
+    let openReel: () -> Void
+    let openRoomTagger: () -> Void
+    /// Build 60: one tap for the whole listing — tour, photos, originals,
+    /// disclosures, videos and a details note — as one ZIP (TestFlight 59:
+    /// "the share all feature is supposed to be the FULL package").
+    let sharePackage: () -> Void
+    let hasAnythingToShare: Bool
+
+    private var sample: Bool { listing.isSample }
+    private var createFirst: String { "Create a \(space.spaceNoun) first" }
+    private var photosSub: String {
+        photoCount == 0 ? "Add and brighten" : "\(photoCount) photo\(photoCount == 1 ? "" : "s") · add more"
+    }
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
+                            GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            // Photo management and AI edits remain separate entry points.
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "Photos", sub: sample ? createFirst : photosSub,
+                                      icon: "photo.stack", gradient: RPGradient.photo, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.photos",
+                destination: { AnyView(PhotoStudioView(listing: destinationListing(), entry: .photos)) }
+            )
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "AI Photo Studio", sub: sample ? createFirst : "Declutter · staging · sky",
+                                      icon: "wand.and.stars", gradient: RPGradient.photo, ai: true, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.photoStudio",
+                destination: { AnyView(PhotoStudioView(listing: destinationListing(), entry: .studio)) }
+            )
+            // The existing detail-owned cover reads live photos/aerial on tap.
+            ListingToolButtonTile(
+                card: ListingToolCard(title: "Make a video", sub: sample ? createFirst : "Social media or listing",
+                                      icon: "film.stack", gradient: RPGradient.reel, ai: true, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.reelStudio", action: openReel
+            )
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "Drone-style walkthrough", sub: sample ? createFirst : "Optional · record or upload",
+                                      icon: "video", gradient: RPGradient.drone, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.recordedWalkthrough",
+                destination: { AnyView(RecordedWalkthroughView(listing: destinationListing())) }
+            )
+            ListingToolButtonTile(
+                card: ListingToolCard(title: space == .realEstate ? "Tag rooms" : "Tag areas",
+                                      sub: sample ? createFirst : (canTagRooms ? "Tap-to-jump chapters" : "Add walkthrough first"),
+                                      icon: "mappin.and.ellipse", gradient: RPGradient.rooms, dimmed: !canTagRooms || sample),
+                disabled: sample, accessibilityID: "detail.roomTags", action: openRoomTagger
+            )
+            // Main tools keep four paired rows. The optional re-render action
+            // follows the grid so an existing walkthrough never leaves an orphan.
+            ListingToolCard(title: "Aerial intro", sub: "Coming soon",
+                            icon: "airplane.departure", gradient: RPGradient.aerial, dimmed: true)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("detail.aerialComingSoon")
+            // One entry for plans and measurements, and one for room tours.
+            // Only the explicit TestFlight lab creates either destination.
+#if SPATIAL_CAPTURE_LAB
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "Floor plans & measurements", sub: sample ? createFirst : "Scan · measure · upload",
+                                      icon: "ruler", gradient: RPGradient.plan, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.floorPlanLab",
+                destination: { AnyView(FloorPlanView(listing: destinationListing())) }
+            )
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "3D tours", sub: sample ? createFirst : "Capture & explore rooms",
+                                      icon: "rotate.3d", gradient: RPGradient.drone, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.spatialLab",
+                destination: { AnyView(SpatialTestingHubView(listing: destinationListing())) }
+            )
+#else
+            ListingToolCard(title: "Floor plans & measurements", sub: "Coming soon",
+                            icon: "ruler", gradient: RPGradient.plan, dimmed: true)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("detail.measurementsComingSoon")
+            ListingToolCard(title: "3D tours", sub: "Coming soon",
+                            icon: "rotate.3d", gradient: RPGradient.drone, dimmed: true)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("detail.spatialComingSoon")
+#endif
+        }
+    }
+
+    /// Optional walkthrough actions stay full-width after the paired tools.
+    @ViewBuilder var rerenderTile: some View {
+        if !sample, hasPublishedTour {
+            if let asset, canRerender {
+                ListingToolLinkTile(
+                    card: ListingToolCard(title: "Re-render fly-through", sub: "New render · new sharing link",
+                                          icon: "arrow.clockwise", gradient: RPGradient.drone),
+                    disabled: false, accessibilityID: "detail.rerenderTour",
+                    destination: { AnyView(ReviewSubmitView(listing: destinationListing(), asset: asset)) }
+                )
+            } else {
+                ListingToolUnavailableTile()
+            }
+        }
+    }
+
+    /// The section places sharing after every tool as one full-width row.
+    var sharePackageTile: ListingToolButtonTile {
+        ListingToolButtonTile(
+            card: ListingToolCard(title: "Share everything",
+                                  sub: sample ? createFirst : (hasAnythingToShare ? "On this iPhone · photos · videos · one ZIP" : "Add photos or a tour first"),
+                                  icon: "shippingbox.fill", gradient: RPGradient.share, dimmed: sample || !hasAnythingToShare),
+            disabled: sample || !hasAnythingToShare, accessibilityID: "detail.sharePackage", action: sharePackage
+        )
+    }
+}
+
+private struct RecordedWalkthroughView: View {
+    let listing: Listing
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var workspace = WorkspaceStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var scope = NativePresentationScope(actorID: AuthStore.shared.userID, orgID: WorkspaceContext.selectedOrgID)
+    private var currentListing: Listing { model.listings.first(where: { $0.id == listing.id }) ?? listing }
+    private var isCurrent: Bool {
+        scope.matches(actorID: auth.userID, orgID: WorkspaceContext.selectedOrgID) &&
+        model.listings.contains { $0.id == listing.id && $0.cloudUnavailable != true && model.isInSelectedWorkspace($0) }
+    }
+    private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
+    private var asset: CaptureAsset? { model.assets[listing.id] }
+    private var roomTags: [RoomTag] {
+        let speed = tour?.speedFactor ?? 1
+        guard speed.isFinite, speed > 0 else { return [] }
+        return (asset?.roomTags ?? []).map { RoomTag(name: $0.name, tMs: Int((Double($0.tMs) / speed).rounded())) }
+    }
+    var body: some View {
+        ScrollView {
+            if isCurrent {
+            VStack(alignment: .leading, spacing: Theme.spacing) {
+                Text("Optional recorded walkthrough").font(.rpTitle).foregroundStyle(Theme.ink)
+                Text("Record on your phone or upload existing walkthrough or drone footage. Walk slowly, keep the camera level and steady, and turn gently around corners. A phone gimbal can help smooth doorways and turns.")
+                    .font(.rpBody).foregroundStyle(Theme.inkDim)
+                if let url = tour?.url ?? asset?.localURL {
+                    PlayerWebView(localVideoURL: url, roomTags: roomTags, listing: currentListing)
+                        .frame(height: 460).clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+                }
+                NavigationLink { AddVideoFlowView(listing: currentListing) } label: {
+                    Label("Record or upload footage", systemImage: "video.badge.plus")
+                        .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(14)
+                        .background(Theme.accent).foregroundStyle(.white).clipShape(RoundedRectangle(cornerRadius: 12))
+                }.buttonStyle(ScalePressStyle()).accessibilityIdentifier("walkthrough.addFootage")
+                if let asset {
+                    NavigationLink { ReviewSubmitView(listing: currentListing, asset: asset) } label: {
+                        Label("Review and create the walkthrough", systemImage: "sparkles")
+                    }.accessibilityIdentifier("walkthrough.review")
+                }
+                Text("This recorded video stays separate from the photo-based listing presentation. Adding footage doesn't replace your chosen property video.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }.padding()
+            } else { Text("Your account or listing changed. Reopen the walkthrough from your listing.").padding() }
+        }.background(Theme.bg).navigationTitle("Drone-style walkthrough").navigationBarTitleDisplayMode(.inline)
+        .onChange(of: auth.userID) { _ in if !isCurrent { dismiss() } }
+        .onChange(of: workspace.selected?.id) { _ in if !isCurrent { dismiss() } }
+    }
+}
+
+private struct ListingToolboxSection: View {
+    let grid: ListingToolboxGrid
+    let resumeAerial: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("TOOLBOX").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            grid
+            grid.rerenderTile
+            if let resumeAerial {
+                Button(action: resumeAerial) {
+                    Label("Resume earlier aerial", systemImage: "arrow.clockwise")
+                        .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                }
+                .accessibilityHint("Checks the request already submitted. Does not generate a new aerial.")
+                .accessibilityIdentifier("detail.resumeAerial")
+            }
+            grid.sharePackageTile
+        }
+    }
+}
+
+#if targetEnvironment(simulator)
+/// Cold-launch regression fixture for the real detail screen, including Release
+/// builds. It is unavailable in device archives and requires the offline UI-test
+/// flag. It never restores/persists a customer's library or invokes capture/AI.
+struct DetailMetadataRegressionHost: View {
+    private static let cases: Set<String> = ["empty", "capture", "rich", "missing-source",
+                                             "published-no-source", "sample", "venue", "republish", "republish-stale"]
+    static var requestedCase: String? {
+        guard Config.isUITesting else { return nil }
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-ui.detailMetadataFixture"),
+              index + 1 < arguments.count, cases.contains(arguments[index + 1]) else { return nil }
+        return arguments[index + 1]
+    }
+
+    @EnvironmentObject private var model: AppModel
+    @State private var listing: Listing?
+    @State private var failure: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if Self.requestedCase == "republish-stale", let listing,
+               let current = model.listings.first(where: { $0.id == listing.id }) {
+                Text("Warning: \(current.lastError ?? "none")")
+                    .accessibilityIdentifier("build59.fixture.warning")
+                Text(current.shareURL ?? "missing link")
+                    .accessibilityIdentifier("build59.fixture.link")
+            }
+            if Config.isUITesting && ProcessInfo.processInfo.arguments.contains("-ui.photoWorkFixture") {
+                PhotoWorkBanner()
+            }
+            NavigationStack {
+                if let listing {
+                    FlythroughDetailView(listing: listing)
+                        .toolbar {
+                            if Self.requestedCase == "republish" {
+                                ToolbarItem(placement: .navigationBarLeading) {
+                                    NavigationLink("Fixture Settings") { SettingsView() }
+                                        .accessibilityIdentifier("build58.fixture.settings")
+                                }
+                            }
+                        }
+                } else if let failure {
+                    Text(failure).accessibilityIdentifier("detail.fixtureFailure")
+                } else {
+                    ProgressView("Preparing synthetic detail fixture")
+                }
+            }
+        }
+        .task {
+            guard listing == nil, failure == nil, let requested = Self.requestedCase else { return }
+            do { try await seed(requested) }
+            catch { failure = "Synthetic fixture failed: \(error.localizedDescription)" }
+        }
+    }
+
+    @MainActor private func seed(_ name: String) async throws {
+        var value = Listing(address: "Detail fixture \(name)", beds: 3, baths: 2,
+                            sqft: 1800, price: Money(cents: 45_000_000))
+        value.spaceTypeRaw = name == "venue" ? SpaceType.venue.rawValue : SpaceType.realEstate.rawValue
+        value.isSample = name == "sample"
+        // Infinity keeps synthesized Hashable reflexive; mapCoordinate rejects
+        // it as nonfinite. hasCoordinate + region still prevents geocoding, so
+        // this offline fixture needs no MapKit tile/geocoder request.
+        value.latitude = .infinity; value.longitude = .infinity; value.regionLabel = "Synthetic fixture"
+        value.clientContactLoaded = true
+        if name == "rich" {
+            value.clientContact = ListingClientContact(listingID: value.id, enabled: true,
+                publicCard: ClientPublicCard(name: "Fixture client", brokerage: "Fixture agency"),
+                recipientEmail: "fixture@example.invalid")
+        }
+        let hasCapture = ["capture", "rich", "missing-source", "venue"].contains(name)
+        let hasTour = ["rich", "missing-source", "venue"].contains(name)
+        let hasAerial = ["rich", "missing-source"].contains(name)
+        let photoCount = name == "rich" ? 3 : (["missing-source", "published-no-source", "venue"].contains(name) ? 1 : 0)
+        var video: URL?
+        if hasCapture || hasTour || hasAerial {
+            video = try await Self.makeSyntheticVideo(listingID: value.id)
+        }
+        if hasCapture, let video {
+            let source: URL
+            if name == "missing-source" {
+                source = FileStore.recordingsDir.appendingPathComponent("missing-fixture-\(value.id).mp4")
+            } else {
+                source = try await Self.makeSyntheticVideo(listingID: value.id, rawRecording: true)
+            }
+            let sourceBytes = name == "missing-source" ? FileStore.fileSize(video) : FileStore.fileSize(source)
+            model.assets[value.id] = CaptureAsset(localURL: source, durationS: 2, fps: 10,
+                                                 width: 64, height: 64, bytes: sourceBytes)
+        }
+        if hasTour, let video {
+            model.tours[value.id] = AppModel.RenderedTour(url: video, durationS: 2, speedFactor: 1.25)
+            value.status = .ready
+        }
+        if ["published-no-source", "republish", "republish-stale"].contains(name) {
+            // A syntactically valid fake share link selects the share branch.
+            // The suite never opens a browser, QR, share sheet or publish action.
+            value.shareSlug = "metadata-fixture"
+            value.shareURL = "https://example.invalid/f/metadata-fixture"
+            value.status = .ready
+        }
+        if hasAerial, let video {
+            let aerial = FileStore.aerialsDir.appendingPathComponent("\(value.id)-fixture.mp4")
+            try FileManager.default.copyItem(at: video, to: aerial)
+            value.aerialRelPath = FileStore.relativePath(for: aerial)
+            value.aerialGeneratedAt = Date()
+        }
+        if photoCount > 0 {
+            let directory = EnhancedPhoto.directory(for: value.id)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let legacyPhotoPairs = name == "rich" && Config.isOfflineAccountFixture
+                && (model.api is MockAPIClient)
+                && ProcessInfo.processInfo.arguments.contains("-ui.legacyPhotoPairs")
+            for index in 0..<photoCount {
+                let image = UIGraphicsImageRenderer(size: CGSize(width: 640, height: 480)).image { context in
+                    UIColor(hue: CGFloat(index) / 3, saturation: 0.35, brightness: 0.8, alpha: 1).setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 640, height: 480))
+                    UIColor.white.setFill(); context.fill(CGRect(x: 80, y: 100, width: 480, height: 280))
+                }
+                guard let jpeg = image.jpegData(compressionQuality: 0.85) else { throw FixtureError.image }
+                let id = "fixture-\(index)"
+                if legacyPhotoPairs {
+                    // Real pre-history pairs stay unverified; the normal rich fixture is unchanged.
+                    try PhotoCaptureStorage.writePair(original: jpeg, enhanced: jpeg, id: id, directory: directory)
+                } else if name == "rich", index == 0 {
+                    let base = "fixture-base-0"
+                    try PhotoVersionHistory.saveCapture(original: jpeg, enhanced: jpeg, id: base, directory: directory)
+                    _ = try PhotoVersionHistory.saveEdit(jpeg: jpeg, id: id, parentID: base, sourceID: base,
+                        edit: "stage", style: "modern", disclosure: "Virtually staged synthetic UI fixture.",
+                        provenanceID: nil, provenanceRecorded: false, directory: directory)
+                    try PhotoVersionHistory.select(id: id, directory: directory, reviewed: true)
+                } else {
+                    try PhotoVersionHistory.saveCapture(original: jpeg, enhanced: jpeg, id: id, directory: directory)
+                }
+            }
+        }
+        if ["republish", "republish-stale"].contains(name) {
+            guard model.api is MockAPIClient else { throw FixtureError.image }
+            try WorkspaceStore.shared.prepareBuild58FixtureLibrary()
+            value.serverID = UUID(uuidString: "b5800000-0000-4000-8000-000000000001")
+            value.serverOrgID = WorkspaceContext.selectedOrgID
+            value.cloudSyncOwnerID = AuthStore.shared.userID.flatMap(UUID.init(uuidString:))
+            value.needsServerSync = false
+            if name == "republish-stale" { value.lastError = "stale" }
+        }
+        // AppModel.load is deliberately never called by this host. Its
+        // hasLoaded guard keeps these transient fixtures out of PersistentStore.
+        model.listings = [value]
+        listing = value
+    }
+
+    private enum FixtureError: Error { case image, video }
+
+    /// Procedural silent video: no camera, microphone, bundled house footage or
+    /// remote asset. It exercises real AVFoundation/PlayerWebView metadata.
+    @MainActor private static func makeSyntheticVideo(listingID: UUID, rawRecording: Bool = false) async throws -> URL {
+        // A recorded source and its rendered tour have separate identities.
+        let name = rawRecording ? "walkthrough-metadata-fixture-\(listingID).mov" : "metadata-fixture-\(listingID).mp4"
+        let url = FileStore.recordingsDir.appendingPathComponent(name)
+        let writer = try AVAssetWriter(outputURL: url, fileType: rawRecording ? .mov : .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input,
+            sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
+                                         kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 64])
+        guard writer.canAdd(input) else { throw FixtureError.video }
+        writer.add(input)
+        guard writer.startWriting() else { throw writer.error ?? FixtureError.video }
+        writer.startSession(atSourceTime: .zero)
+        var buffer: CVPixelBuffer?
+        guard CVPixelBufferCreate(kCFAllocatorDefault, 64, 64, kCVPixelFormatType_32ARGB, nil, &buffer) == kCVReturnSuccess,
+              let buffer else { throw FixtureError.video }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        if let address = CVPixelBufferGetBaseAddress(buffer) {
+            memset(address, 120, CVPixelBufferGetBytesPerRow(buffer) * 64)
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        for index in 0..<20 {
+            var checks = 0
+            while !input.isReadyForMoreMediaData, checks < 300 {
+                try await Task.sleep(nanoseconds: 10_000_000)
+                checks += 1
+            }
+            guard input.isReadyForMoreMediaData,
+                  adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(index), timescale: 10)) else {
+                writer.cancelWriting(); throw writer.error ?? FixtureError.video
+            }
+        }
+        input.markAsFinished()
+        await withCheckedContinuation { continuation in writer.finishWriting { continuation.resume() } }
+        guard writer.status == .completed else { throw writer.error ?? FixtureError.video }
+        return url
+    }
+}
+#endif
 
 struct FlythroughDetailView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var workspace = WorkspaceStore.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var presentationScope = NativePresentationScope(
+        actorID: AuthStore.shared.userID, orgID: WorkspaceContext.selectedOrgID)
     // LOAD-BEARING: the business type drives every noun, the Zillow/sold gating
     // and which listings exist at all. Switching type while this screen is
     // pushed used to leave a HOUSE open inside Gym mode, still showing
@@ -112,12 +631,16 @@ struct FlythroughDetailView: View {
     @State private var zillowSeeded = false
     @State private var zillowError: String?
     @State private var showRoomTagger = false
+    @State private var showRoomTagsWalkthroughHelp = false
+    @State private var showWalkthroughForRoomTags = false
+    @State private var availableRoomTagAsset: CaptureAsset?
     /// Drives the photos screen when this view was opened photos-first.
     @State private var showPhotosScreen = false
     @State private var didAutoOpenPhotos = false
     @State private var tagsBeforeEdit: [RoomTag] = []
     @State private var chapterSyncNote: String?
     @State private var playerRefresh = UUID()
+    @State private var websiteVideoPlayer: AVPlayer?
     @State private var showAerialIntro = false
     /// The toolbox's "Make a reel" tile presents Reel Studio DIRECTLY now.
     ///
@@ -130,6 +653,7 @@ struct FlythroughDetailView: View {
     /// screen; the tile goes there.
     @State private var showReelStudio = false
     @State private var showEdit = false
+    @State private var showListingFactsReview = false
     @State private var showDeleteConfirm = false
     @State private var isDeleting = false
     /// Which of the two links a QR sheet is being shown for (nil = none).
@@ -137,6 +661,12 @@ struct FlythroughDetailView: View {
     @StateObject private var connection = FeatureSessionAction()
     @State private var isPublishing = false
     @State private var publishFailure: AIFailure?
+    /// "Republish tour" (build 58): pushes this phone's facts, photos and video
+    /// to the live page without changing the link.
+    @State private var isRepublishing = false
+    @State private var republishFailure: AIFailure?
+    @State private var republishedAt: Date?
+    @ObservedObject private var publishUploads = UploadManager.shared
     /// "List this tour on Google". Seeded in `onAppear` from this listing's own
     /// answer, or from the workspace default when it has never been asked.
     @State private var listOnGoogle = false
@@ -144,21 +674,31 @@ struct FlythroughDetailView: View {
 
     // MARK: Compliance (W2-C2) — the org's AI provenance rows for THIS listing
     @State private var provenance: [ProvenanceRecord] = []
+    @State private var provenanceCanExport: (() -> Bool)?
     @State private var isLoadingProvenance = false
     @State private var provenanceError: String?
     @State private var isExportingAudit = false
     @State private var auditExport: AuditExport?
     @State private var complianceNote: String?
     @State private var isSavingOriginals = false
+    @State private var showComplianceDetails = false
 
     // MARK: Files (the 4,000 sq ft field test)
     /// Every file this listing has produced, read off disk on appear. NOT computed
     /// inside `body`: a directory scan per re-render is exactly what
     /// `PhotoStudioView.loadExisting()` avoids by loading into state once.
     @State private var mediaItems: [ListingMediaItem] = []
+    /// Checked off the main thread, never by repeated filesystem reads in body.
+    @State private var availableRerenderSource: URL?
     /// The file being viewed. ONE binding for every kind — `ListingFileViewer`
     /// switches internally — so `body` grows a single presentation modifier.
     @State private var openedFile: ListingMediaItem?
+    @State private var filePhotoExport: PhotoExportSelection?
+    @State private var filePhotoExportAdmission: (() -> Bool)?
+    /// Build 60 "Share everything": the videos, scan and details note that
+    /// ride along with the photos in the export sheet. Empty for photos only.
+    @State private var filePackageExtras: [PhotoExportRenderer.Extra] = []
+    @State private var packageError: String?
     /// Result of a Save-to-Photos from the files list (success or the reason it
     /// failed), shown under the section rather than in an alert. `filesNoteOK`
     /// only decides the icon and the colour — a green tick reads as done from
@@ -194,6 +734,27 @@ struct FlythroughDetailView: View {
         model.listings.first(where: { $0.id == listing.id }) ?? listing
     }
 
+    private var hasCurrentPresentationContext: Bool {
+        presentationScope.matches(actorID: auth.userID, orgID: WorkspaceContext.selectedOrgID)
+    }
+
+    /// Clear only this screen's presentation. Shared admitted jobs and their
+    /// account/workspace completion fences continue to own background work.
+    private func invalidatePresentation() {
+        websiteVideoPlayer?.pause(); websiteVideoPlayer = nil
+        filesTask?.cancel(); filesTask = nil; filesStamp = nil
+        mediaItems = []; availableRerenderSource = nil; openedFile = nil
+        filePhotoExport = nil; filePhotoExportAdmission = nil; filePackageExtras = []; packageError = nil
+        provenance = []; provenanceCanExport = nil; auditExport = nil
+        showComplianceDetails = false
+        showPhotosScreen = false; showRoomTagger = false; showReelStudio = false
+        showRoomTagsWalkthroughHelp = false; showWalkthroughForRoomTags = false; availableRoomTagAsset = nil
+        showAerialIntro = false; showEdit = false; showListingFactsReview = false
+        qrTarget = nil
+        connection.cancel()
+        dismiss()
+    }
+
     /// The business type this screen speaks in. Samples carry no spaceTypeRaw
     /// (they are reseeded per type), so they follow the current selection.
     private var space: SpaceType {
@@ -204,11 +765,11 @@ struct FlythroughDetailView: View {
     /// and the player refreshes.
     private var roomTagsBinding: Binding<[RoomTag]> {
         Binding(
-            get: { model.assets[listing.id]?.roomTags ?? [] },
+            get: { self.roomTagAsset?.roomTags ?? [] },
             set: { newTags in
-                if var a = model.assets[listing.id] {
+                if var a = self.roomTagAsset {
                     a.roomTags = newTags
-                    model.assets[listing.id] = a
+                    self.model.assets[self.listing.id] = a
                 }
             }
         )
@@ -248,43 +809,49 @@ struct FlythroughDetailView: View {
 
     // MARK: - end router additions
 
-    /// Toolbox mini feature card — the feature's signature gradient (same one
-    /// it wears on Home), white icon, name, and a short promise.
-    private func toolCard(_ title: String, _ sub: String, _ icon: String,
-                          _ gradient: LinearGradient, ai: Bool = false,
-                          dimmed: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                Image(systemName: icon)
-                    .font(.system(size: 20, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(Color.white)
-                Spacer()
-                if ai { AIPill() }
-            }
-            Spacer(minLength: 8)
-            Text(title)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            Text(sub)
-                .font(.caption2)
-                .foregroundStyle(Color.white.opacity(0.88))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .padding(.top, 1)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 96)
-        .background(gradient)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-        .opacity(dimmed ? 0.45 : 1)
-    }
-
     private var asset: CaptureAsset? { model.assets[listing.id] }
     private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
+
+    private var hasCurrentRoomTagContext: Bool {
+        hasCurrentPresentationContext && model.listings.contains {
+            $0.id == listing.id && !$0.isSample && $0.cloudUnavailable != true && model.isInSelectedWorkspace($0)
+        }
+    }
+
+    private var roomTagGeneratedURLs: [URL] {
+        [tour?.url, selectedWebsiteVideoURL, currentListing.aerialURL].compactMap { $0 }
+    }
+
+    /// Recheck on entry and tag writes; a cached tile cannot authorize a file
+    /// that was deleted, replaced or moved to another account while open.
+    private var roomTagAsset: CaptureAsset? {
+        guard let asset, RoomTagWalkthroughPolicy.sourceURL(asset: asset, documents: FileStore.documents,
+            isSample: currentListing.isSample, isCurrent: hasCurrentRoomTagContext,
+            generatedURLs: roomTagGeneratedURLs) != nil else { return nil }
+        return asset
+    }
+
+    private var canTagRooms: Bool {
+        guard hasCurrentRoomTagContext, let asset, let checked = availableRoomTagAsset else { return false }
+        return checked.id == asset.id && checked.localURL == asset.localURL
+    }
+
+    private func openRoomTags() {
+        guard hasCurrentRoomTagContext else { return }
+        guard let source = roomTagAsset else {
+            availableRoomTagAsset = nil
+            showRoomTagsWalkthroughHelp = true
+            return
+        }
+        tagsBeforeEdit = source.roomTags
+        showRoomTagger = true
+    }
+
+    private func openWalkthroughForRoomTags() {
+        guard hasCurrentRoomTagContext else { return }
+        showRoomTagsWalkthroughHelp = false
+        showWalkthroughForRoomTags = true
+    }
 
     private var mapCoordinate: CLLocationCoordinate2D? {
         let l = currentListing
@@ -311,6 +878,15 @@ struct FlythroughDetailView: View {
 
     /// Prefer the rendered tour; fall back to the raw capture.
     private var playbackURL: URL? { tour?.url ?? asset?.localURL }
+
+    private var selectedWebsiteVideoURL: URL? {
+        guard let selected = currentListing.websiteVideo, selected.listingID == listing.id,
+              selected.ownerID == auth.userID, selected.workspaceID == WorkspaceContext.selectedOrgID,
+              selected.serverListingID == currentListing.serverID,
+              let url = try? ListingVideoStore.fileURL(selected, documents: FileStore.documents),
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
 
     /// The tour's retime factor, sanitized: a 0/NaN factor would trap the
     /// integer conversions below (F-A-26), so anything degenerate reads as 1×.
@@ -341,29 +917,51 @@ struct FlythroughDetailView: View {
 
     var body: some View {
         ScrollView {
+            if hasCurrentPresentationContext {
             VStack(spacing: Theme.spacing) {
-                if space == .realEstate && !currentListing.isSample {
-                    NavigationLink { ProductionPlanView(listing: currentListing) } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "checklist").font(.title2)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Plan your video").font(.rpHeadline)
-                                Text("Choose a format, collect your shots, continue in Studio.")
-                                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.caption.weight(.bold))
-                        }
-                        .padding(16).background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    .accessibilityIdentifier("listing.productionPlan")
+                if !currentListing.isSample {
+                    Button { showEdit = true } label: {
+                        Label("Manage listing details", systemImage: "pencil")
+                            .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
+                            .padding().background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: Theme.radius))
+                    }.foregroundStyle(Theme.accent).accessibilityIdentifier("listing.editDetails")
                 }
+                if !currentListing.isSample && listingFactsNeedReview {
+                    ListingFactsReviewCard { showListingFactsReview = true }
+                }
+                if let notice = model.cloudPhotoNotice(for: listing.id) {
+                    Text(notice).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("listing.photoCoverPreserved")
+                }
+                toolboxSection
                 tourSection
+                if let smoothing = tour?.motionSmoothing {
+                    Text(smoothing == "unavailable"
+                         ? "Motion smoothing wasn't available for this footage. Preview the video before sharing."
+                         : smoothing == "applied"
+                         ? "Camera-shake correction applied. Preview the video to check walking movement and framing."
+                         : "The video had little measured shake. Preview the movement before sharing.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !currentListing.isSample { ListingClientContactSummary(listing: currentListing) }
+                if !currentListing.isSample {
+                    NavigationLink { WebsiteDesignPickerView(listing: currentListing) } label: {
+                        nextStepHeader("rectangle.3.group", "Website design", "Choose the look of this property's website.")
+                            .padding(14).background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
+                    }.buttonStyle(ScalePressStyle()).accessibilityIdentifier("listing.websiteDesign")
+                }
                 if let shareURL {
                     shareSection(shareURL)
                 } else {
                     nextStepCard
                 }
+                filesSection
+                performanceSection
+                infoSection
+                detailsSection
+                mapSection
                 searchIndexingCard
                 if !currentListing.isSample, currentListing.serverID != nil {
                     NavigationLink { CloudMediaView(listing: currentListing) } label: {
@@ -373,26 +971,28 @@ struct FlythroughDetailView: View {
                     }
                 }
                 complianceSection
-                toolboxSection
-                filesSection
                 if !currentListing.isSample {
                     manageSection
+                    DesktopStudioCard().padding(16)
+                        .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.radius))
                 }
-                performanceSection
-                infoSection
-                detailsSection
-                mapSection
             }
             .padding()
+            .askAI(.listing, listingID: listing.id)
+            } else {
+                Text("Your account or workspace changed. Reopen the listing from your current workspace.")
+                    .font(.rpBody).foregroundStyle(Theme.inkDim).padding()
+            }
         }
         .background(Theme.bg)
-        .navigationTitle(currentListing.address)
+        .navigationTitle(hasCurrentPresentationContext ? currentListing.address : "Listing")
         .navigationBarTitleDisplayMode(.inline)
-        .askAI(.listing)
-        .disabled(isDeleting || connection.isWaiting)
+        .task { await refreshClientContactIfCurrent() }
+        .disabled(!hasCurrentPresentationContext || isDeleting || connection.isWaiting)
         .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
-        .onDisappear { connection.cancel() }
+        .onDisappear { connection.cancel(); filesTask?.cancel(); filesTask = nil }
         .onAppear {
+            guard hasCurrentPresentationContext else { invalidatePresentation(); return }
             // Seed the Zillow field ONCE — re-seeding on every appearance wiped
             // an in-progress paste when a sheet closed (F-A-26).
             if !zillowSeeded {
@@ -403,7 +1003,7 @@ struct FlythroughDetailView: View {
             // otherwise the workspace default (which is OFF until somebody
             // says otherwise).
             if !listOnGoogleSeeded {
-                listOnGoogle = currentListing.allowSearchIndexing ?? SearchIndexingDefault.value
+                listOnGoogle = currentListing.allowSearchIndexing ?? false
                 listOnGoogleSeeded = true
             }
             // Photos-first: push the photo library the moment this screen
@@ -425,8 +1025,38 @@ struct FlythroughDetailView: View {
         .navigationDestination(isPresented: $showPhotosScreen) {
             PhotoStudioView(listing: currentListing, entry: .photos)
         }
-        .fullScreenCover(item: $openedFile) { item in
-            ListingFileViewer(item: item)
+        .navigationDestination(isPresented: $showWalkthroughForRoomTags) {
+            if hasCurrentRoomTagContext { RecordedWalkthroughView(listing: currentListing) }
+        }
+        .alert("Add a walkthrough first", isPresented: $showRoomTagsWalkthroughHelp) {
+            Button("Open walkthrough") { openWalkthroughForRoomTags() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Record or upload a drone-style walkthrough before tagging rooms or areas. Tags follow that video's timeline. A photo-based listing video or sample tour doesn't add walkthrough footage.")
+        }
+        .fullScreenCover(item: $openedFile, onDismiss: { loadFiles(force: true) }) { item in
+            ListingFileViewer(item: item, listingID: listing.id)
+        }
+        .alert("Couldn't prepare the listing package", isPresented: Binding(get: { packageError != nil }, set: { if !$0 { packageError = nil } })) {
+            Button("OK", role: .cancel) { packageError = nil }
+        } message: {
+            Text(packageError ?? "")
+        }
+        .sheet(item: $filePhotoExport, onDismiss: { filePackageExtras = [] }) { selection in
+            // Build 58: originals ride along by default (the toggle stays) — a
+            // download should carry the AI disclosure AND the unaltered source.
+            // Build 60: "Share everything" adds the videos and a details note.
+            PhotoExportSheet(photos: selection.photos, includeOriginals: true,
+                             archiveName: currentListing.address, extras: filePackageExtras,
+                             coordinatorPackage: !filePackageExtras.isEmpty,
+                             canExport: filePhotoExportAdmission ?? { false },
+                             onExported: PhotoFeedbackQueue.recordExport)
+        }
+        .onChange(of: auth.userID) { _ in
+            if !hasCurrentPresentationContext { invalidatePresentation() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            if !hasCurrentPresentationContext { invalidatePresentation() }
         }
         // "Make a reel" opens REEL STUDIO, with this listing's photos and its
         // aerial intro — the same two things `PhotoStudioView` used to hand it
@@ -445,20 +1075,45 @@ struct FlythroughDetailView: View {
         // this screen stayed put, so the FILES scan cannot trust its stamp.
         .fullScreenCover(isPresented: $showReelStudio, onDismiss: { loadFiles(force: true) }) {
             ReelStudioView(listing: currentListing,
-                           photos: EnhancedPhoto.loadAll(listingID: currentListing.id),
+                           photos: (try? EnhancedPhoto.loadForListing(listingID: currentListing.id)) ?? [],
                            extraClipURLs: currentListing.aerialURL.map { [$0] } ?? [])
                 .environmentObject(model)
         }
         .task { await loadCompliance() }
+        .task(id: asset?.localURL) {
+            availableRerenderSource = nil
+            let expectedScope = presentationScope
+            guard hasCurrentPresentationContext else { return }
+            guard let source = asset?.localURL, source.isFileURL else { return }
+            let exists = await Task.detached(priority: .utility) {
+                FileManager.default.fileExists(atPath: source.path)
+            }.value
+            guard !Task.isCancelled, exists, expectedScope == presentationScope,
+                  hasCurrentPresentationContext, asset?.localURL == source else { return }
+            availableRerenderSource = source
+        }
+        .task(id: asset) {
+            availableRoomTagAsset = nil
+            let expectedScope = presentationScope
+            guard hasCurrentRoomTagContext, let source = asset else { return }
+            let documents = FileStore.documents, generated = roomTagGeneratedURLs
+            let url = await Task.detached(priority: .utility) {
+                RoomTagWalkthroughPolicy.sourceURL(asset: source, documents: documents,
+                    isSample: false, isCurrent: true, generatedURLs: generated)
+            }.value
+            guard !Task.isCancelled, url != nil, expectedScope == presentationScope,
+                  hasCurrentRoomTagContext, asset == source else { return }
+            availableRoomTagAsset = source
+        }
         .onChange(of: spaceTypeRaw) { _ in
             // The list this screen was opened from no longer contains this
             // listing — go back rather than showing another industry's detail.
             if !currentListing.belongsToCurrentType { dismiss() }
         }
         .sheet(isPresented: $showRoomTagger, onDismiss: roomTaggerDismissed) {
-            if let a = asset {
+            if let a = roomTagAsset {
                 RoomTaggerView(videoURL: a.localURL, tags: roomTagsBinding,
-                               suggest: roomTagSuggestSource)
+                               suggest: roomTagSuggestSource, listingID: listing.id)
             }
         }
         // `force`: this is the one presentation that can have written a file
@@ -474,6 +1129,9 @@ struct FlythroughDetailView: View {
         .sheet(isPresented: $showEdit) {
             ListingEditSheet(listing: currentListing)
                 .environmentObject(model)
+        }
+        .sheet(isPresented: $showListingFactsReview) {
+            ListingFactsReviewSheet(listingID: listing.id)
         }
         .sheet(item: $qrTarget) { target in
             QRShareSheet(url: target.url, title: currentListing.address,
@@ -513,10 +1171,35 @@ struct FlythroughDetailView: View {
 
     private var tourSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(playbackURL != nil ? "YOUR TOUR" : "SAMPLE TOUR")
+            Text(currentListing.isSample ? "SAMPLE TOUR" : "LISTING VIDEO")
                 .font(.rpKicker).foregroundStyle(Theme.inkDim)
             Group {
-                if currentListing.isSample, space != .realEstate, !PlayerWebView.bundledDemoAvailable,
+                if currentListing.websiteVideoRelPath != nil {
+                    if let selectedWebsiteVideoURL {
+                        VideoPlayer(player: websiteVideoPlayer)
+                            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                            .task(id: currentListing.websiteVideo?.id) {
+                                websiteVideoPlayer?.pause()
+                                guard hasCurrentPresentationContext else { return }
+                                websiteVideoPlayer = AVPlayer(url: selectedWebsiteVideoURL)
+                            }
+                            .onDisappear { websiteVideoPlayer?.pause() }
+                    } else {
+                        Text("Your selected listing video isn't available on this phone. The published page is unchanged; reopen Make a video to choose a saved file.")
+                            .font(.rpBody).foregroundStyle(Theme.inkDim).padding()
+                    }
+                } else if !currentListing.isSample {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Your property video starts with photos", systemImage: "photo.on.rectangle")
+                            .font(.rpHeadline).foregroundStyle(Theme.ink)
+                        Text("Add and polish property photos, then choose Listing in Make a video. Your landscape video becomes this listing's presentation; a recorded walkthrough is an optional separate tool.")
+                            .font(.rpBody).foregroundStyle(Theme.inkDim)
+                        PrimaryButton(title: "Make a listing video", systemImage: "film.stack") {
+                            showReelStudio = true
+                        }
+                        .accessibilityIdentifier("listing.primaryVideoStart")
+                    }.padding()
+                } else if currentListing.isSample, space != .realEstate, !PlayerWebView.bundledDemoAvailable,
                    let demo = PlayerWebView.hostedDemoEmbedURL(for: space) {
                     // A build WITHOUT player/demo.mp4: a venue's / bar's / gym's
                     // sample plays the hosted demo flythrough presented as a
@@ -531,13 +1214,13 @@ struct FlythroughDetailView: View {
                 }
             }
                 .id(playerRefresh)
-                .frame(height: 460)
+                .frame(height: currentListing.isSample ? 460 : 230)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                         .strokeBorder(Theme.border)
                 )
-            Text(tourCaption)
+            Text(currentListing.isSample ? tourCaption : currentListing.websiteVideoRelPath != nil ? "Selected for this listing's website. Publish or Republish to update the live page. Your recorded walkthrough stays separate." : "A photo-based listing video is the main presentation. Open Drone-style walkthrough for recorded footage.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
         }
@@ -561,17 +1244,17 @@ struct FlythroughDetailView: View {
             Text("SHARE").font(.rpKicker).foregroundStyle(Theme.inkDim)
 
             linkCard(
-                url: url,
+                url: DeepLink.buyerWebsiteURL(from: url) ?? url,
                 icon: "person.text.rectangle.fill",
                 tint: Theme.accent,
                 name: "Your link",
                 blurb: "\(space.profileCardName) + lead capture. Email, social, texts, QR.",
                 shareSubject: currentListing.address,
-                shareMessage: "Fly through \(currentListing.address) — scroll to walk the \(space.spaceNoun).",
+                shareMessage: "See photos and the property video for \(currentListing.address).",
                 shareTitle: "Share your link",
                 qrCaption: space == .realEstate
-                    ? "Scan to open your branded tour — flyers, sign riders, open-house sheets."
-                    : "Scan to open your branded tour — flyers, counter cards, the front window.")
+                    ? "Scan to open your property website — flyers, sign riders, open-house sheets."
+                    : "Scan to open your property website — flyers, counter cards, the front window.")
 
             if let mls = currentListing.serverUnbrandedURL {
                 linkCard(
@@ -593,8 +1276,77 @@ struct FlythroughDetailView: View {
                     .foregroundStyle(Theme.inkDim)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            republishCard
         }
     }
+
+    /// Build 58. Facts and photos already reach the page as they sync, but an
+    /// agent who just changed something wants to SEE it go live, and a re-shot
+    /// walkthrough has to be pushed on purpose. One button does all of it and
+    /// keeps the link: the server moves the tour in place (republish_render).
+    private var republishCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Made changes?")
+                        .font(.rpHeadline)
+                        .foregroundStyle(Theme.ink)
+                    Text(currentListing.websiteVideoRelPath != nil
+                         ? "Republish sends the selected listing video, details and photos to the live website. Your links stay the same; the optional recorded walkthrough stays separate."
+                         : "Republish sends this phone's latest details, photos and walkthrough to the live page. Your links stay the same — flyers, QR codes and the MLS field keep working.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            if let failure = republishFailure {
+                AIFailureCard(failure: failure,
+                              retryHint: "Tap Republish tour to try again.",
+                              quotaFeature: "renders",
+                              onReconnect: { republishNow() })
+            }
+            if isRepublishing {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text(tour == nil
+                         ? "Republishing — sending your latest details and photos."
+                         : "Republishing — sending your latest details, photos and walkthrough. Keep the app open.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+                .accessibilityIdentifier("detail.republishing")
+            } else {
+                Button { republishNow() } label: {
+                    Label(republishFailure == nil ? "Republish tour" : "Retry republish", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Theme.accentSoft)
+                        .foregroundStyle(Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(ScalePressStyle())
+                .disabled(!model.isInSelectedWorkspace(currentListing) || currentListing.cloudUnavailable == true || isPublishing)
+                .accessibilityIdentifier("detail.republish")
+            }
+            if let stamp = republishedAt ?? currentListing.lastRepublishedAt {
+                Label("Live page updated \(Self.republishStamp.localizedString(for: stamp, relativeTo: Date()))", systemImage: "checkmark.circle.fill")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.good)
+                    .accessibilityIdentifier("detail.republished")
+            }
+        }
+        .padding(14)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+    private static let republishStamp = RelativeDateTimeFormatter()
 
     /// One labelled link: what it is, the URL itself, Copy / QR, and Share.
     /// `warning` renders the MLS one-liner under the row.
@@ -692,16 +1444,16 @@ struct FlythroughDetailView: View {
     // stranger can arrive at it through a search box.
 
     @ViewBuilder private var searchIndexingCard: some View {
-        if !currentListing.isSample, tour != nil || shareURL != nil {
+        if !currentListing.isSample, tour != nil || currentListing.websiteVideoRelPath != nil || shareURL != nil {
             VStack(alignment: .leading, spacing: 10) {
                 Text("SEARCH").font(.rpKicker).foregroundStyle(Theme.inkDim)
                 Toggle(isOn: Binding(get: { listOnGoogle },
                                      set: { setListOnGoogle($0) })) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("List this tour on Google")
+                        Text("Allow this published property to appear in search engines")
                             .font(.rpBody.weight(.semibold))
                             .foregroundStyle(Theme.ink)
-                        Text("Turning this on lets Google show this page, which makes the address and your \(space.profileCardName.lowercased()) — your name, phone and email — findable by anyone searching. Your leads, your files and your other tours stay private either way, and your link keeps working whether it's on or off.")
+                        Text("Turning this on lets search engines show this page, which makes the address and your \(space.profileCardName.lowercased()) — your name, phone and email — findable by anyone searching. Your leads, your files and your other tours stay private either way, and your link keeps working whether it's on or off.")
                             .font(.rpCaption)
                             .foregroundStyle(Theme.inkDim)
                             .fixedSize(horizontal: false, vertical: true)
@@ -710,8 +1462,8 @@ struct FlythroughDetailView: View {
                 .tint(Theme.accent)
                 .accessibilityIdentifier("listing.listOnGoogle")
                 Text(shareURL == nil
-                     ? "Off unless you turn it on. We'll remember your answer as the default for your next tour."
-                     : "Changing this updates your live page. We'll remember your answer as the default for your next tour.")
+                     ? "Off unless you choose it for this property. Your shared link works either way."
+                     : "Changing this updates the search preference for this property. Search engines decide when to index it.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
@@ -745,13 +1497,30 @@ struct FlythroughDetailView: View {
     @ViewBuilder private var nextStepCard: some View {
         if currentListing.isSample {
             sampleCard
-        } else if tour != nil {
+        } else if tour != nil || currentListing.websiteVideoRelPath != nil {
             publishCard
-        } else if let a = asset {
-            createTourCard(a)
         } else {
-            addVideoCard
+            startListingVideoCard
         }
+    }
+
+    private var startListingVideoCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            nextStepHeader("photo.on.rectangle", "Build your listing presentation",
+                "Add property photos, polish the ones you want, then make a landscape Listing video. Review it and choose Use on listing website before publishing.")
+            lastErrorBanner
+            NavigationLink { PhotoStudioView(listing: currentListing, entry: .photos) } label: {
+                nextStepLabel("Add or review photos", "photo.stack")
+            }.buttonStyle(ScalePressStyle()).accessibilityIdentifier("listing.startPhotos")
+            Button { showReelStudio = true } label: {
+                Label("Make a listing video", systemImage: "film.stack")
+                    .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 12)
+                    .background(Theme.card).foregroundStyle(Theme.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }.buttonStyle(ScalePressStyle()).accessibilityIdentifier("listing.startVideo")
+            Text("Recording or uploading a drone-style walkthrough is optional. Its separate tool is in the toolbox.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }.padding(14).background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
     }
 
     @ViewBuilder private var lastErrorBanner: some View {
@@ -789,6 +1558,16 @@ struct FlythroughDetailView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
+    private var publishCellularParked: Bool {
+        guard publishUploads.pendingCellularConfirmation,
+              let upload = publishUploads.state, upload.status == .queued,
+              upload.role == "render", upload.listingID == currentListing.serverID,
+              upload.listingLocalID == nil || upload.listingLocalID == listing.id,
+              upload.filePath == (currentListing.websiteVideo?.relativePath ?? tour.map { FileStore.relativePath(for: $0.url) }),
+              model.isInSelectedWorkspace(currentListing), currentListing.cloudUnavailable != true else { return false }
+        return true
+    }
+
     private var hasPublishProblem: Bool {
         publishFailure != nil || !(currentListing.lastError ?? "").isEmpty
     }
@@ -812,9 +1591,16 @@ struct FlythroughDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 4)
+            } else if publishCellularParked {
+                Text("Your video is saved. Publishing will continue on Wi-Fi, or you can approve this upload on cellular.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button { publishNow(cellularApproved: true) } label: {
+                    nextStepLabel("Upload now on cellular", "antenna.radiowaves.left.and.right")
+                }.buttonStyle(ScalePressStyle())
+                    .accessibilityIdentifier("phase1.publishCellular")
             } else {
                 Button { publishNow() } label: {
-                    nextStepLabel(hasPublishProblem ? "Retry publish" : "Publish tour", "icloud.and.arrow.up")
+                    nextStepLabel(hasPublishProblem ? "Retry publish" : currentListing.websiteVideoRelPath != nil ? "Publish listing" : "Publish tour", "icloud.and.arrow.up")
                 }
                 .buttonStyle(ScalePressStyle())
                 .accessibilityIdentifier("phase1.publish")
@@ -843,7 +1629,7 @@ struct FlythroughDetailView: View {
     private var addVideoCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             nextStepHeader("video.badge.plus", "Add a walkthrough video",
-                           "Record a walkthrough or upload a clip. The tour, share link and leads all start from that video.")
+                           "Optional: record a steady walkthrough or upload existing footage. Your photo-based listing video and property website work without it.")
             lastErrorBanner
             NavigationLink {
                 AddVideoFlowView(listing: currentListing)
@@ -871,95 +1657,22 @@ struct FlythroughDetailView: View {
         .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    /// Toolbox — every feature for this listing, one tap away. Every tool that
-    /// writes files or calls AI is disabled on samples (decision A7): a sample's
-    /// output would be orphaned, and the AI would run against a demo.
-    private var toolboxSection: some View {
-        let sample = currentListing.isSample
-        let createFirst = "Create a \(space.spaceNoun) first"
-        // Read off the FILES scan, not off `currentListing.aerialURL`: that
-        // property does a `fileExists` every time it is touched, and this line
-        // sits in a computed property `body` reads, so it was a stat syscall on
-        // EVERY re-render of this screen — a save, a note, a scroll-driven state
-        // change (the build-9 lag report). The scan already did that check, off
-        // the main thread, and it is the same answer: it only lists an aerial
-        // whose file is really there.
-        let aerialSub = mediaItems.contains { $0.kind == .aerial } ? "Aerial ready" : "AI opening shot"
-        // Same rule as `aerialSub`: read the count off the scan that already
-        // ran, never off a fresh filesystem walk in a computed property `body`
-        // touches (the build-9 lag report).
-        let photoCount = mediaItems.filter { $0.kind == .photo }.count
-        let photosTileSub = photoCount == 0
-            ? "Add and brighten"
-            : "\(photoCount) photo\(photoCount == 1 ? "" : "s") \u{00B7} add more"
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("TOOLBOX").font(.rpKicker).foregroundStyle(Theme.inkDim)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
-                                GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                // TWO TILES. Getting photos in is one job; changing them with
-                // AI is a different job with a different cost, and putting both
-                // behind one door is what made "AI Photo Studio" open on a wall
-                // of thumbnails instead of on the list of what the AI can do.
-                NavigationLink { PhotoStudioView(listing: currentListing, entry: .photos) } label: {
-                    toolCard("Photos", sample ? createFirst : photosTileSub,
-                             "photo.stack", RPGradient.photo, dimmed: sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(sample)
-                .accessibilityIdentifier("detail.photos")
-
-                NavigationLink { PhotoStudioView(listing: currentListing, entry: .studio) } label: {
-                    toolCard("AI Photo Studio", sample ? createFirst : "Declutter · staging · sky",
-                             "wand.and.stars", RPGradient.photo, ai: true, dimmed: sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(sample)
-                .accessibilityIdentifier("detail.photoStudio")
-
-                // STRAIGHT to Reel Studio — not through AI Photo Studio.
-                // `detail.reelStudio` stays on this tile (RendpropUITests taps
-                // it by that identifier); what changed is where it lands.
-                Button { showReelStudio = true } label: {
-                    toolCard("Make a reel", sample ? createFirst : "Video + your voice",
-                             "film.stack", RPGradient.reel, ai: true, dimmed: sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(sample)
-                .accessibilityIdentifier("detail.reelStudio")
-
-                Button {
-                    tagsBeforeEdit = asset?.roomTags ?? []
-                    showRoomTagger = true
-                } label: {
-                    toolCard(space == .realEstate ? "Tag rooms" : "Tag areas",
-                             sample ? createFirst : (asset == nil ? "Needs your own video" : "Tap-to-jump chapters"),
-                             "mappin.and.ellipse", RPGradient.rooms, dimmed: asset == nil || sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(asset == nil || sample)
-
-                NavigationLink { FloorPlanView(listing: currentListing) } label: {
-                    toolCard("Floor plan", sample ? createFirst : "Scan in 3D or upload",
-                             "cube.transparent", RPGradient.plan, dimmed: sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(sample)
-
-                Button { showAerialIntro = true } label: {
-                    toolCard("Aerial intro", sample ? createFirst : aerialSub,
-                             "airplane.departure", RPGradient.aerial, ai: true, dimmed: sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(sample)
-
-                NavigationLink { AgentCardEditorView() } label: {
-                    toolCard(space.profileCardName, "On every link you share",
-                             "person.text.rectangle.fill", RPGradient.agent)
-                }
-                .buttonStyle(ScalePressStyle())
-            }
-        }
+    /// Nominal section/grid/tile boundaries keep the toolbox's navigation and
+    /// card modifier trees out of this screen's enclosing SwiftUI metadata.
+    private var toolboxSection: ListingToolboxSection {
+        ListingToolboxSection(grid: ListingToolboxGrid(
+            listing: currentListing, destinationListing: { currentListing }, space: space, asset: asset,
+            canRerender: asset != nil && availableRerenderSource == asset?.localURL,
+            canTagRooms: canTagRooms,
+            hasPublishedTour: tour != nil || shareURL != nil,
+            // Reuse the background FILES scan. No disk reads in body.
+            photoCount: mediaItems.filter { $0.kind == .photo }.count,
+            openReel: { showReelStudio = true },
+            openRoomTagger: { openRoomTags() },
+            sharePackage: { shareListingPackage() },
+            hasAnythingToShare: !mediaItems.isEmpty
+        ), resumeAerial: !currentListing.isSample && PendingAerialJob.load(for: currentListing.id) != nil
+            ? { showAerialIntro = true } : nil)
     }
 
     // MARK: - Files (the 4,000 sq ft field test)
@@ -1017,6 +1730,7 @@ struct FlythroughDetailView: View {
                     Text("Everything you've made for this \(space.spaceNoun), saved on this phone. Tap one to open it. Tap Save to put it in your Photos app.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                         .fixedSize(horizontal: false, vertical: true)
+                    if filePhotos.count > 1 { shareAllFilePhotosButton }
                     ForEach(fileRows) { item in fileRow(item) }
                     filePhotoGrid
                 }
@@ -1025,6 +1739,118 @@ struct FlythroughDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .card()
         }
+    }
+
+    /// Richard's ask after the first listings went out: "transfer a house with
+    /// pictures out to my transaction coordinator… you have to make it easy so
+    /// an agent can just share it with a person that handles their file." One
+    /// tap here opens the export sheet with every photo of this listing and
+    /// packages them as a single ZIP (with the disclosure notes) by default.
+    private var shareAllFilePhotosButton: some View {
+        Button { shareAllFilePhotos() } label: {
+            Label("Share all \(filePhotos.count) photos", systemImage: "square.and.arrow.up")
+                .font(.rpBody.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 12)
+                .background(Theme.accent).foregroundStyle(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .accessibilityIdentifier("detail.files.shareAllPhotos")
+        .accessibilityHint(Text("Opens the export sheet with every photo as one ZIP file to send to a transaction coordinator or client."))
+    }
+
+    @MainActor private func shareAllFilePhotos() {
+        let admission = mediaExportAdmission(for: currentListing)
+        let items = filePhotos
+        guard !items.isEmpty, admission() else { return }
+        let photos = items.map { item -> EnhancedPhoto in
+            let photoID = item.id.hasPrefix("photo-") ? String(item.id.dropFirst("photo-".count)) : item.id
+            return EnhancedPhoto(id: photoID, originalURL: item.originalURL ?? item.url, enhancedURL: item.url)
+        }
+        filePhotoExportAdmission = admission
+        filePackageExtras = []
+        filePhotoExport = PhotoExportSelection(photos: photos)
+    }
+
+    /// Build 60 — "Share everything": the whole listing as one hand-over. Every
+    /// file the FILES card already lists (the same background scan, no disk
+    /// reads here) plus a details note: address, the facts, the share links.
+    /// Photos go through the ordinary export (JPEG copies, disclosure notes,
+    /// retained originals); videos and the scan are read straight from where
+    /// they live, never copied or moved.
+    @MainActor private func shareListingPackage() {
+        let admission = mediaExportAdmission(for: currentListing)
+        let items = mediaItems
+        guard !items.isEmpty, admission() else { return }
+        // A stale scan must not silently turn "everything" into a partial
+        // handover. Preparation also rechecks sources while reading the ZIP.
+        guard items.allSatisfy({ FileManager.default.fileExists(atPath: $0.url.path) }) else {
+            packageError = "A listing file is no longer available on this phone. Reopen the listing to refresh its files, then try again."
+            return
+        }
+        let photos = items.filter { $0.kind == .photo }.map { item -> EnhancedPhoto in
+            let photoID = item.id.hasPrefix("photo-") ? String(item.id.dropFirst("photo-".count)) : item.id
+            return EnhancedPhoto(id: photoID, originalURL: item.originalURL ?? item.url, enhancedURL: item.url)
+        }
+        var extras: [PhotoExportRenderer.Extra] = []
+        var counts: [ListingMediaItem.Kind: Int] = [:]
+        for item in items.sorted(by: { $0.createdAt < $1.createdAt }) where item.kind != .photo {
+            counts[item.kind, default: 0] += 1
+            let n = counts[item.kind] ?? 1
+            let ext = item.url.pathExtension.isEmpty ? (item.isVideo ? "mp4" : "bin") : item.url.pathExtension
+            let stem: String
+            switch item.kind {
+            case .tour:       stem = n == 1 ? "walkthrough-tour" : "walkthrough-tour-\(n)"
+            case .reel:       stem = "reel-\(String(format: "%02d", n))"
+            case .aerial:     stem = n == 1 ? "aerial-intro" : "aerial-intro-\(n)"
+            case .motionClip: stem = "moving-photo-\(String(format: "%02d", n))"
+            case .floorPlan:  stem = n == 1 ? "3d-floor-plan" : "3d-floor-plan-\(n)"
+            case .photo:      continue
+            }
+            let note: String
+            switch item.kind {
+            case .tour:       note = "the walkthrough tour video people scroll through on the listing page"
+            case .reel:       note = "a social reel (AI motion from the listing photos)"
+            case .aerial:     note = "the AI-generated aerial opening — not real drone footage"
+            case .motionClip: note = "one photo turned into a short AI-motion clip"
+            case .floorPlan:  note = "the 3D scan (open on a Mac, PC or phone that can show 3D files)"
+            case .photo:      continue
+            }
+            extras.append(PhotoExportRenderer.Extra(name: "\(stem).\(ext)", url: item.url, note: note))
+        }
+        do {
+            let note = try Self.listingDetailsNote(for: currentListing)
+            extras.append(PhotoExportRenderer.Extra(name: "listing-details.txt", url: note,
+                                                    note: "the address, the facts on the listing page and the share links"))
+        } catch {
+            packageError = "Couldn't save the listing details for this package. Free some space and try again."
+            return
+        }
+        guard !photos.isEmpty || !extras.isEmpty else { return }
+        filePhotoExportAdmission = admission
+        filePackageExtras = extras
+        filePhotoExport = PhotoExportSelection(photos: photos)
+    }
+
+    /// A plain-text note for the package: what the listing says about itself,
+    /// in the words on the listing page, plus the public links. Written to the
+    /// temporary directory; the usual cleanup removes it.
+    private static func listingDetailsNote(for listing: Listing) throws -> URL {
+        var lines: [String] = [listing.address.isEmpty ? "Untitled listing" : listing.address, ""]
+        if let tagline = listing.tagline?.trimmingCharacters(in: .whitespacesAndNewlines), !tagline.isEmpty { lines.append(tagline); lines.append("") }
+        let chips = listing.cardChips
+        if !chips.isEmpty { lines.append(chips.joined(separator: " · ")); lines.append("") }
+        if let url = listing.serverShareURL { lines.append("Listing page: \(url.absoluteString)") }
+        if let url = listing.serverUnbrandedURL { lines.append("MLS-safe page (no branding): \(url.absoluteString)") }
+        if let sold = listing.soldAt {
+            let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .none
+            lines.append("Marked sold on \(f.string(from: sold))")
+        }
+        let f = DateFormatter(); f.dateStyle = .long; f.timeStyle = .short
+        lines.append("")
+        lines.append("Exported from Rendprop on \(f.string(from: Date())). Photos made or changed with AI carry their own disclosure notes in this package.")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Rendprop-details-\(UUID().uuidString).txt")
+        try Data(lines.joined(separator: "\n").utf8).write(to: url, options: .atomic)
+        return url
     }
 
     private var filesHeader: some View {
@@ -1046,7 +1872,7 @@ struct FlythroughDetailView: View {
             Text("Nothing here yet.")
                 .font(.rpBody.weight(.semibold))
                 .foregroundStyle(Theme.ink)
-            Text("Everything you make with the tools above — reels, photos, a flyover, a floor plan — is saved here automatically and stays on this phone. You can put any of it in your Photos app with one tap.")
+            Text("Your saved photos and videos stay on this phone. You can put them in your Photos app with one tap.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1146,6 +1972,19 @@ struct FlythroughDetailView: View {
                     in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
+    private func filePhotoPublicationLabel(_ item: ListingMediaItem) -> String? {
+        guard let current = model.listings.first(where: { $0.id == listing.id }), current.serverID != nil else {
+            return item.publicationLabel
+        }
+        let id = String(item.id.dropFirst("photo-".count))
+        return model.cloudPhotoProjection(for: listing.id)?.label(versionID: id) ?? "Check listing selection"
+    }
+    private func filePhotoPublicationKnown(_ item: ListingMediaItem) -> Bool {
+        let label = filePhotoPublicationLabel(item)
+        return label == "Selected for listing" || label == "Another version on listing"
+            || (model.listings.first(where: { $0.id == listing.id })?.serverID == nil
+                && label != nil && label != "Not selected for listing")
+    }
     private func filePhotoCell(_ item: ListingMediaItem) -> some View {
         Button { openFile(item) } label: {
             VStack(alignment: .leading, spacing: 6) {
@@ -1156,14 +1995,21 @@ struct FlythroughDetailView: View {
                 Text(item.dateLabel)
                     .font(.caption2).foregroundStyle(Theme.inkDim)
                     .lineLimit(1).minimumScaleFactor(0.8)
+                // Reserve the status line so adjacent thumbnails keep their
+                // top edges aligned when the selected version is a predecessor.
+                Label(filePhotoPublicationLabel(item) ?? "Selection unavailable", systemImage: filePhotoPublicationKnown(item) ? "checkmark.circle.fill" : "circle")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(filePhotoPublicationKnown(item) ? Theme.good : Theme.inkDim)
+                    .lineLimit(1).minimumScaleFactor(0.75)
             }
         }
         .buttonStyle(ScalePressStyle())
-        // OUTSIDE the button's label, not inside it: an overlay applied here is a
-        // sibling above the button and gets its own taps. Inside the label it
-        // would be swallowed by the row's own gesture.
-        .overlay(alignment: .topTrailing) { photoSaveBadge(item) }
         .accessibilityLabel(Text("Photo. \(item.dateLabel). Opens before and after."))
+        .accessibilityValue(filePhotoPublicationLabel(item) ?? "Selection unavailable")
+        .accessibilityIdentifier("listing.filePhoto.\(item.id)")
+        // Keep the save action outside the label AND outside the open button's
+        // accessibility modifiers, so VoiceOver does not call Save an opener.
+        .overlay(alignment: .topTrailing) { photoSaveBadge(item) }
         .contextMenu { fileMenu(item) }
     }
 
@@ -1185,6 +2031,7 @@ struct FlythroughDetailView: View {
         .padding(4)
         .accessibilityLabel(Text(done ? "This photo is in your Photos app"
                                       : "Save this photo to your Photos app"))
+        .accessibilityIdentifier("listing.savePhoto.\(item.id)")
     }
 
     /// What happened to the last save, in a colour and with an icon rather than a
@@ -1212,9 +2059,29 @@ struct FlythroughDetailView: View {
                 Label("Save to Photos", systemImage: "square.and.arrow.down")
             }
         }
-        ShareLink(item: item.url) {
-            Label("Share", systemImage: "square.and.arrow.up")
+        if item.kind == .photo {
+            Button { downloadJPEG(item) } label: {
+                Label("Download JPEG for MLS", systemImage: "doc.badge.arrow.down")
+            }
         }
+        if item.kind == .photo {
+            Button { downloadJPEG(item) } label: {
+                Label("Share photo", systemImage: "square.and.arrow.up")
+            }
+        } else {
+            ShareLink(item: item.url) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        }
+    }
+
+    @MainActor private func downloadJPEG(_ item: ListingMediaItem) {
+        let admission = mediaExportAdmission(for: currentListing)
+        guard item.kind == .photo, admission() else { return }
+        let photoID = item.id.hasPrefix("photo-") ? String(item.id.dropFirst("photo-".count)) : item.id
+        filePhotoExportAdmission = admission
+        filePhotoExport = PhotoExportSelection(photos: [EnhancedPhoto(id: photoID,
+            originalURL: item.originalURL ?? item.url, enhancedURL: item.url)])
     }
 
     private func openFile(_ item: ListingMediaItem) {
@@ -1226,8 +2093,10 @@ struct FlythroughDetailView: View {
     /// different `PhotosLibrarySaver` calls — `saveImageFile` writes the exact
     /// bytes rather than re-encoding, which matters when the "photo" is a
     /// compliance original a broker may ask for (W2-C2).
-    private func saveFileToPhotos(_ item: ListingMediaItem) {
+    @MainActor private func saveFileToPhotos(_ item: ListingMediaItem) {
         guard !isSavingFile else { return }
+        let canExport = mediaExportAdmission(for: currentListing)
+        guard canExport() else { return }
         isSavingFile = true
         filesNote = nil
         let url = item.url
@@ -1235,28 +2104,25 @@ struct FlythroughDetailView: View {
         let what = item.title
         let id = item.id
         let kind = item.kind.rawValue
-        Task {
+        Task { @MainActor in
+            defer { isSavingFile = false }
             do {
                 if isVideo {
-                    try await PhotosLibrarySaver.saveVideo(at: url)
+                    try await PhotosLibrarySaver.saveVideo(at: url, while: canExport)
                 } else {
-                    try await PhotosLibrarySaver.saveImageFile(at: url)
+                    try await PhotosLibrarySaver.saveImageFile(at: url, while: canExport)
                 }
-                await MainActor.run {
-                    isSavingFile = false
-                    savedFiles.insert(id)
-                    filesNoteOK = true
-                    filesNote = "\(what) is now in your Photos app."
-                    Haptics.success()
-                    Analytics.track("file_saved", ["kind": kind, "ok": "true"])
-                }
+                guard canExport() else { return }
+                savedFiles.insert(id)
+                filesNoteOK = true
+                filesNote = "\(what) is now in your Photos app."
+                Haptics.success()
+                Analytics.track("file_saved", ["kind": kind, "ok": "true"])
             } catch {
-                await MainActor.run {
-                    isSavingFile = false
-                    filesNoteOK = false
-                    filesNote = error.localizedDescription
-                    Analytics.track("file_saved", ["kind": kind, "ok": "false"])
-                }
+                guard canExport() else { return }
+                filesNoteOK = false
+                filesNote = error.localizedDescription
+                Analytics.track("file_saved", ["kind": kind, "ok": "false"])
             }
         }
     }
@@ -1296,6 +2162,8 @@ struct FlythroughDetailView: View {
     /// studio, the floor-plan scanner and Reel Studio are all pushes, so their
     /// pop-back runs the stamp check and picks up whatever they wrote.
     private func loadFiles(force: Bool = false) {
+        guard hasCurrentPresentationContext else { invalidatePresentation(); return }
+        let expectedScope = presentationScope
         let live = currentListing
         guard !live.isSample else {
             filesTask?.cancel()
@@ -1313,8 +2181,11 @@ struct FlythroughDetailView: View {
         let since = force ? nil : filesStamp
         filesTask?.cancel()
         filesTask = Task {
+            if live.serverID != nil { _ = try? await model.refreshCloudPhotoSelection(listingID: live.id) }
+            guard !Task.isCancelled, expectedScope == presentationScope, hasCurrentPresentationContext else { return }
             guard let scan = await ListingMediaItem.scan(request, since: since) else { return }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, expectedScope == presentationScope,
+                  hasCurrentPresentationContext else { return }
             filesStamp = scan.stamp
             // Only publish a list that is actually different. An equal array
             // still invalidates `@State` and re-runs `body`, which on this screen
@@ -1325,6 +2196,36 @@ struct FlythroughDetailView: View {
 
     // MARK: - Compliance (W2-C2)
 
+    /// Keep the record accessible without making the listing's main tool feed
+    /// a long disclosure log. Expanding retains all original records/actions.
+    @ViewBuilder private var complianceSection: some View {
+        if !currentListing.isSample, currentListing.serverID != nil,
+           !provenance.isEmpty || isLoadingProvenance || provenanceError != nil {
+            DisclosureGroup(isExpanded: $showComplianceDetails) {
+                complianceDetails
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .foregroundStyle(Theme.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Disclosures & originals")
+                            .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                        Text(!provenance.isEmpty
+                             ? "\(provenance.count) AI media items · disclosure log"
+                             : isLoadingProvenance ? "Loading the disclosure log…" : "Disclosure log needs attention")
+                            .font(.rpCaption)
+                            .foregroundStyle(provenanceError == nil ? Theme.inkDim : Theme.warn)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .tint(Theme.accent)
+            .padding(16)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .accessibilityIdentifier("listing.photoCompliance")
+        }
+    }
+
     /// Every AI-altered or AI-generated asset on this listing, with the exact
     /// disclosure sentence the public tour prints, a link to the unaltered
     /// original, and the two things a broker actually asks for: the originals on
@@ -1334,7 +2235,7 @@ struct FlythroughDetailView: View {
     /// provenance rows gets NO reassuring "nothing was altered" line — rows
     /// only exist from the compliance wave forward, so that claim could be
     /// false for media generated by an earlier build.
-    @ViewBuilder private var complianceSection: some View {
+    @ViewBuilder private var complianceDetails: some View {
         if !currentListing.isSample, currentListing.serverID != nil,
            !provenance.isEmpty || isLoadingProvenance || provenanceError != nil {
             VStack(alignment: .leading, spacing: 12) {
@@ -1486,14 +2387,14 @@ struct FlythroughDetailView: View {
             // setSold/setZillow mark the listing dirty and sync it to the server
             // themselves (decision A6) — nothing else to call here.
             Button {
-                model.setSold(!currentListing.isSold, for: listing.id)
+                model.setSold(!currentListing.isInactive, for: listing.id)
                 playerRefresh = UUID()
                 Haptics.success()
             } label: {
-                Label(currentListing.isSold ? "Mark as active" : "Mark as \(space.archiveVerb)",
-                      systemImage: currentListing.isSold ? "arrow.uturn.backward" : "checkmark.seal.fill")
+                Label(currentListing.isInactive ? "Mark as active" : "Mark as \(space.archiveVerb)",
+                      systemImage: currentListing.isInactive ? "arrow.uturn.backward" : "checkmark.seal.fill")
                     .font(.rpBody.weight(.semibold))
-                    .foregroundStyle(currentListing.isSold ? Theme.inkDim : Theme.accent)
+                    .foregroundStyle(currentListing.isInactive ? Theme.inkDim : Theme.accent)
             }
 
             // Zillow is a real-estate concept — a gym or bar never sees it.
@@ -1520,9 +2421,16 @@ struct FlythroughDetailView: View {
     }
 
     private var deleteMessage: String {
-        var text = currentListing.serverShareURL != nil
-            ? "Removes the video, photos and tour from this phone and takes both share links offline. This can't be undone."
-            : "Removes the video, photos and tour from this phone. This can't be undone."
+        // Build 58: a cloud listing sits in Recently deleted for 30 days, so the
+        // copy promises exactly what the server does — and no more for a local-only one.
+        var text: String
+        if currentListing.serverID != nil, Config.useLiveBackend {
+            text = currentListing.serverShareURL != nil
+                ? "Removes the video, photos and tour from this phone and takes both share links offline. You can restore it from Settings › Recently deleted for 30 days; the same links come back."
+                : "Removes the video, photos and tour from this phone. You can restore the cloud copy from Settings › Recently deleted for 30 days."
+        } else {
+            text = "Removes the video, photos and tour from this phone. This can't be undone."
+        }
         // W2-C3: an original that backs a disclosed AI edit is evidence. Deleting
         // the listing wipes this phone's copy of it, so say so BEFORE the tap —
         // "Download originals" in COMPLIANCE is one scroll away.
@@ -1727,15 +2635,52 @@ struct FlythroughDetailView: View {
 
     /// Publish the EXISTING local render (no re-render). Retain this tap while
     /// the anonymous connection is recovered; registration is never required.
-    private func publishNow() {
-        guard !isPublishing, tour != nil, !currentListing.isSample else { return }
-        connection.run { publishWithSession() }
+    private func publishNow(cellularApproved: Bool = false) {
+        guard !isPublishing, tour != nil || currentListing.websiteVideoRelPath != nil, !currentListing.isSample,
+              model.isInSelectedWorkspace(currentListing), currentListing.cloudUnavailable != true else { return }
+        let context = NativeMediaExportContext()
+        connection.run {
+            guard context.isCurrent, !cellularApproved || publishCellularParked else { return }
+            publishWithSession(cellularApproved: cellularApproved)
+        }
     }
 
-    private func publishWithSession() {
-        guard !isPublishing, tour != nil, !currentListing.isSample else { return }
+    /// Build 58. Same session fence as a first publish; the model decides
+    /// whether the video has to go up again or only the details and photos.
+    private func republishNow() {
+        guard !isRepublishing, !isPublishing, !currentListing.isSample,
+              model.isInSelectedWorkspace(currentListing), currentListing.cloudUnavailable != true else { return }
+        let context = NativeMediaExportContext()
+        connection.run {
+            guard context.isCurrent else { return }
+            isRepublishing = true
+            republishFailure = nil
+            Haptics.selection()
+            let id = listing.id
+            Task {
+                do {
+                    _ = try await model.republishExisting(listingID: id)
+                    await MainActor.run {
+                        isRepublishing = false
+                        republishedAt = Date()
+                        playerRefresh = UUID()
+                        Haptics.success()
+                        PhotoFeedbackQueue.shared.recordPublication(listingID: id, model: model)
+                    }
+                } catch {
+                    await MainActor.run {
+                        isRepublishing = false
+                        republishFailure = AIFailure(error, title: "Couldn't republish")
+                    }
+                }
+            }
+        }
+    }
+
+    private func publishWithSession(cellularApproved: Bool = false) {
+        guard !isPublishing, tour != nil || currentListing.websiteVideoRelPath != nil, !currentListing.isSample else { return }
         // The toggle above the button is the answer whether or not it was
-        // touched: it is drawn at the workspace's own default, so publishing
+        // touched: it shows this property's saved choice, or Off when unanswered, so publishing
         // without touching it has to mean what it says on screen. A no-op when
         // the listing already carries this answer.
         model.setSearchIndexing(listOnGoogle, for: listing.id)
@@ -1745,12 +2690,13 @@ struct FlythroughDetailView: View {
         let id = listing.id
         Task {
             do {
-                _ = try await model.publishExisting(listingID: id)
+                _ = try await model.publishExisting(listingID: id, cellularApproved: cellularApproved)
                 await MainActor.run {
                     isPublishing = false
                     playerRefresh = UUID()
                     Haptics.success()
                     ReviewPrompter.shared.tourPublished()
+                    PhotoFeedbackQueue.shared.recordPublication(listingID: id, model: model)
                 }
             } catch {
                 await MainActor.run {
@@ -1761,23 +2707,52 @@ struct FlythroughDetailView: View {
         }
     }
 
+    private var listingFactsNeedReview: Bool {
+        let value = currentListing
+        return value.factsSync?.conflict == true || value.factsSync?.reviewRequired == true
+            || (value.serverID != nil && value.needsServerSync == true && value.factsSync == nil)
+    }
+
+    @MainActor private func mediaExportAdmission(for snapshot: Listing) -> () -> Bool {
+        let context = NativeMediaExportContext()
+        return {
+            guard context.isCurrent, self.hasCurrentPresentationContext,
+                  let current = self.model.listings.first(where: { $0.id == snapshot.id }),
+                  current.cloudUnavailable != true else { return false }
+            return current.serverID == snapshot.serverID && current.serverOrgID == snapshot.serverOrgID
+        }
+    }
+
+    @MainActor private func refreshClientContactIfCurrent() async {
+        guard !Task.isCancelled, hasCurrentPresentationContext, !currentListing.isSample else { return }
+        try? await model.refreshClientContact(for: listing.id)
+    }
+
     /// Load this listing's provenance rows (GET /me/compliance?listing_id=).
     /// Silent when the account has no access or the route is missing — the card
     /// stays hidden rather than shouting at an agent who did nothing wrong.
-    private func loadCompliance() async {
+    @MainActor private func loadCompliance() async {
+        guard !Task.isCancelled, hasCurrentPresentationContext else { return }
+        let expectedScope = presentationScope
         let l = currentListing
         guard !l.isSample, let serverID = l.serverID else { return }
         guard !Config.enableAuth || auth.isSignedIn else { return }
         guard !isLoadingProvenance else { return }
+        let canExport = mediaExportAdmission(for: l)
+        guard canExport() else { return }
         isLoadingProvenance = true
         provenanceError = nil
         defer { isLoadingProvenance = false }
         do {
-            provenance = try await model.api.provenance(listingServerID: serverID)
+            let rows = try await model.api.provenance(listingServerID: serverID)
+            guard canExport(), expectedScope == presentationScope, hasCurrentPresentationContext else { return }
+            provenance = rows
+            provenanceCanExport = canExport
         } catch is CancellationError {
             // The screen was left mid-load (a push cancels `.task`) — say nothing;
             // coming back re-runs it.
         } catch {
+            guard expectedScope == presentationScope, hasCurrentPresentationContext else { return }
             if (error as? URLError)?.code == .cancelled { return }
             if let api = error as? APIError, api.isNotFound || api.isUnauthorized || api.isForbidden {
                 provenanceError = nil    // nothing to show, and nothing the agent can fix here
@@ -1790,20 +2765,32 @@ struct FlythroughDetailView: View {
     /// Save every unaltered original this listing has on file into Photos —
     /// what a broker or a compliance officer asks for when they want the
     /// "before" images out of the app.
-    private func saveOriginalsToPhotos() {
+    @MainActor private func saveOriginalsToPhotos() {
         guard !isSavingOriginals else { return }
+        guard let canExport = provenanceCanExport, canExport() else {
+            complianceNote = "Your account, workspace or listing changed. Reopen the listing to download originals."
+            return
+        }
         let urls = provenance.compactMap { $0.originalURL }
         guard !urls.isEmpty else { return }
         isSavingOriginals = true
         complianceNote = nil
         Haptics.selection()
-        Task {
+        Task { @MainActor in
+            defer { isSavingOriginals = false }
             var saved = 0
             var failure: String?
             for remote in urls {
                 var staged: URL?
                 do {
+                    try Task.checkCancellation()
+                    guard canExport() else { return }
                     let (tmp, response) = try await URLSession.shared.download(from: remote)
+                    // This operation owns only its returned temporary download.
+                    // A rejected late reply cannot reach Photos or another URL.
+                    defer { try? FileManager.default.removeItem(at: tmp) }
+                    try Task.checkCancellation()
+                    guard canExport() else { return }
                     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                         try? FileManager.default.removeItem(at: tmp)
                         throw AIImagePrep.error("The original couldn't be downloaded (HTTP \(http.statusCode)).")
@@ -1816,7 +2803,11 @@ struct FlythroughDetailView: View {
                     try? FileManager.default.removeItem(at: dest)
                     try FileManager.default.moveItem(at: tmp, to: dest)
                     staged = dest
-                    try await PhotosLibrarySaver.saveImageFile(at: dest)
+                    try await PhotosLibrarySaver.saveImageFile(at: dest, while: canExport)
+                    guard canExport() else {
+                        try? FileManager.default.removeItem(at: dest)
+                        return
+                    }
                     saved += 1
                 } catch {
                     if failure == nil { failure = AIFailure(error).message }
@@ -1826,47 +2817,54 @@ struct FlythroughDetailView: View {
             let total = urls.count
             let done = saved
             let why = failure
-            await MainActor.run {
-                isSavingOriginals = false
-                let plural: String = done == 1 ? "" : "s"
-                if done == total {
-                    complianceNote = "Saved \(done) original\(plural) to Photos."
-                    Haptics.success()
-                } else if done > 0 {
-                    complianceNote = "Saved \(done) of \(total) originals to Photos. \(why ?? "")"
-                } else {
-                    complianceNote = why ?? "Couldn't save the originals."
-                }
+            guard canExport() else { return }
+            let plural: String = done == 1 ? "" : "s"
+            if done == total {
+                complianceNote = "Saved \(done) original\(plural) to Photos."
+                Haptics.success()
+            } else if done > 0 {
+                complianceNote = "Saved \(done) of \(total) originals to Photos. \(why ?? "")"
+            } else {
+                complianceNote = why ?? "Couldn't save the originals."
             }
         }
     }
 
     /// Fetch the broker-exportable CSV for this listing and hand it to the share
     /// sheet, so "email my broker the audit" is one tap and a real attachment.
-    private func exportAudit() {
+    @MainActor private func exportAudit() {
         guard !isExportingAudit, let serverID = currentListing.serverID else { return }
+        let canExport = mediaExportAdmission(for: currentListing)
+        guard canExport() else { return }
         isExportingAudit = true
         complianceNote = nil
         Haptics.selection()
         let api = model.api               // snapshot on the main actor
         let address = currentListing.address
-        Task {
+        Task { @MainActor in
+            var ownedDirectory: URL?
+            var handedOff = false
+            defer {
+                isExportingAudit = false
+                if !handedOff, let ownedDirectory { try? FileManager.default.removeItem(at: ownedDirectory) }
+            }
             do {
                 let csv = try await api.complianceCSV(listingServerID: serverID)
+                try Task.checkCancellation()
+                guard canExport() else { return }
                 let name = Self.auditFilename(for: address)
-                let dest = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-                try? FileManager.default.removeItem(at: dest)
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Rendprop-audit-\(UUID().uuidString)", isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                ownedDirectory = directory
+                let dest = directory.appendingPathComponent(name)
                 try csv.write(to: dest, options: .atomic)
-                await MainActor.run {
-                    isExportingAudit = false
-                    auditExport = AuditExport(url: dest)
-                    Haptics.success()
-                }
+                guard canExport() else { return }
+                auditExport = AuditExport(url: dest)
+                handedOff = true
+                Haptics.success()
             } catch {
-                await MainActor.run {
-                    isExportingAudit = false
-                    complianceNote = "Couldn't build the audit export — \(AIFailure(error).message)"
-                }
+                guard canExport() else { return }
+                complianceNote = "Couldn't build the audit export — \(AIFailure(error).message)"
             }
         }
     }
@@ -1947,10 +2945,11 @@ struct FlythroughDetailView: View {
     /// from the human-confirmed tags only: an auto-filled tagger opened and
     /// closed without a glance is then not a change, and writes nothing at all.
     private func roomTaggerDismissed() {
+        guard hasCurrentRoomTagContext, let source = roomTagAsset else { return }
         playerRefresh = UUID()
         let l = currentListing
         guard !l.isSample, let renderID = l.publishedRenderID, tour != nil else { return }
-        let tags = (model.assets[listing.id]?.roomTags ?? []).filter { !$0.isFromAI }
+        let tags = source.roomTags.filter { !$0.isFromAI }
         guard tags != tagsBeforeEdit.filter({ !$0.isFromAI }) else { return }
         let sf = safeSpeedFactor
         let chapters: [ChapterInput] = tags
@@ -1961,15 +2960,20 @@ struct FlythroughDetailView: View {
             }
         chapterSyncNote = "Updating chapters on your share link…"
         let api = model.api
+        let expectedScope = presentationScope
         Task {
+            guard expectedScope == presentationScope, hasCurrentRoomTagContext,
+                  roomTagAsset?.id == source.id else { return }
             do {
                 try await api.updateChapters(renderID: renderID, chapters: chapters)
-                await MainActor.run { chapterSyncNote = "Chapters updated on your share link." }
+                guard expectedScope == presentationScope, hasCurrentRoomTagContext,
+                      roomTagAsset?.id == source.id else { return }
+                chapterSyncNote = "Chapters updated on your share link."
             } catch {
+                guard expectedScope == presentationScope, hasCurrentRoomTagContext,
+                      roomTagAsset?.id == source.id else { return }
                 let why = AIFailure(error).message
-                await MainActor.run {
-                    chapterSyncNote = "Couldn't update the chapters on your share link — \(why)"
-                }
+                chapterSyncNote = "Couldn't update the chapters on your share link — \(why)"
             }
         }
     }
@@ -2097,13 +3101,15 @@ struct MapPin: Identifiable {
 /// message when there is one, plus the status class so the UI can offer the
 /// right next step — "Upgrade plan" on 402, "Retry connection" on 401, "try again in a
 /// few minutes" on 429.
-private struct AIFailure: Identifiable {
+struct AIFailure: Identifiable {
     let id = UUID()
     let title: String
     let message: String
     let isQuota: Bool
     let isUnauthorized: Bool
     let isRateLimited: Bool
+    let isServiceUnavailable: Bool
+    let isTrialCapacityUnavailable: Bool
 
     // No `pricingURL` here any more. A 402 on this screen offers the in-app
     // paywall and nothing else — see `Config.pricingURL` (retired, always nil).
@@ -2121,17 +3127,23 @@ private struct AIFailure: Identifiable {
             isQuota = api.isQuota
             isUnauthorized = api.isUnauthorized
             isRateLimited = api.isRateLimited
+            isServiceUnavailable = api.isServiceUnavailable
+            isTrialCapacityUnavailable = api.isTrialCapacityUnavailable
         } else if AIFailure.isOffline(error) {
             message = "You're offline — check your connection and try again."
             isQuota = false
             isUnauthorized = false
             isRateLimited = false
+            isServiceUnavailable = false
+            isTrialCapacityUnavailable = false
         } else {
             let text = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
             message = text.isEmpty ? "Something went wrong. Please try again." : text
             isQuota = false
             isUnauthorized = false
             isRateLimited = false
+            isServiceUnavailable = false
+            isTrialCapacityUnavailable = false
         }
     }
 
@@ -2141,6 +3153,8 @@ private struct AIFailure: Identifiable {
         isQuota = false
         isUnauthorized = false
         isRateLimited = false
+        isServiceUnavailable = false
+        isTrialCapacityUnavailable = false
     }
 
     /// Re-word a failure WITHOUT losing what class of failure it is.
@@ -2148,7 +3162,7 @@ private struct AIFailure: Identifiable {
     /// A batch of seventeen declutters that stops on a 402 has to say "9 of 17
     /// changed" AND still offer Upgrade plan — `init(message:)` would drop
     /// `isQuota` and leave the alert with an OK button and no way forward, which
-    /// is the worst of both. Copies the three flags verbatim; only the words
+    /// is the worst of both. Copies the recovery flags verbatim; only the words
     /// change.
     init(_ other: AIFailure, title: String? = nil, message: String) {
         self.title = title ?? other.title
@@ -2156,6 +3170,8 @@ private struct AIFailure: Identifiable {
         isQuota = other.isQuota
         isUnauthorized = other.isUnauthorized
         isRateLimited = other.isRateLimited
+        isServiceUnavailable = other.isServiceUnavailable
+        isTrialCapacityUnavailable = other.isTrialCapacityUnavailable
     }
 
     /// Server messages are written for a person and are shown verbatim —
@@ -2198,9 +3214,11 @@ private struct AIFailure: Identifiable {
 
     /// One-line next step for the status class (empty when there is none).
     var actionHint: String {
-        if isQuota { return "This month's allowance for this feature is used up." }
+        if isTrialCapacityUnavailable { return "Try again later, or contact support. Your saved work is still here." }
+        if isQuota { return "A plan upgrade unlocks this. Your saved work is still here." }
         if isUnauthorized { return "The connection to your workspace needs to be restored. Your work is still here." }
         if isRateLimited { return "Try again in a few minutes." }
+        if isServiceUnavailable { return "If it keeps happening, contact support — the message above helps us find it." }
         return ""
     }
 
@@ -2263,6 +3281,17 @@ private struct AIFailureCard: View {
                 Text(failure.actionHint)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
+            } else if failure.isServiceUnavailable || failure.isTrialCapacityUnavailable {
+                Text(failure.actionHint)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                Link(destination: SettingsView.supportMailURL(subject: "AI request failed — \(failure.title)")) {
+                    Label("Contact support", systemImage: "envelope")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
             } else {
                 Text(retryHint)
                     .font(.rpCaption)
@@ -2280,7 +3309,7 @@ private struct AIFailureCard: View {
 /// UI (F-A-19). The renderer is pinned to scale 1 so "1280 px" means 1280
 /// pixels — the default format inherits the screen's 3× scale and silently
 /// tripled every upload.
-private enum AIImagePrep {
+enum AIImagePrep {
     static func error(_ message: String) -> NSError {
         NSError(domain: "AIImagePrep", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
@@ -2300,13 +3329,31 @@ private enum AIImagePrep {
         }
     }
 
+    /// Camera conditioning uses the complete selected photograph. Delivery
+    /// format is applied only after raw provider frames pass the quality check.
+    /// `downscaled` below bakes orientation without cropping or inventing pixels.
+    static func reelSource(_ image: UIImage, aspect: String) -> UIImage { image }
+
     /// The photo at `url` → downscaled JPEG → base64 (no data: prefix), off main.
-    static func jpegBase64(at url: URL, maxDimension: CGFloat, quality: CGFloat) async -> String? {
+    static func jpegBase64(at url: URL, maxDimension: CGFloat, quality: CGFloat, maxBytes: Int? = nil) async -> String? {
         await Task.detached(priority: .userInitiated) { () -> String? in
             guard let ui = UIImage(contentsOfFile: url.path) else { return nil }
-            return AIImagePrep.downscaled(ui, maxDimension: maxDimension)
-                .jpegData(compressionQuality: quality)?
-                .base64EncodedString()
+            guard let maxBytes else {
+                return AIImagePrep.downscaled(ui, maxDimension: maxDimension)
+                    .jpegData(compressionQuality: quality)?.base64EncodedString()
+            }
+            // Only the AI request copy is conditioned. The complete original
+            // file and every saved/exported version remain untouched.
+            guard maxBytes > 0 else { return nil }
+            for scale: CGFloat in [1, 0.875, 0.75, 0.625, 0.5] {
+                let image = AIImagePrep.downscaled(ui, maxDimension: maxDimension * scale)
+                for candidate: CGFloat in [quality, min(quality, 0.85), min(quality, 0.8)] {
+                    if let jpeg = image.jpegData(compressionQuality: candidate), jpeg.count <= maxBytes {
+                        return jpeg.base64EncodedString()
+                    }
+                }
+            }
+            return nil
         }.value
     }
 
@@ -2397,6 +3444,181 @@ private struct DetailPhotoThumb: View {
     }
 }
 
+private struct ListingFactsReviewCard: View {
+    let review: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Listing details need review", systemImage: "arrow.triangle.2.circlepath")
+                .font(.rpHeadline)
+            Text("Your edits are saved on this iPhone. Compare them with the shared listing before syncing.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Button("Review shared listing details", action: review)
+                .font(.rpBody.weight(.semibold))
+                .accessibilityIdentifier("listing.factsReview")
+        }.frame(maxWidth: .infinity, alignment: .leading).padding()
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.radius))
+    }
+}
+
+/// Phone-editable facts only. Private measurement state and server-managed
+/// attachments cannot become part of an ordinary replacement approval.
+private enum ListingFactsReviewRows {
+    struct Row: Identifiable {
+        let id: String
+        let title: String
+        let local: String
+        let shared: String
+    }
+
+    static func make(_ review: ListingFactsReview) -> [Row] {
+        let a = review.local, b = review.shared
+        func text(_ value: String?) -> String {
+            let cleaned = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return cleaned.isEmpty ? "Not set" : cleaned
+        }
+        func location(_ listing: Listing) -> String {
+            guard let lat = listing.latitude, let lon = listing.longitude,
+                  lat.isFinite, lon.isFinite else { return "Not set" }
+            return String(format: "%.3f, %.3f", lat, lon)
+        }
+        func sold(_ listing: Listing) -> String {
+            guard let date = listing.soldAt else { return "Active" }
+            return "Sold · " + ISO8601DateFormatter().string(from: date).prefix(10)
+        }
+        var rows: [Row] = [
+            .init(id: "address", title: "Address", local: a.address, shared: b.address),
+            .init(id: "beds", title: "Beds", local: a.beds > 0 ? String(a.beds) : "Not set", shared: b.beds > 0 ? String(b.beds) : "Not set"),
+            .init(id: "baths", title: "Baths", local: a.baths > 0 ? String(a.baths) : "Not set", shared: b.baths > 0 ? String(b.baths) : "Not set"),
+            .init(id: "sqft", title: "Square feet", local: a.sqft > 0 ? String(a.sqft) : "Not set", shared: b.sqft > 0 ? String(b.sqft) : "Not set"),
+            .init(id: "price", title: "Price", local: a.price.cents > 0 ? a.price.formatted : "Not set", shared: b.price.cents > 0 ? b.price.formatted : "Not set"),
+            .init(id: "tagline", title: "Description", local: text(a.tagline), shared: text(b.tagline)),
+            .init(id: "location", title: "Location", local: location(a), shared: location(b)),
+            .init(id: "sold", title: "Listing status", local: sold(a), shared: sold(b)),
+            .init(id: "zillow", title: "Zillow link", local: text(a.zillowURL), shared: text(b.zillowURL)),
+        ]
+        let localDetails = ListingFactsSync.detailValues(a), sharedDetails = ListingFactsSync.detailValues(b)
+        let labels = Dictionary(SpaceType.allCases.flatMap { $0.detailFields }.map { ($0.key, $0.label) }, uniquingKeysWith: { first, _ in first })
+        for key in Set(localDetails.keys).union(sharedDetails.keys).sorted() {
+            let title = key == Listing.searchIndexingKey ? "List on Google" : labels[key] ?? key
+            rows.append(.init(id: "detail:" + key, title: title,
+                              local: text(localDetails[key]), shared: text(sharedDetails[key])))
+        }
+        return rows
+    }
+}
+
+private struct ListingFactsComparisonRow: View {
+    let row: ListingFactsReviewRows.Row
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(row.title).font(.rpBody.weight(.semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("On this iPhone").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Text(row.local).font(.rpBody).textSelection(.enabled)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Shared details").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Text(row.shared).font(.rpBody).textSelection(.enabled)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ListingFactsReviewSheet: View {
+    let listingID: UUID
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var auth = AuthStore.shared
+    @State private var review: ListingFactsReview?
+    @State private var loading = false
+    @State private var error: String?
+
+    private var reviewIsCurrent: Bool {
+        guard let review else { return false }
+        return auth.isIdentified && auth.userID == review.ownerID
+            && auth.syncSessionRevision == review.sessionRevision
+            && WorkspaceContext.selectedOrgID == review.local.serverOrgID
+            && model.listings.first(where: { $0.id == listingID }) == review.local
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Compare the details saved on this iPhone with the current shared listing.")
+                    if let review {
+                        Text(review.local.factsSync?.hasChanges == true && review.local.factsSync?.reviewRequired != true
+                             ? "Keep my edits retries only the fields you changed."
+                             : "Keep my edits approves the iPhone details shown below for syncing.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
+                    if loading { ProgressView("Loading shared details…") }
+                    if let error { Text(error).font(.rpCaption).foregroundStyle(.red) }
+                    if review != nil && !reviewIsCurrent && error == nil {
+                        Text("The listing, account or workspace changed. Reload the comparison before choosing.")
+                            .font(.rpCaption).foregroundStyle(.orange)
+                    }
+                    Button("Reload comparison") { Task { await load() } }
+                        .disabled(loading).accessibilityIdentifier("listing.factsReview.reload")
+                }
+                if let review {
+                    Section("Listing details") {
+                        ForEach(ListingFactsReviewRows.make(review)) { row in
+                            ListingFactsComparisonRow(row: row)
+                        }
+                    }
+                    Section {
+                        Button("Use shared details") { resolve(keepLocal: false) }
+                            .accessibilityIdentifier("listing.factsReview.useShared")
+                        Button("Keep my edits") { resolve(keepLocal: true) }
+                            .accessibilityIdentifier("listing.factsReview.keepLocal")
+                    }.disabled(loading || !reviewIsCurrent || error != nil)
+                }
+            }
+            .navigationTitle("Review listing details").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .task { await load() }
+            .onChange(of: auth.userID) { _ in review = nil; error = "Your account changed. Reopen the listing to review its details." }
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+                review = nil; error = "Your workspace changed. Reopen the listing to review its details."
+            }
+        }
+    }
+
+    @MainActor private func load() async {
+        guard !loading else { return }
+        loading = true; error = nil; review = nil
+        defer { loading = false }
+        do { review = try await model.loadListingFactsReview(listingID) }
+        catch { self.error = error.localizedDescription }
+    }
+
+    @MainActor private func resolve(keepLocal: Bool) {
+        guard let review, reviewIsCurrent else { return }
+        do {
+            try model.resolveListingFacts(review, keepLocal: keepLocal)
+            dismiss()
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+/// Captures an export's session without treating ordinary JWT rotation as an
+/// account change. Admission is checked before Photos begins its transaction;
+/// iOS may finish a transaction that has already begun.
+@MainActor private struct NativeMediaExportContext {
+    private let owner = AuthStore.shared.userID
+    private let revision = AuthStore.shared.syncSessionRevision
+    private let workspace = WorkspaceContext.selectedOrgID
+
+    var isCurrent: Bool {
+        !Task.isCancelled && AuthStore.shared.userID == owner
+            && AuthStore.shared.syncSessionRevision == revision
+            && WorkspaceContext.selectedOrgID == workspace
+    }
+}
+
 /// Photos-library saves with a REAL completion (F-A-16). Both calls throw on a
 /// denied permission or a failed write, so a caller flips "Saved to Photos"
 /// only when the asset actually landed.
@@ -2406,16 +3628,23 @@ private enum PhotosLibrarySaver {
             "Rendprop isn't allowed to add to your Photos. Allow it in Settings → Rendprop → Photos, then try again."
         }
     }
+    struct ContextChanged: LocalizedError {
+        var errorDescription: String? { "Your account, workspace or listing changed. Reopen it before exporting." }
+    }
 
-    static func saveVideo(at url: URL) async throws {
+    @MainActor static func saveVideo(at url: URL, while canSave: @escaping @MainActor () -> Bool = { true }) async throws {
+        let context = NativeMediaExportContext()
+        guard context.isCurrent, canSave() else { throw ContextChanged() }
         try await ensureAddAccess()
+        guard context.isCurrent, canSave() else { throw ContextChanged() }
         try await PHPhotoLibrary.shared().performChanges {
             _ = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
         }
     }
 
-    static func saveImage(_ image: UIImage) async throws {
+    @MainActor static func saveImage(_ image: UIImage, while canSave: @escaping @MainActor () -> Bool = { true }) async throws {
         try await ensureAddAccess()
+        guard !Task.isCancelled, canSave() else { throw ContextChanged() }
         try await PHPhotoLibrary.shared().performChanges {
             _ = PHAssetChangeRequest.creationRequestForAsset(from: image)
         }
@@ -2425,8 +3654,13 @@ private enum PhotosLibrarySaver {
     /// originals (W2-C2): a re-encoded "original" is not the original, and a
     /// broker who asks for the unaltered image is entitled to the exact bytes
     /// the public "View original" link serves.
-    static func saveImageFile(at url: URL) async throws {
+    @MainActor static func saveImageFile(at url: URL, while canSave: @escaping @MainActor () -> Bool = { true }) async throws {
+        let context = NativeMediaExportContext()
+        guard context.isCurrent, canSave() else { throw ContextChanged() }
+        try PhotoVersionHistory.requireDownloadReview(imageURL: url)
         try await ensureAddAccess()
+        guard context.isCurrent, canSave() else { throw ContextChanged() }
+        try PhotoVersionHistory.requireDownloadReview(imageURL: url)
         try await PHPhotoLibrary.shared().performChanges {
             _ = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
         }
@@ -2602,6 +3836,10 @@ struct ListingMediaItem: Identifiable, Hashable, Sendable {
     /// one. Nil for every other kind, and nil for a photo that is its own before.
     let originalURL: URL?
     let createdAt: Date
+    /// Local publication choice, resolved by the background file scan. Separate
+    /// from saved-to-Photos state and from completed cloud publication.
+    var selectedForListing = false
+    var publicationLabel: String? = nil
 
     /// True when opening this plays something rather than showing it.
     var isVideo: Bool {
@@ -2618,11 +3856,11 @@ struct ListingMediaItem: Identifiable, Hashable, Sendable {
     /// now looking for it is thinking "the moving photo" and "the flyover", and
     /// the possessive matters more than it looks: the complaint that started this
     /// section was "I don't have any of the photos or videos I made saved", and
-    /// "Your reel" answers it in two words where "Reel" does not.
+    /// "Your video" covers both listing and social-media deliveries.
     var title: String {
         switch kind {
         case .tour:       return "Your walkthrough tour"
-        case .reel:       return "Your reel"
+        case .reel:       return "Your video"
         case .aerial:     return "Your flyover opening"
         case .motionClip: return "Moving photo"
         case .photo:      return "Your photo"
@@ -2636,8 +3874,8 @@ struct ListingMediaItem: Identifiable, Hashable, Sendable {
     var blurb: String {
         switch kind {
         case .tour:       return "The tour people scroll through"
-        case .reel:       return "Post it to Instagram, TikTok or YouTube"
-        case .aerial:     return "The flyover that opens your reel"
+        case .reel:       return "Watch, save or share your finished video"
+        case .aerial:     return "The flyover that opens your video"
         case .motionClip: return "One photo, turned into video"
         case .photo:      return "Edited in AI Photo Studio"
         case .floorPlan:  return "A 3D scan you can spin around"
@@ -2907,6 +4145,7 @@ extension ListingMediaItem {
         // information the first listing already contained.
         let photoDirectory = EnhancedPhoto.directory(for: request.listingID)
         let photoEntries = DiskScan.entries(of: photoDirectory)
+        let selectionIndex = try? PhotoVersionHistory.load(directory: photoDirectory)
         for clip in DiskScan.motionClips(in: photoEntries) {
             items.append(ListingMediaItem(id: "clip-\(clip.name)", kind: .motionClip,
                                           url: clip.url, originalURL: nil,
@@ -2919,7 +4158,9 @@ extension ListingMediaItem {
             items.append(ListingMediaItem(id: "photo-\(photo.id)", kind: .photo,
                                           url: photo.enhancedURL,
                                           originalURL: separateOriginal ? photo.originalURL : nil,
-                                          createdAt: entry.createdAt))
+                                          createdAt: entry.createdAt,
+                                          selectedForListing: selectionIndex?.isSelectedForListing(photo.id) == true,
+                                          publicationLabel: selectionIndex?.publicationLabel(for: photo.id)))
         }
         let plan = floorPlansDirectory
             .appendingPathComponent("\(request.listingID.uuidString).usdz")
@@ -3118,6 +4359,7 @@ private struct MediaThumb: View {
 /// finished reel or aerial from this screen at all.
 private struct ListingFilePreview: View {
     let item: ListingMediaItem
+    let listingID: UUID
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
     @State private var saved = false
@@ -3196,7 +4438,7 @@ private struct ListingFilePreview: View {
             .background(Theme.bg)
             .navigationTitle(item.title)
             .navigationBarTitleDisplayMode(.inline)
-            .askAI(.files)
+            .askAI(.files, listingID: listingID)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
@@ -3239,6 +4481,7 @@ private struct ListingFilePreview: View {
 /// Each branch is a viewer that already exists and already works.
 private struct ListingFileViewer: View {
     let item: ListingMediaItem
+    let listingID: UUID
 
     var body: some View {
         switch item.kind {
@@ -3246,7 +4489,10 @@ private struct ListingFileViewer: View {
             // The photo studio's own before/after view, unchanged. A photo with no
             // separate "before" on disk is its own before, exactly as
             // `EnhancedPhoto.loadAll` records it.
-            PhotoCompareView(photo: EnhancedPhoto(id: item.id,
+            // File-row identity is kind-prefixed; saved history uses the raw
+            // photo version id. Keep the initial publication action accurate.
+            let photoID = item.id.hasPrefix("photo-") ? String(item.id.dropFirst("photo-".count)) : item.id
+            PhotoCompareView(photo: EnhancedPhoto(id: photoID,
                                                   originalURL: item.originalURL ?? item.url,
                                                   enhancedURL: item.url))
         case .floorPlan:
@@ -3260,7 +4506,7 @@ private struct ListingFileViewer: View {
                     }
             }
         default:
-            ListingFilePreview(item: item)
+            ListingFilePreview(item: item, listingID: listingID)
         }
     }
 }
@@ -3281,63 +4527,133 @@ struct EnhancedPhoto: Identifiable, Hashable, Sendable {
     let id: String
     let originalURL: URL
     let enhancedURL: URL
+
+    var savedVersion: PhotoVersionHistory.Version? {
+        guard let index = try? PhotoVersionHistory.load(directory: enhancedURL.deletingLastPathComponent()) else { return nil }
+        return index.versions[id] ?? index.versions.values.first { $0.imageFile == enhancedURL.lastPathComponent }
+    }
+    var retainedSourceIsVerified: Bool { savedVersion?.originalVerified == true }
+    var history: [EnhancedPhoto] {
+        let directory = enhancedURL.deletingLastPathComponent()
+        guard let index = try? PhotoVersionHistory.load(directory: directory), let version = savedVersion else { return [self] }
+        return index.history(for: version.id).map { saved in
+            EnhancedPhoto(id: saved.id, originalURL: directory.appendingPathComponent(saved.reviewSourceFile(in: index)),
+                          enhancedURL: directory.appendingPathComponent(saved.imageFile))
+        }
+    }
+}
+
+/// Family navigation is a local view over this listing's retained version index.
+/// It never selects a publication, changes a version, or accepts another directory.
+private enum PhotoFamilyPager {
+    static func family(of photo: EnhancedPhoto, index: PhotoVersionHistory.Index, directory: URL) -> String? {
+        let directory = directory.standardizedFileURL
+        guard photo.enhancedURL.standardizedFileURL.deletingLastPathComponent() == directory,
+              photo.originalURL.standardizedFileURL.deletingLastPathComponent() == directory,
+              let version = index.versions[photo.id], !index.hiddenFamilies.contains(version.familyID),
+              version.imageFile == photo.enhancedURL.lastPathComponent,
+              version.reviewSourceFile(in: index) == photo.originalURL.lastPathComponent,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: photo.enhancedURL.path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              (attributes[.size] as? NSNumber)?.int64Value ?? 0 > 0 else { return nil }
+        return version.familyID
+    }
+
+    static func photos(_ candidates: [EnhancedPhoto], index: PhotoVersionHistory.Index, directory: URL) -> [EnhancedPhoto] {
+        var families: [String: EnhancedPhoto] = [:]
+        for candidate in candidates {
+            guard let family = family(of: candidate, index: index, directory: directory), families[family] == nil else { continue }
+            families[family] = candidate
+        }
+        return index.orderedFamilyIDs.compactMap { families[$0] }
+    }
+
+    static func destination(from viewed: EnhancedPhoto, offset: Int, candidates: [EnhancedPhoto],
+                            remembered: [String: EnhancedPhoto], index: PhotoVersionHistory.Index, directory: URL) -> EnhancedPhoto? {
+        guard offset == -1 || offset == 1,
+              let current = family(of: viewed, index: index, directory: directory) else { return nil }
+        let ordered = photos(candidates, index: index, directory: directory)
+        guard let position = ordered.firstIndex(where: { family(of: $0, index: index, directory: directory) == current }),
+              ordered.indices.contains(position + offset) else { return nil }
+        let next = ordered[position + offset]
+        guard let target = family(of: next, index: index, directory: directory) else { return nil }
+        if let saved = remembered[target], family(of: saved, index: index, directory: directory) == target { return saved }
+        return next
+    }
+
+    static func swipeOffset(horizontal: Double, vertical: Double) -> Int? {
+        guard horizontal.isFinite, vertical.isFinite, abs(horizontal) >= 60,
+              abs(horizontal) > abs(vertical) * 1.5 else { return nil }
+        return horizontal < 0 ? 1 : -1
+    }
+}
+
+/// Presentation carries the user's cover intent atomically with its photo.
+/// A separate state read inside the cover closure can retain the old value.
+private struct PhotoComparePresentation: Identifiable {
+    let photo: EnhancedPhoto
+    var requestedCover = false
+    var id: String { photo.id }
 }
 
 extension EnhancedPhoto {
+    nonisolated static func loadForListing(listingID: UUID) throws -> [EnhancedPhoto] {
+        let directory = directory(for: listingID)
+        guard let choices = try PhotoVersionHistory.publicationVersions(directory: directory) else {
+            return loadAll(listingID: listingID)
+        }
+        let index = try PhotoVersionHistory.load(directory: directory)
+        return index.orderedForLibrary(choices).map { version in
+            let output = directory.appendingPathComponent(version.imageFile)
+            return EnhancedPhoto(id: version.id, originalURL: directory.appendingPathComponent(version.reviewSourceFile(in: index)),
+                                 enhancedURL: output)
+        }
+    }
     /// Per-listing photo directory (Documents/Photos/<listingID>/). Not created here.
     static func directory(for listingID: UUID) -> URL {
         FileStore.documents.appendingPathComponent("Photos/\(listingID.uuidString)", isDirectory: true)
     }
 
-    /// Every enhanced photo on disk for a listing, newest first. Sorted by real
-    /// file creation date (mixing UUID and timestamp ids reordered AI edits vs
-    /// ingests unpredictably across relaunches); `orig-<id>.jpg` beside an
-    /// `enh-<id>.jpg` is the "before", else the photo is its own before.
-    ///
-    /// SIGNATURE UNCHANGED, deliberately. `PhotoStudioView.loadExisting`, the
-    /// Reel Studio hand-off and `CoachModel.photoCounts` all call this
-    /// synchronously and none of them wanted an `await`; the build-9 lag report
-    /// only asked that it stop costing what it cost, so the body moved onto
-    /// `dated(in:directory:)` and the callers are untouched.
+    /// Current photo versions in source import order. Older files remain
+    /// addressable without moving a family when its editing version changes.
     nonisolated static func loadAll(listingID: UUID) -> [EnhancedPhoto] {
         let dir = directory(for: listingID)
         return dated(in: DiskScan.entries(of: dir), directory: dir).map(\.photo)
     }
 
-    /// The scan behind `loadAll`, over a directory listing the caller already
-    /// has, keeping each photo's creation date instead of throwing it away.
-    ///
-    /// TWO syscall bills paid off here, both mine (the build-9 lag report):
-    ///
-    /// 1. The sort used to call `created()` inside the comparator, so a folder of
-    ///    n photos was stat'd O(n log n) times to answer a question with n
-    ///    answers. The date now comes off the enumeration once, in `DatedFile`.
-    /// 2. Finding the "before" used to be a `fileExists` PER PHOTO — twenty
-    ///    photos, twenty syscalls — for a fact the directory listing in front of
-    ///    us already contains. It is a set lookup now.
-    ///
-    /// The result is byte-for-byte the list build 8 produced, including the
-    /// `a.id > b.id` tie-break, which matters on the rare pair of files written
-    /// inside the same filesystem timestamp.
+    /// Reuse one directory scan for legacy files and the durable version index.
+    /// A legacy orig-* filename alone does not certify an unaltered original.
     nonisolated fileprivate static func dated(in entries: [DatedFile],
                                               directory dir: URL) -> [DatedPhoto] {
         let names = Set(entries.map(\.name))
-        return entries
-            .filter { $0.name.hasPrefix("enh-") }
-            .map { file -> DatedPhoto in
-                let id = file.url.deletingPathExtension().lastPathComponent
-                    .replacingOccurrences(of: "enh-", with: "")
-                let preferredOriginal = "orig-\(id).jpg"
-                let originalName = names.contains(preferredOriginal) ? preferredOriginal
-                    : names.sorted().first(where: { $0.hasPrefix("orig-\(id).") })
-                let origURL = originalName.map { dir.appendingPathComponent($0) } ?? file.url
-                return DatedPhoto(photo: EnhancedPhoto(id: id, originalURL: origURL,
-                                                       enhancedURL: file.url),
-                                  createdAt: file.createdAt)
+        let history = try? PhotoVersionHistory.load(directory: dir)
+        let knownFiles = Dictionary((history?.versions.values.map { ($0.imageFile, $0) } ?? []),
+                                    uniquingKeysWith: { first, _ in first })
+        let positions = Dictionary(uniqueKeysWithValues: (history?.orderedFamilyIDs ?? []).enumerated().map { ($0.element, $0.offset) })
+        return entries.compactMap { file -> DatedPhoto? in
+            if let version = knownFiles[file.name] {
+                guard history?.isVisible(version.id) == true else { return nil }
+                let source = history.map { dir.appendingPathComponent(version.reviewSourceFile(in: $0)) } ?? file.url
+                return DatedPhoto(photo: EnhancedPhoto(id: version.id, originalURL: source, enhancedURL: file.url),
+                                  createdAt: version.createdAt)
             }
-            .sorted { a, b in
-                a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.photo.id > b.photo.id
-            }
+            // Legacy files stay visible without inferring edit history. New edit-
+            // files are visible only after their atomic metadata commit succeeds.
+            guard file.name.hasPrefix("enh-") else { return nil }
+            let id = String(file.url.deletingPathExtension().lastPathComponent.dropFirst(4))
+            let preferredOriginal = "orig-\(id).jpg"
+            let originalName = names.contains(preferredOriginal) ? preferredOriginal
+                : names.sorted().first(where: { $0.hasPrefix("orig-\(id).") })
+            let original = originalName.map { dir.appendingPathComponent($0) } ?? file.url
+            return DatedPhoto(photo: EnhancedPhoto(id: id, originalURL: original, enhancedURL: file.url),
+                              createdAt: file.createdAt)
+        }.sorted { a, b in
+            let aFamily = history?.versions[a.photo.id]?.familyID ?? a.photo.id
+            let bFamily = history?.versions[b.photo.id]?.familyID ?? b.photo.id
+            let aOrder = positions[aFamily] ?? Int.max, bOrder = positions[bFamily] ?? Int.max
+            if aOrder != bOrder { return aOrder < bOrder }
+            return a.createdAt != b.createdAt ? a.createdAt < b.createdAt : a.photo.id > b.photo.id
+        }
     }
 }
 
@@ -3356,13 +4672,13 @@ private struct StagingStyle: Identifiable, Hashable {
     let id: String
     let label: String
 
-    /// Modern / Rustic / Minimalist / Scandinavian. `let` on a file-scope
+    /// Modern / Rustic / Minimalist / Contemporary. `let` on a file-scope
     /// `private` type: no actor, no isolation question, readable from anywhere.
     static let all: [StagingStyle] = [
         StagingStyle(id: "modern", label: "Modern"),
         StagingStyle(id: "rustic", label: "Rustic"),
         StagingStyle(id: "minimalist", label: "Minimalist"),
-        StagingStyle(id: "scandinavian", label: "Scandinavian"),
+        StagingStyle(id: "contemporary", label: "Contemporary"),
     ]
 }
 
@@ -3392,6 +4708,71 @@ private struct PendingBatchEdit: Identifiable, Equatable {
     var id: String { style.map { "\(edit).\($0)" } ?? edit }
 }
 
+@MainActor private struct PhotoStagingSetup: Identifiable {
+    let id = UUID()
+    let pending: PendingBatchEdit
+    let targets: [EnhancedPhoto]
+    let references: [EnhancedPhoto]
+    private let owner = AuthStore.shared.userID
+    private let revision = AuthStore.shared.syncSessionRevision
+    private let workspace = WorkspaceContext.selectedOrgID
+    var isCurrent: Bool {
+        AuthStore.shared.userID == owner && AuthStore.shared.syncSessionRevision == revision
+            && WorkspaceContext.selectedOrgID == workspace
+    }
+}
+
+private struct PhotoStagingSetupView: View {
+    let setup: PhotoStagingSetup
+    let apply: (String?, String?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var referenceID = ""
+    @State private var brief = ""
+    @State private var sameRoomConfirmed = false
+    private var reference: EnhancedPhoto? { setup.references.first { $0.id == referenceID } }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Staging · \((setup.pending.style ?? "modern").capitalized)") {
+                    Text("\(setup.targets.count) selected photo\(setup.targets.count == 1 ? "" : "s"). Each photo is a separate edit and counts against your plan.")
+                    TextField("Furnishing brief (optional)", text: $brief, axis: .vertical)
+                        .lineLimit(2...4).onChange(of: brief) { value in
+                            if value.count > 600 { brief = String(value.prefix(600)) }
+                        }
+                    Text("Reuse a specific furniture description when you stage another angle of this room. Fixed features and clear access take priority.").font(.caption)
+                }
+                Section("Another view of the same room") {
+                    Picker("Furniture reference · Coming soon", selection: $referenceID) {
+                        Text("No reference").tag("")
+                        ForEach(setup.references) { photo in
+                            Text(photo.savedVersion?.title ?? "Reviewed staged photo").tag(photo.id)
+                        }
+                    }.disabled(true).onChange(of: referenceID) { _ in sameRoomConfirmed = false }
+                    if let reference {
+                        DetailPhotoThumb(url: reference.enhancedURL, height: 180)
+                        Toggle("This is the same room and I checked this furniture layout", isOn: $sameRoomConfirmed)
+                    } else if setup.references.isEmpty {
+                        Text("Furniture references are coming soon.")
+                    }
+                    Text("Same-room photo references are not available yet. Use the same furnishing brief for each view, then compare every output; matching furniture is not guaranteed.").font(.caption)
+                }
+                Section {
+                    Button("Stage \(setup.targets.count) photo\(setup.targets.count == 1 ? "" : "s")") {
+                        guard setup.isCurrent, referenceID.isEmpty || sameRoomConfirmed else { return }
+                        dismiss()
+                        apply(referenceID.isEmpty ? nil : referenceID, brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : brief)
+                    }.disabled(!setup.isCurrent || (!referenceID.isEmpty && !sameRoomConfirmed))
+                        .accessibilityIdentifier("photoStage.apply")
+                    if !setup.isCurrent { Text("Your account or workspace changed. Reopen Staging.").foregroundStyle(.orange) }
+                }
+            }
+            .navigationTitle("Stage selected photos").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+    }
+}
+
 /// The one-line verdict left on screen after a batch. `ok` is false when any
 /// photo failed, so the card can stop claiming success it did not have.
 private struct BatchNote: Equatable {
@@ -3407,6 +4788,52 @@ private struct BatchRun: Equatable {
     var current: Int = 1
     var done: Int = 0
     var failed: Int = 0
+    var phase: PhotoWorkQueue.Phase = .preparing
+}
+
+private struct PhotoOrientationFilterControl: View {
+    @Binding var filter: PhotoOrientation?
+    let orientations: [PhotoOrientation]
+    var selectedCount: Int? = nil
+    var identifier = "photos.orientation"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("\(orientations.count) photos" + (selectedCount.map { " · \($0) selected" } ?? ""))
+                    .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Menu {
+                    Picker("Photo orientation", selection: $filter) {
+                        Text("All photos").tag(Optional<PhotoOrientation>.none)
+                        ForEach(PhotoOrientation.allCases, id: \.self) { orientation in
+                            Text("\(orientation.label) (\(PhotoOrientation.counts(orientations)[orientation, default: 0]))")
+                                .tag(Optional(orientation))
+                        }
+                    }
+                } label: {
+                    Label(filter?.label ?? "All photos", systemImage: "line.3.horizontal.decrease")
+                        .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 10).frame(minHeight: 44)
+                        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10))
+                }
+                .accessibilityLabel("Filter photo orientation")
+                .accessibilityValue(filter?.label ?? "All photos")
+                .accessibilityIdentifier(identifier + ".filter")
+            }
+            Text(PhotoOrientation.summary(orientations))
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(identifier + ".counts")
+            if filter != nil, selectedCount != nil {
+                Text("Filtering keeps your selected photos and their order.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 struct PhotoStudioView: View {
@@ -3487,8 +4914,8 @@ struct PhotoStudioView: View {
         /// agent already learned to look for disappeared off the screen.
         static func stagingGloss(_ space: SpaceType) -> String {
             space == .realEstate
-                ? "Add furniture in the style you pick — walls and windows stay as they are."
-                : "Puts in sofas, tables and art in the style you pick — walls and windows stay as they are."
+                ? "Add furniture in the style you pick. Review every result against the original before publishing."
+                : "Add furniture and decor in the style you pick. Review fixed features and access against the original before publishing."
         }
 
     }
@@ -3529,6 +4956,7 @@ struct PhotoStudioView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let listing: Listing
     let entry: Entry
 
@@ -3536,7 +4964,17 @@ struct PhotoStudioView: View {
         model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath
     }
     private func isMain(_ p: EnhancedPhoto) -> Bool {
-        mainRelPath == FileStore.relativePath(for: p.enhancedURL)
+        if model.listings.first(where: { $0.id == listing.id })?.serverID != nil {
+            return model.cloudPhotoProjection(for: listing.id)?.coverVersionIDs.contains(p.id) == true
+        }
+        return mainRelPath == FileStore.relativePath(for: p.enhancedURL)
+    }
+    private var isCloudPhotoListing: Bool { model.listings.first(where: { $0.id == listing.id })?.serverID != nil }
+    private func listingPhotoSelected(_ id: String) -> Bool {
+        isCloudPhotoListing ? model.cloudPhotoProjection(for: listing.id)?.selectedVersionIDs.contains(id) == true : selectedPhotoIDs.contains(id)
+    }
+    private func listingPhotoLabel(_ id: String) -> String? {
+        isCloudPhotoListing ? (model.cloudPhotoProjection(for: listing.id)?.label(versionID: id) ?? "Check listing selection") : publicationLabels[id]
     }
 
     // `aerialClipURLs` moved OUT of this screen with the reel card. The aerial
@@ -3561,8 +4999,43 @@ struct PhotoStudioView: View {
     }
 
     private func setMain(_ p: EnhancedPhoto) {
+        if isCloudPhotoListing {
+            if p.savedVersion?.needsStagingReview == true || p.savedVersion?.needsCustomReview == true {
+                compare = PhotoComparePresentation(photo: p, requestedCover: true)
+                return
+            }
+            let context = NativeMediaExportContext()
+            galleryRetrying = true
+            Task { @MainActor in
+                defer { galleryRetrying = false }
+                do {
+                    _ = try await model.makeCloudPhotoCover(listingID: listing.id, versionID: p.id, reviewed: false)
+                    if context.isCurrent { Haptics.success() }
+                    if context.isCurrent {
+                        PhotoFeedbackQueue.shared.recordListingSelection(of: p.savedVersion, stagingAcknowledged: false,
+                            customAcknowledged: false,
+                            listingIsLive: model.listings.first(where: { $0.id == listing.id })?.serverShareURL != nil)
+                    }
+                } catch { if context.isCurrent { photoSaveError = error.localizedDescription } }
+            }
+            return
+        }
+        do {
+            let directory = p.enhancedURL.deletingLastPathComponent()
+            try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
+                priorFile: p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent, directory: directory)
+            try PhotoVersionHistory.selectForPublication(id: p.id, directory: directory)
+        } catch PhotoVersionHistory.Failure.reviewRequired {
+            compare = PhotoComparePresentation(photo: p, requestedCover: true); return
+        } catch PhotoVersionHistory.Failure.customReviewRequired {
+            compare = PhotoComparePresentation(photo: p, requestedCover: true); return
+        } catch {
+            aiFailure = AIFailure(error); return
+        }
+        loadExisting()
         model.setMainPhoto(FileStore.relativePath(for: p.enhancedURL), for: listing.id)
         Haptics.success()
+        PhotoFeedbackQueue.shared.recordSignal(.manualSelection, detail: .listingSelection, for: p.savedVersion)
     }
 
     /// The business type the copy speaks in (samples follow the current type).
@@ -3573,6 +5046,43 @@ struct PhotoStudioView: View {
     private var stagingLabel: String { space == .realEstate ? "Virtual staging" : "Furnish & style" }
 
     @State private var photos: [EnhancedPhoto] = []
+    @State private var libraryKind: PhotoVersionHistory.LibraryKind = .original
+    @State private var photoOrientationFilter: PhotoOrientation?
+    @State private var photoOrientations: [PhotoGeometryInput: PhotoOrientation] = [:]
+    @State private var selectedPhotoIDs: Set<String> = []
+    @State private var publicationLabels: [String: String] = [:]
+    @State private var galleryRetrying = false
+    private var libraryPhotos: [EnhancedPhoto] {
+        guard entry == .photos, libraryKind != .latest else { return photos }
+        guard let index = try? PhotoVersionHistory.load(directory: EnhancedPhoto.directory(for: listing.id)) else { return [] }
+        let directory = EnhancedPhoto.directory(for: listing.id)
+        return index.libraryVersions(libraryKind).map { version in
+            let image = directory.appendingPathComponent(version.imageFile)
+            return EnhancedPhoto(id: version.id, originalURL: directory.appendingPathComponent(version.reviewSourceFile(in: index)),
+                                 enhancedURL: image)
+        }
+    }
+    private var photoGeometryInputs: [PhotoGeometryInput] {
+        libraryPhotos.map { PhotoGeometryInput(id: $0.id, url: $0.enhancedURL) }
+    }
+    private func photoOrientation(_ photo: EnhancedPhoto) -> PhotoOrientation {
+        photoOrientations[PhotoGeometryInput(id: photo.id, url: photo.enhancedURL)] ?? .unknown
+    }
+    private var filteredLibraryPhotos: [EnhancedPhoto] {
+        PhotoOrientation.filtered(libraryPhotos, by: photoOrientationFilter, orientation: photoOrientation)
+    }
+
+    private var galleryFamilyPhotos: [EnhancedPhoto] {
+        let directory = EnhancedPhoto.directory(for: listing.id)
+        guard let index = try? PhotoVersionHistory.load(directory: directory) else { return [] }
+        return PhotoFamilyPager.photos(libraryPhotos + photos, index: index, directory: directory)
+    }
+
+    private var gallerySyncError: String? {
+        guard let message = model.listings.first(where: { $0.id == listing.id })?.lastError,
+              message.hasPrefix(AppModel.photoSyncErrorPrefix) else { return nil }
+        return message
+    }
     /// The photos with AI work in flight right now, so each THUMBNAIL can say
     /// so. `isProcessing` is one bool for the whole screen and its spinner
     /// renders once, at the top of the scroll view — on a seventeen-photo grid
@@ -3582,16 +5092,29 @@ struct PhotoStudioView: View {
     @State private var busyPhotoIDs: Set<String> = []
     @State private var showLibrary = false
     @State private var showCamera = false
-    @State private var isProcessing = false
+    @State private var showCaptureGuide = false
+    @State private var openCameraAfterGuide = false
+    var captureIntent: CaptureGuideIntent = .listingPhotos
+    @State private var localProcessing = false
+    @State private var libraryImportID: UUID?
+    @State private var libraryImportCancellation: PhotoImportCancellation?
+    @ObservedObject private var photoJobs = PhotoWorkQueue.shared
+    @State private var handledPhotoJob: UUID?
+    private var isProcessing: Bool { localProcessing || photoJobs.job?.running == true }
+    @State private var photoSaveError: String?
     @State private var processingText = "Working on your photo…"
-    @State private var compare: EnhancedPhoto?
+    @State private var compare: PhotoComparePresentation?
+    @State private var exportingPhotos: PhotoExportSelection?
+    @State private var photoOwner = AuthStore.shared.userID
     @State private var aiFailure: AIFailure?
     @State private var animatedClip: AnimatedClip?   // finished photo→reel clip
     @State private var customEditPhoto: EnhancedPhoto?   // photo awaiting a custom-prompt AI edit
-    @State private var animateTask: Task<Void, Never>?   // photo→clip poll; cancelled when the studio is left
+    @State private var animateTask: Task<Void, Never>?   // polling stops on leaving; its exact paid receipt remains
+    @State private var savedAnimations: [PhotoAnimationRecovery.Summary] = []
     @State private var wandPhoto: EnhancedPhoto?         // photo under the visible wand button
     @State private var showWandDialog = false            // wand → change-this-photo chooser
     @State private var stagePhoto: EnhancedPhoto?        // photo awaiting a staging style
+    @State private var stagingSetup: PhotoStagingSetup?
     @State private var showStageDialog = false           // staging style chooser
     @State private var suggestResult: SuggestResult?     // AI-suggested edits sheet payload
     @StateObject private var connection = FeatureSessionAction()
@@ -3619,13 +5142,7 @@ struct PhotoStudioView: View {
     /// `CustomEditSheet` edits one photo's worth of prompt; the prompt it
     /// returns is applied to every photo in here.
     @State private var customBatchTargets: [EnhancedPhoto] = []
-    /// The disclosure sentence the server recorded for each AI edit made this
-    /// session, keyed by photo id — shown verbatim in the before/after view
-    /// (W2-C4). Not persisted: the durable copy is the provenance row, which the
-    /// listing's COMPLIANCE card reads back from the server.
-    @State private var editDisclosures: [String: String] = [:]
-    /// A photo waiting on the "this original backs a published disclosure"
-    /// confirmation before it is deleted (W2-C3).
+    /// A photo awaiting confirmation before its family is hidden from the gallery.
     @State private var pendingPhotoDelete: EnhancedPhoto?
     @State private var showPhotoDeleteConfirm = false
     /// Motion clips already on disk for this listing (F-A-23). Without this the
@@ -3652,7 +5169,7 @@ struct PhotoStudioView: View {
     /// fires the presenter's `onDisappear` — cancelling the animate task there
     /// left the grid stuck on "Animating photo…" forever (F-A-12).
     private var isPresentingOverlay: Bool {
-        compare != nil || animatedClip != nil || customEditPhoto != nil || suggestResult != nil
+        compare != nil || exportingPhotos != nil || stagingSetup != nil || animatedClip != nil || customEditPhoto != nil || suggestResult != nil
             || showLibrary || showCamera
             || showWandDialog || showStageDialog || showPhotoDeleteConfirm
             || showClipDeleteConfirm
@@ -3691,23 +5208,39 @@ struct PhotoStudioView: View {
             }
             .padding()
         }
-        .overlay(alignment: .bottom) { workingPill }
+        .overlay(alignment: .top) { if localProcessing { workingPill } }
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isProcessing)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: busyPhotoIDs)
         .background(Theme.bg)
         .navigationTitle(entry == .photos ? "Photos" : "AI Photo Studio")
         .navigationBarTitleDisplayMode(.inline)
-        .askAI(entry == .photos ? .photos : .photoStudio)
+        .askAI(entry == .photos ? .photos : .photoStudio, listingID: listing.id,
+               photoState: .init(tab: entry == .photos ? (CoachRequest.PhotoState.Tab(rawValue: libraryKind.rawValue.lowercased()) ?? .original) : .original,
+                                 selectedCount: selectedPhotoIDs.count))
         .toolbar {
             ToolbarItem(placement: .principal) { studioTitleBar }
         }
         .onAppear {
             loadExisting()
+            receivePhotoWork(photoJobs.visibleJob)
             syncIdleHold()      // a dismissed cover re-appears mid-animate
             seedPhotosForUIWalk()
             syncGalleryIfPublished()
         }
+        .onReceive(photoJobs.$job) { job in receivePhotoWork(photoJobs.isContextCurrent ? job : nil) }
         .onChange(of: isProcessing) { _ in syncIdleHold() }
+        .onChange(of: auth.userID) { newOwner in
+            libraryImportCancellation?.cancel()
+            // Initial anonymous connection is expected when the first AI tap
+            // reconnects. A change from an established owner closes old media.
+            if photoOwner != nil, photoOwner != newOwner { animateTask?.cancel(); animatedClip = nil; savedAnimations = []; compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss() }
+            photoOwner = newOwner
+        }
+        .onChange(of: auth.syncSessionRevision) { _ in libraryImportCancellation?.cancel() }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            libraryImportCancellation?.cancel()
+            animateTask?.cancel(); animatedClip = nil; savedAnimations = []; compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss()
+        }
         .onDisappear {
             if !isPresentingOverlay { animateTask?.cancel() }
             releaseIdleHold()   // re-taken by onAppear when the work is still running
@@ -3722,13 +5255,27 @@ struct PhotoStudioView: View {
     // per-photo shortcut and has always been one. Everything that costs money
     // and needs a decision lives on the other screen.
 
+    private var photosImportLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 10))
+            : AnyLayout(HStackLayout(spacing: 10))
+    }
+
     private var photosBody: some View {
         VStack(spacing: Theme.spacing) {
-            HStack(spacing: 10) {
+            photosImportLayout {
                 addButton("Add photos", "photo.stack", filled: true) { showLibrary = true }
                 addButton("Take a photo", "camera", filled: false) {
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
+                    showCaptureGuide = true
                 }
+                .accessibilityIdentifier("photos.takePhoto")
+            }
+            .disabled(isProcessing)
+
+            if let photoSaveError {
+                Text(photoSaveError)
+                    .font(.rpCaption).foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if photos.isEmpty && !isProcessing {
@@ -3740,16 +5287,46 @@ struct PhotoStudioView: View {
             }
 
             if !photos.isEmpty {
+                PhotoSavedVersionTabs(selection: $libraryKind)
+                Text(libraryKind == .original
+                     ? "Your originals stay unchanged. Start an AI edit here, then review the saved result."
+                     : libraryKind == .latest ? "The latest saved version of each photo. Originals and earlier edits stay available."
+                     : "Your saved results. Review, select for your listing, or share a version you like.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
                 photosGridHint
             }
 
+            if let gallerySyncError {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(gallerySyncError).font(.rpCaption).foregroundStyle(Theme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button { retryPublishedPhotos() } label: {
+                        Label(galleryRetrying ? "Updating published photos…" : "Retry published photos", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(galleryRetrying).accessibilityIdentifier("photos.retryPublishedPhotos")
+                    if let review = galleryReviewPhoto {
+                        Button { compare = PhotoComparePresentation(photo: review, requestedCover: true) } label: {
+                            Label("Review cover selection", systemImage: "photo.on.rectangle")
+                        }.accessibilityIdentifier("photos.reviewPublishedSelection")
+                        Text("The cover must be a selected saved version. Review it separately; Retry only resends the selected gallery.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).card()
+            }
             photoGrid
+            if !photos.isEmpty && libraryPhotos.isEmpty {
+                Text(libraryKind == .original ? "No retained originals are available here. Add the original photos to start a new edit."
+                     : libraryKind == .decluttered ? "No decluttered photos saved yet. Start from Original and choose Declutter."
+                     : "No staged photos saved yet. Start from Original and choose a staging style.")
+                    .font(.rpBody).foregroundStyle(Theme.inkDim)
+            }
 
             if !photos.isEmpty {
-                openStudioCard
+                if libraryKind == .original { openStudioCard }
                 shareAllButton
             }
 
+            pendingAnimationCard
             clipsCard
         }
     }
@@ -3762,14 +5339,19 @@ struct PhotoStudioView: View {
         .padding(.vertical, 8)
     }
 
+    /// Every photo in the library as ONE share: the export sheet packages
+    /// several photos into a single ZIP by default, which is what an agent
+    /// can actually hand to the person who runs their file.
     private var shareAllButton: some View {
-        ShareLink(items: photos.map { $0.enhancedURL }) {
-            Label("Share all photos", systemImage: "square.and.arrow.up")
+        Button { exportingPhotos = PhotoExportSelection(photos: libraryPhotos) } label: {
+            Label(libraryKind == .latest ? "Share all photos" : "Share all \(libraryKind.rawValue.lowercased()) photos", systemImage: "square.and.arrow.up")
                 .font(.rpBody.weight(.semibold))
                 .frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(Theme.accent).foregroundStyle(Color.white)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+        .accessibilityIdentifier("photos.shareAll")
+        .disabled(libraryPhotos.isEmpty)
     }
 
     /// The empty library. It says what happens to a photo when it lands,
@@ -3798,14 +5380,15 @@ struct PhotoStudioView: View {
     /// The line above the library grid. Three verbs, all of them free.
     private var photosGridHint: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Tap a photo to see before and after. Tap the star to make it the cover. Tap the wand to change just that one.")
+            Text(libraryKind == .original ? "Tap the wand to edit an original. Tap a photo to review its saved versions."
+                 : "Tap a photo to review, share, or select it for your listing. To try a different edit, return to Original.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
-            Label("Already brightened and sharpened on this phone \u{2014} that part costs nothing.",
+            if libraryKind == .latest { Label("Brightening and sharpening on this phone costs nothing.",
                   systemImage: "sparkles")
                 .font(.rpCaption.weight(.semibold))
                 .foregroundStyle(Theme.good)
-                .fixedSize(horizontal: false, vertical: true)
+                .fixedSize(horizontal: false, vertical: true) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -3823,7 +5406,7 @@ struct PhotoStudioView: View {
                     .background(RPGradient.photo,
                                 in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Change these with AI")
+                    Text("Edit originals with AI")
                         .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
                     Text("Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -3858,6 +5441,7 @@ struct PhotoStudioView: View {
             }
 
             studioEditSection
+            pendingAnimationCard
 
             if isProcessing && batchRun == nil {
                 studioSpinnerRow
@@ -3865,8 +5449,9 @@ struct PhotoStudioView: View {
 
             // THE GRID IS ONLY HERE ONCE A MODE IS CHOSEN. An AI screen that
             // opens on a wall of thumbnails is the screen he kept reporting.
-            if batchEdit != nil {
-                studioPickHint
+            if !photos.isEmpty {
+                if batchEdit != nil { studioPickHint }
+                else { Text("Review your photos").font(.rpHeadline).foregroundStyle(Theme.ink) }
                 photoGrid
             }
         }
@@ -3927,11 +5512,11 @@ struct PhotoStudioView: View {
     /// only: tick the photos this change applies to.
     private var studioPickHint: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Tap the photos you want changed \u{2014} they get a tick. Each one is a separate change, saved beside its original.")
+            Text("Tap the photos you want changed \u{2014} they get a tick. Decluttered and staged versions stay available in Photos. Staging is a preview until you choose it for the listing.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
-            Label("Every AI edit is disclosed on your tour, and the untouched original is published with it.",
-                  systemImage: "checkmark.shield.fill")
+            Label("Review saved disclosures and retained source photos before publishing. Export includes disclosure captions for your chosen destination.",
+                  systemImage: "info.circle")
                 .font(.rpCaption.weight(.semibold))
                 .foregroundStyle(Theme.good)
                 .fixedSize(horizontal: false, vertical: true)
@@ -3943,14 +5528,57 @@ struct PhotoStudioView: View {
         studioCore
         .disabled(connection.isWaiting)
         .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
-        .sheet(isPresented: $showLibrary) {
-            LibraryImagePicker { imgs in ingest(imgs) }.ignoresSafeArea()
+        .sheet(isPresented: $showLibrary, onDismiss: {
+            if libraryImportID == nil { pendingShowcaseEdit = nil; pendingShowcaseStyle = nil }
+        }) {
+            LibraryImagePicker(onBegin: { id, count, cancellation in
+                guard !isProcessing else {
+                    photoSaveError = "Another photo is still saving. Please wait, then add those photos again."
+                    return false
+                }
+                libraryImportID = id
+                libraryImportCancellation = cancellation
+                localProcessing = true
+                photoSaveError = nil
+                processingText = "Loading \(count) photos from your library…"
+                return true
+            }, onProgress: { id, completed, total in
+                guard libraryImportID == id else { return }
+                processingText = "Loading photo \(completed) of \(total)…"
+            }, onCancel: {
+                pendingShowcaseEdit = nil; pendingShowcaseStyle = nil
+            }, onImport: { batch in ingest(batch) }).ignoresSafeArea()
         }
-        .sheet(isPresented: $showCamera) {
-            CameraPicker { img in ingest([img]) }.ignoresSafeArea()
+        .sheet(isPresented: $showCaptureGuide, onDismiss: {
+            if openCameraAfterGuide { openCameraAfterGuide = false; showCamera = true }
+        }) {
+            CaptureOrientationGuide(intent: captureIntent, onContinue: {
+                openCameraAfterGuide = true; showCaptureGuide = false
+            }, onCancel: { openCameraAfterGuide = false; showCaptureGuide = false })
         }
-        .fullScreenCover(item: $compare) { p in
-            PhotoCompareView(photo: p, disclosure: editDisclosures[p.id])
+        .fullScreenCover(isPresented: $showCamera) {
+            GuidedPhotoCamera(purpose: .interior, captureIntent: captureIntent, onPicked: { img in
+                let error = await withCheckedContinuation { continuation in
+                    ingest([img]) { continuation.resume(returning: $0) }
+                }
+                if error == nil { showCamera = false }
+                return error
+            }, onCancel: { showCamera = false })
+            .ignoresSafeArea()
+        }
+        .fullScreenCover(item: $compare, onDismiss: { loadExisting() }) { presentation in
+            PhotoCompareView(photo: presentation.photo, requestedCover: presentation.requestedCover,
+                             galleryPhotos: entry == .photos ? galleryFamilyPhotos : [])
+        }
+        .sheet(item: $stagingSetup) { setup in
+            PhotoStagingSetupView(setup: setup) { referenceID, brief in
+                stagingSetup = nil
+                connection.run {
+                    guard setup.isCurrent else { return }
+                    startPhotoWork(setup.pending, targets: setup.targets, prompt: brief,
+                                   stagingReferenceID: referenceID)
+                }
+            }
         }
         .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
         .sheet(item: $customEditPhoto, onDismiss: { customBatchTargets = [] }) { p in
@@ -3987,7 +5615,7 @@ struct PhotoStudioView: View {
         // not been dropped.
     }
 
-    var body: some View {
+    private var photoActionDialogs: some View {
         studioSheets
         // The wand's visible menu — same edits as the long-press path, one tap.
         .confirmationDialog("Change this photo", isPresented: $showWandDialog,
@@ -4008,21 +5636,27 @@ struct PhotoStudioView: View {
             Button(EditWords.animate) { animate(p) }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Each change saves as a new photo. The original stays, and the change is disclosed on your tour.")
+            Text("Each edit is saved separately. Find decluttered and staged photos in Photos. Choose a staged preview for the listing only after reviewing it.")
         }
-        // W2-C3: a photo's "before" is the file a published disclosure's
-        // "View original" points at. Never destroy it without asking.
-        .confirmationDialog("Delete this photo?", isPresented: $showPhotoDeleteConfirm,
+    }
+
+    private var removalDialogs: some View {
+        photoActionDialogs
+        // Removal hides the family; source bytes remain available to earlier
+        // versions and existing reels. Imported galleries preserve cloud photos.
+        .confirmationDialog("Remove this photo from the gallery?", isPresented: $showPhotoDeleteConfirm,
                             titleVisibility: .visible, presenting: pendingPhotoDelete) { p in
-            Button("Delete photo", role: .destructive) {
+            Button("Remove from gallery", role: .destructive) {
                 delete(p)
                 pendingPhotoDelete = nil
             }
             Button("Cancel", role: .cancel) { pendingPhotoDelete = nil }
         } message: { _ in
-            Text(space == .realEstate
-                 ? "This deletes the edited photo AND the untouched original beside it. Your published tour discloses AI edits and links buyers to the original — download the originals from COMPLIANCE first if your broker needs them on file."
-                 : "This deletes the edited photo AND the untouched original beside it. Your published tour discloses AI edits and links \(space.customerNoun) to the original — download the originals from COMPLIANCE first if you want to keep them on file.")
+            if (model.listings.first(where: { $0.id == listing.id }) ?? listing).cloudImported == true {
+                Text("This hides the photo family from this iPhone's gallery. Photos already on the published listing remain online. Source files and edit history stay on this phone.")
+            } else {
+                Text("This removes the photo family from the selected gallery. Your published listing updates when gallery sync finishes. Source files and edit history stay on this phone.")
+            }
         }
         .confirmationDialog("Delete this clip?", isPresented: $showClipDeleteConfirm,
                             titleVisibility: .visible, presenting: pendingClipDelete) { clip in
@@ -4034,18 +5668,22 @@ struct PhotoStudioView: View {
         } message: { _ in
             Text("Removes the motion clip from this phone. Anything you already saved to Photos or shared stays where it is.")
         }
+    }
+
+    private var editFeedbackDialogs: some View {
+        removalDialogs
         .confirmationDialog("Pick a style", isPresented: $showStageDialog,
                             titleVisibility: .visible, presenting: stagePhoto) { p in
             Button("Modern") { aiEdit(p, "stage", style: "modern") }
             Button("Rustic") { aiEdit(p, "stage", style: "rustic") }
             Button("Minimalist") { aiEdit(p, "stage", style: "minimalist") }
-            Button("Scandinavian") { aiEdit(p, "stage", style: "scandinavian") }
+            Button("Contemporary") { aiEdit(p, "stage", style: "contemporary") }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             // `stagingLabel` is the INDUSTRY term ("Virtual staging" /
             // "Furnish & style") — the button says "Add furniture", the
             // disclosure sentence says what a broker has to read.
-            Text("AI adds furniture in the style you pick. Walls and windows stay as they are. \(stagingLabel) is disclosed on your tour.")
+            Text("AI adds furniture in the style you pick. Review the result for unwanted changes. Restyling starts from the saved pre-furniture version, so later edits may not carry over. Export includes \(stagingLabel.lowercased()) disclosure text.")
         }
         .alert(aiFailure?.title ?? "That one didn't work",
                isPresented: Binding(get: { aiFailure != nil }, set: { if !$0 { aiFailure = nil } }),
@@ -4063,29 +5701,77 @@ struct PhotoStudioView: View {
                     connection.run {}
                 }
             }
+            if f.isServiceUnavailable || f.isTrialCapacityUnavailable {
+                Button("Contact support") {
+                    aiFailure = nil
+                    UIApplication.shared.open(SettingsView.supportMailURL(subject: "AI edit failed — \(f.title)"))
+                }
+            }
             Button("OK", role: .cancel) { aiFailure = nil }
         } message: { f in
             Text(f.fullMessage)
         }
-        // Guideline 5.1.2(i): every edit on this screen ships the photo to a
-        // third-party model (Gemini for stills, Seedance for photo→clip), so
-        // the disclosure has to be agreed BEFORE the screen can be used. Asked
-        // once per device; declining backs out of the studio.
+    }
+
+    var body: some View {
+        editFeedbackDialogs
+        .sheet(item: $exportingPhotos) { selection in
+            PhotoExportSheet(photos: selection.photos, original: selection.original, archiveName: listing.address,
+                             onExported: PhotoFeedbackQueue.recordExport)
+        }
+        // Third-party processing consent is asked at AI entry or immediately
+        // before an edit; viewing, importing and exporting ordinary photos
+        // remains available without opting into AI processing.
         .aiConsentGate()
+        .paywallHost(managesLifecycle: false)
         .onDisappear {
             if !isPresentingOverlay { connection.cancel() }
         }
         .task {
-            if await AIConsent.shared.ensureGranted() == false { dismiss() }
+            if entry == .studio, await AIConsent.shared.ensureGranted() == false { dismiss() }
+#if targetEnvironment(simulator)
+            // Exact offline fixture only: exercise the existing quota alert and
+            // its modal paywall host without dispatching an AI job or purchase.
+            if Config.isUITesting, ProcessInfo.processInfo.arguments.contains("-ui.photoQuotaFixture"),
+               listing.address == "Detail fixture empty", model.api is MockAPIClient {
+                aiFailure = AIFailure(APIError.server(status: 402, code: "quota_exceeded", message: "Synthetic photo allowance is used up."))
+            }
+#endif
         }
     }
 
     private var photoGrid: some View {
-        LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(photos) { p in photoCell(p) }
+        VStack(alignment: .leading, spacing: 10) {
+            PhotoOrientationFilterControl(filter: $photoOrientationFilter,
+                orientations: libraryPhotos.map(photoOrientation), selectedCount: batchEdit == nil ? nil : batchSelection.count)
+            if filteredLibraryPhotos.isEmpty && !libraryPhotos.isEmpty {
+                Text("No \(photoOrientationFilter?.rawValue ?? "matching") photos in this view.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button("Show all photos") { photoOrientationFilter = nil }
+                    .font(.rpCaption.weight(.semibold)).frame(minHeight: 44)
+            }
+            LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(filteredLibraryPhotos) { p in
+                    VStack(alignment: .leading, spacing: 5) {
+                        photoCell(p, selectedForListing: listingPhotoSelected(p.id))
+                        Text(photoOrientation(p).label).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            .accessibilityIdentifier("photos.orientation.\(p.id)")
+                        if entry == .photos && libraryKind == .staged, let style = p.savedVersion?.style, !style.isEmpty {
+                            Text(style.capitalized).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        }
+                    }
+                }
+            }
         }
-        // New AI edits and deletions settle into the grid instead of
-        // popping — keyed on count so only inserts/removes animate.
+        .task(id: photoGeometryInputs) {
+            let inputs = photoGeometryInputs, actor = auth.userID, revision = auth.syncSessionRevision
+            let workspace = WorkspaceContext.selectedOrgID
+            let values = await PhotoGeometryReader.observe(inputs)
+            guard !Task.isCancelled, photoGeometryInputs == inputs, auth.userID == actor,
+                  auth.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == workspace else { return }
+            photoOrientations = values
+        }
+        // Filters never reorder the underlying source list or selection.
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: photos.count)
     }
 
@@ -4098,18 +5784,25 @@ struct PhotoStudioView: View {
     /// Selection: an edit from the bar is waiting for its targets, so a tap
     /// ticks the photo instead. The wand is not drawn — a tap that changes one
     /// photo while the screen is asking which photos to change is a trap.
-    @ViewBuilder private func photoCell(_ p: EnhancedPhoto) -> some View {
+    @ViewBuilder private func photoCell(_ p: EnhancedPhoto, selectedForListing: Bool) -> some View {
         // Wand overlay is a SIBLING of the thumb button (a Button
         // inside another Button's label never gets the tap).
         ZStack(alignment: .bottomTrailing) {
             if batchEdit == nil {
-                Button { compare = p } label: { thumb(p).overlay { busyOverlay(p) } }
+                Button { compare = PhotoComparePresentation(photo: p) } label: {
+                    thumb(p, selectedForListing: entry == .photos && selectedForListing,
+                          publicationLabel: entry == .photos ? listingPhotoLabel(p.id) : nil)
+                        .overlay { busyOverlay(p) }
+                }
                     .buttonStyle(ScalePressStyle())
                     .accessibilityLabel(Text(busyPhotoIDs.contains(p.id)
                                              ? "Photo — the AI is working on this one"
                                              : "Photo — opens before-and-after compare"))
+                    .accessibilityValue(entry == .photos
+                                        ? (listingPhotoLabel(p.id) ?? "Selection unavailable") : "")
+                    .accessibilityIdentifier("photos.version.\(p.id)")
                     .contextMenu { photoMenu(p) }
-                if !busyPhotoIDs.contains(p.id) { wandButton(p) }
+                if !busyPhotoIDs.contains(p.id), entry != .photos || libraryKind == .original { wandButton(p) }
                 // THE COVER, on the surface. It was a long-press and nothing
                 // else — an invisible gesture for the one picture that
                 // represents the whole home everywhere it is shared. Only on
@@ -4179,7 +5872,7 @@ struct PhotoStudioView: View {
     /// owed a count.
     private var pillText: String {
         if let run = batchRun {
-            return "\(run.title) — \(min(run.current, run.total)) of \(run.total)"
+            return "\(run.phase.title) · photo \(min(run.current, run.total)) of \(run.total)"
         }
         return processingText
     }
@@ -4203,6 +5896,7 @@ struct PhotoStudioView: View {
     }
 
     @ViewBuilder private func photoMenu(_ p: EnhancedPhoto) -> some View {
+        if entry != .photos || libraryKind == .original {
         Menu {
             Button { aiEdit(p, "twilight") } label: { Label(EditWords.twilight, systemImage: "moon.stars") }
             Button { aiEdit(p, "sky") } label: { Label(EditWords.sky, systemImage: "cloud.sun") }
@@ -4214,7 +5908,7 @@ struct PhotoStudioView: View {
                 Button { aiEdit(p, "stage", style: "modern") } label: { Text("Modern") }
                 Button { aiEdit(p, "stage", style: "rustic") } label: { Text("Rustic") }
                 Button { aiEdit(p, "stage", style: "minimalist") } label: { Text("Minimalist") }
-                Button { aiEdit(p, "stage", style: "scandinavian") } label: { Text("Scandinavian") }
+                Button { aiEdit(p, "stage", style: "contemporary") } label: { Text("Contemporary") }
             } label: {
                 Label(EditWords.stage(space), systemImage: "sofa")
             }
@@ -4225,18 +5919,33 @@ struct PhotoStudioView: View {
         Button { animate(p) } label: {
             Label(EditWords.animate, systemImage: "play.rectangle.on.rectangle")
         }
+        }
         Button { setMain(p) } label: {
             Label("Use as cover photo", systemImage: "star")
         }
+        Button { exportingPhotos = PhotoExportSelection(photos: [p]) } label: {
+            Label("Export photo", systemImage: "square.and.arrow.up")
+        }
         Button(role: .destructive) { confirmDelete(p) } label: {
-            Label("Delete", systemImage: "trash")
+            Label("Remove from gallery", systemImage: "trash")
         }
     }
 
     // MARK: - AI calls (await an anonymous or identified workspace session)
 
+    private func runPhotoAI(_ action: @escaping () -> Void) {
+        let context = NativeMediaExportContext()
+        Task { @MainActor in
+            guard await AIConsent.shared.ensureGranted(), context.isCurrent else { return }
+            connection.run {
+                guard context.isCurrent, AIConsent.shared.isGranted else { return }
+                action()
+            }
+        }
+    }
+
     private func openCustomEdit(_ p: EnhancedPhoto, batchTargets: [EnhancedPhoto] = []) {
-        connection.run {
+        runPhotoAI {
             // Park the batch only after connection succeeds. Cancelling the
             // wait cannot leak these targets into the next single-photo edit.
             customBatchTargets = batchTargets
@@ -4258,155 +5967,52 @@ struct PhotoStudioView: View {
     private func aiEdit(_ p: EnhancedPhoto, _ edit: String,
                         style: String? = nil, prompt: String? = nil) {
         guard !isProcessing else { return }
-        connection.run { aiEditWithSession(p, edit, style: style, prompt: prompt) }
+        if edit == "stage" {
+            runPhotoAI {
+                openStagingSetup(PendingBatchEdit(edit: edit, style: style, title: "Staging", multiple: false), targets: [p])
+            }
+            return
+        }
+        runPhotoAI { aiEditWithSession(p, edit, style: style, prompt: prompt) }
     }
 
     private func aiEditWithSession(_ p: EnhancedPhoto, _ edit: String,
                                    style: String?, prompt: String?) {
-        guard !isProcessing else { return }
-        isProcessing = true
-        batchNote = nil
-        processingText = "Working on your photo…"
-        Task { @MainActor in
-            do {
-                let newPhoto = try await performEdit(p, edit, style: style, prompt: prompt)
-                isProcessing = false
-                Haptics.success()
-                compare = newPhoto   // show the before/after (and its disclosure)
-            } catch {
-                isProcessing = false
-                // The fair-housing denylist speaks for itself — show its
-                // wording, let the user re-word, never retry automatically.
-                let title = (error as? APIError)?.code == "unsupported_edit"
-                    ? "That change isn't allowed" : "That change didn't work"
-                aiFailure = AIFailure(error, title: title)
-            }
+        let title = edit == "declutter" ? "Declutter" : "Photo edit"
+        startPhotoWork(PendingBatchEdit(edit: edit, style: style, title: title, multiple: false),
+                       targets: [p], prompt: prompt)
+    }
+
+    private func startPhotoWork(_ pending: PendingBatchEdit, targets: [EnhancedPhoto], prompt: String?,
+                                stagingReferenceID: String? = nil) {
+        guard !isProcessing, AIConsent.shared.isGranted else { return }
+        let service = PhotoEditService(model: model, listing: listing, space: space)
+        if service.start(title: pending.title, photos: targets, edit: pending.edit,
+                         style: pending.style, prompt: prompt, stagingReferenceID: stagingReferenceID) {
+            batchNote = nil; batchEdit = nil; batchSelection.removeAll()
+            Haptics.selection()
         }
     }
 
-    /// ONE AI edit, start to finish: prep the JPEG, anchor the listing, publish
-    /// the untouched original for disclosure, call `/ai-photo`, write the result
-    /// beside its "before", insert it into the grid, meter it. Returns the new
-    /// photo. Throws whatever the call threw — the CALLER decides whether that
-    /// is an alert (single edit) or a counted failure (a batch that keeps going).
-    ///
-    /// EXTRACTED VERBATIM from `aiEdit`'s task body, deliberately unchanged in
-    /// every respect that costs money or touches compliance. It does not present
-    /// anything and it does not clear `isProcessing`: a batch owns the spinner
-    /// for its whole run, and only the single-photo path opens the compare view.
-    ///
-    /// COMPLIANCE (W2-C3). Before the edit runs we publish the UNTOUCHED
-    /// original with `role:"original"` and send its asset id as
-    /// `original_asset_id`, so the disclosure block's "View original" link is a
-    /// real file rather than a dead promise — California AB 723 requires access
-    /// to the unaltered version, not only the sentence. Both that upload and the
-    /// server-listing creation it needs are best effort: an agent's edit never
-    /// fails because the audit log couldn't be anchored.
-    ///
-    /// A `400 unsupported_edit` from the fair-housing denylist surfaces the
-    /// server's own wording and is NEVER auto-retried — the user re-words it.
-    ///
-    /// `@MainActor` is spelled out rather than inherited from `View`. Everything
-    /// in here reads `AppModel`, `@State` or `Analytics`, all three of which are
-    /// main-actor, and this file has already lost one build to an isolation
-    /// guess (commit 78c4610). The long-running work — JPEG encode, upload, the
-    /// model call — is `await`ed and hops off on its own, exactly as before.
-    @MainActor
-    private func performEdit(_ p: EnhancedPhoto, _ edit: String,
-                             style: String?, prompt: String?) async throws -> EnhancedPhoto {
-        let api = model.api          // snapshot on the main actor
-        let targetDir = dir
-        let source = p.enhancedURL
-        // The unaltered "before" we publish for disclosure. `originalURL` is the
-        // camera/ingest original when one exists; for an already-AI-edited photo
-        // it is that edit's own recorded source. Never a different photo's file.
-        // …but only when it really IS a separate file. When the "before" copy is
-        // missing, `originalURL` falls back to the photo itself — publishing that
-        // as "the original" would label an already-processed image unaltered, so
-        // we publish nothing and the compliance row honestly shows amber.
-        let unaltered: URL? = p.originalURL.standardizedFileURL == p.enhancedURL.standardizedFileURL
-            ? nil : p.originalURL
-        let listingLocalID = listing.id
-        let isSample = listing.isSample
-        let disclosureLabel = Self.provenanceLabel(edit: edit, style: style, space: space)
-        let spaceRaw = space.rawValue    // THIS listing's type, not the selected one (P2-5)
-        let tapKey = UUID().uuidString   // one idempotency key per photo, per run
-
-        // THIS photo is busy, and its thumbnail says so for as long as it is.
-        // `defer` rather than a clear at the end: the throws below are the
-        // whole point — a photo that failed must not be left spinning.
-        busyPhotoIDs.insert(p.id)
-        defer { busyPhotoIDs.remove(p.id) }
-
-        guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 2048, quality: 0.9) else {
-            throw AIImagePrep.error("Couldn't read that photo.")
+    private func receivePhotoWork(_ job: PhotoWorkQueue.Job?) {
+        guard let job, job.listingID == listing.id else { batchRun = nil; busyPhotoIDs.removeAll(); return }
+        busyPhotoIDs = job.currentPhotoID.map { Set([$0]) } ?? []
+        if job.running {
+            batchRun = BatchRun(title: job.title, total: job.total, current: job.current,
+                                done: job.done, failed: job.failures.count, phase: job.phase ?? .preparing)
+            return
         }
-        // Anchor + "before", both best effort.
-        var serverListingID: UUID? = nil
-        var originalAssetID: String? = nil
-        if !isSample {
-            serverListingID = await model.serverListingIDForCompliance(listingLocalID)
-            if let sid = serverListingID, let unaltered {
-                // Put the step on screen and put back whatever line was there —
-                // a batch's line counts photos and must survive this detour.
-                let resume = processingText
-                processingText = "Saving the original for disclosure…"
-                originalAssetID = await model.publishOriginalForDisclosure(
-                    listingServerID: sid, fileURL: unaltered)
-                processingText = resume
-            }
+        batchRun = nil
+        loadExisting()
+        guard handledPhotoJob != job.id else { return }
+        handledPhotoJob = job.id
+        let failure = job.failures.first.map { AIFailure($0.error) }
+        let pending = PendingBatchEdit(edit: "", style: nil, title: job.title, multiple: true)
+        finishBatch(pending, total: job.total, done: job.done, failed: job.failures.count,
+                    firstFailure: failure, stoppedEarly: job.interrupted)
+        if job.interrupted && job.failures.isEmpty {
+            batchNote = BatchNote(text: "\(job.done) of \(job.total) photos changed. Work stopped; saved photos and originals are safe. Reopen the app and select the remaining photos to continue.", ok: false)
         }
-
-        var request = AIPhotoEditRequest(imageBase64: b64, mime: "image/jpeg", edit: edit)
-        request.style = style
-        request.prompt = prompt
-        request.spaceType = spaceRaw
-        request.listingServerID = serverListingID
-        request.label = disclosureLabel
-        request.originalAssetID = originalAssetID
-        request.idempotencyKey = tapKey
-        let result = try await api.aiPhotoEdit(request)
-        // Save with the same enh-/orig- convention as ingested photos: a
-        // UUID-named PNG was skipped by loadExisting (enh- filter) and lost
-        // on relaunch. Timestamp id sorts newest-first alongside ingests;
-        // the copied "before" keeps the compare working after relaunch.
-        let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000))
-            + "-" + String(UUID().uuidString.prefix(4))
-        let outURL = targetDir.appendingPathComponent("enh-\(id).jpg")
-        guard await AIImagePrep.writeJPEG(base64: result.imageBase64, to: outURL, quality: 0.95) else {
-            throw AIImagePrep.error("The AI didn't return an image. Try again.")
-        }
-        let beforeURL = targetDir.appendingPathComponent("orig-\(id).jpg")
-        try? FileManager.default.copyItem(at: source, to: beforeURL)
-        // Never point originalURL at another photo's live file — delete()
-        // removes it, so fall back to self, not the source, if the copy fails.
-        let originalURL = FileManager.default.fileExists(atPath: beforeURL.path)
-            ? beforeURL : outURL
-
-        let newPhoto = EnhancedPhoto(id: id, originalURL: originalURL, enhancedURL: outURL)
-        photos.insert(newPhoto, at: 0)
-        if let disclosure = result.disclosure, !disclosure.isEmpty { editDisclosures[id] = disclosure }
-        // METERED PER PHOTO, because it is charged per photo. `batch` says how
-        // it was reached; the event, and everything else about it, is the one
-        // `ai_photo_edit` a single wand tap has always sent.
-        Analytics.track("ai_photo_edit",
-                        ["task": edit, "ok": "true", "batch": batchRun == nil ? "false" : "true"])
-        if !isSample { FirstProjectGuide.recordAIPhotoEditCompleted() }
-
-        // Publish the "after" against the same provenance row so the
-        // tour can show the pair side by side (NorthstarMLS). Off the
-        // critical path — the edit is already on screen, and a failure
-        // costs nothing: the original alone satisfies AB 723. Detached from
-        // the caller so photo 4 of 17 is not waiting on photo 3's audit row.
-        if let provenanceID = result.provenanceID, let sid = serverListingID {
-            let appModel = model     // snapshot: an @EnvironmentObject read is a
-                                     // view-graph read, and this outlives the call
-            Task { @MainActor in
-                await appModel.attachAlteredPhotoForDisclosure(
-                    provenanceID: provenanceID, listingServerID: sid, fileURL: outURL)
-            }
-        }
-        return newPhoto
     }
 
     /// The label the public disclosure line carries for a studio edit. Studio
@@ -4433,12 +6039,12 @@ struct PhotoStudioView: View {
     /// tapping one runs the normal aiEdit path.
     private func suggestEdits(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        connection.run { suggestEditsWithSession(p) }
+        runPhotoAI { suggestEditsWithSession(p) }
     }
 
     private func suggestEditsWithSession(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        isProcessing = true
+        localProcessing = true
         processingText = "Looking at your photo…"
         Haptics.selection()
         let api = model.api          // snapshot on the main actor
@@ -4450,13 +6056,13 @@ struct PhotoStudioView: View {
                 }
                 let results = try await api.aiPhotoSuggest(imageBase64: b64, mime: "image/jpeg")
                 await MainActor.run {
-                    isProcessing = false
+                    localProcessing = false
                     suggestResult = SuggestResult(photo: p, suggestions: results)
                     Haptics.success()
                 }
             } catch {
                 await MainActor.run {
-                    isProcessing = false
+                    localProcessing = false
                     aiFailure = AIFailure(error, title: "Couldn't analyze the photo")
                 }
             }
@@ -4469,145 +6075,149 @@ struct PhotoStudioView: View {
     /// fal result URLs expire, so the download happens immediately on completion.
     private func animate(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        connection.run { animateWithSession(p) }
+        runPhotoAI { animateWithSession(p) }
     }
 
     private func animateWithSession(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        isProcessing = true
-        processingText = "Making your video — about a minute…"
+        localProcessing = true
+        processingText = "Checking your saved video request…"
         Haptics.selection()
-        let api = model.api          // snapshot on the main actor
-        let targetDir = dir
-        let source = p.enhancedURL
-        let photoID = p.id
-        let listingLocalID = listing.id
-        let isSample = listing.isSample
-        let tapKey = UUID().uuidString
-        // Snapshot on the main actor: `space` reads the listing, and the drift
-        // rubric is scoped by trade (a gym's "equipment appeared" is not a
-        // home's).
+        let api = model.api
+        let targetDir = dir, source = p.enhancedURL, photoID = p.id
+        let listingLocalID = listing.id, isSample = listing.isSample
+        let animationOwner = auth.userID, animationRevision = auth.syncSessionRevision
+        let animationLibrary = WorkspaceContext.selectedOrgID
+        let animationConsentRevision = AIConsent.shared.revocationRevision
+        let requireCurrent: @MainActor () throws -> Void = { [auth, model] in
+            try Task.checkCancellation()
+            guard AIConsent.shared.isGranted,
+                  AIConsent.shared.revocationRevision == animationConsentRevision,
+                  auth.userID == animationOwner, auth.syncSessionRevision == animationRevision,
+                  WorkspaceContext.selectedOrgID == animationLibrary,
+                  let current = model.listings.first(where: { $0.id == listingLocalID }),
+                  model.isInSelectedWorkspace(current), current.cloudUnavailable != true else { throw CancellationError() }
+        }
         let spaceRawForDrift = space.rawValue
         busyPhotoIDs.insert(photoID)
         animateTask = Task {
-            defer { busyPhotoIDs.remove(photoID) }
+            defer {
+                busyPhotoIDs.remove(photoID)
+                localProcessing = false
+                refreshSavedAnimations()
+            }
             do {
-                guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 1280, quality: 0.85) else {
+                try requireCurrent()
+                guard let animationOwner, !animationOwner.isEmpty else { throw PhotoAnimationRecovery.Failure.unavailable }
+                let sourceSHA = PhotoAnimationRecovery.digest(try Data(contentsOf: source, options: .mappedIfSafe))
+                guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 1280, quality: 0.85),
+                      let jpeg = Data(base64Encoded: b64), !jpeg.isEmpty else {
                     throw AIImagePrep.error("Couldn't read that photo.")
                 }
-                // Generated motion is altered media too (Wisconsin Act 69 covers
-                // generated video from 1 Jan 2027) — anchor it so it is
-                // disclosed and audited like every other AI asset.
+                try requireCurrent()
+                // Generated motion retains this exact source version and account.
                 var serverListingID: UUID? = nil
-                if !isSample {
-                    serverListingID = await model.serverListingIDForCompliance(listingLocalID)
+                if !isSample { serverListingID = await model.serverListingIDForCompliance(listingLocalID) }
+                try requireCurrent()
+                guard isSample || serverListingID != nil else {
+                    throw AIImagePrep.error("Reconnect this home's listing before making a video. No generation was started.")
                 }
-                let job = try await api.aiVideoReelClip(
-                    imageBase64: b64, mime: "image/jpeg",
-                    prompt: nil, seconds: 5,
-                    listingServerID: serverListingID, label: "Animated photo",
-                    idempotencyKey: tapKey)
-
-                let deadline = Date().addingTimeInterval(10 * 60)
-                var remoteURL: URL?
-                while remoteURL == nil {
-                    guard Date() < deadline else {
-                        throw AIImagePrep.error("The clip took too long. Please try again.")
-                    }
-                    try await Task.sleep(nanoseconds: 6_000_000_000)
-                    switch try await api.aiVideoStatus(job) {
-                    case .processing:
-                        break   // keep waiting; the grid shows the in-flight label
-                    case .completed(let videoURL):
-                        remoteURL = videoURL
-                    case .failed(let message):
-                        throw AIImagePrep.error(message)
-                    }
+                guard PhotoAnimationRecovery.digest(try Data(contentsOf: source, options: .mappedIfSafe)) == sourceSHA else {
+                    throw PhotoAnimationRecovery.Failure.unavailable
                 }
-                guard let remoteURL else {
-                    throw AIImagePrep.error("The AI didn't return a clip. Try again.")
+                let context = PhotoAnimationRecovery.Context(actor: animationOwner, library: animationLibrary,
+                    listing: listingLocalID, serverListing: serverListingID, photoVersion: photoID,
+                    sourceFile: source.lastPathComponent, sourceSHA256: sourceSHA, spaceType: spaceRawForDrift)
+                let dest = try await PhotoAnimationRecovery.run(context: context, directory: targetDir,
+                    prepare: { jpeg }, requireCurrent: requireCurrent,
+                    submit: { bytes, operationID in
+                        processingText = "Making your video…"
+                        return try await api.aiVideoReelClip(imageBase64: bytes.base64EncodedString(), mime: "image/jpeg",
+                            prompt: nil, seconds: 5, listingServerID: serverListingID,
+                            label: "Animated photo", idempotencyKey: operationID)
+                    }, poll: { job in
+                        processingText = "Checking your saved video…"
+                        return try await api.aiVideoStatus(job)
+                    }, download: { url in
+                        let (file, response) = try await URLSession.shared.download(from: url)
+                        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                            try? FileManager.default.removeItem(at: file)
+                            throw AIImagePrep.error("The saved video could not be downloaded. Check this same request again; no new generation will be started.")
+                        }
+                        return file
+                    }, judge: { job, bytes, clip, markDispatched in
+                        processingText = "Checking it against your photo…"
+                        let frames = await ClipFrames.extract(from: clip)
+                        try requireCurrent()
+                        guard frames.count == 3 else {
+                            return DriftVerdict(status: .unavailable, publishable: false, action: "hold",
+                                message: "The saved video could not be decoded for quality review.", reason: "no_frames")
+                        }
+                        try markDispatched() // Durable marker only at the paid QC seam, after local frame extraction.
+                        return try await api.aiVideoDrift(DriftCheckRequest(requestID: job.requestId, kind: "reel",
+                            sourceBase64: bytes.base64EncodedString(), frames: frames, seconds: 5,
+                            spaceType: spaceRawForDrift, listingServerID: serverListingID, provenanceID: job.provenanceID))
+                    }, lookup: { operationID, listingID in
+                        try await api.aiVideoOperation(operationID: operationID, listingServerID: listingID)
+                    }, validateSource: {
+                        guard PhotoAnimationRecovery.digest(try Data(contentsOf: source, options: .mappedIfSafe)) == sourceSHA else {
+                            throw PhotoAnimationRecovery.Failure.unavailable
+                        }
+                    })
+                try requireCurrent()
+                guard PhotoAnimationRecovery.digest(try Data(contentsOf: source, options: .mappedIfSafe)) == sourceSHA else {
+                    throw PhotoAnimationRecovery.Failure.unavailable
                 }
-
-                let (tmp, resp) = try await URLSession.shared.download(from: remoteURL)
-                if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                    throw AIImagePrep.error("Couldn't download the finished clip (HTTP \(http.statusCode)). Try again.")
-                }
-
-                // ── THE QUALITY GATE ────────────────────────────────────────
-                // Judge the clip before the agent ever sees it. `POST
-                // /ai-video/drift` compares the first, middle and last frames
-                // against the source still on five axes and answers whether it
-                // may be published; until this call existed the route had no
-                // callers at all and every clip was reported `unchecked,
-                // publishable: false` while the app used it anyway.
-                //
-                // FAIL CLOSED: a throw, an unknown status or `.unavailable`
-                // all hold, because "we could not tell whether the AI changed
-                // the house" is not "the AI did not change the house". The
-                // downloaded temp file is dropped on the floor rather than
-                // saved — a clip on disk that must not be published is a trap
-                // the agent finds a week later, next to their listing.
-                await MainActor.run { processingText = "Checking it against your photo…" }
-                let verdict: DriftVerdict
-                do {
-                    verdict = try await api.aiVideoDrift(DriftCheckRequest(
-                        requestID: job.requestId,
-                        kind: "reel",
-                        sourceBase64: b64,
-                        frames: await ClipFrames.extract(from: tmp),
-                        seconds: 5,
-                        spaceType: spaceRawForDrift,
-                        listingServerID: serverListingID))
-                } catch {
-                    verdict = DriftVerdict(status: .unavailable, publishable: false,
-                                           action: "hold", message: "", reason: nil)
-                }
-                guard verdict.mayUse else {
-                    try? FileManager.default.removeItem(at: tmp)
-                    Analytics.track("ai_clip_rejected",
-                                    ["kind": "animate", "status": verdict.status.rawValue])
-                    throw AIImagePrep.error(verdict.refusal)
-                }
-
-                let dest = targetDir.appendingPathComponent(
-                    "clip-\(photoID)-\(UUID().uuidString.prefix(4)).mp4")
-                try? FileManager.default.removeItem(at: dest)
-                try FileManager.default.moveItem(at: tmp, to: dest)
-
-                await MainActor.run {
-                    isProcessing = false
-                    clips = SavedClip.loadAll(listingID: listingLocalID)   // the new clip joins the list
-                    animatedClip = AnimatedClip(url: dest)
-                    Haptics.success()
-                }
+                clips = SavedClip.loadAll(listingID: listingLocalID)
+                animatedClip = AnimatedClip(url: dest)
+                Haptics.success()
             } catch is CancellationError {
-                // The studio was left mid-animate — stop polling quietly, and
-                // never leave the spinner up (F-A-12).
-                await MainActor.run { isProcessing = false }
+                // Leaving stops this phone's work, never erases its paid receipt.
             } catch {
-                await MainActor.run {
-                    isProcessing = false
-                    aiFailure = AIFailure(error, title: "Couldn't animate the photo")
-                }
+                guard (try? requireCurrent()) != nil else { return }
+                aiFailure = AIFailure(error, title: "Saved photo video")
             }
+        }
+    }
+
+    private func refreshSavedAnimations() {
+        guard let owner = auth.userID else { savedAnimations = []; return }
+        savedAnimations = PhotoAnimationRecovery.pending(directory: dir, actor: owner,
+            library: WorkspaceContext.selectedOrgID, listing: listing.id)
+    }
+
+    @ViewBuilder private var pendingAnimationCard: some View {
+        if !savedAnimations.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Saved photo videos").font(.rpHeadline).foregroundStyle(Theme.ink)
+                Text("Check the same saved request. This does not start another generation.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                ForEach(savedAnimations, id: \.operationID) { saved in
+                    SecondaryButton(title: "Check saved video", systemImage: "arrow.clockwise",
+                                    isDisabled: isProcessing, isCompact: true) {
+                        let candidates = photos + photos.flatMap(\.history)
+                        guard let photo = candidates.first(where: {
+                            $0.id == saved.context.photoVersion && $0.enhancedURL.lastPathComponent == saved.context.sourceFile
+                        }) else {
+                            aiFailure = AIFailure(PhotoAnimationRecovery.Failure.unavailable, title: "Saved photo video")
+                            return
+                        }
+                        animate(photo)
+                    }.accessibilityIdentifier("photos.savedAnimation.\(saved.operationID.uuidString)")
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
         }
     }
 
     // MARK: - Pieces
 
-    private func thumb(_ p: EnhancedPhoto) -> some View {
+    private func thumb(_ p: EnhancedPhoto, selectedForListing: Bool = false, publicationLabel: String? = nil) -> some View {
         DetailPhotoThumb(url: p.enhancedURL, height: 150)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.border))
             .overlay(alignment: .topLeading) {
-                if isMain(p) {
-                    Label("Cover", systemImage: "star.fill")
-                        .font(.caption2.weight(.bold))
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(Theme.accent, in: Capsule())
-                        .foregroundStyle(Color.white)
-                        .padding(8)
-                }
+                PhotoPublicationBadges(isCover: isMain(p), publicationLabel: publicationLabel,
+                                       photoID: p.id, selectedForListing: selectedForListing)
             }
     }
 
@@ -4634,7 +6244,8 @@ struct PhotoStudioView: View {
     /// home's studio you are standing in.
     private var studioTitleBar: some View {
         VStack(spacing: 1) {
-            Text("AI Photo Studio")
+            Text(entry == .photos ? "Photos · \(galleryFamilyPhotos.count)" : "AI Photo Studio")
+                .accessibilityIdentifier("photos.libraryCount")
                 .font(.rpBody.weight(.semibold))
                 .foregroundStyle(Theme.ink)
             Text(studioSubtitle)
@@ -4752,9 +6363,10 @@ struct PhotoStudioView: View {
                 }
                 .buttonStyle(ScalePressStyle())
                 .padding(8)
-                .disabled(isProcessing || isCover)
+                .disabled(isProcessing || galleryRetrying || isCover)
                 .accessibilityLabel(Text(isCover ? "This is the cover photo"
                                                  : "Make this the cover photo"))
+                .accessibilityIdentifier("photos.cover.\(p.id)")
                 Spacer(minLength: 0)
             }
         }
@@ -4875,7 +6487,7 @@ struct PhotoStudioView: View {
     ///
     /// Before this the word "staging" appeared nowhere an agent could see:
     /// `EditWords.stage(.realEstate)` returns "Add furniture", and Modern /
-    /// Rustic / Minimalist / Scandinavian lived one confirmation dialog behind
+    /// Rustic / Minimalist / Contemporary live one confirmation dialog behind
     /// another one. Two nested dialogs is not discoverable — the owner reported
     /// virtual staging missing right beside Declutter. The heading is the
     /// industry word, the line under it is the plain-words gloss (never instead
@@ -4896,7 +6508,7 @@ struct PhotoStudioView: View {
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
             stagingStyleGrid
-            Text("\(stagingLabel) is disclosed on your tour.")
+            Text("Exports include \(stagingLabel.lowercased()) disclosure text. Review your tour’s disclosures before publishing.")
                 .font(.caption2).foregroundStyle(Theme.inkDim)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -5045,14 +6657,19 @@ struct PhotoStudioView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 ProgressView()
-                Text("\(run.title) — photo \(min(run.current, run.total)) of \(run.total)")
+                Text("\(run.phase.title) — photo \(min(run.current, run.total)) of \(run.total)")
                     .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
                     .lineLimit(2).minimumScaleFactor(0.8)
             }
+            Text(run.phase.detail).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            // This bar counts completed attempts, not invented supplier progress.
             ProgressView(value: Double(run.done + run.failed), total: Double(max(run.total, 1)))
                 .tint(Theme.accent)
+                .accessibilityLabel("Batch completed attempts")
+                .accessibilityValue("\(run.done) saved, \(run.failed) failed, \(run.total) total")
             Text(run.failed == 0
-                 ? "\(run.done) done. Each photo is a separate change, saved beside its original."
+                 ? "\(run.done) of \(run.total) saved. Earlier versions stay in history."
                  : "\(run.done) done, \(run.failed) failed. The rest keep going.")
                 .font(.rpCaption)
                 .foregroundStyle(run.failed == 0 ? Theme.inkDim : Theme.warn)
@@ -5093,8 +6710,8 @@ struct PhotoStudioView: View {
                 .fixedSize(horizontal: false, vertical: true)
             // W2-C4: the agent learns this BEFORE they tap, not after
             // a broker asks. Disclosure is automatic, not optional.
-            Label("Every AI edit is disclosed on your tour, and the untouched original is published with it.",
-                  systemImage: "checkmark.shield.fill")
+            Label("Review saved disclosures and retained source photos before publishing. Export includes disclosure captions for your chosen destination.",
+                  systemImage: "info.circle")
                 .font(.rpCaption.weight(.semibold))
                 .foregroundStyle(Theme.good)
                 .fixedSize(horizontal: false, vertical: true)
@@ -5127,7 +6744,7 @@ struct PhotoStudioView: View {
         // Pre-tick the whole listing for the fan-out edits: with 17 photos the
         // answer is almost always "all of them", and un-ticking three is less
         // work than ticking fourteen. Never for the one-at-a-time edits.
-        batchSelection = multiple ? Set(photos.map(\.id)) : Set<String>()
+        batchSelection = multiple && edit != "stage" ? Set(photos.map(\.id)) : Set<String>()
         Haptics.selection()
     }
 
@@ -5199,6 +6816,8 @@ struct PhotoStudioView: View {
         guard !targets.isEmpty else { return }
         cancelBatchSelection()
         switch pending.edit {
+        case "stage":
+            connection.run { openStagingSetup(pending, targets: targets) }
         case "animate":
             // Never batched. `animate` is its own endpoint, its own poll and its
             // own charge; the chip is `multiple: false` so this is one photo.
@@ -5214,6 +6833,22 @@ struct PhotoStudioView: View {
         default:
             runBatch(pending, targets: targets)
         }
+    }
+
+    private func openStagingSetup(_ pending: PendingBatchEdit, targets: [EnhancedPhoto]) {
+        guard !isProcessing, !targets.isEmpty else { return }
+        let directory = EnhancedPhoto.directory(for: listing.id)
+        guard let index = try? PhotoVersionHistory.load(directory: directory) else {
+            aiFailure = AIFailure(PhotoVersionHistory.Failure.invalidHistory); return
+        }
+        let references = index.versions.values.filter {
+            $0.effects.contains("stage") && $0.stagingReviewed == true && !index.hiddenFamilies.contains($0.familyID)
+        }.sorted { $0.createdAt > $1.createdAt }.compactMap { version -> EnhancedPhoto? in
+            guard (try? PhotoVersionHistory.stagingReference(id: version.id, directory: directory)) != nil else { return nil }
+            return EnhancedPhoto(id: version.id, originalURL: directory.appendingPathComponent(version.reviewSourceFile(in: index)),
+                                 enhancedURL: directory.appendingPathComponent(version.imageFile))
+        }
+        stagingSetup = PhotoStagingSetup(pending: pending, targets: targets, references: references)
     }
 
     /// Run ONE edit over MANY photos, in sequence, on the user's own account.
@@ -5234,58 +6869,12 @@ struct PhotoStudioView: View {
     private func runBatch(_ pending: PendingBatchEdit, targets: [EnhancedPhoto],
                           prompt: String? = nil) {
         guard !isProcessing else { return }
-        connection.run { runBatchWithSession(pending, targets: targets, prompt: prompt) }
+        runPhotoAI { runBatchWithSession(pending, targets: targets, prompt: prompt) }
     }
 
     private func runBatchWithSession(_ pending: PendingBatchEdit, targets: [EnhancedPhoto],
                                      prompt: String?) {
-        guard !isProcessing else { return }
-        guard !targets.isEmpty else { return }
-        isProcessing = true
-        batchNote = nil
-        batchRun = BatchRun(title: pending.title, total: targets.count)
-        processingText = "\(pending.title) — photo 1 of \(targets.count)…"
-        Haptics.selection()
-        // `@MainActor in` explicitly rather than relying on inheritance: every
-        // line in here touches `@State`, `AppModel` or `Analytics`, all three of
-        // which are main-actor, and this file has already lost one build to an
-        // isolation guess (commit 78c4610).
-        Task { @MainActor in
-            var done = 0
-            var failedCount = 0
-            var firstFailure: AIFailure?
-            var stoppedEarly = false
-
-            for (index, photo) in targets.enumerated() {
-                batchRun?.current = index + 1
-                processingText = "\(pending.title) — photo \(index + 1) of \(targets.count)…"
-                do {
-                    _ = try await performEdit(photo, pending.edit,
-                                              style: pending.style, prompt: prompt)
-                    done += 1
-                    batchRun?.done = done
-                } catch {
-                    // The fair-housing denylist speaks for itself — its wording
-                    // is the message, and it is NEVER auto-retried.
-                    let title = (error as? APIError)?.code == "unsupported_edit"
-                        ? "That change isn't allowed" : "That change didn't work"
-                    let failure = AIFailure(error, title: title)
-                    failedCount += 1
-                    batchRun?.failed = failedCount
-                    if firstFailure == nil { firstFailure = failure }
-                    if failure.isQuota || failure.isUnauthorized {
-                        stoppedEarly = true
-                        break
-                    }
-                }
-            }
-
-            isProcessing = false
-            batchRun = nil
-            finishBatch(pending, total: targets.count, done: done,
-                        failed: failedCount, firstFailure: firstFailure,
-                        stoppedEarly: stoppedEarly)
-        }
+        startPhotoWork(pending, targets: targets, prompt: prompt)
     }
 
     /// What the agent is told when a batch ends. Split out of `runBatch` so the
@@ -5293,9 +6882,9 @@ struct PhotoStudioView: View {
     private func finishBatch(_ pending: PendingBatchEdit, total: Int, done: Int,
                              failed: Int, firstFailure: AIFailure?, stoppedEarly: Bool) {
         let photoWord = done == 1 ? "photo" : "photos"
-        if failed == 0 {
+        if failed == 0 && !stoppedEarly {
             batchNote = BatchNote(
-                text: "\(pending.title) — \(done) \(photoWord) changed. Each one saved beside its original.",
+                text: "\(pending.title) — \(done) \(photoWord) changed. Earlier versions and source files stay in history.",
                 ok: true)
             Haptics.success()
             return
@@ -5323,6 +6912,51 @@ struct PhotoStudioView: View {
     private func loadExisting() {
         photos = EnhancedPhoto.loadAll(listingID: listing.id)
         clips = SavedClip.loadAll(listingID: listing.id)
+        refreshSavedAnimations()
+        // Resolve each family's metadata independently. A missing selected
+        // image still stops gallery upload, but doesn't erase other badges.
+        do {
+            let index = try PhotoVersionHistory.ensureOriginalSources(directory: dir)
+            if entry == .studio {
+                photos = index.libraryVersions(.original).map { version in
+                    let image = dir.appendingPathComponent(version.imageFile)
+                    return EnhancedPhoto(id: version.id, originalURL: image, enhancedURL: image)
+                }
+            }
+            selectedPhotoIDs = Set(index.versions.keys.filter(index.isSelectedForListing))
+            publicationLabels = Dictionary(uniqueKeysWithValues: index.versions.keys.map {
+                ($0, index.publicationLabel(for: $0) ?? "Not selected for listing")
+            })
+        } catch {
+            selectedPhotoIDs = []; publicationLabels = [:]
+            photoSaveError = error.localizedDescription
+        }
+    }
+
+    private var galleryReviewPhoto: EnhancedPhoto? {
+        guard let mainRelPath else { return nil }
+        let selected = (try? EnhancedPhoto.loadForListing(listingID: listing.id)) ?? []
+        guard !selected.contains(where: { FileStore.relativePath(for: $0.enhancedURL) == mainRelPath }) else { return nil }
+        return photos.flatMap(\.history).first { FileStore.relativePath(for: $0.enhancedURL) == mainRelPath }
+    }
+
+    @MainActor private func retryPublishedPhotos() {
+        guard !galleryRetrying, let live = model.listings.first(where: { $0.id == listing.id }),
+              live.cloudUnavailable != true, let serverID = live.serverID else { return }
+        let context = NativeMediaExportContext()
+        let targetID = live.id, main = live.mainPhotoRelPath, org = live.serverOrgID
+        let selected: [String]
+        do { selected = try EnhancedPhoto.loadForListing(listingID: targetID).map(\.id) }
+        catch { photoSaveError = error.localizedDescription; return }
+        galleryRetrying = true
+        Task { @MainActor in
+            defer { galleryRetrying = false }
+            guard context.isCurrent,
+                  let current = model.listings.first(where: { $0.id == targetID }), current.cloudUnavailable != true,
+                  current.serverID == serverID, current.serverOrgID == org, current.mainPhotoRelPath == main,
+                  (try? EnhancedPhoto.loadForListing(listingID: targetID).map(\.id)) == selected else { return }
+            await model.syncGalleryPhotos(listingLocalID: targetID, listingServerID: serverID)
+        }
     }
 
     /// Photos added AFTER a tour was published still belong on its page.
@@ -5330,7 +6964,10 @@ struct PhotoStudioView: View {
     /// no-op on every visit but the first one after a change. Only for a
     /// listing that HAS a public page — there is nothing to add to otherwise.
     private func syncGalleryIfPublished() {
-        guard entry == .photos, !listing.isSample, !photos.isEmpty else { return }
+        guard entry == .photos, !listing.isSample else { return }
+        // An empty new phone must not clear cloud photos. An explicitly hidden
+        // final family, however, is a real user removal with retained history.
+        guard !photos.isEmpty || ((try? PhotoVersionHistory.load(directory: dir).versions.isEmpty) == false) else { return }
         let current = model.listings.first(where: { $0.id == listing.id })
         guard current?.serverShareURL != nil, let serverID = current?.serverID else { return }
         let localID = listing.id
@@ -5352,19 +6989,86 @@ struct PhotoStudioView: View {
         ingest(images)
     }
 
-    private func ingest(_ images: [UIImage]) {
+    /// Library files are decoded and saved one at a time. Keep the exact
+    /// representation delivered by Photos as the retained original; only the
+    /// separate brightened copy is JPEG-encoded, without resizing or cropping.
+    private func ingest(_ batch: PhotoImportBatch) {
+        guard libraryImportID == batch.id else { batch.removeTemporaryFiles(); return }
+        guard batch.context.matches(owner: AuthStore.shared.userID,
+                                    revision: AuthStore.shared.syncSessionRevision,
+                                    workspace: WorkspaceContext.selectedOrgID),
+              !batch.cancellation.isCancelled else {
+            batch.removeTemporaryFiles()
+            localProcessing = false; libraryImportID = nil; libraryImportCancellation = nil
+            pendingShowcaseEdit = nil; pendingShowcaseStyle = nil
+            photoSaveError = "The account or workspace changed. No photos were imported into another account. Choose the photos again in the original listing."
+            return
+        }
+        let targetDir = dir
+        let existingIDs = Array(((try? PhotoVersionHistory.load(directory: targetDir).versions) ?? [:]).keys)
+        processingText = "Saving your photos…"
+        PhotoImportWriter.save(batch, existingIDs: existingIDs, process: { item, id in
+            let original = try Data(contentsOf: item.url, options: .mappedIfSafe)
+            guard let image = UIImage(data: original) else {
+                throw NSError(domain: "RendpropPhotoImport", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "This image couldn't be decoded. Export it from Photos and try again."])
+            }
+            let enhanced = PhotoEnhancer.enhance(image)
+            guard let jpeg = enhanced.jpegData(compressionQuality: 0.97) else {
+                throw NSError(domain: "RendpropPhotoImport", code: 3,
+                              userInfo: [NSLocalizedDescriptionKey: "Couldn't prepare the brightened copy. Free some space and try again."])
+            }
+            try PhotoVersionHistory.saveCapture(original: original, enhanced: jpeg, id: id, directory: targetDir, importOrderID: id)
+        }, progress: { completed in
+            DispatchQueue.main.async {
+                guard libraryImportID == batch.id else { return }
+                processingText = "Saving photo \(completed) of \(batch.requestedCount)…"
+            }
+        }, completion: { report in
+            DispatchQueue.main.async {
+                guard libraryImportID == batch.id else { return }
+                localProcessing = false; libraryImportID = nil; libraryImportCancellation = nil
+                guard batch.context.matches(owner: AuthStore.shared.userID,
+                                            revision: AuthStore.shared.syncSessionRevision,
+                                            workspace: WorkspaceContext.selectedOrgID) else {
+                    pendingShowcaseEdit = nil; pendingShowcaseStyle = nil
+                    // Any completed bytes remain in the original listing's
+                    // directory. Never publish from a late account callback.
+                    return
+                }
+                loadExisting()
+                if mainRelPath == nil, let first = photos.first { setMain(first) }
+                if let message = report.message {
+                    photoSaveError = message
+                    pendingShowcaseEdit = nil; pendingShowcaseStyle = nil
+                } else { runPendingShowcaseEdit() }
+            }
+        })
+    }
+
+    private func ingest(_ images: [UIImage], completion: ((String?) -> Void)? = nil) {
         // An empty callback means the picker was cancelled (PHPicker still calls
         // back with no results). Drop any chip's pending edit rather than firing
         // it at the next photo the agent adds for some other reason.
         guard !images.isEmpty else {
             pendingShowcaseEdit = nil
             pendingShowcaseStyle = nil
+            completion?(nil)
             return
         }
-        isProcessing = true
+        guard !isProcessing else {
+            completion?("Another photo is still saving. Please wait, then try again.")
+            return
+        }
+        localProcessing = true
+        photoSaveError = nil
         processingText = "Working on your photo…"
         let targetDir = dir
+        let owner = AuthStore.shared.userID
+        let revision = AuthStore.shared.syncSessionRevision
+        let workspace = WorkspaceContext.selectedOrgID
         DispatchQueue.global(qos: .userInitiated).async {
+            var failed = 0
             for img in images {
                 // One pool PER PHOTO: the CIContext render and the two JPEG
                 // encodes each leave large autoreleased buffers behind, and
@@ -5372,23 +7076,47 @@ struct PhotoStudioView: View {
                 // worst memory spike (F-A-19).
                 autoreleasepool {
                     let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000))
-                        + "-" + String(UUID().uuidString.prefix(4))
+                        + "-" + UUID().uuidString
                     let enhanced = PhotoEnhancer.enhance(img)
-                    if let od = img.jpegData(compressionQuality: 0.95) {
-                        try? od.write(to: targetDir.appendingPathComponent("orig-\(id).jpg"))
+                    guard let od = img.jpegData(compressionQuality: 0.95),
+                          let ed = enhanced.jpegData(compressionQuality: 0.95) else {
+                        failed += 1
+                        return
                     }
-                    if let ed = enhanced.jpegData(compressionQuality: 0.95) {
-                        try? ed.write(to: targetDir.appendingPathComponent("enh-\(id).jpg"))
+                    do {
+                        try PhotoVersionHistory.saveCapture(original: od, enhanced: ed, id: id, directory: targetDir)
+                    } catch {
+                        failed += 1
                     }
                 }
             }
+            let failureCount = failed
             DispatchQueue.main.async {
+                localProcessing = false
+                guard AuthStore.shared.userID == owner,
+                      AuthStore.shared.syncSessionRevision == revision,
+                      WorkspaceContext.selectedOrgID == workspace else {
+                    // Durable bytes remain with the original local listing.
+                    // A late callback must not publish them in another account.
+                    completion?("Your account or workspace changed. Reopen this home's Photos to find any saved photos.")
+                    return
+                }
                 loadExisting()
                 // First photos added become the card's cover image automatically.
                 if mainRelPath == nil, let first = photos.first { setMain(first) }
-                isProcessing = false
+                if failureCount > 0 {
+                    let message = images.count == 1
+                        ? "Couldn't save this photo. Free some space and try again."
+                        : "\(failureCount) of \(images.count) photos couldn't be saved. Free some space and add those photos again."
+                    photoSaveError = message
+                    pendingShowcaseEdit = nil
+                    pendingShowcaseStyle = nil
+                    completion?(message)
+                    return
+                }
                 // An empty-state chip may have been waiting on this photo.
                 runPendingShowcaseEdit()
+                completion?(nil)
             }
         }
     }
@@ -5400,31 +7128,49 @@ struct PhotoStudioView: View {
         loadExisting()
     }
 
-    /// Deleting a photo also deletes its "before". Once the tour is published
-    /// that before may be the original a disclosure links to (W2-C3), so ask
-    /// first; an unpublished listing deletes straight away as before.
+    /// Non-destructive gallery removal: old reels, history and disclosures may
+    /// still reference these files, so no photo bytes are deleted here.
     private func confirmDelete(_ p: EnhancedPhoto) {
-        let published = model.listings.first(where: { $0.id == listing.id })?.serverShareURL != nil
-        let hasSeparateOriginal = p.originalURL.standardizedFileURL != p.enhancedURL.standardizedFileURL
-        guard published, hasSeparateOriginal, !listing.isSample else {
-            delete(p)
-            return
-        }
         pendingPhotoDelete = p
         showPhotoDeleteConfirm = true
     }
 
     private func delete(_ p: EnhancedPhoto) {
-        let wasMain = isMain(p)
-        ImageThumbnails.invalidate(p.enhancedURL)
-        try? FileManager.default.removeItem(at: p.enhancedURL)
-        try? FileManager.default.removeItem(at: p.originalURL)
-        editDisclosures.removeValue(forKey: p.id)
-        loadExisting()
-        if wasMain {
-            model.setMainPhoto(photos.first.map { FileStore.relativePath(for: $0.enhancedURL) }, for: listing.id)
+        if isCloudPhotoListing {
+            guard !galleryRetrying else { return }
+            Task { await deleteCloudPhoto(p) }
+            return
         }
+        do {
+            try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
+                priorFile: p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent, directory: dir)
+            let coverFile = mainRelPath.map { FileStore.url(fromRelativePath: $0).lastPathComponent }
+            let familyWasMain = try PhotoVersionHistory.familyContains(id: p.id, imageFile: coverFile, directory: dir)
+            try PhotoVersionHistory.hide(id: p.id, directory: dir)
+            loadExisting()
+            if familyWasMain {
+                let replacement = try PhotoVersionHistory.availableCoverVersion(directory: dir)
+                model.setMainPhoto(replacement.map { FileStore.relativePath(for: dir.appendingPathComponent($0.imageFile)) }, for: listing.id)
+            } else {
+                syncGalleryIfPublished()
+            }
+        } catch { photoSaveError = error.localizedDescription }
     }
+    @MainActor private func deleteCloudPhoto(_ p: EnhancedPhoto) async {
+        guard !galleryRetrying, let server = model.listings.first(where: { $0.id == listing.id })?.serverID else { return }
+        let context = NativeMediaExportContext()
+        galleryRetrying = true
+        defer { galleryRetrying = false }
+        do {
+            _ = try await model.prepareCloudPhotoHide(listingID: listing.id, versionID: p.id)
+            guard context.isCurrent, model.listings.first(where: { $0.id == listing.id })?.serverID == server else {
+                throw PhotoCloudSelectionFailure.identityChanged
+            }
+            try PhotoVersionHistory.hide(id: p.id, directory: dir)
+            loadExisting()
+        } catch { if context.isCurrent { photoSaveError = error.localizedDescription } }
+    }
+
 }
 
 /// Deterministic "pro real-estate" look — brighten shadows, recover highlights,
@@ -5471,73 +7217,1037 @@ enum PhotoEnhancer {
     }
 }
 
+/// Intrinsic-width glass tabs keep every saved-version name readable. Compact
+/// screens and larger text scroll instead of shrinking labels or clipping them.
+private struct PhotoSavedVersionTabs: View {
+    @Binding var selection: PhotoVersionHistory.LibraryKind
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(PhotoVersionHistory.LibraryKind.allCases) { kind in
+                        Button { selection = kind } label: {
+                            Text(kind.rawValue)
+                                .font(.subheadline.weight(.semibold))
+                                .fixedSize(horizontal: true, vertical: false)
+                                .foregroundStyle(selection == kind ? Theme.accent : Theme.ink)
+                                .padding(.horizontal, 12).padding(.vertical, 10)
+                                .frame(minHeight: 44)
+                                .background(selection == kind ? Theme.accentSoft : Color.clear, in: Capsule())
+                                .background(.thinMaterial, in: Capsule())
+                                .overlay(Capsule().strokeBorder(selection == kind ? Theme.accent.opacity(0.3) : Theme.border))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(kind.rawValue)
+                        .accessibilityAddTraits(selection == kind ? .isSelected : [])
+                        .accessibilityIdentifier("photos.savedVersion.\(kind.rawValue.lowercased())")
+                        .id(kind.id)
+                    }
+                }
+                .padding(2)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Saved photo versions")
+            .accessibilityIdentifier("photos.savedVersions")
+            .onChange(of: selection) { kind in
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(kind.id, anchor: .center)
+                }
+            }
+        }
+    }
+}
+
+/// Keep the thumbnail's generic metadata shallow. This named boundary also
+/// keeps publication and cover labels independent of save-to-Photos controls.
+private struct PhotoPublicationBadges: View {
+    let isCover: Bool
+    let publicationLabel: String?
+    let photoID: String
+    let selectedForListing: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if isCover {
+                PhotoPublicationBadge(title: "Cover", icon: "star.fill", color: Theme.accent)
+            }
+            if let publicationLabel {
+                PhotoPublicationBadge(title: publicationLabel,
+                    icon: selectedForListing || publicationLabel == "Another version on listing" ? "checkmark.circle.fill" : "circle",
+                    color: selectedForListing || publicationLabel == "Another version on listing" ? Theme.good : Theme.inkDim)
+                    .accessibilityIdentifier(selectedForListing ? "photos.listingSelected.\(photoID)" : "photos.listingVersion.\(photoID)")
+            }
+        }.padding(8).allowsHitTesting(false)
+    }
+}
+
+private struct PhotoPublicationBadge: View {
+    let title: String
+    let icon: String
+    let color: Color
+    var body: some View {
+        Label(title, systemImage: icon)
+            .font(.caption2.weight(.semibold))
+            .lineLimit(1).minimumScaleFactor(0.75)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(color, in: Capsule()).foregroundStyle(Color.white)
+    }
+}
+
 /// Full-screen before/after compare. Both images decode once, off the main
 /// thread, at screen resolution.
+/// Keeps the photo large and footer readable across compact phones and larger text.
+/// No source/export geometry is changed by this display-only calculation.
+private enum PhotoReviewLayout {
+    static func previewHeight(imageSize: CGSize?, availableWidth: CGFloat, viewportHeight: CGFloat) -> CGFloat {
+        let heightLimit = viewportHeight.isFinite ? max(0, min(420, viewportHeight * 0.50)) : 420
+        guard let imageSize, imageSize.width.isFinite, imageSize.height.isFinite,
+              imageSize.width > 0, imageSize.height > 0,
+              availableWidth.isFinite, availableWidth > 0 else {
+            return min(200, heightLimit)
+        }
+        // Decoding already applies source orientation. Use the displayed image's
+        // proportions rather than reserving an empty portrait-shaped container.
+        return min(heightLimit, availableWidth * (imageSize.height / imageSize.width))
+    }
+    static func previewWidth(imageSize: CGSize?, availableWidth: CGFloat, viewportHeight: CGFloat) -> CGFloat {
+        guard let imageSize, imageSize.width.isFinite, imageSize.height.isFinite,
+              imageSize.width > 0, imageSize.height > 0,
+              availableWidth.isFinite, availableWidth > 0 else {
+            return availableWidth.isFinite ? max(0, availableWidth) : 0
+        }
+        let height = previewHeight(imageSize: imageSize, availableWidth: availableWidth, viewportHeight: viewportHeight)
+        return min(availableWidth, height * (imageSize.width / imageSize.height))
+    }
+    static func stacksActions(width: CGFloat, accessibilityType: Bool) -> Bool {
+        accessibilityType || width < 320
+    }
+}
+
+/// Closed choices share the existing photo service; none enters bulk selection.
+private enum PhotoReviewEdit: Equatable {
+    case declutter, stage(String), twilight, sky, lawn, custom
+    var edit: String {
+        switch self {
+        case .declutter: return "declutter"
+        case .stage: return "stage"
+        case .twilight: return "twilight"
+        case .sky: return "sky"
+        case .lawn: return "lawn"
+        case .custom: return "custom"
+        }
+    }
+    var style: String? { if case .stage(let style) = self { return style }; return nil }
+    var title: String {
+        switch self {
+        case .declutter: return "Declutter"
+        case .stage: return "Staging"
+        case .twilight: return "Twilight"
+        case .sky: return "Blue sky"
+        case .lawn: return "Green lawn"
+        case .custom: return "Custom edit"
+        }
+    }
+}
+
+private struct PhotoReviewEditSheet: View {
+    let original: EnhancedPhoto
+    let space: SpaceType
+    let choose: (PhotoReviewEdit) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var pickingStyle = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    DetailPhotoThumb(url: original.enhancedURL, height: 180)
+                    Text("Change just this photo").font(.title2.bold()).foregroundStyle(Theme.ink)
+                    Text("Each action starts from this photo’s Original. Your saved edits stay in history. Review the new version before using it on your listing.")
+                        .font(.subheadline).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if pickingStyle {
+                        Text(space == .realEstate ? "Choose a staging style" : "Choose a furnishing style")
+                            .font(.headline).foregroundStyle(Theme.ink)
+                        ForEach(StagingStyle.all) { style in
+                            SecondaryButton(title: style.label, systemImage: "sofa") { select(.stage(style.id)) }
+                                .accessibilityIdentifier("photoVersion.edit.stage.\(style.id)")
+                        }
+                        SecondaryButton(title: "Back to photo actions", systemImage: "arrow.left") { pickingStyle = false }
+                    } else {
+                        PrimaryButton(title: "Declutter this photo", systemImage: "sparkles") { select(.declutter) }
+                            .accessibilityIdentifier("photoVersion.edit.declutter")
+                        SecondaryButton(title: space == .realEstate ? "Stage this photo" : "Furnish this photo", systemImage: "sofa") { pickingStyle = true }
+                            .accessibilityIdentifier("photoVersion.edit.stage")
+                        SecondaryButton(title: "Make it twilight", systemImage: "sun.horizon") { select(.twilight) }
+                        SecondaryButton(title: "Make the sky blue", systemImage: "cloud.sun") { select(.sky) }
+                        if space == .realEstate {
+                            SecondaryButton(title: "Make the lawn green", systemImage: "leaf") { select(.lawn) }
+                        }
+                        SecondaryButton(title: "Ask for a custom edit", systemImage: "text.bubble") { select(.custom) }
+                            .accessibilityIdentifier("photoVersion.edit.custom")
+                    }
+                    Text("One photo edit counts against your plan. No other photos are selected or changed.")
+                        .font(.caption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
+                }.padding(16).frame(maxWidth: 760).frame(maxWidth: .infinity)
+            }
+            .background(Theme.bg.ignoresSafeArea())
+            .navigationTitle("Edit original photo").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+    }
+    private func select(_ action: PhotoReviewEdit) { choose(action); dismiss() }
+}
+
 struct PhotoCompareView: View {
     let photo: EnhancedPhoto
-    /// The exact disclosure sentence the server recorded for this edit, when it
-    /// came from one (W2-C4). Shown VERBATIM — it is the sentence the public
-    /// tour prints, and the agent should recognise it when a broker quotes it.
     var disclosure: String? = nil
+    var requestedCover = false
+    var galleryPhotos: [EnhancedPhoto] = []
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var auth = AuthStore.shared
+    @State private var selectedVersion: EnhancedPhoto?
+    @State private var rememberedFamilyVersions: [String: EnhancedPhoto] = [:]
     @State private var showOriginal = false
     @State private var enhanced: UIImage?
     @State private var original: UIImage?
+    @State private var exporting: PhotoExportSelection?
+    @State private var showFullComparison = false
+    @State private var imageContext: NativeMediaExportContext?
+    @State private var selectionError: String?
+    @State private var selectedForListing = false
+    @State private var confirmCloudCoverFollow = false
+    @State private var selectionWorkID: UUID?
+    @State private var imageLoadComplete = false
+    @State private var stagingReview = PhotoVersionHistory.StagingReview()
+    @State private var customReview = PhotoVersionHistory.CustomReview()
+    @ObservedObject private var photoJobs = PhotoWorkQueue.shared
+    @StateObject private var editConnection = FeatureSessionAction()
+    @State private var editOriginal: EnhancedPhoto?
+    @State private var editContext: NativeMediaExportContext?
+    @State private var editConsentRevision: UInt64?
+    @State private var showEditActions = false
+    @State private var pendingEdit: PhotoReviewEdit?
+    @State private var singleStagingSetup: PhotoStagingSetup?
+    @State private var singleCustomPhoto: EnhancedPhoto?
+    @State private var singleEditJobID: UUID?
+
+    private var viewed: EnhancedPhoto { selectedVersion ?? photo }
+    private var photoListingID: UUID? { UUID(uuidString: viewed.enhancedURL.deletingLastPathComponent().lastPathComponent) }
+    private var isCloudListing: Bool { photoListingID.flatMap { id in model.listings.first(where: { $0.id == id })?.serverID } != nil }
+    private var cloudProjection: PhotoCloudSelectionProjection? { photoListingID.flatMap { model.cloudPhotoProjection(for: $0) } }
+    private var publicationSelected: Bool { isCloudListing ? cloudProjection?.selectedVersionIDs.contains(viewed.id) == true : selectedForListing }
+    private var cloudCoverRequested: Bool { isCloudListing && requestedCoverForViewed }
+    private var cloudSelectionKnown: Bool {
+        guard isCloudListing, let family = viewed.savedVersion?.familyID, let cloudProjection else { return false }
+        return cloudProjection.mutableFamilyIDs.contains(family) && !cloudProjection.pending
+    }
+    private var needsStagingReview: Bool {
+        viewed.savedVersion?.effects.contains("stage") == true && viewed.savedVersion?.stagingReviewed != true
+    }
+    private var needsCustomReview: Bool { viewed.savedVersion?.needsCustomReview == true }
+    private var sourceTitle: String { viewed.retainedSourceIsVerified ? "Retained original" : "Earlier source" }
+    private var savedDisclosure: String? { viewed.savedVersion?.reviewDisclosure ?? (viewed.id == photo.id ? disclosure : nil) }
+    private var versionChoices: [EnhancedPhoto] {
+        let history = viewed.history
+        var kinds: Set<String> = []
+        let choices = history.filter { version in
+            let effects = version.savedVersion?.effects ?? []
+            let source = version.savedVersion.map { $0.parentID == nil && $0.imageFile == $0.originalFile } ?? false
+            let kind = source ? "Original" : effects.contains("stage") ? "Staged" : effects.contains("declutter") ? "Decluttered" : "Enhanced"
+            return kinds.insert(kind).inserted
+        }
+        // Keep the retained source first without changing which saved edit
+        // represents each category or the order of the remaining categories.
+        return choices.filter { $0.savedVersion.map { $0.parentID == nil && $0.imageFile == $0.originalFile } == true }
+            + choices.filter { $0.savedVersion.map { $0.parentID == nil && $0.imageFile == $0.originalFile } != true }
+    }
+    private func choiceTitle(_ version: EnhancedPhoto) -> String {
+        if let saved = version.savedVersion, saved.parentID == nil && saved.imageFile == saved.originalFile {
+            return saved.originalVerified ? "Original" : "Earlier source"
+        }
+        let effects = version.savedVersion?.effects ?? []
+        return effects.contains("stage") ? "Staged" : effects.contains("declutter") ? "Decluttered" : "Enhanced"
+    }
+
+    private func isRetainedSource(_ version: EnhancedPhoto) -> Bool {
+        guard let saved = version.savedVersion,
+              saved.parentID == nil, saved.imageFile == saved.originalFile else { return false }
+        return version.enhancedURL.standardizedFileURL == viewed.originalURL.standardizedFileURL
+    }
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            VStack {
-                Spacer()
-                if let ui = showOriginal ? original : enhanced {
-                    Image(uiImage: ui).resizable().scaledToFit()
-                        .accessibilityLabel(Text(showOriginal ? "Original photo" : "Enhanced photo"))
-                } else {
-                    ProgressView().tint(.white)
-                }
-                Spacer()
-                if let disclosure, !disclosure.isEmpty {
-                    Label(disclosure, systemImage: "checkmark.shield.fill")
-                        .font(.rpCaption)
-                        .foregroundStyle(Color.white.opacity(0.85))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 6)
-                        .accessibilityLabel(Text("Disclosure published with this photo. \(disclosure)"))
-                }
-                Picker("", selection: $showOriginal) {
-                    Text("After").tag(false)
-                    Text("Before").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .padding()
-            }
-            VStack {
-                HStack {
-                    Spacer()
-                    Button { dismiss() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title).foregroundStyle(Color.white.opacity(0.9))
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    reviewHeader
+                    familyNavigation
+                    savedVersionStrip(stacked: geometry.size.width < 320 || dynamicTypeSize >= .xxLarge)
+                    reviewTools(stacked: geometry.size.width < 320 || dynamicTypeSize >= .xxLarge)
+                    ZStack {
+                        if let image = showOriginal ? original : enhanced {
+                            Image(uiImage: image).resizable().scaledToFit()
+                                .accessibilityLabel(showOriginal ? sourceTitle : choiceTitle(viewed) + " photo")
+                        } else if imageLoadComplete {
+                            Label("Photo unavailable", systemImage: "photo.badge.exclamationmark")
+                                .foregroundStyle(Theme.inkDim)
+                        } else { ProgressView().tint(Theme.accent) }
                     }
-                    .padding()
-                    .accessibilityLabel(Text("Close"))
+                    .frame(width: PhotoReviewLayout.previewWidth(
+                        imageSize: (showOriginal ? original : enhanced)?.size,
+                        availableWidth: max(0, min(760, geometry.size.width) - 32),
+                        viewportHeight: geometry.size.height))
+                    .frame(height: PhotoReviewLayout.previewHeight(
+                        imageSize: (showOriginal ? original : enhanced)?.size,
+                        availableWidth: max(0, min(760, geometry.size.width) - 32),
+                        viewportHeight: geometry.size.height))
+                    .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .accessibilityIdentifier("photoVersion.preview")
+                    .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { value in
+                        if let offset = PhotoFamilyPager.swipeOffset(horizontal: Double(value.translation.width), vertical: Double(value.translation.height)) {
+                            movePhotoFamily(offset)
+                        }
+                    })
+                    .accessibilityAction(named: Text("Previous photo")) { movePhotoFamily(-1) }
+                    .accessibilityAction(named: Text("Next photo")) { movePhotoFamily(1) }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(showOriginal ? sourceTitle : viewed.savedVersion?.visibleLabel ?? choiceTitle(viewed))
+                            .font(.headline).foregroundStyle(Theme.ink)
+                        if publicationSelected, !showOriginal {
+                            Label("Selected for listing", systemImage: "checkmark.circle.fill")
+                                .font(.caption).foregroundStyle(Theme.good)
+                        }
+                    }
+                    reviewDetails
+                    if isCloudListing, cloudProjection?.pending == true {
+                        SecondaryButton(title: "Discard saved photo choice", systemImage: "xmark.circle", isDisabled: selectionWorkID != nil, isCompact: true) {
+                            abandonSavedCloudSelection()
+                        }
+                        Text("Only a request that never started can be discarded. A completed choice is kept and refreshed.")
+                            .font(.caption).foregroundStyle(Theme.inkDim)
+                    }
                 }
-                Spacer()
+                .padding(16)
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
+            }
+            .background(Theme.bg.ignoresSafeArea())
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                actionFooter(stacked: PhotoReviewLayout.stacksActions(width: geometry.size.width,
+                    accessibilityType: dynamicTypeSize.isAccessibilitySize))
             }
         }
-        // Media viewer — always dark chrome (segmented control, buttons),
-        // regardless of the app's light/dark appearance. The photo sits on
-        // black in both modes anyway.
-        .environment(\.colorScheme, .dark)
-        .task {
-            let after = await AIImagePrep.decoded(at: photo.enhancedURL, maxPixel: 2400)
+        .onChange(of: auth.userID) { _ in clearAndDismiss() }
+        .onChange(of: auth.syncSessionRevision) { _ in clearAndDismiss() }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in clearAndDismiss() }
+        .onReceive(photoJobs.$job) { receiveSinglePhotoWork($0) }
+        .sheet(isPresented: $showEditActions, onDismiss: continueSinglePhotoEdit) {
+            if let editOriginal, let listing = reviewListing {
+                PhotoReviewEditSheet(original: editOriginal, space: listing.isSample ? SpaceType.current : listing.spaceType) {
+                    pendingEdit = $0
+                }
+            }
+        }
+        .sheet(item: $singleStagingSetup, onDismiss: finishSinglePhotoSetup) { setup in
+            PhotoStagingSetupView(setup: setup) { referenceID, brief in
+                singleStagingSetup = nil
+                guard setup.isCurrent else { return }
+                startSinglePhotoWork(.stage(setup.pending.style ?? "modern"), prompt: brief,
+                                     stagingReferenceID: referenceID)
+            }
+        }
+        .sheet(item: $singleCustomPhoto, onDismiss: finishSinglePhotoSetup) { source in
+            if let listing = reviewListing {
+                CustomEditSheet(photo: source, api: model.api,
+                    space: listing.isSample ? SpaceType.current : listing.spaceType,
+                    listingServerID: listing.serverID) { prompt in
+                        singleCustomPhoto = nil
+                        startSinglePhotoWork(.custom, prompt: prompt)
+                    }
+            }
+        }
+        .fullScreenCover(isPresented: $showFullComparison) {
+            if let enhanced, imageContext?.isCurrent == true {
+                PhotoFullSizeComparison(edited: enhanced, source: viewed.originalURL == viewed.enhancedURL ? nil : original, sourceTitle: sourceTitle,
+                    showOriginal: $showOriginal)
+            }
+        }
+        .sheet(item: $exporting) { selection in
+            PhotoExportSheet(photos: selection.photos, original: selection.original, onExported: PhotoFeedbackQueue.recordExport)
+        }
+        .alert("Photo action needs attention", isPresented: Binding(get: { selectionError != nil }, set: { if !$0 { selectionError = nil } })) {
+            Button("OK") { selectionError = nil }
+        } message: { Text(selectionError ?? "") }
+        .confirmationDialog("Use this version as the listing cover too?", isPresented: $confirmCloudCoverFollow, titleVisibility: .visible) {
+            Button("Use version and keep it as cover") { beginCloudSelection(followCover: true) }
+            Button("Cancel", role: .cancel) {}
+        }
+        .task(id: viewed.id) {
+            let context = NativeMediaExportContext()
+            imageContext = context
+            let target = viewed
+            let directory = target.enhancedURL.deletingLastPathComponent()
+            selectedForListing = !isCloudListing && (try? PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)) == true
+            if isCloudListing, let listingID = photoListingID {
+                do { _ = try await model.refreshCloudPhotoSelection(listingID: listingID) }
+                catch is CancellationError { return }
+                catch { if context.isCurrent, viewed.id == target.id { selectionError = error.localizedDescription } }
+            }
+            guard context.isCurrent, viewed.id == target.id, !Task.isCancelled else { return }
+            stagingReview = PhotoVersionHistory.StagingReview()
+            customReview = PhotoVersionHistory.CustomReview()
+            enhanced = nil; original = nil; imageLoadComplete = false
+            let after = await AIImagePrep.decoded(at: target.enhancedURL, maxPixel: 2400)
+            guard context.isCurrent, viewed.id == target.id else { return }
             enhanced = after
-            if photo.originalURL == photo.enhancedURL {
-                original = after
-            } else {
-                original = await AIImagePrep.decoded(at: photo.originalURL, maxPixel: 2400)
+            let before = target.originalURL == target.enhancedURL ? after
+                : await AIImagePrep.decoded(at: target.originalURL, maxPixel: 2400)
+            guard context.isCurrent, viewed.id == target.id else { return }
+            original = before
+            imageLoadComplete = true
+            if showOriginal, before != nil, target.originalURL != target.enhancedURL {
+                stagingReview.comparedSource = true
+                customReview.comparedSource = true
             }
         }
+        .onChange(of: showOriginal) { showing in
+            if showing, imageContext?.isCurrent == true, original != nil, viewed.originalURL != viewed.enhancedURL {
+                stagingReview.comparedSource = true
+                customReview.comparedSource = true
+            }
+        }
+        .sessionConnectionNotice(isActive: editConnection.isWaiting, onCancel: { clearSinglePhotoEdit() })
+        .aiConsentGate()
+    }
+
+    private var familyPhotos: [EnhancedPhoto] {
+        guard !galleryPhotos.isEmpty else { return [] }
+        let directory = photo.enhancedURL.deletingLastPathComponent()
+        guard let index = try? PhotoVersionHistory.load(directory: directory) else { return [] }
+        return PhotoFamilyPager.photos([photo] + galleryPhotos, index: index, directory: directory)
+    }
+
+    private var familyPosition: Int? {
+        let directory = photo.enhancedURL.deletingLastPathComponent()
+        guard let index = try? PhotoVersionHistory.load(directory: directory),
+              let family = PhotoFamilyPager.family(of: viewed, index: index, directory: directory) else { return nil }
+        return familyPhotos.firstIndex { PhotoFamilyPager.family(of: $0, index: index, directory: directory) == family }
+    }
+
+    private var canNavigateFamilies: Bool {
+        imageContext?.isCurrent == true && reviewListing != nil && selectionWorkID == nil
+            && editContext == nil && singleEditJobID == nil && !showEditActions
+            && pendingEdit == nil && singleStagingSetup == nil && singleCustomPhoto == nil
+            && !editConnection.isWaiting && !showFullComparison && exporting == nil
+    }
+
+    private var requestedCoverForViewed: Bool {
+        let directory = photo.enhancedURL.deletingLastPathComponent()
+        guard requestedCover, let index = try? PhotoVersionHistory.load(directory: directory),
+              let initial = PhotoFamilyPager.family(of: photo, index: index, directory: directory) else { return false }
+        return PhotoFamilyPager.family(of: viewed, index: index, directory: directory) == initial
+    }
+
+    @ViewBuilder private var familyNavigation: some View {
+        if let position = familyPosition, !familyPhotos.isEmpty {
+            HStack(spacing: 12) {
+                Button { Haptics.selection(); movePhotoFamily(-1) } label: {
+                    Image(systemName: "chevron.left").font(.subheadline.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .background(Theme.accentSoft, in: Circle())
+                        .foregroundStyle(!canNavigateFamilies || position == 0 ? Theme.disabledInk : Theme.accent)
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canNavigateFamilies || position == 0)
+                .accessibilityLabel("Previous photo")
+                .accessibilityIdentifier("photoVersion.previousPhoto")
+                Spacer(minLength: 0)
+                Text("\(position + 1) of \(familyPhotos.count)")
+                    .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.inkDim)
+                    .accessibilityLabel("Photo \(position + 1) of \(familyPhotos.count)")
+                    .accessibilityIdentifier("photoVersion.position")
+                Spacer(minLength: 0)
+                Button { Haptics.selection(); movePhotoFamily(1) } label: {
+                    Image(systemName: "chevron.right").font(.subheadline.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .background(Theme.accentSoft, in: Circle())
+                        .foregroundStyle(!canNavigateFamilies || position + 1 >= familyPhotos.count ? Theme.disabledInk : Theme.accent)
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canNavigateFamilies || position + 1 >= familyPhotos.count)
+                .accessibilityLabel("Next photo")
+                .accessibilityIdentifier("photoVersion.nextPhoto")
+            }
+        }
+    }
+
+    private func movePhotoFamily(_ offset: Int) {
+        guard canNavigateFamilies else { return }
+        let directory = photo.enhancedURL.deletingLastPathComponent()
+        guard let index = try? PhotoVersionHistory.load(directory: directory),
+              let current = PhotoFamilyPager.family(of: viewed, index: index, directory: directory),
+              let target = PhotoFamilyPager.destination(from: viewed, offset: offset,
+                  candidates: [photo] + galleryPhotos, remembered: rememberedFamilyVersions,
+                  index: index, directory: directory) else { return }
+        rememberedFamilyVersions[current] = viewed
+        clearSinglePhotoEdit()
+        selectionError = nil
+        selectedForListing = false
+        chooseVersion(target)
+    }
+
+    private var reviewListing: Listing? {
+        guard let id = UUID(uuidString: photo.enhancedURL.deletingLastPathComponent().lastPathComponent) else { return nil }
+        return model.listings.first { $0.id == id && $0.cloudUnavailable != true }
+    }
+
+    private var singlePhotoEditing: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let job = photoJobs.visibleJob, job.id == singleEditJobID, job.running {
+                HStack(alignment: .top, spacing: 10) {
+                    ProgressView().tint(Theme.accent)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(job.phase?.title ?? "Preparing photo").font(.subheadline.weight(.semibold))
+                        Text(job.phase?.detail ?? "Your saved versions stay unchanged.").font(.caption).foregroundStyle(Theme.inkDim)
+                    }
+                }
+                .accessibilityIdentifier("photoVersion.edit.progress")
+                SecondaryButton(title: "Stop photo edit", systemImage: "stop.circle", isCompact: true) { photoJobs.cancel() }
+            } else {
+                SecondaryButton(title: "Edit", systemImage: "wand.and.stars",
+                    isDisabled: imageContext?.isCurrent != true || selectionWorkID != nil
+                        || photoJobs.visibleJob?.running == true || editConnection.isWaiting || reviewListing == nil,
+                    isCompact: true,
+                    action: openSinglePhotoEdit)
+                    .accessibilityIdentifier("photoVersion.editOriginal")
+                    .accessibilityLabel("Edit original photo")
+                    .accessibilityHint("Declutter, stage or edit only this photo’s retained Original. Saved versions stay unchanged.")
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func reviewTools(stacked: Bool) -> some View {
+        Group {
+            if stacked {
+                VStack(spacing: 8) { singlePhotoEditing; comparisonButton }
+            } else {
+                HStack(alignment: .top, spacing: 10) { singlePhotoEditing; comparisonButton }
+            }
+        }
+    }
+
+    private var comparisonButton: some View {
+        SecondaryButton(title: "Compare", systemImage: "square.split.2x1",
+            isDisabled: enhanced == nil || imageContext?.isCurrent != true, isCompact: true) {
+                guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
+                showFullComparison = true
+            }
+            .disabled(enhanced == nil || imageContext?.isCurrent != true)
+            .accessibilityIdentifier("photoVersion.fullSize")
+            .accessibilityHint("Inspect this version beside its retained source at full size.")
+    }
+
+    private func openSinglePhotoEdit() {
+        guard imageContext?.isCurrent == true, reviewListing != nil,
+              selectionWorkID == nil, photoJobs.visibleJob?.running != true else { return }
+        do {
+            let directory = viewed.enhancedURL.deletingLastPathComponent()
+            let source = try PhotoVersionHistory.originalForEditing(id: viewed.id, directory: directory)
+            let url = directory.appendingPathComponent(source.imageFile)
+            editOriginal = EnhancedPhoto(id: source.id, originalURL: url, enhancedURL: url)
+            editContext = NativeMediaExportContext()
+            pendingEdit = nil
+            showEditActions = true
+        } catch { selectionError = error.localizedDescription }
+    }
+
+    private func continueSinglePhotoEdit() {
+        guard let action = pendingEdit else { clearSinglePhotoEdit(); return }
+        pendingEdit = nil
+        guard let source = editOriginal, let context = editContext, context.isCurrent else { clearSinglePhotoEdit(); return }
+        Task { @MainActor in
+            guard await AIConsent.shared.ensureGranted(), context.isCurrent else { clearSinglePhotoEdit(); return }
+            let consentRevision = AIConsent.shared.revocationRevision
+            editConsentRevision = consentRevision
+            editConnection.run { [self] in
+                guard context.isCurrent, editContext?.isCurrent == true, AIConsent.shared.isGranted,
+                      AIConsent.shared.revocationRevision == consentRevision,
+                      reviewListing != nil, photoJobs.visibleJob?.running != true else { clearSinglePhotoEdit(); return }
+                if case .stage = action {
+                    singleStagingSetup = PhotoStagingSetup(
+                        pending: PendingBatchEdit(edit: action.edit, style: action.style, title: action.title, multiple: false),
+                        targets: [source], references: [])
+                } else if action == .custom {
+                    singleCustomPhoto = source
+                } else {
+                    startSinglePhotoWork(action, prompt: nil)
+                }
+            }
+        }
+    }
+
+    private func startSinglePhotoWork(_ action: PhotoReviewEdit, prompt: String?, stagingReferenceID: String? = nil) {
+        guard let source = editOriginal, let context = editContext, context.isCurrent,
+              imageContext?.isCurrent == true, AIConsent.shared.isGranted,
+              editConsentRevision == AIConsent.shared.revocationRevision,
+              let listing = reviewListing, photoJobs.visibleJob?.running != true else { return }
+        let service = PhotoEditService(model: model, listing: listing,
+            space: listing.isSample ? SpaceType.current : listing.spaceType)
+        if service.start(title: action.title, photos: [source], edit: action.edit,
+                         style: action.style, prompt: prompt, stagingReferenceID: stagingReferenceID) {
+            singleEditJobID = photoJobs.visibleJob?.id
+            Haptics.selection()
+        }
+    }
+
+    private func receiveSinglePhotoWork(_ job: PhotoWorkQueue.Job?) {
+        guard let job, job.id == singleEditJobID, !job.running,
+              editContext?.isCurrent == true, imageContext?.isCurrent == true,
+              let source = editOriginal else { return }
+        singleEditJobID = nil
+        if let failure = job.failures.first {
+            selectionError = AIFailure(failure.error).fullMessage
+        } else if job.done == 1 {
+            let directory = source.enhancedURL.deletingLastPathComponent()
+            if let index = try? PhotoVersionHistory.load(directory: directory),
+               let family = index.versions[source.id]?.familyID, let latestID = index.current[family],
+               let latest = index.versions[latestID] {
+                chooseVersion(EnhancedPhoto(id: latest.id,
+                    originalURL: directory.appendingPathComponent(latest.reviewSourceFile(in: index)),
+                    enhancedURL: directory.appendingPathComponent(latest.imageFile)))
+            }
+        }
+        clearSinglePhotoEdit()
+    }
+
+
+    private var reviewHeader: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    reviewHeaderTitle.frame(maxWidth: .infinity, alignment: .leading)
+                    HStack {
+                        reviewHeaderActions
+                    }
+                }
+            } else {
+                HStack {
+                    reviewHeaderTitle
+                    Spacer(minLength: 8)
+                    reviewHeaderActions
+                }
+            }
+        }
+    }
+
+    private var reviewHeaderTitle: some View {
+        Text("Photo versions").font(.title2.weight(.bold)).foregroundStyle(Theme.ink)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("photoVersion.headerTitle")
+    }
+
+    @ViewBuilder private var reviewHeaderActions: some View {
+        if viewed.history.count > 1 {
+            Menu {
+                ForEach(viewed.history) { version in
+                    Button(version.savedVersion?.title ?? "Earlier version") { chooseVersion(version) }
+                }
+            } label: {
+                Label("All edits", systemImage: "clock.arrow.circlepath").font(.subheadline)
+                    .frame(minHeight: 44)
+            }.accessibilityHint("Every saved style and earlier version remains available.")
+                .accessibilityIdentifier("photoVersion.history")
+        }
+        if dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
+        Button { clearAndDismiss() } label: {
+            Image(systemName: "xmark")
+                .font(dynamicTypeSize.isAccessibilitySize ? .system(size: 20, weight: .semibold) : .body.weight(.semibold))
+                .frame(width: 44, height: 44).background(.thinMaterial, in: Circle())
+        }.accessibilityLabel("Close")
+    }
+
+    private func savedVersionStrip(stacked: Bool) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 8), count: stacked ? 1 : 2), spacing: 8) {
+            if viewed.originalURL != viewed.enhancedURL && !versionChoices.contains(where: isRetainedSource) {
+                versionChip(viewed.retainedSourceIsVerified ? "Original" : "Earlier source", selected: showOriginal) {
+                    showOriginal = true
+                }
+            }
+            ForEach(versionChoices) { version in
+                versionChip(choiceTitle(version), selected: showOriginal ? isRetainedSource(version) : choiceTitle(viewed) == choiceTitle(version)) {
+                    chooseVersion(version)
+                }
+            }
+        }.accessibilityIdentifier("photoVersion.savedChoices")
+    }
+
+    private var reviewDetails: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !showOriginal, needsStagingReview || needsCustomReview {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Review before using on the listing", systemImage: "checkmark.shield")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                    Text("Compare with the source, then confirm the checks below.")
+                        .font(.caption).foregroundStyle(Theme.inkDim)
+                    if needsStagingReview { stagingReviewChecklist }
+                    if needsCustomReview { customReviewChecklist }
+                }
+                .padding(14)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            if !showOriginal, (viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview),
+               imageLoadComplete && (original == nil || viewed.originalURL == viewed.enhancedURL) {
+                Label("Restore the retained source before selecting this version.", systemImage: "exclamationmark.circle")
+                    .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+            }
+            if (!showOriginal && savedDisclosure?.isEmpty == false) || viewed.savedVersion?.sourceHistoryKnown != true {
+                DisclosureGroup("About this version") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !showOriginal, let savedDisclosure, !savedDisclosure.isEmpty {
+                            Text(savedDisclosure)
+                        }
+                        if viewed.savedVersion?.sourceHistoryKnown != true {
+                            Text("Earlier edits are unverified. This source may already contain AI changes.")
+                        }
+                        if !showOriginal, viewed.savedVersion?.effects.contains("stage") == true {
+                            Text("Check windows, doors, fixed appliances and furniture across views. AI can change details.")
+                        }
+                    }.font(.caption).foregroundStyle(Theme.inkDim).padding(.top, 6)
+                }.font(.subheadline).foregroundStyle(Theme.ink)
+            }
+            // Optional feedback on this exact AI version. It sits after the
+            // required checks and never changes them or any action above.
+            if !showOriginal, let feedbackVersion = viewed.savedVersion, PhotoFeedbackQueue.shared.canRecord(feedbackVersion) {
+                PhotoFeedbackControl(version: feedbackVersion, directory: viewed.enhancedURL.deletingLastPathComponent(),
+                                     cloudListing: isCloudListing, listingSelected: publicationSelected,
+                                     exportOpened: exporting != nil)
+                    .id(feedbackVersion.id)
+            }
+        }.accessibilityIdentifier("photoVersion.reviewControls")
+    }
+
+    private func actionFooter(stacked: Bool) -> some View {
+        Group {
+            if stacked {
+                VStack(spacing: 8) { savePhotoButton; useOnListingButton }
+            } else {
+                HStack(spacing: 10) { savePhotoButton; useOnListingButton }
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 0.5) }
+        .accessibilityIdentifier("photoVersion.fixedActions")
+    }
+
+    @ViewBuilder private var useOnListingButton: some View {
+        if !showOriginal, viewed.savedVersion != nil {
+            PrimaryButton(title: selectionWorkID != nil ? "Checking…" : isCloudListing && !cloudSelectionKnown ? "Check selection" : cloudCoverRequested ? "Use as cover" : publicationSelected ? "Unselect" : "Use on listing",
+                          systemImage: publicationSelected ? "minus.circle" : "checkmark.circle",
+                          isDisabled: listingSelectionDisabled, isCompact: true, action: changeListingSelection)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("photoVersion.useOnListing")
+            .accessibilityLabel(isCloudListing && !cloudSelectionKnown ? "Refresh listing photo selection" : cloudCoverRequested ? "Use this version as the listing cover" : publicationSelected ? "Remove this photo from listing" : "Use this version on listing")
+            .accessibilityHint(publicationSelected ? "Keeps every original and saved edit in Photos." : "Checks this home’s current cloud selection before changing it.")
+            .disabled(listingSelectionDisabled)
+        }
+    }
+
+    private var listingSelectionDisabled: Bool {
+        guard imageContext?.isCurrent == true, selectionWorkID == nil else { return true }
+        if isCloudListing && !cloudSelectionKnown { return false } // Refresh only, never an ambiguous mutation.
+        // Removing exposure does not require decoded pixels or a new approval.
+        if publicationSelected && !cloudCoverRequested { return false }
+        return enhanced == nil
+            || ((viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview)
+                && (original == nil || viewed.originalURL == viewed.enhancedURL
+                    || (needsStagingReview && !stagingReview.isComplete)
+                    || (needsCustomReview && !customReview.isComplete)))
+    }
+
+    private func changeListingSelection() {
+        guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
+        guard selectionWorkID == nil else { return }
+        do {
+            let directory = viewed.enhancedURL.deletingLastPathComponent()
+            guard let listingID = UUID(uuidString: directory.lastPathComponent) else { return }
+            if model.listings.first(where: { $0.id == listingID })?.serverID != nil {
+                if cloudCoverRequested { beginCloudSelection(followCover: false) }
+                else if cloudSelectionKnown, !publicationSelected,
+                   let family = viewed.savedVersion?.familyID,
+                   cloudProjection?.versions.contains(where: { $0.familyID == family && cloudProjection?.coverVersionIDs.contains($0.id) == true }) == true {
+                    confirmCloudCoverFollow = true
+                } else { beginCloudSelection(followCover: false) }
+                return
+            }
+            try PhotoVersionHistory.trackExisting(id: viewed.id, imageFile: viewed.enhancedURL.lastPathComponent,
+                priorFile: viewed.originalURL == viewed.enhancedURL ? nil : viewed.originalURL.lastPathComponent, directory: directory)
+            let currentSelection = try PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)
+            guard currentSelection == selectedForListing else {
+                selectedForListing = currentSelection
+                throw PhotoVersionHistory.Failure.changedVersion
+            }
+            let priorMain = model.listings.first { $0.id == listingID }?.mainPhotoRelPath
+            let familyWasMain = try PhotoVersionHistory.familyContains(id: viewed.id,
+                imageFile: priorMain.map { FileStore.url(fromRelativePath: $0).lastPathComponent }, directory: directory)
+            if currentSelection {
+                try PhotoVersionHistory.removeFromPublication(id: viewed.id, directory: directory)
+                if familyWasMain {
+                    let replacement = try PhotoVersionHistory.availableCoverVersion(directory: directory)
+                    model.setMainPhoto(replacement.map { FileStore.relativePath(for: directory.appendingPathComponent($0.imageFile)) }, for: listingID)
+                }
+                selectedForListing = false
+            } else {
+                guard !needsStagingReview || stagingReview.isComplete else {
+                    throw PhotoVersionHistory.Failure.reviewRequired
+                }
+                guard !needsCustomReview || customReview.isComplete else {
+                    throw PhotoVersionHistory.Failure.customReviewRequired
+                }
+                try PhotoVersionHistory.selectForPublication(id: viewed.id, directory: directory,
+                    reviewed: stagingReview.isComplete, customReviewed: customReview.isComplete)
+                if familyWasMain || requestedCoverForViewed { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
+                selectedForListing = true
+            }
+            if let listing = model.listings.first(where: { $0.id == listingID }),
+               listing.serverShareURL != nil, let serverID = listing.serverID {
+                Task { await model.syncGalleryPhotos(listingLocalID: listingID, listingServerID: serverID) }
+            }
+        } catch { selectionError = error.localizedDescription }
+    }
+
+    private func beginCloudSelection(followCover: Bool) {
+        guard let listingID = photoListingID, let context = imageContext, context.isCurrent,
+              selectionWorkID == nil else { return }
+        let versionID = viewed.id, wasSelected = publicationSelected, known = cloudSelectionKnown
+        let work = UUID(); selectionWorkID = work
+        Task { @MainActor in
+            defer { if selectionWorkID == work { selectionWorkID = nil } }
+            do {
+                guard context.isCurrent, viewed.id == versionID else { throw PhotoCloudSelectionFailure.identityChanged }
+                if !known {
+                    _ = try await model.refreshCloudPhotoSelection(listingID: listingID)
+                    return
+                }
+                if !wasSelected || cloudCoverRequested {
+                    guard !needsStagingReview || stagingReview.isComplete else { throw PhotoVersionHistory.Failure.reviewRequired }
+                    guard !needsCustomReview || customReview.isComplete else { throw PhotoVersionHistory.Failure.customReviewRequired }
+                }
+                let reviewed = (!needsStagingReview || stagingReview.isComplete) && (!needsCustomReview || customReview.isComplete)
+                // Optional feedback signals describe this exact request after it succeeds.
+                let feedbackVersion = viewed.savedVersion, choosing = !wasSelected || cloudCoverRequested
+                let stagingAcknowledged = needsStagingReview && stagingReview.isComplete
+                let customAcknowledged = needsCustomReview && customReview.isComplete
+                if cloudCoverRequested {
+                    _ = try await model.makeCloudPhotoCover(listingID: listingID, versionID: versionID, reviewed: reviewed)
+                } else {
+                    _ = try await model.changeCloudPhotoSelection(listingID: listingID, versionID: versionID,
+                        selecting: !wasSelected, followFamilyCover: followCover, reviewed: reviewed)
+                }
+                guard context.isCurrent, viewed.id == versionID else { throw PhotoCloudSelectionFailure.identityChanged }
+                if choosing {
+                    PhotoFeedbackQueue.shared.recordListingSelection(of: feedbackVersion, stagingAcknowledged: stagingAcknowledged,
+                        customAcknowledged: customAcknowledged,
+                        listingIsLive: model.listings.first(where: { $0.id == listingID })?.serverShareURL != nil)
+                }
+            } catch { if context.isCurrent, selectionWorkID == work { selectionError = error.localizedDescription } }
+        }
+    }
+
+    private func abandonSavedCloudSelection() {
+        guard let listingID = photoListingID, let context = imageContext, context.isCurrent,
+              selectionWorkID == nil, cloudProjection?.pending == true else { return }
+        let work = UUID(); selectionWorkID = work
+        Task { @MainActor in
+            defer { if selectionWorkID == work { selectionWorkID = nil } }
+            do { _ = try await model.abandonCloudPhotoSelection(listingID: listingID) }
+            catch { if context.isCurrent, selectionWorkID == work { selectionError = error.localizedDescription } }
+        }
+    }
+
+    private var savePhotoButton: some View {
+        SecondaryButton(title: "Save photo", systemImage: "square.and.arrow.down", isDisabled: savePhotoDisabled, isCompact: true) {
+            guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
+            do {
+                if !showOriginal, needsCustomReview {
+                    guard enhanced != nil, original != nil, viewed.originalURL != viewed.enhancedURL else {
+                        throw PhotoVersionHistory.Failure.missingImage
+                    }
+                    try PhotoVersionHistory.confirmCustomReview(id: viewed.id,
+                        imageFile: viewed.enhancedURL.lastPathComponent,
+                        sourceFile: viewed.originalURL.lastPathComponent, review: customReview,
+                        directory: viewed.enhancedURL.deletingLastPathComponent())
+                }
+                exporting = PhotoExportSelection(photos: [viewed], original: showOriginal)
+            } catch { selectionError = error.localizedDescription }
+
+        }
+        .frame(minHeight: 44)
+        .accessibilityIdentifier("photoVersion.download")
+        .accessibilityLabel(showOriginal ? (viewed.retainedSourceIsVerified ? "Download original" : "Download earlier source")
+            : "Download " + choiceTitle(viewed).lowercased() + " photo")
+        .disabled(savePhotoDisabled)
+    }
+
+    private var savePhotoDisabled: Bool {
+        imageContext?.isCurrent != true || (showOriginal ? original == nil : enhanced == nil || (needsCustomReview
+            && (original == nil || viewed.originalURL == viewed.enhancedURL || !customReview.isComplete)))
+    }
+
+    private func chooseVersion(_ version: EnhancedPhoto) {
+        if version.id == viewed.id {
+            showOriginal = false
+            return
+        }
+        showFullComparison = false
+        imageContext = nil
+        enhanced = nil
+        original = nil
+        imageLoadComplete = false
+        selectedVersion = version
+        showOriginal = false
+    }
+
+    private func clearAndDismiss() {
+        showFullComparison = false
+        exporting = nil
+        clearSinglePhotoEdit()
+        imageContext = nil
+        selectionWorkID = nil
+        enhanced = nil
+        original = nil
+        dismiss()
+    }
+
+    private func finishSinglePhotoSetup() {
+        if singleEditJobID == nil, singleStagingSetup == nil, singleCustomPhoto == nil { clearSinglePhotoEdit() }
+    }
+
+    private func clearSinglePhotoEdit() {
+        showEditActions = false
+        pendingEdit = nil
+        singleStagingSetup = nil
+        singleCustomPhoto = nil
+        editContext = nil
+        editConsentRevision = nil
+        editOriginal = nil
+        singleEditJobID = nil
+        editConnection.cancel()
+    }
+
+    private var stagingReviewChecklist: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            comparisonStatus(stagingReview.comparedSource)
+            reviewCheck("Windows, walls and fixtures match", detail: "Windows, walls and fixed appliances match the source", isOn: $stagingReview.fixedFeaturesMatch)
+            reviewCheck("Doors and routes stay clear", detail: "Doors, exits and walking routes remain clear", isOn: $stagingReview.accessIsClear)
+            reviewCheck("Furniture matches across views", detail: "Furniture matches my other published views, or this is the only view", isOn: $stagingReview.furnitureMatchesOtherViews)
+        }.accessibilityIdentifier("photoVersion.stagingReview")
+    }
+
+    private var customReviewChecklist: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            comparisonStatus(customReview.comparedSource)
+            reviewCheck("Fixed features match", detail: "Structure and fixed features match the source", isOn: $customReview.fixedFeaturesMatch)
+            reviewCheck("Colors and materials match", detail: "Paint colors, garage door, trim and materials match", isOn: $customReview.colorsAndMaterialsMatch)
+            reviewCheck("Only my requested change", detail: "Only the change I requested was made", isOn: $customReview.onlyRequestedChange)
+        }.accessibilityIdentifier("photoVersion.customReview")
+    }
+
+    private func comparisonStatus(_ compared: Bool) -> some View {
+        Label(compared ? "Source comparison opened" : "Open Compare and view the source first",
+              systemImage: compared ? "checkmark.circle.fill" : "square.split.2x1")
+            .font(.caption).foregroundStyle(compared ? Theme.good : Theme.inkDim)
+            .padding(.bottom, 4)
+    }
+
+    private func reviewCheck(_ title: String, detail: String, isOn: Binding<Bool>) -> some View {
+        Button { isOn.wrappedValue.toggle() } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isOn.wrappedValue ? "checkmark.circle.fill" : "circle")
+                    .font(.title3).foregroundStyle(isOn.wrappedValue ? Theme.accent : Theme.inkDim)
+                Text(title).font(.subheadline).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(detail)
+        .accessibilityValue(isOn.wrappedValue ? "Confirmed" : "Not confirmed")
+        .accessibilityAddTraits(isOn.wrappedValue ? .isSelected : [])
+    }
+
+    private func versionChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.subheadline.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(selected ? Theme.accent : Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .foregroundStyle(selected ? Color.white : Theme.ink)
+        }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Inspection only: choosing the source records comparison in the parent, but
+/// this screen has no publication, approval or export actions.
+private struct PhotoFullSizeComparison: View {
+    let edited: UIImage
+    let source: UIImage?
+    let sourceTitle: String
+    @Binding var showOriginal: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var zoom: CGFloat = 1
+    @GestureState private var pinch: CGFloat = 1
+
+    private var image: UIImage { showOriginal ? (source ?? edited) : edited }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text(showOriginal ? sourceTitle : "Edited photo").font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }.accessibilityIdentifier("photoComparison.close")
+            }.padding(.horizontal)
+            if source != nil {
+                Picker("Photo version", selection: $showOriginal) {
+                    Text("Edited").tag(false)
+                    Text(sourceTitle).tag(true)
+                }.pickerStyle(.segmented).padding(.horizontal)
+                    .accessibilityIdentifier("photoComparison.version")
+            }
+            GeometryReader { geometry in
+                let scale = min(geometry.size.width / max(1, image.size.width),
+                                geometry.size.height / max(1, image.size.height))
+                let magnification = min(5, max(1, zoom * pinch))
+                ScrollView([.horizontal, .vertical]) {
+                    Image(uiImage: image).resizable()
+                        .frame(width: image.size.width * scale * magnification,
+                               height: image.size.height * scale * magnification)
+                        .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
+                        .accessibilityLabel(showOriginal ? sourceTitle : "Edited photo")
+                        .accessibilityIdentifier("photoComparison.image")
+                }
+                .gesture(MagnificationGesture().updating($pinch) { value, state, _ in state = value }
+                    .onEnded { value in zoom = min(5, max(1, zoom * value)) })
+            }
+            HStack {
+                Text("Pinch to zoom. Swipe to inspect details.").font(.caption)
+                Spacer()
+                Button("Reset zoom") { zoom = 1 }.font(.caption)
+            }.padding(.horizontal)
+        }
+        .foregroundStyle(Theme.ink).padding(.vertical)
+        .background(Theme.bg.ignoresSafeArea())
+        .onChange(of: showOriginal) { _ in zoom = 1 }
     }
 }
 
@@ -5563,6 +8273,9 @@ struct CustomEditSheet: View {
     /// The area named by the starter chip the person tapped, sent as
     /// `room_hint`. See `StarterChip` for why this is the room signal we have.
     @State private var pickedArea: String?
+    @State private var needsClarification = false
+    @State private var preparedPrompt: String?
+    @State private var chosenScope: CustomPhotoPromptPolicy.Choice?
 
     private var trimmed: String {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5570,15 +8283,17 @@ struct CustomEditSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Tell the AI what to change — it edits this photo and keeps the original.")
+            ScrollView {
+              VStack(alignment: .leading, spacing: 14) {
+                Text("Tell us what to change. You'll review the instruction first, then compare the result with your saved source.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
 
-                TextField("Describe the change — e.g. 'make it look freshly painted white with warm evening light'",
+                TextField("For example: improve brightness and keep the existing paint colors",
                           text: $prompt, axis: .vertical)
                     .lineLimit(4...8)
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("customPhoto.request")
 
                 Text("\(prompt.count)/600")
                     .font(.rpCaption)
@@ -5604,7 +8319,7 @@ struct CustomEditSheet: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .disabled(trimmed.isEmpty || isImproving)
-                Text("Rewrites the first 300 characters of your idea into a sharper prompt.")
+                Text("Optional: refine your whole request before reviewing it. Uses your AI allowance.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
 
@@ -5614,23 +8329,61 @@ struct CustomEditSheet: View {
                         .foregroundStyle(Theme.warn)
                 }
 
-                Button {
-                    let text = String(trimmed.prefix(600))
-                    Haptics.selection()
-                    dismiss()
-                    onGenerate(text)
-                } label: {
-                    Label("Generate", systemImage: "wand.and.stars")
+                if needsClarification {
+                    Text("What would you like us to change?")
+                        .font(.rpBody.weight(.semibold))
+                    Text("Your request is still above. Pick one specific change so we don't guess what you meant.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    ForEach(CustomPhotoPromptPolicy.Choice.allCases) { choice in
+                        Button(choice.label) {
+                            chosenScope = choice
+                            preparedPrompt = choice.prompt
+                            needsClarification = false
+                            improveError = nil
+                        }.font(.rpBody.weight(.semibold))
+                            .accessibilityIdentifier("customPhoto.choice.\(choice.id)")
+                    }
+                }
+
+                if let preparedPrompt {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Review your edit").font(.rpBody.weight(.semibold))
+                        if let chosenScope { Text("We'll only: \(chosenScope.label.lowercased()).").font(.rpCaption) }
+                        Text(preparedPrompt).font(.rpBody)
+                            .accessibilityIdentifier("customPhoto.preparedInstruction")
+                        Text(CustomPhotoPromptPolicy.preservedFeatures).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        Text("AI can still make mistakes. The result is saved as a preview until you compare and approve it for your listing.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }.padding().background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12))
+                    Button {
+                        guard CustomPhotoPromptPolicy.decision(for: preparedPrompt, realEstate: space == .realEstate) == .ready else {
+                            reviewEdit(); return
+                        }
+                        Haptics.selection()
+                        dismiss()
+                        onGenerate(preparedPrompt)
+                    } label: {
+                        Label("Generate preview", systemImage: "wand.and.stars")
                         .font(.rpBody.weight(.semibold))
                         .frame(maxWidth: .infinity).padding(.vertical, 14)
                         .background(Theme.accent).foregroundStyle(Color.white)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }.disabled(isImproving).accessibilityIdentifier("customPhoto.generatePreview")
+                    Button("Choose a different change") {
+                        self.preparedPrompt = nil; chosenScope = nil; needsClarification = true
+                    }.font(.rpCaption)
+                } else if !needsClarification {
+                    Button { reviewEdit() } label: {
+                        Label("Review edit", systemImage: "text.magnifyingglass")
+                            .font(.rpBody.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .background(Theme.accent).foregroundStyle(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }.disabled(trimmed.isEmpty || isImproving).accessibilityIdentifier("customPhoto.reviewEdit")
                 }
-                .disabled(trimmed.isEmpty || isImproving)
-
-                Spacer()
+              }.padding()
             }
-            .padding()
+            .scrollDismissesKeyboard(.interactively)
             .disabled(connection.isWaiting)
             .background(Theme.bg)
             .navigationTitle("Custom AI edit")
@@ -5642,6 +8395,7 @@ struct CustomEditSheet: View {
             }
             .onChange(of: prompt) { newValue in
                 if newValue.count > 600 { prompt = String(newValue.prefix(600)) }
+                preparedPrompt = nil; chosenScope = nil; needsClarification = false; improveError = nil
                 // An emptied box means the starter chip that named an area is
                 // gone too: whatever gets typed next may be about a different
                 // room, and a stale `room_hint` is worse than none.
@@ -5652,7 +8406,19 @@ struct CustomEditSheet: View {
         }
         .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
         .onDisappear { connection.cancel() }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
+    }
+
+    private func reviewEdit() {
+        switch CustomPhotoPromptPolicy.decision(for: trimmed, realEstate: space == .realEstate) {
+        case .ready:
+            preparedPrompt = trimmed; needsClarification = false; improveError = nil
+        case .clarify:
+            preparedPrompt = nil; needsClarification = true; improveError = nil
+        case .blocked:
+            preparedPrompt = nil; needsClarification = false
+            improveError = CustomPhotoPromptPolicy.blockedMessage
+        }
     }
 
     // MARK: Starter chips — somewhere to begin when the box is empty
@@ -5693,15 +8459,15 @@ struct CustomEditSheet: View {
         case .realEstate:
             return [
                 StarterChip(label: "Clear the counters", area: "Kitchen",
-                            text: "Clear everything off the kitchen counters and make the surfaces look freshly wiped. Keep the cabinets, appliances and layout exactly as photographed."),
-                StarterChip(label: "Fresh white walls", area: nil,
-                            text: "Repaint the walls a clean warm white and touch up the trim, keeping every window, fixture and piece of furniture exactly where it is."),
+                            text: "Remove loose items from the kitchen counters. Keep the cabinets, appliances, existing materials, paint colors and actual property condition as photographed."),
+                StarterChip(label: "Brighter photo", area: nil,
+                            text: CustomPhotoPromptPolicy.Choice.lighting.prompt),
                 StarterChip(label: "Warm evening light", area: "Living Room",
                             text: "Relight the room with warm evening light coming through the windows, keeping the furniture and the architecture exactly as photographed."),
                 StarterChip(label: "Tidy the yard", area: "Backyard",
-                            text: "Tidy the yard: clear the hose, bins and loose items, and make the beds look freshly mulched. Keep the house and the planting exactly as photographed."),
+                            text: "Remove the hose, bins and loose items from the yard. Keep the house, planting, materials and actual property condition as photographed."),
                 StarterChip(label: "Empty the driveway", area: "Exterior",
-                            text: "Remove the cars and the bins from the driveway and the street in front, keeping the house exactly as photographed."),
+                            text: "Remove movable cars and bins from the driveway and the street in front, keeping the house and actual property condition as photographed."),
             ]
         case .venue:
             return [
@@ -5751,8 +8517,8 @@ struct CustomEditSheet: View {
             return [
                 StarterChip(label: "Clear the clutter", area: "Main Area",
                             text: "Remove the boxes, cables and loose items from the shot, keeping the room exactly as photographed."),
-                StarterChip(label: "Fresh white walls", area: nil,
-                            text: "Repaint the walls a clean warm white and touch up the trim, keeping every window and fixture exactly where it is."),
+                StarterChip(label: "Brighter photo", area: nil,
+                            text: CustomPhotoPromptPolicy.Choice.lighting.prompt),
                 StarterChip(label: "Warm evening light", area: "Main Area",
                             text: "Relight the room with warm evening light, keeping the furniture and the architecture exactly as photographed."),
                 StarterChip(label: "Tidy the entrance", area: "Entrance",
@@ -5818,6 +8584,9 @@ struct CustomEditSheet: View {
     /// floor. That left a multi-megabyte encode running on the main path of the
     /// one AI call in the app that is meant to feel instant.
     private func improvePrompt() {
+        guard CustomPhotoPromptPolicy.decision(for: trimmed, realEstate: space == .realEstate) == .ready else {
+            reviewEdit(); return
+        }
         guard !trimmed.isEmpty, !isImproving else { return }
         connection.run { improvePromptWithSession() }
     }
@@ -5834,10 +8603,11 @@ struct CustomEditSheet: View {
         let spaceRaw = space.rawValue
         Task {
             do {
-                let improved = try await api.aiImprovePrompt(rough: String(rough.prefix(300)),
+                let improved = try await api.aiImprovePrompt(rough: rough,
                                                              roomHint: hint,
                                                              listingServerID: serverID)
-                let text = String(improved.prefix(600))
+                guard improved.count <= 600 else { throw APIError.decoding }
+                let text = improved
                 await MainActor.run {
                     prompt = text
                     isImproving = false
@@ -5851,9 +8621,13 @@ struct CustomEditSheet: View {
                 }
             } catch {
                 let why = AIFailure(error).fullMessage
+                let asksClarification = (error as? APIError)?.code == "photo_clarification_required"
                 await MainActor.run {
                     isImproving = false
                     improveError = why
+                    if asksClarification {
+                        preparedPrompt = nil; chosenScope = nil; needsClarification = true
+                    }
                     // Deliberately NO reason prop: the server's message is
                     // written for a person and can quote their own words back.
                     Analytics.track("ai_prompt_improved",
@@ -6332,9 +9106,10 @@ struct AerialIntroSheet: View {
                     }
                     if let failure, phase != .generating {
                         AIFailureCard(failure: failure,
-                                      retryHint: "Adjust the settings above and generate again.",
-                                      quotaFeature: "aerials",
-                                      onReconnect: { generate() })
+                                      retryHint: "Reopen to check the request already submitted.",
+                                      onReconnect: {
+                                          if let pending = PendingAerialJob.load(for: listing.id) { resume(pending) }
+                                      })
                     }
                 }
                 .padding()
@@ -6343,7 +9118,7 @@ struct AerialIntroSheet: View {
             .background(Theme.bg)
             .navigationTitle("Aerial intro")
             .navigationBarTitleDisplayMode(.inline)
-            .askAI(.aerial)
+            .askAI(.aerial, listingID: listing.id)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
@@ -6373,17 +9148,22 @@ struct AerialIntroSheet: View {
             if v.count > 80 { region = String(v.prefix(80)) }
         }
         .sheet(isPresented: $showLibrary) {
-            LibraryImagePicker(selectionLimit: 1) { imgs in
+            LibraryImagePicker(selectionLimit: 1, onFailed: { photoError = $0 }) { imgs in
                 if let img = imgs.first { saveExterior(img) }
             }
             .ignoresSafeArea()
         }
-        .sheet(isPresented: $showCamera) {
-            CameraPicker { img in saveExterior(img) }.ignoresSafeArea()
+        .fullScreenCover(isPresented: $showCamera) {
+            GuidedPhotoCamera(purpose: .exterior, onPicked: { img in
+                let error = await saveExteriorPhoto(img)
+                if error == nil { showCamera = false }
+                return error
+            }, onCancel: { showCamera = false })
+            .ignoresSafeArea()
         }
         .fullScreenCover(isPresented: $showReelStudio) {
             ReelStudioView(listing: listing,
-                           photos: EnhancedPhoto.loadAll(listingID: listing.id),
+                           photos: (try? EnhancedPhoto.loadForListing(listingID: listing.id)) ?? [],
                            extraClipURLs: clipURL.map { [$0] } ?? [])
                 .environmentObject(model)
         }
@@ -6400,6 +9180,7 @@ struct AerialIntroSheet: View {
         // and the city/state region go to Google's video models. Agreed once
         // per device before this sheet is usable; declining closes it.
         .aiConsentGate()
+        .paywallHost(managesLifecycle: false)
         .task {
             if await AIConsent.shared.ensureGranted() == false { dismiss() }
         }
@@ -6418,9 +9199,11 @@ struct AerialIntroSheet: View {
             // The "from your photo" promise is only TRUE once a photo is
             // attached — with none, the clip is invented scenery and the
             // headline must not claim otherwise (F-A-03).
-            Text(hasPhoto
-                 ? "A cinematic AI opening shot for this \(noun) — generated from your exterior photo, so it starts on the real building and flies out."
-                 : "A cinematic AI opening shot for this \(noun). Add an exterior photo below and it starts on YOUR building; without one the AI invents a generic \(noun).")
+            Text(!LaunchFeatureAvailability.canGenerateAerial
+                 ? "Coming soon. You can still review saved clips and resume a request already submitted."
+                 : (hasPhoto
+                    ? "A cinematic AI opening shot for this \(noun) — generated from your exterior photo."
+                    : "Add an exterior photo to ground an AI opening shot on this \(noun)."))
                 .font(.rpBody)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -6458,10 +9241,13 @@ struct AerialIntroSheet: View {
 
     // MARK: - Form
 
-    // Setup is available offline. Generate retains its original tap and waits
-    // for an anonymous connection; there is no registration gate.
+    // Launch availability never affects recovery of an already accepted job.
     @ViewBuilder private var formSection: some View {
-        if listing.isSample {
+        if !LaunchFeatureAvailability.canGenerateAerial {
+            Text(LaunchFeatureAvailability.aerialMessage)
+                .font(.rpBody).foregroundStyle(Theme.inkDim)
+                .accessibilityIdentifier("aerial.comingSoon")
+        } else if listing.isSample {
             sampleNotice
         } else {
             propertyCard
@@ -6508,10 +9294,11 @@ struct AerialIntroSheet: View {
                             Label("Choose photo", systemImage: "photo")
                         }
                         Button {
-                            if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
+                            showCamera = true
                         } label: {
                             Label("Take photo", systemImage: "camera")
                         }
+                        .accessibilityIdentifier("aerial.takePhoto")
                     }
                     .font(.rpCaption.weight(.semibold))
                     .foregroundStyle(Theme.accent)
@@ -6647,7 +9434,7 @@ struct AerialIntroSheet: View {
                 .foregroundStyle(Color.white)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .disabled(isSavingPhoto)
+        .disabled(isSavingPhoto || !LaunchFeatureAvailability.canGenerateAerial)
         .accessibilityIdentifier("phase1.aerialGenerate")
     }
 
@@ -6748,12 +9535,14 @@ struct AerialIntroSheet: View {
                     .foregroundStyle(Theme.warn)
                     .multilineTextAlignment(.center)
             }
-            Button("Regenerate") {
-                failure = nil
-                phase = .form      // the current clip stays until a new one lands
+            if LaunchFeatureAvailability.canGenerateAerial {
+                Button("Regenerate") {
+                    failure = nil
+                    phase = .form      // the current clip stays until a new one lands
+                }
+                .font(.rpBody)
+                .foregroundStyle(Theme.inkDim)
             }
-            .font(.rpBody)
-            .foregroundStyle(Theme.inkDim)
         }
         .frame(maxWidth: .infinity)
     }
@@ -6803,37 +9592,48 @@ struct AerialIntroSheet: View {
     /// Save a chosen/taken exterior photo to Photos/<listingID>/exterior.jpg and
     /// point the listing at it. Encoding runs off the main actor.
     private func saveExterior(_ image: UIImage) {
-        guard !isSavingPhoto else { return }
+        Task { _ = await saveExteriorPhoto(image) }
+    }
+
+    @MainActor
+    private func saveExteriorPhoto(_ image: UIImage) async -> String? {
+        guard !isSavingPhoto else { return "Another photo is still saving. Please wait, then try again." }
         isSavingPhoto = true
         photoError = nil
         let listingID = listing.id
+        let owner = AuthStore.shared.userID
+        let revision = AuthStore.shared.syncSessionRevision
+        let workspace = WorkspaceContext.selectedOrgID
         let dest = EnhancedPhoto.directory(for: listingID).appendingPathComponent("exterior.jpg")
-        Task {
-            let ok = await AIImagePrep.writeJPEG(image, to: dest, maxDimension: 2560, quality: 0.9)
-            await MainActor.run {
-                isSavingPhoto = false
-                guard ok else {
-                    photoError = "Couldn't save that photo. Try another one."
-                    return
-                }
-                ImageThumbnails.invalidate(dest)
-                model.setExteriorPhoto(FileStore.relativePath(for: dest), for: listingID)
-                exteriorURL = dest
-                exteriorVersion = UUID()
-                Haptics.success()
-            }
+        let ok = await AIImagePrep.writeJPEG(image, to: dest, maxDimension: 2560, quality: 0.9)
+        isSavingPhoto = false
+        guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == workspace else {
+            return "Your account or workspace changed. Reopen this home's aerial intro before saving again."
         }
+        guard ok else {
+            photoError = "Couldn't save this photo. Free some space and try again."
+            return photoError
+        }
+        ImageThumbnails.invalidate(dest)
+        model.setExteriorPhoto(FileStore.relativePath(for: dest), for: listingID)
+        exteriorURL = dest
+        exteriorVersion = UUID()
+        Haptics.success()
+        return nil
     }
 
     // MARK: - Generate (submit → poll → download; fal URLs expire, so download now)
 
     private func generate() {
-        guard phase != .generating, !listing.isSample, !isSavingPhoto else { return }
+        guard LaunchFeatureAvailability.canGenerateAerial,
+              phase != .generating, !listing.isSample, !isSavingPhoto else { return }
         connection.run { generateWithSession() }
     }
 
     private func generateWithSession() {
-        guard phase != .generating, !listing.isSample, !isSavingPhoto else { return }
+        guard LaunchFeatureAvailability.canGenerateAerial,
+              phase != .generating, !listing.isSample, !isSavingPhoto else { return }
         failure = nil
         statusText = hasPhoto ? "Preparing your photo…" : "Submitting…"
         phase = .generating
@@ -6891,6 +9691,7 @@ struct AerialIntroSheet: View {
                 // Closed mid-generate — the persisted job resumes on the next open.
             } catch {
                 await MainActor.run {
+                    Analytics.trackAIFailure("aerial", step: "generate", error: error)
                     phase = clipURL != nil ? .result : .form
                     failure = AIFailure(error, title: "That one didn't generate")
                 }
@@ -7085,7 +9886,7 @@ private let addressToken = "{address}"
 /// this same bug in a slower form. It is cleared when the clips are stitched into a
 /// reel, when the agent explicitly discards them, or when the listing is deleted
 /// (`FileStore.deleteListingFiles` sweeps `reels/<id>-*`, folders included).
-private struct PendingReelClips: Codable {
+struct PendingReelClips: Codable {
     var listingID: UUID
     var savedAt: Date
     /// Documents-relative paths, in the order the clips were generated.
@@ -7110,22 +9911,57 @@ private struct PendingReelClips: Codable {
             .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    /// The parked set, or nil when there is nothing to resume. A record whose
-    /// files have gone (Clear local data, a listing delete) clears itself rather
-    /// than offering a resume that would stitch nothing.
-    static func load(for id: UUID) -> PendingReelClips? {
-        guard let data = UserDefaults.standard.data(forKey: key(id)),
-              let parked = try? JSONDecoder().decode(PendingReelClips.self, from: data) else { return nil }
-        guard !parked.clipURLs.isEmpty else {
-            clear(for: id)
-            return nil
+    /// Reading never deletes clip files. An unreadable authoritative manifest
+    /// must not revive old preferences or turn a missing record into new work.
+    static func readRecord(for id: UUID) throws -> PendingReelClips? {
+        do {
+            let target = directory(for: id).appendingPathComponent("manifest.json")
+            let data = FileManager.default.fileExists(atPath: target.path)
+                ? try Data(contentsOf: target) : UserDefaults.standard.data(forKey: key(id))
+            guard let data else { return nil }
+            let parked = try JSONDecoder().decode(Self.self, from: data)
+            guard parked.listingID == id else { throw CocoaError(.fileReadCorruptFile) }
+            return parked
+        } catch {
+            throw AIImagePrep.error("Saved clip history couldn't be read. Your clip files have been kept. Check this phone's storage and reopen Reel Studio before retrying.")
         }
+    }
+
+    static func load(for id: UUID) -> PendingReelClips? {
+        guard let parked = try? readRecord(for: id), !parked.clipURLs.isEmpty else { return nil }
         return parked
     }
 
-    func save() {
-        guard let data = try? JSONEncoder().encode(self) else { return }
-        UserDefaults.standard.set(data, forKey: Self.key(listingID))
+    func save() { try? saveDurably() }
+
+    func saveDurably() throws {
+        _ = try Self.readRecord(for: listingID)
+        let data = try JSONEncoder().encode(self)
+        let target = Self.directory(for: listingID).appendingPathComponent("manifest.json")
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: target, options: .atomic)
+        guard try Data(contentsOf: target) == data else { throw AIImagePrep.error("Couldn't save the retained clips. Free some space and retry the saved request.") }
+        // Old records remain readable, but this verified file is authoritative.
+        UserDefaults.standard.removeObject(forKey: Self.key(listingID))
+    }
+
+    /// Retire only this run's copies after its finished reel is written.
+    /// Earlier paid clips and unrelated files remain available for finishing.
+    static func retire(_ clips: [URL], for id: UUID) {
+        guard let parked = load(for: id) else { return }
+        let chosen = Set(clips.map { $0.standardizedFileURL })
+        let dir = directory(for: id).standardizedFileURL
+        let removed = parked.relPaths.filter {
+            let url = FileStore.url(fromRelativePath: $0).standardizedFileURL
+            return chosen.contains(url) && url.deletingLastPathComponent().standardizedFileURL == dir
+        }
+        let remaining = parked.relPaths.filter { !removed.contains($0) }
+        if remaining.isEmpty {
+            UserDefaults.standard.removeObject(forKey: key(id))
+            try? FileManager.default.removeItem(at: directory(for: id).appendingPathComponent("manifest.json"))
+        }
+        else { PendingReelClips(listingID: id, savedAt: parked.savedAt, relPaths: remaining).save() }
+        for path in removed { try? FileManager.default.removeItem(at: FileStore.url(fromRelativePath: path)) }
     }
 
     /// Forget the record AND delete the parked mp4s. Only ever called once the
@@ -7136,25 +9972,520 @@ private struct PendingReelClips: Codable {
     }
 }
 
+/// Standalone Animate has its own journal: it must never adopt a Make Video
+/// receipt. A lost submission or quality reply remains uncertain, not a new tap.
+enum PhotoAnimationRecovery {
+    struct Context: Codable, Equatable, Sendable {
+        let actor: String
+        let library: UUID?
+        let listing: UUID
+        let serverListing: UUID?
+        let photoVersion: String
+        let sourceFile: String
+        let sourceSHA256: String
+        let spaceType: String
+    }
+    struct RefusedOperation: Codable, Sendable {
+        let operationID: UUID
+        let status: Int
+    }
+    struct Entry: Codable, Sendable {
+        let schema: Int
+        let context: Context
+        let operationID: UUID
+        let sourceJPEG: Data
+        let jpegSHA256: String
+        var dispatched = false
+        var job: AIVideoJob?
+        var clipSHA256: String?
+        var qualityDispatched = false
+        var qualityPassed: Bool?
+        var message: String?
+        var completed = false
+        var refusedBeforeAcceptance: Bool? = nil
+        var refusedStatus: Int? = nil
+        var refusedOperations: [RefusedOperation]? = nil
+    }
+    struct Summary: Sendable {
+        let context: Context
+        let operationID: UUID
+        let dispatched: Bool
+        let job: AIVideoJob?
+    }
+    enum Failure: Error, LocalizedError {
+        case unavailable, submissionUnknown, qualityUnknown, waiting, failed(String)
+        var errorDescription: String? {
+            switch self {
+            case .unavailable:
+                return "The saved video request could not be verified. Your photo and request have been kept. Contact support before starting another video."
+            case .submissionUnknown:
+                return "The video submission is saved, but its reply was not received. No new generation will be started. Contact support to recover this saved request."
+            case .qualityUnknown:
+                return "This video's quality check is saved but could not be confirmed. It is held safely; checking again will not purchase another generation or quality check."
+            case .waiting:
+                return "This video is still saved. Return to this photo and check its video again; no new generation will be started."
+            case .failed(let message): return message
+            }
+        }
+    }
+    static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+    private static func key(_ context: Context) -> String {
+        // The source hash is checked inside the record, not used to evade an
+        // uncertain operation by changing the same version's bytes.
+        digest(try! JSONEncoder().encode([context.actor, context.library?.uuidString ?? "local",
+                                          context.listing.uuidString, context.photoVersion]))
+    }
+    private static func folder(_ directory: URL) -> URL {
+        directory.appendingPathComponent(".photo-animation-requests", isDirectory: true)
+    }
+    static func file(_ context: Context, directory: URL) -> URL {
+        folder(directory).appendingPathComponent(key(context) + ".json")
+    }
+    static func load(_ context: Context, directory: URL) throws -> Entry? {
+        let url = file(context, directory: directory)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true,
+              let size = values.fileSize, (1...13_000_000).contains(size) else { throw Failure.unavailable }
+        let entry = try JSONDecoder().decode(Entry.self, from: Data(contentsOf: url))
+        guard entry.schema == 1, entry.context == context,
+              !context.actor.isEmpty, !context.photoVersion.isEmpty,
+              context.sourceFile == URL(fileURLWithPath: context.sourceFile).lastPathComponent,
+              context.sourceSHA256.count == 64, (1...9_000_000).contains(entry.sourceJPEG.count),
+              digest(entry.sourceJPEG) == entry.jpegSHA256,
+              entry.job == nil || valid(entry.job!),
+              !entry.completed || (entry.qualityPassed == true && entry.clipSHA256 != nil) else { throw Failure.unavailable }
+        return entry
+    }
+    private static func valid(_ job: AIVideoJob) -> Bool {
+        job.kind == "reel" && !job.requestId.isEmpty && job.requestId.utf8.count <= 200
+            && [job.statusUrl, job.responseUrl].allSatisfy {
+                guard let url = URL(string: $0) else { return false }
+                return url.scheme == "https" && url.host != nil && url.user == nil && url.password == nil
+            }
+    }
+    private static func save(_ entry: Entry, directory: URL) throws {
+        let target = file(entry.context, directory: directory)
+        let data = try JSONEncoder().encode(entry)
+        guard data.count <= 13_000_000 else { throw Failure.unavailable }
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        try data.write(to: target, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        #if os(iOS)
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: target.path)
+        #endif
+        var excluded = target.deletingLastPathComponent()
+        var values = URLResourceValues(); values.isExcludedFromBackup = true
+        try excluded.setResourceValues(values)
+        guard try Data(contentsOf: target) == data else { throw Failure.unavailable }
+    }
+    static func pending(directory: URL, actor: String, library: UUID?, listing: UUID) -> [Summary] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder(directory), includingPropertiesForKeys: nil)) ?? []
+        return files.compactMap { url in
+            guard url.pathExtension == "json", let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey]),
+                  values.isSymbolicLink != true, let size = values.fileSize, (1...13_000_000).contains(size),
+                  let bytes = try? Data(contentsOf: url), let entry = try? JSONDecoder().decode(Entry.self, from: bytes),
+                  entry.context.actor == actor, entry.context.library == library, entry.context.listing == listing,
+                  !entry.completed, url.resolvingSymlinksInPath().path == file(entry.context, directory: directory).resolvingSymlinksInPath().path,
+                  let verified = try? load(entry.context, directory: directory) else { return nil }
+            return Summary(context: verified.context, operationID: verified.operationID, dispatched: verified.dispatched, job: verified.job)
+        }.sorted { $0.operationID.uuidString < $1.operationID.uuidString }
+    }
+    private static func isDefinitiveRefusal(_ error: Error) -> Bool {
+        guard let api = error as? APIError, let status = api.status else { return false }
+        return (400...499).contains(status) && status != 408 && status != 409
+    }
+    @MainActor private static var active: Set<String> = []
+
+    /// Every provider boundary is injected so the production persistence and
+    /// race decisions execute in focused tests without making paid requests.
+    @MainActor static func run(context: Context, directory: URL,
+        prepare: () async throws -> Data,
+        requireCurrent: @escaping () throws -> Void,
+        submit: (Data, String) async throws -> AIVideoJob,
+        poll: (AIVideoJob) async throws -> AIVideoStatus,
+        download: (URL) async throws -> URL,
+        judge: (AIVideoJob, Data, URL, () throws -> Void) async throws -> DriftVerdict,
+        lookup: ((UUID, UUID) async throws -> AIVideoJob?)? = nil,
+        validateSource: () throws -> Void = {},
+        now: () -> Date = Date.init,
+        pause: () async throws -> Void = { try await Task.sleep(nanoseconds: 6_000_000_000) }) async throws -> URL {
+        try requireCurrent()
+        let identity = file(context, directory: directory).path
+        guard active.insert(identity).inserted else { throw Failure.waiting }
+        defer { active.remove(identity) }
+        var entry: Entry
+        let saved = try load(context, directory: directory)
+        if let saved { entry = saved }
+        else {
+            let jpeg = try await prepare()
+            try requireCurrent()
+            guard (1...9_000_000).contains(jpeg.count) else { throw Failure.unavailable }
+            entry = Entry(schema: 1, context: context, operationID: UUID(), sourceJPEG: jpeg, jpegSHA256: digest(jpeg))
+            try save(entry, directory: directory) // Exact input and operation BEFORE paid dispatch.
+        }
+        if entry.refusedBeforeAcceptance == true {
+            guard !entry.dispatched, entry.job == nil, !entry.qualityDispatched,
+                  let status = entry.refusedStatus, (400...499).contains(status), status != 408, status != 409 else { throw Failure.unavailable }
+            var history = entry.refusedOperations ?? []
+            history.append(RefusedOperation(operationID: entry.operationID, status: status))
+            let next = Entry(schema: 1, context: context, operationID: UUID(), sourceJPEG: entry.sourceJPEG, jpegSHA256: entry.jpegSHA256)
+            entry = next; entry.refusedOperations = history
+            try save(entry, directory: directory) // Only this new explicit user check retires the refused key.
+        }
+        let candidate = directory.appendingPathComponent(".animation-\(entry.operationID.uuidString).mp4")
+        let finished = directory.appendingPathComponent("clip-\(entry.operationID.uuidString).mp4")
+        if entry.completed {
+            guard let expected = entry.clipSHA256, let bytes = try? Data(contentsOf: finished), digest(bytes) == expected else { throw Failure.unavailable }
+            try requireCurrent(); return finished
+        }
+        if let message = entry.message { throw Failure.failed(message) }
+        if saved != nil, entry.dispatched, entry.job == nil, let listing = context.serverListing, let lookup {
+            try requireCurrent()
+            if let recovered = try await lookup(entry.operationID, listing) {
+                guard valid(recovered), entry.job == nil || entry.job!.requestId == recovered.requestId,
+                      entry.job?.provenanceID == nil || entry.job?.provenanceID == recovered.provenanceID else { throw Failure.unavailable }
+                entry.job = recovered; try save(entry, directory: directory)
+            }
+            try requireCurrent()
+        }
+        if entry.job == nil {
+            guard !entry.dispatched else { throw Failure.submissionUnknown }
+            try requireCurrent()
+            entry.dispatched = true; try save(entry, directory: directory)
+            let job: AIVideoJob
+            do { job = try await submit(entry.sourceJPEG, entry.operationID.uuidString) }
+            catch is CancellationError { throw CancellationError() }
+            catch {
+                if Self.isDefinitiveRefusal(error), let api = error as? APIError {
+                    entry.dispatched = false; entry.refusedBeforeAcceptance = true; entry.refusedStatus = api.status
+                    try save(entry, directory: directory)
+                    throw error // No automatic retry and no server financial-state mutation.
+                }
+                throw Failure.submissionUnknown
+            }
+            guard valid(job) else { throw Failure.submissionUnknown }
+            entry.job = job
+            try save(entry, directory: directory) // Retain202 even if actor/cancellation changed while awaiting it.
+        }
+        try requireCurrent()
+        guard let job = entry.job else { throw Failure.submissionUnknown }
+        var clip: URL?
+        if let expected = entry.clipSHA256 {
+            for url in [candidate, finished] where FileManager.default.fileExists(atPath: url.path) {
+                guard digest(try Data(contentsOf: url)) == expected else { throw Failure.unavailable }
+                clip = url; break
+            }
+        }
+        if clip == nil {
+            let deadline = now().addingTimeInterval(10 * 60)
+            while clip == nil {
+                try requireCurrent()
+                guard now() < deadline else { throw Failure.waiting }
+                let status = try await poll(job)
+                try requireCurrent()
+                switch status {
+                case .processing:
+                    try await pause()
+                case .failed:
+                    entry.message = "The service could not finish this saved video. Your photo and paid request are retained; no new generation was started."
+                    try save(entry, directory: directory); throw Failure.failed(entry.message!)
+                case .completed(let url):
+                    let temporary = try await download(url)
+                    defer { try? FileManager.default.removeItem(at: temporary) }
+                    try requireCurrent()
+                    let bytes = try Data(contentsOf: temporary, options: .mappedIfSafe)
+                    guard !bytes.isEmpty, bytes.count <= 256 * 1024 * 1024 else { throw Failure.unavailable }
+                    let downloadedSHA = digest(bytes)
+                    guard entry.clipSHA256 == nil || entry.clipSHA256 == downloadedSHA else { throw Failure.unavailable }
+                    try bytes.write(to: candidate, options: .atomic)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: candidate.path)
+                    #if os(iOS)
+                    try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: candidate.path)
+                    #endif
+                    entry.clipSHA256 = downloadedSHA; try save(entry, directory: directory)
+                    clip = candidate
+                }
+            }
+        }
+        guard let clip else { throw Failure.waiting }
+        if entry.qualityPassed == nil {
+            guard !entry.qualityDispatched else { throw Failure.qualityUnknown }
+            try requireCurrent()
+            let verdict = try await judge(job, entry.sourceJPEG, clip, {
+                try requireCurrent()
+                entry.qualityDispatched = true; try save(entry, directory: directory)
+            })
+            guard entry.qualityDispatched || !verdict.mayUse else { throw Failure.unavailable }
+            entry.qualityPassed = verdict.mayUse
+            if !verdict.mayUse {
+                entry.message = "This saved video is held by its quality review. Your photo is unchanged. No new generation or quality check will be started."
+            }
+            try save(entry, directory: directory) // Exact verdict is durable before a context-dependent UI update.
+        }
+        try requireCurrent()
+        guard entry.qualityPassed == true else { throw Failure.failed(entry.message ?? Failure.qualityUnknown.localizedDescription) }
+        try validateSource()
+        if clip != finished {
+            guard !FileManager.default.fileExists(atPath: finished.path) else { throw Failure.unavailable }
+            try FileManager.default.moveItem(at: clip, to: finished)
+        }
+        guard digest(try Data(contentsOf: finished)) == entry.clipSHA256 else { throw Failure.unavailable }
+        entry.completed = true; try save(entry, directory: directory)
+        try requireCurrent(); return finished
+    }
+}
+
+/// One confirmed provider receipt. A connection or download failure can resume
+/// this request without submitting or charging for a second generation.
+struct PendingReelRequest: Codable, Sendable {
+    struct Context: Codable, Sendable, Equatable {
+        let listingID: UUID
+        let serverListingID: UUID?
+        let owner: String
+        let workspace: UUID?
+    }
+    let context: Context
+    let photoNumber: Int
+    let job: AIVideoJob
+    var operationID: String? = nil
+    var inputDigest: String? = nil
+    var submissionUnconfirmed: Bool? = nil
+    var sourceJPEGBase64: String? = nil
+    var sourceSpaceType: String? = nil
+    var qualityAttempt: Int? = nil
+    var framing: String? = nil
+    var outputAspect: String? = nil
+    var sourceAssetID: String? = nil
+    var photoProvenanceID: String? = nil
+    static func key(_ context: Context) -> String {
+        "reel.request.\(context.listingID).\(context.owner).\(context.workspace?.uuidString ?? "local")"
+    }
+    static func file(_ context: Context) -> URL {
+        let hash = SHA256.hash(data: Data(key(context).utf8)).map { String(format: "%02x", $0) }.joined()
+        return FileStore.documents.appendingPathComponent("reel-requests", isDirectory: true).appendingPathComponent(hash + ".json")
+    }
+    static func load(_ context: Context) -> PendingReelRequest? {
+        let target = file(context)
+        let data = AdoptionOwnedIdentity.pathIsOccupied(target)
+            ? (try? Data(contentsOf: target)) : UserDefaults.standard.data(forKey: key(context))
+        guard let data,
+              let request = try? JSONDecoder().decode(Self.self, from: data), request.context == context,
+              request.job.kind == "reel", (1...VideoSelectionCapacity.maximumPhotos).contains(request.photoNumber),
+              request.framing == nil || request.framing == "preserve_photo",
+              request.outputAspect == nil || ["9:16", "16:9"].contains(request.outputAspect!) else { return nil }
+        return request
+    }
+    static func exists(_ context: Context) -> Bool {
+        if AdoptionOwnedIdentity.pathIsOccupied(file(context)) || UserDefaults.standard.object(forKey: key(context)) != nil { return true }
+        guard context.workspace == nil, let owner = UUID(uuidString: context.owner) else { return false }
+        do {
+            return !(try AdoptionOwnedIdentity.unselectedReviewFiles(owner: owner, listingID: context.listingID,
+                documents: FileStore.documents, defaults: UserDefaults.standard)).isEmpty
+        } catch { return true }
+    }
+    static func hasUnreadableAdoptionMetadata(_ context: Context) -> Bool {
+        guard context.workspace == nil, let owner = UUID(uuidString: context.owner) else { return false }
+        do {
+            _ = try AdoptionOwnedIdentity.unselectedReviewFiles(owner: owner, listingID: context.listingID,
+                documents: FileStore.documents, defaults: UserDefaults.standard)
+            return false
+        } catch { return true }
+    }
+    static func forget(_ context: Context) {
+        try? FileManager.default.removeItem(at: file(context))
+        UserDefaults.standard.removeObject(forKey: key(context))
+        if context.workspace == nil, let owner = UUID(uuidString: context.owner) {
+            AdoptionOwnedIdentity.forgetUnselectedReviews(owner: owner, listingID: context.listingID,
+                documents: FileStore.documents, defaults: UserDefaults.standard)
+        }
+    }
+    func save() throws {
+        let data = try JSONEncoder().encode(self)
+        let target = Self.file(context)
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: target, options: .atomic)
+        guard try Data(contentsOf: target) == data else { throw AIImagePrep.error("Couldn't save the video request. Free some space and try again.") }
+        UserDefaults.standard.removeObject(forKey: Self.key(context))
+    }
+    func clear() {
+        // A late completion cannot remove a different receipt.
+        guard Self.load(context)?.job.requestId == job.requestId else { return }
+        try? FileManager.default.removeItem(at: Self.file(context))
+        UserDefaults.standard.removeObject(forKey: Self.key(context))
+    }
+}
+
+/// New runs keep their exact prepared photos and ordered progress. This is local
+/// owned recovery metadata, never an authorization or a substitute for server QC.
+/// Legacy single-photo receipts continue to recover without inventing a batch.
+struct PendingReelBatch: Codable, Sendable {
+    struct Shot: Codable, Sendable {
+        let photoID: String; let order: Int; let motion: String?; let room: String?
+        let onScreenText: String?; let seconds: Double?; let voiceLine: String?
+        init(_ shot: AIShot) {
+            photoID = shot.photoID; order = shot.order; motion = shot.motion; room = shot.room
+            onScreenText = shot.onScreenText; seconds = shot.seconds; voiceLine = shot.voiceLine
+        }
+        var value: AIShot { AIShot(photoID: photoID, order: order, motion: motion, room: room,
+            onScreenText: onScreenText, seconds: seconds, voiceLine: voiceLine) }
+    }
+    struct Photo: Codable, Sendable {
+        let id: String; let jpegBase64: String; let shot: Shot?
+        var sourceAssetID: String? = nil
+        var photoProvenanceID: String? = nil
+    }
+    let context: PendingReelRequest.Context
+    let id: UUID
+    let photos: [Photo]
+    let motion: String
+    let aspect: String
+    let spaceType: String
+    var completedPaths: [String]
+    var completedSources: [ListingVideoSource]? = nil
+    var framing: String? = nil
+    var scenePlanVersion: Int? = nil
+    var scenePlanningNotice: String? = nil
+    var automaticOrder: Bool? = nil
+    var usedPlanningFallback: Bool? = nil
+    static func file(_ context: PendingReelRequest.Context) -> URL {
+        FileStore.documents.appendingPathComponent("reels/\(context.listingID.uuidString)-batch", isDirectory: true)
+            .appendingPathComponent(PendingReelRequest.file(context).lastPathComponent)
+    }
+    static func exists(_ context: PendingReelRequest.Context) -> Bool { AdoptionOwnedIdentity.pathIsOccupied(file(context)) }
+    static func load(_ context: PendingReelRequest.Context) throws -> Self? {
+        guard exists(context) else { return nil }
+        let target = file(context)
+        guard let fileBytes = try target.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              fileBytes > 0, fileBytes <= VideoSelectionCapacity.maximumRecipeBytes else {
+            throw AIImagePrep.error("The saved video recipe is too large to open safely. Its photos and clips have been kept.")
+        }
+        let data = try Data(contentsOf: target)
+        guard data.count <= VideoSelectionCapacity.maximumRecipeBytes else { throw CocoaError(.fileReadCorruptFile) }
+        let batch = try JSONDecoder().decode(Self.self, from: data)
+        guard batch.context == context, (1...VideoSelectionCapacity.maximumPhotos).contains(batch.photos.count),
+              Set(batch.photos.map(\.id)).count == batch.photos.count,
+              batch.completedPaths.count <= batch.photos.count,
+              batch.completedSources == nil || batch.completedSources?.count == batch.completedPaths.count,
+              Set(batch.completedPaths).count == batch.completedPaths.count,
+              ["9:16", "16:9"].contains(batch.aspect),
+              batch.framing == nil || batch.framing == "preserve_photo",
+              batch.scenePlanVersion == nil || (batch.scenePlanVersion == 1 && batch.photos.enumerated().allSatisfy({ index, photo in
+                  photo.shot?.photoID == photo.id && photo.shot?.order == index + 1 && photo.shot?.seconds == 5 &&
+                  ["fly_through", "push_in", "side_glide", "pull_back"].contains(photo.shot?.motion ?? "")
+              })),
+              batch.photos.reduce(0, { $0 + $1.jpegBase64.utf8.count }) <= VideoSelectionCapacity.maximumPreparedBase64Bytes,
+              batch.photos.allSatisfy({ !$0.id.isEmpty && $0.jpegBase64.utf8.count <= VideoSelectionCapacity.maximumPhotoBase64Bytes && !(Data(base64Encoded: $0.jpegBase64)?.isEmpty ?? true) }),
+              batch.completedPaths.allSatisfy({ path in
+                  !path.hasPrefix("/") && !path.split(separator: "/").contains("..") &&
+                  FileStore.url(fromRelativePath: path).deletingLastPathComponent().standardizedFileURL == PendingReelClips.directory(for: context.listingID).standardizedFileURL &&
+                  ((try? FileStore.url(fromRelativePath: path).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0
+              }) else { throw AIImagePrep.error("The saved reel batch could not be verified. Your saved requests and clips have been kept.") }
+        return batch
+    }
+    func save() throws {
+        let bytes = try JSONEncoder().encode(self), target = Self.file(context)
+        guard bytes.count <= VideoSelectionCapacity.maximumRecipeBytes else {
+            throw AIImagePrep.error("This video recipe is too large to save safely. Choose fewer photos or smaller source copies; no photos were removed.")
+        }
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try bytes.write(to: target, options: .atomic)
+        guard try Data(contentsOf: target) == bytes else { throw AIImagePrep.error("Couldn't save reel progress. Your request has been kept.") }
+    }
+    func clear() {
+        guard (try? Self.load(context))?.id == id else { return }
+        try? FileManager.default.removeItem(at: Self.file(context))
+    }
+}
+
+private enum ReelRecoveryChoice { case saferRetry, originalPhoto }
+
 // MARK: - Reel Studio (multi-photo → AI motion clips → one stitched social video)
-// Pick 2–8 listing photos; each becomes a 5 s Seedance motion clip via
+// Pick up to 100 listing photos; each becomes a 5 s motion clip via
 // POST /ai-video/reel-clip (sequential submit → poll → download), then the
 // clips are stitched ON-DEVICE with AVFoundation into a single 9:16 or 16:9
 // mp4 saved to Documents/reels/. `extraClipURLs` (e.g. the listing's aerial
 // intro) are ready-made clips that lead the reel — no AI call for those.
 // Inline here per the new-file-not-in-target rule.
 
+/// Only a confirmed property-drift verdict requests the bounded safer move.
+/// Network, decode, unavailable QC, consent and admission failures are not this.
+private struct ReelQualityRefusal: Error, LocalizedError {
+    let verdict: DriftVerdict
+    var errorDescription: String? { verdict.refusal }
+    var mayRetry: Bool { verdict.status == .fail && verdict.action == "retry" }
+}
+
+/// A reel stops at the first failed photo. Keep the position and a safe reason
+/// instead of reducing every error to a count and spending on the next photo.
+struct ReelClipIssue: Identifiable {
+    let photoNumber: Int
+    let failure: AIFailure
+    var id: Int { photoNumber }
+
+    init(photoNumber: Int, error: Error) {
+        self.photoNumber = photoNumber
+        failure = Self.failure(for: error, title: "Photo \(photoNumber) couldn't become a clip")
+    }
+
+    static func failure(for error: Error, title: String) -> AIFailure {
+        let original = AIFailure(error, title: title)
+        let message: String
+        if let refusal = error as? ReelQualityRefusal, refusal.mayRetry {
+            message = "The AI changed the property, so this clip was held. Choose one safer retry or keep your selected photo as a still shot."
+        } else if let api = error as? APIError, (api.status ?? 0) >= 500 || api.code == "upstream" || api.code == "internal" {
+            message = "The video service is unavailable right now, so this clip wasn't made. If it keeps happening, contact support from Settings → Legal & support."
+        } else if AIFailure.isOffline(error) {
+            message = "The connection stopped. Check your connection before making more clips."
+        } else {
+            let raw = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            // A submit, poll or download failure does not establish whether the
+            // provider charged. Never repeat a raw payload or promise a refund.
+            let machine = raw.contains("{\"") || raw.contains("[{") || raw.contains("Traceback")
+                || raw.range(of: #"HTTP \d{3}"#, options: .regularExpression) != nil
+            message = machine ? "The video service couldn't process this photo. Review the photo and try again later." : original.message
+        }
+        return AIFailure(original, title: title, message: message)
+    }
+}
+
 struct ReelStudioView: View {
-    @State private var idleHeld = false
+    @ObservedObject private var work: ReelWorkJob
+    private let reviewingExistingJob: Bool
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var processorConsent = PropertyVideoProcessorConsent.shared
+    @State private var preparingProcessor = false
+    @State private var preparedProcessorContext: PropertyVideoJobContext?
+    @State private var preparedProcessorPermission: PropertyVideoProcessorSnapshot?
+    @State private var preparedSessionRevision: UInt64?
+    @State private var preparedBaseRevision: UInt64?
+    @State private var preparedProcessorRevision: UInt64?
     @Environment(\.dismiss) private var dismiss
     let listing: Listing
     let photos: [EnhancedPhoto]
+    @State private var refreshedPhotos: [EnhancedPhoto]?
+    @State private var savedPhotoError: String?
+    @State private var showReelPhotos = false
+    private var reelPhotos: [EnhancedPhoto] { refreshedPhotos ?? photos }
+    @State private var photoOrientationFilter: PhotoOrientation?
+    @State private var photoOrientations: [PhotoGeometryInput: PhotoOrientation] = [:]
+    private var photoGeometryInputs: [PhotoGeometryInput] {
+        reelPhotos.map { PhotoGeometryInput(id: $0.id, url: $0.enhancedURL) }
+    }
+    private func photoOrientation(_ photo: EnhancedPhoto) -> PhotoOrientation {
+        photoOrientations[PhotoGeometryInput(id: photo.id, url: photo.enhancedURL)] ?? .unknown
+    }
+    private var filteredReelPhotos: [EnhancedPhoto] {
+        PhotoOrientation.filtered(reelPhotos, by: photoOrientationFilter, orientation: photoOrientation)
+    }
     /// Finished clips to put in front of the photo clips (the aerial intro).
     var extraClipURLs: [URL] = []
 
-    private enum Phase { case setup, generating, stitching, done, failed }
+    private typealias Phase = ReelWorkJob.Phase
 
     /// Which voiceover the agent is building, if any. `.off` (default) makes the
     /// reel with no voiceover, exactly as before this feature existed.
@@ -7188,45 +10519,70 @@ struct ReelStudioView: View {
     /// inside a `@MainActor` `View` costs a non-isolated caller nothing.
     typealias ReelCaptions = ReelTitleCard
 
-    @State private var phase: Phase = .setup
-    @State private var selected: [String] = []      // photo ids in tap order = clip order
+    private var phase: Phase { get { work.phase } nonmutating set { work.phase = newValue } }
+    @State private var selected: [String] = []      // grid follows upload order; selections keep the agent's tap order
     @State private var selectedExtras: [URL] = []   // extra clips still switched on
     @State private var seededExtras = false
-    @State private var portrait = true              // 9:16 (true) vs 16:9 (false)
-    @State private var captionsOn = true            // intro title card + Rendprop mark on export
-    /// The BIG burned-in words on each shot — three or four, upper case, held for
-    /// the picture. On by default and deliberately so: this is what separates a
-    /// reel that looks posted from one that looks generated, and the owner's whole
-    /// bet is that the app produces the former without being asked.
-    @State private var bigCaptionsOn = true
+    @State private var videoPurpose: VideoAspectChoice?
+    /// Existing snapshots, saved drafts and recovery records keep their exact
+    /// portrait contract. Purpose owns it now; legacy nil remains social video.
+    private var portrait: Bool {
+        get { videoPurpose?.portrait ?? true }
+        nonmutating set { videoPurpose = VideoAspectChoice(portrait: newValue) }
+    }
+    @State private var captionsOn = false           // Optional social title/mark, under Advanced.
+    /// Optional picture labels remain available under Advanced. A fresh video
+    /// starts with clean imagery and no unexplained text overlays.
+    @State private var bigCaptionsOn = false
     @State private var bigCaptionStyle: ReelComposer.ShotCaptionStyle = .lowerThird
     /// Defaults to hard cuts, and the copy under the picker says why.
     @State private var reelTransition: ReelComposer.Transition = .cut
-    @State private var motionPrompt = ""
-    @State private var completedClips = 0
-    @State private var totalClips = 0
-    @State private var failedClips = 0
-    @State private var statusText = ""
-    @State private var reelURL: URL?
-    @State private var player: AVPlayer?
+    @State private var motionPrompt = "" // Legacy draft field; never dispatched by preset UI.
+    @State private var cameraMove: ReelCameraMove? = nil // Automatic per-photo motion by default.
+    @State private var automaticOrder = false
+    @State private var showVideoAdvanced = false
+    @State private var scenePlanningNotice: String?
+    @State private var musicSelection: VideoMusicSelection? = nil
+    @State private var musicPreviewPlayer: AVPlayer?
+    @State private var framingPreviewPhoto: EnhancedPhoto?
+    @State private var allowOriginalPhotoFallback = true
+    @State private var showVideoHelp = false
+    @State private var checkingFraming = false
+    @State private var showFramingReview = false
+    @State private var framingAssessments: [VideoPhotoFramingAssessment] = []
+    @State private var pendingFramingKey: String?
+    @State private var acknowledgedFramingKey: String?
+    private var completedClips: Int { get { work.completedClips } nonmutating set { work.completedClips = newValue } }
+    private var originalPhotoMotionShots: Int { get { work.originalPhotoMotionShots } nonmutating set { work.originalPhotoMotionShots = newValue } }
+    private var totalClips: Int { get { work.totalClips } nonmutating set { work.totalClips = newValue } }
+    private var clipIssues: [ReelClipIssue] { get { work.clipIssues } nonmutating set { work.clipIssues = newValue } }
+    private var failedClips: Int { clipIssues.count }
+    private var statusText: String { get { work.statusText } nonmutating set { work.statusText = newValue } }
+    private var reelURL: URL? { get { work.reelURL } nonmutating set { work.reelURL = newValue } }
+    @State private var measuredReelAspect: CGFloat?
+    private var player: AVPlayer? { get { work.player } nonmutating set { work.setPlaybackPlayer(newValue) } }
     @State private var savedToPhotos = false
     @State private var isSaving = false
     @State private var saveError: String?
-    @State private var failure: AIFailure?
+    private var failure: AIFailure? { get { work.failure } nonmutating set { work.failure = newValue } }
     @StateObject private var connection = FeatureSessionAction()
-    @State private var workTask: Task<Void, Never>?
+    private var workTask: Task<Void, Never>? { work.task }
     /// The newest reel already on disk for this listing (F-A-23). Reels used to
     /// be write-only: the file survived in Documents/reels but the studio always
     /// reopened on an empty setup form, so the last one was unreachable.
-    @State private var lastReel: URL?
+    private var lastReel: URL? { get { work.lastReel } nonmutating set { work.lastReel = newValue } }
     /// Clips from an earlier run of THIS listing's reel that were generated and
     /// billed but never stitched (the 4,000 sq ft field test). Loaded on open,
     /// exactly like `AerialIntroSheet` resumes a `PendingAerialJob`.
-    @State private var parkedClips: PendingReelClips?
-    /// Close was tapped while a job was running — ask before cancelling it, the
-    /// way the aerial sheet already does.
-    @State private var showCloseConfirm = false
+    private var parkedClips: PendingReelClips? { get { work.parkedClips } nonmutating set { work.parkedClips = newValue } }
+    private var pendingRequest: PendingReelRequest? { get { work.pendingRequest } nonmutating set { work.pendingRequest = newValue } }
+    private var pendingBatch: PendingReelBatch? { get { work.pendingBatch } nonmutating set { work.pendingBatch = newValue } }
+    private var unreadableBatch: Bool { get { work.unreadableBatch } nonmutating set { work.unreadableBatch = newValue } }
+    private var recoveredRetryRequestID: String? { get { work.recoveredRetryRequestID } nonmutating set { work.recoveredRetryRequestID = newValue } }
+    private var unreadablePendingContext: PendingReelRequest.Context? { get { work.unreadablePendingContext } nonmutating set { work.unreadablePendingContext = newValue } }
+    private var reelOwner: String? { work.scope.owner }
     @State private var showDiscardParkedConfirm = false
+    @State private var showDiscardPendingConfirm = false
 
     // MARK: Voiceover step state (optional — see docs/VOICEOVER-CONTRACT.md)
     //
@@ -7239,6 +10595,8 @@ struct ReelStudioView: View {
     @State private var voiceover: Voiceover?
     @State private var wordCaptionsOn = true          // maps to CaptionStyle.enabled
     @State private var voPlayer: AVPlayer?            // playback of the take, not the reel
+    @State private var requestingVoicePermission = false
+    @State private var voicePermissionID: UUID?
     @State private var isTranscribing = false
     @State private var voiceError: String?            // fatal step error (mic denied, etc.)
     @State private var voiceNote: String?             // soft note (e.g. captions unavailable)
@@ -7265,21 +10623,36 @@ struct ReelStudioView: View {
     @State private var nativeSetupNotice: String?
     @State private var nativeSetupError: String?
 
+    init(listing: Listing, photos: [EnhancedPhoto], extraClipURLs: [URL] = [], reviewingJob: ReelWorkJob? = nil) {
+        self.listing = listing; self.photos = photos; self.extraClipURLs = extraClipURLs
+        self.work = reviewingJob ?? ReelWorkQueue.shared.job(for: listing)
+        self.reviewingExistingJob = reviewingJob != nil
+    }
+
     private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
     /// The screen photos are added on — same words as its title bar.
     private var photosScreenName: String { "AI Photo Studio" }
     private var totalSelected: Int { selectedExtras.count + selected.count }
-    private var canGenerate: Bool { totalSelected >= 2 && totalSelected <= 9 }
-    /// A job is in flight — AI clips are being generated, or the stitch is
-    /// running. Closing now cancels it, so Close asks first (F-A-05 / the
-    /// 4,000 sq ft field test).
-    private var isWorking: Bool { phase == .generating || phase == .stitching }
+    /// A pending narration operation must settle before its audio is frozen into
+    /// a video. A settled error is not a requirement to buy or record another take.
+    private var narrationPreparationMessage: String? {
+        if requestingVoicePermission { return "Waiting for microphone permission…" }
+        if recorder.isRecording { return "Stop recording before creating" }
+        if isTranscribing { return "Finishing your narration…" }
+        if scriptInFlight { return "Writing your script…" }
+        if ttsInFlight { return "Making your voice…" }
+        return nil
+    }
+    private var canGenerate: Bool { narrationPreparationMessage == nil && (work.serverJob == nil || work.serverJob?.reply?.isTerminal == true) && VideoSelectionCapacity.canCreate(photoCount: selected.count, totalCount: totalSelected) && pendingRequest == nil && unreadablePendingContext == nil && pendingBatch == nil && !unreadableBatch }
+    /// The app-owned job continues when this sheet is dismissed. Only the
+    /// explicit Cancel action or a captured permission change stops it.
+    private var isWorking: Bool { work.running || work.isServerRendering || phase == .generating || phase == .stitching }
 
     /// Title + which home this reel is for. iOS 16 has no `navigationSubtitle`,
     /// so the two lines are a principal toolbar item.
     private var reelTitleBar: some View {
         VStack(spacing: 1) {
-            Text("Reel Studio")
+            Text("Make a video")
                 .font(.rpBody.weight(.semibold))
                 .foregroundStyle(Theme.ink)
             Text(reelSubtitle)
@@ -7309,33 +10682,30 @@ struct ReelStudioView: View {
                     case .stitching:  stitchingSection
                     case .done:       doneSection
                     case .failed:     failedSection
+                    case .paused:     pausedSection
                     }
                 }
                 .padding()
             }
-            .disabled(connection.isWaiting || nativeSetupBusy)
+            .disabled(connection.isWaiting || nativeSetupBusy || preparingProcessor)
             .background(Theme.bg)
-            .navigationTitle("Reel Studio")
+            .navigationTitle("Make a video")
             .navigationBarTitleDisplayMode(.inline)
-            .askAI(.reelStudio)
+            .askAI(.reelStudio, listingID: listing.id)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    // UNGUARDED Close was half of the money bug: one tap ran
-                    // dismiss() → onDisappear → workTask?.cancel(), and the
-                    // build's catch deleted every clip already paid for without
-                    // a word on screen. Ask, exactly like AerialIntroSheet.
-                    Button("Close") {
-                        if isWorking { showCloseConfirm = true } else { dismiss() }
-                    }
+                    Button("Close") { dismiss() }
                 }
                 ToolbarItem(placement: .principal) { reelTitleBar }
             }
         }
         .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
-        .interactiveDismissDisabled(isWorking)
+        .interactiveDismissDisabled(connection.isWaiting)
         .onAppear {
+            refreshVideoPhotos()
+            work.isPresented = true
             if !seededExtras {
-                selectedExtras = extraClipURLs
+                selectedExtras = [] // Saved aerials stay available, but new videos start with the chosen photos only.
                 seededExtras = true
             }
             // The tone that suits this trade, picked once. Guarded like
@@ -7345,26 +10715,29 @@ struct ReelStudioView: View {
                 tone = Self.defaultTone(for: space)
                 seededTone = true
             }
-            lastReel = Self.newestReel(for: listing.id)
+            if !reviewingExistingJob { lastReel = Self.newestReel(for: listing.id) }
             if aiScript.isEmpty, let script = CloudVoiceStore.script(listing.id) { aiScript = script }
             if voiceover == nil, let saved = CloudVoiceStore.voice(listing.id) {
                 voiceover = saved
-                voiceMode = .aiVoice
-                voiceNote = "Narration saved from Studio."
+                voiceNote = "Saved narration is available under Advanced."
             }
             // Pick up clips a previous run generated and was charged for but
             // never stitched — the reel equivalent of resuming a pending aerial.
-            if !listing.isSample { parkedClips = PendingReelClips.load(for: listing.id) }
-        }
-        .onChange(of: phase) { p in
-            let wantHold = (p == .generating || p == .stitching)
-            if wantHold && !idleHeld { IdleTimer.hold(); idleHeld = true }
-            else if !wantHold && idleHeld { IdleTimer.release(); idleHeld = false }
+            if !reviewingExistingJob, !listing.isSample { parkedClips = PendingReelClips.load(for: listing.id) }
+            if !reviewingExistingJob {
+                reloadPendingRequest()
+                restoreVideoPurposeForSavedWork()
+                restoreServerVideoJob()
+            } else if let saved = work.serverJob {
+                videoPurpose = saved.request.purpose == "listing" ? .listing : .socialMedia
+            }
+            if let reelURL, player == nil { player = AVPlayer(url: reelURL) }
         }
         .onChange(of: voiceMode) { mode in
             // Leaving My voice mid-take drops the mic/session; a finished
             // voiceover is kept. Entering AI voice seeds the script from any
             // recording transcript and loads the voice catalogue once.
+            if mode != .myVoice { voicePermissionID = nil; requestingVoicePermission = false }
             if mode != .myVoice, recorder.isRecording { recorder.cancel() }
             if mode == .aiVoice {
                 if aiScript.isEmpty, let t = voiceover?.transcript, !t.isEmpty { aiScript = t }
@@ -7372,29 +10745,35 @@ struct ReelStudioView: View {
             }
         }
         .onDisappear {
+            // Execution belongs to the app queue. Leaving a sheet stops only
+            // its playback, microphone and unsent reconnect waiter.
+            voicePermissionID = nil; requestingVoicePermission = false
             connection.cancel()
-            workTask?.cancel()
-            player?.pause()
-            voPlayer?.pause()
+            work.isPresented = false
+            player?.pause(); player = nil; voPlayer?.pause(); musicPreviewPlayer?.pause()
             if recorder.isRecording { recorder.cancel() }
-            if idleHeld { IdleTimer.release(); idleHeld = false }
         }
-        .confirmationDialog("Still making your reel", isPresented: $showCloseConfirm,
-                            titleVisibility: .visible) {
-            Button("Close anyway") {
-                workTask?.cancel()
-                dismiss()
-            }
-            Button("Keep waiting", role: .cancel) {}
-        } message: {
-            Text("Every clip you've already paid for is kept on this phone. Reopen Reel Studio and finish the reel from them — you won't be charged for the same clips twice.")
+        .onChange(of: auth.userID) { owner in
+            if reelOwner != owner { ReelWorkQueue.shared.reconcileIdentity(); dismiss() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            ReelWorkQueue.shared.reconcileIdentity(); dismiss()
         }
         .confirmationDialog("Discard these clips?", isPresented: $showDiscardParkedConfirm,
                             titleVisibility: .visible) {
             Button("Discard clips", role: .destructive) { discardParkedClips() }
             Button("Keep them", role: .cancel) {}
         } message: {
-            Text("These clips were already generated and already charged. Deleting them means making them again costs another round of AI.")
+            Text("This deletes saved video progress and finished clips. Remote requests are kept. Making the deleted clips again costs another round of AI.")
+        }
+        .confirmationDialog("Forget the saved request?", isPresented: $showDiscardPendingConfirm, titleVisibility: .visible) {
+            Button("Forget request", role: .destructive) {
+                if let context = pendingRequest?.context ?? unreadablePendingContext { PendingReelRequest.forget(context) }
+                reloadPendingRequest()
+            }
+            Button("Keep request", role: .cancel) {}
+        } message: {
+            Text("This does not cancel the remote job or refund it. Generating this photo again may count another clip. Finished clips stay on this phone.")
         }
         // Asked ONLY when there are already words in the box. The likeliest
         // words are the transcript of a recording the agent made themselves
@@ -7410,9 +10789,34 @@ struct ReelStudioView: View {
         // Guideline 5.1.2(i) — each selected photo is animated by a
         // third-party video model. Agreed once per device; declining closes
         // the studio.
+        .sheet(isPresented: $showFramingReview) {
+            VideoFramingReviewSheet(assessments: framingAssessments.filter(\.isMajorCrop), aspect: portrait ? 9.0/16.0 : 16.0/9.0) {
+                acknowledgedFramingKey = pendingFramingKey
+                showFramingReview = false
+                DispatchQueue.main.async { generate() }
+            }
+        }
+        .sheet(item: $framingPreviewPhoto) { photo in
+            VideoFramingPreviewSheet(url: photo.enhancedURL, aspect: portrait ? 9.0/16.0 : 16.0/9.0)
+        }
+        .sheet(isPresented: $showReelPhotos, onDismiss: { refreshVideoPhotos() }) {
+            NavigationStack {
+                PhotoStudioView(listing: listing, entry: .photos, captureIntent: portrait ? .socialPhotos : .listingPhotos)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showReelPhotos = false } } }
+            }.environmentObject(model)
+        }
+        .overlay {
+            if processorConsent.askingContext?.localListingID == listing.id {
+                PropertyVideoProcessorPermissionCard(consent: processorConsent)
+            }
+        }
+        .onDisappear {
+            if processorConsent.askingContext?.localListingID == listing.id { processorConsent.decline() }
+        }
         .aiConsentGate()
+        .paywallHost(managesLifecycle: false)
         .task {
-            if await AIConsent.shared.ensureGranted() == false { dismiss() }
+            if !reviewingExistingJob, work.serverJob == nil, await AIConsent.shared.ensureGranted() == false { dismiss() }
         }
     }
 
@@ -7423,14 +10827,56 @@ struct ReelStudioView: View {
     // this file has hit the type-checker's expression budget before, so
     // `setupSection` stays a short list of identifiers and nothing else.
     @ViewBuilder private var setupSection: some View {
-        if space == .realEstate && !listing.isSample {
-            NavigationLink { ProductionPlanView(listing: listing) } label: {
-                Label("Plan your shots and collect video takes", systemImage: "checklist")
-                    .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(14)
-                    .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
+        if videoPurpose == nil {
+            videoPurposeChooser
+            lastReelCard
+        } else {
+            configuredSetupSection
+        }
+    }
+
+    private var videoPurposeChooser: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Where will you use this video?")
+                .font(.rpTitle).foregroundStyle(Theme.ink)
+            Text("Choose a video format.")
+                .font(.rpBody).foregroundStyle(Theme.inkDim)
+            ForEach(VideoAspectChoice.allCases, id: \.rawValue) { choice in
+                Button {
+                    videoPurpose = choice
+                    Haptics.selection()
+                } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: choice.portrait ? "iphone" : "rectangle")
+                            .font(.title2).foregroundStyle(Theme.accent)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(choice.title).font(.rpHeadline).foregroundStyle(Theme.ink)
+                            Text(choice.explanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            Text(choice.formatDescription).font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").foregroundStyle(Theme.accent)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .card()
+                }
+                .buttonStyle(ScalePressStyle())
+                .accessibilityIdentifier("video.purpose.\(choice.rawValue)")
             }
         }
-        nativeSetupCard
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("video.purposeChooser")
+    }
+
+    private func restoreVideoPurposeForSavedWork() {
+        guard videoPurpose == nil else { return }
+        let savedAspect = pendingBatch?.aspect ?? pendingRequest?.outputAspect ?? work.configuration?.aspect
+        if savedAspect != nil || pendingRequest != nil || pendingBatch != nil || parkedClips != nil || isWorking {
+            videoPurpose = VideoAspectChoice.saved(aspect: savedAspect)
+        }
+    }
+
+    @ViewBuilder private var configuredSetupSection: some View {
         setupHeader
 
         // Unfinished, ALREADY-PAID-FOR clips come first, and deliberately NOT
@@ -7438,6 +10884,7 @@ struct ReelStudioView: View {
         // with no AI call, so an expired session must never stand between the
         // agent and the reel he has already bought (the 4,000 sq ft field test).
         parkedClipsCard
+        pendingRequestCard
 
         // The reel this listing ALREADY has, also outside the gate and for the
         // same reason: it is a finished mp4 on this phone that has already been
@@ -7446,9 +10893,7 @@ struct ReelStudioView: View {
         // the same rule the listing screen's FILES section follows.
         lastReelCard
 
-        if !extraClipURLs.isEmpty { clipsCard }
         stepPhotosCard
-        stepVoiceCard
         stepMakeCard
     }
 
@@ -7486,8 +10931,8 @@ struct ReelStudioView: View {
             if save {
                 guard let ownerID = actor.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
                 let selectedIDs = selected
-                guard Set(photos.map(\.id)).count == photos.count else { throw CloudSyncError.invalidResponse }
-                let byID = Dictionary(uniqueKeysWithValues: photos.map { ($0.id, $0) })
+                guard Set(reelPhotos.map(\.id)).count == reelPhotos.count else { throw CloudSyncError.invalidResponse }
+                let byID = Dictionary(uniqueKeysWithValues: reelPhotos.map { ($0.id, $0) })
                 var sharedPhotos: [NativeReelDraft.Photo] = []
                 for (index, localID) in selectedIDs.enumerated() {
                     guard let photo = byID[localID] else { throw CloudSyncError.invalidResponse }
@@ -7506,7 +10951,8 @@ struct ReelStudioView: View {
                     voiceMode: voiceMode == .off ? "off" : (voiceMode == .myVoice ? "myVoice" : "aiVoice"), voiceResultId: voiceID,
                     localNarration: voiceMode != .off && voiceover != nil && voiceID == nil,
                     photos: sharedPhotos,
-                    localExtraClipCount: selectedExtras.count, updatedAt: ISO8601DateFormatter().string(from: Date()))
+                    localExtraClipCount: selectedExtras.count, updatedAt: ISO8601DateFormatter().string(from: Date()),
+                    motionPreset: cameraMove?.rawValue, automaticOrder: automaticOrder)
                 let document = try await cloud.saveCloudNativeReel(draft, listingID: sid, orgID: org, revision: nativeSetupRevision)
                 guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified else { throw CloudSyncError.identityChanged }
                 nativeSetupRevision = document.revision
@@ -7518,17 +10964,20 @@ struct ReelStudioView: View {
                 guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified else { throw CloudSyncError.identityChanged }
                 guard let document else { nativeSetupRevision = 0; nativeSetupNotice = "No saved setup yet. Save this one to continue at the office."; return }
                 let draft = document.payload
-                portrait = draft.portrait; captionsOn = draft.titleCard; bigCaptionsOn = draft.shotCaptions
+                let planning = draft.planningSetup
+                portrait = draft.portrait; captionsOn = draft.titleCard; bigCaptionsOn = planning.pictureLabels
                 bigCaptionStyle = ReelComposer.ShotCaptionStyle(rawValue: draft.captionStyle) ?? .lowerThird
                 reelTransition = ReelComposer.Transition(rawValue: draft.transition) ?? .cut
-                motionPrompt = draft.motionPrompt; aiScript = draft.script; tone = ScriptTone(rawValue: draft.tone) ?? .warm
+                motionPrompt = ""; cameraMove = planning.motionPreset.flatMap(ReelCameraMove.init(rawValue:)); automaticOrder = planning.automaticOrder; aiScript = draft.script; tone = ScriptTone(rawValue: draft.tone) ?? .warm
                 wordCaptionsOn = draft.wordCaptions
-                let available = Set(photos.map(\.id))
+                let available = Set(reelPhotos.map(\.id))
+                let photoIndex = try? PhotoVersionHistory.load(directory: EnhancedPhoto.directory(for: listing.id))
                 selected = draft.photos.compactMap { photo in
-                    if available.contains(photo.localId) { return photo.localId }
+                    if available.contains(photo.localId) || photoIndex?.versions[photo.localId] != nil { return photo.localId }
                     if let sid = photo.sourcePhotoId { return available.first(where: { $0.lowercased() == "cloud-\(sid.uuidString.lowercased())" }) }
                     return nil
                 }
+                selected = Self.selectionPreservingOrder(selected, photos: reelPhotos, index: photoIndex)
                 var missing: [String] = []
                 if selected.count < draft.photos.count { missing.append("Save missing photos from Cloud files, then load this setup again.") }
                 selectedExtras = []
@@ -7541,7 +10990,7 @@ struct ReelStudioView: View {
                     if draft.voiceMode != "off" { missing.append(draft.localNarration ? "The recorded narration is on its original iPhone." : "Save its narration from Cloud files.") }
                 }
                 nativeSetupRevision = document.revision
-                nativeSetupNotice = (["Saved setup loaded."] + missing).joined(separator: " ")
+                nativeSetupNotice = (["Saved setup loaded."] + (planning.notice.map { [$0] } ?? []) + missing).joined(separator: " ")
             }
         } catch is CancellationError { return }
         catch {
@@ -7555,12 +11004,12 @@ struct ReelStudioView: View {
             Image(systemName: "film.stack")
                 .font(.system(size: 40, weight: .light))
                 .foregroundStyle(Theme.accent)
-            Text("Make a reel")
+            Text("Make a video")
                 .font(.rpTitle)
                 .foregroundStyle(Theme.ink)
             Text(extraClipURLs.isEmpty
-                 ? "Your photos become one video for Reels, TikTok or YouTube. Three steps."
-                 : "Your aerial intro opens the reel, then your photos. Three steps.")
+                 ? (portrait ? "Choose photos. We handle the scenes and camera motion." : "Choose photos. We handle the scenes and camera motion.")
+                 : "Choose photos. An optional opening clip can be added under Advanced.")
                 .font(.rpBody)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -7573,16 +11022,13 @@ struct ReelStudioView: View {
     /// The whole flow on one line, so the voice step is visible before you
     /// scroll to it.
     private var stepsRail: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             stepChip("1", "Photos")
-            Image(systemName: "arrow.right")
-                .font(.caption2.weight(.bold)).foregroundStyle(Theme.inkDim)
-            stepChip("2", "🎙 Voice")
-            Image(systemName: "arrow.right")
-                .font(.caption2.weight(.bold)).foregroundStyle(Theme.inkDim)
-            stepChip("3", "Make it")
-        }
-        .padding(.top, 2)
+            Image(systemName: "arrow.right").font(.caption2.weight(.bold)).foregroundStyle(Theme.inkDim)
+            stepChip("2", "Format")
+            Image(systemName: "arrow.right").font(.caption2.weight(.bold)).foregroundStyle(Theme.inkDim)
+            stepChip("3", "Create")
+        }.padding(.top, 2)
     }
 
     private func stepChip(_ number: String, _ title: String) -> some View {
@@ -7598,9 +11044,10 @@ struct ReelStudioView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("STEP \(number) · \(title)")
                 .font(.rpKicker).foregroundStyle(Theme.accent)
-            Text(note)
-                .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                .fixedSize(horizontal: false, vertical: true)
+            if !note.isEmpty {
+                Text(note).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -7610,27 +11057,95 @@ struct ReelStudioView: View {
     private var stepPhotosCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
-                stepTitle(1, "PICK PHOTOS", "Tap them in the order you want them. 2 to 8.")
-                Text("\(selected.count)/8")
+                stepTitle(1, "PICK PHOTOS", "Pick your finished photos.")
+                Text("\(selected.count)/\(VideoSelectionCapacity.maximumPhotos)")
                     .font(.rpCaption)
                     .foregroundStyle(selected.count >= 1 ? Theme.accent : Theme.inkDim)
             }
+            Label(videoPurpose == .listing ? "Use landscape photos for your listing" : "Use portrait photos for social media",
+                  systemImage: videoPurpose == .listing ? "rectangle" : "rectangle.portrait")
+                .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(videoPurpose == .listing
+                 ? "Hold your phone sideways and fit the whole room. Start with the front, then rooms and backyard."
+                 : "Hold your phone upright. Landscape photos can lose the sides in a vertical video.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
             photoPickerGrid
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
     }
 
+    private func restoreServerVideoJob() {
+        guard !listing.isSample, let current = model.listings.first(where: { $0.id == listing.id }),
+              let serverID = current.serverID, let actor = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
+              let org = WorkspaceContext.selectedOrgID, let jobsAPI = model.api as? PropertyVideoJobsAPI else { return }
+        let context = PropertyVideoJobContext(localListingID: listing.id, listingID: serverID, actorID: actor, orgID: org)
+        PropertyVideoJobRunner.shared.restore(work: work, model: model, api: jobsAPI, context: context)
+        if let saved = work.serverJob { videoPurpose = saved.request.purpose == "listing" ? .listing : .socialMedia }
+    }
+
+    private func refreshVideoPhotos() {
+        do {
+            refreshedPhotos = try EnhancedPhoto.loadForListing(listingID: listing.id)
+            savedPhotoError = nil
+            let index = try PhotoVersionHistory.load(directory: EnhancedPhoto.directory(for: listing.id))
+            selected = Self.selectionPreservingOrder(selected, photos: reelPhotos, index: index)
+        } catch {
+            refreshedPhotos = []
+            savedPhotoError = "The selected photo versions need attention. Your saved photos are kept; review them in Photos before creating a video."
+        }
+    }
+
     @ViewBuilder private var photoPickerGrid: some View {
-        if photos.isEmpty {
-            Text("No photos yet — add some in \(photosScreenName) first.")
+        Group {
+        if let savedPhotoError {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(savedPhotoError).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                PrimaryButton(title: "Review saved photos", systemImage: "photo.on.rectangle") {
+                    showReelPhotos = true
+                }
+            }
+        } else if reelPhotos.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+            Text("Add your property photos, then select them here.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
-        } else {
-            LazyVGrid(columns: selectColumns, spacing: 8) {
-                ForEach(photos) { p in selectThumb(p) }
+            PrimaryButton(title: "Add photos", systemImage: "photo.stack") { showReelPhotos = true }
+                .accessibilityIdentifier("reel.addPhotos")
             }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                PhotoOrientationFilterControl(filter: $photoOrientationFilter,
+                    orientations: reelPhotos.map(photoOrientation), selectedCount: selected.count,
+                    identifier: "video.photos.orientation")
+                if filteredReelPhotos.isEmpty {
+                    Text("No \(photoOrientationFilter?.rawValue ?? "matching") photos here. Your selection is kept.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    Button("Show all photos") { photoOrientationFilter = nil }
+                        .font(.rpCaption.weight(.semibold)).frame(minHeight: 44)
+                }
+                LazyVGrid(columns: selectColumns, spacing: 8) {
+                    ForEach(filteredReelPhotos) { p in
+                        VStack(alignment: .leading, spacing: 4) {
+                            selectThumb(p)
+                            Text(photoOrientation(p).label).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                .accessibilityIdentifier("video.photos.orientation.\(p.id)")
+                        }
+                    }
+                }
+            }
+        }
+        }
+        .task(id: photoGeometryInputs) {
+            let inputs = photoGeometryInputs, actor = auth.userID, revision = auth.syncSessionRevision
+            let workspace = WorkspaceContext.selectedOrgID
+            let values = await PhotoGeometryReader.observe(inputs)
+            guard !Task.isCancelled, photoGeometryInputs == inputs, auth.userID == actor,
+                  auth.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == workspace else { return }
+            photoOrientations = values
         }
     }
 
@@ -7638,17 +11153,60 @@ struct ReelStudioView: View {
 
     private var stepMakeCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            stepTitle(3, "MAKE THE REEL", "Pick the shape, then tap the button.")
+            stepTitle(2, "FORMAT", "")
             formatRow
-            titleCardToggle
-            bigCaptionsRow
-            transitionRow
-            motionRow
+            if let scenePlanningNotice { Text(scenePlanningNotice).font(.rpCaption).foregroundStyle(Theme.inkDim) }
             makeButton
             aiDisclosureLine
+            videoAdvancedControls
+            videoHelpControls
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+
+    private var videoHelpControls: some View {
+        DisclosureGroup("Help · photos and video", isExpanded: $showVideoHelp) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Hold sideways for property photos. Use 0.5× to fit the whole room, or 1× when it already fits. Keep the phone level. Social video works best with upright photos.")
+                Text("Each photo becomes about five seconds. Your selected photo order is kept while camera motion is chosen for each photo. Separate photos do not map a physically connected route through the home.")
+                Text("Videos export at 1080p. Small sources cannot recover missing detail. Photos may be cropped to fill the format; we ask you to review large crops before creating. Saved photos stay unchanged.")
+                Text("If AI changes the property, an opted-in shot can use the reviewed photo with restrained 2D movement. Connection, billing and uncertain quality errors stop the job.")
+                Text("Review the finished video before publishing. Listing videos omit app-added branding; check your own narration and text before MLS use.")
+                if let id = selected.first, let photo = reelPhotos.first(where: { $0.id == id }) {
+                    Button { framingPreviewPhoto = photo } label: { Label("Preview selected photo framing", systemImage: "viewfinder") }
+                }
+            }.font(.rpCaption).foregroundStyle(Theme.inkDim).padding(.top, 8)
+        }.accessibilityIdentifier("video.help")
+    }
+
+    private var videoAdvancedControls: some View {
+        DisclosureGroup("Optional · voice, music and style", isExpanded: $showVideoAdvanced) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Your selected photo order is kept. Camera motion can still be automatic.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                motionRow
+                titleCardToggle
+                bigCaptionsRow
+                transitionRow
+                VideoMusicPicker(selection: $musicSelection) { track in
+                    guard !recorder.isRecording else { voiceNote = "Finish your recording before previewing music."; return }
+                    musicPreviewPlayer?.pause(); voPlayer?.pause()
+                    do { musicPreviewPlayer = AVPlayer(url: try VideoMusicCatalog.localURL(for: track)); musicPreviewPlayer?.play() }
+                    catch { voiceNote = "This music preview isn't available. Choose Off or another track." }
+                }
+                Toggle("Use my selected photo if AI changes the property", isOn: $allowOriginalPhotoFallback)
+                    .tint(Theme.accent)
+                stepVoiceCard
+                if !extraClipURLs.isEmpty { clipsCard }
+                nativeSetupCard
+                if space == .realEstate && !listing.isSample {
+                    NavigationLink { ProductionPlanView(listing: listing) } label: {
+                        Label("Plan recorded shots and collect takes", systemImage: "checklist").font(.rpCaption)
+                    }
+                }
+            }.padding(.top, 12)
+        }.foregroundStyle(Theme.ink).accessibilityIdentifier("video.advanced")
     }
 
     /// The big words on the video, and which of the three looks they wear.
@@ -7699,15 +11257,26 @@ struct ReelStudioView: View {
     }
 
     private var formatRow: some View {
-        Picker("Shape", selection: $portrait) {
-            Text("Tall · 9:16").tag(true)
-            Text("Wide · 16:9").tag(false)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text((videoPurpose ?? .socialMedia).title)
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                Text((videoPurpose ?? .socialMedia).formatDescription)
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+            Spacer(minLength: 0)
+            Button("Change") { videoPurpose = nil }
+                .foregroundStyle(Theme.accent)
+                .disabled(isWorking || pendingBatch != nil || pendingRequest != nil || parkedClips != nil)
         }
-        .pickerStyle(.segmented)
+        .accessibilityIdentifier("video.deliveryFormat")
     }
 
-    private var titleCardToggle: some View {
-        Toggle(isOn: $captionsOn) {
+    @ViewBuilder private var titleCardToggle: some View {
+        if !portrait {
+            Text("Listing videos omit the intro title and Rendprop mark. Review your own narration and text for contact or agent branding before using an MLS link.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        } else { Toggle(isOn: $captionsOn) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Show the \(space == .realEstate ? "address" : "name") at the start")
                     .font(.rpBody.weight(.semibold))
@@ -7718,20 +11287,40 @@ struct ReelStudioView: View {
             }
         }
         .tint(Theme.accent)
+        }
     }
 
     private var motionRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("HOW IT MOVES (OPTIONAL)")
-                .font(.rpKicker).foregroundStyle(Theme.inkDim)
-            TextField("e.g. 'slow push-in, golden-hour feel'",
-                      text: $motionPrompt, axis: .vertical)
-                .lineLimit(2...4)
-                .textFieldStyle(.roundedBorder)
-            Text("Leave it blank for a smooth push-in.")
-                .font(.rpCaption).foregroundStyle(Theme.inkDim)
-            Text(costText)
-                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("CAMERA MOTION").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            Button { cameraMove = nil; Haptics.selection() } label: {
+                HStack {
+                    Text("Automatic · choose for each photo").font(.rpCaption.weight(.semibold))
+                    Spacer()
+                    if cameraMove == nil { Image(systemName: "checkmark.circle.fill") }
+                }.padding(12).frame(maxWidth: .infinity)
+                    .foregroundStyle(cameraMove == nil ? Theme.accent : Theme.ink)
+                    .background(cameraMove == nil ? Theme.accent.opacity(0.12) : Theme.fillSubtle)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }.buttonStyle(.plain).accessibilityIdentifier("video.motion.automatic")
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                ForEach(ReelCameraMove.allCases, id: \.rawValue) { move in
+                    Button { cameraMove = move; Haptics.selection() } label: {
+                        HStack {
+                            Text(move.title).font(.rpCaption.weight(.semibold))
+                            Spacer(minLength: 4)
+                            if cameraMove == move { Image(systemName: "checkmark.circle.fill") }
+                        }.padding(12).frame(maxWidth: .infinity)
+                            .foregroundStyle(cameraMove == move ? Theme.accent : Theme.ink)
+                            .background(cameraMove == move ? Theme.accent.opacity(0.12) : Theme.fillSubtle)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }.buttonStyle(.plain).accessibilityIdentifier("reel.motion.\(move.rawValue)")
+                        .accessibilityAddTraits(cameraMove == move ? .isSelected : [])
+                }
+            }
+            Text("Fly-through adds a short, smooth glide to each photo. It does not map a connected route through the house. Pull-back stays within the original photo. The full photo is sent to the camera model. Your chosen video format fills the frame with one centered crop from the same scene; check the finished video before publishing.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
+            Text(costText).font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -7745,15 +11334,14 @@ struct ReelStudioView: View {
                 .foregroundStyle(canGenerate ? Color.white : Theme.inkDim)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .disabled(!canGenerate)
+        .disabled(!canGenerate || checkingFraming)
         .accessibilityIdentifier("phase1.reelGenerate")
     }
 
     private var aiDisclosureLine: some View {
-        Text("Made with AI motion — the photos themselves are unchanged. Any aerial clip is AI-generated scenery, not real drone footage.")
-            .font(.rpCaption)
-            .foregroundStyle(Theme.inkDim)
-            .fixedSize(horizontal: false, vertical: true)
+        Text("Review your finished video before publishing.")
+            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
     }
 
     /// Clips from a run that stopped before the stitch — already generated,
@@ -7772,23 +11360,23 @@ struct ReelStudioView: View {
         if parkedClipCount > 0 {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("UNFINISHED REEL").font(.rpKicker).foregroundStyle(Theme.accent)
+                    Text("UNFINISHED VIDEO").font(.rpKicker).foregroundStyle(Theme.accent)
                     Spacer(minLength: 8)
                     Text("\(parkedClipCount) clip\(parkedClipCount == 1 ? "" : "s")")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 }
-                Text("You already made \(parkedClipCount) AI clip\(parkedClipCount == 1 ? "" : "s") for this \(space.spaceNoun) and they're saved on this phone. Putting them together into a reel happens right here and costs nothing.")
+                Text("You already made \(parkedClipCount) AI clip\(parkedClipCount == 1 ? "" : "s") for this \(space.spaceNoun) and they're saved on this phone. Joining them into a video happens here and uses no new AI generation.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
                 Button { finishParkedReel() } label: {
-                    Label("Finish that reel", systemImage: "film.stack")
+                    Label("Finish that video", systemImage: "film.stack")
                         .font(.rpBody.weight(.semibold))
                         .frame(maxWidth: .infinity).padding(.vertical, 14)
                         .background(Theme.accent).foregroundStyle(Color.white)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(ScalePressStyle())
-                .accessibilityLabel(Text("Finish that reel from the clips you already paid for"))
+                .accessibilityLabel(Text("Finish that video from the clips you already paid for"))
                 Button("Discard those clips", role: .destructive) {
                     showDiscardParkedConfirm = true
                 }
@@ -7806,7 +11394,7 @@ struct ReelStudioView: View {
     @ViewBuilder private var lastReelCard: some View {
         if let url = lastReel {
             VStack(alignment: .leading, spacing: 10) {
-                Text("YOUR LAST REEL").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Text("YOUR LAST VIDEO").font(.rpKicker).foregroundStyle(Theme.inkDim)
                 Button { openExistingReel(url) } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "play.circle.fill")
@@ -7831,7 +11419,7 @@ struct ReelStudioView: View {
                                 in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(ScalePressStyle())
-                Text("Making a new reel generates fresh AI clips. Your last few reels stay on this phone.")
+                Text("Making a new video creates fresh clips. Your recent videos stay on this phone.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -7862,7 +11450,7 @@ struct ReelStudioView: View {
                             .background(RPGradient.aerial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Aerial intro").font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
-                            Text("Opens the reel · AI-generated").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            Text("Opens the video · AI-generated").font(.rpCaption).foregroundStyle(Theme.inkDim)
                         }
                         Spacer()
                         Image(systemName: on ? "checkmark.circle.fill" : "circle")
@@ -7880,7 +11468,13 @@ struct ReelStudioView: View {
     }
 
     private var generateTitle: String {
-        if canGenerate { return "Make my reel" }
+        if let narrationPreparationMessage { return narrationPreparationMessage }
+        if canGenerate { return "Make my video" }
+        // A retained request is the reason, not the photo count — say so.
+        if pendingRequest != nil || unreadablePendingContext != nil { return "Review the saved request first" }
+        if selected.count > VideoSelectionCapacity.maximumPhotos || totalSelected > VideoSelectionCapacity.maximumClips {
+            return "Pick \(VideoSelectionCapacity.maximumPhotos) photos at most"
+        }
         if !selectedExtras.isEmpty { return "Pick 1 more photo" }
         return "Pick 2 photos first"
     }
@@ -7893,19 +11487,23 @@ struct ReelStudioView: View {
 
     private var generatingSection: some View {
         VStack(spacing: 14) {
-            ProgressView(value: Double(completedClips), total: Double(max(totalClips, 1)))
+            ProgressView(value: work.fraction)
                 .tint(Theme.accent)
             Text(statusText)
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
-            Text("Each photo takes about a minute. Keep this screen open — your reel is put together as soon as they're done.")
+            Text(work.serverJob?.reply != nil ? "Your photos are safely uploaded. Rendering continues on our servers even if you close Rendprop. We’ll notify you when it is ready; reopen this listing to review." : work.serverJob != nil ? "Your request is saved. Check status to confirm server acceptance before starting another video." : "Keep Rendprop open while photos, optional narration and the exact recipe upload. After the server accepts the job, you can leave the app while it renders.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
             if failedClips > 0 {
-                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — continuing with the rest.")
+                Text("Clip generation stopped. Finished clips are kept on this phone.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.warn)
+                clipFailureDetails
+            }
+            if work.serverJob != nil {
+                serverStatusControls
             }
             Button("Cancel", role: .destructive) { cancelWork() }
                 .font(.rpBody)
@@ -7913,7 +11511,7 @@ struct ReelStudioView: View {
             // Say the money part out loud. Cancelling used to delete every clip
             // already generated and charged for, silently (the 4,000 sq ft field
             // test); now it keeps them and this line promises so before the tap.
-            Text("Cancelling keeps the clips you've already paid for — you can finish the reel from them later.")
+            Text(work.serverJob != nil ? "Cancel stops future clip requests. Work already dispatched may still be charged; your saved photos stay unchanged." : "Cancelling keeps the clips you've already paid for — you can finish the video from them later.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -7923,12 +11521,31 @@ struct ReelStudioView: View {
         .padding(.vertical, 24)
     }
 
+    private var serverStatusControls: some View {
+        VStack(spacing: 8) {
+            SecondaryButton(title: work.isCheckingServerStatus ? "Refreshing…" : "Refresh status",
+                            systemImage: "arrow.clockwise",
+                            isDisabled: work.isCheckingServerStatus,
+                            isLoading: work.isCheckingServerStatus) {
+                PropertyVideoJobRunner.shared.checkNow(work)
+            }
+            .accessibilityIdentifier("video.status.refresh")
+            if let checked = work.lastServerStatusCheck {
+                Text("Last checked \(checked.formatted(date: .omitted, time: .standard))")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+            Text(work.serverStatusCheckNote ?? "Updates automatically while Rendprop is open.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+        }
+    }
+
     private var stitchingSection: some View {
         VStack(spacing: 12) {
             ProgressView()
                 .scaleEffect(1.3)
                 .padding(.top, 16)
-            Text("Putting your reel together…")
+            Text("Putting your video together…")
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
             Text("Joining everything into one \(portrait ? "tall" : "wide") video, here on your phone.")
@@ -7936,7 +11553,7 @@ struct ReelStudioView: View {
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
             if failedClips > 0 {
-                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — the reel uses the rest.")
+                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — the video uses the rest.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.warn)
             }
@@ -7945,23 +11562,68 @@ struct ReelStudioView: View {
         .padding(.vertical, 24)
     }
 
+    private var reelResultAspect: CGFloat {
+        measuredReelAspect ?? (portrait ? 9.0 / 16.0 : 16.0 / 9.0)
+    }
+
+    @State private var selectingWebsiteVideo = false
+    @State private var websiteVideoNote: String?
+
+    private func chooseWebsiteVideo(_ url: URL) {
+        guard !selectingWebsiteVideo, !listing.isSample else { return }
+        selectingWebsiteVideo = true; websiteVideoNote = nil
+        Task {
+            defer { selectingWebsiteVideo = false }
+            do {
+                let record = try ListingVideoStore.load(for: url)
+                try await model.selectWebsiteVideo(record, for: listing.id)
+                websiteVideoNote = "Selected for the listing website. Return to the listing and tap Publish or Republish to make it live."
+                Haptics.success()
+            } catch { websiteVideoNote = AppModel.userMessage(for: error) }
+        }
+    }
+
     @ViewBuilder private var doneSection: some View {
         VStack(spacing: 12) {
-            Label("Your reel is ready", systemImage: "checkmark.circle.fill")
+            Label("Your video is ready", systemImage: "checkmark.circle.fill")
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.good)
+            if originalPhotoMotionShots > 0 {
+                Text("Used still photo on \(originalPhotoMotionShots) shot\(originalPhotoMotionShots == 1 ? "" : "s"). Those shots use the selected photo unchanged, including any photo edits you selected.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("reel.originalPhotoMotionSummary")
+            }
             if failedClips > 0 {
-                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — the reel uses the rest.")
+                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — the video uses the rest.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.warn)
             }
             if let player {
                 VideoPlayer(player: player)
-                    .frame(height: portrait ? 460 : 230)
+                    .aspectRatio(reelResultAspect, contentMode: .fit)
+                    .frame(maxWidth: 460 * reelResultAspect)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                     .onAppear { player.play() }
+                    .task(id: reelURL) {
+                        guard let url = reelURL else { return }
+                        measuredReelAspect = nil
+                        let owner = auth.userID, revision = auth.syncSessionRevision
+                        guard let ratio = await Self.reelDisplayAspect(url), !Task.isCancelled,
+                              reelURL == url, auth.userID == owner, auth.syncSessionRevision == revision else { return }
+                        measuredReelAspect = ratio
+                    }
             }
             if let reelURL {
+                if !listing.isSample, let record = try? ListingVideoStore.load(for: reelURL), record.canSelectForWebsite {
+                    Button { chooseWebsiteVideo(reelURL) } label: {
+                        Label(selectingWebsiteVideo ? "Checking the saved video…" : "Use on listing website", systemImage: "globe")
+                            .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .background(Theme.accent).foregroundStyle(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }.disabled(selectingWebsiteVideo).accessibilityIdentifier("video.useOnWebsite")
+                }
+                if let websiteVideoNote { Text(websiteVideoNote).font(.rpCaption).foregroundStyle(Theme.inkDim) }
                 Button { saveToPhotos(reelURL) } label: {
                     Label(savedToPhotos ? "Saved to Photos" : "Save to Photos",
                           systemImage: savedToPhotos ? "checkmark.circle.fill" : "square.and.arrow.down")
@@ -7973,7 +11635,7 @@ struct ReelStudioView: View {
                 .disabled(savedToPhotos || isSaving)
 
                 ShareLink(item: reelURL) {
-                    Label("Share reel", systemImage: "square.and.arrow.up")
+                    Label("Share video", systemImage: "square.and.arrow.up")
                         .font(.rpBody.weight(.semibold))
                         .frame(maxWidth: .infinity).padding(.vertical, 13)
                         .background(Theme.accentSoft).foregroundStyle(Theme.accent)
@@ -7993,25 +11655,87 @@ struct ReelStudioView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private var failedSection: some View {
+    @ViewBuilder private var failedSection: some View {
+        if work.serverJob != nil { serverVideoAttentionSection } else {
         VStack(spacing: 12) {
             if let failure {
                 AIFailureCard(failure: failure,
-                              retryHint: "Check your photos and try again.",
+                              retryHint: "No more photos were sent after the failure. Finished clips are kept on this phone.",
                               quotaFeature: "reels",
                               onReconnect: { connection.run { resetToSetup() } })
             } else {
-                Label("Couldn't make the reel", systemImage: "exclamationmark.triangle")
+                Label("Couldn't make the video", systemImage: "exclamationmark.triangle")
                     .font(.rpHeadline)
                     .foregroundStyle(Theme.warn)
             }
-            Button("Try again") { resetToSetup() }
-                .font(.rpBody.weight(.semibold))
-                .foregroundStyle(Theme.accent)
+            clipFailureDetails
+            pendingRequestCard
+            if let parkedClips {
+                Text("\(parkedClips.clipURLs.count) finished clip\(parkedClips.clipURLs.count == 1 ? " is" : "s are") saved. You can finish a shorter video from those clips without generating again.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                PrimaryButton(title: "Finish video from saved clips", systemImage: "film.stack") {
+                    finishParkedReel()
+                }
+                    .accessibilityIdentifier("reel.finish-saved-clips")
+            }
+            SecondaryButton(title: "Back to video setup", systemImage: "slider.horizontal.3") {
+                resetToSetup()
+            }
                 .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
+    }
+    }
+
+    private var serverVideoAttentionSection: some View {
+        VStack(spacing: 14) {
+            Label("Your video request is saved", systemImage: "icloud").font(.rpHeadline)
+            if let failure { Text(failure.message).font(.rpCaption).foregroundStyle(Theme.inkDim) }
+            Text(work.serverJob?.wasRefusedBeforeAdmission == true ? "This video was not admitted. Choose fewer photos or check your plan; your saved photos and rejected recipe are kept." : "Check this same request before starting again. Leaving Rendprop does not cancel an accepted server job.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            if work.serverJob?.reply != nil {
+                serverStatusControls
+            }
+            if work.serverJob?.mayReplaceAfterResolution == true, work.serverJob?.reply == nil {
+                PrimaryButton(title: "Edit photos and setup", systemImage: "photo.on.rectangle") {
+                    resetToSetup()
+                }
+                .accessibilityIdentifier("video.server.editRefused")
+            } else if work.serverJob?.reply?.isTerminal == true {
+                if work.serverJob?.reply?.mayResume == true && work.serverJob?.reply?.resumeConsentToken != nil && work.serverJob?.stopRequested != true {
+                    PrimaryButton(title: "Resume saved video", systemImage: "play.fill") {
+                        Task { await PropertyVideoJobRunner.shared.resume(work) }
+                    }
+                    .accessibilityIdentifier("video.server.resume")
+                    Text("Uses the same photos and finished clips. Your current plan is checked before more clips start.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                if work.serverJob?.reply?.mayResume == true && work.serverJob?.reply?.resumeConsentToken == nil {
+                    Text(PropertyVideoProcessorFailure.unknownSavedAuthority.localizedDescription).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                SecondaryButton(title: "Back to video setup", systemImage: "slider.horizontal.3") { resetToSetup() }
+            } else {
+                PrimaryButton(title: "Check saved job", systemImage: "arrow.clockwise") {
+                    phase = .generating; PropertyVideoJobRunner.shared.checkNow(work)
+                }
+                .accessibilityIdentifier("video.server.check")
+                Button("Cancel saved job", role: .destructive) { Task { await PropertyVideoJobRunner.shared.cancel(work) } }
+            }
+        }.padding(.vertical, 24)
+    }
+
+    private var clipFailureDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(clipIssues) { issue in
+                Text("Photo \(issue.photoNumber): \(issue.failure.message)")
+                    .font(.rpCaption).foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("reel.clip-failures")
     }
 
     // MARK: Step 2 — your voice (optional; docs/VOICEOVER-CONTRACT.md)
@@ -8027,7 +11751,9 @@ struct ReelStudioView: View {
     /// the caption toggle.
     @ViewBuilder private var stepVoiceCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            stepTitle(2, "ADD YOUR VOICE", "Optional. Talk over your reel and the words appear as captions.")
+            Text("OPTIONAL NARRATION").font(.rpKicker).foregroundStyle(Theme.accent)
+            Text("Add your voice or an AI voice. Spoken captions are optional and follow the narration.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
             voiceModePicker
             voiceModeHint
             switch voiceMode {
@@ -8071,7 +11797,7 @@ struct ReelStudioView: View {
 
     private static func voiceModeHintText(_ mode: VoiceMode) -> String {
         switch mode {
-        case .off:     return "No talking. The reel plays with no sound."
+        case .off:     return "No narration. Optional music is separate."
         case .myVoice: return "Record yourself. Your words become captions on the video."
         case .aiVoice: return "Type it, AI reads it. Your words become captions on the video."
         }
@@ -8118,7 +11844,7 @@ struct ReelStudioView: View {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(ScalePressStyle())
-        .disabled(isTranscribing)
+        .disabled(isTranscribing || requestingVoicePermission)
         .accessibilityLabel(Text(recorder.isRecording ? "Stop recording" : "Record your voice"))
     }
 
@@ -8140,14 +11866,29 @@ struct ReelStudioView: View {
     // Every body here stays tiny on purpose — see the note above
     // `stepVoiceCard`. `aiVoicePane` is a list of identifiers and nothing else.
     @ViewBuilder private var aiVoicePane: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
+            aiVoiceScriptCard
+            aiVoicePicker
+            makeVoiceButton
+        }
+    }
+
+    private var aiVoiceScriptCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Label("Your script", systemImage: "text.alignleft")
+                    .font(.rpBody.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                toneMenu
+            }
             scriptAssistRow
             scriptField
             scriptLengthRow
             scriptLengthNote
-            aiVoicePicker
-            makeVoiceButton
         }
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     /// "Write my script" — wearing the same clothes as "✨ Improve my prompt" in
@@ -8162,7 +11903,8 @@ struct ReelStudioView: View {
                         ProgressView().tint(Theme.accent)
                         Text("Writing your script…")
                     } else {
-                        Text("✨ Write my script")
+                        Image(systemName: "sparkles")
+                        Text("Write my script")
                     }
                 }
                 .font(.rpBody.weight(.semibold))
@@ -8170,15 +11912,12 @@ struct ReelStudioView: View {
                 .background(Theme.accentSoft).foregroundStyle(Theme.accent)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
+            .buttonStyle(ScalePressStyle())
             .disabled(scriptInFlight || ttsInFlight)
             .accessibilityIdentifier("reel.script.write")
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Uses this \(space.spaceNoun)'s own details. Every word stays editable.")
-                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 6)
-                toneMenu
-            }
+            Text("Uses this \(space.spaceNoun)'s details. You can edit every word.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -8186,36 +11925,47 @@ struct ReelStudioView: View {
     /// of its own and not a question anybody has to answer. The default already
     /// suits the space type.
     private var toneMenu: some View {
-        Picker("Tone", selection: $tone) {
-            ForEach(ScriptTone.allCases, id: \.self) { t in
-                Text(t.label).tag(t)
+        Menu {
+            Picker("Tone", selection: $tone) {
+                ForEach(ScriptTone.allCases, id: \.self) { t in
+                    Text(t.label).tag(t)
+                }
             }
+        } label: {
+            HStack(spacing: 5) {
+                Text(tone.label)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+            }
+            .font(.rpCaption.weight(.semibold))
+            .foregroundStyle(Theme.accent)
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(Theme.accentSoft, in: Capsule())
         }
-        .pickerStyle(.menu)
-        .tint(Theme.accent)
-        .font(.rpCaption)
         .disabled(scriptInFlight)
         .accessibilityLabel(Text("How the script should sound"))
+        .accessibilityValue(Text(tone.label))
     }
 
     private var scriptField: some View {
-        TextField("Type what the voice should say — e.g. 'Welcome to 12 Oak Lane. Three beds, two baths.'",
+        TextField("Write what you'd like your narrator to say…",
                   text: $aiScript, axis: .vertical)
-            .lineLimit(2...5)
-            .textFieldStyle(.roundedBorder)
+            .font(.rpBody)
+            .lineLimit(3...6)
+            .textFieldStyle(.plain)
+            .padding(12)
+            .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .disabled(ttsInFlight || scriptInFlight)
+            .accessibilityLabel(Text("Narration script"))
             .accessibilityIdentifier("reel.script.field")
     }
 
     /// Live length, in BOTH units that matter: characters against the server's
     /// hard 1,000-char cap, and seconds against the reel this script has to fit.
     ///
-    /// Neither was visible before. The cap announced itself as a 400 only after
-    /// somebody had written a paragraph, and the overrun announced itself as a
-    /// finished video that freezes on its last picture — because `stitch()`
-    /// HOLDS the final frame rather than cutting the speaker off. Both are now
-    /// on screen before a cent is spent. Same shape as the 600-char counter in
-    /// `CustomEditSheet`.
+    /// Show the estimate before voice generation. Background video jobs verify
+    /// the actual narration duration before starting clips and refuse a take
+    /// that doesn't fit; this estimate does not change that authority. Same
+    /// shape as the 600-char counter in `CustomEditSheet`.
     private var scriptLengthRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(Self.scriptLengthLabel(count: aiScript.count,
@@ -8241,7 +11991,7 @@ struct ReelStudioView: View {
                 .font(.rpCaption).foregroundStyle(Theme.warn)
                 .fixedSize(horizontal: false, vertical: true)
         } else if scriptOverrunsReel {
-            Text("This takes about \(Self.wholeSeconds(scriptReadSeconds)) seconds to read and your reel is \(reelSeconds) seconds long. The video will freeze on its last picture while the voice finishes — add photos, or cut a sentence.")
+            Text("This takes about \(Self.wholeSeconds(scriptReadSeconds)) seconds to read and your video is \(reelSeconds) seconds long. Shorten the narration or add photos so the voice fits before creating your video.")
                 .font(.rpCaption).foregroundStyle(Theme.warn)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -8249,14 +11999,16 @@ struct ReelStudioView: View {
 
     private var makeVoiceButton: some View {
         Button { generateAIVoice() } label: {
-            Label(ttsInFlight ? "Making the voice…" : "Make the voice", systemImage: "waveform")
+            Label(ttsInFlight ? "Making voice…" : "Make voice", systemImage: "waveform")
                 .font(.rpBody.weight(.semibold))
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(aiCanGenerate ? Theme.accent : Theme.fillSubtle)
                 .foregroundStyle(aiCanGenerate ? Color.white : Theme.inkDim)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+        .buttonStyle(ScalePressStyle())
         .disabled(!aiCanGenerate)
+        .accessibilityIdentifier("reel.voice.make")
     }
 
     @ViewBuilder private var aiVoicePicker: some View {
@@ -8269,19 +12021,79 @@ struct ReelStudioView: View {
             Button("Load voices") { loadVoices() }
                 .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
         } else {
-            Picker("Voice", selection: $selectedVoiceID) {
-                ForEach(aiVoices) { v in
-                    Text(voiceRowLabel(v)).tag(v.voiceID)
+            Menu {
+                Picker("Voice", selection: $selectedVoiceID) {
+                    ForEach(aiVoices) { v in
+                        Text(voiceRowLabel(v)).tag(v.voiceID)
+                    }
                 }
+            } label: {
+                selectedVoiceLabel
             }
-            .pickerStyle(.menu)
-            .tint(Theme.accent)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel(Text("Narrator voice"))
+            .accessibilityValue(Text(selectedAIVoice.map(voiceRowLabel) ?? "Choose a voice"))
+            .accessibilityHint(Text("Choose who reads your script"))
+            .accessibilityIdentifier("reel.voice.picker")
         }
     }
 
+    private var selectedAIVoice: AIVoice? {
+        aiVoices.first { $0.voiceID == selectedVoiceID }
+    }
+
+    private var selectedVoiceLabel: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "waveform")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 44, height: 44)
+                .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Narrator").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Text(selectedAIVoice.map(voiceDisplayName) ?? "Choose a voice")
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                if let selectedAIVoice {
+                    Text(voiceShortDescription(selectedAIVoice))
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.inkDim)
+                .accessibilityHidden(true)
+        }
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
     private func voiceRowLabel(_ v: AIVoice) -> String {
-        v.subtitle.isEmpty ? v.displayName : "\(v.displayName) · \(v.subtitle)"
+        "\(voiceDisplayName(v)) · \(voiceShortDescription(v))"
+    }
+
+    /// Presentation only: the catalogue's id and server metadata stay intact.
+    private func voiceDisplayName(_ voice: AIVoice) -> String {
+        let name = voice.displayName
+        guard let suffix = name.range(of: #"\s+[-–—|]\s*"#, options: .regularExpression) else { return name }
+        let friendly = String(name[..<suffix.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return friendly.isEmpty ? name : friendly
+    }
+
+    private func voiceShortDescription(_ voice: AIVoice) -> String {
+        let metadata = "\(voice.displayName) \(voice.subtitle)".lowercased().replacingOccurrences(of: "_", with: " ")
+        let words = Set(metadata.components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty })
+        let styles = [("warm", "Warm"), ("friendly", "Friendly"), ("calm", "Calm"),
+                      ("confident", "Confident"), ("dominant", "Confident"), ("firm", "Confident"),
+                      ("bright", "Bright"), ("soft", "Soft"), ("deep", "Deep"), ("expressive", "Expressive")]
+        let accents = [("american", "American accent"), ("british", "British accent"),
+                       ("australian", "Australian accent"), ("irish", "Irish accent"),
+                       ("scottish", "Scottish accent"), ("canadian", "Canadian accent")]
+        let style = styles.first { words.contains($0.0) }?.1
+        let accent = accents.first { words.contains($0.0) }?.1
+        let description = [style, accent].compactMap { $0 }.joined(separator: " · ")
+        return description.isEmpty ? "Narration voice" : description
     }
 
     private var aiCanGenerate: Bool {
@@ -8344,7 +12156,7 @@ struct ReelStudioView: View {
         if count == 0 {
             return "About \(budget) characters fits your \(reelSeconds)-second reel."
         }
-        return "About \(wholeSeconds(readSeconds))s to read · your reel is \(reelSeconds)s"
+        return "About \(wholeSeconds(readSeconds))s to read · your video is \(reelSeconds)s"
     }
 
     nonisolated private static func wholeSeconds(_ seconds: Double) -> Int {
@@ -8439,25 +12251,34 @@ struct ReelStudioView: View {
     /// nobody had a reason to lose.
     private func recordTapped() {
         if recorder.isRecording { stopAndTranscribe(); return }
+        guard narrationPreparationMessage == nil else { return }
         voiceError = nil
         voiceNote = nil
         speechDenied = false
-        Task {
+        let permissionID = UUID()
+        voicePermissionID = permissionID
+        requestingVoicePermission = true
+        Task { @MainActor in
+            defer {
+                if voicePermissionID == permissionID {
+                    voicePermissionID = nil; requestingVoicePermission = false
+                }
+            }
             // `requestPermissions()` is mic AND speech; it prompts for both.
             let both = await recorder.requestPermissions()
-            await MainActor.run {
-                let micOK = both || recorder.hasMicrophonePermission
-                guard micOK else {
-                    voiceError = "Rendprop needs the microphone to record your voice. Turn it on in Settings → Rendprop → Microphone."
-                    return
-                }
-                // Mic yes, speech no: record anyway, captions off, say so once.
-                if !both {
-                    speechDenied = true
-                    voiceNote = Self.captionsOffNote
-                }
-                beginTake()
+            guard voicePermissionID == permissionID, work.isPresented, phase == .setup, voiceMode == .myVoice,
+                  work.isContextCurrent else { return }
+            let micOK = both || recorder.hasMicrophonePermission
+            guard micOK else {
+                voiceError = "Rendprop needs the microphone to record your voice. Turn it on in Settings → Rendprop → Microphone."
+                return
             }
+            // Mic yes, speech no: record anyway, captions off, say so once.
+            if !both {
+                speechDenied = true
+                voiceNote = Self.captionsOffNote
+            }
+            beginTake()
         }
     }
 
@@ -8597,11 +12418,12 @@ struct ReelStudioView: View {
     /// point is that the agent fixes the two words the model got wrong.
     private func runScriptWriter() {
         guard !scriptInFlight else { return }
-        connection.run { runScriptWriterWithSession() }
+        connection.run { authorizeVideoPreparation { runScriptWriterWithSession() } }
     }
 
     private func runScriptWriterWithSession() {
         guard !scriptInFlight else { return }
+        do { try requirePreparedProcessor() } catch { voiceError = error.localizedDescription; return }
         scriptInFlight = true
         voiceError = nil
         voiceNote = nil
@@ -8610,6 +12432,9 @@ struct ReelStudioView: View {
         // Everything the request needs is read HERE, on the main actor, into
         // plain Sendable values. The Task below never reaches back into the
         // model or the view for anything.
+        let permission = preparedProcessorPermission, permissionContext = preparedProcessorContext
+        let baseEpoch = AIConsent.shared.revocationRevision, processorEpoch = processorConsent.revision
+        let sessionEpoch = auth.syncSessionRevision
         let api = model.api
         let live = model.listings.first(where: { $0.id == listing.id }) ?? listing
         let request = Self.scriptRequest(for: live, space: space,
@@ -8632,6 +12457,7 @@ struct ReelStudioView: View {
                 // `generateAIVoice` resolves it one tap later in this same
                 // flow, so this adds no side effect the voiceover path doesn't
                 // already have.
+                try requireProcessorPreparation(permission, context: permissionContext, baseEpoch: baseEpoch, processorEpoch: processorEpoch, sessionEpoch: sessionEpoch)
                 var req = request
                 // Only ever an UPGRADE on what `scriptRequest` already read off
                 // the listing: a nil answer here (offline, signed out, listing
@@ -8639,6 +12465,7 @@ struct ReelStudioView: View {
                 if !isSample, let resolved = await model.serverListingIDForCompliance(listingID) {
                     req.listingServerID = resolved
                 }
+                try requireProcessorPreparation(permission, context: permissionContext, baseEpoch: baseEpoch, processorEpoch: processorEpoch, sessionEpoch: sessionEpoch)
                 let result = try await api.aiCopyScript(req)
                 let filled = Self.filledAddress(result.script, address: address,
                                                 fallbackNoun: noun)
@@ -8790,11 +12617,12 @@ struct ReelStudioView: View {
     /// would fail identically, so the server's message is shown to re-word.
     private func generateAIVoice() {
         guard !ttsInFlight else { return }
-        connection.run { generateAIVoiceWithSession() }
+        connection.run { authorizeVideoPreparation { generateAIVoiceWithSession() } }
     }
 
     private func generateAIVoiceWithSession() {
         guard !ttsInFlight else { return }
+        do { try requirePreparedProcessor() } catch { voiceError = error.localizedDescription; return }
         let script = aiScript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard script.count >= 2 else { voiceError = "Type a short script first."; return }
         let voiceID = selectedVoiceID
@@ -8804,6 +12632,9 @@ struct ReelStudioView: View {
         let isSample = listing.isSample
         let key = UUID().uuidString               // one idempotency key per tap
         let actor = auth.userID, epoch = auth.syncSessionRevision
+        let permission = preparedProcessorPermission, permissionContext = preparedProcessorContext
+        let baseEpoch = AIConsent.shared.revocationRevision, processorEpoch = processorConsent.revision
+        let sessionEpoch = epoch
         ttsInFlight = true
         voiceError = nil
         voiceNote = nil
@@ -8812,6 +12643,7 @@ struct ReelStudioView: View {
                 let serverID: UUID? = isSample ? nil
                     : await model.serverListingIDForCompliance(listingID)
                 guard auth.userID == actor, auth.syncSessionRevision == epoch else { throw CloudSyncError.identityChanged }
+                try requireProcessorPreparation(permission, context: permissionContext, baseEpoch: baseEpoch, processorEpoch: processorEpoch, sessionEpoch: sessionEpoch)
                 let result = try await api.aiVoiceTTS(text: script, voiceID: voiceID,
                                                       listingServerID: serverID,
                                                       label: "Reel voiceover",
@@ -8912,8 +12744,22 @@ struct ReelStudioView: View {
 
     // MARK: Selection
 
+    nonisolated private static func selectionPreservingOrder(_ selected: [String], photos: [EnhancedPhoto],
+                                                           index: PhotoVersionHistory.Index? = nil) -> [String] {
+        var seen = Set<String>()
+        return selected.compactMap { id in
+            let exact = photos.first { $0.id == id }
+            let approved = exact ?? index?.versions[id].flatMap { previous in
+                photos.first { index?.versions[$0.id]?.familyID == previous.familyID }
+            }
+            guard let approved, seen.insert(approved.id).inserted else { return nil }
+            return approved.id
+        }
+    }
+
     private func selectThumb(_ p: EnhancedPhoto) -> some View {
         let order = selected.firstIndex(of: p.id)
+        let reviewed = (try? PhotoVersionHistory.requireReelReview(imageURL: p.enhancedURL)) != nil
         return Button { toggle(p) } label: {
             ZStack(alignment: .topTrailing) {
                 DetailPhotoThumb(url: p.enhancedURL, height: 100)
@@ -8923,9 +12769,12 @@ struct ReelStudioView: View {
                             .strokeBorder(order != nil ? Theme.accent : Theme.border,
                                           lineWidth: order != nil ? 2 : 1)
                     )
-                    .opacity(order == nil && selected.count >= 8 ? 0.4 : 1)
+                    .opacity(!reviewed || order == nil && selected.count >= VideoSelectionCapacity.maximumPhotos ? 0.4 : 1)
 
-                if let order {
+                if !reviewed {
+                    Text("Review photo first").font(.caption2.weight(.semibold))
+                        .padding(5).background(.ultraThinMaterial, in: Capsule())
+                } else if let order {
                     Text("\(order + 1)")
                         .font(.caption2.weight(.bold))
                         .frame(width: 22, height: 22)
@@ -8942,7 +12791,8 @@ struct ReelStudioView: View {
             }
         }
         .buttonStyle(ScalePressStyle())
-        .accessibilityLabel(Text(order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
+        .disabled(!reviewed)
+        .accessibilityLabel(Text(!reviewed ? "Photo needs review in Photo Studio before use in a reel." : order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
                                  ?? "Photo not in reel. Tap to add."))
         .accessibilityIdentifier("reel.photo.\(p.id)")
     }
@@ -8950,16 +12800,20 @@ struct ReelStudioView: View {
     private func toggle(_ p: EnhancedPhoto) {
         if let idx = selected.firstIndex(of: p.id) {
             selected.remove(at: idx)
-        } else if selected.count < 8 {
+        } else if selected.count < VideoSelectionCapacity.maximumPhotos {
+            guard (try? PhotoVersionHistory.requireReelReview(imageURL: p.enhancedURL)) != nil else { return }
             selected.append(p.id)
             Haptics.selection()
         }
     }
 
     private func cancelWork() {
+        if work.serverJob != nil {
+            Task { await PropertyVideoJobRunner.shared.cancel(work) }
+            return
+        }
         let task = workTask
-        workTask = nil
-        task?.cancel()
+        work.cancel()
         resetToSetup()
         // The cancelled task parks its already-billed clips in its own `catch`,
         // which has not run yet at this instant — so wait for it before reading
@@ -8976,6 +12830,21 @@ struct ReelStudioView: View {
     }
 
     private func resetToSetup() {
+        if let saved = work.serverJob {
+            guard saved.mayReplaceAfterResolution else {
+                phase = .generating; PropertyVideoJobRunner.shared.checkNow(work); return
+            }
+            // Only the completed server-owned recipe is retired. Existing
+            // legacy local clip requests use their unchanged recovery flow.
+            if saved.wasRefusedBeforeAdmission {
+                guard pendingRequest == nil, pendingBatch?.completedPaths.isEmpty != false else { return }
+                if selected.isEmpty {
+                    let available = Set(reelPhotos.map(\.id))
+                    selected = saved.request.sources.map(\.photoVersionID).filter { available.contains($0) }
+                }
+            }
+            pendingBatch?.clear(); pendingBatch = nil; work.serverJob = nil
+        }
         player?.pause()
         player = nil
         reelURL = nil
@@ -8983,13 +12852,283 @@ struct ReelStudioView: View {
         saveError = nil
         failure = nil
         completedClips = 0
+        originalPhotoMotionShots = 0
         totalClips = 0
-        failedClips = 0
+        clipIssues = []
         phase = .setup
         lastReel = Self.newestReel(for: listing.id)   // the one just made is now "your last reel"
         // A run that failed part-way parked its billed clips — surface them again
         // rather than letting "Try again" charge for the same clips twice.
         parkedClips = listing.isSample ? nil : PendingReelClips.load(for: listing.id)
+        reloadPendingRequest()
+        if pendingRequest == nil && pendingBatch == nil && parkedClips == nil &&
+            unreadablePendingContext == nil && !unreadableBatch {
+            work.configuration = nil
+        }
+        videoPurpose = nil
+        restoreVideoPurposeForSavedWork()
+    }
+
+    private func reloadPendingRequest() {
+        guard !listing.isSample, let owner = auth.userID,
+              let live = model.listings.first(where: { $0.id == listing.id }), live.cloudUnavailable != true else {
+            pendingRequest = nil; unreadablePendingContext = nil; pendingBatch = nil; unreadableBatch = false; recoveredRetryRequestID = nil; return
+        }
+        let context = PendingReelRequest.Context(listingID: live.id, serverListingID: live.serverID,
+            owner: owner, workspace: WorkspaceContext.selectedOrgID)
+        pendingRequest = PendingReelRequest.load(context)
+        unreadablePendingContext = pendingRequest == nil && PendingReelRequest.exists(context) ? context : nil
+        do { pendingBatch = try PendingReelBatch.load(context); scenePlanningNotice = pendingBatch?.scenePlanningNotice; unreadableBatch = false }
+        catch { pendingBatch = nil; unreadableBatch = true }
+        if recoveredRetryRequestID != pendingRequest?.job.requestId { recoveredRetryRequestID = nil }
+    }
+
+    @ViewBuilder private var pendingRequestCard: some View {
+        if unreadableBatch {
+            Text("Saved video progress cannot be read. Your requests and clips are kept; new generation is paused until that progress can be recovered.")
+                .font(.rpCaption).foregroundStyle(Theme.warn)
+        }
+        if let batch = pendingBatch, pendingRequest == nil, unreadablePendingContext == nil {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Saved video: \(batch.completedPaths.count) of \(batch.photos.count) photos finished")
+                    .font(.rpBody.weight(.semibold))
+                Text("Continue uses the saved photo order, keeps finished clips and generates only the remaining photos. You can finish a shorter video from saved clips instead.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button(batch.completedPaths.count == batch.photos.count ? "Finish saved full video" : "Continue saved video") {
+                    connection.run { continueSavedBatch(batch) }
+                }.disabled(isWorking).accessibilityIdentifier("reel.continue-saved-batch")
+                Button("Discard saved batch…", role: .destructive) { showDiscardParkedConfirm = true }.disabled(isWorking)
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+        }
+        if let request = pendingRequest {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(request.submissionUnconfirmed == true ? "Photo \(request.photoNumber) submission needs review" : "Photo \(request.photoNumber) has a saved video request", systemImage: "clock.arrow.circlepath")
+                    .font(.rpBody.weight(.semibold))
+                if request.submissionUnconfirmed == true {
+                    Text("The submission ended without a usable receipt. It may already count a clip. There is no automatic retry or result lookup. Review your usage before forgetting this request; generating again may count another clip.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                } else {
+                    Text("Check this existing request before generating again. Recovery checks its status, downloads its clip and checks it against the saved source photo; it sends no new generation. Remote results can expire.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    if recoveredRetryRequestID == request.job.requestId, request.qualityAttempt == 0 {
+                        Text("The first AI clip changed the property. Nothing is generating now. A safer retry sends this same photo once more; still photo happens on this iPhone without another AI generation.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        Button("Retry once with safer motion") { connection.run { resolveRecoveredRetry(request, choice: .saferRetry) } }
+                            .disabled(isWorking).accessibilityIdentifier("reel.retry-saved-safer")
+                        Button("Use still photo") { connection.run { resolveRecoveredRetry(request, choice: .originalPhoto) } }
+                            .disabled(isWorking).accessibilityIdentifier("reel.use-saved-original")
+                    } else {
+                        Button("Recover saved request") { connection.run { recoverPendingRequest(request) } }
+                            .disabled(isWorking).accessibilityIdentifier("reel.recover-request")
+                    }
+                }
+                Button("Forget request…") { showDiscardPendingConfirm = true }.disabled(isWorking)
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+        } else if let context = unreadablePendingContext {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("An earlier video request cannot be read").font(.rpBody.weight(.semibold))
+                if PendingReelRequest.hasUnreadableAdoptionMetadata(context) {
+                    Text("Saved account-transfer records could not be read. Choose your workspace and review its saved request there, or get recovery help. Your saved records have been kept and no new clip will be submitted.").font(.rpCaption)
+                } else {
+                    Text("Generating is paused because that request may already count a clip. Review your usage before deliberately forgetting it.").font(.rpCaption)
+                    Button("Forget request…") { showDiscardPendingConfirm = true }.disabled(isWorking)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+        }
+    }
+
+    private func snapshotReelConfiguration() -> ReelWorkJob.Configuration {
+        ReelWorkJob.Configuration(extras: selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) },
+            captions: VideoBrandingPolicy.titleCard(captionsOn ? Self.reelCaptions(for: listing) : nil, aspect: portrait ? "9:16" : "16:9"),
+            voice: voiceMode == .off ? nil : voiceover,
+            captionStyle: voiceMode != .off && wordCaptionsOn ? .standard : .off,
+            shotStyle: bigCaptionsOn ? bigCaptionStyle : .off, transition: reelTransition,
+            aspect: portrait ? "9:16" : "16:9")
+    }
+
+    /// Called only for this job's OS-expiration pause. Terminal QC, quota, auth
+    /// or network errors never trigger this automatic continuation.
+    private func resumePausedWork() {
+        guard work.isContextCurrent, !work.running else { return }
+        reloadPendingRequest()
+        if let request = pendingRequest, request.submissionUnconfirmed != true {
+            recoverPendingRequest(request, resumeBatch: true)
+        } else if pendingRequest == nil, unreadablePendingContext == nil, !unreadableBatch, let batch = pendingBatch {
+            continueSavedBatch(batch)
+        } else {
+            phase = .setup
+        }
+    }
+
+    private var pausedSection: some View {
+        VStack(spacing: 12) {
+            Text("Your video is safely paused").font(.rpHeadline)
+            Text("iPhone paused background work. Finished clips and the current request are kept. Open this listing’s Make a video tool to recover and continue; it will not finish while the app is paused.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim).multilineTextAlignment(.center)
+            Button("Continue saved video") { work.resumeForeground() }.disabled(work.running)
+            Button("Stop for now", role: .destructive) { cancelWork() }
+        }.frame(maxWidth: .infinity).padding(.vertical, 24)
+    }
+
+    private func recoverPendingRequest(_ request: PendingReelRequest, resumeBatch: Bool = false) {
+        let model = self.model, auth = self.auth
+        do { try Self.requireSavedReelReview(try PendingReelBatch.load(request.context)) }
+        catch { failure = AIFailure(error, title: "Review the saved photo first"); return }
+        guard !isWorking, request.submissionUnconfirmed != true,
+              pendingRequest?.job.requestId == request.job.requestId else { return }
+        let api = model.api, revision = auth.syncSessionRevision, consent = AIConsent.shared.revocationRevision
+        let validate: @MainActor @Sendable () throws -> Void = {
+            try Task.checkCancellation()
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consent,
+                  auth.userID == request.context.owner, auth.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == request.context.workspace,
+                  let current = model.listings.first(where: { $0.id == request.context.listingID }),
+                  current.cloudUnavailable != true, current.serverID == request.context.serverListingID else {
+                throw CancellationError()
+            }
+        }
+        let tmpDir = FileManager.default.temporaryDirectory.appendingPathComponent("reel-recovery-\(UUID())", isDirectory: true)
+        phase = .generating; completedClips = 0; totalClips = 1
+        statusText = "Checking saved request for photo \(request.photoNumber)…"
+        failure = nil; clipIssues = []; recoveredRetryRequestID = nil
+        if work.configuration == nil { work.configuration = snapshotReelConfiguration() }
+        work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
+            do {
+                try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+                let clip = try await Self.retrieveClip(job: request.job, pending: request, api: api,
+                    into: tmpDir, index: request.photoNumber - 1, clearReceiptOnDownload: false, requireCurrent: validate)
+                try validate()
+                _ = try await Self.acknowledgeRecoveredClip(clip, request: request, requireCurrent: validate)
+                try? FileManager.default.removeItem(at: tmpDir)
+                parkedClips = PendingReelClips.load(for: request.context.listingID)
+                reloadPendingRequest(); phase = .setup
+                if resumeBatch, let saved = pendingBatch {
+                    work.afterCurrentOperation { continueSavedBatch(saved) }
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: tmpDir)
+                reloadPendingRequest()
+                if error is CancellationError || Task.isCancelled { return }
+                if let refusal = error as? ReelQualityRefusal, refusal.mayRetry, request.qualityAttempt == 0 {
+                    recoveredRetryRequestID = request.job.requestId
+                }
+                clipIssues = [ReelClipIssue(photoNumber: request.photoNumber, error: error)]
+                failure = ReelClipIssue.failure(for: error, title: "Couldn't recover the clip")
+                phase = .failed
+            }
+        }
+    }
+
+    /// Both choices are explicit. Recovery itself remains an existing-job lookup.
+    private func resolveRecoveredRetry(_ request: PendingReelRequest, choice: ReelRecoveryChoice) {
+        let model = self.model, auth = self.auth
+        guard !isWorking, recoveredRetryRequestID == request.job.requestId, request.qualityAttempt == 0,
+              pendingRequest?.job.requestId == request.job.requestId else { return }
+        let api = model.api, revision = auth.syncSessionRevision, consent = AIConsent.shared.revocationRevision
+        let validate: @MainActor @Sendable () throws -> Void = {
+            try Task.checkCancellation()
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consent,
+                  auth.userID == request.context.owner, auth.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == request.context.workspace,
+                  let current = model.listings.first(where: { $0.id == request.context.listingID }),
+                  current.cloudUnavailable != true, current.serverID == request.context.serverListingID else { throw CancellationError() }
+        }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("reel-choice-\(UUID())", isDirectory: true)
+        failure = nil; clipIssues = []; phase = .generating
+        statusText = choice == .saferRetry ? "Photo \(request.photoNumber) — one safer retry…" : "Photo \(request.photoNumber) — using still photo…"
+        if work.configuration == nil { work.configuration = snapshotReelConfiguration() }
+        work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                _ = try await Self.resolveSavedQualityRetry(request, choice: choice, api: api, into: dir, requireCurrent: validate)
+                try validate()
+                try? FileManager.default.removeItem(at: dir)
+                recoveredRetryRequestID = nil; reloadPendingRequest()
+                parkedClips = PendingReelClips.load(for: request.context.listingID)
+                phase = .setup
+            } catch {
+                try? FileManager.default.removeItem(at: dir)
+                reloadPendingRequest()
+                if error is CancellationError || Task.isCancelled { return }
+                if let refusal = error as? ReelQualityRefusal, refusal.mayRetry,
+                   pendingRequest?.qualityAttempt == 0 { recoveredRetryRequestID = pendingRequest?.job.requestId }
+                failure = ReelClipIssue.failure(for: error, title: "Couldn't finish this photo")
+                clipIssues = [ReelClipIssue(photoNumber: request.photoNumber, error: error)]; phase = .failed
+            }
+        }
+    }
+
+    /// Resume only this saved ordered batch. Finished positions come from its
+    /// durable progress; selected setup photos cannot reorder or replace it.
+    private func continueSavedBatch(_ saved: PendingReelBatch) {
+        let model = self.model, auth = self.auth
+        do { try Self.requireSavedReelReview(saved) }
+        catch { failure = AIFailure(error, title: "Review the saved photo first"); return }
+        guard !isWorking, pendingRequest == nil, unreadablePendingContext == nil,
+              pendingBatch?.id == saved.id else { return }
+        let api = model.api, revision = auth.syncSessionRevision, consent = AIConsent.shared.revocationRevision
+        let validate: @MainActor @Sendable () throws -> Void = {
+            try Task.checkCancellation()
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consent,
+                  auth.userID == saved.context.owner, auth.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == saved.context.workspace,
+                  let current = model.listings.first(where: { $0.id == saved.context.listingID }),
+                  current.cloudUnavailable != true, current.serverID == saved.context.serverListingID else { throw CancellationError() }
+        }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("reel-resume-\(UUID())", isDirectory: true)
+        let configuration = work.configuration ?? snapshotReelConfiguration()
+        work.configuration = configuration
+        let extras = configuration.extras
+        let captions = VideoBrandingPolicy.titleCard(configuration.captions, aspect: saved.aspect), voice = configuration.voice
+        let captionStyle = configuration.captionStyle, shotStyle = configuration.shotStyle
+        let transition = configuration.transition
+        phase = .generating; failure = nil; clipIssues = []
+        totalClips = saved.photos.count; completedClips = saved.completedPaths.count
+        work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
+            do {
+                try validate()
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let batch = try await Self.completeSavedBatch(saved, api: api, into: dir, requireCurrent: validate,
+                    progress: { number in completedClips = number; statusText = "Photo \(number + 1) of \(saved.photos.count) — making video…" })
+                try validate()
+                phase = .stitching
+                let photoClips = batch.completedPaths.map { FileStore.url(fromRelativePath: $0) }
+                let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
+                try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
+                let out = reelsDir.appendingPathComponent("\(saved.context.listingID.uuidString)-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString).mp4")
+                try await ReelComposer.compose(shots: Self.shots(extras: extras, photoClips: photoClips,
+                    plan: batch.photos.map { $0.shot?.value }, captionsOn: shotStyle.isOn),
+                    renderSize: batch.aspect == "9:16" ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080),
+                    options: ReelComposer.Options(titleCard: captions, voiceover: voice, captionStyle: captionStyle,
+                        shotCaptionStyle: shotStyle, transition: transition), output: out)
+                try validate()
+                try OriginalPhotoMotion.saveSummary(count: photoClips.filter(OriginalPhotoMotion.isClip).count, for: out)
+                let finishedRecord = try await ListingVideoPreparation.retain(output: out, listingID: saved.context.listingID,
+                    ownerID: saved.context.owner, workspaceID: saved.context.workspace, serverListingID: saved.context.serverListingID,
+                    purpose: batch.aspect == "16:9" ? .listing : .socialMedia, sources: batch.completedSources ?? [],
+                    includesOpeningClip: !extras.isEmpty, brandingPolicy: batch.aspect == "16:9" ? "unbranded" : nil)
+                try validate()
+                if finishedRecord.canSelectForWebsite, model.listings.first(where: { $0.id == saved.context.listingID })?.websiteVideoRelPath == nil {
+                    try await model.selectWebsiteVideo(finishedRecord, for: saved.context.listingID, onlyIfUnselected: true)
+                    try validate()
+                }
+                batch.clear()
+                PendingReelClips.retire(photoClips, for: saved.context.listingID)
+                try? FileManager.default.removeItem(at: dir)
+                reloadPendingRequest(); parkedClips = PendingReelClips.load(for: saved.context.listingID)
+                reelURL = out; lastReel = out; player = AVPlayer(url: out)
+                originalPhotoMotionShots = photoClips.filter(OriginalPhotoMotion.isClip).count
+                phase = .done; Haptics.success()
+            } catch {
+                // All completed shots already have durable progress. The current
+                // accepted/unknown receipt stays; no following photo is submitted.
+                try? FileManager.default.removeItem(at: dir)
+                reloadPendingRequest(); parkedClips = PendingReelClips.load(for: saved.context.listingID)
+                if error is CancellationError || Task.isCancelled { return }
+                failure = ReelClipIssue.failure(for: error, title: "Couldn't continue the saved reel")
+                phase = .failed
+            }
+        }
     }
 
     /// Open a reel that already exists on disk — same result screen as a fresh
@@ -9003,17 +13142,31 @@ struct ReelStudioView: View {
         }
         player?.pause()
         reelURL = url
+        originalPhotoMotionShots = OriginalPhotoMotion.summaryCount(for: url)
         player = AVPlayer(url: url)
         savedToPhotos = false
         saveError = nil
         failure = nil
-        failedClips = 0
+        clipIssues = []
         phase = .done
         Haptics.selection()
         Task {
             guard let isPortrait = await Self.isPortraitVideo(url) else { return }
             await MainActor.run { portrait = isPortrait }
         }
+    }
+
+    /// Match the preview container to the actual encoded display shape, not a
+    /// fixed height across the sheet's width. Preferred rotation is included.
+    nonisolated private static func reelDisplayAspect(_ url: URL) async -> CGFloat? {
+        let asset = AVURLAsset(url: url)
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let size = try? await track.load(.naturalSize),
+              let transform = try? await track.load(.preferredTransform) else { return nil }
+        let rect = CGRect(origin: .zero, size: size).applying(transform)
+        let width = abs(rect.width), height = abs(rect.height)
+        guard width > 0, height > 0, width.isFinite, height.isFinite else { return nil }
+        return width / height
     }
 
     /// True when the video's displayed frame is taller than it is wide. Nil when
@@ -9072,8 +13225,15 @@ struct ReelStudioView: View {
     nonisolated private static func pruneReels(for listingID: UUID, keeping: Int) {
         let files = reelFiles(for: listingID)
         guard files.count > keeping else { return }
+        let selected = ListingVideoStore.selected(listingID: listingID, documents: FileStore.documents)?.relativePath
+        let pending = (try? ListingVideoStore.pending(listingID: listingID, documents: FileStore.documents))?.relativePath
         for url in files.dropFirst(keeping) {
+            let path = FileStore.relativePath(for: url)
+            guard path != selected, path != pending else { continue }
+            try? FileManager.default.removeItem(at: ListingVideoStore.metadataURL(for: url))
+            try? FileManager.default.removeItem(at: url.appendingPathExtension("website-assets.json"))
             try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: OriginalPhotoMotion.summaryURL(for: url))
         }
     }
 
@@ -9098,56 +13258,143 @@ struct ReelStudioView: View {
         }
     }
 
+    /// Disclosure resolution happens before the paid planner, script writer or
+    /// voice generator. Only an exact unpublished response selects legacy v1.
+    private func authorizeVideoPreparation(_ action: @escaping () -> Void) {
+        guard !preparingProcessor else { return }
+        preparingProcessor = true
+        Task { @MainActor in
+            defer { preparingProcessor = false }
+            do {
+                guard await AIConsent.shared.ensureGranted() else { throw PropertyVideoProcessorFailure.declined }
+                let baseEpoch = AIConsent.shared.revocationRevision, processorEpoch = processorConsent.revision
+                let sessionEpoch = auth.syncSessionRevision
+                if listing.isSample {
+                    preparedProcessorContext = nil; preparedProcessorPermission = nil
+                } else {
+                    guard let actor = auth.userID.flatMap(UUID.init(uuidString:)), auth.isIdentified,
+                          let org = WorkspaceContext.selectedOrgID, let api = model.api as? PropertyVideoJobsAPI,
+                          let server = await model.serverListingIDForCompliance(listing.id) else { throw PropertyVideoJobStore.Failure.identityChanged }
+                    let context = PropertyVideoJobContext(localListingID: listing.id, listingID: server, actorID: actor, orgID: org)
+                    let contract = try await api.propertyVideoProcessorContract(context: context)
+                    guard context.isCurrent, auth.syncSessionRevision == sessionEpoch, AIConsent.shared.revocationRevision == baseEpoch, processorConsent.revision == processorEpoch else { throw PropertyVideoJobStore.Failure.identityChanged }
+                    let permission: PropertyVideoProcessorSnapshot?
+                    if let contract { permission = try await processorConsent.ensure(contract, context: context) } else { permission = nil }
+                    guard work.isPresented, context.isCurrent, auth.syncSessionRevision == sessionEpoch, AIConsent.shared.revocationRevision == baseEpoch, processorConsent.revision == processorEpoch else { throw PropertyVideoJobStore.Failure.identityChanged }
+                    preparedProcessorContext = context; preparedProcessorPermission = permission
+                }
+                preparedSessionRevision = sessionEpoch; preparedBaseRevision = baseEpoch; preparedProcessorRevision = processorEpoch
+                try requirePreparedProcessor()
+                action()
+            } catch {
+                savedPhotoError = error.localizedDescription; voiceError = error.localizedDescription
+            }
+        }
+    }
+    private func requirePreparedProcessor() throws {
+        guard let base = preparedBaseRevision, let processor = preparedProcessorRevision, preparedSessionRevision == auth.syncSessionRevision else { throw PropertyVideoProcessorFailure.permissionRequired }
+        try requireProcessorPreparation(preparedProcessorPermission, context: preparedProcessorContext, baseEpoch: base, processorEpoch: processor, sessionEpoch: preparedSessionRevision!)
+    }
+    private func requireProcessorPreparation(_ permission: PropertyVideoProcessorSnapshot?, context: PropertyVideoJobContext?, baseEpoch: UInt64, processorEpoch: UInt64, sessionEpoch: UInt64) throws {
+        guard auth.syncSessionRevision == sessionEpoch, AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == baseEpoch, processorConsent.revision == processorEpoch,
+              listing.isSample || (context?.isCurrent == true && model.listings.contains(where: { $0.id == listing.id && $0.serverID == context?.listingID && $0.cloudUnavailable != true })) else { throw PropertyVideoJobStore.Failure.identityChanged }
+        if let permission, let context { guard processorConsent.permits(permission, context: context) else { throw PropertyVideoProcessorFailure.permissionRequired } }
+    }
+
     // MARK: Generate (sequential clips → on-device stitch)
 
+    private var framingSelectionKey: String {
+        VideoFramingReviewPolicy.selectionKey(aspect: portrait ? "9:16" : "16:9", photoIDs: selected)
+    }
+
     private func generate() {
-        guard phase == .setup, canGenerate else { return }
-        connection.run { generateWithSession() }
+        guard phase == .setup, canGenerate, !checkingFraming else { return }
+        checkingFraming = true
+        let key = framingSelectionKey, actor = auth.userID, revision = auth.syncSessionRevision
+        let org = WorkspaceContext.selectedOrgID, consent = AIConsent.shared.revocationRevision
+        let inputs = selected.compactMap { id in reelPhotos.first(where: { $0.id == id }).map { ($0.id, $0.enhancedURL) } }
+        let aspect = portrait ? 9.0 / 16.0 : 16.0 / 9.0
+        Task { @MainActor in
+            defer { checkingFraming = false }
+            let assessments = await Task.detached(priority: .utility) {
+                inputs.compactMap { input in
+                    autoreleasepool { VideoPhotoFramingReader.read(photoID: input.0, url: input.1, aspect: aspect) }
+                }
+            }.value
+            guard work.isPresented, phase == .setup, canGenerate, framingSelectionKey == key,
+                  auth.userID == actor, auth.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == org,
+                  AIConsent.shared.revocationRevision == consent else { return }
+            guard assessments.count == inputs.count else {
+                savedPhotoError = "A selected photo couldn't be read. Review it in Photos before creating this video."
+                return
+            }
+            framingAssessments = assessments
+            if VideoFramingReviewPolicy.needsAcknowledgment(assessments: assessments, selectionKey: key, acknowledgedKey: acknowledgedFramingKey) {
+                pendingFramingKey = key
+                showFramingReview = true
+                return
+            }
+            connection.run { authorizeVideoPreparation { generateWithSession() } }
+        }
     }
 
     private func generateWithSession() {
+        let model = self.model, auth = self.auth
         guard phase == .setup, canGenerate else { return }
-        if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
-        let chosen = selected.compactMap { id in photos.first(where: { $0.id == id }) }
+        do { try requirePreparedProcessor() } catch { savedPhotoError = error.localizedDescription; return }
+        let frozenProcessorPermission = preparedProcessorPermission
+        let frozenProcessorContext = preparedProcessorContext
+        let frozenProcessorRevision = preparedProcessorRevision
+        musicPreviewPlayer?.pause(); voPlayer?.pause()
+        let chosen = selected.compactMap { id in reelPhotos.first { $0.id == id } }
+        do {
+            for photo in chosen { try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL) }
+        } catch {
+            phase = .failed
+            failure = AIFailure(error, title: "Review the selected photo first")
+            return
+        }
         let extras = selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) }
         guard chosen.count + extras.count >= 2 else { return }
         let api = model.api                       // snapshot on the main actor
         let isPortrait = portrait
-        let prompt = motionPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = "" // Closed presets keep free text from replacing property-preservation rules.
+        let selectedMove = cameraMove?.rawValue ?? "push_in"
+        let motionOverride = cameraMove?.rawValue, arrangeScenes = false
         let listingID = listing.id
+        let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
+        let reelWorkspace = WorkspaceContext.selectedOrgID
+        let reelConsentRevision = AIConsent.shared.revocationRevision
         // Caption text is resolved HERE (main actor, plain Sendable strings) —
         // the CALayers themselves are built inside the nonisolated stitch.
-        let captions: ReelCaptions? = captionsOn ? Self.reelCaptions(for: listing) : nil
+        let captions: ReelCaptions? = VideoBrandingPolicy.titleCard(captionsOn ? Self.reelCaptions(for: listing) : nil, aspect: isPortrait ? "9:16" : "16:9")
         // Voiceover + caption-style snapshot on the main actor (both Sendable).
         // `.off` mode → no voiceover; a finished take is used only when the mode
         // isn't .off. captionStyle governs the burned-in spoken-word captions.
         let voiceover: Voiceover? = (voiceMode == .off) ? nil : self.voiceover
-        let captionStyle: CaptionStyle = wordCaptionsOn ? .standard : .off
+        let captionStyle: CaptionStyle = voiceMode != .off && wordCaptionsOn ? .standard : .off
         // The big burned-in shot captions and the transition, snapshot as plain
         // Sendable values like everything else this Task reads.
         let shotStyle: ReelComposer.ShotCaptionStyle = bigCaptionsOn ? bigCaptionStyle : .off
         let transition = reelTransition
-        // What the shot planner needs, read here on the main actor. The call
-        // itself happens inside the Task and is allowed to fail.
-        let live = model.listings.first(where: { $0.id == listing.id }) ?? listing
-        let planRequest = Self.shotlistRequest(for: live, space: space,
-                                               photos: chosen,
-                                               targetSeconds: targetSeconds,
-                                               tone: tone.rawValue)
-        let address = live.address
-        let noun = space.spaceNoun
+        let frozenMusic = musicSelection
+        let keepOriginalPhoto = allowOriginalPhotoFallback
         let spaceRaw = space.rawValue
+        work.configuration = ReelWorkJob.Configuration(extras: extras, captions: captions, voice: voiceover,
+            captionStyle: captionStyle, shotStyle: shotStyle, transition: transition,
+            aspect: isPortrait ? "9:16" : "16:9")
         phase = .generating
         completedClips = 0
+        originalPhotoMotionShots = 0
         totalClips = chosen.count
-        failedClips = 0
+        clipIssues = []
         failure = nil
         statusText = chosen.isEmpty ? "Getting ready…" : "Planning your shots…"
         Haptics.selection()
         let tmpDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("reel-\(UUID().uuidString)", isDirectory: true)
         let isSample = listing.isSample
-        workTask = Task {
+        work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
             // Hoisted OUT of the `do` so the `catch` can still see them. These are
             // the clips the account has ALREADY BEEN CHARGED FOR; the catch below
             // used to delete the directory holding them before it had even looked
@@ -9161,33 +13408,8 @@ struct ReelStudioView: View {
                 if !isSample {
                     reelListingServerID = await model.serverListingIDForCompliance(listingID)
                 }
-                // THE SHOT PLAN. One text-only `/ai-copy/shotlist` call, before a
-                // cent is spent on video: a camera move, a three-to-five-word
-                // caption and a length for each photo. It is a BEST EFFORT and
-                // nothing below depends on it — `planShots` never throws, and an
-                // empty plan puts every downstream decision back exactly where it
-                // was before this route existed (nil motion, whole clips, no shot
-                // captions). It runs first because the motion has to be known
-                // before the clip is submitted, not after.
                 var plan: [AIShot] = []
-                if !chosen.isEmpty {
-                    var req = planRequest
-                    if let resolved = reelListingServerID { req.listingServerID = resolved }
-                    plan = await Self.planShots(req, api: api, address: address, fallbackNoun: noun)
-                    let planned = plan.isEmpty ? "false" : "true"
-                    let shotCount = String(plan.count)
-                    await MainActor.run {
-                        Analytics.track("reel_planned", ["ok": planned,
-                                                         "space_type": spaceRaw,
-                                                         "shots": shotCount])
-                    }
-                }
-                // The plan may REORDER the reel — it opens on the best
-                // establishing shot and closes on the best closing frame, with
-                // the agent's tap order as its tiebreak. `reordered` is all or
-                // nothing: anything it cannot account for photo-for-photo leaves
-                // the tap order exactly as it was.
-                let ordered = Self.reordered(chosen, by: plan)
+                var ordered = chosen
                 try Task.checkCancellation()
 
                 var clipURLs: [URL] = extras          // ready-made clips lead the reel
@@ -9195,27 +13417,174 @@ struct ReelStudioView: View {
                 // Kept in step with `clipURLs` so a failed clip cannot slide every
                 // later caption onto the wrong picture.
                 var usedShots: [AIShot?] = []
+                let targetServerID = reelListingServerID
+                let recoveryContext = reelActor.map { PendingReelRequest.Context(listingID: listingID,
+                    serverListingID: targetServerID, owner: $0, workspace: reelWorkspace) }
+                let requireCurrent: @MainActor @Sendable () throws -> Void = {
+                    try Task.checkCancellation()
+                    guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision,
+                          PropertyVideoProcessorConsent.shared.revision == frozenProcessorRevision else { throw CancellationError() }
+                    if let permission = frozenProcessorPermission, let context = frozenProcessorContext {
+                        guard PropertyVideoProcessorConsent.shared.permits(permission, context: context) else { throw PropertyVideoProcessorFailure.permissionRequired }
+                    }
+                    guard auth.userID == reelActor, auth.syncSessionRevision == reelRevision,
+                          WorkspaceContext.selectedOrgID == reelWorkspace,
+                          let current = model.listings.first(where: { $0.id == listingID }),
+                          current.cloudUnavailable != true, current.serverID == targetServerID else {
+                        throw CancellationError()
+                    }
+                }
+                var batch: PendingReelBatch? = nil
+                if !ordered.isEmpty, let recoveryContext {
+                    try requireCurrent()
+                    guard !PendingReelBatch.exists(recoveryContext) else { throw AIImagePrep.error("Continue or discard the saved reel before starting another batch.") }
+                    var prepared: [PendingReelBatch.Photo] = []
+                    let stagedInputs = try await VideoPreparedSourcePolicy.stage(chosen,
+                        aspect: isPortrait ? "9:16" : "16:9", directory: tmpDir,
+                        maximumJPEGBytes: VideoSelectionCapacity.maximumPreparedJPEGBytes,
+                        maximumBase64Bytes: VideoSelectionCapacity.maximumPreparedBase64Bytes,
+                        progress: { number, total in statusText = "Preparing photo \(number) of \(total)…" },
+                        requireCurrent: requireCurrent,
+                        prepare: { try Self.preparedReelJPEG(photo: $0, aspect: isPortrait ? "9:16" : "16:9") })
+                    for (index, photo) in chosen.enumerated() {
+                        try requireCurrent()
+                        let input = stagedInputs[index]
+                        let jpeg = try Data(contentsOf: input)
+                        let encoded = jpeg.base64EncodedString()
+                        // Private input upload leaves the public gallery untouched.
+                        // Its exact JPEG binds generation/QC source authority.
+                        var sourceAssetID: String? = nil
+                        if let targetServerID {
+                            let photoNumber = prepared.count + 1
+                            await MainActor.run { statusText = "Uploading photo \(photoNumber) of \(chosen.count)…" }
+                            sourceAssetID = try await DirectUploader.uploadPhoto(fileURL: input, listingID: targetServerID,
+                                role: "capture", contentType: "image/jpeg", keyPrefix: "video-source", api: api)
+                            try requireCurrent()
+                        }
+                        try? FileManager.default.removeItem(at: input)
+                        prepared.append(PendingReelBatch.Photo(id: photo.id, jpegBase64: encoded,
+                            shot: nil,
+                            sourceAssetID: sourceAssetID, photoProvenanceID: photo.savedVersion?.provenanceID))
+                        await Task.yield()
+                    }
+                    // All exact private JPEGs exist before classification. Freeze
+                    // the complete global order and per-photo motion before any clip POST.
+                    var plannedPhotos: [PropertyVideoPlanner.Planned] = []
+                    var planningFallback = true
+                    var planningNotice = "Automatic scene planning wasn't available. Keeping your selected order with restrained motion."
+                    if let sid = targetServerID, let owner = UUID(uuidString: recoveryContext.owner), let org = recoveryContext.workspace {
+                        let inputs = try prepared.map { photo -> PropertyVideoPlanner.Input in
+                            guard let asset = photo.sourceAssetID.flatMap(UUID.init(uuidString:)), let jpeg = Data(base64Encoded: photo.jpegBase64) else {
+                                throw PropertyVideoPlanner.Failure.invalidInput
+                            }
+                            return PropertyVideoPlanner.Input(photoID: photo.id, assetID: asset, jpegDigest: PropertyVideoPlanner.digest(jpeg))
+                        }
+                        await MainActor.run { statusText = "Choosing camera motion for your photos…" }
+                        let result = try await PropertyVideoPlanner.plan(inputs: inputs,
+                            context: .init(ownerID: owner, orgID: org, listingID: sid), api: api as? PropertyVideoPlanningAPI,
+                            automaticOrder: arrangeScenes, documents: FileStore.documents, requireCurrent: requireCurrent)
+                        plannedPhotos = try PropertyVideoPlanner.preservingInputOrder(result.photos, inputs: inputs)
+                        planningFallback = result.usedFallback; planningNotice = result.notice
+                    }
+                    try requireCurrent()
+                    let byID = Dictionary(uniqueKeysWithValues: prepared.map { ($0.id, $0) })
+                    let frozenIDs = plannedPhotos.isEmpty ? prepared.map(\.id) : plannedPhotos.map { $0.input.photoID }
+                    let plannedByID = Dictionary(uniqueKeysWithValues: plannedPhotos.map { ($0.input.photoID, $0) })
+                    prepared = frozenIDs.enumerated().map { index, id in
+                        let original = byID[id]!, scene = plannedByID[id]
+                        let shot = AIShot(photoID: id, order: index + 1, motion: motionOverride ?? scene?.motion ?? "push_in",
+                            room: scene?.confident == true ? scene?.scene.rawValue : nil,
+                            onScreenText: scene?.caption, seconds: 5, voiceLine: nil)
+                        return PendingReelBatch.Photo(id: id, jpegBase64: original.jpegBase64, shot: .init(shot),
+                            sourceAssetID: original.sourceAssetID, photoProvenanceID: original.photoProvenanceID)
+                    }
+                    plan = prepared.compactMap { $0.shot?.value }
+                    ordered = Self.reordered(chosen, by: plan)
+                    await MainActor.run { scenePlanningNotice = planningNotice }
+                    batch = PendingReelBatch(context: recoveryContext, id: UUID(), photos: prepared,
+                        motion: selectedMove, aspect: isPortrait ? "9:16" : "16:9", spaceType: spaceRaw, completedPaths: [], framing: "preserve_photo", scenePlanVersion: 1,
+                        scenePlanningNotice: planningNotice, automaticOrder: arrangeScenes, usedPlanningFallback: planningFallback)
+                    try requireCurrent()
+                    try batch?.save()
+                }
+                if !isSample, extras.isEmpty, let prepared = batch, let targetServerID,
+                   let actor = reelActor.flatMap(UUID.init(uuidString:)), let org = reelWorkspace,
+                   let jobsAPI = api as? PropertyVideoJobsAPI {
+                    try requireCurrent()
+                    guard frozenMusic == nil || frozenMusic?.checked(catalog: VideoMusicCatalog.tracks) != nil else {
+                        throw PropertyVideoJobStore.Failure.invalidReceipt
+                    }
+                    let context = PropertyVideoJobContext(localListingID: listingID, listingID: targetServerID, actorID: actor, orgID: org)
+                    let sources = try prepared.photos.map { photo -> PropertyVideoJobSource in
+                        guard let asset = photo.sourceAssetID.flatMap(UUID.init(uuidString:)) else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+                        return PropertyVideoJobSource(photoID: photo.id, photoAssetID: asset, photoVersionID: photo.id,
+                            photoProvenanceID: photo.photoProvenanceID.flatMap(UUID.init(uuidString:)), motion: photo.shot?.motion ?? selectedMove)
+                    }
+                    let title = captions.map { PropertyVideoPresentation.Title(title: $0.title, subtitle: $0.subtitle, watermark: $0.watermark) }
+                    let presentation = PropertyVideoPresentation(transition: transition.rawValue, shotCaptionStyle: shotStyle.rawValue,
+                        spokenCaptions: captionStyle.enabled && voiceover != nil, titleCard: title,
+                        shotLabels: prepared.photos.map { shotStyle.isOn ? $0.shot?.onScreenText : nil })
+                    let narrationResult = voiceover?.sharedReference?.resultID(ownerID: actor, listingID: targetServerID)
+                    var request = PropertyVideoJobRequest(operationID: UUID(), listingID: targetServerID, expectedOrgID: org,
+                        purpose: isPortrait ? "social" : "listing", aspect: isPortrait ? "9:16" : "16:9", sources: sources,
+                        narrationResultID: narrationResult, music: frozenMusic, allowOriginalPhotoFallback: keepOriginalPhoto, presentation: presentation)
+                    if let voiceover, narrationResult == nil {
+                        statusText = "Uploading your optional narration…"
+                        request.narrationAssetID = try await PropertyVideoNarrationUpload.upload(voiceover, operationID: request.operationID,
+                            context: context, requireCurrent: requireCurrent)
+                        request.narrationWords = captionStyle.enabled ? voiceover.words.map { .init(text: $0.text, start: $0.start, end: $0.end) } : nil
+                        try requireCurrent()
+                    }
+                    let saved = PropertyVideoSavedJob(context: context, request: request, createdAt: Date(), processorPermission: frozenProcessorPermission)
+                    try PropertyVideoJobStore.start(saved, documents: FileStore.documents) // Persist before enqueue.
+                    work.serverJob = saved
+                    statusText = "Sending your saved video recipe…"
+                    try await PropertyVideoJobRunner.shared.enqueue(saved, work: work, model: model, api: jobsAPI)
+                    try requireCurrent()
+                    prepared.clear(); pendingBatch = nil
+                    try? FileManager.default.removeItem(at: tmpDir)
+                    return // No native provider polling or stitching after server acceptance.
+                }
+                guard frozenMusic == nil else {
+                    throw AIImagePrep.error("Music is available for background photo videos. Remove the opening clip or choose Off; no new clips were requested.")
+                }
                 for (i, photo) in ordered.enumerated() {
                     try Task.checkCancellation()
+                    try requireCurrent()
+                    guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision else {
+                        throw CancellationError()
+                    }
                     await MainActor.run { statusText = "Photo \(i + 1) of \(ordered.count) — making video…" }
                     let shot = Self.shot(for: photo, in: plan)
                     do {
                         let clip = try await Self.makeClip(photo: photo, prompt: prompt,
                                                            shot: shot, shotCount: ordered.count,
+                                                           motion: shot?.motion ?? selectedMove, aspect: isPortrait ? "9:16" : "16:9", spaceType: spaceRaw,
                                                            api: api, listingServerID: reelListingServerID,
-                                                           into: tmpDir, index: i)
+                                                           into: tmpDir, index: i, recoveryContext: recoveryContext,
+                                                           requireCurrent: requireCurrent,
+                                                           preparedJPEG: batch.flatMap { Data(base64Encoded: $0.photos[i].jpegBase64) },
+                                                           framing: batch?.framing,
+                                                           sourceAssetID: batch?.photos[i].sourceAssetID,
+                                                           photoProvenanceID: batch?.photos[i].photoProvenanceID)
+                        if batch != nil {
+                            batch = try PendingReelBatch.load(recoveryContext!)
+                        }
                         clipURLs.append(clip)
                         usedShots.append(shot)
-                        billedClips.append(clip)   // paid for the moment it lands
+                        billedClips.append(clip)   // retained before its accepted receipt is cleared
+                        if OriginalPhotoMotion.isClip(clip) { originalPhotoMotionShots += 1 }
                     } catch is CancellationError {
                         throw CancellationError()
-                    } catch let apiError as APIError where apiError.isQuota || apiError.isUnauthorized {
-                        // A plan boundary or expired session won't fix itself on
-                        // the next clip — stop and say so.
-                        throw apiError
                     } catch {
-                        // One bad clip never kills the reel — note it and move on.
-                        await MainActor.run { failedClips += 1 }
+                        // Continuing hid the reason and could send every other
+                        // photo to an unavailable service. Stop, retain the exact
+                        // photo position, and park completed clips in the catch.
+                        await MainActor.run {
+                            clipIssues.append(ReelClipIssue(photoNumber: i + 1, error: error))
+                            completedClips = i + 1
+                        }
+                        throw error
                     }
                     await MainActor.run { completedClips = i + 1 }
                 }
@@ -9229,7 +13598,7 @@ struct ReelStudioView: View {
                                             : CGSize(width: 1920, height: 1080)
                 let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
                 try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
-                let stamp = Int(Date().timeIntervalSince1970)
+                let stamp = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString)"
                 let outURL = reelsDir.appendingPathComponent("\(listingID.uuidString)-\(stamp).mp4")
                 let photoClips = Array(clipURLs.dropFirst(extras.count))
                 try await ReelComposer.compose(
@@ -9241,12 +13610,24 @@ struct ReelStudioView: View {
                                                   shotCaptionStyle: shotStyle,
                                                   transition: transition),
                     output: outURL)
+                try requireCurrent()
+                try OriginalPhotoMotion.saveSummary(count: clipURLs.filter(OriginalPhotoMotion.isClip).count, for: outURL)
+                let finishedRecord = try await ListingVideoPreparation.retain(output: outURL, listingID: listingID,
+                    ownerID: reelActor, workspaceID: reelWorkspace, serverListingID: reelListingServerID,
+                    purpose: isPortrait ? .socialMedia : .listing, sources: batch?.completedSources ?? [],
+                    includesOpeningClip: !extras.isEmpty, brandingPolicy: isPortrait ? nil : "unbranded")
+                try requireCurrent()
+                if finishedRecord.canSelectForWebsite, model.listings.first(where: { $0.id == listingID })?.websiteVideoRelPath == nil {
+                    try await model.selectWebsiteVideo(finishedRecord, for: listingID, onlyIfUnselected: true)
+                    try requireCurrent()
+                }
                 try? FileManager.default.removeItem(at: tmpDir)
 
-                try Task.checkCancellation()
+                try requireCurrent()
                 let wasPlanned = usedShots.contains(where: { $0 != nil }) ? "true" : "false"
                 await MainActor.run {
                     reelURL = outURL
+                    originalPhotoMotionShots = clipURLs.filter(OriginalPhotoMotion.isClip).count
                     player = AVPlayer(url: outURL)
                     lastReel = outURL
                     phase = .done
@@ -9256,6 +13637,8 @@ struct ReelStudioView: View {
                                                   "transition": transition.rawValue,
                                                   "planned": wasPlanned])
                 }
+                batch?.clear()
+                PendingReelClips.retire(billedClips, for: listingID)
                 // The new reel is safely on disk AND on screen — now, and only
                 // now, trim the older ones so Documents/reels can't grow without
                 // bound (F-A-23). Off the main actor and never cancellable: a
@@ -9282,9 +13665,11 @@ struct ReelStudioView: View {
                     return
                 }
                 await MainActor.run {
+                    Analytics.trackAIFailure("reel", step: "clips", error: error)
                     parkedClips = PendingReelClips.load(for: listingID)
+                    reloadPendingRequest()
                     phase = .failed
-                    failure = AIFailure(error, title: "Couldn't make the reel")
+                    failure = ReelClipIssue.failure(for: error, title: "Couldn't make the reel")
                 }
             }
         }
@@ -9304,71 +13689,106 @@ struct ReelStudioView: View {
     /// cancelled task is exactly how this work would get lost a second time.
     nonisolated private static func parkClips(_ clips: [URL], for listingID: UUID, tmpDir: URL) {
         let fm = FileManager.default
-        defer { try? fm.removeItem(at: tmpDir) }
+        var canRemoveTemporary = clips.isEmpty
+        defer { if canRemoveTemporary { try? fm.removeItem(at: tmpDir) } }
         guard !clips.isEmpty else { return }
         let dir = PendingReelClips.directory(for: listingID)
+        let previous: PendingReelClips?
         do {
+            previous = try PendingReelClips.readRecord(for: listingID)
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         } catch {
-            return   // nowhere to put them; the defer still clears tmp
+            return   // Keep the only copies when storage/history is unavailable.
         }
         // Start from what is already parked, dropping any entry whose file has
         // since gone so the record can't accumulate dead paths.
-        var relPaths = (PendingReelClips.load(for: listingID)?.clipURLs ?? [])
+        var relPaths = (previous?.clipURLs ?? [])
             .map { FileStore.relativePath(for: $0) }
-        let stamp = Int(Date().timeIntervalSince1970)
-        for (i, clip) in clips.enumerated() {
+        var allRetained = true
+        for clip in clips {
             guard fm.fileExists(atPath: clip.path) else { continue }
-            let dest = dir.appendingPathComponent("clip-\(stamp)-\(i).mp4")
-            try? fm.removeItem(at: dest)
+            if relPaths.contains(FileStore.relativePath(for: clip)) { continue }
+            let prefix = OriginalPhotoMotion.isClip(clip) ? "clip-photo-motion-" : "clip-"
+            let dest = dir.appendingPathComponent("\(prefix)\(UUID().uuidString).mp4")
             do {
                 try fm.moveItem(at: clip, to: dest)
             } catch {
                 // tmp and Documents are the same volume so a move should not
                 // fail — but a copy is the difference between keeping the agent's
                 // money and losing it, so try that before giving up on this clip.
-                do { try fm.copyItem(at: clip, to: dest) } catch { continue }
+                do { try fm.copyItem(at: clip, to: dest) } catch { allRetained = false; continue }
             }
             relPaths.append(FileStore.relativePath(for: dest))
         }
         guard !relPaths.isEmpty else { return }
-        PendingReelClips(listingID: listingID, savedAt: Date(), relPaths: relPaths).save()
+        do {
+            try PendingReelClips(listingID: listingID, savedAt: Date(), relPaths: relPaths).saveDurably()
+            canRemoveTemporary = allRetained
+        } catch { return }
     }
 
     /// Stitch the parked clips into a reel. NO AI call, no network, no spend —
     /// the clips were bought on an earlier run; this is the free half of the job
     /// the old cancel path threw away.
     ///
-    /// Any aerial/extra clip still switched on leads the reel, exactly as it does
-    /// in `generate()`. Shape, title card and voiceover come from whatever the
-    /// setup screen currently says, because those are free to change and the
-    /// clips are not.
+    /// Finish paid clips with the saved job's settings and durable batch shape.
+    /// Only older clips without saved settings use the current setup.
+    nonisolated private static func parkedReelSettings(configuration: ReelWorkJob.Configuration?,
+        batchAspect: String?, fallback: ReelWorkJob.Configuration) -> (configuration: ReelWorkJob.Configuration, renderSize: CGSize) {
+        let settings = configuration ?? fallback
+        let aspect = batchAspect ?? settings.aspect ?? fallback.aspect
+        return (settings, aspect == "16:9" ? CGSize(width: 1920, height: 1080) : CGSize(width: 1080, height: 1920))
+    }
+
+    nonisolated private static func requireSavedReelReview(_ batch: PendingReelBatch?) throws {
+        guard let batch else { return }
+        let directory = EnhancedPhoto.directory(for: batch.context.listingID)
+        for photo in batch.photos { try PhotoVersionHistory.requireReelReview(versionID: photo.id, directory: directory) }
+    }
+
     private func finishParkedReel() {
+        let model = self.model, auth = self.auth
         guard !isWorking else { return }
-        let clips = (selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) })
+        do { try Self.requireSavedReelReview(pendingBatch) }
+        catch { failure = AIFailure(error, title: "Review the saved photo first"); return }
+        let settings = Self.parkedReelSettings(configuration: work.configuration,
+            batchAspect: pendingBatch?.aspect, fallback: snapshotReelConfiguration())
+        let configuration = settings.configuration
+        let clips = (configuration.extras.filter { FileManager.default.fileExists(atPath: $0.path) })
             + (parkedClips?.clipURLs ?? [])
         guard !clips.isEmpty else {
-            PendingReelClips.clear(for: listing.id)
             parkedClips = nil
             return
         }
         if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
         let listingID = listing.id
-        let isPortrait = portrait
-        let captions: ReelCaptions? = captionsOn ? Self.reelCaptions(for: listing) : nil
-        let voiceover: Voiceover? = (voiceMode == .off) ? nil : self.voiceover
-        let captionStyle: CaptionStyle = wordCaptionsOn ? .standard : .off
+        let parkedActor = auth.userID, parkedRevision = auth.syncSessionRevision
+        let parkedWorkspace = WorkspaceContext.selectedOrgID
+        let parkedConsent = AIConsent.shared.revocationRevision
+        let parkedServerID = listing.serverID
+        let requireCurrent: @MainActor @Sendable () throws -> Void = {
+            try Task.checkCancellation()
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == parkedConsent,
+                  auth.userID == parkedActor, auth.syncSessionRevision == parkedRevision,
+                  WorkspaceContext.selectedOrgID == parkedWorkspace,
+                  let current = model.listings.first(where: { $0.id == listingID }),
+                  current.cloudUnavailable != true, current.serverID == parkedServerID else { throw CancellationError() }
+        }
+        let captions = VideoBrandingPolicy.titleCard(configuration.captions, aspect: settings.renderSize.width < settings.renderSize.height ? "9:16" : "16:9")
+        let voiceover = configuration.voice
+        let captionStyle = configuration.captionStyle
         failure = nil
-        failedClips = 0
+        clipIssues = []
         phase = .stitching
         Haptics.selection()
-        workTask = Task {
+        work.configuration = configuration
+        work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
             do {
-                let renderSize = isPortrait ? CGSize(width: 1080, height: 1920)
-                                            : CGSize(width: 1920, height: 1080)
+                try requireCurrent()
+                let renderSize = settings.renderSize
                 let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
                 try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
-                let stamp = Int(Date().timeIntervalSince1970)
+                let stamp = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString)"
                 let outURL = reelsDir.appendingPathComponent("\(listingID.uuidString)-\(stamp).mp4")
                 // Parked clips have no shot plan — the run that bought them ended
                 // before one could be attached to a file on disk — so they are
@@ -9380,16 +13800,31 @@ struct ReelStudioView: View {
                     shots: clips.map { ReelComposer.Shot(url: $0) },
                     renderSize: renderSize,
                     options: ReelComposer.Options(titleCard: captions, voiceover: voiceover,
-                                                  captionStyle: captionStyle),
+                        captionStyle: captionStyle, shotCaptionStyle: configuration.shotStyle,
+                        transition: configuration.transition),
                     output: outURL)
-                try Task.checkCancellation()
+                try OriginalPhotoMotion.saveSummary(count: clips.filter(OriginalPhotoMotion.isClip).count, for: outURL)
+                let recipe = pendingBatch
+                let sources = recipe?.completedPaths == parkedClips?.relPaths ? recipe?.completedSources ?? [] : []
+                let finishedRecord = try await ListingVideoPreparation.retain(output: outURL, listingID: listingID,
+                    ownerID: parkedActor, workspaceID: parkedWorkspace, serverListingID: parkedServerID,
+                    purpose: renderSize.width > renderSize.height ? .listing : .socialMedia, sources: sources,
+                    includesOpeningClip: !configuration.extras.isEmpty, brandingPolicy: settings.renderSize.width > settings.renderSize.height ? "unbranded" : nil)
+                try requireCurrent()
+                if finishedRecord.canSelectForWebsite, model.listings.first(where: { $0.id == listingID })?.websiteVideoRelPath == nil {
+                    try await model.selectWebsiteVideo(finishedRecord, for: listingID, onlyIfUnselected: true)
+                    try requireCurrent()
+                }
                 await MainActor.run {
                     // The clips now live inside a finished reel on disk, so the
                     // parked copy has done its job and can go. This is the ONLY
                     // automatic delete of paid clips in the whole flow.
-                    PendingReelClips.clear(for: listingID)
-                    parkedClips = nil
+                    pendingBatch?.clear()
+                    pendingBatch = nil
+                    PendingReelClips.retire(clips, for: listingID)
+                    parkedClips = PendingReelClips.load(for: listingID)
                     reelURL = outURL
+                    originalPhotoMotionShots = clips.filter(OriginalPhotoMotion.isClip).count
                     player = AVPlayer(url: outURL)
                     lastReel = outURL
                     phase = .done
@@ -9414,12 +13849,14 @@ struct ReelStudioView: View {
 
     /// Delete the parked clips at the agent's explicit request (confirmed first).
     private func discardParkedClips() {
+        pendingBatch?.clear()
         PendingReelClips.clear(for: listing.id)
         parkedClips = nil
+        reloadPendingRequest()
         Haptics.selection()
     }
 
-    /// One photo → 5 s AI motion clip: downscale ≤1280 → jpeg b64 → submit
+    /// One photo → 5 s AI motion clip: downscale ≤2048 → high-quality JPEG → submit
     /// `ai-video/reel-clip` → poll every 5 s (cap 5 min) → download the mp4 into
     /// `dir`. fal result URLs expire, so the download happens immediately.
     ///
@@ -9436,14 +13873,28 @@ struct ReelStudioView: View {
     /// and trimming 5 s down on-device is free.
     nonisolated private static func makeClip(photo: EnhancedPhoto, prompt: String,
                                              shot: AIShot?, shotCount: Int,
+                                             motion: String, aspect: String, spaceType: String,
                                              api: APIClient, listingServerID: UUID?,
-                                             into dir: URL, index: Int) async throws -> URL {
-        guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else {
-            throw AIImagePrep.error("Couldn't read that photo.")
+                                             into dir: URL, index: Int,
+                                             recoveryContext: PendingReelRequest.Context? = nil,
+                                             requireCurrent: @MainActor @Sendable () throws -> Void = { try Task.checkCancellation() },
+                                             preparedJPEG: Data? = nil, framing: String? = nil,
+                                             sourceAssetID: String? = nil, photoProvenanceID: String? = nil) async throws -> URL {
+        try await requireCurrent()
+        guard let recoveryContext else { throw AIImagePrep.error("Reconnect your account before generating this clip.") }
+        if PendingReelRequest.exists(recoveryContext) {
+            throw AIImagePrep.error("Recover or forget the saved video request before generating again.")
         }
-        let scaled = AIImagePrep.downscaled(ui, maxDimension: 1280)
-        guard let jpeg = scaled.jpegData(compressionQuality: 0.85) else {
-            throw AIImagePrep.error("Couldn't prepare that photo.")
+        _ = try PendingReelClips.readRecord(for: recoveryContext.listingID)
+        let jpeg = try preparedJPEG ?? Self.preparedReelJPEG(photo: photo, aspect: aspect)
+        guard !jpeg.isEmpty else { throw AIImagePrep.error("Couldn't prepare that photo.") }
+        if let batch = try PendingReelBatch.load(recoveryContext) {
+            guard batch.completedPaths.count == index, index < batch.photos.count,
+                  batch.photos[index].id == photo.id, batch.photos[index].jpegBase64 == jpeg.base64EncodedString(),
+                  batch.aspect == aspect, batch.spaceType == spaceType, batch.framing == framing,
+                  batch.scenePlanVersion != 1 || (batch.photos[index].shot?.motion ?? batch.motion) == motion else {
+                throw AIImagePrep.error("This photo does not match the saved reel. Continue the saved batch instead.")
+            }
         }
         // No motion text → send NOTHING and let `/ai-video/reel-clip` use its own
         // space-aware anti-hallucination prompt (F-A-24). Sending a canned client
@@ -9451,27 +13902,290 @@ struct ReelStudioView: View {
         // the server's stronger default and wrote our own words into the
         // listing's provenance log as if the agent had typed them.
         let typed: String? = prompt.isEmpty ? nil : prompt
-        let job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
-                                                mime: "image/jpeg", prompt: typed, seconds: 5,
-                                                motion: shot?.motion, room: shot?.room,
-                                                shotIndex: index, shotCount: shotCount,
-                                                listingServerID: listingServerID,
-                                                label: Self.clipLabel(shot: shot, index: index),
-                                                idempotencyKey: UUID().uuidString)
+        try await requireCurrent()
+        for attempt in 0...1 {
+            try await requireCurrent()
+            let attemptMotion = attempt == 0 ? motion : "push_in"
+            let operationID = UUID().uuidString
+            var intent = try JSONEncoder().encode([typed ?? "", attemptMotion, aspect, "preset-v1", shot?.room ?? "",
+                String(index), String(shotCount), listingServerID?.uuidString ?? "", framing ?? "legacy"])
+            intent.append(jpeg)
+            let digest = SHA256.hash(data: intent).map { String(format: "%02x", $0) }.joined()
+            let submission = PendingReelRequest(context: recoveryContext, photoNumber: index + 1,
+                job: AIVideoJob(requestId: operationID, statusUrl: "", responseUrl: "", kind: "reel"),
+                operationID: operationID, inputDigest: digest, submissionUnconfirmed: true,
+                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt, framing: framing, outputAspect: aspect, sourceAssetID: sourceAssetID, photoProvenanceID: photoProvenanceID)
+            try submission.save() // Atomic marker and readback BEFORE any paid POST.
+            try await requireCurrent()
+            let job: AIVideoJob
+            do {
+                if let sourceAssetID {
+                    job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(), mime: "image/jpeg", prompt: nil, seconds: 5,
+                        aspect: aspect, framing: framing, presetVersion: 1, motion: attemptMotion, room: shot?.room,
+                        shotIndex: index, shotCount: shotCount, listingServerID: listingServerID,
+                        label: Self.clipLabel(shot: shot, index: index), idempotencyKey: operationID,
+                        sourceAssetID: sourceAssetID, sourceProvenanceID: photoProvenanceID)
+                } else {
+                job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
+                                                    mime: "image/jpeg", prompt: nil, seconds: 5,
+                                                    aspect: aspect, framing: framing, presetVersion: 1,
+                                                    motion: attemptMotion, room: shot?.room,
+                                                    shotIndex: index, shotCount: shotCount,
+                                                    listingServerID: listingServerID,
+                                                    label: Self.clipLabel(shot: shot, index: index),
+                                                    idempotencyKey: operationID)
+                }
+            } catch {
+                // The marker exists for an UNKNOWN outcome: a lost response may
+                // already count a clip, so it stays and blocks a second POST. A
+                // definitive refusal is the opposite case — the server answered,
+                // nothing was admitted or charged — and keeping the marker only
+                // locked Generate behind "submission needs review" (TestFlight 59:
+                // every preset reel was refused with 400 and the button stayed
+                // dead). A 409 duplicate can mean this same operation already
+                // started. Conflicts, transport errors, timeouts and 5xx keep it.
+                if Self.isDefinitiveRefusal(error) { submission.clear() }
+                throw error
+            }
+            let pending = PendingReelRequest(context: recoveryContext, photoNumber: index + 1, job: job,
+                operationID: operationID, inputDigest: digest, submissionUnconfirmed: false,
+                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt, framing: framing, outputAspect: aspect, sourceAssetID: sourceAssetID, photoProvenanceID: photoProvenanceID)
+            try pending.save()
+            do {
+                let clip = try await retrieveClip(job: job, pending: pending, api: api, into: dir, index: index,
+                                                 clearReceiptOnDownload: false, requireCurrent: requireCurrent)
+                try await requireCurrent()
+                return try await acknowledgeRecoveredClip(clip, request: pending, requireCurrent: requireCurrent)
+            } catch let refusal as ReelQualityRefusal where refusal.mayRetry && attempt == 0 {
+                try await requireCurrent()
+                // This is an explicit terminal judgement, never a dropped response.
+                // Keep the first accepted receipt until the next intent is atomically
+                // saved above; no gap permits a second unknown submission.
+                continue
+            }
+        }
+        throw AIImagePrep.error("The quality check requested more than one retry. The saved request has been kept.")
+    }
 
+    nonisolated private static func preparedReelJPEG(photo: EnhancedPhoto, aspect: String) throws -> Data {
+        try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL)
+        guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else { throw AIImagePrep.error("Couldn't read that photo.") }
+        let scaled = AIImagePrep.downscaled(AIImagePrep.reelSource(ui, aspect: aspect), maxDimension: 2048)
+        guard let jpeg = scaled.jpegData(compressionQuality: 0.95), !jpeg.isEmpty else { throw AIImagePrep.error("Couldn't prepare that photo.") }
+        try VideoPreparedSourcePolicy.requireUsableJPEG(jpeg, aspect: aspect)
+        return jpeg
+    }
+
+    /// The clip and batch position are durable BEFORE the exact accepted receipt
+    /// is acknowledged. A repeated acknowledgement reuses its recorded clip.
+    nonisolated private static func acknowledgeRecoveredClip(_ clip: URL, request: PendingReelRequest,
+        requireCurrent: @MainActor @Sendable () throws -> Void) async throws -> URL {
+        try await requireCurrent()
+        guard PendingReelRequest.load(request.context)?.job.requestId == request.job.requestId else { throw CancellationError() }
+        var batch = try PendingReelBatch.load(request.context)
+        if let saved = batch {
+            guard (1...saved.photos.count).contains(request.photoNumber),
+                  saved.photos[request.photoNumber - 1].jpegBase64 == request.sourceJPEGBase64,
+                  saved.completedPaths.count == request.photoNumber - 1 || saved.completedPaths.count == request.photoNumber else {
+                throw AIImagePrep.error("The recovered photo does not match saved video progress. Its request has been kept.")
+            }
+            if saved.completedPaths.count == request.photoNumber {
+                try await requireCurrent()
+                request.clear()
+                return FileStore.url(fromRelativePath: saved.completedPaths[request.photoNumber - 1])
+            }
+        }
+        let retained = try retainRecoveredClip(clip, for: request.context.listingID)
+        try await requireCurrent()
+        if batch != nil {
+            // Source identity is retained in the same atomic write as the clip,
+            // before the accepted request can be acknowledged and removed.
+            let position = request.photoNumber - 1, photo = batch!.photos[position]
+            let source = ListingVideoSource(photoVersionID: photo.id,
+                photoAssetID: request.sourceAssetID ?? photo.sourceAssetID,
+                photoProvenanceID: request.photoProvenanceID ?? photo.photoProvenanceID,
+                generationRequestID: request.job.requestId, generationProvenanceID: request.job.provenanceID,
+                motionKind: OriginalPhotoMotion.isClip(retained) ? "original_photo" : "ai",
+                sourceBound: request.job.sourceBound == true && request.job.sourceAssetID == (request.sourceAssetID ?? photo.sourceAssetID))
+            if batch!.completedSources == nil && batch!.completedPaths.isEmpty { batch!.completedSources = [] }
+            batch!.completedSources?.append(source)
+            batch!.completedPaths.append(FileStore.relativePath(for: retained))
+            try batch!.save()
+        }
+        try await requireCurrent()
+        request.clear()
+        return retained
+    }
+
+    /// Only an explicit choice after the original job's confirmed first retry
+    /// verdict can send one safer POST or render the exact source locally.
+    nonisolated private static func resolveSavedQualityRetry(_ request: PendingReelRequest, choice: ReelRecoveryChoice,
+        api: APIClient, into dir: URL, requireCurrent: @MainActor @Sendable () throws -> Void) async throws -> URL {
+        try await requireCurrent()
+        try requireSavedReelReview(try PendingReelBatch.load(request.context))
+        guard request.qualityAttempt == 0, request.submissionUnconfirmed != true,
+              PendingReelRequest.load(request.context)?.job.requestId == request.job.requestId,
+              let source = request.sourceJPEGBase64, let jpeg = Data(base64Encoded: source), !jpeg.isEmpty,
+              let spaceType = request.sourceSpaceType else { throw AIImagePrep.error("Recover the saved request before choosing a safer retry.") }
+        // Re-read the existing owned job and cached judgment. An unavailable
+        // check or a changed session cannot open either fallback action.
+        do {
+            let already = try await retrieveClip(job: request.job, pending: request, api: api, into: dir,
+                index: request.photoNumber - 1, requireCurrent: requireCurrent)
+            return try await acknowledgeRecoveredClip(already, request: request, requireCurrent: requireCurrent)
+        } catch let refusal as ReelQualityRefusal where refusal.mayRetry {
+            // The only case which permits the two explicit choices below.
+        }
+        try await requireCurrent()
+        guard PendingReelRequest.load(request.context)?.job.requestId == request.job.requestId,
+              let shape = UIImage(data: jpeg)?.size, shape.width > 0, shape.height > 0 else { throw CancellationError() }
+        let batch = try PendingReelBatch.load(request.context)
+        if let batch {
+            guard batch.completedPaths.count == request.photoNumber - 1, request.photoNumber <= batch.photos.count,
+                  batch.photos[request.photoNumber - 1].jpegBase64 == source,
+                  batch.framing == request.framing,
+                  request.outputAspect == nil || request.outputAspect == batch.aspect else { throw AIImagePrep.error("Saved reel progress does not match this photo. Your request has been kept.") }
+        }
+        let aspect = request.outputAspect ?? batch?.aspect ?? (shape.width < shape.height ? "9:16" : "16:9")
+        if choice == .originalPhoto {
+            let local = dir.appendingPathComponent("clip-photo-motion-\(request.photoNumber - 1).mp4")
+            try await OriginalPhotoMotion.render(jpeg: jpeg,
+                renderSize: aspect == "9:16" ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080), output: local)
+            try await requireCurrent()
+            return try await acknowledgeRecoveredClip(local, request: request, requireCurrent: requireCurrent)
+        }
+        let operationID = UUID().uuidString
+        let digest = SHA256.hash(data: jpeg + Data("push_in|\(aspect)|\(request.photoNumber)|retry-1|\(request.framing ?? "legacy")".utf8)).map { String(format: "%02x", $0) }.joined()
+        let submission = PendingReelRequest(context: request.context, photoNumber: request.photoNumber,
+            job: AIVideoJob(requestId: operationID, statusUrl: "", responseUrl: "", kind: "reel"), operationID: operationID,
+            inputDigest: digest, submissionUnconfirmed: true, sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1, framing: request.framing, outputAspect: aspect, sourceAssetID: request.sourceAssetID, photoProvenanceID: request.photoProvenanceID)
+        try submission.save()
+        try await requireCurrent()
+        let job: AIVideoJob
+        do {
+            if let sourceAssetID = request.sourceAssetID {
+                job = try await api.aiVideoReelClip(imageBase64: source, mime: "image/jpeg", prompt: nil, seconds: 5,
+                    aspect: aspect, framing: request.framing, presetVersion: 1, motion: "push_in", room: batch?.photos[request.photoNumber - 1].shot?.room,
+                    shotIndex: request.photoNumber - 1, shotCount: batch?.photos.count ?? request.photoNumber,
+                    listingServerID: request.context.serverListingID, label: "Reel shot \(request.photoNumber) — safer retry", idempotencyKey: operationID,
+                    sourceAssetID: sourceAssetID, sourceProvenanceID: request.photoProvenanceID)
+            } else {
+                job = try await api.aiVideoReelClip(imageBase64: source, mime: "image/jpeg", prompt: nil, seconds: 5,
+                    aspect: aspect, framing: request.framing, presetVersion: 1, motion: "push_in", room: batch?.photos[request.photoNumber - 1].shot?.room,
+                    shotIndex: request.photoNumber - 1, shotCount: batch?.photos.count ?? request.photoNumber,
+                    listingServerID: request.context.serverListingID, label: "Reel shot \(request.photoNumber) — safer retry", idempotencyKey: operationID)
+            }
+        } catch {
+            if Self.isDefinitiveRefusal(error), PendingReelRequest.load(request.context)?.job.requestId == operationID {
+                // Restore the confirmed rejected job atomically, with no empty
+                // interval that could invite a third unknown submission.
+                try request.save()
+            }
+            throw error
+        }
+        let accepted = PendingReelRequest(context: request.context, photoNumber: request.photoNumber, job: job,
+            operationID: operationID, inputDigest: digest, submissionUnconfirmed: false,
+            sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1, framing: request.framing, outputAspect: aspect, sourceAssetID: request.sourceAssetID, photoProvenanceID: request.photoProvenanceID)
+        try accepted.save()
+        try await requireCurrent()
+        let clip = try await retrieveClip(job: job, pending: accepted, api: api, into: dir,
+            index: request.photoNumber - 1, requireCurrent: requireCurrent)
+        return try await acknowledgeRecoveredClip(clip, request: accepted, requireCurrent: requireCurrent)
+    }
+
+    /// Resume the exact prepared source for each remaining position. Retained
+    /// clips and their plan remain in order; a current receipt prevents any POST.
+    nonisolated private static func completeSavedBatch(_ saved: PendingReelBatch, api: APIClient, into dir: URL,
+        requireCurrent: @MainActor @Sendable () throws -> Void,
+        progress: @MainActor @Sendable (Int) -> Void) async throws -> PendingReelBatch {
+        try await requireCurrent()
+        try requireSavedReelReview(saved)
+        guard var batch = try PendingReelBatch.load(saved.context), batch.id == saved.id,
+              !PendingReelRequest.exists(saved.context) else { throw AIImagePrep.error("Recover the saved photo before continuing this reel.") }
+        while batch.completedPaths.count < batch.photos.count {
+            try await requireCurrent()
+            let index = batch.completedPaths.count, photo = batch.photos[index]
+            guard let jpeg = Data(base64Encoded: photo.jpegBase64), !jpeg.isEmpty else { throw AIImagePrep.error("The saved source photo cannot be read. Your progress has been kept.") }
+            await progress(index)
+            let placeholder = dir.appendingPathComponent("saved-source-\(index).jpg")
+            _ = try await makeClip(photo: EnhancedPhoto(id: photo.id, originalURL: placeholder, enhancedURL: placeholder),
+                prompt: "", shot: photo.shot?.value, shotCount: batch.photos.count, motion: batch.scenePlanVersion == 1 ? photo.shot?.motion ?? batch.motion : batch.motion,
+                aspect: batch.aspect, spaceType: batch.spaceType, api: api, listingServerID: batch.context.serverListingID,
+                into: dir, index: index, recoveryContext: batch.context, requireCurrent: requireCurrent, preparedJPEG: jpeg, framing: batch.framing,
+                sourceAssetID: photo.sourceAssetID, photoProvenanceID: photo.photoProvenanceID)
+            try await requireCurrent()
+            guard let updated = try PendingReelBatch.load(saved.context), updated.id == saved.id,
+                  updated.completedPaths.count == index + 1 else { throw AIImagePrep.error("Reel progress could not be confirmed. Your clips have been kept.") }
+            batch = updated
+        }
+        return batch
+    }
+
+    /// Give a downloaded clip an explicit media suffix before decoding it.
+    /// A unique sibling avoids overwriting another file. If moving fails,
+    /// AVFoundation can still try the original bytes; an empty frame check holds.
+    nonisolated static func clipPath(forDownloaded downloaded: URL) -> URL {
+        guard downloaded.pathExtension.lowercased() != "mp4" else { return downloaded }
+        let renamed = downloaded.deletingLastPathComponent().appendingPathComponent("reel-download-\(UUID().uuidString).mp4")
+        do { try FileManager.default.moveItem(at: downloaded, to: renamed) } catch { return downloaded }
+        return renamed
+    }
+
+    /// A 4xx the server itself produced before admitting the request. 408 is a
+    /// timeout and 409 can report an already-started operation, so neither is
+    /// proof of non-admission. Everything 5xx or non-HTTP is also unknown.
+    nonisolated private static func isDefinitiveRefusal(_ error: Error) -> Bool {
+        guard let api = error as? APIError, let status = api.status else { return false }
+        return (400...499).contains(status) && status != 408 && status != 409
+    }
+
+    /// A status poll that failed to get an answer, as opposed to an answer:
+    /// transport loss, a timeout, or a 5xx/408/429 from the gateway. Anything
+    /// definitive (a 4xx, an identity change, cancellation) is not.
+    nonisolated static func isDroppedPoll(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let url = error as? URLError { return url.code != .cancelled }
+        if let api = error as? APIError, let status = api.status {
+            return status >= 500 || status == 408 || status == 429
+        }
+        return false
+    }
+
+    nonisolated private static func retrieveClip(job: AIVideoJob, pending: PendingReelRequest?, api: APIClient,
+        into dir: URL, index: Int, clearReceiptOnDownload: Bool = false,
+        requireCurrent: @MainActor @Sendable () throws -> Void = { try Task.checkCancellation() }) async throws -> URL {
+        guard pending?.submissionUnconfirmed != true else { throw AIImagePrep.error("That submission has no receipt to recover. Review it before generating again.") }
         let deadline = Date().addingTimeInterval(5 * 60)
         var remoteURL: URL?
+        var droppedPolls = 0
         while remoteURL == nil {
             guard Date() < deadline else {
                 throw AIImagePrep.error("The clip took too long.")
             }
             try await Task.sleep(nanoseconds: 5_000_000_000)
-            switch try await api.aiVideoStatus(job) {
+            try await requireCurrent()
+            guard Date() < deadline else { throw AIImagePrep.error("The clip took too long.") }
+            let status: AIVideoStatus
+            do {
+                status = try await api.aiVideoStatus(job)
+                try await requireCurrent()
+                guard Date() < deadline else { throw AIImagePrep.error("The clip took too long.") }
+                droppedPolls = 0
+            } catch where Self.isDroppedPoll(error) && droppedPolls < 5 {
+                // The poll is read-only. A connection that dropped (the phone
+                // was locked mid-clip, a cell handoff, a gateway 5xx) is not
+                // an answer about the clip, so ask again. Six misses in a row
+                // surface exactly as one did before; the paid receipt stays.
+                droppedPolls += 1
+                continue
+            }
+            switch status {
             case .processing:
                 break   // keep polling — the caller shows "Clip X of N"
             case .completed(let videoURL):
                 remoteURL = videoURL
             case .failed(let message):
+                pending?.clear()
                 throw AIImagePrep.error(message)
             }
         }
@@ -9479,13 +14193,86 @@ struct ReelStudioView: View {
             throw AIImagePrep.error("The AI didn't return a clip.")
         }
 
-        let (tmp, resp) = try await URLSession.shared.download(from: remoteURL)
+        try await requireCurrent()
+        let (downloaded, resp) = try await URLSession.shared.download(from: remoteURL)
+        defer { try? FileManager.default.removeItem(at: downloaded) }
         if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw AIImagePrep.error("Couldn't download the finished clip (HTTP \(http.statusCode)).")
+        }
+        try await requireCurrent()
+        guard ((try? downloaded.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0 else {
+            throw AIImagePrep.error("The completed clip was empty. Recover the saved request to download it again.")
+        }
+        // Use an explicit media suffix, but never treat that suffix as proof
+        // the vendor returned a readable clip. The actual decoder and quality
+        // gate below must still succeed before these bytes can be used.
+        let tmp = Self.clipPath(forDownloaded: downloaded)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        // No unchecked clip enters the parked library or the final composition.
+        // Recovery reuses the accepted generation receipt and exact source; it
+        // never submits another paid clip. Legacy receipts without a source hold.
+        guard let source = pending?.sourceJPEGBase64, !source.isEmpty,
+              let spaceType = pending?.sourceSpaceType else {
+            throw AIImagePrep.error("This older request has no saved source photo for its quality check. It has been kept, but cannot be added to a reel unchecked.")
+        }
+        let frames = await ClipFrames.extract(from: tmp)
+        // FAIL CLOSED, locally: a clip this phone cannot read is held, the
+        // receipt stays, and no empty judgement is sent to the server.
+        guard !frames.isEmpty else {
+            throw AIImagePrep.error("Couldn't read the finished clip on this phone, so it is being held rather than published. Recover the saved request to try again.")
+        }
+        try await requireCurrent()
+        let verdict = try await api.aiVideoDrift(DriftCheckRequest(requestID: job.requestId,
+            kind: "reel", sourceBase64: source, frames: frames, seconds: 5,
+            spaceType: spaceType, listingServerID: pending?.context.serverListingID,
+            provenanceID: job.provenanceID, sourceAssetID: pending?.sourceAssetID, attempt: pending?.qualityAttempt ?? 1))
+        try await requireCurrent()
+        guard verdict.mayUse else {
+            guard verdict.status == .fail, verdict.action == "refuse",
+                  let jpeg = Data(base64Encoded: source) else {
+                throw ReelQualityRefusal(verdict: verdict)
+            }
+            // Only the server's terminal property-drift refusal permits this.
+            // Decode, identity, quota, consent and unavailable-QC failures never
+            // reach here. The rejected video is deleted by the existing defer.
+            try await requireCurrent()
+            let local = dir.appendingPathComponent("clip-photo-motion-\(index).mp4")
+            let shape = UIImage(data: jpeg)?.size
+            guard let shape, shape.width > 0, shape.height > 0 else { throw CocoaError(.fileReadCorruptFile) }
+            let outputAspect = pending?.outputAspect ?? (shape.width < shape.height ? "9:16" : "16:9")
+            let size = outputAspect == "9:16" ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080)
+            try await OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)
+            try await requireCurrent()
+            // Caller durably retains this local clip before retiring the failed
+            // AI receipt. No provider call or cost-history mutation is made.
+            return local
         }
         let dest = dir.appendingPathComponent("clip-\(index).mp4")
         try? FileManager.default.removeItem(at: dest)
         try FileManager.default.moveItem(at: tmp, to: dest)
+        if clearReceiptOnDownload { pending?.clear() }
+        return dest
+    }
+
+    /// Recovery acknowledges only after the completed clip is retained and
+    /// addressable. A full disk keeps its accepted receipt available to retry.
+    nonisolated private static func retainRecoveredClip(_ clip: URL, for listingID: UUID) throws -> URL {
+        let fm = FileManager.default
+        let bytes = try clip.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard bytes > 0 else { throw AIImagePrep.error("The recovered clip is empty. Retry the saved request.") }
+        let dir = PendingReelClips.directory(for: listingID)
+        var relPaths = (try PendingReelClips.readRecord(for: listingID)?.clipURLs ?? []).map { FileStore.relativePath(for: $0) }
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let prefix = OriginalPhotoMotion.isClip(clip) ? "clip-photo-motion-" : "clip-recovered-"
+        let dest = dir.appendingPathComponent("\(prefix)\(UUID().uuidString).mp4")
+        do { try fm.moveItem(at: clip, to: dest) }
+        catch { try fm.copyItem(at: clip, to: dest) }
+        relPaths.append(FileStore.relativePath(for: dest))
+        try PendingReelClips(listingID: listingID, savedAt: Date(), relPaths: relPaths).saveDurably()
+        guard PendingReelClips.load(for: listingID)?.clipURLs.contains(dest) == true,
+              (try? dest.resourceValues(forKeys: [.fileSizeKey]).fileSize) == bytes else {
+            throw AIImagePrep.error("Couldn't retain the recovered clip. Free some space and retry the saved request.")
+        }
         return dest
     }
 
@@ -9675,79 +14462,6 @@ struct ReelStudioView: View {
 
 // MARK: - Pickers
 
-/// Multi-select Photos picker (images only). `selectionLimit: 1` for a single
-/// exterior photo; the studio's default of 15 for batch ingest.
-struct LibraryImagePicker: UIViewControllerRepresentable {
-    var selectionLimit: Int = 15
-    let onPicked: ([UIImage]) -> Void
-
-    func makeUIViewController(context: Context) -> PHPickerViewController {
-        var config = PHPickerConfiguration()
-        config.filter = .images
-        config.selectionLimit = selectionLimit
-        let picker = PHPickerViewController(configuration: config)
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(onPicked: onPicked) }
-
-    final class Coordinator: NSObject, PHPickerViewControllerDelegate {
-        let onPicked: ([UIImage]) -> Void
-        init(onPicked: @escaping ([UIImage]) -> Void) { self.onPicked = onPicked }
-
-        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-            picker.dismiss(animated: true)
-            let group = DispatchGroup()
-            let lock = NSLock()
-            var images: [UIImage] = []
-            for result in results where result.itemProvider.canLoadObject(ofClass: UIImage.self) {
-                group.enter()
-                result.itemProvider.loadObject(ofClass: UIImage.self) { obj, _ in
-                    if let img = obj as? UIImage {
-                        lock.lock(); images.append(img); lock.unlock()
-                    }
-                    group.leave()
-                }
-            }
-            group.notify(queue: .main) { self.onPicked(images) }
-        }
-    }
-}
-
-/// Single-shot camera capture.
-struct CameraPicker: UIViewControllerRepresentable {
-    let onPicked: (UIImage) -> Void
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(onPicked: onPicked) }
-
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let onPicked: (UIImage) -> Void
-        init(onPicked: @escaping (UIImage) -> Void) { self.onPicked = onPicked }
-
-        func imagePickerController(_ picker: UIImagePickerController,
-                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            picker.dismiss(animated: true)
-            if let img = info[.originalImage] as? UIImage { onPicked(img) }
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            picker.dismiss(animated: true)
-        }
-    }
-}
-
 // MARK: - Floor plan (Apple RoomPlan → USDZ "dollhouse")
 // LiDAR-only (iPhone/iPad Pro). Scans room after room in ONE AR session, merges
 // them with RoomPlan's StructureBuilder (iOS 17+, and it handles rooms on
@@ -9756,6 +14470,7 @@ struct CameraPicker: UIViewControllerRepresentable {
 
 struct FloorPlanView: View {
     let listing: Listing
+    @EnvironmentObject private var model: AppModel
 
     @State private var showScanner = false
     @State private var showViewer = false       // 3D / AR (USDZ via QuickLook)
@@ -9851,12 +14566,15 @@ struct FloorPlanView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: Theme.spacing) {
+                Text("Choose a phone scan, your own measurements, or an existing plan.")
+                    .font(.rpBody).foregroundStyle(Theme.inkDim)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if RoomCaptureSession.isSupported {
                     VStack(spacing: 10) {
                         Image(systemName: planExists ? "cube.fill" : "cube.transparent")
                             .font(.system(size: 44, weight: .light))
                             .foregroundStyle(Theme.accent)
-                        Text(planExists ? "Floor plan ready" : "Scan the floor plan")
+                        Text(planExists ? "Your room scan" : "Scan rooms with your phone")
                             .font(.rpTitle)
                             .foregroundStyle(Theme.ink)
                         // TRUE copy (F-A-17): say what the scanner actually does.
@@ -9886,7 +14604,7 @@ struct FloorPlanView: View {
                         }
                         // Destructive: a successful re-scan overwrites the saved
                         // USDZ + geometry, so confirm first (F-A-17).
-                        secondaryButton("Scan again", "arrow.clockwise") { showRescanConfirm = true }
+                        secondaryButton("Scan again", "arrow.triangle.2.circlepath") { showRescanConfirm = true }
                         ShareLink(item: usdzURL) {
                             Label("Share the 3D model", systemImage: "square.and.arrow.up")
                                 .font(.rpBody.weight(.semibold))
@@ -9905,34 +14623,35 @@ struct FloorPlanView: View {
                         primaryButton("Start scan", "cube.transparent") { showScanner = true }
                     }
 
-                    Divider().padding(.vertical, 6)
-                    Text("Already have blueprints or measurements?")
-                        .font(.rpKicker).foregroundStyle(Theme.inkDim)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    uploadSection
                 } else {
                     VStack(spacing: 10) {
-                        Image(systemName: uploadedURL != nil ? "doc.richtext" : "square.and.arrow.up.on.square")
-                            .font(.system(size: 40, weight: .light))
-                            .foregroundStyle(Theme.accent)
-                        Text(uploadedURL != nil ? "Floor plan ready" : "Add a floor plan")
-                            .font(.rpTitle)
+                        Label("Phone scanning needs LiDAR", systemImage: "camera.viewfinder")
+                            .font(.rpHeadline)
                             .foregroundStyle(Theme.ink)
-                        Text("This device has no LiDAR for 3D scanning — but you can upload a PDF or image of your floor plan or blueprints. Your photos and video tour work on every device.")
+                        Text("This device cannot scan rooms automatically. You can still enter measurements or upload a floor plan below.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
-                            .multilineTextAlignment(.center)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 28)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 12)
+                }
+                Divider().padding(.vertical, 6)
+                measurementsSection
+                Divider().padding(.vertical, 6)
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Upload an existing plan", systemImage: "doc.richtext")
+                        .font(.rpHeadline).foregroundStyle(Theme.ink)
+                    Text("Keep a PDF or image from your measuring software with this listing.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     uploadSection
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding()
         }
         .background(Theme.bg)
-        .navigationTitle("Floor plan")
+        .navigationTitle("Floor plans & measurements")
         .navigationBarTitleDisplayMode(.inline)
-        .askAI(.floorPlan)
+        .askAI(.floorPlan, listingID: listing.id)
         .onAppear { refreshState() }
         .fullScreenCover(isPresented: $showScanner) {
             RoomScanView(exportURL: usdzURL) { url in
@@ -10019,6 +14738,26 @@ struct FloorPlanView: View {
         } message: {
             Text(importError ?? "")
         }
+    }
+
+    private var measurementsSection: some View {
+        let current = model.listings.first(where: { $0.id == listing.id }) ?? listing
+        let count = current.floorMeasurements?.rooms.count ?? 0
+        let outlineCount = current.floorMeasurements?.outlines.count ?? 0
+        return VStack(alignment: .leading, spacing: 12) {
+            Label("Measurements", systemImage: "ruler")
+                .font(.rpTitle).foregroundStyle(Theme.ink)
+            Text("Enter room dimensions or draw the home's wall outline. Review areas in the worksheet and download a plan. Furnished rooms work too.")
+                .font(.rpBody).foregroundStyle(Theme.inkDim)
+            NavigationLink {
+                FloorMeasurementsView(listing: current)
+            } label: {
+                Label(outlineCount > 0 ? "Open measurements · \(outlineCount) outlines" : count == 0 ? "Enter measurements" : "Open measurements · \(count) rooms", systemImage: "ruler")
+                    .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(Theme.accent).foregroundStyle(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }.accessibilityIdentifier("floorPlan.measurements")
+        }.padding().background(Theme.card).clipShape(RoundedRectangle(cornerRadius: Theme.radius))
     }
 
     private func primaryButton(_ title: String, _ icon: String, _ action: @escaping () -> Void) -> some View {
@@ -10528,9 +15267,11 @@ struct FloorPlan2DView: View {
                     .foregroundStyle(Theme.ink)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                Text("Approximate — measured by phone scan, not a survey.")
+                Text("Phone scan estimates · schematic, not to scale; not a survey. Hull area may include unscanned space and is not verified living area.")
                     .font(.system(size: 22))
                     .foregroundStyle(Theme.inkDim)
+                Text("Exported: " + Date().formatted(date: .abbreviated, time: .shortened))
+                    .font(.system(size: 20)).foregroundStyle(Theme.inkDim)
             }
             .padding(48)
         }
@@ -10582,9 +15323,15 @@ private struct PlanExport: Identifiable {
 /// Save / share a rendered room plan. "Saved to Photos" flips only when the
 /// Photos write actually succeeded (same rule as every other save on this
 /// screen — F-A-16).
-private struct PlanExportSheet: View {
+struct PlanExportSheet: View {
     let image: UIImage
     let address: String
+    var disclosure: String = "Phone scan estimates. Schematic, not to scale; not a survey. Hull area can include unscanned space and does not certify advertised or appraisal living area."
+    var additionalFile: URL? = nil
+    var canExport: () -> Bool = { true }
+    // Re-evaluate the captured freshness closure when a cloud plan refreshes
+    // while this sheet is open; each save also checks it after permission awaits.
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var saved = false
     @State private var isSaving = false
@@ -10603,7 +15350,7 @@ private struct PlanExportSheet: View {
                             .strokeBorder(Theme.border))
                         .accessibilityLabel(Text("Room plan image for \(address)"))
 
-                    Text("Dimensions and area are approximate — a phone scan is not a survey.")
+                    Text(disclosure)
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                         .multilineTextAlignment(.center)
@@ -10616,7 +15363,7 @@ private struct PlanExportSheet: View {
                             .background(Theme.accent).foregroundStyle(Color.white)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    .disabled(saved || isSaving)
+                    .disabled(saved || isSaving || !canExport())
 
                     ShareLink(item: Image(uiImage: image),
                               preview: SharePreview(address.isEmpty ? "Room plan" : "Room plan — \(address)",
@@ -10627,7 +15374,23 @@ private struct PlanExportSheet: View {
                             .background(Theme.accentSoft).foregroundStyle(Theme.accent)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
+                    .disabled(!canExport())
 
+                    if let additionalFile {
+                        ShareLink(item: additionalFile) {
+                            Label("Share PDF · save to Files", systemImage: "doc.richtext")
+                                .font(.rpBody.weight(.semibold))
+                                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                                .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }.accessibilityIdentifier("measurements.sharePDF").disabled(!canExport())
+                    }
+
+                    if !canExport() {
+                        Text("This plan changed elsewhere or has a shared-edit conflict. Load the current measurements before exporting.")
+                            .font(.rpCaption).foregroundStyle(Theme.warn).multilineTextAlignment(.center)
+                            .accessibilityIdentifier("measurements.exportChanged")
+                    }
                     if let saveError {
                         Text(saveError)
                             .font(.rpCaption)
@@ -10650,14 +15413,16 @@ private struct PlanExportSheet: View {
     }
 
     private func save() {
+        guard canExport() else { saveError = "These measurements, listing or workspace changed. Load the current plan before exporting."; return }
         isSaving = true
         saveError = nil
         let img = image
         Task {
             do {
-                try await PhotosLibrarySaver.saveImage(img)
+                try await PhotosLibrarySaver.saveImage(img, while: { canExport() })
                 await MainActor.run {
                     isSaving = false
+                    guard canExport() else { return }
                     saved = true
                     Haptics.success()
                 }
@@ -10934,10 +15699,10 @@ enum FloorPlanRenderer {
         // Area is an estimate, and it says so. A phone scan is not a measured survey,
         // and square footage is a number agents get sued over.
         //
-        // Summed PER ROOM, never as one hull over the whole storey: the convex hull
-        // of a single room's wall endpoints is close to its true footprint, but one
-        // hull thrown around an entire L-shaped floor bridges straight across the
-        // notch and invents square footage that does not exist.
+        // Summed PER ROOM, never as one hull over the whole storey. This is still
+        // a CONVEX HULL estimate: an L-shaped room bridges its notch, and adjacent
+        // scan-room hulls can overlap. Label the algorithm and approximation;
+        // this number must never be treated as measured or appraisal living area.
         var areaSqM: Float = 0
         for r in rooms {
             var pts: [SIMD2<Float>] = []
@@ -10955,7 +15720,7 @@ enum FloorPlanRenderer {
             if let storyLabel { scope = storyLabel }
             else if rooms.count > 1 || roomNames.count > 1 { scope = "scanned area" }
             else { scope = "this room" }
-            ctx.draw(Text("\(scope) ≈ \(Int(areaSqFt.rounded())) sq ft")
+            ctx.draw(Text("Scan hull estimate ≈ \(Int(areaSqFt.rounded())) sq ft · \(scope)")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(Theme.inkDim),
                      at: CGPoint(x: padLeft - 8, y: 16), anchor: .leading)
@@ -11140,5 +15905,34 @@ enum FloorPlanRenderer {
         case .stairs: return "Stairs"
         @unknown default: return ""
         }
+    }
+}
+
+
+private struct PropertyVideoProcessorPermissionCard: View {
+    @ObservedObject var consent: PropertyVideoProcessorConsent
+    var body: some View {
+        ZStack {
+            Theme.bg.opacity(0.97).ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(PropertyVideoProcessorContract.title).font(.rpTitle).foregroundStyle(Theme.ink)
+                    Text(PropertyVideoProcessorContract.body).font(.rpBody).foregroundStyle(Theme.inkDim)
+                    HStack {
+                        Link(destination: URL(string: "https://rendprop.com/privacy")!) {
+                            Text("Privacy").frame(minHeight: 44).contentShape(Rectangle())
+                        }
+                        Spacer()
+                        Link(destination: URL(string: "https://kie.ai/terms-of-use")!) {
+                            Text("Kie terms").frame(minHeight: 44).contentShape(Rectangle())
+                        }
+                    }.font(.rpCaption)
+                    PrimaryButton(title: PropertyVideoProcessorContract.allowLabel, systemImage: "checkmark") { consent.allow() }
+                        .accessibilityIdentifier("video.processor.allow")
+                    SecondaryButton(title: PropertyVideoProcessorContract.declineLabel, systemImage: "xmark") { consent.decline() }
+                        .accessibilityIdentifier("video.processor.decline")
+                }.padding(24).frame(maxWidth: 440)
+            }
+        }.accessibilityIdentifier("video.processor.disclosure")
     }
 }

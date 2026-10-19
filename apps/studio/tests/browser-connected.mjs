@@ -18,9 +18,10 @@ const receipt = { status: "running", mutation, artifacts, checks: [], errors: []
   proof: "Separately compiled real App + real Studio services with injected offline Auth/fetch. This is NOT a live Apple sign-in or deployed media proof." };
 let browser, server, page;
 let transformed = false;
-const labels = {"Video editor":"Create","Content library":"Media",Properties:"My homes",Workspace:"Business",Overview:"Home",Create:"AI tools"};
+const labels = {"Video editor":"Create","Content library":"Media",Properties:"My Listings",Workspace:"Business",Overview:"Home",Create:"AI tools"};
 const nav = (name) => ({click: async () => { const label=labels[name]??name; await page.getByRole("navigation", { name: "Studio navigation" }).getByRole("button", { name: label, exact:true }).click(); }});
 const title = () => page.locator(".rp-editor:visible").getByLabel("Title overlay", { exact: true });
+const openAdvanced = () => page.getByRole("button", {name:"Advanced desktop editor",exact:true}).click();
 const check = (name) => receipt.checks.push(name);
 let savedKey;
 try {
@@ -60,6 +61,7 @@ try {
   await expect(page.getByRole("button", {name:"Manage Your account",exact:true})).toContainText("Your account");
   check("an Apple account with an empty profile name retains a visible and accessible account control");
   await nav("Video editor").click();
+  await expect(page.getByRole("heading",{name:"Make a video",exact:true})).toBeVisible();await openAdvanced();
   await page.locator(".rp-editor:visible").getByRole("button",{name:"Pro view",exact:true}).click();
   await expect(page.getByLabel("Property reel", { exact: true })).not.toHaveValue("");
   const propertyId = await page.getByLabel("Property reel", { exact: true }).inputValue();
@@ -103,6 +105,7 @@ try {
 
   await page.evaluate(() => window.studioFixture.setMode("ok"));
   await page.getByRole("button", { name: "Retry connection", exact: true }).click();
+  await openAdvanced();
   await expect(page.getByLabel("Property reel", {exact:true})).toBeVisible();
   await page.getByLabel("Property reel", {exact:true}).selectOption(propertyId);
   await page.locator(".rp-editor:visible").getByRole("button", {name:"Pro view",exact:true}).click();
@@ -111,18 +114,23 @@ try {
   check("verified access recovery restores the right draft and honestly requests original-file reselection");
 
   await nav("Workspace").click();
-  await page.getByRole("combobox", { name: "Workspace", exact: true }).selectOption("44444444-4444-4444-8444-444444444444");
+  await page.locator("#switch-workspace").selectOption("44444444-4444-4444-8444-444444444444");
   await expect(page.getByText(/^Updated \d/)).toBeVisible();
   await nav("Video editor").click();
+  await openAdvanced();
   await page.locator(".rp-editor:visible").getByRole("button",{name:"Pro view",exact:true}).click();
   await expect(title()).not.toHaveValue("Scoped business edit");
   await expect(page.getByRole("button", { name: /Select clip 1:/ })).toHaveCount(0);
   await title().fill("Second organization only");
   await page.evaluate(() => window.studioFixture.switchUser("B"));
   await expect(page.locator(".account-button")).toContainText("Fixture B");
+  await openAdvanced();
   await page.locator(".rp-editor:visible").getByRole("button", {name:"Pro view",exact:true}).click();
   await expect(title()).not.toHaveValue("Second organization only");
   await expect(title()).not.toHaveValue("Scoped business edit");
+  await expect(page.getByLabel("Switch agent", { exact: true })).toHaveCount(0);
+  const isolatedRows = await page.evaluate(() => window.studioFixture.calls().filter(call => call.path === "/functions/v1/listings" && call.method === "GET").at(-1));
+  assert.equal(isolatedRows.org, "44444444-4444-4444-8444-444444444444", "Invited agent only loads their own library");
   check("organization and account switches still fence drafts and in-memory files");
 
   await nav("Properties").click();
@@ -139,7 +147,7 @@ try {
   assert.deepEqual(receipt.externalRequests, [], "No provider or external request is permitted");
   assert.deepEqual(receipt.errors, [], "No browser runtime errors");
   receipt.requests = await page.evaluate(() => window.studioFixture.calls());
-  assert.ok(receipt.requests.some((call) => call.path === "/rest/v1/listings"));
+  assert.ok(receipt.requests.some((call) => call.path === "/functions/v1/listings" && call.method === "GET"));
   receipt.status = "passed";
 } catch (error) {
   receipt.status = "failed";

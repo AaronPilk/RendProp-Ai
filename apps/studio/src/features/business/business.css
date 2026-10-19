@@ -108,3 +108,11 @@
   bottom: 16px;
 } .business-save-bar > span { flex-basis: 100%; } .business-nav { flex-wrap: nowrap; overflow-x: auto; } .business-nav button { white-space: nowrap; } .business-content td, .business-content th { padding: 12px; } .business-list > li { align-items: flex-start; flex-wrap: wrap; } }
 @media(max-width:800px) { .business-save-bar { bottom:88px; } }
+.business-client-delivery { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 18px; overflow-wrap: anywhere; }
+.business-client-delivery h4 { margin: 0 0 8px; }
+.business-client-delivery .business-check { margin: 16px 0; }
+.business-work-role .business-check { display: flex; flex-direction: row; align-items: center; gap: 12px; min-height: 44px; }
+.business-work-role > button { margin-top: 18px; }
+
+/* Disabled actions keep readable neutral text instead of fading the whole control. */
+.business-workspace button:disabled { opacity: 1; color: var(--muted); background: var(--surface-subtle); border-color: var(--input-line); box-shadow: none; cursor: not-allowed; }

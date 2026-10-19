@@ -1489,3 +1489,6 @@ main {
 @media(min-width:1300px) { .app-property-tools .app-feature-grid { grid-template-columns:repeat(4,minmax(0,1fr)); } }
 @media(max-width:800px) { .nav-label-full { display:none; }.nav-label-short { display:inline;text-transform:capitalize; }.nav-item { font-size:.69rem; } }
 .app-property-status.status-expired { color:var(--bad);background:var(--bad-soft); }
+
+/* Disabled actions keep readable neutral text instead of fading the whole control. */
+button:disabled { opacity: 1; color: var(--muted); background: var(--surface-subtle); border-color: var(--input-line); box-shadow: none; cursor: not-allowed; }

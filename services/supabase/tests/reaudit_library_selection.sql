@@ -1,0 +1,41 @@
+\set ON_ERROR_STOP on
+begin;
+create temporary table reaudit_checks(n integer not null default 0);insert into reaudit_checks default values;grant select,update on reaudit_checks to service_role;
+create function pg_temp.ok(v boolean,label text)returns void language plpgsql as $$begin if v is distinct from true then raise exception 'REAUDIT FAIL: %',label;end if;update reaudit_checks set n=n+1;end$$;
+create function pg_temp.refuse(command text,prefix text,label text)returns void language plpgsql as $$begin begin execute command;exception when raise_exception then if sqlerrm like prefix||'%'then perform pg_temp.ok(true,label);return;end if;raise;end;raise exception 'REAUDIT FAIL: allowed %',label;end$$;
+
+insert into auth.users(id,email,is_anonymous)values
+('fa100000-0000-4000-8000-000000000001','selection-owner@fixture.invalid',false),('fa100000-0000-4000-8000-000000000002','selection-agent@fixture.invalid',false),('fa100000-0000-4000-8000-000000000003','selection-guest@fixture.invalid',true),('fa100000-0000-4000-8000-000000000004','selection-sibling@fixture.invalid',false);
+create temp table reaudit_fixture as select(select org_id from memberships where user_id='fa100000-0000-4000-8000-000000000001')team,(select org_id from memberships where user_id='fa100000-0000-4000-8000-000000000002')child,(select org_id from memberships where user_id='fa100000-0000-4000-8000-000000000003')guest;
+grant select on reaudit_fixture to service_role;
+update orgs set plan='team',plan_source='manual'where id=(select team from reaudit_fixture);
+update plan_entitlements set seats=8 where plan='team';
+set local role service_role;
+select create_org_invite('fa100000-0000-4000-8000-000000000001',(select team from reaudit_fixture),null,'agent',repeat('91',32));
+select accept_org_invite('fa100000-0000-4000-8000-000000000002',repeat('91',32));
+select create_org_invite('fa100000-0000-4000-8000-000000000001',(select team from reaudit_fixture),null,'agent',repeat('92',32));
+select accept_org_invite('fa100000-0000-4000-8000-000000000004',repeat('92',32));
+reset role;
+insert into orgs(id,name)values('fa100000-0000-4000-8000-000000000090','Second legacy content library');
+insert into memberships(user_id,org_id,role)values('fa100000-0000-4000-8000-000000000002','fa100000-0000-4000-8000-000000000090','owner');
+insert into listings(id,org_id,agent_id,address)values('fa100000-0000-4000-8000-000000000091','fa100000-0000-4000-8000-000000000090','fa100000-0000-4000-8000-000000000002','Preserved legacy listing');
+update user_workspace_state set active_org_id='fa100000-0000-4000-8000-000000000090'where user_id='fa100000-0000-4000-8000-000000000002';
+set local role service_role;
+select pg_temp.ok((workspace_directory('fa100000-0000-4000-8000-000000000002',null)->>'active_org_id')::uuid=(select child from reaudit_fixture),'bound non-switcher default aligns active with own');
+select pg_temp.refuse($q$select workspace_directory('fa100000-0000-4000-8000-000000000002','fa100000-0000-4000-8000-000000000090')$q$,'RP403:','explicit non-switcher alternate preference refuses instead of 503');
+select pg_temp.refuse($q$select select_workspace('fa100000-0000-4000-8000-000000000002','fa100000-0000-4000-8000-000000000090')$q$,'RP403:','POST cannot persist unsupported alternate library');
+select pg_temp.ok((workspace_directory('fa100000-0000-4000-8000-000000000002',(select child from reaudit_fixture))->>'active_org_id')::uuid=(select child from reaudit_fixture),'explicit own library remains valid');
+select select_workspace('fa100000-0000-4000-8000-000000000001',(select child from reaudit_fixture));
+select pg_temp.ok((workspace_directory('fa100000-0000-4000-8000-000000000001',null)->>'active_org_id')::uuid=(select child from reaudit_fixture),'actual Team owner retains agent switching');
+select pg_temp.refuse(format('select workspace_directory(%L,%L)','fa100000-0000-4000-8000-000000000004',(select child from reaudit_fixture)),'RP403:','sibling cannot select agent library');
+select adopt_anonymous_org('fa100000-0000-4000-8000-000000000002','fa100000-0000-4000-8000-000000000003',(select guest from reaudit_fixture),'fa100000-0000-4000-8000-000000000099');
+select pg_temp.ok((select active_org_id=(select child from reaudit_fixture)from user_workspace_state where user_id='fa100000-0000-4000-8000-000000000002'),'adoption retains live accepted private library selection');
+select pg_temp.ok((workspace_directory('fa100000-0000-4000-8000-000000000002',null)->>'billing_org_id')::uuid=(select team from reaudit_fixture),'adoption keeps accepted Team billing identity');
+select pg_temp.ok(exists(select 1 from memberships where user_id='fa100000-0000-4000-8000-000000000002'and org_id=(select guest from reaudit_fixture)and role='owner'),'guest transfer is retained without merging content');
+select pg_temp.ok(exists(select 1 from listings where id='fa100000-0000-4000-8000-000000000091'and org_id='fa100000-0000-4000-8000-000000000090'),'directory and adoption never move legacy content');
+select adopt_anonymous_org('fa100000-0000-4000-8000-000000000002','fa100000-0000-4000-8000-000000000003',(select guest from reaudit_fixture),'fa100000-0000-4000-8000-000000000099');
+select pg_temp.ok((select active_org_id=(select child from reaudit_fixture)from user_workspace_state where user_id='fa100000-0000-4000-8000-000000000002'),'adoption receipt replay does not reapply selection');
+reset role;
+select pg_temp.ok(not has_function_privilege('anon','public.workspace_directory(uuid,uuid)','execute')and not has_function_privilege('authenticated','public.select_workspace(uuid,uuid)','execute'),'selection remains service-only');
+select jsonb_build_object('suite','reaudit_library_selection','assertions',n)from reaudit_checks;
+rollback;

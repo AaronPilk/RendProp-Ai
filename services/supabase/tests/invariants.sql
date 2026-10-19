@@ -19,6 +19,17 @@
 
 create temp table _inv(seq serial, name text, pass boolean, note text);
 
+-- Publication fixtures explicitly represent a finite, previously sponsored
+-- trial. This does not activate or advertise a trial for a new free account.
+create function pg_temp.inv_hosting_authority(p_org uuid,p_actor uuid)returns void
+language plpgsql as $$declare f uuid;begin
+ insert into serving_funding(org_id,source,collection_ref,actor_id,net_receipts_cents,sponsored_cents,starts_at,ends_at,retention_ends_at,service_months,recurring_reserve_cents,reserve_components,evidence_sha256,created_at)
+ values(p_org,'trial','_inv-hosting-'||p_org,p_actor,0,500,now()-interval '1 day',now()+interval '7 days',now()+interval '97 days',1,7,
+ '{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',repeat('a',64),(select created_at-interval '1 day'from subscription_trial_config where singleton))returning id into f;
+ insert into serving_funding_slices(funding_id,slice_index,org_id,starts_at,ends_at,total_budget_cents,recurring_reserve_cents)values(f,0,p_org,now()-interval '1 day',now()+interval '7 days',500,7);
+end$$;
+
+
 -- ── P0-3 / P0-7: privileged surface ──────────────────────────────────────────
 
 insert into _inv(name, pass, note)
@@ -53,7 +64,7 @@ select 'create_render_job enforces role AND uploaded asset',
        count(*) = 1, ''
 from pg_proc
 where proname = 'create_render_job'
-  and prosrc like '%org_role%' and prosrc like '%uploaded is true%';
+  and prosrc like '%library_scope_role(auth.uid(),v_org,p_listing)%' and prosrc like '%uploaded is true%';
 
 insert into _inv(name, pass, note)
 select 'create_render_job takes p_source and reads effective_plan()',
@@ -66,14 +77,14 @@ where proname = 'create_render_job'
 
 insert into _inv(name, pass, note)
 select 'publish_render enforces role', count(*) = 1, ''
-from pg_proc where proname = 'publish_render' and prosrc like '%org_role%';
+from pg_proc where proname='publish_render' and prosrc like '%library_scope_role(auth.uid(),v_org,%';
 
 insert into _inv(name, pass, note)
 select 'fail_render_job / set_render_chapters / set_lead_status are role-gated definers',
        count(*) = 3, format('%s of 3 found', count(*))
 from pg_proc
 where proname in ('fail_render_job','set_render_chapters','set_lead_status')
-  and prosecdef and prosrc like '%org_role%';
+  and prosecdef and(case when proname='set_lead_status'then prosrc like '%listing_content_access(auth.uid(),v_lead.listing_id,true)%'else prosrc like '%library_scope_role(auth.uid(),%'end);
 
 insert into _inv(name, pass, note)
 select 'idempotency is re-checked after the advisory lock',
@@ -128,15 +139,19 @@ select 'listing ownership columns are not tenant-writable',
        not has_column_privilege('authenticated','public.listings','org_id','UPDATE')
        and not has_column_privilege('authenticated','public.listings','agent_id','UPDATE'), '';
 
--- Regression guard: over-tightening this grant silently broke the sold/archive
--- flow once. Every column the listings function may PATCH must stay writable.
+-- Ordinary changes use the service-only per-field CAS; photo/source lifecycle
+-- operations retain their narrower direct grant.
 insert into _inv(name, pass, note)
-select 'every client-writable listing column is still granted',
-       bool_and(has_column_privilege('authenticated','public.listings', c, 'UPDATE')),
-       string_agg(c, ',') filter (where not has_column_privilege('authenticated','public.listings', c, 'UPDATE'))
+select 'ordinary listing columns require explicit intent CAS',
+       bool_and(not has_column_privilege('authenticated','public.listings',c,'UPDATE')),
+       string_agg(c, ',') filter(where has_column_privilege('authenticated','public.listings',c,'UPDATE'))
 from unnest(array['space_type','address','tagline','details','beds','baths','sqft',
-                  'price_cents','zillow_url','main_photo_key','lat','lng','status',
-                  'sold_at','source','mls_ref','deleted_at']) c;
+ 'price_cents','zillow_url','lat','lng','status','sold_at']) c;
+insert into _inv(name, pass, note)
+select 'remaining listing lifecycle columns stay writable',
+       bool_and(has_column_privilege('authenticated','public.listings',c,'UPDATE')),
+       string_agg(c, ',') filter(where not has_column_privilege('authenticated','public.listings',c,'UPDATE'))
+from unnest(array['main_photo_key','source','mls_ref','deleted_at']) c;
 
 insert into _inv(name, pass, note)
 select 'orgs: tenants may edit name/handle/brand_kit but never plan',
@@ -161,9 +176,9 @@ where (lat is not null and lat <> round(lat::numeric, 3))
    or (lng is not null and lng <> round(lng::numeric, 3));
 
 -- ── Plan coherence: enforced must equal published (pricing.html) ─────────────
--- Paid sizes are the 2026-09-12 rework (migration 0044): prices unchanged,
--- allowances 4/10/25 renders, 100/200/400 edits, 6/12/25 reels, 2/4/8 aerials,
--- Team 2 seats + 2 Topaz. The base trial/free rows are still 0032's; the
+-- Paid sizes include the reviewed multi-photo recipe allowances: prices unchanged,
+-- 4/10/25 renders,100/200/400 edits,30/60/150 generated shots,2/4/8 aerials,
+-- Team2 seats +2 Topaz; trial20 edits/20 shots/1500c and Free300c unchanged. The
 -- single-location trial override lives in plan_entitlement_overrides and is
 -- asserted in the 0044 section at the end of this file.
 
@@ -177,7 +192,7 @@ select 'render caps match paid plans and 0032 signup trial/free (4/10/25; trial 
               plan_render_cap('team'), plan_render_cap('trial'), plan_render_cap('free'));
 
 insert into _inv(name, pass, note)
-select 'plan_entitlements match paid plans and 0032 trial/free for every metered feature',
+select 'plan_entitlements match current paid/trial/free catalog for every metered feature',
        count(*) = 6 and coalesce(bool_and(ok), false),
        coalesce(string_agg(plan, ', ') filter (where not ok), '')
 from (
@@ -186,12 +201,12 @@ from (
            e.aerials_per_month, e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
            is not distinct from
           (x.renders, x.edits, x.reels, x.aerials, x.topaz, x.seats, x.cogs, x.price)) as ok
-    from (values ('trial',   3,  60, 4,  2, 1, 1, 1200,     0),
+    from (values ('trial',   3,  20,20,  2, 1, 1, 1500,     0),
                  ('free',    1,   5, 0,  0, 0, 1,  300,     0),
-                 ('starter', 4, 100, 6,  2, 0, 1, 1200,  4900),
-                 ('solo',    4, 100, 6,  2, 0, 1, 1200,  4900),
-                 ('pro',    10, 200,12,  4, 0, 1, 2400,  9900),
-                 ('team',   25, 400,25,  8, 2, 2, 6000, 24900))
+                 ('starter', 4, 100,30,  2, 0, 1, 2032,  4900),
+                 ('solo',    4, 100,30,  2, 0, 1, 2032,  4900),
+                 ('pro',    10, 200,60,  4, 0, 1, 4157,  9900),
+                 ('team',   25, 400,150, 8, 2, 2,10532, 24900))
            as x(plan, renders, edits, reels, aerials, topaz, seats, cogs, price)
     left join plan_entitlements e on x.plan = e.plan
 ) s;
@@ -211,7 +226,8 @@ where conrelid = 'public.orgs'::regclass and conname = 'orgs_plan_check';
 
 insert into _inv(name, pass, note)
 select 'effective_plan() demotes an expired trial to free', count(*) = 1, ''
-from pg_proc where proname = 'effective_plan' and prosrc like '%trial_ends_at < now()%';
+from pg_proc where proname='effective_plan'and prosrc like '%effective_plan_before_team(public.library_billing_org(p_org))%'
+ and exists(select 1 from pg_proc q where q.proname='effective_plan_before_team'and q.prosrc like '%trial_ends_at < now()%');
 
 -- ── Lifecycle schema (0011) ──────────────────────────────────────────────────
 
@@ -379,7 +395,7 @@ select 'record_provenance / set_provenance_media are role-gated definers',
        count(*) = 2, format('%s of 2 found', count(*))
 from pg_proc
 where proname in ('record_provenance', 'set_provenance_media')
-  and prosecdef and prosrc like '%org_role%';
+  and prosecdef and(case when proname='set_lead_status'then prosrc like '%listing_content_access(auth.uid(),v_lead.listing_id,true)%'else prosrc like '%library_scope_role(auth.uid(),%'end);
 
 insert into _inv(name, pass, note)
 select 'the provenance RPCs are NOT executable by anon',
@@ -579,7 +595,7 @@ begin
   insert into _inv(name, pass, note)
     values ('signup without a name uses My business, never the email', v_name = 'My business', v_name);
   insert into _inv(name, pass, note)
-    select 'signup starts a 7-day trial', plan = 'trial' and trial_ends_at > now() + interval '6 days', plan
+    select 'signup stays free until a subscription is confirmed', plan = 'free' and trial_ends_at is null and plan_source is null, plan
       from orgs where id = v_org;
 
   -- Act as the first user.
@@ -591,7 +607,11 @@ begin
   insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded)
     values (v_listing, 'photo', 'renders', 'renders/_inv/p.jpg', 100, true) returning id into v_poster;
 
-  -- App publishes do not consume the 0032 signup-trial cloud-render quota.
+  -- Preserve the legacy allowance fixture independently of today's signup policy.
+  update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=v_org;
+  perform pg_temp.inv_hosting_authority(v_org,u);
+
+  -- App publishes do not consume the grandfathered trial cloud-render quota.
   v_job  := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000001', 'app');
   v_job2 := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000002', 'app');
   insert into _inv(name, pass, note)
@@ -725,6 +745,7 @@ begin
     values (u3, 'inv-fixture3@example.com', '{"full_name":"Lease Fixture"}');
   select m.org_id into v_org from memberships m where m.user_id = u3;
   update orgs set plan = 'team', trial_ends_at = null where id = v_org;
+  update orgs set plan_source='manual'where id=v_org;
   perform set_config('request.jwt.claims', json_build_object('sub', u3, 'role', 'authenticated')::text, true);
 
   insert into listings (org_id, agent_id, address) values (v_org, u3, '2 Lease Way') returning id into v_listing;
@@ -883,12 +904,13 @@ select 'the allowlist holds exactly the seeded owner, normalised',
 from admin_allowlist;
 
 insert into _inv(name, pass, note)
-select 'is_admin() is a SECURITY DEFINER with search_path pinned to public',
+select 'is_admin() is a SECURITY DEFINER with an empty search_path and qualified authority tables',
        count(*) = 1, format('%s match(es)', count(*))
 from pg_proc p
 where p.pronamespace = 'public'::regnamespace and p.proname = 'is_admin' and p.pronargs = 0
   and p.prosecdef
-  and 'search_path=public' = any(p.proconfig);
+  and 'search_path=""' = any(p.proconfig)
+  and p.prosrc like '%public.profiles%' and p.prosrc like '%auth.users%';
 
 -- Same reasoning as is_org_member (0005b): a helper used inside an RLS policy
 -- must stay executable by every role that can reach the table, or an anonymous
@@ -899,8 +921,8 @@ select 'RLS helper is_admin stays executable by authenticated and anon',
        and has_function_privilege('anon','public.is_admin()','EXECUTE'), '';
 
 insert into _inv(name, pass, note)
-select 'every admin policy is SELECT-only and predicated solely on is_admin()',
-       count(*) = 4
+select 'remaining admin policies are SELECT-only; job access requires the actual listing grant',
+       count(*)=3 and not exists(select 1 from pg_policy where polname='admin jobs read')
        and bool_and(polcmd = 'r' and polpermissive)
        and bool_and(pg_get_expr(polqual, polrelid) = 'is_admin()')
        and bool_and(polwithcheck is null),
@@ -971,10 +993,10 @@ begin
   delete from auth.users where id in (uA,uB,uC);
   delete from admin_allowlist where email = '_inv-existing@example.com';
 
-  -- (a) an allowlisted e-mail becomes an admin at SIGN-UP — no password, no
+  -- (a) a verified allowlisted e-mail becomes an admin at SIGN-UP — no password, no
   -- secret in the app, mixed case on purpose (the allowlist is normalised).
-  insert into auth.users (id, email, raw_user_meta_data)
-    values (uA, 'AARON@Pilk.ai', '{"full_name":"Owner"}');
+  insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
+    values (uA, 'AARON@Pilk.ai', now(), '{"full_name":"Owner"}');
   select p.is_admin into b from profiles p where p.id = uA;
   insert into _inv(name, pass, note)
     values ('an allowlisted sign-up e-mail becomes an admin (case-insensitive)',
@@ -988,8 +1010,8 @@ begin
 
   -- (b) an account that ALREADY EXISTS when the allowlist gains it is promoted
   -- by the migration's back-fill (this is how the owner's real account works).
-  insert into auth.users (id, email, raw_user_meta_data)
-    values (uB, '_inv-existing@example.com', '{"full_name":"Existing"}');
+  insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
+    values (uB, '_inv-existing@example.com', now(), '{"full_name":"Existing"}');
   select p.is_admin into b from profiles p where p.id = uB;
   insert into _inv(name, pass, note)
     values ('precondition: the pre-existing account starts as a non-admin',
@@ -1024,6 +1046,9 @@ begin
   select mm.org_id into vA from memberships mm where mm.user_id = uA;
   select mm.org_id into vB from memberships mm where mm.user_id = uB;
   select mm.org_id into vC from memberships mm where mm.user_id = uC;
+  -- Pre-existing hosted metadata seeded by the database owner, with explicit
+  -- manual authority rather than a tenant publication identity.
+  update orgs set plan='pro',plan_source='manual'where id in(vA,vC);
 
   insert into listings (org_id, agent_id, address) values (vA, uA, '1 Admin Way')  returning id into lA;
   insert into listings (org_id, agent_id, address) values (vC, uC, '1 Tenant Way') returning id into lC;
@@ -1163,7 +1188,7 @@ begin
   insert into _inv(name, pass, note) values ('an admin reads every org', n = 3, n::text);
 
   set role authenticated; select count(*) into n from render_jobs where id in (jA, jC); reset role;
-  insert into _inv(name, pass, note) values ('an admin reads every org''s render_jobs', n = 2, n::text);
+  insert into _inv(name, pass, note) values ('product-admin status alone cannot read another account''s render_jobs',n=1,n::text);
 
   set role authenticated;
   select count(*) into n from rate_limits where key in ('aiphotomo:'||vA::text, 'aiphotomo:'||vC::text);
@@ -1302,17 +1327,122 @@ where note = 'legacy'
 -- Contract §3: every reseller row stays OFF until its commercial terms are
 -- confirmed, and until then it assumes the WORST data posture — which is also
 -- what keeps customer media off it if somebody enables it early.
+--
+-- ONE exception, where the owner's acceptance of the terms is recorded rather
+-- than assumed: the exact pinned Kie property row
+-- 7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21 (task video.property_reel_clip_kie, kie,
+-- kling-3.0/video, trains_by_default, params exactly {"kie_mode":"4K","sound":false})
+-- may be ON
+--   * activated: while app_config.property_video_quality is EXACTLY the
+--     acknowledged selector docs/handoff/KIE-ACTIVATION.sql writes (enabled
+--     true, profile kie-kling3-4k-steady-v1, vendor_content_license
+--     kie-terms-2025-08-01-section-3-owner-accepted: Kie Terms section 3) AND
+--     the activation that script records in
+--     app_config.property_video_quality_kie_activation is current (not rolled
+--     back) and attests the published processor disclosure that names Kie
+--     (processor_disclosure: 1-200 visible ASCII characters) with the same
+--     acknowledgement. The selector or the row set by hand is not an
+--     activation; or
+--   * draining: while the selector does not select Kie by the rule
+--     property_video_quality_profile() applies, extra keys included (after
+--     the default docs/handoff/KIE-ROLLBACK.sql restored the previous
+--     selector, under a new-admission hold, or after an owner-test window:
+--     nothing new is admitted on Kie), and a saved kie-kling3-4k-steady-v1
+--     job may still need this row: not cancelled, before its 24 h deadline
+--     (set at admission, never extended), and in a state from which Kie work
+--     can still be granted (queued, generating, quality_review, composing:
+--     the worker scope test of property_video_job_scope) or resumed by the
+--     owner (failed: a capacity, quality or CPU pause, resumable only before
+--     the deadline; the owner's resume quote reads this row). ready,
+--     cancelled and needs_reconciliation are final: no function moves a job
+--     out of them (an uncertain dispatch is only reconciled, never sent
+--     again). Unsent clips and resume quotes need this row ON; with the row
+--     OFF they refuse before any provider request; or
+--   * owner-test window: while the selector does not select Kie (the global
+--     production default is unchanged) and at least one owner-only quality-test
+--     grant (property_video_kie_test_grants, created by
+--     docs/handoff/KIE-OWNER-TEST-GRANT.sql, which opens the window) can still
+--     create: not revoked, not expired and creates_used < max_creates.
+--     property_video_kie_dispatch_authority re-checks that grant's exact scope
+--     and consumes one create before every paid Kie create; revocation,
+--     expiry and usage are one-way, so a window never reopens by itself.
+-- The drain therefore ends by the last Kie admission's deadline at the latest,
+-- and a window by its grant's expiry (72 h after creation at the latest); from
+-- then on this is red until the row is OFF (docs/handoff/KIE-ROUTE-OFF.sql, or
+-- KIE-REVOKE-TEST-GRANT.sql -v route_off=on). Any other enabled kie/higgsfield
+-- row, this row with other params or a weaker tier, or this row ON with none of
+-- the three conditions fails. These branches and their red states are proven
+-- on disposable copies by services/supabase/tests/property_video_kie_profile_pg.py.
 insert into _inv(name, pass, note)
 select 'every kie / higgsfield row is disabled and assumes trains_by_default',
-       count(*) = 0,
-       coalesce(string_agg(format('%s/%s/%s enabled=%s tier=%s', task, provider, model, enabled, privacy_tier), '; '),
-                'all reseller rows disabled + worst-case tier')
-from ai_routes
-where provider in ('kie','higgsfield')
-  and (enabled or privacy_tier is distinct from 'trains_by_default');
+       count(*) filter (where not allowed) = 0,
+       coalesce(string_agg(format('%s/%s/%s enabled=%s tier=%s params=%s', task, provider, model, enabled,
+                                  privacy_tier, coalesce(params::text, 'null')), '; ') filter (where not allowed),
+                case when bool_or(enabled)
+                     then format('pinned Kie row ON (%s); every other reseller row disabled + worst-case tier',
+                                 case when bool_or(activated)
+                                      then format('owner-acknowledged Kie selector, recorded activation, processor disclosure %s', max(disclosure))
+                                      when max(draining) > 0
+                                      then format('%s admitted Kie job(s) draining', max(draining))
+                                           || case when max(test_grants) > 0
+                                                   then format(', %s owner quality-test grant(s) can still create', max(test_grants))
+                                                   else '' end
+                                      else format('owner-test window: %s owner quality-test grant(s) can still create', max(test_grants)) end)
+                     else 'all reseller rows disabled + worst-case tier' end)
+from (
+  select r.task, r.provider, r.model, r.enabled, r.privacy_tier, r.params, g.activated, g.disclosure, g.draining, g.test_grants,
+         coalesce(r.privacy_tier = 'trains_by_default'
+                  and (not r.enabled
+                       or (r.id = '7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21'::uuid
+                           and r.task = 'video.property_reel_clip_kie' and r.provider = 'kie'
+                           and r.model = 'kling-3.0/video'
+                           and r.params = '{"kie_mode":"4K","sound":false}'::jsonb
+                           and (g.activated
+                                or (g.draining > 0 and not g.selects_kie)
+                                or (g.test_grants > 0 and not g.selects_kie)))), false) as allowed
+    from ai_routes r,
+         (select k.acknowledged, k.selects_kie, k.acknowledged and k.disclosure is not null as activated, k.disclosure, k.draining, k.test_grants
+            from (select exists (select 1 from app_config
+                                  where key = 'property_video_quality'
+                                    and value = '{"enabled":true,"profile":"kie-kling3-4k-steady-v1","vendor_content_license":"kie-terms-2025-08-01-section-3-owner-accepted"}'::jsonb)
+                           as acknowledged,
+                         -- What property_video_quality_profile() itself accepts as Kie
+                         -- (extra keys allowed): the drain and the owner-test window
+                         -- count only while the selector does not select Kie.
+                         exists (select 1 from app_config
+                                  where key = 'property_video_quality'
+                                    and value->'enabled' = 'true'::jsonb
+                                    and value->>'profile' = 'kie-kling3-4k-steady-v1'
+                                    and value->'vendor_content_license' = '"kie-terms-2025-08-01-section-3-owner-accepted"'::jsonb)
+                           as selects_kie,
+                         (select value->>'processor_disclosure' from app_config
+                           where key = 'property_video_quality_kie_activation'
+                             and jsonb_typeof(value) = 'object'
+                             and value->'profile' = '"kie-kling3-4k-steady-v1"'::jsonb
+                             and value->'route_id' = '"7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21"'::jsonb
+                             and value->'vendor_content_license' = '"kie-terms-2025-08-01-section-3-owner-accepted"'::jsonb
+                             and jsonb_typeof(value->'processor_disclosure') = 'string'
+                             and value->>'processor_disclosure' ~ '^[!-~]{1,200}$'
+                             and jsonb_typeof(value->'activated_at') = 'string'
+                             and value->'rolled_back_at' = 'null'::jsonb) as disclosure,
+                         (select count(*) from property_video_jobs
+                           where quality_profile = 'kie-kling3-4k-steady-v1'
+                             and state in ('queued','generating','quality_review','composing','failed')
+                             and cancelled_at is null and deadline > now()) as draining,
+                         -- Owner-only quality-test grants that can still create.
+                         (select count(*) from property_video_kie_test_grants
+                           where revoked_at is null and expires_at > now() and creates_used < max_creates) as test_grants) k) g
+   where r.provider in ('kie','higgsfield')
+) s;
 
 -- The resell relationship is RECORDED, not implied: a failover between two
 -- steps sharing a family key buys a different queue, not a different model.
+-- One exact exception: pinned row 7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21 is the
+-- owner-chosen Kie primary for NEW property jobs (kie-kling3-4k-steady-v1). Its
+-- dedicated task video.property_reel_clip_kie has no FAL failover by design, so
+-- its FAL twin is the same-family row of the historical FAL property task
+-- video.property_reel_clip; the family is still recorded. Every other reseller
+-- row keeps the same-task rule.
 insert into _inv(name, pass, note)
 select 'every reseller step shares same_model_as with a fal step in the same task',
        count(*) filter (where twin = 0) = 0 and count(*) >= 4,
@@ -1323,8 +1453,11 @@ select 'every reseller step shares same_model_as with a fal step in the same tas
 from (
   select r.task, r.provider, r.model,
          (select count(*) from ai_routes f
-           where f.task = r.task and f.provider = 'fal'
-             and f.same_model_as = r.same_model_as) as twin
+           where f.provider = 'fal' and f.same_model_as = r.same_model_as
+             and (f.task = r.task
+                  or (r.id = '7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21'::uuid
+                      and r.task = 'video.property_reel_clip_kie'
+                      and f.task = 'video.property_reel_clip'))) as twin
     from ai_routes r
    where r.provider in ('kie','higgsfield') and r.same_model_as is not null
 ) s;
@@ -1353,12 +1486,16 @@ where table_schema = 'public' and table_name = 'ai_routes'
 -- NULL means "whatever the adapter does by default", which is what makes 0030
 -- additive — so it must stay legal. 0030 seeds two Astra writing routes and
 -- 0034 adds the agent-reel writing route. The two bounded Studio text tasks
--- added by 20260924235553 also carry params. Require all five exact seats:
--- arbitrary replacements, duplicate tasks or larger Studio budgets cannot pass.
+-- added by 20260924235553 also carry params. The two isolated Pro photo seats
+-- added by 20261015074002 require their exact 4K image knob. The pinned Kie
+-- property seat added by 20261016100000 carries exactly its frozen-identity
+-- knobs (kie_mode 4K, sound false), which property-video-quality.ts requires
+-- key-for-key before any generation. Require all eight: arbitrary
+-- replacements, duplicate tasks or larger Studio budgets cannot pass.
 -- This inventory change does not alter the three Astra paid-plan/headroom rules.
 insert into _inv(name, pass, note)
-select 'only the three explicit Astra and two bounded Studio text seats carry params',
-       count(*) filter (where params is not null) = 5
+select 'only the three explicit Astra, two bounded Studio text, two isolated Pro photo and the pinned Kie property seats carry params',
+       count(*) filter (where params is not null) = 8
    and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
                         and position = 1 and task = 'copy.shotlist') = 1
    and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
@@ -1380,7 +1517,19 @@ select 'only the three explicit Astra and two bounded Studio text seats carry pa
                         and enabled and retire_after is null
                         and capabilities @> array['text','compliant']
                         and capabilities <@ array['text','compliant']
-                        and params = '{"effort":"low","max_output_tokens":1600}'::jsonb) = 1,
+                        and params = '{"effort":"low","max_output_tokens":1600}'::jsonb) = 1
+   and count(*) filter (where id = 'c43f188c-faf0-46c8-a646-ea71b8481201'::uuid
+                        and task = 'photo.quality_stage' and position = 1
+                        and provider = 'gemini' and model = 'gemini-3-pro-image'
+                        and params = '{"image_size":"4K"}'::jsonb) = 1
+   and count(*) filter (where id = 'c43f188c-faf0-46c8-a646-ea71b8481202'::uuid
+                        and task = 'photo.quality_declutter' and position = 1
+                        and provider = 'gemini' and model = 'gemini-3-pro-image'
+                        and params = '{"image_size":"4K"}'::jsonb) = 1
+   and count(*) filter (where id = '7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21'::uuid
+                        and task = 'video.property_reel_clip_kie' and position = 1
+                        and provider = 'kie' and model = 'kling-3.0/video'
+                        and params = '{"kie_mode":"4K","sound":false}'::jsonb) = 1,
        format('%s row(s) with params: %s', count(*) filter (where params is not null),
               coalesce(string_agg(format('%s/%s', task, model), ', ')
                        filter (where params is not null), 'none'))
@@ -1405,13 +1554,25 @@ where params is not null and jsonb_typeof(params) <> 'object';
 -- Every key an adapter will ACT on. A key outside this set is not an error —
 -- _shared/providers/params.ts treats it as absent, deliberately, so a future
 -- knob can be seeded before the deploy that reads it — but a row full of keys
--- nothing reads is almost always a typo, and it is worth seeing here.
+-- nothing reads is almost always a typo, and it is worth seeing here. The
+-- image-size exception is limited to the two exact isolated Pro route rows;
+-- it is not a general permission to add image_size to another route. Likewise
+-- kie_mode/sound are recognised only on the exact pinned Kie property row with
+-- exactly its frozen-identity params (property-video-quality.ts reads both
+-- keys and refuses on any difference); no other route may carry them.
 insert into _inv(name, pass, note)
 select 'every seeded params key is one an adapter actually reads',
        count(*) = 0,
        coalesce(string_agg(format('%s/%s has %s', task, model, k), '; '), 'all keys recognised')
 from ai_routes r, lateral jsonb_object_keys(r.params) k
-where r.params is not null and k not in ('effort', 'max_output_tokens');
+where r.params is not null and k not in ('effort', 'max_output_tokens')
+  and not (k = 'image_size' and r.provider = 'gemini' and r.model = 'gemini-3-pro-image'
+           and r.params = '{"image_size":"4K"}'::jsonb
+           and ((r.id = 'c43f188c-faf0-46c8-a646-ea71b8481201'::uuid and r.task = 'photo.quality_stage')
+             or (r.id = 'c43f188c-faf0-46c8-a646-ea71b8481202'::uuid and r.task = 'photo.quality_declutter')))
+  and not (k in ('kie_mode', 'sound') and r.id = '7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21'::uuid
+           and r.task = 'video.property_reel_clip_kie' and r.provider = 'kie' and r.model = 'kling-3.0/video'
+           and r.params = '{"kie_mode":"4K","sound":false}'::jsonb);
 
 -- 0030: and it is gated to PAYING plans. min_plan is the only working plan
 -- lever — router.ts's defaultPolicyFor() is dead code, so the cheapest-policy
@@ -1448,10 +1609,10 @@ where model = 'gpt-6-astra' and params ->> 'effort' = 'none';
 -- The ceiling has to clear the VISIBLE answer the caller asks for, because a
 -- reasoning model spends reasoning tokens out of the same budget: ai-copy asks
 -- for 1,600 tokens of shot list (MAX_SHOTLIST_TOKENS) and 700 of script
--- (MAX_TOKENS), and 700 for agent-reel (MAX_AGENT_REEL_TOKENS). The 0034
--- agent-reel seed currently violates this headroom rule (700 == 700). Keep that
--- failure visible; updating stale route counts is not permission to enlarge
--- a provider budget or weaken > to >=. It must also stay under the code clamp.
+-- (MAX_TOKENS), and 500 for agent-reel (MAX_AGENT_REEL_TOKENS). Agent-reel
+-- enforces its complete compact JSON <=500 UTF-8 bytes before parsing; aliases
+-- and a shared optional-caption budget preserve twelve windows. The seeded
+-- combined cap remains 700. Never enlarge it or weaken > to >= to pass this.
 insert into _inv(name, pass, note)
 select 'each astra ceiling clears its route''s visible answer and stays under the code clamp',
        coalesce(bool_and(ceiling > visible and ceiling <= 8000), false),
@@ -1459,7 +1620,7 @@ select 'each astra ceiling clears its route''s visible answer and stays under th
 from (
   select task,
          (params ->> 'max_output_tokens')::int as ceiling,
-         case task when 'copy.shotlist' then 1600 else 700 end as visible
+         case task when 'copy.shotlist' then 1600 when 'copy.agent_reel' then 500 else 700 end as visible
     from ai_routes
    where model = 'gpt-6-astra' and params ? 'max_output_tokens'
 ) s;
@@ -1631,8 +1792,9 @@ begin
 
   -- (e) WHO MAY SEE THE OUTAGE MAP. Same shape as 0017's rate_limits check: a
   -- non-admin gets ZERO ROWS (not an error), an admin sees everything.
-  insert into auth.users (id, email, raw_user_meta_data)
-    values (uAdm, 'aaron@pilk.ai', '{"full_name":"Owner"}');
+  -- This positive fixture represents the verified allowlisted owner.
+  insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
+    values (uAdm, 'aaron@pilk.ai', now(), '{"full_name":"Owner"}');
   insert into auth.users (id, email, raw_user_meta_data)
     values (uTen, '_inv-router-tenant@example.com', '{"full_name":"Tenant"}');
 
@@ -1754,6 +1916,7 @@ do $ap$
 declare
   oA uuid; oB uuid; oM uuid; oX uuid;
   r jsonb; msg text; ok boolean;
+  previous_role text := current_setting('role',true);
 begin
   insert into orgs (name, plan, plan_source) values ('_inv apple A','trial','trial') returning id into oA;
   insert into orgs (name, plan, plan_source) values ('_inv apple B','trial','trial') returning id into oB;
@@ -1765,14 +1928,14 @@ begin
   -- S1 FINDING 1: one subscription must not entitle two workspaces. Before
   -- 0021 the second call re-pointed the row and set the second org's plan while
   -- the first kept its own — one purchase, two paid workspaces.
-  r := apply_apple_entitlement(oA, null, '_inv-OT-1', 'T1',
+  r := apply_apple_entitlement_v2(oA, null, '_inv-OT-1', 'T1',
         'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active',
-        now() + interval '30 days', true, null);
+        now() + interval '30 days', true, null, now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   ok := false;
   begin
-    r := apply_apple_entitlement(oB, null, '_inv-OT-1', 'T1',
+    r := apply_apple_entitlement_v2(oB, null, '_inv-OT-1', 'T1',
           'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active',
-          now() + interval '30 days', true, null);
+          now() + interval '30 days', true, null, now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   exception when others then msg := SQLERRM; ok := msg like 'RP409:%';
   end;
   insert into _inv(name, pass, note)
@@ -1784,41 +1947,41 @@ begin
   -- S1 FINDING 2: a crossgrade inside the group shortens the expiry. Treating
   -- that as stale froze the plan AND the expiry, which then made every later
   -- signal stale too — including the EXPIRED, so the plan never lapsed.
-  r := apply_apple_entitlement(oX, null, '_inv-OT-2', 'T1',
+  r := apply_apple_entitlement_v2(oX, null, '_inv-OT-2', 'T1',
         'com.rendprop.app.pro.annual', 'pro', 'Production', 'active',
-        now() + interval '365 days', true, 'SUBSCRIBED');
-  r := apply_apple_entitlement(oX, null, '_inv-OT-2', 'T2',
+        now() + interval '365 days', true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+  r := apply_apple_entitlement_v2(oX, null, '_inv-OT-2', 'T2',
         'com.rendprop.app.team.monthly', 'team', 'Production', 'active',
-        now() + interval '30 days', true, 'DID_CHANGE_RENEWAL_PREF');
+        now() + interval '30 days', true, 'DID_CHANGE_RENEWAL_PREF', now()+interval '-900 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds');
   insert into _inv(name, pass, note)
     select 'an upgrade to a shorter-dated product moves the plan',
            plan = 'team' and plan_expires_at < now() + interval '60 days',
            plan || ' until ' || coalesce(plan_expires_at::text, 'null')
       from orgs where id = oX;
-  r := apply_apple_entitlement(oX, null, '_inv-OT-2', 'T3',
+  r := apply_apple_entitlement_v2(oX, null, '_inv-OT-2', 'T2',
         'com.rendprop.app.team.monthly', 'team', 'Production', 'expired',
-        now() + interval '30 days', false, 'EXPIRED');
+        now() + interval '30 days', false, 'EXPIRED', now()+interval '-900 seconds', now()+interval '-790 seconds', now()+interval '-790 seconds', now()+interval '-790 seconds');
   insert into _inv(name, pass, note)
     select 'and the eventual lapse still downgrades it to free',
            plan = 'free' and effective_plan(id) = 'free', plan from orgs where id = oX;
 
   -- …and the guard that DID hold oA back is itself worth asserting: an org with
   -- a second live subscription is not dropped to free by an old one expiring.
-  r := apply_apple_entitlement(oA, null, '_inv-OT-1b', 'T9',
+  r := apply_apple_entitlement_v2(oA, null, '_inv-OT-1b', 'T9',
         'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired',
-        now() - interval '1 day', false, 'EXPIRED');
+        now() - interval '1 day', false, 'EXPIRED', now()+interval '-2000 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds');
   insert into _inv(name, pass, note)
     values ('a lapse does not downgrade an org that still has a live subscription',
             r->>'reason' = 'another_subscription_active', r::text);
 
   -- The behaviour the stale guard exists for is unchanged: a late signal about
   -- the SAME product with an older expiry is news we already have.
-  r := apply_apple_entitlement(oB, null, '_inv-OT-3', 'T1',
+  r := apply_apple_entitlement_v2(oB, null, '_inv-OT-3', 'T1',
         'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active',
-        now() + interval '30 days', true, 'DID_RENEW');
-  r := apply_apple_entitlement(oB, null, '_inv-OT-3', 'T0',
+        now() + interval '30 days', true, 'DID_RENEW', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+  r := apply_apple_entitlement_v2(oB, null, '_inv-OT-3', 'T0',
         'com.rendprop.app.pro.monthly', 'pro', 'Production', 'expired',
-        now() - interval '1 day', false, 'EXPIRED');
+        now() - interval '1 day', false, 'EXPIRED', now()+interval '-2000 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds');
   insert into _inv(name, pass, note)
     values ('an out-of-order EXPIRED for the same product is still stale',
             r->>'reason' = 'stale_notification', r::text);
@@ -1826,28 +1989,36 @@ begin
     select 'and it does not take the plan away', plan = 'pro', plan from orgs where id = oB;
 
   -- S1 FINDING 3: Sandbox and Production may never overwrite each other.
-  r := apply_apple_entitlement(oB, null, '_inv-OT-4', 'T1',
+  r := apply_apple_entitlement_v2(oB, null, '_inv-OT-4', 'T1',
         'com.rendprop.app.team.annual', 'team', 'Production', 'active',
-        now() + interval '365 days', true, 'SUBSCRIBED');
-  r := apply_apple_entitlement(oB, null, '_inv-OT-4', 'T2',
-        'com.rendprop.app.team.annual', 'team', 'Sandbox', 'active',
-        now() + interval '400 days', true, null);
+        now() + interval '365 days', true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+  ok := false;
+  begin
+    -- Exercise the actual service writer. A denial caused only by this
+    -- auditor's postgres role would never reach the Sandbox authority fence.
+    perform set_config('role','service_role',true);
+    r := apply_apple_entitlement_v2(oB, null, '_inv-OT-4', 'T2',
+          'com.rendprop.app.team.annual', 'team', 'Sandbox', 'active',
+          now() + interval '400 days', true, null, now()+interval '-900 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds');
+  exception when others then msg := SQLERRM; ok := msg like 'RP403:%';
+  end;
+  perform set_config('role',previous_role,true);
   insert into _inv(name, pass, note)
     values ('a Sandbox write cannot move a Production subscription',
-            r->>'reason' = 'environment_mismatch', r::text);
+            ok, coalesce(msg,'NO ERROR RAISED'));
   insert into _inv(name, pass, note)
     select 'and the stored environment is untouched', environment = 'Production', environment
       from apple_subscriptions where original_transaction_id = '_inv-OT-4';
 
   -- 0019 RULE 2: an owner-granted plan is Apple-proof in both directions.
-  r := apply_apple_entitlement(oM, null, '_inv-OT-5', 'T1',
+  r := apply_apple_entitlement_v2(oM, null, '_inv-OT-5', 'T1',
         'com.rendprop.app.team.monthly', 'team', 'Production', 'active',
-        now() + interval '30 days', true, 'SUBSCRIBED');
+        now() + interval '30 days', true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   insert into _inv(name, pass, note)
     values ('Apple cannot RAISE a manual plan', r->>'reason' = 'manual_plan', r::text);
-  r := apply_apple_entitlement(oM, null, '_inv-OT-5', 'T2',
+  r := apply_apple_entitlement_v2(oM, null, '_inv-OT-5', 'T1',
         'com.rendprop.app.team.monthly', 'team', 'Production', 'expired',
-        now() + interval '31 days', false, 'EXPIRED');
+        now() + interval '31 days', false, 'EXPIRED', now()+interval '-1000 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds');
   insert into _inv(name, pass, note)
     select 'and Apple cannot LOWER one either', plan = 'pro' and plan_source = 'manual',
            plan || '/' || plan_source from orgs where id = oM;
@@ -1905,7 +2076,7 @@ end $ap$;
 -- after the kept-red astra ceiling assertion so that one keeps its number.
 
 insert into _inv(name, pass, note)
-select 'plan_entitlement_overrides holds exactly the five single-location trial rows (1/60/4/1/1, 1000¢)',
+select 'plan_entitlement_overrides holds exactly the five single-location trial rows (1/20/20/1/1, 1500¢)',
        (select count(*) from plan_entitlement_overrides) = 5 and coalesce(bool_and(ok), false),
        format('%s row(s) total; wrong or missing: %s',
               (select count(*) from plan_entitlement_overrides),
@@ -1915,7 +2086,7 @@ from (
          ((o.plan, o.renders_per_month, o.photo_edits_per_month, o.reels_per_month,
            o.aerials_per_month, o.topaz_per_month, o.seats, o.cogs_ceiling_cents)
            is not distinct from
-          ('trial', 1, 60, 4, 1, 1, null::integer, 1000)) as ok
+          ('trial', 1, 20,20, 1, 1, null::integer, 1500)) as ok
     from unnest(array['venue','restaurant','retail','fitness','other']) as x(space_type)
     left join plan_entitlement_overrides o on o.plan = 'trial' and o.space_type = x.space_type
 ) s;
@@ -1957,10 +2128,10 @@ where contype = 'c'
 -- Same shape as effective_plan() (0010 §3 / 0019 §5): invoker, pinned path,
 -- callable by authenticated and the service role, never by anon.
 insert into _inv(name, pass, note)
-select 'org_entitlement(uuid) mirrors effective_plan(): invoker, search_path pinned, authenticated + service_role only',
+select 'org_entitlement(uuid) resolves trusted library billing with pinned path and unchanged client ACL',
        count(*) = 1
-       and bool_and(not prosecdef
-                and 'search_path=public' = any(coalesce(proconfig, array[]::text[]))
+       and bool_and(prosecdef and prosrc like '%library_billing_org(p_org)%'
+                and 'search_path=""' = any(coalesce(proconfig,array[]::text[]))
                 and provolatile = 's'
                 and has_function_privilege('authenticated', oid, 'EXECUTE')
                 and has_function_privilege('service_role', oid, 'EXECUTE')
@@ -1974,9 +2145,9 @@ where pronamespace = 'public'::regnamespace and proname = 'org_entitlement';
 insert into _inv(name, pass, note)
 select 'create_render_job and log_job_cost read org_entitlement(); the plan-only helpers ignore the override table',
        (select count(*) from pg_proc where proname = 'create_render_job'
-         and prosrc like '%from public.org_entitlement(v_org)%' and prosrc not like '%plan_render_cap(%') = 1
+         and prosrc like '%from public.org_entitlement(v_billing)%' and prosrc like '%library_billing_org(public.listing_owner_library(p_listing))%' and prosrc not like '%plan_render_cap(%') = 1
        and (select count(*) from pg_proc where proname = 'log_job_cost'
-             and prosrc like '%from public.org_entitlement(v_org)%' and prosrc not like '%plan_entitlement(v_plan)%') = 1
+             and prosrc like '%from public.org_entitlement(v_billing)%' and prosrc like '%j.billing_org_id%' and prosrc not like '%plan_entitlement(v_plan)%') = 1
        and (select count(*) from pg_proc
              where pronamespace = 'public'::regnamespace
                and proname in ('plan_entitlement', 'plan_render_cap', 'org_seats_allowed', 'effective_plan')
@@ -2008,18 +2179,18 @@ begin
 
   e := org_entitlement(oRE);
   insert into _inv(name, pass, note)
-    values ('org_entitlement on a real-estate trial org is the 0032 base row (3/60/4/2/1, 1 seat, 1200¢)',
+    values ('org_entitlement on a real-estate trial org is the current base row (3/20/20/2/1, 1 seat, 1500¢)',
             (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
              e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
-              is not distinct from ('trial', 3, 60, 4, 2, 1, 1, 1200, 0),
+              is not distinct from ('trial', 3, 20,20, 2, 1, 1, 1500, 0),
             e::text);
 
   e := org_entitlement(oFit);
   insert into _inv(name, pass, note)
-    values ('org_entitlement on a fitness trial org is the single-location free week (1/60/4/1/1, 1 seat, 1000¢)',
+    values ('org_entitlement on a fitness trial org is the single-location free week (1/20/20/1/1, 1 seat, 1500¢)',
             (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
              e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
-              is not distinct from ('trial', 1, 60, 4, 1, 1, 1, 1000, 0),
+              is not distinct from ('trial', 1, 20,20, 1, 1, 1, 1500, 0),
             e::text);
 
   -- Only the trial is industry-aware: an expired single-location trial is
@@ -2038,7 +2209,7 @@ begin
     values ('a paid single-location org reads the plain paid row (paid plans are not industry-aware)',
             (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
              e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
-              is not distinct from ('pro', 10, 200, 12, 4, 0, 1, 2400, 9900),
+              is not distinct from ('pro', 10, 200,60, 4, 0, 1, 4157, 9900),
             e::text);
 
   -- (b) the column is a real enum now.
@@ -2057,7 +2228,9 @@ begin
   insert into auth.users (id, email, raw_user_meta_data)
     values (u4, 'inv-fixture4@example.com', '{"full_name":"Gym Fixture"}');
   select m.org_id into v_org from memberships m where m.user_id = u4;
-  update orgs set space_type = 'fitness' where id = v_org;
+  -- This tests a grandfathered industry trial, not a new signup grant.
+  update orgs set space_type = 'fitness', plan='trial', plan_source='trial', trial_ends_at=now()+interval '7 days' where id = v_org;
+  perform pg_temp.inv_hosting_authority(v_org,u4);
   perform set_config('request.jwt.claims', json_build_object('sub', u4, 'role', 'authenticated')::text, true);
 
   insert into listings (org_id, agent_id, address) values (v_org, u4, '1 Gym Way') returning id into v_listing;
@@ -2081,21 +2254,21 @@ begin
   insert into _inv(name, pass, note)
     values ('an app publish is still free on a single-location trial at its render cap', v_job.source = 'app', '');
 
-  -- The spend ceiling is the override's 1000¢, not the base trial's 1200¢: a
-  -- 1001¢ line (fine under 1200¢) is refused, a 999¢ line lands.
+  -- The current1500c trial ceiling is shared across industry/base rows:
+  -- a1501c line is refused without writing, then a1499c line lands.
   select rj.* into v_job from render_jobs rj where rj.idem_key = '_inv-fit-000001';
   ok := false; msg := null;
   begin
-    perform log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 1001, '{"_inv":"industry"}'::jsonb, 5000);
-  exception when others then msg := sqlerrm; ok := msg like 'RP402: monthly AI spend ceiling reached for the trial plan (0¢ of 1000¢)%';
+    perform log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 1501, '{"_inv":"industry"}'::jsonb, 5000);
+  exception when others then msg := sqlerrm; ok := msg like 'RP402: monthly AI spend ceiling reached for the trial plan (0¢ of 1500¢)%';
   end;
   insert into _inv(name, pass, note)
-    values ('log_job_cost enforces the single-location trial ceiling (1000¢, not the base 1200¢)',
+    values ('log_job_cost enforces the current single-location trial ceiling (1500¢)',
             ok, coalesce(msg, 'NO ERROR RAISED'));
-  v_cost := log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 999, '{"_inv":"industry"}'::jsonb, 5000);
+  v_cost := log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 1499, '{"_inv":"industry"}'::jsonb, 5000);
   select count(*) into n from cost_ledger where meta->>'_inv' = 'industry';
   insert into _inv(name, pass, note)
-    values ('and a line inside that ceiling is recorded', v_cost = 999 and n = 1, format('total=%s rows=%s', v_cost, n));
+    values ('and a line inside that ceiling is recorded', v_cost = 1499 and n = 1, format('total=%s rows=%s', v_cost, n));
 
   -- Cleanup (children cascade from listings/orgs; profiles cascade from
   -- auth.users; cost_ledger only SET NULLs on org/job deletion).
@@ -2140,11 +2313,37 @@ where proname in ('publish_render', 'publish_worker_render')
   and prosrc like '%first_tour_published_at%';
 
 insert into _inv(name, pass, note)
-select 'apply_apple_entitlement records the cancellation and clears it on a win-back',
+select 'the private Apple snapshot writer records cancellation and clears it on a win-back',
        count(*) = 1, ''
 from pg_proc
-where proname = 'apply_apple_entitlement'
+where pronamespace = 'public'::regnamespace
+  and proname = '_apply_apple_entitlement_snapshot'
   and prosrc like '%cancelled_at%' and prosrc like '%cancel_reason%';
+
+insert into _inv(name, pass, note)
+select 'both Apple entry points delegate to the private cancellation writer',
+       count(*) = 2, coalesce(string_agg(proname, ', '), '(missing)')
+from pg_proc
+where pronamespace = 'public'::regnamespace
+  and proname in ('apply_apple_entitlement','apply_apple_entitlement_v2')
+  and prosrc like '%public._apply_apple_entitlement_snapshot(%';
+
+insert into _inv(name, pass, note)
+select 'the private Apple snapshot writer cannot bypass chronology through any client role',
+       count(*) = 1 and coalesce(bool_and(
+         not has_function_privilege('anon',oid,'execute')
+         and not has_function_privilege('authenticated',oid,'execute')
+         and not has_function_privilege('service_role',oid,'execute')),false), ''
+from pg_proc
+where pronamespace = 'public'::regnamespace and proname = '_apply_apple_entitlement_snapshot';
+
+insert into _inv(name, pass, note)
+select 'Apple signed chronology columns exist while historical chronology can remain unknown',
+       count(*) = 4 and coalesce(bool_and(data_type='timestamp with time zone' and is_nullable='YES'),false),
+       coalesce(string_agg(column_name, ', '), '(missing)')
+from information_schema.columns
+where table_schema='public' and table_name='apple_subscriptions'
+  and column_name in ('transaction_purchased_at','transaction_signed_at','entitlement_signed_at','renewal_signed_at');
 
 insert into _inv(name, pass, note)
 select 'admin_cohorts / admin_churn / org_is_real are service_role-only definers',
@@ -2209,6 +2408,7 @@ begin
   select m.org_id into oA      from memberships m where m.user_id = u5;
   select m.org_id into oB      from memberships m where m.user_id = u6;
   select m.org_id into oOrphan from memberships m where m.user_id = u7;
+  perform pg_temp.inv_hosting_authority(oA,u5);
 
   -- (a) a REAL publish stamps the activation fact, and a second one cannot move it.
   perform set_config('request.jwt.claims', json_build_object('sub', u5, 'role', 'authenticated')::text, true);
@@ -2252,17 +2452,17 @@ begin
             format('A=%s B=%s upload-only=%s', org_is_real(oA), org_is_real(oB), org_is_real(oUP)));
 
   -- (c) the cancellation fact. oA buys and keeps paying; oB buys and lapses.
-  r := apply_apple_entitlement(oA, null, '_inv-CO-1', 'T1',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
-  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T1',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
+  r := apply_apple_entitlement_v2(oA, null, '_inv-CO-1', 'T1',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+  r := apply_apple_entitlement_v2(oB, null, '_inv-CO-2', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
   insert into _inv(name, pass, note)
     values ('an active subscription carries no cancelled_at', s.cancelled_at is null, coalesce(s.cancelled_at::text, '<null>'));
 
   -- Same expiry, so this is a genuine second delivery and not the stale arm.
-  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T2',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'EXPIRED');
+  r := apply_apple_entitlement_v2(oB, null, '_inv-CO-2', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'EXPIRED', now()+interval '-1000 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
   v_cancel := s.cancelled_at;
   insert into _inv(name, pass, note)
@@ -2273,8 +2473,8 @@ begin
   -- The REASON is the discriminator here, not the clock: now() is transaction
   -- time, so a re-stamp inside this fixture would keep the same timestamp but
   -- would carry GRACE_PERIOD_EXPIRED instead of the EXPIRED that got there first.
-  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T3',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'GRACE_PERIOD_EXPIRED');
+  r := apply_apple_entitlement_v2(oB, null, '_inv-CO-2', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'GRACE_PERIOD_EXPIRED', now()+interval '-1000 seconds', now()+interval '-970 seconds', now()+interval '-970 seconds', now()+interval '-970 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
   insert into _inv(name, pass, note)
     values ('a later terminal signal does NOT move cancelled_at',
@@ -2285,9 +2485,9 @@ begin
   -- retention effort needs before the subscription actually ends.
   insert into orgs (name, plan, plan_source) values ('_inv cohort renew-off', 'trial', 'trial')
     returning id into oRN;
-  r := apply_apple_entitlement(oRN, null, '_inv-CO-4', 'T1',
+  r := apply_apple_entitlement_v2(oRN, null, '_inv-CO-4', 'T1',
         'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, false,
-        'DID_CHANGE_RENEWAL_STATUS');
+        'DID_CHANGE_RENEWAL_STATUS', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-4';
   insert into _inv(name, pass, note)
     values ('auto_renew turned off is a cancellation even while the status is still active',
@@ -2296,18 +2496,18 @@ begin
             format('%s / %s / %s', s.status, coalesce(s.cancelled_at::text, '<null>'),
                    coalesce(s.cancel_reason, '<null>')));
   -- A second subscription in billing grace, for admin_churn's in_grace count.
-  r := apply_apple_entitlement(oRN, null, '_inv-CO-5', 'T1',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'grace', v_exp, true, 'DID_FAIL_TO_RENEW');
+  r := apply_apple_entitlement_v2(oRN, null, '_inv-CO-5', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'grace', v_exp, true, 'DID_FAIL_TO_RENEW', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
 
   -- A win-back clears both columns, so they always describe the CURRENT state.
-  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T1',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
-  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T2',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'expired', v_exp, false, 'EXPIRED');
+  r := apply_apple_entitlement_v2(oA, null, '_inv-CO-3', 'T1',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+  r := apply_apple_entitlement_v2(oA, null, '_inv-CO-3', 'T1',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'expired', v_exp, false, 'EXPIRED', now()+interval '-1000 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-3';
   ok := s.cancelled_at is not null;
-  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T3',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp + interval '30 days', true, 'DID_RENEW');
+  r := apply_apple_entitlement_v2(oA, null, '_inv-CO-3', 'T3',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp + interval '30 days', true, 'DID_RENEW', now()+interval '-900 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-3';
   insert into _inv(name, pass, note)
     values ('a win-back clears cancelled_at and cancel_reason',
@@ -2419,7 +2619,7 @@ declare
   uSeat uuid := '0f1e2d3c-4b5a-4968-8776-655443322125';
   uJoin uuid := '0f1e2d3c-4b5a-4968-8776-655443322126';
   uLose uuid := '0f1e2d3c-4b5a-4968-8776-655443322127';
-  oBrk uuid; oOut uuid; oSeat uuid; oAdmOwn uuid;
+  oBrk uuid; oOut uuid; oSeat uuid; oAdmOwn uuid; oAgOwn uuid; v_accepted_invite uuid;
   v_listing uuid; v_asset uuid; v_prov uuid;
   v_job render_jobs; v_render renders;
   r jsonb; m jsonb; row_json jsonb;
@@ -2445,9 +2645,20 @@ begin
   select org_id into oAdmOwn from memberships where user_id = uAdm;
   select org_id into oOut    from memberships where user_id = uOut;
   select org_id into oSeat   from memberships where user_id = uSeat;
-  update orgs set plan = 'team', plan_source = 'apple' where id in (oBrk, oOut, oSeat);
+  -- Brokerage metadata/seat behavior uses explicit manual authority; this
+  -- fixture does not claim that a raw Apple plan has verified funding.
+  update orgs set plan = 'team', plan_source = 'manual' where id in (oBrk, oOut, oSeat);
 
   insert into memberships (user_id, org_id, role) values (uAdm, oBrk, 'admin'), (uAg, oBrk, 'agent');
+  -- This is retained historical Team content, not a generic shared-library
+  -- grant. Explicit accepted owner invitation plus the agent's sole original
+  -- private library is the current authority for both agent and Team owner.
+  -- The deliberate three-person read fixture above still proves seat events;
+  -- no production seats/allowances are enlarged or silently granted.
+  insert into org_invites(org_id,role,token_hash,invited_by,accepted_by,accepted_at)
+   values(oBrk,'agent',encode(sha256(convert_to('_inv-brk-accepted-agent','UTF8')),'hex'),uOwn,uAg,now())returning id into v_accepted_invite;
+  oAgOwn:=bind_team_private_library(uOwn,oBrk,uAg,v_accepted_invite);
+
 
   -- ── (a) the ledger caught every seat the trigger could see ────────────────
   select count(*) into n from org_seat_events
@@ -2510,11 +2721,12 @@ begin
             format('seats=%s totals=%s', r->'seats', r->'totals'));
 
   -- ── (c) the org-wide compliance record ────────────────────────────────────
-  r := compliance_audit(oBrk, uAdm, now() - interval '1 day', now() + interval '1 day');
+  r := compliance_audit(oAgOwn, uOwn, now() - interval '1 day', now() + interval '1 day');
+  ok:=false;begin perform compliance_audit(oAgOwn,uAdm,null,null);exception when others then ok:=sqlerrm like 'RP403%';end;
   select x into row_json from jsonb_array_elements(r->'rows') x where x->>'id' = v_prov::text;
   insert into _inv(name, pass, note)
-    values ('compliance_audit hands an ADMIN another member''s AI asset with the agent named and the disclosure',
-            row_json is not null
+    values ('compliance_audit gives only the actual Team owner a linked agent''s asset, name and disclosure',
+            ok and row_json is not null
               and row_json->>'agent_id' = uAg::text
               and row_json->>'agent_name' = 'Gus Agent'
               and row_json->>'altered_key' = 'renders/_inv/brk-altered.jpg'
@@ -2591,7 +2803,9 @@ begin
   select count(*) into n from memberships where org_id = oSeat and user_id = uJoin;
   insert into _inv(name, pass, note)
     values ('a code minted by create_org_invites_bulk is accepted verbatim by accept_org_invite',
-            (r->>'ok')::boolean and r->>'org_id' = oSeat::text and r->>'role' = 'agent' and n = 1,
+            (r->>'ok')::boolean and r->>'team_org_id'=oSeat::text and r->>'role'='owner' and n=1
+              and(r->>'org_id')::uuid=agent_private_library(uJoin)
+              and library_team_owner((r->>'org_id')::uuid)=uSeat,
             r::text);
 
   -- Two people, one code, one seat: the serialised form of the F02 race 0033
@@ -2717,22 +2931,23 @@ begin
                                  where user_id in (uNO, uNA, uNM, uCL));
   delete from auth.users where id in (uNO, uNA, uNM, uCL);
 
-  insert into auth.users (id, email, raw_user_meta_data) values
-    (uNO, 'inv-notify-owner@example.com',     '{"full_name":"Ned Owner"}'),
-    (uNA, 'inv-notify-admin@example.com',     '{"full_name":"Ana Admin"}'),
-    (uNM, 'inv-notify-marketing@example.com', '{"full_name":"Mo Marketing"}');
+  insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+    (uNO, 'inv-notify-owner@example.com',     now(), '{"full_name":"Ned Owner"}'),
+    (uNA, 'inv-notify-admin@example.com',     now(), '{"full_name":"Ana Admin"}'),
+    (uNM, 'inv-notify-marketing@example.com', now(), '{"full_name":"Mo Marketing"}');
   select org_id into oNO from memberships where user_id = uNO;
+  perform pg_temp.inv_hosting_authority(oNO,uNO);
   insert into memberships (user_id, org_id, role) values (uNA, oNO, 'admin'), (uNM, oNO, 'marketing');
 
   -- ── (a) posture ───────────────────────────────────────────────────────────
-  -- The four tables hold push tokens, message queues and a delivery history
+  -- The five tables hold push tokens, session fences, queues and delivery history
   -- across every tenant. A single SELECT grant to `authenticated` would let one
   -- signed-in customer enumerate another's device tokens.
   insert into _inv(name, pass, note)
-    values ('the four notification tables are service-role only, with RLS on and no tenant grants',
+    values ('the five notification tables are service-role only, with RLS on and no tenant grants',
             not exists (select 1 from unnest(array[
                   'public.notification_devices','public.notification_preferences',
-                  'public.notification_outbox','public.notification_log']) t
+                  'public.notification_outbox','public.notification_log','public.notification_device_session_tombstones']) t
                  cross join unnest(array['SELECT','INSERT','UPDATE','DELETE']) p
                  where has_table_privilege('authenticated', t, p)
                     or has_table_privilege('anon', t, p))
@@ -2740,7 +2955,8 @@ begin
                     where c.oid in ('public.notification_devices'::regclass,
                                     'public.notification_preferences'::regclass,
                                     'public.notification_outbox'::regclass,
-                                    'public.notification_log'::regclass))
+                                    'public.notification_log'::regclass,
+                                    'public.notification_device_session_tombstones'::regclass))
               -- The drain reads devices and the queue with the service role;
               -- every WRITE still goes through an RPC.
               and has_table_privilege('service_role', 'public.notification_devices', 'SELECT')
@@ -2753,7 +2969,7 @@ begin
             -- Callable RPCs and trigger functions have different privilege models.
             -- Redaction is deliberately SECURITY INVOKER; it can only be fired
             -- through its terminal-state outbox trigger, never called as an RPC.
-            (select count(*)=11 and bool_and(p.prosecdef
+            (select count(*)=14 and bool_and(p.prosecdef
                     and not has_function_privilege('authenticated',p.oid,'EXECUTE')
                     and not has_function_privilege('anon',p.oid,'EXECUTE')
                     and has_function_privilege('service_role',p.oid,'EXECUTE'))
@@ -2800,12 +3016,12 @@ begin
   select count(*) into n from notification_outbox
    where category = 'lead_received' and dedupe_key like 'lead_received:' || v_lead::text || ':%';
   insert into _inv(name, pass, note)
-    values ('a lead insert queues exactly one message for the owner and the admin, and none for a marketing seat',
-            n = 2
+    values ('a lead insert queues once for its authorized owner and excludes unrelated admin/marketing seats',
+            n=1
               and exists (select 1 from notification_outbox o where o.user_id = uNO
                            and o.dedupe_key = 'lead_received:' || v_lead::text || ':' || uNO::text)
-              and exists (select 1 from notification_outbox o where o.user_id = uNA
-                           and o.dedupe_key = 'lead_received:' || v_lead::text || ':' || uNA::text)
+              and not exists(select 1 from notification_outbox o where o.user_id=uNA
+                           and o.dedupe_key='lead_received:'||v_lead::text||':'||uNA::text)
               and not exists (select 1 from notification_outbox o where o.user_id = uNM),
             format('%s rows; marketing rows=%s', n,
                    (select count(*) from notification_outbox o where o.user_id = uNM)));
@@ -2831,8 +3047,8 @@ begin
   select count(*) into n2 from notification_outbox
    where category = 'render_ready' and dedupe_key like 'render_ready:' || v_render.id::text || ':%';
   insert into _inv(name, pass, note)
-    values ('a publish queues render_ready for the owner and the admin, keyed so that render can never be announced twice',
-            n = 2 and n2 = 2,
+    values ('a publish queues render_ready only for its authorized owner with immutable per-render dedupe',
+            n=1 and n2=1,
             format('first render: %s rows, still %s after another publish', n, n2));
 
   -- ── (c) the dedupe key is the invariant, not a convention ────────────────
@@ -3027,13 +3243,13 @@ begin
   r := notification_tick();
   select count(*) into n from notification_outbox
    where category = 'free_week_ending' and org_id = oNO;
-  ok := (r->>'free_week_ending')::int >= 1;
+  ok := (r->>'free_week_ending')::int = 0;
   r := notification_tick();
   select count(*) into n2 from notification_outbox
    where category = 'free_week_ending' and org_id = oNO;
   insert into _inv(name, pass, note)
-    values ('the trial-ending tick queues one message per owner/admin and a second run queues none',
-            ok and n = 2 and n2 = 2 and (r->>'free_week_ending')::int = 0,
+    values ('the trial-ending tick cannot queue promotional email without the consent workflow',
+            ok and n = 0 and n2 = 0 and (r->>'free_week_ending')::int = 0,
             format('first run queued %s rows, second run added %s (tick said %s)',
                    n, n2 - n, r->>'free_week_ending'));
 
@@ -3055,14 +3271,14 @@ begin
   select count(*) into n2 from notification_outbox where org_id = oNO
      and category in ('allowance_low','first_tour_nudge','upload_stuck');
   insert into _inv(name, pass, note)
-    values ('allowance_low, first_tour_nudge and upload_stuck each queue once and are not re-sent on the next tick',
-            -- 5: allowance_low and first_tour_nudge go to both the owner and the
-            -- admin; upload_stuck goes only to the person who started the upload.
-            n = 5 and n2 = n
+    values ('transactional allowance and upload notices queue once while promotional nudges remain blocked',
+            -- 3: allowance_low goes to the owner and admin; upload_stuck goes
+            -- only to its actor. The promotional email nudge stays disabled.
+            n = 3 and n2 = n
               and exists (select 1 from notification_outbox where org_id = oNO and category = 'allowance_low'
                            and payload -> 'data' ->> 'feature' = 'photo_edits'
                            and (payload -> 'data' ->> 'used')::int = (payload -> 'data' ->> 'cap')::int)
-              and exists (select 1 from notification_outbox where org_id = oNO and category = 'first_tour_nudge')
+              and not exists (select 1 from notification_outbox where org_id = oNO and category = 'first_tour_nudge')
               and exists (select 1 from notification_outbox where org_id = oNO and category = 'upload_stuck'),
             format('%s rows after the first tick, %s after the second', n, n2));
 
@@ -3090,6 +3306,10 @@ begin
   delete from orgs where id in (oNO, oCL);
   delete from auth.users where id in (uNO, uNA, uNM, uCL);
 end $notif$;
+
+-- Remove only these fixture sponsor records; no lifecycle reset is tested here.
+delete from serving_funding_slices where funding_id in(select id from serving_funding where collection_ref like '\_inv-hosting-%');
+delete from serving_funding where collection_ref like '\_inv-hosting-%';
 
 drop table if exists _inv_tasks;
 

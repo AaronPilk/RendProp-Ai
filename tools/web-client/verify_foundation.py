@@ -24,8 +24,12 @@ EXTRA_IDS = {
     "agent-reel-client", "saved-drafts-transfers", "review-submit", "two-links-playback",
     "share-qr-download", "account-deletion", "analytics-contract", "brokerage-governance",
     "speech-transcription", "admin-provider-probe", "admin-funnel", "gear-catalog",
+    "listing-photo-publication",
 }
-REQUIRED_SYMBOLS = {"admin-provider-probe": {"adminProbeKeys", "adminLastKeyProbe"},
+PHOTO_FAMILY_SYMBOLS = {"ListingPhotoCloudSelectionAPI", "photoCloudSelection",
+                        "changePhotoCloudSelection", "abandonPhotoCloudSelection"}
+REQUIRED_SYMBOLS = {"listing-photo-publication": PHOTO_FAMILY_SYMBOLS,
+                    "admin-provider-probe": {"adminProbeKeys", "adminLastKeyProbe"},
                     "admin-funnel": {"adminFunnel"}, "gear-catalog": {"performRefresh", "normalizedASIN"},
                     "speech-transcription": {"SpeechTranscriber"}}
 
@@ -85,6 +89,12 @@ def validate_capabilities(doc, source, root=ROOT):
             contents = target.read_text()
             for symbol in row["symbols"]:
                 require(bool(re.search(r"\b" + re.escape(symbol) + r"\b", contents)), "direct-client source symbol missing")
+            if row["id"] == "listing-photo-publication":
+                marker = "protocol ListingPhotoCloudSelectionAPI: Sendable {"
+                require(contents.count(marker) == 1, "ambiguous typed photo family contract")
+                body = contents.split(marker, 1)[1].split("\n}", 1)[0]
+                require(set(re.findall(r"\bfunc\s+(\w+)\s*\(", body)) == PHOTO_FAMILY_SYMBOLS - {"ListingPhotoCloudSelectionAPI"},
+                        "typed photo family methods changed: review mapping")
     return {"apiMethods": len(declarations), "apiDeclarations": sum(declarations.values()),
             "capabilityGroups": len(rows), "outsideProtocol": len(extras), "browserVerified": 0}
 
@@ -140,22 +150,96 @@ class FoundationTests(unittest.TestCase):
 
     def test_complete_inventory(self):
         result = validate_capabilities(self.cap, SWIFT)
-        # 53/54 after spatial + renew; the four reflection quote/job/cancel/apply
-        # methods are inventoried as planned, without claiming browser parity.
-        self.assertEqual(result["apiMethods"], 57)
-        self.assertEqual(result["apiDeclarations"], 58)
-        self.assertEqual(result["outsideProtocol"], 24)
+        # Includes the dedicated measurements CAS route, reflection,
+        # photographer/client, photo selection, distinct personal-card/logo methods
+        # and the account-owned JSON inventory export.
+        # Inventory coverage does not establish browser, phone or live parity.
+        self.assertEqual(result["apiMethods"], 76)
+        self.assertEqual(result["apiDeclarations"], 78)
+        self.assertEqual(result["capabilityGroups"], 25)
+        self.assertEqual(result["outsideProtocol"], 25)
         self.assertEqual(result["browserVerified"], 0)
+
+    def test_identity_methods_have_explicit_product_mappings(self):
+        groups = {row["id"]: set(row["methods"]) for row in self.cap["api"]}
+        self.assertEqual(groups["listing-client-contact"], {"clientContact", "saveClientContact", "requestClientRecipientVerification"})
+        self.assertTrue({"realEstateRole", "updateRealEstateRole"} <= groups["account"])
+        self.assertEqual(groups["leads"], {"leads", "sendLeadToClient", "deleteLead"})
+        self.assertEqual(groups["personal-public-card"], {"personalCard", "savePersonalCard"})
+        self.assertEqual(groups["workspace-business-logo"],
+                         {"businessLogo", "uploadBusinessLogo", "removeBusinessLogo"})
+        statuses = {row["id"]: row["status"] for row in self.cap["api"]}
+        self.assertEqual(statuses["personal-public-card"], "native-handoff")
+        self.assertEqual(statuses["workspace-business-logo"], "native-handoff")
+
+    def test_each_missing_identity_method_fails(self):
+        for method in ["clientContact", "saveClientContact", "realEstateRole",
+                       "updateRealEstateRole", "sendLeadToClient", "deleteLead", "requestClientRecipientVerification", "personalCard",
+                       "savePersonalCard", "businessLogo", "uploadBusinessLogo", "removeBusinessLogo"]:
+            with self.subTest(method=method):
+                incomplete = copy.deepcopy(self.cap)
+                for row in incomplete["api"]:
+                    if method in row["methods"]:
+                        row["methods"].remove(method)
+                with self.assertRaises(ContractError):
+                    validate_capabilities(incomplete, SWIFT)
 
     def test_token_positive(self):
         self.assertEqual(len(validate_tokens(self.tokens)), 6)
+
+    def test_account_export_mapping_and_missing_export_failure(self):
+        row = next(row for row in self.cap["api"] if row["id"] == "account-data-export")
+        self.assertEqual(row["methods"], ["exportAccountData"])
+        self.assertEqual(row["status"], "native-handoff")
+        for contract in ["GET /me/export", "actor", "account-owned", "selected-workspace",
+                         "JSON", "omissions", "excludes binary media", "parity are not verified"]:
+            self.assertIn(contract, row["web"])
+        incomplete = copy.deepcopy(self.cap)
+        incomplete["api"] = [item for item in incomplete["api"] if item["id"] != row["id"]]
+        with self.assertRaisesRegex(ContractError, r"API mismatch: missing=\['exportAccountData'\] extra=\[\]"):
+            validate_capabilities(incomplete, SWIFT)
+
+    def test_photo_publication_methods_must_be_mapped(self):
+        row = next(row for row in self.cap["outsideProtocol"] if row["id"] == "listing-photo-publication")
+        self.assertEqual(set(row["symbols"]), PHOTO_FAMILY_SYMBOLS)
+        self.assertEqual(row["source"], "apps/ios/Rendprop/Photos/PhotoCloudSelection.swift")
+        self.assertEqual(row["status"], "native-handoff")
+        self.assertFalse({"selectListingPhotos", "addListingPhotos"} & set(api_declarations(SWIFT)))
+        for contract in ["GET /listings/:id/photo-selection", "PATCH /listings/:id/photo-selection",
+                         "POST /listings/:id/photo-selection/abandon", "actor", "library", "physical org",
+                         "family_asset_ids", "target", "expected_selection", "follow_family_cover", "reviewed",
+                         "promote_cover", "operation_id", "tombstones", "GET-only", "401",
+                         "current state", "not verified"]:
+            self.assertIn(contract, row["web"])
+        for symbol in PHOTO_FAMILY_SYMBOLS:
+            incomplete = copy.deepcopy(self.cap)
+            next(item for item in incomplete["outsideProtocol"] if item["id"] == row["id"])["symbols"].remove(symbol)
+            with self.subTest(symbol=symbol), self.assertRaisesRegex(ContractError, "direct-client symbol mapping"):
+                validate_capabilities(incomplete, SWIFT)
+        incomplete = copy.deepcopy(self.cap)
+        incomplete["outsideProtocol"].remove(next(item for item in incomplete["outsideProtocol"] if item["id"] == row["id"]))
+        with self.assertRaisesRegex(ContractError, "outside-protocol capability inventory changed"):
+            validate_capabilities(incomplete, SWIFT)
+
+    def test_standalone_video_recovery_mapping_and_missing_failure(self):
+        row = next(row for row in self.cap["api"] if row["id"] == "standalone-video-recovery")
+        self.assertEqual(row["methods"], ["aiVideoOperation"])
+        self.assertEqual(row["status"], "native-handoff")
+        for contract in ["authenticated GET /ai-video/operation", "operation_id", "listing_id",
+                         "actor", "X-Org-Id", "UUID case", "retained paid provider receipt",
+                         "pending", "no new generation POST", "aiVideoStatus", "parity are not verified"]:
+            self.assertIn(contract, row["web"])
+        incomplete = copy.deepcopy(self.cap)
+        incomplete["api"].remove(next(item for item in incomplete["api"] if item["id"] == row["id"]))
+        with self.assertRaisesRegex(ContractError, r"API mismatch: missing=\['aiVideoOperation'\] extra=\[\]"):
+            validate_capabilities(incomplete, SWIFT)
 
     def test_contrast_reference_values(self):
         self.assertAlmostEqual(contrast("#000000", "#FFFFFF"), 21)
         self.assertEqual(contrast("#161820", "#161820"), 1)
 
     def test_missing_upload_fails(self):
-        self.cap["api"][1]["methods"].remove("completeUpload")
+        next(row for row in self.cap["api"] if row["id"] == "uploads")["methods"].remove("completeUpload")
         with self.assertRaises(ContractError):
             validate_capabilities(self.cap, SWIFT)
 
@@ -214,14 +298,16 @@ def main():
     if not __debug__:
         raise ContractError("optimized Python is not a verification mode")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--inject-fault", choices=["missing-upload", "low-contrast", "no-op-validator"])
+    parser.add_argument("--inject-fault", choices=["missing-upload", "missing-export", "low-contrast", "no-op-validator"])
     args = parser.parse_args()
     global CAP, TOKENS, SWIFT
     CAP = json.loads((CONTRACTS / "capabilities.json").read_text())
     TOKENS = json.loads((CONTRACTS / "design-tokens.json").read_text())
     SWIFT = (ROOT / "apps/ios/Rendprop/Networking/APIClient.swift").read_text()
     if args.inject_fault == "missing-upload":
-        CAP["api"][1]["methods"].remove("completeUpload")
+        next(row for row in CAP["api"] if row["id"] == "uploads")["methods"].remove("completeUpload")
+    elif args.inject_fault == "missing-export":
+        CAP["api"] = [row for row in CAP["api"] if row["id"] != "account-data-export"]
     elif args.inject_fault == "low-contrast":
         TOKENS["color"]["muted"] = TOKENS["color"]["surface"]
     inventory = validate_capabilities(CAP, SWIFT)
@@ -230,7 +316,7 @@ def main():
         # Prove the rejection tests detect an implementation that stops validating.
         globals()["validate_capabilities"] = lambda *_args, **_kwargs: inventory
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(FoundationTests))
-    require(result.testsRun == 14 and not result.skipped, "missing/skipped tests")
+    require(result.testsRun == 19 and not result.skipped, "missing/skipped tests")
     require(result.wasSuccessful(), "foundation tests failed")
     print(json.dumps({"inventory": inventory, "contrast": ratios, "tests": result.testsRun,
                       "skips": len(result.skipped), "browserTests": 0, "liveTests": 0}, indent=2))

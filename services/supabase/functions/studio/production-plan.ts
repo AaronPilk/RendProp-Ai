@@ -1,3 +1,4 @@
+import { requireContentWrite } from "../_shared/library-access.ts";
 import { assert, HttpError } from "../_shared/http.ts";
 import type { StudioContext } from "./context.ts";
 
@@ -38,10 +39,7 @@ export function productionPlanInput(value: unknown, listingId: string) {
 }
 
 export async function authorizeProductionPlan(plan: ReturnType<typeof productionPlanInput>, context: StudioContext, signal: AbortSignal) {
-  const {data: member, error} = await context.db.from("memberships").select("role")
-    .eq("user_id", context.userId).eq("org_id", context.orgId).abortSignal(signal).maybeSingle();
-  if (error) throw new HttpError(503, "Capture plan permissions are temporarily unavailable.");
-  assert(member && ["owner", "admin", "agent"].includes(member.role), 403, "Your role can view capture plans but cannot edit them.");
+  await requireContentWrite(context.admin, context.userId, context.orgId, plan.listingId);
   const photoIds = [...new Set(plan.shots.flatMap(shot => shot.sourcePhotoIds))];
   const videoIds = [...new Set(plan.shots.flatMap(shot => shot.sourceVideoIds))];
   const all = [...new Set([...photoIds, ...videoIds])];
@@ -50,13 +48,14 @@ export async function authorizeProductionPlan(plan: ReturnType<typeof production
   // assets (including photos without a gallery row), and completed renders.
   const queries = await Promise.all([
     photoIds.length ? context.db.from("photos").select("id").eq("listing_id", plan.listingId).in("id", photoIds).abortSignal(signal) : Promise.resolve({data: [], error: null}),
-    context.db.from("capture_assets").select("id,kind").eq("listing_id", plan.listingId).eq("uploaded", true).in("id", all).abortSignal(signal),
+    context.db.from("capture_assets").select("id,kind,storage_key").eq("listing_id", plan.listingId).eq("uploaded", true).in("id", all).abortSignal(signal),
     videoIds.length ? context.db.from("renders").select("id").eq("listing_id", plan.listingId).not("video_key", "is", null).in("id", videoIds).abortSignal(signal) : Promise.resolve({data: [], error: null}),
   ]);
   if (queries.some(result => result.error)) throw new HttpError(503, "Saved capture files could not be checked. Retry before saving.");
   const photos = new Set((queries[0].data ?? []).map((row: {id: string}) => row.id));
   const videos = new Set((queries[2].data ?? []).map((row: {id: string}) => row.id));
   for (const asset of queries[1].data ?? []) {
+    if (typeof asset.storage_key === "string" && asset.storage_key.includes("/contact-")) continue;
     if (asset.kind === "photo") photos.add(asset.id);
     if (asset.kind === "video") videos.add(asset.id);
   }

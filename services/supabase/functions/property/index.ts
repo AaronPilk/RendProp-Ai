@@ -21,23 +21,25 @@
 // photographs; they belong to the photographer or the MLS. `PropertyFacts` has
 // no photo field so nothing downstream can start expecting one.
 //
-// EVERY CALL COSTS MONEY, so three guards, in this order:
+// Preserve per-call evidence separately from a modeled price, in this order:
 //   1. CACHE FIRST, on a normalised address. The second lookup of a house we
 //      already bought is free, for every org — re-buying a public record we
 //      already own would spend the owner's money to enforce a boundary that
 //      protects nobody.
 //   2. A DURABLE RATE LIMIT per org. The in-memory fallback is not enough for a
 //      route with a real invoice behind it, so this one fails CLOSED.
-//   3. A LEDGER ROW per real call, so it shows up in the spend console beside
-//      every other unit cost instead of arriving as a surprise line item.
+//   3. A DURABLE INTENT before dispatch, and a content-free terminal receipt.
+//      Unknown outcomes remain unknown; the supplier is never retried here.
+//   4. The existing catalog-estimate ledger for a valid hit or genuine miss.
 
+import { libraryBillingOrg, requireLibraryWrite } from "../_shared/library-access.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
-import { recordAppAiCost } from "../_shared/ledger.ts";
-import { addressKey, hasSubstance, PropertyFacts, PropertyProvider } from "../_shared/property/provider.ts";
+import { addressKey, hasSubstance, PropertyLookupFailure, PropertyLookupResponse, PropertyProvider } from "../_shared/property/provider.ts";
 import { rentcast } from "../_shared/property/rentcast.ts";
+import { beginPropertyAttempt, finishPropertyAttempt, recordPropertyAttemptCost } from "../_shared/provider-attempt-receipt.ts";
 
 /** Tried in order; the first CONFIGURED one answers. An MLS/IDX provider slots
  *  in at the front of this array and nothing else changes. */
@@ -72,8 +74,11 @@ Deno.serve(async (req: Request) => {
 
     const user = await getUser(req);
     const orgId = await orgForUser(user.id, preferredOrg(req));
+    await assertPaidAiIdentity(user, orgId);
 
     const admin = adminClient();
+    await requireLibraryWrite(admin,user.id,orgId);
+    const billingOrg=await libraryBillingOrg(admin,orgId,user.id);
     const akey = addressKey(address);
 
     // 1 — cache.
@@ -90,41 +95,41 @@ Deno.serve(async (req: Request) => {
     // 2 — rate limit. Fails CLOSED: `durableRateLimit` returning false because
     // the RPC is unavailable is exactly when an unbounded paid route is most
     // dangerous, so there is no in-memory fallback here on purpose.
-    const allowed = await durableRateLimit(`property:${orgId}`, RATE_MAX, RATE_WINDOW_S);
+    const allowed = await durableRateLimit(`property:${billingOrg}`, RATE_MAX, RATE_WINDOW_S);
     if (!allowed) {
       throw new HttpError(429, "That's a lot of address lookups — try again in a little while.", "rate_limited");
     }
 
-    let facts: PropertyFacts | null = null;
+    // This is an accounting intent, not a financial reservation or a claim
+    // that the supplier accepted/billed. Lost DB replies never grant dispatch.
+    const attempt = await beginPropertyAttempt(admin, user.id, orgId, req, akey);
+    let lookup: PropertyLookupResponse;
     try {
-      facts = await provider.lookup(address);
+      lookup = await provider.lookup(address);
+      if (lookup.status === null) throw new PropertyLookupFailure("transport_unknown", null);
     } catch (e) {
-      console.error("property: provider threw:", e instanceof Error ? e.message : String(e));
+      const failure = e instanceof PropertyLookupFailure ? e : new PropertyLookupFailure("transport_unknown", null);
+      await finishPropertyAttempt(admin, attempt, { outcome: failure.outcome, status: failure.status, requestId: failure.requestId });
       // No custom code: `ErrorCode` is a closed union and 502 already maps to
       // the right one via `codeForStatus`. Inventing a member here would be a
       // contract the app has no case for.
       throw new HttpError(502, "The property records service didn't answer. Try again in a moment.");
     }
+    const facts = lookup.facts;
 
     if (!facts || !hasSubstance(facts)) {
-      // A miss is still a call the provider billed for, so it is still a ledger
-      // row — silent losses are how a cost line goes unexplained.
-      await recordAppAiCost(admin, {
-        orgId, provider: provider.id, feature: "property_lookup",
-        model: "properties", units: 1, unitCents: provider.unitCents,
-        meta: { result: "no_record" },
-      });
+      // Preserve the existing catalog estimate for a genuine miss. A received
+      // response and this modeled price are not a reconciled supplier bill.
+      const cost = await recordPropertyAttemptCost(admin, attempt, provider.unitCents, { result: "no_record" });
+      await finishPropertyAttempt(admin, attempt, { outcome: "no_record", status: lookup.status, requestId: lookup.requestId, estimatedCents: provider.unitCents, ledgerStatus: cost.recorded ? "recorded" : "unconfirmed" });
       return json({ configured: true, cached: false, source: provider.id, facts: null });
     }
 
-    // 3 — ledger, then cache. In that order: a ledger failure must not stop the
+    // 4 — ledger, terminal evidence, then cache. In that order: a ledger failure must not stop the
     // agent getting the answer they are waiting for, and a cache row written
     // before the charge is recorded would hide the charge forever.
-    await recordAppAiCost(admin, {
-      orgId, provider: provider.id, feature: "property_lookup",
-      model: "properties", units: 1, unitCents: provider.unitCents,
-      meta: { result: "hit", has_sqft: facts.sqft != null, has_beds: facts.beds != null },
-    });
+    const cost = await recordPropertyAttemptCost(admin, attempt, provider.unitCents, { result: "hit", has_sqft: facts.sqft != null, has_beds: facts.beds != null });
+    await finishPropertyAttempt(admin, attempt, { outcome: "hit", status: lookup.status, requestId: lookup.requestId, estimatedCents: provider.unitCents, ledgerStatus: cost.recorded ? "recorded" : "unconfirmed" });
 
     await admin.from("property_lookups").upsert({
       address_key: akey,

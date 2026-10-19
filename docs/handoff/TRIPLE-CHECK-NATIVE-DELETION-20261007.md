@@ -1,0 +1,11 @@
+# Native deletion follow-up — 7 October 2026
+
+The independent recheck of build 47 found an account deletion race in Settings. A delayed token refresh could select a replacement account's token. A late successful deletion response could sign out that replacement account and erase its local data. Compiled reproductions demonstrated both behaviors without a real account, network request or file deletion. A separate review also reproduced a queued confirmation reading a newer account's mutable confirmation state.
+
+Settings now binds the Delete and Retry actions to the account and session revision that were confirmed. That immutable context travels into the scheduled task. The request checks it before and after token refresh, verifies the existing JWT subject against the captured account, and checks it after the response. Local upload cancellation, sign-out and file erasure require the same context. Account, workspace and session changes close obsolete confirmation and Retry dialogs. Successful deletion, pending server cleanup, server refusal and the offline local-only flow remain supported.
+
+The new actual-method regression runner passes 132 assertions and eight compiled guard-removal controls. It is registered in the existing offline CI job, with receipts, generated fixture source and logs retained. The fixture replaces Auth, HTTP and local erasure with suspended synthetic doubles; SwiftUI invalidation is checked from source. These results do not establish physical phone behavior or delete any real account.
+
+Build 48 is the intended internal TestFlight successor. At this source checkpoint it still requires exact-source CI, a newly signed device archive, transferred-package verification and Apple's availability confirmation. Build 47's earlier successful delivery remains historical evidence; it does not contain this follow-up fix. See the separately retained release evidence for actual delivery status.
+
+Backend, database, Studio and published-page runtime sources are unchanged by this follow-up. No trial funding, paid feature flag, provider job, spatial experiment, public App Review submission or public release is authorized by this document. The existing pricing, credential replacement, protected-media, purchase recovery and real-device acceptance gates remain open.

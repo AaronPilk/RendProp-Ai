@@ -13,7 +13,9 @@ final class SpatialCaptureIntegrationTests: XCTestCase {
                       userInfo: [NSLocalizedDescriptionKey: "Unsupported-hardware integration tests require an iOS simulator; never run camera-start probes on a device"])
         #endif
         app = XCUIApplication()
-        app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-appearance", "light"]
+        app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-appearance", "light",
+                               "-space.type", "real_estate", "-ui.spatial", "disabled",
+                               "-ui.detailMetadataFixture", "republish"]
         app.launch()
         openCaptureFromSettings()
     }
@@ -96,20 +98,40 @@ final class SpatialCaptureIntegrationTests: XCTestCase {
     }
 
     private func openCaptureFromSettings(file: StaticString = #filePath, line: UInt = #line) {
-        let settings = app.tabBars.buttons["Settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 15), "Settings tab missing", file: file, line: line)
-        settings.tap()
-        let entry = app.buttons["settings.spatialCapture"]
+        if !app.navigationBars["Settings"].exists {
+            XCTAssertTrue(app.navigationBars["Detail fixture republish"].waitForExistence(timeout: 15),
+                          "The identified offline fixture must be active", file: file, line: line)
+            XCTAssertFalse(app.descendants(matching: .any)["detail.fixtureFailure"].exists, file: file, line: line)
+            let settings = app.buttons["build58.fixture.settings"]
+            XCTAssertTrue(settings.exists && settings.isHittable, file: file, line: line)
+            settings.tap()
+        }
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10), file: file, line: line)
+        let entry = app.buttons["settings.spatialTestingHub"]
         for _ in 0..<8 {
             if entry.exists && entry.isHittable { break }
             app.swipeUp()
         }
         XCTAssertTrue(entry.exists && entry.isHittable,
-                      "Explicit TestFlight build must expose settings.spatialCapture", file: file, line: line)
-        XCTAssertEqual(entry.label, "Spatial capture (TestFlight)", file: file, line: line)
+                      "Explicit TestFlight build must expose the shared 3D tours hub", file: file, line: line)
+        XCTAssertEqual(entry.label, "3D tours", file: file, line: line)
         entry.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["spatial.hub.listingPicker"].waitForExistence(timeout: 10), file: file, line: line)
+        let fixture = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "spatial.hub.chooseListing.")).firstMatch
+        XCTAssertTrue(fixture.waitForExistence(timeout: 5) && fixture.isHittable, file: file, line: line)
+        XCTAssertEqual(fixture.label, "Detail fixture republish", "Only the known private fixture may be selected", file: file, line: line)
+        fixture.tap()
+        XCTAssertTrue(app.navigationBars["3D tours"].waitForExistence(timeout: 10), file: file, line: line)
+        let walking = app.buttons["spatial.hub.walking"]
+        for _ in 0..<8 {
+            if walking.exists && walking.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(walking.exists && walking.isHittable && walking.isEnabled, file: file, line: line)
+        XCTAssertFalse(app.otherElements["spatial.preview"].exists, "Opening the hub must not start capture", file: file, line: line)
+        walking.tap()
         XCTAssertTrue(app.staticTexts["spatial.status"].waitForExistence(timeout: 10),
-                      "Settings entry did not present the integrated capture controller", file: file, line: line)
+                      "The shared hub did not present the integrated capture controller", file: file, line: line)
     }
 
     private func assertIdleControls(file: StaticString = #filePath, line: UInt = #line) {
@@ -136,8 +158,13 @@ final class SpatialCaptureIntegrationTests: XCTestCase {
                                                   object: app.staticTexts["spatial.status"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed,
                        "Done did not dismiss capture", file: file, line: line)
-        XCTAssertTrue(app.tabBars.buttons["Settings"].isSelected,
-                      "Done did not return to Settings", file: file, line: line)
+        XCTAssertTrue(app.navigationBars["3D tours"].waitForExistence(timeout: 5),
+                      "Done did not return to the shared 3D tours hub", file: file, line: line)
+        app.navigationBars["3D tours"].buttons.firstMatch.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["spatial.hub.listingPicker"].waitForExistence(timeout: 5), file: file, line: line)
+        app.navigationBars["3D tours"].buttons.firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5),
+                      "The hub's picker must return to Settings", file: file, line: line)
     }
 
     private func attachScreen(_ name: String) {

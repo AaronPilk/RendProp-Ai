@@ -5,24 +5,15 @@ import Foundation
 // ONE source of truth for the product ids, the plan they map to, and the
 // "what you get" lines. The numbers below are COPIED from
 // `services/supabase/migrations/0044_plan_rework_and_industry_trial.sql`
+// with video-shot counts updated by `20261014200302_property_video_recipe_allowances.sql`
 // (`plan_entitlements`, the table 0010 introduced), which is what the server
 // actually enforces — if that table changes, change these in the same commit
 // or the paywall starts lying.
 //
-// The free week (server plan `trial`) is NOT here: it is sized per industry
-// (`orgs.space_type`) and the app reads its numbers from `GET /me` — see
-// `SpaceType.freeWeekLine` for the offline fallback.
-//
-// PRICES ARE NOT HERE, ON PURPOSE. Every price the user sees comes from
-// StoreKit (`Product.displayPrice`), so it is correct in their currency, on
-// their storefront, after any App Store price change — and there is nothing to
-// keep in sync. Never hardcode a price string in this app.
-//
-// Server plan `trial` is the FREE WEEK every new org starts on — no product,
-// no card, sized per industry (see above). It is a different thing from the
-// 7-day introductory offer Apple attaches to each paid product, which is the
-// only thing the app may call a "free trial". `free` is the lapsed floor (no
-// product). `solo` is a legacy alias of `starter` that is never sold.
+// A subscription trial begins only after Apple confirmation and server
+// verification. New workspaces start on the free plan. Existing historical
+// server trials may retain their original expiry, but are never newly granted
+// by this app. Prices come exclusively from StoreKit's Product.displayPrice.
 
 /// A sellable plan. Raw value === the `orgs.plan` / `plan_entitlements.plan`
 /// string the server uses, so `activePlan` and `/me` speak the same language.
@@ -101,13 +92,13 @@ enum RendpropPlan: String, CaseIterable, Identifiable, Sendable {
         return isSold(fallback) ? fallback : nil
     }
 
-    /// The server-enforced monthly allowances for this plan (migration 0044).
+    /// Base monthly allowances (0044), with current generated-shot caps (20261014200302).
     var allowances: PlanAllowances {
         switch self {
         // plan_entitlements: renders, photo_edits, reels, aerials, topaz, seats
-        case .starter: return PlanAllowances(renders: 4,  photoEdits: 100, reels: 6,  aerials: 2, topaz: 0, seats: 1)
-        case .pro:     return PlanAllowances(renders: 10, photoEdits: 200, reels: 12, aerials: 4, topaz: 0, seats: 1)
-        case .team:    return PlanAllowances(renders: 25, photoEdits: 400, reels: 25, aerials: 8, topaz: 2, seats: 2)
+        case .starter: return PlanAllowances(renders: 4,  photoEdits: 100, reels: 30,  aerials: 2, topaz: 0, seats: 1)
+        case .pro:     return PlanAllowances(renders: 10, photoEdits: 200, reels: 60, aerials: 4, topaz: 0, seats: 1)
+        case .team:    return PlanAllowances(renders: 25, photoEdits: 400, reels: 150, aerials: 8, topaz: 2, seats: 2)
         }
     }
 
@@ -124,7 +115,7 @@ struct PlanAllowances: Hashable, Sendable {
     let photoEdits: Int
     let reels: Int
     let aerials: Int
-    /// Topaz "drone-glide" upscales. 0 means the tier is not included.
+    /// Optional video-quality upscales. 0 means the tier is not included.
     let topaz: Int
     let seats: Int
 
@@ -133,20 +124,21 @@ struct PlanAllowances: Hashable, Sendable {
 
     var benefitLines: [String] {
         var lines: [String] = [
-            "\(renders) tour \(renders == 1 ? "render" : "renders") a month",
-            "\(photoEdits) AI photo edits",
-            "\(reels) reel \(reels == 1 ? "clip" : "clips")",
-            "\(aerials) aerial \(aerials == 1 ? "intro" : "intros")",
+            "\(renders) cloud tour \(renders == 1 ? "render" : "renders") a month",
+            "High-resolution AI photo edits",
+            "\(reels) AI video shots a month",
         ]
         if topaz > 0 {
-            // Team: "2 drone-glide upscales · 2 seats"
-            lines.append("\(topaz) drone-glide \(topaz == 1 ? "upscale" : "upscales") · \(seatsPhrase)")
+            // Quality upgrades have a separate expensive AI allowance.
+            lines.append("\(topaz) video quality \(topaz == 1 ? "upgrade" : "upgrades") · \(seatsPhrase)")
         } else {
             // Starter / Pro: "1 seat · unlimited tours to share"
             lines.append("\(seatsPhrase) · unlimited tours to share")
         }
         return lines
     }
+
+    static let videoAllowanceExplanation = "Cloud tour renders process existing footage. Publishing a tour video made on your iPhone doesn't use that allowance. Video quality upgrades are separate AI upscales; they improve resolution and detail but don't turn walking footage into a real drone shot. Each AI video shot animates one photo for about 5 seconds. Make a video combines shots into a Listing or Social video; the count is shots, not finished videos. Aerial intro is Coming soon and is not included at launch."
 }
 
 /// How often the subscription bills.
@@ -194,7 +186,7 @@ enum BillingPeriod: String, CaseIterable, Identifiable, Sendable {
     /// it is true for: Team has no yearly product at launch (see
     /// `RendpropProducts.notSoldAtLaunch`), so promising it "2 months free"
     /// would be a lie.
-    static let annualBadge = "2 months free on Starter and Pro"
+    static let annualBadge = "Billed once a year"
 }
 
 // MARK: - Product id ⇄ plan
@@ -209,12 +201,20 @@ enum RendpropProducts {
     /// entitlement — they are simply never requested from StoreKit and never
     /// shown a price.
     ///
-    /// 2026-09-05 — `com.rendprop.app.team.annual` ($2,490/yr): App Store
-    /// Connect's yearly price points stop at USD 1,000 unless Apple grants
-    /// extended price points, and that request is still open, so Team ships
-    /// monthly-only. To put it back on sale when Apple grants them, empty this
-    /// set — that one line is the whole change.
-    static let notSoldAtLaunch: Set<String> = [RendpropPlan.team.annualProductID]
+    /// 2026-10-09 — Rendprop sells MONTHLY plans only (owner decision). The
+    /// annual products cannot carry the advertised allowances inside the
+    /// per-month AI budget (ten monthly prices over twelve months), so none is
+    /// offered. Their ids stay mapped below so a stray historical or Sandbox
+    /// annual purchase still resolves to its plan; they are never requested
+    /// from StoreKit and never shown a price. The products must also be
+    /// removed from sale in App Store Connect.
+    static let notSoldAtLaunch: Set<String> = Set(RendpropPlan.allCases.map(\.annualProductID))
+
+    /// True when at least one annual product is on sale. Drives whether the
+    /// paywall shows the Monthly / Yearly picker at all.
+    static var sellsAnnual: Bool {
+        RendpropPlan.allCases.contains { $0.isSold(.annual) }
+    }
 
     /// Every product id the app asks StoreKit for, in the order the paywall
     /// shows them. Ids in `notSoldAtLaunch` are left out: asking the App Store
@@ -278,6 +278,8 @@ enum PaywallLegal {
     static let autoRenewDisclosure =
         "Renews automatically until cancelled. Cancel anytime in Settings → Apple ID → Subscriptions."
 
+    /// Legacy copy retained for old clients; current UI uses the selected
+    /// product's localized price in SubscriptionOfferPolicy.disclosure.
     /// Shown under a trial button so nobody is surprised by the first charge.
     /// "At least 24 hours": Apple bills the first period unless the
     /// subscription is cancelled at least a day before the offer ends.

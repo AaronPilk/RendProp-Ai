@@ -7,6 +7,18 @@ import { TransportError } from "../../supabase/functions/uploads/gateway_contrac
 
 const ORIGIN = "https://state-fixture.invalid",
   SECRET = "synthetic-state-service-key-not-real";
+Deno.test("revocable state credential is sent only as apikey", async () => {
+  const previous = globalThis.fetch;
+  try {
+    globalThis.fetch = (input, init) => {
+      const req = new Request(input, init);
+      assertEquals(req.headers.get("apikey"), "sb_secret_synthetic_state_only");
+      assertEquals(req.headers.get("authorization"), null);
+      return Promise.resolve(Response.json({ dispatch: false }));
+    };
+    assertEquals(await stateClient(ORIGIN, ORIGIN, "sb_secret_synthetic_state_only")("claim_upload_operation", {}), { dispatch: false });
+  } finally { globalThis.fetch = previous; }
+});
 Deno.test("state RPC uses only explicit allowlisted destination and fixed operation", async () => {
   const before = globalThis.fetch;
   let calls = 0;

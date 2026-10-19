@@ -1,6 +1,6 @@
 import type { Listing, ListingMedia, Workspace } from "../../data/contracts";
 import type { FeatureId } from "../home/features";
-import { canPublishAsset, tourLinks } from "./model";
+import { canPublishAsset, tourLinks, websiteDesignPreviews } from "./model";
 import type { ListingState } from "./model";
 
 export type ListingDestination = { tab: "media" | "tour" | "details" } | { feature: FeatureId } | { refresh: true };
@@ -13,12 +13,16 @@ export type ListingFinish = {
   next: Action | null;
   steps: ListingFinishStep[];
   publishedLinks: ReturnType<typeof tourLinks>;
+  /** Design previews for the published slug (W5); never an entitlement. */
+  designPreviews: ReturnType<typeof websiteDesignPreviews>;
   progress: number | null;
   checking: boolean;
 };
 const terminal = new Set(["ready", "failed", "completed", "published", "cancelled"]);
 export function canEditListing(workspace: Workspace): boolean {
-  const role = workspace.memberships.find(member => member.orgId === workspace.org.id)?.role;
+  const member = workspace.memberships.find(member => member.orgId === (workspace.libraryOrgId ?? workspace.org.id));
+  if (member?.canWrite !== undefined) return member.canWrite;
+  const role = member?.role;
   return role === "owner" || role === "admin" || role === "agent";
 }
 
@@ -32,11 +36,11 @@ export function listingFinish(input: {
   const tab = (label: string, value: "media" | "tour" | "details"): Action => ({ label, destination: { tab: value } });
   if (input.loadFailed || state.nextOffset !== null || media?.nextOffset != null) return {
     title: "Check the latest property status", detail: "Some property information could not be loaded. Refresh before deciding what is ready to share.",
-    next: { label: "Reload listing status", destination: { refresh: true } }, steps: [], publishedLinks: null, progress: null, checking: false,
+    next: { label: "Reload listing status", destination: { refresh: true } }, steps: [], publishedLinks: null, designPreviews: null, progress: null, checking: false,
   };
   if (input.loading || !media) return {
     title: "Checking your saved work…", detail: "Loading this property's uploads, results and published tours.",
-    next: null, steps: [], publishedLinks: null, progress: null, checking: true,
+    next: null, steps: [], publishedLinks: null, designPreviews: null, progress: null, checking: true,
   };
   const assets = state.assets.filter(asset => asset.uploaded === true && asset.id !== listing.details.floorplan_asset_id);
   const photoIds = new Set([...assets.filter(asset => asset.kind === "photo").map(asset => asset.id), ...media.photos.filter(photo => photo.id !== listing.details.floorplan_asset_id).map(photo => photo.id)]);
@@ -56,9 +60,9 @@ export function listingFinish(input: {
   const steps: ListingFinishStep[] = [
     { id: "details", title: "Check property details", status: hasDetails ? "saved" : "waiting", detail: hasDetails ? "Details are saved. Check the address, price and facts before sharing." : "Add a property name or address. Other facts can be added when you know them.", action: tab("Review details", "details") },
     { id: "media", title: "Add photos or video", status: input.pendingUploads || media.unavailableCount ? "waiting" : hasMedia ? "saved" : "waiting", detail: input.pendingUploads ? `${input.pendingUploads} upload${input.pendingUploads === 1 ? "" : "s"} still need to finish.` : media.unavailableCount ? `${media.unavailableCount} media item${media.unavailableCount === 1 ? " needs" : "s need"} a fresh upload. Other available media can still be used.` : hasMedia ? `${mediaDetail}. Continue with these files on either device.` : "Import files here or finish an upload in the phone app. A walkthrough is optional.", action: tab(hasMedia ? "View media" : canWrite ? "Add media" : "View media", "media") },
-    { id: "create", title: "Polish photos or make a reel", status: "optional", detail: "Optional. Use your existing photos and clips; no new camera capture is required.", action: input.hasCreativeTools ? { label: "Open Reel Studio", destination: { feature: "reel" }, requiresWrite: true } : tab("View your media", "media") },
+    { id: "create", title: "Edit photos or make a video", status: "optional", detail: "Optional. Use your existing photos and clips; no new camera capture is required.", action: input.hasCreativeTools ? { label: "Make a video", destination: { feature: "reel" }, requiresWrite: true } : tab("View your media", "media") },
     { id: "review", title: "Review your results", status: "review", detail: review.length ? `${review.length} generated result${review.length === 1 ? " needs" : "s need"} the existing property-accuracy review before publishing.` : "Check the images, video, captions and any staging disclosure. Saved files alone do not mean they have been reviewed.", action: review.length && input.hasCreativeTools ? { label: "Open accuracy review", destination: { feature: "animate" }, requiresWrite: true } : tab("Review media", "media") },
-    { id: "share", title: hasVideos || links ? "Publish and share" : "Download and share", status: links ? "live" : "waiting", detail: links ? "A published tour is available. New edits and unfinished jobs do not replace it automatically here." : hasPhotos && !hasVideos ? "Review and open your photos in Media to save them. Make a reel only if you want one." : finishedVideo || readyJob ? "A finished video is available. Review it and the property details before choosing Publish." : "Your links appear after a tour is published. You can also open and save available photos from Media.", action: tab(links ? "View sharing options" : hasPhotos && !hasVideos ? "Review and download photos" : "Open publishing", hasPhotos && !hasVideos && !links ? "media" : "tour") },
+    { id: "share", title: hasVideos || links ? "Publish and share" : "Download and share", status: links ? "live" : "waiting", detail: links ? "A published tour is available. New edits and unfinished jobs do not replace it automatically here." : hasPhotos && !hasVideos ? "Review and open your photos in Media to save them. Make a video only if you want one." : finishedVideo || readyJob ? "A finished video is available. Review it and the property details before choosing Publish." : "Your links appear after a tour is published. You can also open and save available photos from Media.", action: tab(links ? "View sharing options" : hasPhotos && !hasVideos ? "Review and download photos" : "Open publishing", hasPhotos && !hasVideos && !links ? "media" : "tour") },
   ];
   let title = "Start with the property details", detail = steps[0].detail, next: Action = steps[0].action;
   let progress: number | null = null;
@@ -73,8 +77,8 @@ export function listingFinish(input: {
     }
     else if (readyJob || finishedVideo) { title = "Your finished video is ready to review"; detail = steps[4].detail; next = tab(canWrite ? "Review before publishing" : "View finished video", "tour"); }
     else if (failures.length) { title = "A render needs attention"; detail = "Open the failed job to see what happened. Your saved source media is still available; this guide will not retry or charge you."; next = tab("View render issue", "tour"); }
-    else if (hasPhotos && !hasVideos) { title = "Your photos are ready to review"; detail = "Check the gallery, choose your cover and save the photos you want to share. A reel, floor plan and 3D walkthrough are optional."; next = steps[4].action; }
-    else if (hasVideos) { title = "Choose how to finish your video"; detail = "Review your uploaded footage, build a reel, or open tour publishing. Creating a new render is always a separate choice."; next = input.hasCreativeTools && canWrite ? steps[2].action : tab("View video options", "tour"); }
+    else if (hasPhotos && !hasVideos) { title = "Your photos are ready to review"; detail = "Check the gallery, choose your cover and save the photos you want to share. A video, floor plan and 3D walkthrough are optional."; next = steps[4].action; }
+    else if (hasVideos) { title = "Choose how to finish your video"; detail = "Review your uploaded footage, make a video, or open tour publishing. Creating a new render is always a separate choice."; next = input.hasCreativeTools && canWrite ? steps[2].action : tab("View video options", "tour"); }
     else { title = "Add the property's photos or video"; detail = steps[1].detail; next = steps[1].action; }
   }
   if (listing.status === "archived" || listing.soldAt) {
@@ -82,5 +86,5 @@ export function listingFinish(input: {
     detail = links ? "Its existing tour is still published. Review its sharing options or update the property status in Details." : "Your saved work remains available. Review the property status before creating new marketing.";
     next = links ? steps[4].action : tab("View property status", "details");
   }
-  return { title, detail, next, steps, publishedLinks: links, progress, checking: false };
+  return { title, detail, next, steps, publishedLinks: links, designPreviews: latestPublished ? websiteDesignPreviews(latestPublished.slug) : null, progress, checking: false };
 }

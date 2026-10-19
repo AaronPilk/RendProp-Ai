@@ -1,5 +1,9 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import {PHOTO_OUTPUT_BASE64_CHARS} from "../../data/photo-output";
+import { STAGING_STYLE_CHOICES } from "./staging-styles";
+import CustomPhotoPromptHelp, { analyzeCustomPhotoPrompt } from "./CustomPhotoPromptHelp";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Listing, StudioPhoto, Workspace } from "../../data/contracts";
+import { canEditListing, scopedListingWorkspace } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
 import { uploadListingAsset } from "../listings/uploads";
 import { decodeListingState } from "../listings/model";
@@ -8,7 +12,6 @@ import {
   editedImage,
   imageFromURL,
   prepareImage,
-  type SourceImage,
   videoFrames,
 } from "./media";
 import {
@@ -36,6 +39,14 @@ import {
 } from "./model";
 import "./creative.css";
 import BatchPhotoStudio from "./BatchPhotoStudio";
+import PhotoExportPanel from "./PhotoExportPanel";
+import PhotoFeedbackControl from "./PhotoFeedbackControl";
+import { createPhotoFeedbackQueue } from "./photo-feedback-queue";
+import CoordinatorPhotoExportPanel from "./CoordinatorPhotoExportPanel";
+import {retainedPhotoRequest,resumePhotoRequest} from "./creative-request";
+import {savedPhotoRequests,matchingPhotoRequest,finishPhotoRequest,type SavedPhotoRequest} from "./photo-request-journal";
+import { creativeCoachContext } from "./coach-context";
+import { importedPhoto, inputForEdit, isServerDerivedPhoto, photoDelivery, propertyPhoto, propertyOriginalPhoto, photosInTab, type PhotoLibraryTab, type PhotoDelivery, type PhotoSource } from "./photo-lineage";
 import { importSubtitleTranscript, TRANSCRIPT_FILE_BYTES } from "./transcript";
 const PresenterPanel = lazy(() => import("../presenter/PresenterPanel"));
 const PromptLibrary = lazy(() => import("../prompts/PromptLibrary"));
@@ -125,6 +136,7 @@ export default function CreativeWorkspace(props: Props) {
           <ListingCreative
             key={`${props.workspace.user.id}:${props.workspace.org.id}:${listing.id}`}
             {...props}
+            workspace={scopedListingWorkspace(props.workspace, listing)}
             listing={listing}
             consumeEntry={consumeEntry}
             presenterChanged={presenterChanged}
@@ -181,23 +193,18 @@ function ListingCreative(
     [renderJobs, setRenderJobs] = useState<
       ReturnType<typeof decodeListingState>["jobs"]
     >([]);
-  const [source, setSource] = useState<SourceImage | null>(null),
+  const [source, setSource] = useState<PhotoSource | null>(null),
     [edit, setEdit] = useState<Edit>("declutter"),
     [style, setStyle] = useState("modern"),
     [prompt, setPrompt] = useState(""),
     [room, setRoom] = useState("");
+  const photoRequestRow=useRef<SavedPhotoRequest|null>(null);
+  const [photoTab, setPhotoTab] = useState<PhotoLibraryTab>("original");
   const [suggestions, setSuggestions] = useState<
       { edit: Edit; reason: string }[]
     >([]),
     [photoResult, setPhotoResult] = useState<
-      {
-        file: File;
-        preview: string;
-        provenanceId: string | null;
-        disclosure: string;
-        originalAssetId: string;
-        saved: boolean;
-      } | null
+      (PhotoDelivery & { preview: string; disclosure: string; originalAssetId: string; saved: boolean; reviewed: boolean; edit: Edit; source: PhotoSource }) | null
     >(null);
   const [draft, setDraft] = useState<CreativeDraft>(EMPTY_DRAFT),
     [draftReady, setDraftReady] = useState(false),
@@ -265,9 +272,21 @@ function ListingCreative(
       "How do I create a property reel?",
       "How do I share an unbranded tour?",
     ]);
-  const role = workspace.memberships.find((m) => m.orgId === orgId)?.role,
-    canCreate = role !== "marketing";
+  const member = workspace.memberships.find((m) => m.orgId === (workspace.libraryOrgId ?? orgId));
+  const role = member?.role, canCreate = canEditListing(workspace, listing);
   const signal = abort.current.signal;
+  // Optional output feedback keeps its own durable queue, flushed on open, on
+  // reconnect and when the tab is shown. It never runs through run() and never
+  // changes when or whether a review action happens. (Studio already requires
+  // localStorage for its session, so the queue can rely on it.)
+  const [feedback] = useState(() => createPhotoFeedbackQueue(services, { actor: workspace.user.id, library: workspace.libraryOrgId ?? orgId }, localStorage));
+  useEffect(() => { feedback.start(); return feedback.dispose; }, [feedback]);
+  const reviewedOutput = photoResult?.provenanceId;
+  useEffect(() => {
+    if (!reviewedOutput) return;
+    if (photoResult?.edit === "custom" && photoResult.reviewed) feedback.signal(reviewedOutput, "accuracy_ack");
+    if (photoResult?.saved) feedback.signal(reviewedOutput, "manual_selection");
+  }, [feedback, reviewedOutput, photoResult?.reviewed, photoResult?.saved]);
   const api = useCallback(
     (
       path: string,
@@ -431,7 +450,7 @@ function ListingCreative(
           })}`,
         ),
       );
-      found.push(...rows(result.results, 100).map(decodeResult));
+      found.push(...rows(result.results, 100).map(value=>decodeResult(value,{actor:workspace.user.id,org:orgId,listing:listingId})));
       if (result.next_offset === null || result.next_offset === undefined) {
         break;
       }
@@ -472,12 +491,22 @@ function ListingCreative(
     }
   }
   async function loadPhotos(offset = 0) {
-    const media = await services.listMedia(orgId, listingId, signal, offset);
+    // Read every media page: saved Decluttered/Staged versions and their originals
+    // can sit past the first 50 rows, and the version tabs must not hide them.
+    const found: StudioPhoto[] = [], seen = new Set<string>();
+    let next: number | null = offset;
+    while (next !== null) {
+      const media = await services.listMedia(orgId, listingId, signal, next);
+      if (media.nextOffset !== null && media.nextOffset <= next) throw new Error("The saved photo list could not be loaded completely. Refresh this property.");
+      for (const photo of media.photos) if (!seen.has(photo.id) && !isServerDerivedPhoto(photo)) { seen.add(photo.id); found.push(photo); }
+      if (found.length > 5000) throw new Error("This property has too many photos to open at once.");
+      next = media.nextOffset;
+    }
     if (alive.current) {
       setPhotos((old) =>
-        offset ? [...old, ...media.photos] : [...media.photos]
+        offset ? [...old, ...found.filter((photo) => !old.some((prior) => prior.id === photo.id))] : found
       );
-      setMediaOffset(media.nextOffset);
+      setMediaOffset(null);
     }
   }
   useEffect(() => {
@@ -515,7 +544,7 @@ function ListingCreative(
               }),
             );
             if (!cancelled) {
-              const updated = decodeResult(result.result);
+              const updated = decodeResult(result.result,{actor:workspace.user.id,org:orgId,listing:listingId});
               setResults((old) => old.map((r) => r.id === id ? updated : r));
             }
           }
@@ -571,80 +600,92 @@ function ListingCreative(
     asset.id === draft.agentAssetId
   );
   const agentSeconds = agentBase?.duration_s ?? draft.agentDuration ?? 30;
-  async function chooseSource(next: SourceImage) {
+  const photoIdentityVersion = useRef(services.getSnapshot().identityVersion).current;
+  function assertPhotoScope(editing = true) {
+    signal.throwIfAborted();
+    const current = services.getSnapshot();
+    if (!alive.current || current.status !== "signed-in" || current.identityVersion !== photoIdentityVersion ||
+      current.identity?.userId !== workspace.user.id || current.identity.isAnonymous || listing.orgId !== orgId ||
+      (editing ? !canCreate : !(member?.canRead ?? ["owner", "admin", "agent", "marketing"].includes(role ?? "")))) throw new Error("Your account or editing access changed. Reopen this property.");
+  }
+  async function chooseSource(next: PhotoSource) {
+    assertPhotoScope(false);
     setSource(next);
     setPhotoResult(null);
     setSuggestions([]);
   }
   async function ensureOriginal() {
     if (!source) throw new Error("Choose the photo you want to work on first.");
+    assertPhotoScope();
+    if (!source.originalVerified || !source.original) throw new Error("Review and confirm the unedited original before creating another edit.");
     if (source.originalAssetId) return source.originalAssetId;
     const asset = await uploadListingAsset(services, {
       orgId,
       listingId,
-      file: source.file,
+      file: source.original.file,
       role: "original",
       signal,
     });
-    if (alive.current) setSource({ ...source, originalAssetId: asset.assetId });
+    assertPhotoScope();
+    setSource({ ...source, originalAssetId: asset.assetId });
     return asset.assetId;
   }
   async function generatePhoto() {
     if (!source) throw new Error("Choose a photo first.");
-    if (edit === "custom" && !prompt.trim()) {
-      throw new Error("Describe the change you want to make.");
+    if (photoTab !== "original" || source.edits.length) throw new Error("Choose the Original tab to create a new edit.");
+    if (edit === "custom") {
+      const decision = analyzeCustomPhotoPrompt(prompt, listing.spaceType);
+      if (decision.status !== "ready") throw new Error(decision.message);
     }
-    const originalAssetId = await ensureOriginal();
-    const response = record(
-      await api("ai-photo", {
-        listing_id: listingId,
-        original_asset_id: originalAssetId,
-        image_b64: source.base64,
-        mime: source.mime,
-        edit,
-        space_type: listing.spaceType,
-        label: room || "Studio photo",
-        ...(edit === "stage" ? { style } : {}),
-        ...(edit === "custom" ? { prompt: prompt.trim() } : {}),
-      }, {
-        idempotencyKey: crypto.randomUUID(),
-        timeoutMs: 300_000,
-        maxResponseBytes: 32 * 1024 * 1024,
-      }),
-    );
-    const file = editedImage(
-        requiredText(response.image_b64, "an edited photo", 32 * 1024 * 1024),
-        text(response.mime, 50) || "image/png",
-      ),
-      preview = `data:${file.type};base64,${String(response.image_b64)}`;
-    const provenance = response.provenance ? record(response.provenance) : {};
-    setPhotoResult({
-      file,
-      preview,
-      originalAssetId,
-      provenanceId: provenance.recorded === true
-        ? text(provenance.id, 80) || null
-        : null,
-      disclosure: requiredText(
-        response.disclosure,
-        "the photo disclosure",
-        1000,
-      ),
-      saved: false,
-    });
+    const identity={actor:workspace.user.id,library:workspace.libraryOrgId??orgId,listing:listingId};
+    assertPhotoScope();
+    const existing=await matchingPhotoRequest(identity,source);assertPhotoScope();
+    if(existing){
+      const changed=existing.context.edit!==edit||edit==="stage"&&existing.context.style!==style||edit==="custom"&&existing.context.prompt!==prompt.trim();
+      if(existing.state==="ready"&&changed){await finishPhotoRequest(existing);assertPhotoScope();photoRequestRow.current=null;}
+      else{photoRequestRow.current=existing;applySavedPhoto(await resumePhotoRequest(services,identity,existing,assertPhotoScope,signal));return;}
+    }
+    const originalAssetId=await ensureOriginal();assertPhotoScope();
+    const input=inputForEdit(source,edit);
+    applySavedPhoto(await retainedPhotoRequest(services,identity,{
+      listing_id:listingId,original_asset_id:originalAssetId,image_b64:input.base64,mime:input.mime,edit,space_type:listing.spaceType,label:room||"Studio photo",
+      ...(edit==="stage"?{style}:{}),...(edit==="custom"?{prompt:prompt.trim()}:{})
+    },{channel:"single",source:{...source,originalAssetId},edit,style,prompt:prompt.trim(),originalAssetId},assertPhotoScope,signal));
+  }
+  function applySavedPhoto(saved:{row:SavedPhotoRequest;result:unknown}){
+    assertPhotoScope();const {row}=saved,originalAssetId=row.context.originalAssetId,source=row.context.source,edit=row.context.edit,response=record(saved.result);
+    const file=editedImage(requiredText(response.image_b64,"an edited photo",PHOTO_OUTPUT_BASE64_CHARS),text(response.mime,50)||"image/png"),preview=`data:${file.type};base64,${String(response.image_b64)}`;
+    const provenance=response.provenance?record(response.provenance):{},disclosure=requiredText(response.disclosure,"the photo disclosure",1000),delivery=photoDelivery(source,file,edit,disclosure,provenance.recorded===true?text(provenance.id,80)||null:null);
+    photoRequestRow.current=row;setSource(source);setEdit(edit);setStyle(row.context.style);setPrompt(row.context.prompt);setPhotoTab("original");
+    setPhotoResult({...delivery,preview,originalAssetId,disclosure:delivery.disclosures.join("\n"),saved:false,reviewed:edit!=="custom",edit,source});
     if (provenance.recorded !== true) {
       setNotice(
         "Your edited photo is ready to review, but its disclosure record could not be saved. Download the result and retry later before adding it to a public gallery.",
       );
     }
   }
+  useEffect(()=>{
+    let cancelled=false;const identity={actor:workspace.user.id,library:workspace.libraryOrgId??orgId,listing:listingId};
+    void savedPhotoRequests(identity).then(rows=>{
+      if(cancelled||!alive.current||signal.aborted)return;const row=rows.find(item=>item.context.channel==="single");if(!row)return;
+      return run("Checking your saved photo",async()=>{
+        assertPhotoScope();photoRequestRow.current=row;setSource(row.context.source);setEdit(row.context.edit);setStyle(row.context.style);setPrompt(row.context.prompt);setPhotoTab("original");
+        applySavedPhoto(await resumePhotoRequest(services,identity,row,assertPhotoScope,signal));
+      });
+    }).catch(reason=>{if(!cancelled&&alive.current&&!signal.aborted)setError(message(reason));});
+    return()=>{cancelled=true;};
+  },[services,orgId,listingId,workspace.user.id,workspace.libraryOrgId]);
   async function savePhoto() {
     if (!photoResult) return;
+    if (photoResult.edit === "custom" && !photoResult.reviewed) throw new Error("Compare the preview with its original and confirm the fixed features before saving it.");
+    assertPhotoScope();
     if (!photoResult.provenanceId) {
       throw new Error(
         "This edit needs its disclosure record before it can be saved to the gallery.",
       );
     }
+    const caption = [room, ...photoResult.disclosures.slice(0, -1)].filter(Boolean).join(" · ");
+    if (caption.length > 400) throw new Error("This edit history is too long for a gallery caption. Download its complete photo package instead.");
     const result = await uploadListingAsset(services, {
       orgId,
       listingId,
@@ -652,6 +693,7 @@ function ListingCreative(
       role: "gallery",
       signal,
     });
+    assertPhotoScope();
     await services.api(
       `/functions/v1/me/compliance/${photoResult.provenanceId}`,
       {
@@ -664,15 +706,18 @@ function ListingCreative(
         },
       },
     );
+    assertPhotoScope();
     await api("studio/photos", {
       listing_id: listingId,
       asset_id: result.assetId,
-      caption: room || PRESETS.find((p) => p.id === edit)?.name,
+      caption,
       provenance_id: photoResult.provenanceId,
     });
+    assertPhotoScope();
+    if(photoRequestRow.current){await finishPhotoRequest(photoRequestRow.current);photoRequestRow.current=null;}
     setPhotoResult({ ...photoResult, saved: true });
     setNotice(
-      "Photo saved to this property's cloud gallery with the original and AI disclosure attached.",
+      "Version saved to this property's history with its original and AI disclosure. Use on listing in Media selects it for the website.",
     );
     onChanged();
     await loadPhotos();
@@ -811,14 +856,15 @@ function ListingCreative(
         label: "Property voiceover",
       }, { idempotencyKey: crypto.randomUUID(), timeoutMs: 360_000 }),
     );
-    setResults((old) => [decodeResult(raw.result), ...old]);
+    setResults((old) => [decodeResult(raw.result,{actor:workspace.user.id,org:orgId,listing:listingId}), ...old]);
     setNotice(
       "Your narration is saved with this property and can be opened again on another device.",
     );
   }
   async function generateVideo() {
+    if (videoKind === "aerial") throw new Error("Aerial intros are Coming soon.");
     let assetId = videoAsset;
-    if (videoKind === "reel" || videoKind === "aerial") {
+    if (videoKind === "reel") {
       assetId = await ensureOriginal();
     }
     if (!assetId) throw new Error("Choose a completed video first.");
@@ -830,7 +876,6 @@ function ListingCreative(
       label: room ||
         ({
           reel: "Property motion clip",
-          aerial: "Aerial-style intro",
           drone: "Drone glide",
           declutter: "Decluttered clip",
         }[videoKind]),
@@ -839,13 +884,10 @@ function ListingCreative(
         : videoKind === "declutter"
         ? { prompt }
         : {
-          seconds: videoKind === "aerial" ? 6 : seconds,
-          motion: videoKind === "aerial" ? "orbit_left" : motion,
+          seconds,
+          motion,
           room,
           prompt: prompt.trim() || undefined,
-          ...(videoKind === "aerial"
-            ? { aspect: "16:9", time_of_day: "day" }
-            : {}),
         }),
     };
     const raw = record(
@@ -854,7 +896,7 @@ function ListingCreative(
         timeoutMs: 360_000,
       }),
     );
-    setResults((old) => [decodeResult(raw.result), ...old]);
+    setResults((old) => [decodeResult(raw.result,{actor:workspace.user.id,org:orgId,listing:listingId}), ...old]);
     setNotice(
       "Generation started. You can leave this page and return to this property's saved results.",
     );
@@ -862,6 +904,7 @@ function ListingCreative(
   async function reviewVideo(result: CreativeResult) {
     const signed = decodeResult(
       record(await api("studio/sign-media", { result_id: result.id })).result,
+      {actor:workspace.user.id,org:orgId,listing:listingId},
     );
     if (!signed.url || !signed.sourceUrl || !signed.requestId) {
       throw new Error(
@@ -956,6 +999,7 @@ function ListingCreative(
   async function askCoach(input = question) {
     const content = input.trim();
     if (!content) return;
+    assertPhotoScope(false);
     const messages = [...conversation, { role: "user" as const, content }]
       .slice(-15);
     setConversation(messages);
@@ -964,27 +1008,11 @@ function ListingCreative(
       await api("coach", {
         messages,
         space_type: listing.spaceType,
-        context: {
-          plan: workspace.plan,
-          screen: "studio",
-          listings: listings.slice(0, 30).map((item) => ({
-            id: item.id,
-            title: item.tagline || item.address || "Property",
-            has_video: item.id === listingId ? videos.length > 0 : false,
-            room_tags: item.id === listingId ? draft.chapters.length : 0,
-            has_tour: item.status === "ready",
-            published: item.status === "ready",
-            photos: item.id === listingId ? photos.length : 0,
-            edits: item.id === listingId
-              ? photos.filter((p) => p.isStaged).length
-              : 0,
-            reels: item.id === listingId
-              ? results.filter((r) => r.kind === "video").length
-              : 0,
-          })),
-        },
+        context: creativeCoachContext(workspace, listing, { photos, assets, renders,
+          chapters: draft.chapters.length, reels: results.filter(row => row.kind === "video").length }),
       }, { idempotencyKey: crypto.randomUUID(), timeoutMs: 120_000 }),
     );
+    assertPhotoScope(false);
     setConversation([...messages, {
       role: "assistant",
       content: requiredText(response.reply, "a reply", 4000),
@@ -1032,11 +1060,17 @@ function ListingCreative(
       )}
     </div>
   );
+  const selectedPhotoDelivery = useMemo(() => source && source.edits.length ? [{ file: source.file, original: source.original?.file ?? null,
+    originalPreview: source.original?.preview ?? null, originalVerified: source.originalVerified, disclosures: source.disclosures,
+    edits: source.edits, provenanceId: null }] : [], [source]);
+  const originalEditing = panel === "photos" && photoTab === "original";
+  const savedPhotoReview = panel === "photos" && !originalEditing;
+  const displayedPhotos = panel === "photos" ? photosInTab(photos, photoTab) : photos;
   const sourcePicker = (
     <div className="creative-source">
-      <h2>Choose your photo</h2>
-      <p>Use a saved property photo from your phone, or add one from this computer.</p>
-      <label className="creative-upload">
+      <h2>{originalEditing ? "Choose your original" : savedPhotoReview ? "Review saved results" : "Choose your photo"}</h2>
+      <p>{originalEditing ? "New edits start from the original. Finished versions stay saved separately." : savedPhotoReview ? "Review and download these finished photos. Choose Original to create another edit." : "Use your chosen saved property photo, or import one from this computer."}</p>
+      {!savedPhotoReview && <label className="creative-upload">
         Import a photo<input
           type="file"
           accept="image/jpeg,image/png,image/webp"
@@ -1046,14 +1080,14 @@ function ListingCreative(
             if (file) {
               void run(
                 "Preparing photo",
-                async () => chooseSource(await prepareImage(file, signal)),
+                async () => chooseSource(importedPhoto(await prepareImage(file, signal))),
               );
             }
             e.target.value = "";
           }}
         />
-      </label>
-      {photos.length > 0 && (
+      </label>}
+      {displayedPhotos.length > 0 && (
         <label>
           Or use a property photo<select
             aria-label="Source property photo"
@@ -1061,32 +1095,21 @@ function ListingCreative(
             disabled={isBusy}
             onChange={(e) => {
               const photo = photos.find((p) => p.id === e.target.value);
-              if (
-                photo &&
-                (!(photo.isAltered || photo.isStaged) || photo.originalUrl)
-              ) {
+              if (photo) {
                 void run("Opening photo", async () => {
                   await chooseSource(
-                    await imageFromURL(
-                      (photo.isAltered || photo.isStaged)
-                        ? photo.originalUrl!
-                        : photo.url,
-                      `${photo.caption || "property"}.jpg`,
-                      signal,
-                    ),
+                    await (originalEditing ? propertyOriginalPhoto(photo, signal) : propertyPhoto(photo, signal)),
                   );
-                  setRoom(photo.caption || "");
+                  setRoom((photo.caption || "").split(" · ")[0]!.slice(0, 60));
                 });
               }
             }}
           >
             <option value="">Choose a cloud photo</option>
-            {photos.filter((p) =>
-              (!p.isAltered && !p.isStaged) || !!p.originalUrl
-            ).map((p, i) => (
+            {displayedPhotos.map((p, i) => (
               <option key={p.id} value={p.id}>
                 {p.caption || `Photo ${i + 1}`}
-                {p.isStaged ? " · AI edited" : ""}
+                {originalEditing && (p.isAltered || p.isStaged) ? " · paired original" : !originalEditing && (p.isAltered || p.isStaged) ? " · saved edit" : ""}
               </option>
             ))}
           </select>
@@ -1096,16 +1119,22 @@ function ListingCreative(
         ? (
           <figure>
             <img src={source.preview} alt="Selected source property" />
-            <figcaption>{source.file.name} · original preserved</figcaption>
+            <figcaption>{source.file.name} · {originalEditing ? "original editing image" : "chosen saved photo"}</figcaption>
+            {!source.originalVerified && source.original && <details open><summary>Check the paired original</summary>
+              <img src={source.original.preview} alt="Paired source to verify" />
+              <p>This photo predates verified source history. Confirm the original before a new edit.</p>
+              <label><input type="checkbox" disabled={isBusy} onChange={event => setSource({ ...source, originalVerified: event.target.checked })} />This is the actual unedited original.</label>
+            </details>}
+            {savedPhotoReview && source.original && <button disabled={isBusy} onClick={() => { setPhotoTab("original"); void chooseSource({ ...importedPhoto(source.original!), originalVerified: source.originalVerified, originalAssetId: source.originalAssetId }); }}>Edit original with AI</button>}
           </figure>
         )
         : (
           <div className="creative-source-placeholder">
-            Choose a photo from your phone's synced library or import one from
-            your computer.
+            {displayedPhotos.length ? "Choose a photo from this property." : savedPhotoReview ? "No saved results in this category yet." : "Import a photo, or sync your saved property photos."}
           </div>
         )}
-      {source && (
+      {selectedPhotoDelivery.length > 0 && <PhotoExportPanel photos={selectedPhotoDelivery} assertScope={() => assertPhotoScope(false)} disabled={isBusy} />}
+      {source && !savedPhotoReview && (
         <label>
           Room or view<input
             maxLength={60}
@@ -1226,7 +1255,7 @@ function ListingCreative(
           <button
             key={item.id}
             aria-current={panel === item.id ? "page" : undefined}
-            onClick={() => { if (item.id === panel || panel !== "presenter" || canLeavePresenter()) setPanel(item.id); }}
+            onClick={() => { if (item.id === panel || panel !== "presenter" || canLeavePresenter()) { if (item.id === "photos" && photoTab === "original" && source?.edits.length) setSource(source.original ? { ...importedPhoto(source.original), originalVerified: source.originalVerified, originalAssetId: source.originalAssetId } : null); setPanel(item.id); } }}
           >
             {item.label}
           </button>
@@ -1264,7 +1293,10 @@ function ListingCreative(
       {panel === "presenter" && <Suspense fallback={<p role="status">Loading AI Presenter…</p>}><PresenterPanel services={services} workspace={workspace} listing={listing} onChanged={onChanged} onPendingChange={presenterChanged} onUseAgentPlan={onUseAgentPlan} /></Suspense>}
       {panel === "photos" && (
         <div className="creative-two-column">
-          <div className="creative-card">
+          <nav className="creative-tabs creative-wide" aria-label="Photo versions">
+            {([["original", "Original"], ["declutter", "Decluttered"], ["stage", "Staged"], ["saved", "Saved edits"]] as const).map(([id, label]) => <button key={id} disabled={isBusy} aria-current={photoTab === id ? "page" : undefined} onClick={() => { setPhotoTab(id); setSource(null); setSuggestions([]); }}>{label}</button>)}
+          </nav>
+          {photoTab === "original" && <div className="creative-card">
             <h2>What would you like to change?</h2>
             <p>
               Choose an edit, then pick your photo. Review the preview before
@@ -1291,7 +1323,7 @@ function ListingCreative(
               <div className="creative-style-picker" role="group" aria-label="Staging style">
                 <p>Choose a style</p>
                 <div className="creative-preset-grid">
-                  {["modern", "rustic", "minimalist", "scandinavian"].map((value) => (
+                  {STAGING_STYLE_CHOICES.map((value) => (
                     <button key={value} aria-pressed={style === value}
                       className={style === value ? "selected" : ""}
                       onClick={() => setStyle(value)}>
@@ -1312,12 +1344,12 @@ function ListingCreative(
                   />
                 </label>
                 <button
-                  disabled={isBusy || !prompt.trim() || !canCreate}
+                  disabled={isBusy || !canCreate || analyzeCustomPhotoPrompt(prompt, listing.spaceType).status !== "ready"}
                   onClick={() =>
                     run("Refining your edit", async () => {
                       const response = record(
                         await api("ai-copy/edit-prompt", {
-                          rough: prompt.slice(0, 300),
+                          rough: prompt,
                           room_hint: room,
                           listing_id: listingId,
                           space_type: listing.spaceType,
@@ -1334,11 +1366,12 @@ function ListingCreative(
                 >
                   Help me describe it
                 </button>
+                <CustomPhotoPromptHelp prompt={prompt} onPrompt={setPrompt} space={listing.spaceType} disabled={isBusy || !canCreate} />
               </>
             )}
             <div className="creative-actions">
               <button
-                disabled={!source || isBusy || !canCreate}
+                disabled={!source || source.edits.length > 0 || isBusy || !canCreate}
                 onClick={() =>
                   run("Finding suitable edits", async () => {
                     const response = record(
@@ -1367,10 +1400,10 @@ function ListingCreative(
               </button>
               <button
                 className="creative-primary"
-                disabled={!source || isBusy || !canCreate}
+                disabled={!source || source.edits.length > 0 || !source.originalVerified || isBusy || !canCreate || edit === "custom" && analyzeCustomPhotoPrompt(prompt, listing.spaceType).status !== "ready"}
                 onClick={() => run("Creating your photo", generatePhoto)}
               >
-                Generate preview
+                {photoRequestRow.current?.state==="pending"?"Check saved edit":"Generate preview"}
               </button>
             </div>
             <small>Uses the same photo allowance as your iPhone app.</small>
@@ -1384,16 +1417,18 @@ function ListingCreative(
                 <span>{s.reason}</span>
               </button>
             ))}
-          </div>
+          </div>}
           {sourcePicker}
+          <CoordinatorPhotoExportPanel services={services} orgId={orgId} listingId={listingId} title={listing.address || "property"}
+            scopeSignal={signal} assertScope={() => assertPhotoScope(false)} disabled={isBusy} />
           {photoResult && (
             <section className="creative-card creative-wide">
               <h2>Review your edit</h2>
               <div className="creative-comparison">
                 <figure>
                   <img
-                    src={source?.preview}
-                    alt="Original photo before the edit"
+                    src={photoResult.originalPreview ?? undefined}
+                    alt="Unedited original photo"
                   />
                   <figcaption>Original</figcaption>
                 </figure>
@@ -1406,26 +1441,34 @@ function ListingCreative(
                 </figure>
               </div>
               <p>{photoResult.disclosure}</p>
+              {photoResult.edit === "custom" && <label className="creative-review-confirmation"><input type="checkbox" checked={photoResult.reviewed} disabled={isBusy} onChange={event => setPhotoResult(current => current ? { ...current, reviewed: event.target.checked } : null)} />I compared the preview with the original: paint and garage/trim finishes, fixed features, layout and property condition are unchanged.</label>}
               <div className="creative-actions">
                 <button
                   className="creative-primary"
                   disabled={isBusy || photoResult.saved ||
-                    !photoResult.provenanceId}
+                    !photoResult.provenanceId || photoResult.edit === "custom" && !photoResult.reviewed}
                   onClick={() => run("Saving photo and original", savePhoto)}
                 >
                   {photoResult.saved
-                    ? "Saved to gallery"
-                    : "Save to property gallery"}
+                    ? "Version saved"
+                    : "Save version"}
                 </button>
-                <a href={photoResult.preview} download={photoResult.file.name}>
-                  Download edited photo
-                </a>
+                <button disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed} onClick={() => void run("Opening original", async () => {
+                  if (photoResult.edit === "custom" && !photoResult.reviewed) throw new Error("Compare and confirm this custom edit before continuing.");
+                  if(photoRequestRow.current){await finishPhotoRequest(photoRequestRow.current);photoRequestRow.current=null;}
+                  const next = { ...importedPhoto(photoResult.source.original!), originalAssetId: photoResult.originalAssetId };
+                  setPhotoTab("original");
+                  await chooseSource(next);
+                })}>Edit original again</button>
+                <PhotoExportPanel photos={[photoResult]} assertScope={() => assertPhotoScope(false)} disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed}
+                  onDownloaded={reviewedOutput ? () => feedback.signal(reviewedOutput, "export") : undefined} />
               </div>
+              {reviewedOutput && <PhotoFeedbackControl key={reviewedOutput} queue={feedback} provenanceId={reviewedOutput} file={photoResult.file} />}
             </section>
           )}
         </div>
       )}
-      <div hidden={panel !== "photos"}>
+      <div hidden={panel !== "photos" || photoTab !== "original"}>
         <BatchPhotoStudio services={services} workspace={workspace} listing={listing}
           photos={photos} canCreate={canCreate} onChanged={onChanged}
           onComplete={() => void loadPhotos().catch((error) => {
@@ -1850,15 +1893,15 @@ function ListingCreative(
       {panel === "video" && (
         <div className="creative-two-column">
           <div className="creative-card">
-            <h2>{videoKind === "aerial" ? "Make an aerial shot" : videoKind === "drone" ? "Polish your drone footage" : videoKind === "declutter" ? "Remove an object from your video" : "Animate a property photo"}</h2>
-            <p>{videoKind === "aerial" ? "Start with an exterior photo of this property. Review your AI aerial-style clip before adding it to a reel." : videoKind === "drone" ? "Choose drone footage you uploaded from your phone to make a smoother, sharper clip." : videoKind === "declutter" ? "Choose a saved clip and describe the object you want removed." : "Choose a saved property photo, add a little movement, then use the clip in Reel Studio."}</p>
+            <h2>{videoKind === "aerial" ? "Aerial intros · Coming soon" : videoKind === "drone" ? "Polish your drone footage" : videoKind === "declutter" ? "Remove an object from your video" : "Animate a property photo"}</h2>
+            <p>{videoKind === "aerial" ? "New aerial creation is not included in any plan. Your saved aerial videos remain available below." : videoKind === "drone" ? "Choose drone footage you uploaded from your phone to make a smoother, sharper clip." : videoKind === "declutter" ? "Choose a saved clip and describe the object you want removed." : "Choose a saved property photo, add a little movement, then use the clip in Reel Studio."}</p>
             <label>
               What would you like to make?<select
                 value={videoKind}
                 onChange={(e) => setVideoKind(e.target.value)}
               >
                 <option value="reel">Animate a property photo</option>
-                <option value="aerial">Create an aerial-style intro</option>
+                <option value="aerial" disabled>Aerial intro · Coming soon</option>
                 <option value="drone">Smooth and upscale drone footage</option>
                 <option value="declutter">
                   Remove an object from a short clip
@@ -1954,7 +1997,7 @@ function ListingCreative(
             </label>
             <button
               className="creative-primary"
-              disabled={isBusy || !canCreate}
+              disabled={isBusy || !canCreate || videoKind === "aerial"}
               onClick={() => run("Starting your video", generateVideo)}
             >
               Generate video
@@ -2014,7 +2057,7 @@ function ListingCreative(
                             setResults((old) =>
                               old.map((r) =>
                                 r.id === result.id
-                                  ? decodeResult(raw.result)
+                                  ? decodeResult(raw.result,{actor:workspace.user.id,org:orgId,listing:listingId})
                                   : r
                               )
                             );

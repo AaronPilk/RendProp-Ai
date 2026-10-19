@@ -1,0 +1,143 @@
+{
+  "recorded_at": "2026-10-10T17:50:38.689386+00:00",
+  "source_commit": "d5ed053e472594e94c408f9798d1fe30c705d4dd",
+  "branch": "fix/build57-portable-integration-20261010",
+  "version": "1.0.4",
+  "build": "57",
+  "apple_build_id": "46e2df20-e688-4e14-afa7-88655f28e8ba",
+  "processing_state": "VALID",
+  "build_audience": "APP_STORE_ELIGIBLE",
+  "internal_beta_state": "IN_BETA_TESTING",
+  "external_beta_state": "READY_FOR_BETA_SUBMISSION",
+  "artifact": {
+    "compiled_tracked_swift": 135,
+    "compiled_generated_swift": 1,
+    "compiled_inputs_match_source": true,
+    "ipa_sha256": "dda4e6f554ea261086bd96a8eb5e9de5981e6a1a89c83f14bd9ad89eb5128560",
+    "archive_binary_sha256": "ef1cf5f696a6bf0886e2e699688c06a43d248bfbebaa7557511513339bb3995e",
+    "exported_binary_sha256": "71a8596b5b86c1c097d3c53610646f584e30f4e6f7aeca8e58f2ec2b0dbc0b79",
+    "dsym_sha256": "235c2b7514b3904d089ab0a16157330eeacb8067aa4b956003d115f1935a5fbb",
+    "uuids": {
+      "archive": "D9DCDA5B-7D3C-348C-A069-35F352A7FD77",
+      "ipa": "D9DCDA5B-7D3C-348C-A069-35F352A7FD77",
+      "dsym": "D9DCDA5B-7D3C-348C-A069-35F352A7FD77"
+    },
+    "AppStoreDistribution": true,
+    "get_task_allow": false,
+    "aps_environment": "production",
+    "signatures_verified": true,
+    "capture_lab_compiler_flag": false
+  },
+  "export_manageAppVersionAndBuildNumber": false,
+  "upload_attempts": 1,
+  "ci": {
+    "checkpoint_run": 38067429608,
+    "checkpoint_commit": "2a9d98f092780d5476a8cbfca63aeeccc31363da",
+    "checkpoint_jobs_passed": 12,
+    "archive_tip_run": 38071986005,
+    "archive_tip_status": "in_progress",
+    "archive_tip_conclusion": "",
+    "jobs": [
+      {
+        "name": "Offline reel-style preservation and blind-evaluation contracts",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Offline audit evidence, consent and adoption source gates",
+        "status": "in_progress",
+        "conclusion": ""
+      },
+      {
+        "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "iOS static gates",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Cloudflare Worker (tour-host)",
+        "status": "completed",
+        "conclusion": "failure"
+      },
+      {
+        "name": "Web parity inventory and design-token contracts (offline)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase migrations (fresh replay + invariants)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Studio contracts, build and property workflows (offline)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Python workers (render, spatial, training adapter)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase edge functions (deno check + tests)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Secret scan",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ],
+    "unresolved": "Studio original-audio double-speed-transient-waiting unexpectedly refused export; local unchanged H.264/AAC 9/9 pass is not closure"
+  },
+  "web": {
+    "worker_version": "49b2e9a3-e917-437f-92b4-c59c5f5bb23d",
+    "readback_passed": true,
+    "normalization": "Only the identified Cloudflare JS-detection script stripped; raw responses retained"
+  },
+  "studio": {
+    "worker_version": "a489f876-479d-4ceb-b64d-e2a7912c94f8",
+    "connected_config_verified": true,
+    "gzip_bytes": 349777,
+    "verified_files": 31,
+    "readback_passed": true,
+    "entry_browser_errors": 0,
+    "sign_in_shown": true,
+    "account_login_verified": false,
+    "superseded_disconnected_worker_version": "3a34cc49-b2ba-48fd-b9cf-6309105477c2"
+  },
+  "app_store_draft": {
+    "version_id": "39ff74df-71d4-4bf1-92f4-9c709e7f4366",
+    "review_id": "ecf0a17a-6fdd-40c9-8e0b-39f345b1b830",
+    "build_id": "46e2df20-e688-4e14-afa7-88655f28e8ba",
+    "state": "READY_FOR_REVIEW",
+    "screenshots_complete": 7,
+    "replaced_screenshot_orders": [
+      1,
+      5
+    ],
+    "review_items": "app version + three monthly subscription versions",
+    "text_metadata_verified": true,
+    "submitted": false
+  },
+  "evidence_root": "/Users/pilksclaes/LocalRendpropAudits/build57-ship-20261010",
+  "open_acceptance": [
+    "Hosted audio export regression",
+    "Real-device capture/account/purchase/cancel/restore/push/lead acceptance",
+    "Ordinary non-sponsored photo/reel/aerial and condition-preservation quality with settled ledger holds",
+    "Supplier invoice and Apple effective commission evidence"
+  ],
+  "backend_redeployed": false,
+  "product_source_changed": false
+}

@@ -10,7 +10,7 @@ import {
   respondError,
   throwRpc,
 } from "../_shared/http.ts";
-import { adminClient, getBearer } from "../_shared/supabase.ts";
+import { adminClient, getBearer, publicApiKey } from "../_shared/supabase.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function uuid(value: unknown): value is string {
@@ -22,7 +22,7 @@ async function userForToken(
   token: string,
 ): Promise<{ id: string; is_anonymous: boolean } | null> {
   const base = Deno.env.get("SUPABASE_URL"),
-    anon = Deno.env.get("SUPABASE_ANON_KEY");
+    anon = publicApiKey();
   if (!base || !anon) {
     throw new HttpError(503, "Account verification is unavailable", "upstream");
   }

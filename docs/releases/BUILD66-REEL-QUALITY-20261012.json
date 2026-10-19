@@ -1,0 +1,59 @@
+{
+  "recordedUTC": "2026-10-12T23:09:50.323329+00:00",
+  "version": "1.0.4",
+  "build": "66",
+  "sourceCommit": "382380a2f7d46412d706ad5f91d42f5aacf8d04b",
+  "purpose": "Full-scene framing and app-owned reel work; short real-photo acceptance pending",
+  "archiveVerified": true,
+  "ipaSHA256": "b9642ad21296c9c118d8c3f5e91944945758af2a06afbee3b989e2dfa1fc2b6e",
+  "deliveryUUID": "754ecb00-f7b7-4f7c-8dab-757760229e62",
+  "uploadCount": 1,
+  "testflightState": "IN_BETA_TESTING",
+  "existingInternalTeamVerified": true,
+  "testingNotesVerified": true,
+  "ci": {
+    "runID": 38319377681,
+    "sourceCommit": "382380a2f7d46412d706ad5f91d42f5aacf8d04b",
+    "state": "pending-final-native-job",
+    "knownFailures": [
+      "Extracted server preflight fixture lacks real framing helper import; narrow local repair tested",
+      "Studio web export whip transition delayed under late-frame fixture; unresolved"
+    ]
+  },
+  "phoneAcceptance": {
+    "installed": true,
+    "twoPhotoGeneration": true,
+    "visualAccepted": false,
+    "leaveStudioWhileRendering": true,
+    "installedReadbackUTC": "2026-10-12T23:11:47.272518+00:00",
+    "generateTappedUTC": "2026-10-12T23:20:07.124Z",
+    "tabsObserved": [
+      "Home",
+      "Profile"
+    ],
+    "backgroundLeftUTC": "2026-10-12T23:23:16.010Z",
+    "foregroundTapUTC": "2026-10-12T23:24:51.862Z",
+    "observedOSPause": "1 of 2 photos ready; resume verification pending",
+    "source1FullAspect": "1536x2048, EXIF1, 1612140 bytes",
+    "osPauseResumedWithoutDuplicate": true,
+    "completedFromProfile": true,
+    "globalBannerReviewOpenedExistingJob": true,
+    "saveToPhotos": true,
+    "finalEncodedVisualAccepted": false,
+    "ownerRejected": "Blurred top/bottom filler; chose single-crop full-screen Instagram instead",
+    "cleanPreview": "1080x1920,30fps,10s from same paid raw clips, no blurred filler",
+    "catalogCostUSD": 0.926
+  },
+  "appStore": {
+    "build": "57",
+    "state": "WAITING_FOR_REVIEW",
+    "release": "MANUAL",
+    "modified": false
+  },
+  "limits": [
+    "No quality guarantee from geometry QC",
+    "Full source fit cannot recover provider-discarded content",
+    "iOS suspension can pause the retained local batch; complete cloud assembly is not implemented",
+    "Public Kie routing remains disabled"
+  ]
+}

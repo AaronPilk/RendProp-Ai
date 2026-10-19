@@ -219,6 +219,10 @@ export interface TourLdInput {
   poster: string;
   /** The all-intra scrub mp4 as rendered. Absolutized here. */
   videoUrl: string;
+  /** Duration of the video actually shown, not a separately recorded tour. */
+  videoDurationS?: number;
+  /** null omits an embed URL when the legacy embed plays a different video. */
+  videoEmbedUrl?: string | null;
   /** The listing's price in dollars, or null when it has none (0 / absent). */
   priceValue: number | null;
   /** SOLD (real estate) / Archived (every other type). */
@@ -288,9 +292,9 @@ export function tourJsonLd(input: TourLdInput): string {
     description,
     thumbnailUrl: poster,
     contentUrl: video,
-    embedUrl: `${canonical}?embed=1`,
+    embedUrl: input.videoEmbedUrl === null ? undefined : input.videoEmbedUrl || `${canonical}?embed=1`,
     uploadDate: published,
-    duration: isoDuration(tour.duration_s),
+    duration: isoDuration(input.videoDurationS ?? tour.duration_s),
     about: { "@id": id("property") },
   };
 

@@ -6,6 +6,8 @@ export const PAGE_SIZE = 50;
 export const MEDIA_TTL_SECONDS = 600;
 export const MAX_CAPTION_CHARS = 4_096;
 export type MediaScope = { userId: string; orgId: string; listingId: string };
+export type PhotoEditKind = "declutter" | "stage" | "sky" | "twilight" | "lawn" | "custom";
+export type PhotoEditProof = { edit: PhotoEditKind | null; originalKey: string | null };
 export type PhotoRow = {
   id: string;
   listing_id: string;
@@ -43,12 +45,13 @@ export interface StudioDependencies {
   read(
     scope: MediaScope,
     offset: number,
-  ): Promise<{ photos: PhotoRow[]; assets: AssetRow[]; renders: RenderRow[]; photoAssetAliases?: string[] }>;
+  ): Promise<{ photos: PhotoRow[]; assets: AssetRow[]; renders: RenderRow[]; photoAssetAliases?: string[]; photoEdits?: Record<string, PhotoEditProof> }>;
   mediaVisibility(scope: MediaScope, refs: MediaSourceRefs): Promise<MediaVisibility>;
   sign(
     bucket: "uploads" | "renders",
     key: string,
     seconds: number,
+    scope: MediaScope,
   ): Promise<string>;
   now(): number;
 }
@@ -87,6 +90,16 @@ export function bucketForKey(
     }
   }
   return null;
+}
+
+/** Server-reserved video working copies/posters are not property photographs.
+ * Keep untouched capture originals, gallery uploads and saved edits; never
+ * infer a room/photo identity from captions or from the renders bucket alone. */
+export function internalVideoPhoto(key: string, scope: MediaScope): boolean {
+  const root = `${scope.orgId}/${scope.listingId}/`;
+  const uuid = "[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}";
+  return new RegExp(`^uploads/${root}prepared-video/${uuid}/${uuid}\\.jpg$`).test(key) ||
+    new RegExp(`^renders/${root}background/${uuid}/${uuid}/first-clip\\.jpg$`).test(key);
 }
 
 export function createStudioHandler(deps: StudioDependencies) {
@@ -191,11 +204,12 @@ export function createStudioHandler(deps: StudioDependencies) {
         if (signed.has(key as string)) return null;
         signed.add(key as string);
         exposedKeys.add(key as string);
-        return await deps.sign(bucket, key as string, MEDIA_TTL_SECONDS);
+        return await deps.sign(bucket, key as string, MEDIA_TTL_SECONDS,scope);
       }
       // Sequential signing is intentionally bounded (at most 200 objects per page).
       // It does no object download, provider work, mutation, or publication.
       for (const photo of pagePhotos) {
+        if (internalVideoPhoto(photo.enhanced_key || photo.original_key || "", scope)) continue;
         const url = await sign(
           photo.enhanced_key || photo.original_key,
           photo.listing_id,
@@ -204,7 +218,7 @@ export function createStudioHandler(deps: StudioDependencies) {
           const originalBucket = bucketForKey(photo.original_key, scope);
           const originalURL = originalBucket && photo.original_key && access.keys[photo.original_key] === true
             ? photo.original_key === (photo.enhanced_key || photo.original_key) ? url
-              : await deps.sign(originalBucket, photo.original_key, MEDIA_TTL_SECONDS)
+              : await deps.sign(originalBucket, photo.original_key, MEDIA_TTL_SECONDS,scope)
             : null;
           if (originalURL && photo.original_key) exposedKeys.add(photo.original_key);
           photos.push({
@@ -216,11 +230,14 @@ export function createStudioHandler(deps: StudioDependencies) {
             is_staged: photo.is_staged === true,
             is_altered: photo.is_staged === true || Boolean(photo.enhanced_key && photo.enhanced_key !== photo.original_key),
             original_url: originalURL,
+            edit_kind: rows.photoEdits?.[photo.enhanced_key || photo.original_key || ""]?.edit ?? null,
+            original_verified: !!originalURL && rows.photoEdits?.[photo.enhanced_key || photo.original_key || ""]?.originalKey === photo.original_key,
             sort: photo.sort,
           });
         }
       }
       for (const asset of pageAssets) {
+        if (/\/contact-[^/]+$/.test(asset.storage_key)) continue;
         if (access.assets[asset.id] !== true) { unavailable++; continue; }
         if (!asset.uploaded || !["photo", "video"].includes(asset.kind)) {
           continue;
@@ -229,6 +246,7 @@ export function createStudioHandler(deps: StudioDependencies) {
         // Keep the canonical gallery identity and caption, not a second source
         // card whose only difference is the backing capture UUID.
         if (asset.kind === "photo" && photoAssetAliases.has(asset.storage_key)) continue;
+        if (asset.kind === "photo" && internalVideoPhoto(asset.storage_key, scope)) continue;
         const url = await sign(
           asset.storage_key,
           asset.listing_id,
@@ -248,6 +266,8 @@ export function createStudioHandler(deps: StudioDependencies) {
             // bucket assets can be offered as an unaltered source without provenance.
             is_altered: asset.bucket === "renders",
             original_url: asset.bucket === "uploads" ? url : null,
+            edit_kind: rows.photoEdits?.[asset.storage_key]?.edit ?? null,
+            original_verified: false,
             sort: 0,
           });
         } else {

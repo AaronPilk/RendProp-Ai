@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "scope": "internal TestFlight only",
+  "verifiedAt": "2026-10-06T19:23:12.515353+00:00",
+  "sourceCommit": "5eeb783125867a8bebbcc7254dd2b09d58ae439e",
+  "bundleId": "com.rendprop.app",
+  "version": "1.0.4",
+  "build": "45",
+  "appleBuildId": "e4b26e8d-2682-4976-b296-496c6847224e",
+  "processingState": "VALID",
+  "buildAudienceType": "INTERNAL_ONLY",
+  "expired": false,
+  "internalBuildState": "IN_BETA_TESTING",
+  "internalGroupName": "Rendprop team",
+  "internalGroupBuildIncluded": true,
+  "exactCI": {
+    "runUrl": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37507134865",
+    "jobsPassed": 12,
+    "testedSourceTree": "5f4f860af3866d657b8744787785c09b5e55eff3",
+    "receiptSHA256": "08c31c303d0b5a30bba7d85e3a006ae10f44db9bf74c1e7ab4725c77da996fa4"
+  },
+  "evidenceSHA256": {
+    "appleAvailability": "9cef40a9d9fc42255d42778e51ef489d865bef1174257510ecb2e689ce54666c",
+    "independentAppleAvailability": "41a0a5aed6760ecd8c0167ba561b9983f744ea867029ffecb9a6eb069f3cc2ef",
+    "uploadedPackageBinding": "28fa5119e96f453972f3fed70b00a633c8f4765b5abd94f0d9aa7e5e7e58e5ad",
+    "independentUploadedPackage": "4916be2ddc45ea3b32db307dbeb378ab61161713a11ac1bfdbfac0626888a119"
+  },
+  "limitations": [
+    "No public App Store submission or release performed.",
+    "Availability and source binding do not prove physical camera, AR, real billing or provider quality.",
+    "Backend verification stopped on the stale facts edit; remaining Studio/media rollout and photo ACL contraction are pending.",
+    "Free-trial sponsorship and retail/review funding allocations remain unseeded."
+  ]
+}

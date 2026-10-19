@@ -1,0 +1,200 @@
+{
+  "kind": "Regular App Store 1.0.3(42) submission and production Studio durability fix",
+  "verifiedAt": "2026-10-02T20:25:47.394186+00:00",
+  "source": {
+    "branch": "release/appstore-1.0.3-20261002",
+    "runtimeCommit": "204594a771d5f0688bf4ad7b2a3902c83c2b70a6",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/19",
+    "pullRequestBase": "fix/beta-polish-20261002",
+    "draftAtDelivery": true,
+    "note": "Delivery documentation is a later docs-only commit. No shared branch or Claude checkout was rewritten."
+  },
+  "app": {
+    "appID": "6808982413",
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "42",
+    "scheme": "Rendprop",
+    "spatialLabEnabled": false,
+    "minimumOS": "16.0"
+  },
+  "ci": {
+    "runtimeCommit": "204594a771d5f0688bf4ad7b2a3902c83c2b70a6",
+    "runURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37057063887",
+    "expectedJobs": 12,
+    "passedJobs": 12,
+    "skippedJobs": 0,
+    "requiredJobNames": [
+      "Cloudflare Worker (tour-host)",
+      "Cloudflare Worker (upload-gateway, deno check + tests)",
+      "Disposable PostgreSQL publication, invariant and deletion regression",
+      "Offline audit evidence, consent and adoption source gates",
+      "Offline reel-style preservation and blind-evaluation contracts",
+      "Python workers (render, spatial, training adapter)",
+      "Secret scan",
+      "Studio contracts, build and property workflows (offline)",
+      "Supabase edge functions (deno check + tests)",
+      "Supabase migrations (fresh replay + invariants)",
+      "Web parity inventory and design-token contracts (offline)",
+      "iOS static gates"
+    ]
+  },
+  "nativeChanges": [
+    "Experimental spatial entry points, new admissions and inherited upload recovery are confined to the explicit lab scheme. Existing local media/journals are retained.",
+    "Physical devices ignore simulator UI-test launch switches.",
+    "AI consent revocation stops unsent photo-batch requests, including after revoke/regrant, and retains already dispatched responses.",
+    "Settings and consent name the same AI processors."
+  ],
+  "softwareChecks": {
+    "nativeSourceInputsBoundToArchive": 216,
+    "compiledTrackedSwiftInputs": 131,
+    "compiledGeneratedSwiftInputs": 1,
+    "spatialIsolationNegativeControls": 3,
+    "aiConsentBatchAssertions": 48,
+    "aiConsentNegativeControls": 2,
+    "studioUnitTests": 441,
+    "studioProjectsBrowserChecks": 14,
+    "studioRecipeBrowserChecks": 4,
+    "studioCloudEditorBrowserChecks": 16,
+    "studioAdmissionNegativeControls": 2,
+    "paidProviderOrGPUJobs": 0
+  },
+  "archive": {
+    "executableSHA256": "0e0b4ba2f526600f8f642f8e3a0b1605cff93ef8c78f30408eef42a2d88c7d44",
+    "arm64UUID": "A22E8242-01CA-377F-A15A-1733B8BB2745",
+    "dSYM_SHA256": "b1c47ff030df0189fa7995f2938620f3f6c83a546459149038b8a2b35b4a5859",
+    "deepStrictSignatureVerified": true,
+    "sourceAndCompiledInputsVerified": true,
+    "simulatorFixturesAbsent": true
+  },
+  "upload": {
+    "attempts": 1,
+    "exitCode": 0,
+    "actualUploadedIPAPreserved": true,
+    "ipaSHA256": "3c744f2c3a1e397e7498171d3f19058ce4029a009d91ed756f3c939349414113",
+    "ipaBytes": 19669083,
+    "actualAppleDistributionSignatureVerified": true,
+    "productionAPNs": true,
+    "appleSignInPreserved": true,
+    "getTaskAllow": false,
+    "additionalExportsOrUploads": 0
+  },
+  "apple": {
+    "buildID": "56692628-791e-4072-a222-09fc11929726",
+    "processingState": "VALID",
+    "buildAudienceType": "APP_STORE_ELIGIBLE",
+    "usesNonExemptEncryption": false,
+    "versionID": "33fa0285-e1aa-49b6-9b9c-74f2ccfc3509",
+    "versionState": "WAITING_FOR_REVIEW",
+    "reviewSubmissionID": "a8aabcf8-3946-409b-a5dc-471cd29d5359",
+    "reviewState": "WAITING_FOR_REVIEW",
+    "submittedAt": "2026-10-02T20:17:03.947Z",
+    "submittedItems": 1,
+    "exactVersionBuildItemVerified": true,
+    "releaseType": "AFTER_APPROVAL",
+    "approved": false,
+    "newVersionPublicAvailabilityClaimed": false,
+    "recovery": "Initial single API submit returned500. Fresh GET/UI showed unsubmitted READY_FOR_REVIEW; one UI submission of the same draft succeeded. No new draft or upload. The API exposes submittedDate/state, not a submitted boolean."
+  },
+  "listing": {
+    "locale": "en-US",
+    "metadataFieldsReadbackExact": [
+      "description",
+      "promotionalText",
+      "whatsNew",
+      "keywords",
+      "supportUrl",
+      "marketingUrl"
+    ],
+    "reviewNotesReadbackExact": true,
+    "reviewContactFieldsPreserved": true,
+    "demoAccountRequired": false,
+    "screenshots": 5,
+    "screenshotDisplayType": "APP_IPHONE_67",
+    "screenshotDimensions": [
+      1320,
+      2868
+    ],
+    "allScreenshotChecksumsOrderedAndComplete": true,
+    "previousReleasedVersionScreenshotsUnchanged": true,
+    "publishedPrivacyDataTypes": 14,
+    "audioData": {
+      "purpose": "App Functionality",
+      "linkedToIdentity": true,
+      "tracking": false
+    },
+    "ageRating": "TWELVE_PLUS",
+    "approvedSubscriptionsResubmitted": false,
+    "pricingAndTerritoriesChanged": false
+  },
+  "production": {
+    "studio": {
+      "url": "https://studio.rendprop.com/",
+      "workerVersion": "f3e4a654-2b72-42a7-9996-ad4616cf2ba9",
+      "runtimeCommit": "204594a771d5f0688bf4ad7b2a3902c83c2b70a6",
+      "liveAssetsByteExact": 31,
+      "verifiedAt": "2026-10-02T19:58:52.642Z",
+      "change": "Original media must finish persistence before draft admission; failed storage preserves the accepted draft and supports retry.",
+      "freshAppleLoginVerified": false
+    },
+    "tourHost": {
+      "url": "https://rendprop.com/",
+      "workerVersion": "44d84909-587f-470b-bf52-f629d3cbef6d",
+      "runtimeCommit": "204594a771d5f0688bf4ad7b2a3902c83c2b70a6",
+      "liveBrowserReadbackVerified": true,
+      "change": "Public copy describes recorded walkthroughs, optional playback, source/provenance and AI limitations accurately; photo-first behavior remains.",
+      "renderOrCaptureAlgorithmChanged": false
+    },
+    "supabaseBackendChangedThisRelease": false
+  },
+  "testflightSpatial": {
+    "version": "1.0.3",
+    "build": "41",
+    "buildID": "48d08a93-3cf1-4248-8071-afc9398b1c56",
+    "audience": "INTERNAL_ONLY",
+    "receipt": "TESTFLIGHT-41-20261002.json",
+    "select": "TestFlight \u2192 Previous Builds \u2192 1.0.3 (41)",
+    "note": "The existing internal group accepts all builds, so42 may also appear.42 hides the spatial lab. Neither41 nor42 was expired.",
+    "independentAfterSubmissionReadbackVerified": true,
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "expired": false,
+    "existingGroupBuildIncluded": true,
+    "independentAfterSubmissionCheckedAt": "2026-10-02T20:25:47.394186+00:00"
+  },
+  "bria": {
+    "directAPIKeyReceived": false,
+    "directAdapterImplemented": false,
+    "generationEnabledByThisRelease": false,
+    "currentReflectionRoute": "fal.ai bria/video/erase/prompt using FAL_KEY",
+    "directKeyIsNotFALKey": true,
+    "secureServerSecretNameForFutureAdapter": "BRIA_API_TOKEN",
+    "scope": "Current short-interval reflection/person removal is not whole-video furniture declutter. Direct mask/eraser adapter and account-specific cost checks remain work."
+  },
+  "limitations": [
+    "Apple approval is still required for public1.0.3 release.",
+    "No physical camera, room coverage, reconstructed3D quality or arm64e crash acceptance was performed.",
+    "Controlled real-device purchase/restore, client inbox delivery and cross-device/Studio account sync remain acceptance work.",
+    "Photo batches do not resume unfinished work after force-quit.",
+    "Whole-video declutter and guaranteed drone-like walking stabilization remain unfinished.",
+    "Higgsfield generation remains disabled."
+  ],
+  "privateEvidence": {
+    "note": "Raw customer contacts, credentials, binaries and signed media references remain outside Git. Names below identify private receipts and hashes only.",
+    "receiptSHA256": {
+      "submitted-readback.json": "d11f5977afdd16e36dc58f040edc5d7d8152414c40ec3c039893210cfa15447f",
+      "post-ui-review-readback.json": "2fceebeadda558bfbd9013e46657d41e7676891480a0cfd72df586c69883d022",
+      "submission-content-readback.json": "8e3d00af7f54e9ddebce14cd45c67ba3903a3cb2ec76883cd4a4172fdb06521a",
+      "privacy-label-published-readback.json": "a0f2a6b0fe8623a15ca85bf778f304425e282bd078fb59612b0a926487102893",
+      "ci-success.json": "704bf7afad8e91edbb4a0328133dad40dff31374830e832e9b1be5360881be89",
+      "archive-ci-independent-final-review.json": "05519cb26d2df9fb6a9388ac37587c5f38a241b6ddfbc0fb903e0e8907aff530",
+      "export-distribution-independent-review.json": "e9090f2fa92589e14caaa310ec3d690abfa9cb7f11bd55b33e25a6032715d643",
+      "upload-result.json": "fc59f7836f4ab32da60f31e390192d3d551e9b059f6628c2dd13c13556fb1b77",
+      "studio-deployed-readback.json": "b2e4f954e5ddea8b3e26c4ab64c0eae891d9ee0093ba50db2537bd4fc5456359",
+      "independent-studio-admission-review.json": "2987c42508a39997802cd2b7be756af1ab995ee7a601c62be13c4ff83ab416d1",
+      "ci-studio-failure/studio-admission-fix-receipt.json": "dd0f124bda0c650e1238fdcc6da4970c6ea5bcdac7530e8f58751d055fa1b80f",
+      "public-copy-final-review.json": "45e9dcd3f1769bf79daa373adde5282d325e2d53e54ee98c392d48d71f207298",
+      "final42-41-independent-confirmation.json": "ca6efe24f32e2f7c70045373316adf34bf8272a35b7b9e1e02e836deb8969be3"
+    }
+  }
+}

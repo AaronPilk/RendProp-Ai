@@ -95,7 +95,7 @@ final class PaywallShot: XCTestCase {
         // skipped gates, same deterministic light appearance. Keys verified
         // against source: RendpropApp.swift @AppStorage("hasOnboarded"),
         // RootTabView @AppStorage("space.type"), @AppStorage("appearance"),
-        // AIConsent "ai.thirdPartyProcessing.consent.v2".
+        // AIConsent "ai.thirdPartyProcessing.consent.v3".
         //
         // `-uiTesting` does not touch StoreKit: PurchaseManager.loadProducts()
         // calls `Product.products(for: RendpropProducts.all)` unconditionally,
@@ -105,7 +105,7 @@ final class PaywallShot: XCTestCase {
             "-hasOnboarded", "YES",
             "-space.type", "real_estate",
             "-appearance", "light",
-            "-ai.thirdPartyProcessing.consent.v2", "YES",
+            "-ai.thirdPartyProcessing.consent.v3", "YES",
         ]
         app.launch()
     }
@@ -249,9 +249,9 @@ final class PaywallShot: XCTestCase {
 
     // MARK: p02 — the Yearly tab
 
-    /// Same sheet, picker on Yearly: "$490.00/year" on Starter and Pro, and
-    /// Team's card falling back to its monthly price with a "Monthly only"
-    /// note (Team Yearly is in `RendpropProducts.notSoldAtLaunch`).
+    /// Same sheet, picker on Yearly. Since 2026-10-09 every annual product is
+    /// in `RendpropProducts.notSoldAtLaunch`, the picker is hidden and this
+    /// step records SKIPPED; it returns if annual plans are ever sold again.
     private func step02Yearly(productsLoaded: Bool) {
         activity("p02 — Paywall · Yearly") {
             guard productsLoaded else {

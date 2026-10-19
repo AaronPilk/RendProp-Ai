@@ -23,9 +23,9 @@ export async function deleteStreamVideo(uid: string): Promise<boolean> {
   if (!streamConfigured()) throw new Error("Stream API not configured");
   const res = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/stream/${encodeURIComponent(uid)}`,
-    { method: "DELETE", headers: { Authorization: `Bearer ${STREAM_TOKEN}` } },
+    { method: "DELETE", headers: { Authorization: `Bearer ${STREAM_TOKEN}` }, signal: AbortSignal.timeout(15_000), redirect: "error" },
   );
-  if (res.ok || res.status === 404) return true;
+  if (res.ok || res.status === 404) { await res.body?.cancel().catch(() => {}); return true; }
   const text = await res.text().catch(() => "");
   throw new Error(`Stream DELETE ${uid} -> ${res.status} ${text.slice(0, 200)}`);
 }

@@ -1,3 +1,25 @@
+import { libraryAccess, listingLibraryScope } from "../_shared/library-access.ts";
+import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
+import { servingMode } from "../_shared/funded-serving.ts";
+
+/** Best effort: the envelope is informational on /me; the gate itself lives in
+ * serving_envelope_admit. Null when the mode is funded or the RPC is unavailable. */
+async function servingEnvelope(admin: { rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }> }, orgId: string): Promise<Record<string, unknown> | null> {
+  if (await servingMode() !== "ceiling") return null;
+  try {
+    const { data, error } = await admin.rpc("serving_envelope_state", { p_org: orgId });
+    if (error || !data || typeof data !== "object" || Array.isArray(data)) return null;
+    const row = data as Record<string, unknown>;
+    const num = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && Number.isFinite(Number(v)) ? Number(v) : null;
+    return {
+      kind: typeof row.kind === "string" ? row.kind : null,
+      ceiling_cents: num(row.ceiling_cents), spent_cents: num(row.spent_cents), held_cents: num(row.held_cents), available_cents: num(row.available_cents),
+      period_start: typeof row.period_start === "string" ? row.period_start : null, period_end: typeof row.period_end === "string" ? row.period_end : null,
+      window: typeof row.window === "string" ? row.window : null,
+      pool: row.pool && typeof row.pool === "object" && !Array.isArray(row.pool) ? { cap_cents: num((row.pool as Record<string, unknown>).cap_cents), spent_cents: num((row.pool as Record<string, unknown>).spent_cents), starts_at: typeof (row.pool as Record<string, unknown>).starts_at === "string" ? (row.pool as Record<string, unknown>).starts_at : null, ends_at: typeof (row.pool as Record<string, unknown>).ends_at === "string" ? (row.pool as Record<string, unknown>).ends_at : null } : null,
+    };
+  } catch { return null; }
+}
 // me — the signed-in user, their org, plan, and account lifecycle (owner).
 //
 //   GET    /me                  -> { user, org, plan, plan_raw, trial_ends_at, entitlement,
@@ -10,9 +32,15 @@
 //                                  (audit F-supabase-16 / F-E-15; decision B4),
 //                                  notifications = the EFFECTIVE notification switches, so the
 //                                  settings screen renders without a second call (0047)
+//   GET    /me/workspaces      -> { active_org_id, workspaces: [{id,name,role}] }
+//   POST   /me/workspace       -> { ok, org_id, org_name, role }; body {org_id}
+//                                  Selects a live membership; never moves existing work.
 //   POST   /me/devices          -> { ok, device: { id, environment, bundle_id, last_seen_at } }
 //                                  { device_token, environment?, bundle_id?, locale?, app_version? }
 //                                  Registers this phone's APNs token for the CALLER (0047).
+//   DELETE /me/devices          -> { ok, unregistered: true }; exact device/environment.
+//                                  Both routes use the Auth-verified session; sign-out
+//                                  tombstones keep delayed old registrations inert.
 //   PATCH  /me/notifications    -> { ok, notifications }
 //                                  any of { lead_received, render_ready, upload_stuck,
 //                                  free_week_ending, allowance_low, first_tour_nudge } as
@@ -23,6 +51,13 @@
 //                                  + `space_type` (the workspace's industry, one of the six
 //                                  the app knows; 400 otherwise — 0044 reads it for the
 //                                  industry-aware trial)
+//   GET/PATCH /me/card         -> { ok, user_id, space_type, public_card }
+//                                  Account-owned reviewed card; changes + present/value CAS.
+//                                  Public text never changes sign-in or notification email.
+//   POST   /me/brand/logo       -> { ok, org_id, business_logo_url, replayed? }
+//   POST   /me/brand/logo/clear -> { ok, org_id, business_logo_url: null }
+//                                  Selected owner/admin, exact expected URL;
+//                                  POST keeps older handlers from treating this as account deletion.
 //   GET    /me/compliance       -> { org_id, from, to, count, truncated, rows[] }
 //                                  ?from=&to=&listing_id=&limit=&format=csv&scope=
 //                                  The BROKER-EXPORTABLE AI audit log: every
@@ -68,6 +103,18 @@
 // that echoes the error text.
 
 import { deleteAccount, sweepAccounts } from "./deletion.ts";
+import { deviceBinding } from "./devices.ts";
+import { saveProfileRole } from "./profile.ts";
+import { personalCard } from "./card.ts";
+import { memberPortfolio } from "./portfolio.ts";
+import { accountDataExport } from "./export.ts";
+import { hostingRetention } from "../_shared/hosting-retention.ts";
+import { photoPackageContext } from "../_shared/photo-package-context.ts";
+import { boundedTrialContext, subscriptionServingActivation, trialServingActivationForSync } from "../_shared/bounded-trial.ts";
+import { heldTrialPurchase, prepareTrialPurchase } from "../_shared/trial-purchase.ts";
+import { brandLogo } from "./brand-logo.ts";
+import { requestedWorkspace, selectWorkspace, workspaceDirectory, workspaceID } from "../_shared/workspaces.ts";
+import { assertExpectedSubscriptionWorkspace, assertVerifiedPurchaseOwner } from "./billing.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import {
   HttpError,
@@ -80,12 +127,21 @@ import {
   round4,
   throwRpc,
 } from "../_shared/http.ts";
+import { libraryUsageSummary, libraryProvenance } from "../_shared/library-summary.ts";
+import { privateProvenanceLinks } from "../_shared/private-provenance-links.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
+import { cleanupLegacyGhlTarget } from "../_shared/legacy-ghl-cleanup.ts";
+import { sweepPrivacyCleanup } from "../_shared/privacy-cleanup.ts";
+import { masterTestingAccess, privateTestingContext } from "../_shared/internal-testing.ts";
 import { isSpaceType, SPACE_TYPES } from "../_shared/spacetypes.ts";
 import {
   abortMultipartUpload,
   deleteObjects,
-  publicR2Url,
+  deleteOwnedPrefixPage,
+  publishedBrandLogoUrl,
+  inspectBrandLogo,
+  writeBrandLogo,
   R2_BUCKET_RENDERS,
   R2_BUCKET_UPLOADS,
   type R2Object,
@@ -95,6 +151,7 @@ import { deleteStreamVideo, streamConfigured } from "../_shared/stream.ts";
 import { appleConfigured, exchangeAppleCode, revokeAppleToken } from "../_shared/apple.ts";
 import {
   type AppleRenewalInfo,
+  type AppleTransaction,
   decodeRenewalInfo,
   decodeTransaction,
   deriveEntitlement,
@@ -111,7 +168,6 @@ import {
   userClient,
 } from "../_shared/supabase.ts";
 import {
-  decideGhlTagAction,
   type DeletionPayload,
   type GhlCleanupTarget,
 } from "./logic.ts";
@@ -133,8 +189,51 @@ Deno.serve(async (req) => {
       if (!isServiceRole(req)) throw new HttpError(403, "Service role required");
       return await sweepDeletions();
     }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "sweep-privacy") {
+      if (!isServiceRole(req)) throw new HttpError(403, "Service role required");
+      const receipt = await sweepPrivacyCleanup(adminClient());
+      return json(receipt, receipt.failed ? 503 : 200);
+    }
 
     const user = await getUser(req);
+
+    if (seg.length === 1 && seg[0] === "export") {
+      assert(req.method === "GET", 405, "Use GET to download your account data.");
+      return await accountDataExport(adminClient(), user.id);
+    }
+
+    if (seg.length === 1 && seg[0] === "card") {
+      assert(req.method === "GET" || req.method === "PATCH",405,"Use GET or PATCH for your personal card.");
+      return json(await personalCard(adminClient(),user.id,req.method === "PATCH" ? await readJsonLimited(req,24576) : undefined));
+    }
+
+    if (seg.length === 1 && seg[0] === "portfolio") {
+      assert(req.method === "GET" || req.method === "PUT",405,"Use GET or PUT for your portfolio.");
+      const selected = requestedWorkspace(req);
+      assert(selected,409,"Choose a workspace before reviewing your portfolio.");
+      return json(await memberPortfolio(adminClient(),user.id,selected,req.method === "PUT" ? await readJsonLimited(req,16384) : undefined));
+    }
+
+    const logoUpload = seg.length === 2 && seg[0] === "brand" && seg[1] === "logo";
+    const logoClear = seg.length === 3 && seg[0] === "brand" && seg[1] === "logo" && seg[2] === "clear";
+    if (logoUpload || logoClear) {
+      assert(req.method === "POST", 405, "Use POST for a business logo.");
+      const selected = requestedWorkspace(req);
+      assert(selected, 409, "Choose a workspace before changing its logo.");
+      const directory = await workspaceDirectory(adminClient(), user.id, selected);
+      const membership = directory.workspaces.find((w) => w.id === selected);
+      assert(membership && ["owner", "admin"].includes(membership.role), 403, "Only the workspace owner or an admin can change its logo.");
+      assert(await durableRateLimit(`brandlogoburst:${user.id}`, 30, 300), 429, "Please wait before retrying your logo upload.");
+      return await brandLogo(req, adminClient(), user.id, selected, { publicURL: publishedBrandLogoUrl, write: writeBrandLogo, inspect: inspectBrandLogo }, logoClear ? "clear" : "upload");
+    }
+
+    if (req.method === "GET" && seg[0] === "workspaces" && seg.length === 1) {
+      return json(await workspaceDirectory(adminClient(), user.id, requestedWorkspace(req)));
+    }
+    if (req.method === "POST" && seg[0] === "workspace" && seg.length === 1) {
+      const body = await readJsonLimited<{org_id?:unknown}>(req, 1024);
+      return json(await selectWorkspace(adminClient(), user.id, workspaceID(body.org_id)));
+    }
 
     // The broker's AI audit log (compliance wave, W2-B3).
     if (req.method === "GET" && seg[0] === "compliance") {
@@ -144,8 +243,13 @@ Deno.serve(async (req) => {
       return await handleCompliancePatch(req, user.id, seg[1]);
     }
 
+    if (req.method === "POST" && seg.length === 2 && seg[0] === "trial" && seg[1] === "prepare") {
+      const directory = await workspaceDirectory(adminClient(), user.id, requestedWorkspace(req));
+      return json(await prepareTrialPurchase(adminClient(), user.id, directory.active_org_id, await readJsonLimited(req, 2048)));
+    }
     if (req.method === "GET") return await handleGet(req, user.id, user.email ?? null);
     if (req.method === "PATCH") {
+      if (seg.length === 1 && seg[0] === "profile") return json(await saveProfileRole(adminClient(), user.id, await readJsonLimited(req, 1024)));
       if (seg[0] === "brand") return await handleBrandPatch(req, user.id);
       if (seg[0] === "notifications") return await handleNotificationsPatch(req, user.id);
       throw new HttpError(404, "Unknown route — PATCH /me/brand, /me/notifications or /me/compliance/:id");
@@ -153,17 +257,20 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg[0] === "apple-code") {
       return await handleAppleCode(req, user.id);
     }
-    if (req.method === "POST" && seg[0] === "devices") {
-      return await handleDeviceRegister(req, user.id);
+    if (seg.length === 1 && seg[0] === "devices") {
+      return await deviceBinding(req, adminClient(), user.id);
     }
     if (req.method === "POST" && seg[0] === "entitlement") {
       return await handleEntitlement(req, user.id);
     }
-    if (req.method === "DELETE") return await handleDelete(user.id, user.email ?? null);
+    if (req.method === "DELETE") {
+      assert(seg.length === 0, 404, "Account deletion is only available at DELETE /me.");
+      return await handleDelete(user.id, user.email ?? null);
+    }
 
     throw new HttpError(
       405,
-      "Only GET, GET /me/compliance, PATCH /me/brand, PATCH /me/notifications, PATCH /me/compliance/:id, POST /me/apple-code, POST /me/devices, POST /me/entitlement, and DELETE are supported",
+      "Only GET, GET /me/workspaces, POST /me/workspace, GET /me/compliance, PATCH /me/brand, PATCH /me/notifications, PATCH /me/compliance/:id, POST /me/apple-code, POST /me/devices, POST /me/entitlement, and DELETE are supported",
     );
   } catch (err) {
     return respondError(err);
@@ -194,41 +301,40 @@ const METERS: Record<string, string> = {
 async function handleGet(req: Request, userId: string, userEmail: string | null): Promise<Response> {
   const db = userClient(req);
   const admin = adminClient();
-  const orgId = await orgForUser(userId, preferredOrg(req));
+  const directory = await workspaceDirectory(admin, userId, requestedWorkspace(req));
+  const orgId = directory.active_org_id;
+  const access = await libraryAccess(admin, userId, orgId);
+  const servingOrgId = access.billing_org_id;
+  const billingRes = await admin.from("orgs").select("id,name,plan,trial_ends_at,plan_source,plan_expires_at,apple_product_id")
+    .eq("id",servingOrgId).is("deleted_at",null).maybeSingle();
+  assert(!billingRes.error && billingRes.data?.id === servingOrgId,503,"Team billing state could not be verified.");
+  const purchaseOrgId = directory.billing_org_id;
+  const purchaseRes = purchaseOrgId === servingOrgId ? billingRes : await admin.from("orgs")
+    .select("id,name,plan,trial_ends_at,plan_source,plan_expires_at,apple_product_id")
+    .eq("id",purchaseOrgId).is("deleted_at",null).maybeSingle();
+  assert(!purchaseRes.error && purchaseRes.data?.id === purchaseOrgId,503,"Subscription billing state could not be verified.");
 
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const month = monthStart.slice(0, 7); // YYYY-MM
-  const meterKeys = Object.values(METERS).map((k) => `${k}:${orgId}`);
+  const meterKeys = Object.values(METERS).map((k) => `${k}:${servingOrgId}`);
 
   const [
     profileRes,
     orgRes,
-    ledgerRes,
-    leadsRes,
-    leadsNewRes,
-    listingsRes,
-    jobsRes,
+    libraryUsage,
     metersRes,
     prefsRes,
     entitlement,
+    membershipRes,
   ] = await Promise.all([
-      db.from("profiles").select("id, email, name, avatar_url, phone").eq("id", userId).maybeSingle(),
-      db.from("orgs").select(
-        "id, name, handle, space_type, plan, trial_ends_at, brand_kit, plan_source, plan_expires_at, apple_product_id",
+      db.from("profiles").select("id, email, name, avatar_url, phone, real_estate_role, public_card").eq("id", userId).maybeSingle(),
+      // Fresh library access permits these display fields; it never grants
+      // generic RLS membership or exposes the beneficiary's account billing.
+      admin.from("orgs").select(
+        "id, name, handle, space_type, brand_kit",
       ).eq("id", orgId).maybeSingle(),
-      db.from("cost_ledger").select("total_cents").eq("org_id", orgId).gte("created_at", monthStart),
-      db.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).gte("created_at", monthStart),
-      db.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "new"),
-      db.from("listings").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("deleted_at", null),
-      // Worker render jobs this calendar month — the exact count create_render_job
-      // enforces the cap against. render_jobs has no org_id: join via listings.
-      admin
-        .from("render_jobs")
-        .select("id, listings!inner(org_id)", { count: "exact", head: true })
-        .eq("listings.org_id", orgId)
-        .eq("source", "worker")
-        .gte("created_at", monthStart),
+      libraryUsageSummary(admin,userId,orgId,monthStart),
       // rate_limits is service-role only (0004): read the org's meters here.
       admin.from("rate_limits").select("key, count, window_start, window_seconds").in("key", meterKeys),
       // notification_preferences is service-role only too (0047). The RPC —
@@ -237,34 +343,68 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       // is on. The app must render the same answer the enqueuer acts on.
       admin.rpc("notification_preferences_for", { p_user: userId }),
       entitlementFor(orgId),
+      Promise.resolve({ data: access, error: null }),
     ]);
 
+  if (profileRes.error) throw new HttpError(503,"Your personal profile could not be verified. Please retry.");
+  if (!profileRes.data) throw new HttpError(403,"Your account is unavailable. Please sign in again.");
   if (orgRes.error) throw new HttpError(500, `Org lookup failed: ${orgRes.error.message}`);
   if (!orgRes.data) throw new HttpError(404, "Org not found");
-  const org = orgRes.data;
+  if (membershipRes.error || !membershipRes.data) throw new HttpError(503, "Workspace billing permissions could not be verified. Please retry.");
+  const org = { ...orgRes.data, plan:billingRes.data.plan, trial_ends_at:billingRes.data.trial_ends_at,
+    plan_source:billingRes.data.plan_source, plan_expires_at:billingRes.data.plan_expires_at, apple_product_id:billingRes.data.apple_product_id };
+  const testingAccess = entitlement.plan === "team" ? await privateTestingContext(admin, userId, orgId) : null;
+  const testingProjection = entitlement.plan === "team" && [entitlement.renders_per_month,
+    entitlement.photo_edits_per_month, entitlement.reels_per_month, entitlement.aerials_per_month,
+    entitlement.topaz_per_month, entitlement.cogs_ceiling_cents].every((cap) => cap === 2147483647);
+  if ((testingAccess && !testingProjection) || (testingProjection && !testingAccess && !(await masterTestingAccess(admin, orgId)))) {
+    throw new HttpError(503, "Your testing access changed while loading. Please refresh.", "upstream");
+  }
+  // Switching the viewed library must not retarget an owner's purchase.
+  // Verify the actual parent billing library independently; a beneficiary has
+  // no generic access to that parent and cannot acquire management authority.
+  let billingAccess = access;
+  if (purchaseOrgId !== orgId && access.access_mode === "team_owner") {
+    billingAccess = await libraryAccess(admin, userId, purchaseOrgId);
+  }
+  const canManageSubscription = billingAccess.can_manage_subscription &&
+    !entitlement.degraded && purchaseRes.data.plan !== "brokerage" && purchaseRes.data.plan_source !== "manual";
+  // A new phone has no cached purchase/workspace intent. Let an authorized
+  // purchaser compare its verified StoreKit original ID with this workspace's
+  // existing bindings before Apple shows an upgrade or another purchase sheet.
+  let originalTransactionIDs: string[] = [];
+  if (canManageSubscription && purchaseRes.data.plan_source === "apple" && purchaseRes.data.plan !== "free") {
+    const { data: subscriptions, error: subscriptionsError } = await admin.from("apple_subscriptions")
+      .select("original_transaction_id").eq("org_id", purchaseOrgId).in("status", ["active", "grace"]);
+    if (subscriptionsError) throw new HttpError(503, "Subscription workspace could not be verified. Please retry.", "upstream");
+    originalTransactionIDs = (subscriptions ?? []).map((row) => String(row.original_transaction_id));
+  }
 
-  const costCents = round4(
-    (ledgerRes.data ?? []).reduce((s, r) => s + Number(r.total_cents ?? 0), 0),
-  );
+  const costCents = round4(libraryUsage.cost_cents);
+  const servingActivation = await subscriptionServingActivation(admin, userId, servingOrgId);
+  const photoPackage = await photoPackageContext(admin, userId, servingOrgId);
+  const visibleEntitlement = org.plan_source === "apple" && !servingActivation.available
+    ? { ...entitlement, renders_per_month:0, photo_edits_per_month:0, reels_per_month:0, aerials_per_month:0, topaz_per_month:0, degraded:true }
+    : entitlement;
 
   // Meter rows → used/resets_at. bump_rate still increments past the cap, so
   // clamp what we show; an expired window counts as 0 (it resets on next use).
   const nowMs = now.getTime();
-  const byFeature: Record<string, number> = { renders: jobsRes.count ?? 0 };
+  const byFeature: Record<string, number> = { renders: libraryUsage.render_count };
   const windows: Record<string, { started_at: string; resets_at: string } | null> = { renders: {
     started_at: monthStart,
     resets_at: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString(),
   } };
   const caps: Record<string, number> = {
-    renders: entitlement.renders_per_month,
-    photo_edits: entitlement.photo_edits_per_month,
-    reels: entitlement.reels_per_month,
-    aerials: entitlement.aerials_per_month,
-    drone: entitlement.topaz_per_month,
+    renders: visibleEntitlement.renders_per_month,
+    photo_edits: visibleEntitlement.photo_edits_per_month,
+    reels: visibleEntitlement.reels_per_month,
+    aerials: visibleEntitlement.aerials_per_month,
+    drone: visibleEntitlement.topaz_per_month,
   };
   const rows = (metersRes.data ?? []) as Array<{ key: string; count: number; window_start: string; window_seconds: number }>;
   for (const [feature, prefix] of Object.entries(METERS)) {
-    const row = rows.find((r) => r.key === `${prefix}:${orgId}`);
+    const row = rows.find((r) => r.key === `${prefix}:${servingOrgId}`);
     if (!row) { byFeature[feature] = 0; windows[feature] = null; continue; }
     const startMs = Date.parse(row.window_start);
     const endMs = startMs + Number(row.window_seconds ?? 2_592_000) * 1000;
@@ -277,27 +417,60 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   byFeature.renders = Math.max(0, byFeature.renders);
 
   const portfolioUrl = org.handle ? `${TOUR_BASE}/a/${org.handle}` : null;
+  const trial = canManageSubscription && purchaseOrgId === servingOrgId ? await boundedTrialContext(admin, userId, servingOrgId) : {};
+  const heldPurchase = canManageSubscription && purchaseOrgId === servingOrgId ? await heldTrialPurchase(admin, userId, servingOrgId) : null;
 
   return json({
-    user: profileRes.data ?? { id: userId, email: userEmail },
+    user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null,
+      public_card: profileRes.data?.public_card ? Object.fromEntries(Object.entries(profileRes.data.public_card).filter(([key])=>key!=="space_type")) : null,
+      public_card_space_type: profileRes.data?.public_card?.space_type ?? null },
+    workspaces: directory.workspaces,
     org: { id: org.id, name: org.name, handle: org.handle, space_type: org.space_type, plan: org.plan, brand_kit: org.brand_kit },
     plan: entitlement.plan,          // EFFECTIVE (expired trial → free)
     plan_raw: org.plan ?? null,
+    hosting_retention: await hostingRetention(admin, orgId),
     trial_ends_at: org.trial_ends_at ?? null,
+    ...trial,
+    trial_offer: heldPurchase?.trial_offer ?? null,
+    trial_reservation: heldPurchase,
+    serving_activation: servingActivation,
+    serving_photo_package: photoPackage,
+    // Launch cost model (2026-10-08): "ceiling" = ordinary StoreKit purchases,
+    // meters + a per-workspace serving envelope; "funded" = held-trial /
+    // funded-serving. `serving_envelope` is the money gate the app shows next
+    // to the feature meters: ceiling, counted spend, held liability, what is
+    // still available and when the window resets (null outside ceiling mode).
+    serving_mode: await servingMode(),
+    serving_envelope: await servingEnvelope(admin, servingOrgId),
     // Additive (launch wave, decision LC-§"Entitlement sync"). Optional in the
     // client: an app build older than migration 0019 simply ignores them.
-    plan_source: org.plan_source ?? null,          // 'apple' | 'manual' | 'trial' | null
+    plan_source: testingAccess ? "manual" : org.plan_source ?? null,
+    ...(testingAccess ? { plan_source_raw: org.plan_source ?? null, testing_access: { active: true, team_name: testingAccess.sponsor_org_name } } : {}),
     plan_expires_at: org.plan_expires_at ?? null,  // end of the paid/grace window
     apple_product_id: org.apple_product_id ?? null,
+    // Bind purchase UI to the exact workspace the entitlement endpoint resolves.
+    // Contract/manual access is managed separately and should not prompt the
+    // user to buy an Apple subscription that cannot replace that entitlement.
+    billing: {
+      actor_id: userId,
+      content_org_id: orgId,
+      org_id: purchaseOrgId,
+      serving_org_id: servingOrgId,
+      org_name: purchaseRes.data.name,
+      role: billingAccess.role,
+      can_manage_subscription: canManageSubscription,
+      original_transaction_ids: originalTransactionIDs,
+      source: purchaseOrgId === orgId && testingAccess ? "manual" : purchaseRes.data.plan_source ?? null,
+    },
     entitlement: {
       plan: entitlement.plan,
-      renders_per_month: entitlement.renders_per_month,
-      photo_edits_per_month: entitlement.photo_edits_per_month,
-      reels_per_month: entitlement.reels_per_month,
-      aerials_per_month: entitlement.aerials_per_month,
-      topaz_per_month: entitlement.topaz_per_month,
+      renders_per_month: visibleEntitlement.renders_per_month,
+      photo_edits_per_month: visibleEntitlement.photo_edits_per_month,
+      reels_per_month: visibleEntitlement.reels_per_month,
+      aerials_per_month: visibleEntitlement.aerials_per_month,
+      topaz_per_month: visibleEntitlement.topaz_per_month,
       seats: entitlement.seats,
-      ...(entitlement.degraded ? { degraded: true } : {}),
+      ...(visibleEntitlement.degraded ? { degraded: true } : {}),
     },
     usage: {
       month,
@@ -305,9 +478,9 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       caps,                         // same keys — what the plan allows
       windows,                      // same keys — { started_at, resets_at } | null
       renders: byFeature.renders,   // month-scoped, worker renders only (app publishes are free)
-      leads: leadsRes.count ?? 0,
-      leads_new: leadsNewRes.count ?? 0,
-      listings: listingsRes.count ?? 0,
+      leads: libraryUsage.leads,
+      leads_new: libraryUsage.leads_new,
+      listings: libraryUsage.listings,
       cost_cents: costCents,        // internal provider COGS this month (legacy field)
     },
     // 0047. Additive: a build older than this migration ignores the key.
@@ -362,53 +535,6 @@ const NOTIFICATION_CATEGORIES = [
   "free_week_ending", "allowance_low", "first_tour_nudge",
 ] as const;
 
-const APNS_TOKEN_RE = /^[0-9a-fA-F]{16,400}$/;
-
-async function handleDeviceRegister(req: Request, userId: string): Promise<Response> {
-  const body = await readJson<Record<string, unknown>>(req);
-  const token = String(body.device_token ?? "").trim();
-  assert(APNS_TOKEN_RE.test(token), 400, "device_token must be the hexadecimal APNs token");
-
-  const environment = String(body.environment ?? "production").trim().toLowerCase();
-  assert(
-    environment === "sandbox" || environment === "production",
-    400,
-    "environment must be sandbox or production",
-  );
-
-  const clip = (v: unknown, n: number) => {
-    const s = typeof v === "string" ? v.trim() : "";
-    return s ? s.slice(0, n) : null;
-  };
-
-  const { data, error } = await adminClient().rpc("notification_register_device", {
-    p_user: userId,
-    p_token: token,
-    p_bundle_id: clip(body.bundle_id, 120),
-    p_environment: environment,
-    p_locale: clip(body.locale, 32),
-    p_app_version: clip(body.app_version, 40),
-  });
-  if (error) {
-    if (/RP\d{3}:/.test(error.message)) throwRpc(error.message);
-    console.error("notification_register_device failed:", error.message);
-    throw new HttpError(503, "Could not register this device — try again.", "upstream");
-  }
-
-  const row = (data ?? {}) as Record<string, unknown>;
-  // The token itself is NEVER echoed: it is a device credential, and a response
-  // body is the easiest place for one to end up in a log.
-  return json({
-    ok: true,
-    device: {
-      id: row.id ?? null,
-      bundle_id: row.bundle_id ?? null,
-      environment: row.environment ?? environment,
-      last_seen_at: row.last_seen_at ?? null,
-    },
-  });
-}
-
 async function handleNotificationsPatch(req: Request, userId: string): Promise<Response> {
   const body = await readJson<Record<string, unknown>>(req);
   const patch: Record<string, unknown> = {};
@@ -453,9 +579,9 @@ async function handleNotificationsPatch(req: Request, userId: string): Promise<R
 // Writes the agent/business card into org.brand_kit. The PUBLIC tours and
 // portfolio functions allow-list exactly these display fields, so this is the
 // single write path that makes the card appear on every hosted share link.
-// Uses the user client: RLS (owner/admin, 0007) + the column-scoped grant
-// (0005) restrict the update to orgs the caller may edit, and `plan` stays
-// untouchable.
+// Service-only atomic explicit-field merge retains owner/admin authority
+// (0007), deletion and selected-org fencing. Protected logo and plan stay
+// outside this ordinary patch.
 //
 // Also accepts the org columns the card needs (audit F-supabase-15/06):
 //   handle      public portfolio slug (/a/:handle) — ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$,
@@ -476,7 +602,6 @@ const BRAND_FIELDS = [
   "avatar_url", "headshot_url", "instagram", "linkedin", "tiktok", "accent",
 ] as const;
 const MAX_BRAND_FIELD_CHARS = 300;
-const MAX_BRAND_KIT_BYTES = 8_000;
 const HEX_COLOR = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/;
 const RESERVED_HANDLES = new Set([
@@ -485,15 +610,10 @@ const RESERVED_HANDLES = new Set([
   "estate-demo", "about", "blog", "contact", "portfolio", "agent", "agents",
 ]);
 
-function isPlaceholderOrgName(name: unknown): boolean {
-  const s = String(name ?? "").trim();
-  return s === "" || s === "My business" || s.includes("@");
-}
-
 async function handleBrandPatch(req: Request, userId: string): Promise<Response> {
-  const db = userClient(req);
   const orgId = await orgForUser(userId, preferredOrg(req));
-  const body = await readJson<Record<string, unknown>>(req);
+  const body = await readJsonLimited<Record<string, unknown>>(req, 12_000);
+  assert(body && typeof body === "object" && !Array.isArray(body) && Object.keys(body).every((key) => [...BRAND_FIELDS, "handle", "org_name", "space_type"].includes(key)), 400, "Unsupported brand fields. Upload or remove a business logo with the logo endpoint.");
 
   const patch: Record<string, string | null> = {};
   for (const f of BRAND_FIELDS) {
@@ -540,28 +660,9 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
   assert(Object.keys(patch).length + Object.keys(orgPatch).length > 0, 400,
     `No brand fields provided. Accepted: ${BRAND_FIELDS.join(", ")}, handle, org_name, space_type`);
 
-  const { data: org, error: oErr } = await db
-    .from("orgs").select("id, name, handle, space_type, brand_kit").eq("id", orgId).maybeSingle();
-  if (oErr) throw new HttpError(500, `Org lookup failed: ${oErr.message}`);
-  if (!org) throw new HttpError(404, "Org not found");
-
-  const merged: Record<string, unknown> = { ...((org.brand_kit as Record<string, unknown> | null) ?? {}) };
-  for (const [k, v] of Object.entries(patch)) {
-    if (v === null) delete merged[k];
-    else merged[k] = v;
-  }
-  assert(JSON.stringify(merged).length <= MAX_BRAND_KIT_BYTES, 400, "brand kit is too large");
-
-  // Heal a placeholder/email org name from the card name (see header).
-  if (!("name" in orgPatch) && typeof patch.name === "string" && isPlaceholderOrgName(org.name)) {
-    orgPatch.name = patch.name;
-  }
-
-  const update: Record<string, unknown> = { ...orgPatch };
-  if (Object.keys(patch).length > 0) update.brand_kit = merged;
-
-  const { data: updated, error: upErr } = await db
-    .from("orgs").update(update).eq("id", orgId).select("id, name, handle, space_type, brand_kit").maybeSingle();
+  const { data: updated, error: upErr } = await adminClient().rpc("merge_org_brand_fields", {
+    p_actor: userId, p_org: orgId, p_brand: patch, p_org_fields: orgPatch,
+  });
   if (upErr) {
     // 23505 = unique_violation on orgs.handle.
     if ((upErr as { code?: string }).code === "23505" || /duplicate key|orgs_handle_key/i.test(upErr.message)) {
@@ -572,16 +673,17 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
     if ((upErr as { code?: string }).code === "23514" || /orgs_space_type_check/i.test(upErr.message)) {
       throw new HttpError(400, `space_type must be one of ${SPACE_TYPES.join(", ")}`);
     }
-    throw new HttpError(500, `Brand update failed: ${upErr.message}`);
+    if (/RP\d{3}:/.test(upErr.message)) throwRpc(upErr.message);
+    throw new HttpError(503, "Your brand card could not be saved. Please retry.", "upstream");
   }
-  // RLS (owner/admin only) filtered the row: a member without the right role.
+  // SQL checks current owner/admin authority at the same atomic write.
   if (!updated) throw new HttpError(403, "Only the workspace owner or an admin can edit the brand card");
 
   const handle = (updated.handle as string | null) ?? null;
   return json({
     ok: true,
-    brand_kit: updated.brand_kit ?? merged,
-    org: { name: updated.name, handle, space_type: updated.space_type ?? org.space_type ?? null },
+    brand_kit: updated.brand_kit ?? {},
+    org: { name: updated.name, handle, space_type: updated.space_type ?? null },
     portfolio_url: handle ? `${TOUR_BASE}/a/${handle}` : null,
   });
 }
@@ -695,7 +797,9 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
 
   const from = isoParam(params.get("from"), "from");
   const to = isoParam(params.get("to"), "to");
-  const listingId = (params.get("listing_id") ?? "").trim();
+  // Lowercase: the phone sends `UUID.uuidString` (uppercase) and every row
+  // filter below compares against Postgres' lowercase uuid text.
+  const listingId = (params.get("listing_id") ?? "").trim().toLowerCase();
   if (listingId) {
     assert(UUID_RE.test(listingId), 400, "listing_id must be a UUID");
   }
@@ -710,25 +814,10 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
     return await handleComplianceOrg(userId, orgId, { from, to, listingId, limit, wantCsv });
   }
 
-  let q = db
-    .from("media_provenance")
-    .select(
-      "id, listing_id, render_id, kind, label, model_id, edit, style, prompt_summary, " +
-        "original_key, altered_key, disclosure, created_at, listings(address, space_type)",
-    )
-    .eq("org_id", orgId)
-    .order("created_at", { ascending: false })
-    .limit(limit + 1); // one extra so we can report `truncated` honestly
-  if (from) q = q.gte("created_at", from);
-  if (to) q = q.lt("created_at", to);
-  if (listingId) q = q.eq("listing_id", listingId);
-
-  const { data, error } = await q;
-  if (error) throw new HttpError(500, `Compliance lookup failed: ${error.message}`);
-
-  const all = (data ?? []) as unknown as Array<Record<string, unknown>>;
+  const all = await libraryProvenance(adminClient(),userId,orgId,{from,to,listing:listingId||null,limit:limit+1});
   const truncated = all.length > limit;
-  const rows = all.slice(0, limit).map((r) => {
+  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,all.slice(0,limit),(bucket,key,seconds,listing,physicalOrg)=>privateMediaUrl({actor:userId,org:physicalOrg,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
+  const rows = all.slice(0, limit).map((r,index) => {
     const l = (Array.isArray(r.listings) ? r.listings[0] : r.listings) as
       | { address: string | null; space_type: string | null }
       | null
@@ -749,10 +838,7 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
       // never does (tours/index.ts returns the disclosure + URLs only).
       prompt_summary: (r.prompt_summary as string | null) ?? null,
       disclosure: r.disclosure as string,
-      original_url: publicR2Url(r.original_key as string | null),
-      altered_url: publicR2Url(r.altered_key as string | null),
-      /** true when the unaltered original is publicly reachable (AB 723). */
-      original_available: publicR2Url(r.original_key as string | null) !== null,
+      ...privateLinks[index],
     };
   });
 
@@ -806,9 +892,10 @@ async function handleComplianceOrg(
 
   // Identical field order to the per-user rows, with the agent appended — so
   // one renderer serves both and a diff between the two exports is only ever
-  // the attribution. The RPC returns R2 KEYS; publicR2Url stays the single
-  // place a key becomes a link.
-  const rows = scoped.slice(0, opts.limit).map((r) => ({
+  // the attribution. Private links retain exact source identity and the same
+  // current permission checks as the individual export.
+  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,scoped.slice(0,opts.limit),(bucket,key,seconds,listing,physicalOrg)=>privateMediaUrl({actor:userId,org:physicalOrg,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
+  const rows = scoped.slice(0, opts.limit).map((r,index) => ({
     id: r.id as string,
     created_at: r.created_at as string,
     listing_id: (r.listing_id as string | null) ?? null,
@@ -822,9 +909,7 @@ async function handleComplianceOrg(
     model_id: (r.model_id as string | null) ?? null,
     prompt_summary: (r.prompt_summary as string | null) ?? null,
     disclosure: r.disclosure as string,
-    original_url: publicR2Url(r.original_key as string | null),
-    altered_url: publicR2Url(r.altered_key as string | null),
-    original_available: publicR2Url(r.original_key as string | null) !== null,
+    ...privateLinks[index],
     agent_id: (r.agent_id as string | null) ?? null,
     agent_name: (r.agent_name as string | null) ?? null,
     agent_email: (r.agent_email as string | null) ?? null,
@@ -878,6 +963,15 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
     "Send at least one of original_asset_id, altered_asset_id, label",
   );
 
+  const prior = await db.from("media_provenance").select("id,org_id,listing_id").eq("id",id).maybeSingle();
+  assert(!prior.error,503,"Disclosure identity could not be verified.");
+  assert(prior.data && typeof prior.data.listing_id === "string" && UUID_RE.test(prior.data.listing_id),404,"Disclosure record not found.");
+  const listingScope=await listingLibraryScope(adminClient(),userId,prior.data.listing_id,true);
+  const selected=preferredOrg(req);
+  assert(selected===undefined||selected===listingScope.org_id||selected===listingScope.library_org_id,404,"Disclosure not found in this library.");
+  const orgId=listingScope.org_id;
+  assert(prior.data.org_id===orgId,503,"Disclosure media identity could not be verified.");
+
   const { data, error } = await db.rpc("set_provenance_media", {
     p_id: id,
     p_original_asset: originalAsset,
@@ -887,6 +981,9 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
   if (error) throwRpc(error.message);
 
   const row = (data ?? {}) as Record<string, unknown>;
+  assert(row.id===id && row.listing_id===prior.data.listing_id && row.org_id===orgId,503,"Disclosure update returned inconsistent identity.");
+  await listingLibraryScope(adminClient(),userId,prior.data.listing_id);
+  const [privateLinks]=await privateProvenanceLinks(adminClient(),orgId,[row],(bucket,key,seconds,listing,physicalOrg)=>privateMediaUrl({actor:userId,org:physicalOrg,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
   return json({
     ok: true,
     provenance: {
@@ -895,8 +992,7 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
       kind: row.kind as string,
       label: (row.label as string | null) ?? null,
       disclosure: row.disclosure as string,
-      original_url: publicR2Url(row.original_key as string | null),
-      altered_url: publicR2Url(row.altered_key as string | null),
+      ...privateLinks,
       created_at: (row.created_at as string | null) ?? null,
     },
   });
@@ -935,7 +1031,9 @@ async function handleAppleCode(req: Request, userId: string): Promise<Response> 
     if (error) return json({ ok: true, stored: false, reason: error.message });
     return json({ ok: true, stored: true });
   } catch (e) {
-    console.error("apple code exchange failed:", e);
+    const name = e instanceof Error ? e.name : "";
+    const errorName = ["Error", "TypeError", "RangeError", "SyntaxError", "TimeoutError", "AbortError"].includes(name) ? name : "Other";
+    console.error(JSON.stringify({ event: "apple_code_exchange_failed", error_name: errorName }));
     return json({ ok: true, stored: false, reason: "exchange failed" });
   }
 }
@@ -972,11 +1070,10 @@ async function handleAppleCode(req: Request, userId: string): Promise<Response> 
 //                    below. Soft on purpose: the shipped build sets no token,
 //                    so an absent one is accepted. (S1 review; migration 0021
 //                    adds the column that records it.)
-//   environment      Sandbox and Production are both accepted (App Review and
-//                    every TestFlight tester buys in Sandbox) but they may not
-//                    mix: a transaction from the other environment than the one
-//                    on file is a 409, the same rule /apple-subscriptions has
-//                    always applied to notifications.
+//   environment      Production receipts alone may update retail billing.
+//                    TestFlight and App Review use Sandbox: their receipts may
+//                    be acknowledged only against separately authorized test
+//                    access, in an isolated ledger with no retail plan write.
 //   expiresDate      a purchase with no expiry is not a subscription: 400.
 //   role             only the workspace owner or an admin may attach a
 //                    subscription, so an `agent` seat in someone else's org
@@ -1030,7 +1127,7 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
   // Capped before it is buffered: two JWS blobs are at most ~128 KB of JSON and
   // req.json() would read whatever the caller sent into memory first.
   const body = await readJsonLimited<
-    { signed_transaction?: unknown; signed_renewal_info?: unknown }
+    { signed_transaction?: unknown; signed_renewal_info?: unknown; expected_org_id?: unknown }
   >(req, MAX_ENTITLEMENT_BODY_BYTES);
   const signedTransaction = body.signed_transaction;
   assert(
@@ -1076,19 +1173,10 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
   // transaction and every notification for that subscription forever. Set it to
   // the signed-in user's own id and a stolen JWS is worthless to anyone else.
   //
-  // SOFT, deliberately: the shipped build calls `product.purchase()` with no
-  // options, so a real customer's transaction carries no token at all and must
-  // still work. A token that is PRESENT and names someone else is refused —
-  // that is the replay — while an absent one is accepted and the review report
-  // carries the exact iOS change that makes it present. Once a build that sets
-  // it has fully rolled out, this can be tightened to require the token.
-  if (tx.appAccountToken !== null && tx.appAccountToken.toLowerCase() !== userId.toLowerCase()) {
-    throw new HttpError(
-      403,
-      "That purchase belongs to a different Rendprop account. Sign in with the account that bought it, or use Restore Purchases there.",
-      "forbidden",
-    );
-  }
+  // Old purchases without a token remain supported. A present token must
+  // match this account, except for an exact, still-authorized guest adoption
+  // receipt. Apple retains the original guest token after account connection.
+  // Verify that receipt after resolving the target workspace below.
 
   // Renewal info is optional and only trusted for THIS subscription.
   let renewal: AppleRenewalInfo | null = null;
@@ -1097,15 +1185,21 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     assert(signedRenewal.length <= MAX_JWS_CHARS, 400, "signed_renewal_info is too large");
     const candidate = decodeRenewalInfo(await verifyAppleJWS(signedRenewal));
     if (
-      candidate.originalTransactionId === null ||
       candidate.originalTransactionId === tx.originalTransactionId
     ) {
+      assert(candidate.environment === null || candidate.environment === tx.environment,
+        400, "That renewal belongs to a different App Store environment");
       renewal = candidate;
     }
   }
 
   const admin = adminClient();
   const orgId = await orgForUser(userId, preferredOrg(req));
+  const purchaseAccess = await libraryAccess(admin, userId, orgId);
+  assert(purchaseAccess.can_manage_subscription && purchaseAccess.billing_org_id === orgId, 403,
+    "This library uses its Team subscription. The Team owner manages the plan.", "forbidden");
+  assertExpectedSubscriptionWorkspace(body.expected_org_id, orgId);
+  await assertVerifiedPurchaseOwner(tx.appAccountToken, userId, orgId, admin);
 
   const { data: membership, error: mErr } = await admin
     .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
@@ -1116,6 +1210,59 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
       "Only the workspace owner or an admin can add a subscription",
       "forbidden",
     );
+  }
+
+  if (tx.environment === "Sandbox" && await servingMode() === "ceiling") {
+    // Ceiling mode (launch): a Sandbox purchase — only App Review or a Sandbox
+    // tester the owner created can make one — opens a 7-day `trial` plan,
+    // bounded by that plan's meters, the 500¢ trial envelope and the global
+    // sponsor pool. The RPC validates the receipt's status and expiry, persists
+    // the receipt either way, grants once per receipt, replays without
+    // restarting, and never downgrades a paid workspace or binds a retail
+    // subscription. A receipt that grants nothing is a 200 with granted:false.
+    const derivedSandbox = deriveEntitlement(tx, renewal);
+    const { data, error } = await admin.rpc("grant_sandbox_trial", {
+      p_org: orgId, p_actor: userId, p_original: tx.originalTransactionId, p_transaction: tx.transactionId,
+      p_product: tx.productId, p_status: derivedSandbox.status, p_expires_at: derivedSandbox.expiresAt, p_signed_at: tx.signedDate,
+    });
+    if (error) {
+      if (/RP(?:400|403|409):/.test(error.message)) throwRpc(error.message);
+      throw new HttpError(503, "Test purchase could not be confirmed. Please retry.", "upstream");
+    }
+    const grant = (data ?? {}) as { plan?: unknown; source?: unknown; expires_at?: unknown; granted?: unknown; replay?: unknown; reason?: unknown };
+    assert(typeof grant.plan === "string" && typeof grant.granted === "boolean", 503, "Test purchase could not be confirmed. Please retry.");
+    const servingActivation = await subscriptionServingActivation(admin, userId, orgId);
+    return json({
+      plan: grant.plan,
+      source: typeof grant.source === "string" ? grant.source : null,
+      expires_at: typeof grant.expires_at === "string" ? grant.expires_at : null,
+      product_id: tx.productId,
+      original_transaction_id: tx.originalTransactionId,
+      environment: "Sandbox",
+      serving_activation: servingActivation,
+      status: derivedSandbox.status,
+      test_only: true,
+      granted: grant.granted,
+      replay: grant.replay === true,
+      reason: typeof grant.reason === "string" ? grant.reason : null,
+    }, 200, { "cache-control": "no-store" });
+  }
+
+  if (tx.environment === "Sandbox") {
+    const { data, error } = await admin.rpc("record_apple_sandbox_receipt", {
+      p_org: orgId, p_actor: userId, p_original: tx.originalTransactionId,
+      p_transaction: tx.transactionId, p_product: tx.productId,
+      p_status: deriveEntitlement(tx, renewal).status, p_signed_at: tx.signedDate,
+    });
+    if (error) {
+      if (/RP403:/.test(error.message)) throw new HttpError(403,
+        "This TestFlight/App Review purchase is test-only. This workspace needs authorized test access before activation. Your purchase is kept; restore after access is enabled.", "sandbox_testing_required");
+      if (/RP(?:400|409):/.test(error.message)) throwRpc(error.message);
+      throw new HttpError(503, "Test purchase could not be confirmed. Please retry.", "upstream");
+    }
+    assert(data?.ok === true && data.test_only === true && data.environment === "Sandbox" && data.org_id === orgId,
+      503, "Authorized test access could not be confirmed. Please retry.");
+    return json(data, 200, { "cache-control": "no-store" });
   }
 
   // One subscription, one workspace. This is the friendly pre-check; the RPC
@@ -1132,9 +1279,8 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     throw new HttpError(409, "This subscription is already used by another account", "conflict");
   }
 
-  // Sandbox and Production are both accepted — App Review and every TestFlight
-  // tester buys in Sandbox, so refusing it would fail review — but they may
-  // never mix. /apple-subscriptions has always refused a notification whose
+  // Production retail bindings remain environment-sticky. Sandbox receipts
+  // already returned through the separate explicitly authorized test path. /apple-subscriptions has always refused a notification whose
   // environment disagrees with the stored row; this is the same rule on the
   // device path, which did not have it. (0021 enforces it in the RPC too, for
   // both callers at once; this is the version that produces a sentence.)
@@ -1149,7 +1295,7 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
 
   const derived = deriveEntitlement(tx, renewal);
 
-  const { error: rpcErr } = await admin.rpc("apply_apple_entitlement", {
+  const { data: applied, error: rpcErr } = await admin.rpc("apply_apple_entitlement_v2", {
     p_org: orgId,
     p_user: userId,
     p_original_transaction_id: tx.originalTransactionId,
@@ -1161,6 +1307,10 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     p_expires_at: derived.expiresAt,
     p_auto_renew: derived.autoRenew,
     p_notification_type: null,
+    p_transaction_purchased_at: tx.purchaseDate,
+    p_transaction_signed_at: tx.signedDate,
+    p_event_signed_at: null,
+    p_renewal_signed_at: renewal?.signedDate ?? null,
   });
   if (rpcErr) {
     // RPnnn is the RPC refusing the input (a bug on our side — the only one it
@@ -1185,26 +1335,35 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     if (tokErr) console.error("app_account_token write failed:", tokErr.message);
   }
 
+  await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,tx);
   const replayed = await replayPendingNotifications(tx.originalTransactionId, orgId);
 
-  // Answer with what the server now ENFORCES, read back after every write —
-  // effective_plan() is the same function the charge paths call, so the app can
-  // never be told it has a plan the next AI request will refuse.
-  const [{ data: effective }, { data: org }] = await Promise.all([
+  // Signed subscription state and financial serving admission are separate.
+  // Preserve accepted Apple chronology; an unfunded new active trial must not
+  // be answered as usable included service merely because raw plan is paid.
+  const [{ data: effective, error: effectiveError }, { data: org, error: orgError }, { data: subscription, error: subscriptionError }] = await Promise.all([
     admin.rpc("effective_plan", { p_org: orgId }),
-    admin.from("orgs").select("plan, plan_source, plan_expires_at").eq("id", orgId).maybeSingle(),
+    admin.from("orgs").select("plan, plan_source, plan_expires_at, apple_product_id").eq("id", orgId).maybeSingle(),
+    admin.from("apple_subscriptions").select("status, auto_renew, product_id, expires_at")
+      .eq("original_transaction_id", tx.originalTransactionId).eq("org_id", orgId).maybeSingle(),
   ]);
+  if (effectiveError || orgError || subscriptionError || !org || !subscription) {
+    throw new HttpError(503, "Subscription state could not be confirmed. Please retry.", "upstream");
+  }
+  const servingActivation = await subscriptionServingActivation(admin, userId, orgId);
+  trialServingActivationForSync(servingActivation, tx, subscription.status);
 
   return json({
     plan: String(effective ?? org?.plan ?? "free"),
     source: (org?.plan_source as string | null) ?? "apple",
-    expires_at: derived.expiresAt,
-    product_id: tx.productId,
+    expires_at: org.plan_expires_at ?? subscription.expires_at ?? applied?.expires_at ?? null,
+    product_id: subscription.product_id,
     original_transaction_id: tx.originalTransactionId,
     environment: tx.environment,
+    serving_activation: servingActivation,
     // Additive extras the app may ignore.
-    status: derived.status,
-    auto_renew: derived.autoRenew,
+    status: subscription.status,
+    auto_renew: subscription.auto_renew,
     replayed_notifications: replayed,
   });
 }
@@ -1215,8 +1374,8 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
  * apple-subscriptions/index.ts stores the exact RPC arguments it computed on
  * each `pending` row (`payload.entitlement`), so a replay re-applies the SAME
  * decision rather than re-deriving it here from a second copy of the rules. In
- * receipt order, because apply_apple_entitlement() resolves out-of-order
- * signals by comparing expiries.
+ * receipt order. apply_apple_entitlement_v2() orders the independently verified
+ * purchase, transaction and outer-notification dates before applying a change.
  *
  * Best effort: a failure here must not turn a successful purchase into an error
  * the customer sees. The rows stay `pending` and the next sync retries them.
@@ -1245,7 +1404,9 @@ async function replayPendingNotifications(
         .update({ pending: false, org_id: orgId }).eq("notification_uuid", uuid);
       continue;
     }
-    const { error: rpcErr } = await admin.rpc("apply_apple_entitlement", {
+    const payload = row.payload as { transaction?: AppleTransaction; renewal?: AppleRenewalInfo; notification?: { signedDate?: number } };
+    const outerSigned = payload?.notification?.signedDate;
+    const { error: rpcErr } = await admin.rpc("apply_apple_entitlement_v2", {
       p_org: orgId,
       p_user: null,
       p_original_transaction_id: e.original_transaction_id,
@@ -1257,11 +1418,18 @@ async function replayPendingNotifications(
       p_expires_at: (e.expires_at as string | null) ?? null,
       p_auto_renew: typeof e.auto_renew === "boolean" ? e.auto_renew : null,
       p_notification_type: (e.notification_type as string | null) ?? null,
+      // Historical pending notifications already stored the decoded verified
+      // transaction and outer signed date, before these explicit fields existed.
+      p_transaction_purchased_at: e.transaction_purchased_at ?? payload?.transaction?.purchaseDate ?? null,
+      p_transaction_signed_at: e.transaction_signed_at ?? payload?.transaction?.signedDate ?? null,
+      p_event_signed_at: e.event_signed_at ?? (typeof outerSigned === "number" && Number.isFinite(outerSigned) && outerSigned > 0 && outerSigned <= 8.64e15 ? new Date(outerSigned).toISOString() : null),
+      p_renewal_signed_at: e.renewal_signed_at ?? payload?.renewal?.signedDate ?? null,
     });
     if (rpcErr) {
       console.error("pending notification replay failed:", rpcErr.message);
       continue; // stays pending; the next sync retries it
     }
+    if (payload?.transaction) await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,payload.transaction);
     await admin.from("apple_notifications")
       .update({ pending: false, org_id: orgId }).eq("notification_uuid", uuid);
     applied++;
@@ -1306,70 +1474,12 @@ const INLINE_CRM_CAP = 50;
  * the contact is ever re-tagged for this tenant a later pass will finish it,
  * while nothing here ever deletes on a guess.
  */
-async function cleanupGhlContactForTenant(
-  email: string,
-  orgId: string,
-): Promise<{ removed: number; untagged: number; leftover: number }> {
-  const key = Deno.env.get("GHL_API_KEY");
-  const locationId = Deno.env.get("GHL_LOCATION_ID");
-  if (!key || !locationId) throw new Error("GHL not configured");
-  const headers = {
-    Authorization: `Bearer ${key}`,
-    Version: "2021-07-28",
-    Accept: "application/json",
-  };
-  const searchUrl = new URL("https://services.leadconnectorhq.com/contacts/");
-  searchUrl.searchParams.set("locationId", locationId);
-  searchUrl.searchParams.set("query", email);
-  const res = await fetch(searchUrl, { headers });
-  if (!res.ok) throw new Error(`GHL search ${res.status}`);
-  const data = await res.json().catch(() => ({}));
-  const contacts = (data?.contacts ?? []) as Array<{ id?: string; email?: string }>;
-
-  let removed = 0;
-  let untagged = 0;
-  let leftover = 0;
-
-  for (const c of contacts) {
-    if (!c.id || (c.email ?? "").toLowerCase() !== email.toLowerCase()) continue;
-
-    // Re-fetch the full record: the search result is not a contract that it
-    // carries tags, and a tag we cannot positively read is not a tag we act on.
-    const getRes = await fetch(`https://services.leadconnectorhq.com/contacts/${c.id}`, { headers });
-    if (!getRes.ok) throw new Error(`GHL contact fetch ${c.id} -> ${getRes.status}`);
-    const full = await getRes.json().catch(() => null) as { contact?: { tags?: unknown } } | null;
-    const decision = decideGhlTagAction(full?.contact?.tags, orgId);
-
-    if (decision.action === "leftover") {
-      leftover++;
-      continue;
-    }
-    if (decision.action === "untag") {
-      const untagRes = await fetch(`https://services.leadconnectorhq.com/contacts/${c.id}/tags`, {
-        method: "DELETE",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: [decision.tag] }),
-      });
-      if (!untagRes.ok) throw new Error(`GHL untag ${c.id} -> ${untagRes.status}`);
-      untagged++;
-      continue;
-    }
-    // decision.action === "delete": only this tenant's org tag is present.
-    const del = await fetch(`https://services.leadconnectorhq.com/contacts/${c.id}`, {
-      method: "DELETE",
-      headers,
-    });
-    if (del.ok || del.status === 404) removed++;
-    else throw new Error(`GHL delete ${c.id} -> ${del.status}`);
-  }
-  return { removed, untagged, leftover };
-}
-
 /** Attempt the external cleanup in a payload. Returns what REMAINS + notes. */
 async function processPayload(payload: DeletionPayload): Promise<{ remaining: DeletionPayload; notes: string[] }> {
   const notes: string[] = [];
   const remaining: DeletionPayload = {
     r2: [],
+    ...(payload.r2_prefixes === undefined ? {} : { r2_prefixes: [] }),
     stream_uids: [],
     ghl_targets: [],
     apple_refresh_token: payload.apple_refresh_token ?? null,
@@ -1400,6 +1510,14 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
   const storageDrained=!payload.storage_not_before || Date.parse(payload.storage_not_before)<=Date.now();
   if(storageDrained) remaining.storage_not_before=null;
   else notes.push("storage: waiting for previously issued writes to expire; queued");
+  for (const [i, target] of (payload.r2_prefixes ?? []).entries()) {
+    if (!storageDrained || remaining.provider_leases!.length || remaining.unresolved_uploads!.length ||
+      remaining.unresolved_render_jobs!.length || i >= 2) { remaining.r2_prefixes!.push(target); continue; }
+    try {
+      const result = await deleteOwnedPrefixPage(target);
+      if (!result.complete) remaining.r2_prefixes!.push({ ...target, removed_count: target.removed_count + result.deleted });
+    } catch { remaining.r2_prefixes!.push(target); notes.push("storage: owned output cleanup remains unconfirmed; queued"); }
+  }
   for(const [i,target] of (payload.multipart_uploads??[]).entries()) {
     if(!storageDrained || i>=16) {remaining.multipart_uploads!.push(target);continue;}
     try { await abortMultipartUpload({bucket:target.bucket,key:target.key,uploadId:target.upload_id}); }
@@ -1438,7 +1556,7 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
       for (let i = 0; i < streamTodo.length; i++) {
         if (i >= INLINE_STREAM_CAP) { remaining.stream_uids.push(streamTodo[i]); continue; }
         try {
-          await deleteStreamVideo(streamTodo[i]);
+          if (await deleteStreamVideo(streamTodo[i]) !== true) throw new Error("Video deletion acknowledgment missing");
         } catch (e) {
           notes.push(`stream ${streamTodo[i]}: ${e instanceof Error ? e.message : String(e)}`);
           remaining.stream_uids.push(streamTodo[i]);
@@ -1461,16 +1579,16 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
         if (i >= INLINE_CRM_CAP) { remaining.ghl_targets.push(crmTodo[i]); continue; }
         const target = crmTodo[i];
         try {
-          const outcome = await cleanupGhlContactForTenant(target.email, target.org_id);
+          const outcome = await cleanupLegacyGhlTarget(target);
           if (outcome.leftover > 0) {
             // Never guessed at — this tenant's own tag could not be confirmed
             // on the match, so nothing was touched. Stays queued (same as a
             // retryable failure) rather than being dropped or force-deleted.
-            notes.push(`crm ${target.email}: ${outcome.leftover} contact(s) left for manual review — tenant tag unconfirmed`);
+            notes.push(`crm: ${outcome.leftover} legacy contact(s) need manual review — tenant tag unconfirmed`);
             remaining.ghl_targets.push(target);
           }
         } catch (e) {
-          notes.push(`crm ${target.email}: ${e instanceof Error ? e.message : String(e)}`);
+          notes.push("crm: legacy cleanup was not acknowledged — queued");
           remaining.ghl_targets.push(target);
         }
       }

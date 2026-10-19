@@ -51,6 +51,7 @@ function fixture() {
   const qualityCalls: any[] = [];
   const admin = {
     rpc: async (name: string, args: any) => {
+      if (name === "listing_library_scope") return {data:{actor_id:user,org_id:org,library_org_id:org,listing_id:listing,listing_owner_user_id:user,library_owner_user_id:user,role,access_mode:"own",can_read:true,can_write:role!=="marketing",can_manage_subscription:false,billing_org_id:org,team_org_id:null},error:null};
       if (name === "studio_presenter_asset_access") {
         assertEquals(args, { p_asset: source });
         return { data: presenterApproved, error: null };
@@ -417,4 +418,11 @@ Deno.test("music cannot be finalized by guessed hash, incomplete upload, deleted
   f.tables.studio_property_music_copies.push({ actor_id: user, org_id: org, listing_id: listing, sha256: sha, source_version_id: voice });
   f.tables.studio_production_versions.push({ id: voice, org_id: org, listing_id: listing, payload: { draft: { music: { licensed: true, source: { sha256: sha } } } } });
   assertEquals((await f.call({ music_sha256: sha })).status, 200);
+});
+
+Deno.test("property video finalization rejects a manually supplied client headshot before writes", async () => {
+  const f = fixture();
+  f.tables.capture_assets[1].storage_key = key(`contact-${source}.jpg`);
+  await assertRejects(() => f.call(), HttpError, "source file");
+  assertEquals(f.writes, 0);
 });

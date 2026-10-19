@@ -225,18 +225,7 @@ let photoHandler: ((req: Request) => Promise<Response>) | undefined;
 async function actualPhotoHandler() {
   if (photoHandler) return photoHandler;
   Deno.env.set("GEMINI_API_KEY", "fixture-only-not-a-provider-key");
-  const descriptor = Object.getOwnPropertyDescriptor(Deno, "serve")!;
-  Object.defineProperty(Deno, "serve", {
-    configurable: true,
-    value: (handler: typeof photoHandler) => {
-      photoHandler = handler;
-    },
-  });
-  try {
-    await import("../ai-photo/index.ts");
-  } finally {
-    Object.defineProperty(Deno, "serve", descriptor);
-  }
+  photoHandler = (await import("../ai-photo/index.ts")).handleAIPhoto;
   assert(photoHandler);
   return photoHandler;
 }
@@ -248,7 +237,12 @@ for (const flag of [false, true]) {
         seen: string[] = [],
         charges: string[] = [],
         refunds: string[] = [];
+      const operations: string[] = [];
       const unexpected: string[] = [];
+      const receiptCharges: Record<string, unknown>[] = [];
+      const receiptRefunds: Record<string, unknown>[] = [];
+      const burstWindow = "2026-10-07T00:00:00.123456Z";
+      const monthlyWindow = "2026-10-07T00:00:00.234567Z";
       globalThis.fetch =
         (async (input: string | URL | Request, init?: RequestInit) => {
           const url = new URL(
@@ -258,9 +252,27 @@ for (const flag of [false, true]) {
           seen.push(url.pathname);
           let answer: unknown;
           if (url.pathname.endsWith("/auth/v1/user")) {
-            answer = { id: "fixture-user", aud: "authenticated" };
+            answer = { id: "51000000-0000-4000-8000-000000000001", aud: "authenticated", is_anonymous: false };
           } else if (url.pathname.endsWith("/rpc/active_org_for_user")) {
-            answer = "fixture-org";
+            answer = "51000000-0000-4000-8000-000000000002";
+          } else if (url.pathname.endsWith("/rpc/workspace_directory")) {
+            const actor = "51000000-0000-4000-8000-000000000001";
+            const org = "51000000-0000-4000-8000-000000000002";
+            assertEquals(body.p_user, actor);
+            answer = { actor_id: actor, active_org_id: org, own_org_id: org,
+              billing_org_id: org, can_switch_agent_libraries: false,
+              workspaces: [{id:org,name:"Photo fixture",role:"owner",access_mode:"own",
+                library_owner_user_id:actor,billing_org_id:org,can_read:true,can_write:true}] };
+          } else if (url.pathname.endsWith("/rpc/library_access")) {
+            const actor = "51000000-0000-4000-8000-000000000001";
+            const org = "51000000-0000-4000-8000-000000000002";
+            assertEquals(body, {p_actor:actor,p_org:org});
+            answer = {actor_id:actor,org_id:org,library_owner_user_id:actor,role:"owner",
+              access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true,
+              billing_org_id:org,team_org_id:null};
+          } else if (url.pathname.endsWith("/rpc/library_actor_billing_org")) {
+            assertEquals(body,{p_actor:"51000000-0000-4000-8000-000000000001",p_org:"51000000-0000-4000-8000-000000000002"});
+            answer = "51000000-0000-4000-8000-000000000002";
           } else if (url.pathname.endsWith("/memberships")) {
             answer = { role: "owner" };
           } else if (url.pathname.endsWith("/rpc/org_entitlement")) {
@@ -275,11 +287,19 @@ for (const flag of [false, true]) {
               cogs_ceiling_cents: 2000,
               price_cents: 7900,
             };
-          } else if (url.pathname.endsWith("/rpc/bump_rate")) {
+          } else if (url.pathname.endsWith("/rpc/serving_operation_begin")) {
+            operations.push("begin");
+            answer = { begun: true };
+          } else if (url.pathname.endsWith("/rpc/serving_operation_no_dispatch")) {
+            operations.push("no_dispatch");
+            answer = { retryable: true };
+          } else if (url.pathname.endsWith("/rpc/bump_rate_receipt")) {
             charges.push(body.p_key);
-            answer = true;
-          } else if (url.pathname.endsWith("/rpc/refund_rate")) {
+            receiptCharges.push(body);
+            answer = { accepted: true, window_start: body.p_key === "aiphotomo:51000000-0000-4000-8000-000000000002" ? monthlyWindow : burstWindow };
+          } else if (url.pathname.endsWith("/rpc/refund_rate_receipt")) {
             refunds.push(body.p_key);
+            receiptRefunds.push(body);
             answer = true;
           } else if (url.pathname.endsWith("/app_config")) {
             answer = { value: { enabled: flag } };
@@ -300,10 +320,12 @@ for (const flag of [false, true]) {
             headers: {
               "Authorization": "Bearer fixture-user-token",
               "Content-Type": "application/json",
+              "Idempotency-Key": "photo-fixture-key",
+              "x-rendprop-photo-quality-protocol": "retained-operation-v1",
             },
             body: JSON.stringify({
               edit,
-              image_b64: "c3ludGhldGlj",
+              image_b64: btoa(String.fromCharCode(...[255,216,255,192,0,11,8,0,1,0,1,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217])),
               mime: "image/jpeg",
             }),
           }),
@@ -316,10 +338,21 @@ for (const flag of [false, true]) {
         assertEquals(
           charges.sort(),
           edit === "sky"
-            ? ["aiphoto:fixture-org", "aiphotomo:fixture-org"]
+            ? ["aiphoto:51000000-0000-4000-8000-000000000002", "aiphotomo:51000000-0000-4000-8000-000000000002"]
             : [],
         );
-        assertEquals(refunds.sort(), charges);
+        // Permanent admission precedes quota, and the zero-provider route
+        // refusal explicitly aborts it. Burst/monthly charges are refunded.
+        assertEquals(operations, edit === "sky" ? ["begin", "no_dispatch"] : []);
+        assertEquals(refunds.sort(), edit === "sky" ? ["aiphoto:51000000-0000-4000-8000-000000000002", "aiphotomo:51000000-0000-4000-8000-000000000002"] : []);
+        assertEquals(receiptCharges, edit === "sky" ? [
+          { p_key: "aiphoto:51000000-0000-4000-8000-000000000002", p_max: 40, p_window_seconds: 300, p_cost: 1 },
+          { p_key: "aiphotomo:51000000-0000-4000-8000-000000000002", p_max: 100, p_window_seconds: 2592000, p_cost: 1 },
+        ] : []);
+        assertEquals(receiptRefunds, edit === "sky" ? [
+          { p_key: "aiphotomo:51000000-0000-4000-8000-000000000002", p_window_seconds: 2592000, p_window_start: monthlyWindow, p_cost: 1 },
+          { p_key: "aiphoto:51000000-0000-4000-8000-000000000002", p_window_seconds: 300, p_window_start: burstWindow, p_cost: 1 },
+        ] : []);
         assertEquals(
           unexpected,
           [],

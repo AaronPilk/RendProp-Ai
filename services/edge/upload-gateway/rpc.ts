@@ -25,7 +25,9 @@ export function stateClient(
       redirect: "manual",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${secret}`,
+        // A revocable Supabase secret key is not a JWT. Legacy compatibility
+        // is transport-only; SQL still verifies the exact operation claim.
+        ...(!secret.startsWith("sb_secret_") ? { authorization: `Bearer ${secret}` } : {}),
         apikey: secret,
       },
       body: JSON.stringify(args),

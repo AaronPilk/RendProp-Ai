@@ -29,6 +29,8 @@ export interface OutboxRow {
   user_id: string | null;
   /** Set only on rows addressed to someone with no profile to look up. */
   to_email?: string | null;
+  client_delivery_id?: string | null;
+  client_verification_id?: string | null;
   category: string;
   channel: "push" | "email";
   dedupe_key: string;
@@ -65,6 +67,7 @@ export async function deliverPush(
   devices: DeviceRow[],
   base: string,
   fetchImpl: typeof fetch = fetch,
+  authorizeDevice?: (device:DeviceRow)=>Promise<boolean>,
 ): Promise<Outcome> {
   // THE INERT PATH. Not an error and not a retry: this row has nowhere to go
   // until somebody sets three secrets, and naming them in last_error is how
@@ -72,7 +75,10 @@ export async function deliverPush(
   if (!apns.configured()) {
     return { state: "skipped", reason: apns.missingReason(), providerId: null, deadTokens: [] };
   }
-  if (devices.length === 0) {
+  // The drain groups devices by the row's own user_id; a caller that hands this
+  // row somebody else's devices gets them dropped here rather than pushed to.
+  const ownDevices = row.user_id ? devices.filter((device) => device.user_id === row.user_id) : [];
+  if (ownDevices.length === 0 || !row.user_id) {
     // The device was disabled or removed between enqueue and drain. A push with
     // no device is not a failure worth retrying five times.
     return {
@@ -93,7 +99,10 @@ export async function deliverPush(
   const deadTokens: string[] = [];
   let lastReason: string | null = null;
 
-  for (const device of devices) {
+  let authorizedDevices=0;
+  for (const device of ownDevices) {
+    if(authorizeDevice&&!await authorizeDevice(device))continue;
+    authorizedDevices++;
     const result = await apns.send({
       deviceToken: device.device_token,
       environment: device.environment === "sandbox" ? "sandbox" : "production",
@@ -101,7 +110,8 @@ export async function deliverPush(
       body: message.body,
       deepLink: link,
       category: row.category,
-      data,
+      recipientUserId: row.user_id,
+      data: apns.pushRouteData(data),
       collapseId: row.dedupe_key,
     }, fetchImpl);
 
@@ -117,7 +127,8 @@ export async function deliverPush(
   // EVERY token this person has is gone. Retrying cannot help, so the row is
   // closed as skipped rather than left to burn its five attempts against
   // phones that no longer exist.
-  if (deadTokens.length > 0 && deadTokens.length === devices.length) {
+  if(authorizedDevices===0)return {state:"skipped",reason:"the current account or device enrollment changed",providerId:null,deadTokens};
+  if (deadTokens.length > 0 && deadTokens.length === authorizedDevices) {
     return {
       state: "skipped",
       reason: `every device token for this user was rejected by APNs (${lastReason ?? "unregistered"})`,
@@ -139,6 +150,7 @@ export async function deliverEmail(
   address: string | null,
   base: string,
   fetchImpl: typeof fetch = fetch,
+  clientMessage?: email.EmailMessage,
 ): Promise<Outcome> {
   if (!email.configured()) {
     return { state: "skipped", reason: email.missingReason(), providerId: null, deadTokens: [] };
@@ -152,9 +164,13 @@ export async function deliverEmail(
     };
   }
 
+  if(["client_lead_received", "client_recipient_verification"].includes(row.category) && (!clientMessage || clientMessage.to !== address)) {
+    return {state:"skipped",reason:"Client forwarding was not authorized.",providerId:null,deadTokens:[]};
+  }
+
   const message = render(row.category, row.payload);
   const link = absoluteLink(row.payload, base);
-  const result = await email.sendEmail({
+  const result = await email.sendEmail(clientMessage ?? {
     to: address,
     subject: message.title,
     text: emailText(message, link, row.category),

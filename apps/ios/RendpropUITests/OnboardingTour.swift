@@ -72,7 +72,7 @@
 //  slow drags (`gentleScroll`, `scrubPlayer`), which are gestures, not taps.
 //
 //  Launch: `-uiTesting -hasOnboarded YES -appearance light
-//  -ai.thirdPartyProcessing.consent.v2 YES` and NO `-space.type`, so the
+//  -ai.thirdPartyProcessing.consent.v3 YES` and NO `-space.type`, so the
 //  top-left business-type menu can really be driven (an argument-domain value
 //  would win over every pick — see IndustryWalk.swift's header). The tour
 //  starts in real estate and switches back to it after showing the menu.
@@ -138,7 +138,7 @@ final class OnboardingTour: XCTestCase {
             "-appearance", "light",
             // Guideline 5.1.2(i) consent — without it the AI screens show the
             // disclosure overlay and dismiss themselves when it is not answered.
-            "-ai.thirdPartyProcessing.consent.v2", "YES",
+            "-ai.thirdPartyProcessing.consent.v3", "YES",
         ]
     }
 
@@ -238,8 +238,8 @@ final class OnboardingTour: XCTestCase {
             ensureRealEstate()          // before the mark: the switch is not part of the take
             settle(1.0)
             mark("01")
-            beat(2.5)                   // the hero: "Win the listing. Skip the film crew."
-            gentleScroll(down: true)    // reveal "Make something"
+            beat(2.5)                   // the hero: "List it. Launch it. Sell it."
+            gentleScroll(down: true)    // reveal "Create Something Amazing"
             beat(1.5)
             gentleScroll(down: false)   // and back up to the hero
             beat(0.8)
@@ -277,7 +277,7 @@ final class OnboardingTour: XCTestCase {
                 note("The menu did not list \"Real estate\" the second time — closing it.")
                 closeTypeMenu()
             }
-            _ = labelElement(containing: "Win the listing", timeout: 6)
+            _ = labelElement(containing: "List it. Launch it. Sell it.", timeout: 6)
             beat(2.0)
             if currentTypeOnHome()?.raw != "real_estate" {
                 note("Home did not return to real estate — relaunching pinned so the rest of the tour is a home.")
@@ -292,8 +292,9 @@ final class OnboardingTour: XCTestCase {
         activity("02 — Start with the space") {
             scrollToTop()
             mark("02")
-            guard let add = scrollTo(ids: ["home.addHome"], labels: ["Add a home"], swipes: 4) else {
-                note("SKIPPED: no `home.addHome` and no \"Add a home\" button on Home.")
+            guard openTab("Listings", ids: [], confirmedBy: ["Add a home"]),
+                  let add = scrollTo(ids: [], labels: ["Add a home"], swipes: 4) else {
+                note("SKIPPED: the Listings tab's Add a home action was unavailable.")
                 beat(3.0)
                 return
             }
@@ -473,18 +474,24 @@ final class OnboardingTour: XCTestCase {
                 return
             }
             scrollToTop()
-            let card = find(ids: ["detail.reelStudio"], labels: ["Make a reel"], timeout: shortTimeout)
+            let card = find(ids: ["detail.reelStudio"], labels: ["Make a video"], timeout: shortTimeout)
             guard let card, card.isEnabled, card.isHittable else {
                 note("The \"Make a reel\" card is disabled (it needs 2 photos) — resting on it instead of opening Reel Studio.")
                 beat(4.0)
                 return
             }
             tap(card)
-            guard waitForAny(ids: [], labels: ["Reel Studio", "PICK PHOTOS"], timeout: screenTimeout) else {
+            guard waitForAny(ids: [], labels: ["Make a video", "PICK PHOTOS"], timeout: screenTimeout) else {
                 note("SKIPPED: Reel Studio did not open.")
                 beat(2.0)
                 return
             }
+            guard let social = find(ids: ["video.purpose.social_media"], labels: [], timeout: shortTimeout), social.isHittable else {
+                note("SKIPPED: Social media video destination did not open.")
+                dismissTopScreen()
+                return
+            }
+            tap(social)
             beat(1.5)
             if scrollTo(ids: ["reel.step.voice"], labels: ["STEP 2 · ADD YOUR VOICE", "My voice"], swipes: 6) != nil {
                 if let myVoice = find(ids: [], labels: ["My voice"], timeout: 2), myVoice.isHittable {
@@ -823,7 +830,7 @@ final class OnboardingTour: XCTestCase {
         capsule.tap()
         settle(0.9)
         if let estate = menuItem("Real estate") { estate.tap() } else { closeTypeMenu() }
-        _ = labelElement(containing: "Win the listing", timeout: 6)
+        _ = labelElement(containing: "List it. Launch it. Sell it.", timeout: 6)
         settle(1.0)
         if currentTypeOnHome()?.raw != "real_estate" { relaunchPinnedToRealEstate() }
     }
@@ -841,15 +848,14 @@ final class OnboardingTour: XCTestCase {
 
     /// Home is up when its one unmissable action is on screen.
     private func waitForHome(timeout: TimeInterval) -> Bool {
-        waitForAny(ids: ["home.addHome"], labels: ["Make something"], timeout: timeout)
+        waitForAny(ids: ["home.getStarted"], labels: ["Create Something Amazing"], timeout: timeout)
     }
 
-    /// CAREFUL with the confirming labels: "Add a home" and "My Homes" appear
-    /// on BOTH the Home dashboard and the collection tab, so only `home.addHome`
-    /// and "Make something" are unique to the dashboard.
+    /// Confirm the dashboard with its unique Get started action or tool heading,
+    /// never the collection tab's unchanged Add action.
     @discardableResult
     private func openHomeTab() -> Bool {
-        openTab("Home", ids: ["home.addHome"], confirmedBy: ["Make something"])
+        openTab("Home", ids: ["home.getStarted"], confirmedBy: ["Create Something Amazing"])
     }
 
     @discardableResult

@@ -11,6 +11,8 @@ export type NativeReel = {
   captionStyle: "off" | "lowerThird" | "punchCard" | "highlightBox";
   transition: "cut" | "dissolve" | "whip";
   motionPrompt: string;
+  automaticOrder?: boolean;
+  motionPreset?: "fly_through" | "push_in" | "side_glide" | "pull_back";
   script: string;
   tone: "warm" | "punchy" | "luxury";
   wordCaptions: boolean;
@@ -22,7 +24,7 @@ export type NativeReel = {
   updatedAt: string;
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const invalid = () => new Error("The saved iPhone setup could not be read. Open it on your iPhone and save the setup again.");
+const invalid = () => new Error("This iPhone setup could not be read. Save it again on your iPhone.");
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
   return value as Record<string, unknown>;
@@ -62,6 +64,8 @@ export function decodeNativeReel(value: unknown): NativeReel {
     tone: choice(raw.tone, ["warm", "punchy", "luxury"]), wordCaptions: flag(raw.wordCaptions),
     voiceMode: choice(raw.voiceMode, ["off", "myVoice", "aiVoice"]), voiceResultId: optionalId(raw.voiceResultId), localNarration: flag(raw.localNarration),
     photos, localExtraClipCount: raw.localExtraClipCount as number, updatedAt,
+    ...(raw.automaticOrder == null ? {} : {automaticOrder:flag(raw.automaticOrder)}),
+    ...(raw.motionPreset == null ? {} : { motionPreset: choice(raw.motionPreset, ["fly_through", "push_in", "side_glide", "pull_back"] as const) }),
   };
 }
 
@@ -72,7 +76,7 @@ export function nativeCaptionStyle(style: NativeReel["captionStyle"]): CaptionSt
 export function nativeReelShots(recipe: NativeReel): Shot[] {
   // Revalidate so callers cannot accidentally bypass completeness checks with a cast.
   const checked = decodeNativeReel(recipe);
-  if (checked.localExtraClipCount > 0) throw new Error("This setup includes clips saved only on the iPhone. Upload those clips to this listing and build the complete sequence in Studio, or save an iPhone setup without the extra clips.");
+  if (checked.localExtraClipCount > 0) throw new Error("Upload those clips from your iPhone to this listing, or save a setup without extra clips.");
   if (!checked.photos.length) throw new Error("Choose photos on your iPhone and save the setup again before importing a sequence.");
   if (checked.photos.some(photo => photo.sourcePhotoId === null)) throw new Error("Some selected photos are saved only on the iPhone. Choose Upload photos on your iPhone, let the upload finish, and choose Save setup again. No photos were skipped.");
   return checked.photos.map((photo, index) => ({

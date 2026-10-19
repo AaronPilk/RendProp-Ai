@@ -15,8 +15,11 @@ Current configuration and operating contracts live with their services:
 | Optional render worker | [worker README](../services/worker/README.md) |
 | Gated spatial controller and GPU sandbox | [spatial-worker README](../services/spatial-worker/README.md) |
 
-See the [24 September Studio release](../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
-for verified production versions. A checked-in configuration or deployment recipe
+See the [6 October launch candidate](../docs/handoff/LAUNCH-READINESS-20261006.md)
+for current source dependencies and pending rollout gates; it is not a delivery
+receipt. Verified production versions require their dated receipts. The
+[24 September Studio record](../docs/handoff/CODEX-STUDIO-LIVE-20260924.md) remains
+historical evidence. A checked-in configuration or deployment recipe
 does not establish that a worker is running. Keep secrets in the appropriate
 server environment, preserve private media access and cost controls, and verify
 the target account, routes, runtime gates and live readback for each release.

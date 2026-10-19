@@ -1,3 +1,4 @@
+import {isPrivateMediaURL,privateMediaCapability,type PrivateMediaScope} from "../../data/private-media";
 import type {StudioServices} from "../../data";
 const CHUNK=8*1024*1024,HASH=/^[a-f0-9]{64}$/;
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -21,11 +22,13 @@ export async function saveCloudOriginal(services:StudioServices,orgId:string,fil
  }
  if(!saved.complete)throw new Error("The original is not fully uploaded. Retry saving this project.");return saved;
 }
-export async function downloadSavedMedia(saved:SavedMedia,signal:AbortSignal):Promise<File>{
+export async function downloadSavedMedia(saved:SavedMedia,signal:AbortSignal,scope?:PrivateMediaScope):Promise<File>{
  if(!saved.complete)throw new Error("The original is still uploading on the other device.");
  const chunks:BlobPart[]=[];
  for(const part of saved.parts){
-  signal.throwIfAborted();const url=new URL(part.url!);if(url.protocol!=="https:"||url.username||url.password||url.hash||!url.hostname.endsWith(".r2.cloudflarestorage.com"))throw new Error("The original download address is invalid.");
+  signal.throwIfAborted();const url=new URL(part.url!);
+  if(isPrivateMediaURL(url.href)){if(!scope)throw new Error("Refresh this account before downloading saved originals.");const c=privateMediaCapability(url.href,{...scope,bucket:"uploads"});const segments=c.key.split("/");if(segments.length!==5||segments[0]!=="studio-project"||segments[1]!==scope.org||!UUID.test(segments[2])||segments[3]!==saved.id||segments[4]!==String(part.index)||scope.listing===null&&segments[2]!==scope.actor)throw new Error("Saved original identity does not match this project.");}
+  else if(url.protocol!=="https:"||url.username||url.password||url.port||url.hash||!url.hostname.endsWith(".r2.cloudflarestorage.com"))throw new Error("The original download address is invalid.");
   const response=await fetch(url,{signal:AbortSignal.any([signal,AbortSignal.timeout(60_000)]),credentials:"omit",redirect:"error",referrerPolicy:"no-referrer"});
   if(!response.ok||!response.body||Number(response.headers.get("content-length"))>part.bytes){void response.body?.cancel().catch(()=>{});throw new Error("A saved original could not be downloaded.");}
   const reader=response.body.getReader(),pieces:Uint8Array<ArrayBuffer>[]=[];let size=0;
@@ -37,4 +40,4 @@ export async function downloadSavedMedia(saved:SavedMedia,signal:AbortSignal):Pr
  const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await file.arrayBuffer())),n=>n.toString(16).padStart(2,"0")).join("");
  if(hash!==saved.sha256)throw new Error("The saved original differs from this project. Its local copy is preserved.");return file;
 }
-export async function loadCloudOriginal(services:StudioServices,orgId:string,hash:string,signal:AbortSignal):Promise<File|null>{const saved=decodeSavedMedia(await services.api(`/functions/v1/studio/project-media?sha256=${hash}`,{orgId,signal}),hash);return saved?downloadSavedMedia(saved,signal):null;}
+export async function loadCloudOriginal(services:StudioServices,orgId:string,hash:string,signal:AbortSignal):Promise<File|null>{const saved=decodeSavedMedia(await services.api(`/functions/v1/studio/project-media?sha256=${hash}`,{orgId,signal}),hash);return saved?downloadSavedMedia(saved,signal,{actor:services.getSnapshot().identity?.userId??"",org:orgId,listing:null}):null;}

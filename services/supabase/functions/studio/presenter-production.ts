@@ -1,3 +1,5 @@
+import {privateMediaUrl} from "../_shared/private-media.ts";
+import { fundedAttempt, type FundingContext } from "../_shared/funded-serving.ts";
 import type { StudioContext } from "./context.ts";
 import { assert, HttpError } from "../_shared/http.ts";
 import { adminClient } from "../_shared/supabase.ts";
@@ -34,9 +36,15 @@ export function presenterProduction(req?: Request, context?: StudioContext): Pre
     worker(job, action, payload = {}) { return rpc("studio_presenter_execution_worker", { p_job_id: job, p_action: action, p_payload: payload }); },
     liveConfigured: presenterLiveConfigured,
     sign: (key, seconds) => presignGet(R2_BUCKET_UPLOADS, key, seconds),
+    previewSign: async(key,seconds,listing)=>{assert(context,403,"A signed-in workspace is required.");return await privateMediaUrl({actor:context.userId,org:context.orgId,listing,bucket:"uploads",key},seconds);},
     fetch: (url, init) => fetch(url, init),
     estimate: estimateHfMotionTransfer,
-    submit: submitHfMotionTransfer,
+    async submit(input, job) {
+      assert(job && typeof job.actor_id === "string" && typeof job.org_id === "string" && typeof job.id === "string", 503, "Presenter dispatch has no verified workspace budget.");
+      const funding: FundingContext = {actorId:job.actor_id,orgId:job.org_id,requestKey:job.id,rpc:(name,args)=>admin.rpc(name,args)};
+      // Public estimator/config figures are not a binding upper-price contract.
+      return await fundedAttempt(funding, "presenter.motion", {provider:"higgsfield",model:"motion-transfer"}, input, null, () => submitHfMotionTransfer(input));
+    },
     poll: pollHfMotionTransfer,
     cancel: cancelHfMotionTransfer,
     outputHosts,

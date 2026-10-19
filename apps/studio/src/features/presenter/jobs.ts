@@ -1,3 +1,4 @@
+import {isPrivateMediaURL,privateMediaCapability} from "../../data/private-media";
 import { mediaURL, uuid } from "../../data/contracts";
 import { invalid, list, permissions, rev, row, scope, str } from "./model";
 
@@ -16,21 +17,23 @@ export const activeJob = (j: PresenterJob) => ["reserved", "dispatching", "uncer
 function cents(value: unknown): number { if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > 1000000) invalid(); return Number(value); }
 function usd(value: unknown): string { if (typeof value !== "string" || !/^(0|[1-9]\d{0,5})(\.\d{1,8})?$/.test(value) || Number(value) > 10000) invalid(); return value; }
 function date(value: unknown): string { const s = str(value, 80); if (!Number.isFinite(Date.parse(s))) invalid(); return s; }
-function outputURL(raw: unknown, org: string, listing: string, job: string, expires: string): string {
-  const original = str(raw, 8192), url = new URL(original), parts = url.pathname.split("/");
+function outputURL(raw: unknown, org: string, listing: string, job: string, expires: string, actor?:string): string {
+  const original = str(raw, 8192);
+  if(isPrivateMediaURL(original)){const c=privateMediaCapability(original,{actor:actor??"",org,listing,bucket:"uploads",key:`presenter-private/${org}/${job}/output.mp4`});if(Date.parse(expires)>c.exp*1000+1000)invalid();return original;}
+  const url = new URL(original), parts = url.pathname.split("/");
   if (parts.length !== 6 || parts[2] !== "presenter-private" || parts[3] !== org || parts[4] !== job || parts[5] !== "output.mp4") invalid();
   url.pathname = `/${parts[1]}/renders/${org}/${listing}/${job}/output.mp4`;
   mediaURL(url.href, org, listing, expires, Date.now());
   return original;
 }
-export function decodeJobs(raw: unknown, org: string, listing: string): JobsState {
+export function decodeJobs(raw: unknown, org: string, listing: string, actor?:string): JobsState {
   const data = row(raw); scope(data, org, listing);
   const runtime = row(data.runtime); if (typeof runtime.available !== "boolean") invalid();
   const jobs = list(data.jobs).map(value => { const j = row(value), id = uuid(j.id); if (!Object.hasOwn(JOB_STATES, String(j.status))) invalid();
     let output: PresenterJob["output"] = null;
     if (j.output) { const o = row(j.output); if (typeof o.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(o.sha256) || !Number.isSafeInteger(o.bytes) || Number(o.bytes) < 1 || typeof o.duration_s !== "number" || !Number.isFinite(o.duration_s) || o.duration_s < 0.1 || o.duration_s > 60) invalid();
       const expires = o.preview_url === undefined ? undefined : date(o.preview_expires_at);
-      output = { sha256: o.sha256, bytes: Number(o.bytes), duration_s: o.duration_s, ...(expires ? { preview_expires_at: expires, preview_url: outputURL(o.preview_url, org, listing, id, expires) } : {}) };
+      output = { sha256: o.sha256, bytes: Number(o.bytes), duration_s: o.duration_s, ...(expires ? { preview_expires_at: expires, preview_url: outputURL(o.preview_url, org, listing, id, expires, actor) } : {}) };
     }
     return { id, quote_id: uuid(j.quote_id), draft_id: uuid(j.draft_id), draft_revision: j.status === "invalidated" && j.draft_revision === null ? null : rev(j.draft_revision), profile_revision: j.status === "invalidated" && j.profile_revision === null ? null : rev(j.profile_revision), revision: rev(j.revision), status: j.status as JobStatus,
       quote_cents: cents(j.quote_cents), max_cost_cents: cents(j.max_cost_cents), held_cents: cents(j.held_cents), estimate_usd: usd(j.estimate_usd), charged_cents: j.charged_cents === null ? null : cents(j.charged_cents), actual_usd: j.actual_usd === null ? null : usd(j.actual_usd), output,

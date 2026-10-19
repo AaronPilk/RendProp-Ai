@@ -44,7 +44,7 @@ test("downloaded kit has exact originals, escaped HTML and redacted private data
   const html = await readFile(join(dir, "opened/START-HERE.html"), "utf8"); assert(html.includes("&lt;script&gt;")); assert(!html.includes("<script>"));
   const script = await readFile(join(dir, "opened/saved-script.txt"), "utf8"); assert(!script.includes("access_token")); assert(script.includes("[private link omitted]"));
   assert(!JSON.stringify(manifest).includes("X-Amz")); assert(!JSON.stringify(manifest).includes("MUST-NOT-EXPORT"));
-  assert(requests.every(options => options.credentials === "omit" && options.redirect === "error" && options.referrerPolicy === "no-referrer"));
+  assert(requests.every(options => options.cache === "no-store" && options.credentials === "omit" && options.redirect === "error" && options.referrerPolicy === "no-referrer"));
 });
 test("failed, oversized, malformed or cross-account download cannot return a kit", async () => {
   const f = kitFixture(), controller = new AbortController(), snapshot = await loadKit(f.services, workspace, listingA, controller.signal), selected = [snapshot.items[0].id];

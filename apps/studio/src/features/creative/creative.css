@@ -569,3 +569,10 @@
 @media(max-width:620px) { .batch-photo-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.batch-photo-results { grid-template-columns:1fr; } }
 .batch-photo-studio fieldset { border:0;padding:0;margin:24px 0;min-width:0; }
 .batch-photo-studio legend { font-size:.92rem;font-weight:650;margin-bottom:6px; }
+
+/* Disabled actions keep readable neutral text instead of fading the whole control. */
+.creative-workspace button:disabled { opacity: 1; color: var(--muted); background: var(--surface-subtle); border-color: var(--input-line); box-shadow: none; cursor: not-allowed; }
+
+/* Keep a per-preview comparison next to its checkbox, including on phones. */
+.creative-workspace label.creative-review-confirmation { flex-direction:row;align-items:flex-start;gap:.65rem;margin:.8rem 0;line-height:1.5; }
+.creative-review-confirmation input[type="checkbox"] { width:20px;height:20px;min-height:20px;flex:0 0 20px;margin:.1rem 0 0;padding:0;accent-color:var(--accent); }

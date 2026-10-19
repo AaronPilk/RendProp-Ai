@@ -547,7 +547,7 @@ export interface AppleTransaction {
   originalTransactionId: string;
   productId: string;
   bundleId: string;
-  /** "Sandbox" | "Production" — stored, never used to decide trust. */
+  /** Verified environment; Sandbox is isolated from retail billing authority. */
   environment: string;
   purchaseDate: string | null;
   /** null for a non-subscription purchase; callers treat that as a 400. */
@@ -555,12 +555,21 @@ export interface AppleTransaction {
   revocationDate: string | null;
   revocationReason: number | null;
   type: string | null;
+  /** Present only when Apple signed the purchased consumable quantity. */
+  quantity?: number;
   /** "PURCHASED" | "FAMILY_SHARED" */
   inAppOwnershipType: string | null;
   appAccountToken: string | null;
   webOrderLineItemId: string | null;
   subscriptionGroupIdentifier: string | null;
   signedDate: string | null;
+  /** Apple signs price in milliunits (USD 49.00 is 49000), never cents. */
+  priceMilliunits?: number | null;
+  currency?: string | null;
+  storefront?: string | null;
+  offerType?: number | null;
+  offerIdentifier?: string | null;
+  offerDiscountType?: string | null;
 }
 
 /** Shape a verified JWSTransaction payload. Throws 401 if the identity fields are missing. */
@@ -572,22 +581,31 @@ export function decodeTransaction(payload: Record<string, unknown>): AppleTransa
   if (!transactionId || !originalTransactionId || !productId || !bundleId) {
     reject("transaction is missing its identity fields");
   }
+  const environment = str(payload.environment);
+  if (environment !== "Sandbox" && environment !== "Production") reject("transaction has no recognized App Store environment");
   return {
     transactionId: transactionId!,
     originalTransactionId: originalTransactionId!,
     productId: productId!,
     bundleId: bundleId!,
-    environment: str(payload.environment) ?? "Production",
+    environment,
     purchaseDate: msToIso(payload.purchaseDate),
     expiresDate: msToIso(payload.expiresDate),
     revocationDate: msToIso(payload.revocationDate),
     revocationReason: num(payload.revocationReason),
     type: str(payload.type),
+    ...(payload.type === 'Consumable' && typeof payload.quantity === 'number' && Number.isSafeInteger(payload.quantity) ? {quantity:payload.quantity} : {}),
     inAppOwnershipType: str(payload.inAppOwnershipType),
     appAccountToken: str(payload.appAccountToken),
     webOrderLineItemId: str(payload.webOrderLineItemId),
     subscriptionGroupIdentifier: str(payload.subscriptionGroupIdentifier),
     signedDate: msToIso(payload.signedDate),
+    priceMilliunits: typeof payload.price === "number" && Number.isSafeInteger(payload.price) && payload.price >= 0 ? payload.price : null,
+    currency: str(payload.currency),
+    storefront: str(payload.storefront),
+    offerType: num(payload.offerType),
+    offerIdentifier: str(payload.offerIdentifier),
+    offerDiscountType: str(payload.offerDiscountType),
   };
 }
 

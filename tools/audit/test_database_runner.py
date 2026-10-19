@@ -24,13 +24,14 @@ from unittest.mock import patch
 # run_database_regression.py; +19 for the 0047 lifecycle-notification section,
 # +13 for the 0048 brokerage section, 234 since the 0046 commercial-telemetry
 # section, 213 for the 0044 plan-rework section).
-# Both concurrent branches are now reconciled here: 234 + 13 + 19 = 266.
-COUNT = 266
+# Apple chronology and listing facts registration add four assertions to the
+# prior 266-row inventory. Keep the mocked inventory exact and independent.
+COUNT = 270
 REQUIRED = [
     'all three explicit Astra writing seats keep their 0030/0034 paid-plan gates',
     'no gpt-6-astra row is reachable on the free or trial tier',
-    'plan_entitlements match paid plans and 0032 trial/free for every metered feature',
-    'org_entitlement on a fitness trial org is the single-location free week (1/60/4/1/1, 1 seat, 1000¢)',
+    'plan_entitlements match current paid/trial/free catalog for every metered feature',
+    'org_entitlement on a fitness trial org is the single-location free week (1/20/20/1/1, 1 seat, 1500¢)',
 ]
 NAMES = REQUIRED + [f'synthetic invariant {n:03d}' for n in range(len(REQUIRED) + 1, COUNT + 1)]
 PAID_MARKER = ('PASS: exact paid-plan predicates registered 6 expected outcomes across baseline '
@@ -115,6 +116,13 @@ class RunnerCase(unittest.TestCase):
                     states = ['t'] * COUNT
                     states[2] = 'f'
                     output, rc = table(states=states), 3
+            elif sqlfile in ('video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql'):
+                marker = ('PASS video erase SQL: 51 assertions' if sqlfile == 'video_erase.sql' else
+                          'PASS direct Bria SQL: 40 assertions' if sqlfile == 'video_erase_direct_bria.sql' else
+                          'PASS: member portfolio SQL assertions; all fixtures rolled back.')
+                output, rc = scenario.get('reflection', {}).get(sqlfile, (marker + '\n', 0))
+            elif sqlfile == 'build58_db_controls.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"suite": "build58_db_controls", "assertions": 52}\n', 0))
             elif sqlfile == 'negative_astra_paid_gates.sql':
                 output, rc = scenario.get('paid', (PAID_MARKER + '\n', 0))
             elif sqlfile in ('worker_publish_transaction.sql', 'negative_upload_publication.sql'):
@@ -222,6 +230,31 @@ class InventoryTests(RunnerCase):
             self.assertIn('replay-' + stem, commands)
         # The exception is exact, never a wildcard covering future Studio work.
         self.assertTrue(subject_module().replayable_migration('20260923000000_studio_future_change.sql'))
+
+    def test_reflection_fixtures_complete_on_fresh_and_replayed_schemas(self):
+        result = self.invoke()
+        self.assertIsNone(result.failure)
+        self.assertEqual(result.receipt['reflectionFixtures'], [
+            {'phase': phase, 'fixture': filename, 'assertions': count,
+             'rolledBack': True, 'database': database}
+            for phase, database in [('initial', 'rendprop_audit'), ('replayed', 'rendprop_replay')]
+            for filename, count in [('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52)]])
+        commands = {row['name']: row for row in result.receipt['commands']}
+        self.assertIn('replay-20261002225458_video_erase_direct_bria', commands)
+        for phase in ('initial', 'replayed'):
+            for stem in ('video_erase', 'video_erase_direct_bria', 'member_portfolios'):
+                self.assertIn('reflection-' + phase + '-' + stem, commands)
+
+    def test_reflection_missing_completion_marker_rejects(self):
+        for filename in ('video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql'):
+            with self.subTest(fixture=filename):
+                self.rejected(reflection={filename: ('ROLLBACK without acceptance marker\n', 0)})
+
+    def test_reflection_wrong_assertion_count_rejects(self):
+        self.rejected(reflection={'video_erase_direct_bria.sql': ('PASS direct Bria SQL: 41 assertions\n', 0)})
+
+    def test_reflection_marker_cannot_override_error_exit(self):
+        self.rejected(reflection={'video_erase_direct_bria.sql': ('PASS direct Bria SQL: 40 assertions\n', 3)})
 
     def test_publication_exit_zero_without_required_marker_rejects(self):
         self.rejected(publication_positive=('printed without actually finishing', 0))
