@@ -50,7 +50,9 @@ jobs:
       - name: Exact rollout readback, freshness and artifact refusals (offline)
         env:
           PYTHONDONTWRITEBYTECODE: '1'
-        run: python3 tools/deploy/test_verify_rollout_readback.py
+        run: |
+          python3 tools/deploy/test_verify_rollout_readback.py
+          python3 tools/deploy/test_verify_release_binding.py
       - name: Invariant source registration contracts
         run: python3 tools/audit/test_database_invariant_sources.py
       - name: Republish retry clears a stale warning before its sync refusals (source gate)
