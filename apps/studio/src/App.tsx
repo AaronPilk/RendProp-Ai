@@ -30,7 +30,11 @@ import { canRetainWorkspace } from "./workspace-refresh";
 import {useEditingAssistant} from "./features/sync/useEditingAssistant";
 import type { Industry, PlanItem } from "./workspace";
 
-type Page = "overview" | "properties" | "creative" | "editor" | "library" | "planner" | "workspace";
+type Page = "overview" | "properties" | "creative" | "editor" | "library" | "planner" | "workspace" | typeof ADMIN_REPORT;
+// Internal photo feedback report: reached by its ?view= route only, never listed
+// in navigation. GET /admin/photo-feedback is the gate; the page loads on demand.
+const ADMIN_REPORT = "admin/photo-feedback";
+const PhotoFeedbackReport = lazy(() => import("./features/admin/PhotoFeedbackReport"));
 const ListingWorkflow = lazy(() => import("./features/listings/ListingWorkflow"));
 const CreativeWorkspace = lazy(() => import("./features/creative/CreativeWorkspace"));
 const BusinessWorkspace = lazy(() => import("./features/business/BusinessWorkspace"));
@@ -101,7 +105,7 @@ export default function App({ servicesFactory }: {
   );
   const [page, setPage] = useState<Page>(() => {
     const view=new URL(window.location.href).searchParams.get("view");
-    return pages.some(item=>item.id===view) ? view as Page : "editor";
+    return view===ADMIN_REPORT||pages.some(item=>item.id===view) ? view as Page : "editor";
   });
   const initialListing = useRef(new URL(window.location.href).searchParams.get("listing"));
   const [industry, setIndustry] = useState<Industry>("real_estate");
@@ -840,8 +844,8 @@ export default function App({ servicesFactory }: {
       .includes(query.toLowerCase()),
   );
   const navigation = pages.map(item=>item.id==="properties"?{...item,label:homeWords(workspace?.org.spaceType??industry).collection}:item);
-  const heading = navigation.find((p) => p.id === page)!;
-  const compactLabels: Record<Page,string>={overview:"Home",properties:homeWords(workspace?.org.spaceType??industry).plural,creative:"AI tools",editor:"Create",library:"Media",planner:"Planner",workspace:"Business"};
+  const heading = navigation.find((p) => p.id === page) ?? { label: "Report" };
+  const compactLabels: Record<Page,string>={overview:"Home",properties:homeWords(workspace?.org.spaceType??industry).plural,creative:"AI tools",editor:"Create",library:"Media",planner:"Planner",workspace:"Business",[ADMIN_REPORT]:"Report"};
   const navigationButton = (item: typeof navigation[number]) => <button
     key={item.id}
     className={`nav-item ${page === item.id ? "active" : ""}`}
@@ -874,7 +878,7 @@ export default function App({ servicesFactory }: {
         <p className="nav-label">YOUR STUDIO</p>
         <nav aria-label="Studio navigation">
           {navigation.filter(item => primaryPages.includes(item.id)).map(navigationButton)}
-          <details className="secondary-navigation" open={!primaryPages.includes(page) || undefined}>
+          <details className="secondary-navigation" open={page !== ADMIN_REPORT && !primaryPages.includes(page) || undefined}>
             <summary>More tools</summary>
             <div className="secondary-navigation-menu">{navigation.filter(item => !primaryPages.includes(item.id)).map(navigationButton)}</div>
           </details>
@@ -1003,7 +1007,8 @@ export default function App({ servicesFactory }: {
               </button>
             </div>
           )}
-          {page !== "overview" && page !== "editor" && !(workspace && (page === "properties" || page === "creative")) && <div className="page-title">
+          {page === ADMIN_REPORT && (workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening the report…</p>}><PhotoFeedbackReport key={editScope} services={services} workspace={workspace} /></SafeLoad> : <EmptyConnect onConnect={() => setShowLogin(true)} />)}
+          {page !== "overview" && page !== "editor" && page !== ADMIN_REPORT && !(workspace && (page === "properties" || page === "creative")) && <div className="page-title">
             <div>
               <p className="eyebrow">
                 {industryName(industry).toUpperCase()} / RENDPROP STUDIO
