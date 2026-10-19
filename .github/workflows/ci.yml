@@ -1204,7 +1204,7 @@ jobs:
           if-no-files-found: warn
 
   studio-media-export:
-    # Fresh runner capacity is a qualification experiment, not a clock-cause claim.
+    # Recorded readiness is a prerequisite, not proof of a timing cause.
     name: Studio media exports and native audio timing
     runs-on: macos-latest
     permissions:
@@ -1215,11 +1215,20 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: services/edge/tour-host/package-lock.json
+          cache-dependency-path: apps/studio/package-lock.json
 
       - name: Install locked Studio dependencies for the media export gate
         working-directory: apps/studio
         run: npm ci --ignore-scripts
+      - name: Validate bounded media runner readiness controls
+        timeout-minutes: 1
+        run: node --test tools/ci/media-runner-ready.test.mjs
+      - name: Restore exact locked Chromium cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 3
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: studio-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/studio/package-lock.json') }}
       - name: Verify locked full Chromium and synthetic media tools
         working-directory: apps/studio
         shell: bash
@@ -1248,6 +1257,11 @@ jobs:
             scope: 'Observed before isolated media gates; capacity does not establish a timing cause' };
           writeFileSync(process.argv[2], JSON.stringify(facts, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
           JSRUNNER
+      # Environment admission only. The media tests below still execute once
+      # with their original clock, refusal controls and time limits.
+      - name: Require bounded recorded media runner readiness
+        timeout-minutes: 4
+        run: node tools/ci/media-runner-ready.mjs --output "$RUNNER_TEMP/studio-media-export-readiness.json"
       - name: Studio waits for advancing audio before recording content
         working-directory: apps/studio
         timeout-minutes: 3
@@ -1463,6 +1477,7 @@ jobs:
             ${{ runner.temp }}/rendprop-finishing-*/*.png
             ${{ runner.temp }}/rendprop-finishing-*/*.mp4
             ${{ runner.temp }}/studio-media-export-runner-facts.json
+            ${{ runner.temp }}/studio-media-export-readiness.json
           retention-days: 7
           if-no-files-found: warn
 
