@@ -11,8 +11,7 @@ export const SCHEDULING_GAP_THRESHOLDS_MS = [16, 33, 100];
 const RETAINED_GAPS = 64;
 
 // Shared loop body for both probes. `wait` is the per-iteration pause; the
-// page worker uses a short spin then a timer yield (so it does not take a
-// whole core from a 3-vCPU runner), the Node worker sleeps 1 ms via
+// page worker records once per native timer wake; the Node worker sleeps 1 ms via
 // Atomics.wait. Wake-up lateness, not CPU use, is the measurement.
 const PROBE_LOOP = `
 const thresholds = ${JSON.stringify(SCHEDULING_GAP_THRESHOLDS_MS)}, retained = ${RETAINED_GAPS};
@@ -40,17 +39,15 @@ summary.startedAtEpochMs = performance.timeOrigin + performance.now();
 `;
 
 const PAGE_WORKER_SOURCE = `${PROBE_LOOP}
-// Spin for about one millisecond, then yield through a timer. Chromium clamps
-// nested timers to 4 ms, so the nominal cadence is ~1-5 ms and a gap above
-// 16 ms means this worker thread was not scheduled, whatever the cause.
-function spin() {
+// Never busy-spin or allocate records repeatedly between native timer wakes:
+// diagnostic observation must not compete with real media capture.
+function tick() {
   if (stopped) return;
-  const until = performance.now() + 1;
-  do { record(performance.now()); } while (performance.now() < until);
-  setTimeout(spin, 0);
+  record(performance.now());
+  setTimeout(tick, 0);
 }
 self.onmessage = event => { if (event.data === "stop") self.postMessage(finish()); };
-spin();
+tick();
 `;
 
 const NODE_WORKER_SOURCE = `${PROBE_LOOP}
@@ -93,7 +90,7 @@ export function startNodeSchedulingProbe() {
 // Page-side probe. Started from the test process; the worker lives in the
 // page under window.__schedulingProbe and is stopped by stopPageSchedulingProbe.
 export async function startPageSchedulingProbe(page) {
-  const facts = {kind: "page-dedicated-worker", wait: "~1 ms spin then setTimeout(0)", observationMayPerturbTiming: true, status: "starting", issues: []};
+  const facts = {kind: "page-dedicated-worker", wait: "one record per native setTimeout(0) wake", observationMayPerturbTiming: true, status: "starting", issues: []};
   try {
     const started = await page.evaluate(source => {
       const url = URL.createObjectURL(new Blob([source], {type: "text/javascript"}));

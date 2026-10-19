@@ -7,31 +7,29 @@ import {createServer} from "node:http";
 import {execFileSync} from "node:child_process";
 import {build} from "vite";
 import {chromium, expect} from "@playwright/test";
-import {startNativeTraceObserver} from "./native-trace-observer.mjs";
+import {testExportDiagnosticsOption, startExportDiagnostics} from "./export-diagnostics.mjs";
 import {collectRunnerFacts} from "./runner-facts.mjs";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
 
-const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
+const {args: audioArgs, audioOutput} = testAudioOutputOption(process.argv.slice(2));
+const {args, diagnostics} = testExportDiagnosticsOption(audioArgs, ["actual", "--before", "--fault=omit-readiness"]);
 assert(args.length <= 1, "Unknown startup test option");
 const mode = args[0] ?? "actual";
 assert(["actual", "--before", "--fault=omit-readiness"].includes(mode));
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-startup-"));
 const paths = ["src/editor/export.ts", "src/editor/recording-clock.ts", "src/editor/media.ts", "src/editor/model.ts",
-  "tests/export-startup-fixture.ts", "tests/export-startup-fixture.html", "tests/export-startup-browser.mjs", "tests/native-trace-observer.mjs", "tests/runner-facts.mjs"];
+  "tests/export-startup-fixture.ts", "tests/export-startup-fixture.html", "tests/export-startup-browser.mjs", "tests/native-trace-observer.mjs", "tests/runner-facts.mjs",
+  "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs"];
 const hashes = async () => Object.fromEntries(await Promise.all(paths.map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = {status: "running", mode, audioOutput, sourceHashes: await hashes(), runnerFacts: collectRunnerFacts(), cases: [], checks: [], externalRequests: [], errors: [],
+const receipt = {status: "running", mode, audioOutput, diagnostics, sourceHashes: await hashes(), runnerFacts: collectRunnerFacts(), cases: [], checks: [], externalRequests: [], errors: [],
   proof: "Native Web Audio/canvas/MediaRecorder and decoded PCM. Explicit startup currentTime observation hold; real native time retained independently. No claim to reproduce the underlying hosted browser/device cause."};
 let browser, server, page, mutated = false;
 let nativeTraceOwner;
-// Passive native tracing for the actual first freeze/MP4 case only. This owns
-// no product clock/source/graph and never turns an export refusal into success.
-// The observer itself lives in native-trace-observer.mjs, shared with the
-// finishing and export-resume suites; its categories, limits, raw-file policy
-// and receipt fields are unchanged from when it was defined here.
+// Native tracing is optional evidence, never an export pass/fail control.
+// --diagnostics retains it for the actual first freeze/MP4 case only.
 async function startNativeStartupTrace(context, page) {
-  const {finish} = await startNativeTraceObserver({context, page, artifacts, syncId: "startup-freeze-mp4-before-click",
-    rawFileName: "native-trace-freeze-mp4.raw.private.json", sourceHashes: receipt.sourceHashes, onFacts: facts => {receipt.nativeTrace = facts;}});
-  return {finish};
+  return startExportDiagnostics({diagnostics, context, page, native: {artifacts, syncId: "startup-freeze-mp4-before-click",
+    rawFileName: "native-trace-freeze-mp4.raw.private.json", sourceHashes: receipt.sourceHashes, onFacts: facts => {receipt.nativeTrace = facts;}}});
 }
 
 try {
@@ -76,7 +74,7 @@ try {
     await verifyTestAudioOutput(page, audioOutput);
     await page.getByLabel("Synthetic source").setInputFiles(source);
     await page.evaluate(({scenario, extension}) => Object.assign(window.startupFixture, {mode: scenario, extension}), {scenario, extension});
-    const nativeTrace = mode === "actual" && receipt.cases.length === 0 && scenario === "freeze" && extension === "mp4"
+    const nativeTrace = diagnostics.enabled && mode === "actual" && receipt.cases.length === 0 && scenario === "freeze" && extension === "mp4"
       ? await startNativeStartupTrace(context, page) : undefined;
     if (nativeTrace) nativeTraceOwner = nativeTrace;
     try {
