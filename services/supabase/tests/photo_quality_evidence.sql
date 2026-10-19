@@ -32,7 +32,8 @@ create function pg_temp.prepared(x jsonb)returns jsonb language plpgsql as $$dec
  c:=photo_quality_claim((x#>>'{check,id}')::uuid);o:=photo_quality_derivatives_reserve((x#>>'{check,id}')::uuid,(c#>>'{check,lease_token}')::uuid,pg_temp.manifest(x));
  select jsonb_agg(v||jsonb_build_object('etag','"derivative-'||(v->>'role')||'-'||(v->>'region')||'"'))into receipts from jsonb_array_elements(o->'images')v;
  return photo_quality_derivatives_complete((x#>>'{check,id}')::uuid,(c#>>'{check,lease_token}')::uuid,receipts);end$$;
-create function pg_temp.bind(x jsonb,paid_generation boolean default true)returns jsonb language plpgsql security definer as $$declare e jsonb:=x->'evidence';q jsonb:=x->'check';rid uuid:=gen_random_uuid();begin
+create function pg_temp.bind(x jsonb,paid_generation boolean default true,retain_context boolean default true)returns jsonb language plpgsql security definer as $$declare e jsonb:=x->'evidence';q jsonb:=x->'check';rid uuid:=gen_random_uuid();begin
+ if retain_context then perform public.photo_quality_set_context((e->>'actor_id')::uuid,(e->>'id')::uuid,e->>'request_sha256',jsonb_build_object('edit',e->>'edit','style',e->'style','instruction',''));end if;
  if paid_generation then
   insert into serving_cost_reservations(org_id,actor_id,request_key,stage,provider,model,input_sha256,tariff_version,hold_cents,sponsored_unlimited,state)values((e->>'org_id')::uuid,(e->>'actor_id')::uuid,e->>'request_key','photo.declutter:0','gemini','gemini-3.1-flash-image',repeat('a',64),'closed-fixture',.0001,true,'succeeded');
   insert into cost_ledger(org_id,feature,provider,model,total_cents,meta)values((e->>'org_id')::uuid,'photo_edit','gemini','gemini-3.1-flash-image',.0001,jsonb_build_object('request_key',e->>'request_key','stage','photo.declutter:0'));
@@ -101,6 +102,8 @@ select pg_temp.ok((select x#>>'{check,state}'='refuse'from reject),'paid termina
 select pg_temp.no($q$select register_private_ai_output((select actor from f),(select org from f),(select listing from f),'renders',(select x#>>'{evidence,legacy_keys,1}'from reject),8000000)$q$,'RP409','refused legacy output remains quarantined');
 create temporary table missing_gen as select pg_temp.prepared(pg_temp.candidate(pg_temp.seed('no-generation-ledger')))x;grant select on missing_gen to service_role;
 select pg_temp.no($q$select pg_temp.bind((select x from missing_gen),false)$q$,'RP409','missing generation settlement cannot start QC');
+create temporary table missing_context as select pg_temp.prepared(pg_temp.candidate(pg_temp.seed('no-judge-context')))x;grant select on missing_context to service_role;
+select pg_temp.no($q$select pg_temp.bind((select x from missing_context),true,false)$q$,'Exact saved photo judge context is missing','funded judge without retained context cannot dispatch');
 create temporary table pano as select pg_temp.candidate(pg_temp.seed('four-k-panorama'),12288,1536)x;grant select on pano to service_role;
 select pg_temp.ok((select x#>>'{evidence,output,width}'='12288'from pano),'official4Kpanorama geometry retained without resize');
 create temporary table cpu as select pg_temp.candidate(pg_temp.seed('cpu-infra'))x;grant select,update on cpu to service_role;

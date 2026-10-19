@@ -34,12 +34,10 @@ try:
  run('exact-forward-replay',[*PSQL,'-q','-1','-f',MIG]);print('Forward migration replayed without changing applied migrations.',flush=True)
  fixture=FIX.read_text();anchor="'bytes',60000,'mime','image/jpeg','width',1024";assert fixture.count(anchor)==1
  fixture=fixture.replace(anchor,"'bytes',9000000,'mime','image/jpeg','width',1024",1)
- anchor='if paid_generation then';assert fixture.count(anchor)==1
- fixture=fixture.replace(anchor,"perform public.photo_quality_set_context((e->>'actor_id')::uuid,(e->>'id')::uuid,e->>'request_sha256',jsonb_build_object('edit',e->>'edit','style',e->'style','instruction',''));\n "+anchor,1)
  anchor='create temporary table calibrated as select';assert fixture.count(anchor)==1
  fixture=fixture.replace(anchor,(SQL/'tests/photo_input_9mb.sql').read_text()+'\n'+anchor,1)
  generated=OUT/'complete-9mb-corpus.sql';generated.write_text(fixture);generated.chmod(0o600)
- r['fixtureProjection']={'existingCorpus':str(FIX.relative_to(ROOT)),'exactReplacements':{'preparedDescriptor60000To9000000':1,'retainedContextBeforeBind':1,'newBoundaryAssertionsBeforeCalibration':1},'generatedSHA256':hashlib.sha256(fixture.encode()).hexdigest()}
+ r['fixtureProjection']={'existingCorpus':str(FIX.relative_to(ROOT)),'retainedContextBeforeBind':'canonical fixture','exactReplacements':{'preparedDescriptor60000To9000000':1,'newBoundaryAssertionsBeforeCalibration':1},'generatedSHA256':hashlib.sha256(fixture.encode()).hexdigest()}
  out=run('actual-photo-input-rpc-roles',[*PSQL,'-Atq'],fixture);r['fixture']=out.strip();print(out.strip()[-1500:],flush=True)
  # Compile actual SQL with narrow guards removed; independent fixture must fail.
  for label,signature,anchor,replacement,oracle in [
