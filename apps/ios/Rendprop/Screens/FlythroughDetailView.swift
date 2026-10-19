@@ -476,10 +476,17 @@ struct DetailMetadataRegressionHost: View {
                 publicCard: ClientPublicCard(name: "Fixture client", brokerage: "Fixture agency"),
                 recipientEmail: "fixture@example.invalid")
         }
+        // Exact simulator-only extension of the existing offline republish host.
+        // UUID provenance is synthetic, never issued by a production backend.
+        // MockAPIClient has no PhotoFeedbackAPI transport, so UI feedback stays
+        // on this simulator and cannot send a provider or production request.
+        let photoFeedbackFixture = name == "republish" && Config.isOfflineAccountFixture
+            && (model.api is MockAPIClient)
+            && ProcessInfo.processInfo.arguments.contains("-ui.photoFeedbackFixture")
         let hasCapture = ["capture", "rich", "missing-source", "venue"].contains(name)
         let hasTour = ["rich", "missing-source", "venue"].contains(name)
         let hasAerial = ["rich", "missing-source"].contains(name)
-        let photoCount = name == "rich" ? 3 : (["missing-source", "published-no-source", "venue"].contains(name) ? 1 : 0)
+        let photoCount = name == "rich" || photoFeedbackFixture ? 3 : (["missing-source", "published-no-source", "venue"].contains(name) ? 1 : 0)
         var video: URL?
         if hasCapture || hasTour || hasAerial {
             video = try await Self.makeSyntheticVideo(listingID: value.id)
@@ -529,12 +536,13 @@ struct DetailMetadataRegressionHost: View {
                 if legacyPhotoPairs {
                     // Real pre-history pairs stay unverified; the normal rich fixture is unchanged.
                     try PhotoCaptureStorage.writePair(original: jpeg, enhanced: jpeg, id: id, directory: directory)
-                } else if name == "rich", index == 0 {
+                } else if name == "rich" || photoFeedbackFixture, index == 0 {
                     let base = "fixture-base-0"
                     try PhotoVersionHistory.saveCapture(original: jpeg, enhanced: jpeg, id: base, directory: directory)
                     _ = try PhotoVersionHistory.saveEdit(jpeg: jpeg, id: id, parentID: base, sourceID: base,
                         edit: "stage", style: "modern", disclosure: "Virtually staged synthetic UI fixture.",
-                        provenanceID: nil, provenanceRecorded: false, directory: directory)
+                        provenanceID: photoFeedbackFixture ? UUID().uuidString : nil,
+                        provenanceRecorded: photoFeedbackFixture, directory: directory)
                     try PhotoVersionHistory.select(id: id, directory: directory, reviewed: true)
                 } else {
                     try PhotoVersionHistory.saveCapture(original: jpeg, enhanced: jpeg, id: id, directory: directory)
@@ -544,9 +552,16 @@ struct DetailMetadataRegressionHost: View {
         if ["republish", "republish-stale"].contains(name) {
             guard model.api is MockAPIClient else { throw FixtureError.image }
             try WorkspaceStore.shared.prepareBuild58FixtureLibrary()
-            value.serverID = UUID(uuidString: "b5800000-0000-4000-8000-000000000001")
-            value.serverOrgID = WorkspaceContext.selectedOrgID
-            value.cloudSyncOwnerID = AuthStore.shared.userID.flatMap(UUID.init(uuidString:))
+            // Feedback UI uses local synthetic media, not a fabricated cloud
+            // selection. Existing republish cases retain their remote identity.
+            value.serverID = photoFeedbackFixture ? nil : UUID(uuidString: "b5800000-0000-4000-8000-000000000001")
+            value.serverOrgID = photoFeedbackFixture ? nil : WorkspaceContext.selectedOrgID
+            value.cloudSyncOwnerID = photoFeedbackFixture ? nil : AuthStore.shared.userID.flatMap(UUID.init(uuidString:))
+            if photoFeedbackFixture {
+                // A detached local copy cannot auto-create a cloud draft. The
+                // real guard remains unchanged; no fake remote mapping exists.
+                value.cloudDetachedServerID = UUID()
+            }
             value.needsServerSync = false
             if name == "republish-stale" { value.lastError = "stale" }
         }

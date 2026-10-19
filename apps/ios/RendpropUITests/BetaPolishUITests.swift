@@ -935,6 +935,96 @@ final class BetaPolishUITests: XCTestCase {
         app.buttons["Close"].tap()
     }
 
+    /// Actual optional-feedback SwiftUI and local queue only. The existing
+    /// republish host supplies a fixed synthetic actor/library and MockAPIClient;
+    /// the latter has no feedback transport, so this cannot prove delivery or
+    /// touch a production output, provider, purchase or customer account.
+    func testOptionalPhotoFeedbackFitsNormalAndLargestTextWithoutChangingSelection() {
+        executionTimeAllowance = 300
+        for largestText in [false, true] {
+            if app.state != .notRunning { app.terminate() }
+            app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "republish", "-ui.photoFeedbackFixture"]
+            if largestText {
+                app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            }
+            app.launch()
+            XCTAssertTrue(app.navigationBars["Detail fixture republish"].waitForExistence(timeout: 30), app.debugDescription)
+            XCTAssertFalse(element("detail.fixtureFailure").exists)
+            openDetail("detail.photos", title: "Photos")
+            let library = app.scrollViews["photos.savedVersions"]
+            XCTAssertTrue(library.buttons["Original"].isSelected)
+            library.buttons["Latest"].tap()
+            let photo = app.buttons["photos.version.fixture-0"]
+            revealForBoundedAcceptance(photo); photo.tap()
+            let choices = element("photoVersion.savedChoices")
+            XCTAssertTrue(choices.buttons["Staged"].waitForExistence(timeout: 10))
+            XCTAssertTrue(choices.buttons["Staged"].isSelected)
+            XCTAssertFalse(app.alerts["Photo action needs attention"].exists,
+                           "The local feedback fixture must not enter an unmapped cloud-selection flow")
+            let use = photoReviewFooterButton(download: false)
+            XCTAssertTrue(use.waitForExistence(timeout: 10), app.debugDescription)
+            let selectedBefore = use.label
+            assertAcceptanceFooterIsVisible()
+            let useful = app.buttons["photoVersion.feedback.useful"]
+            let needsWork = app.buttons["photoVersion.feedback.needsWork"]
+            let mode = largestText ? "largest-text" : "normal"
+            for control in [useful, needsWork] {
+                revealForBoundedAcceptance(control)
+                XCTAssertTrue(control.isEnabled && control.isHittable)
+                XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+                XCTAssertGreaterThanOrEqual(control.frame.minX, app.frame.minX)
+                XCTAssertLessThanOrEqual(control.frame.maxX, app.frame.maxX)
+            }
+            attach("photo-feedback-\(mode)-optional-control")
+            revealForBoundedAcceptance(useful); useful.tap()
+            let status = app.staticTexts["photoVersion.feedback.status"]
+            XCTAssertTrue(status.waitForExistence(timeout: 5))
+            XCTAssertTrue(status.label.hasPrefix("Saved on this phone."), status.label)
+            XCTAssertTrue(useful.isSelected)
+            XCTAssertEqual(use.label, selectedBefore, "Feedback never changes the listing selection")
+            revealForBoundedAcceptance(needsWork); needsWork.tap()
+            let save = app.buttons["photoVersion.feedback.save"]
+            XCTAssertTrue(save.exists); XCTAssertFalse(save.isEnabled, "Needs work requires a reason")
+            let reason = app.buttons["photoVersion.feedback.reason.changed_permanent_features"]
+            revealForBoundedAcceptance(reason); reason.tap()
+            XCTAssertTrue(reason.isSelected)
+            let note = app.textFields["photoVersion.feedback.note"]
+            revealForBoundedAcceptance(note)
+            XCTAssertTrue(note.isHittable, "The optional note remains reachable")
+            attach("photo-feedback-\(mode)-reasons-and-note")
+            revealForBoundedAcceptance(save)
+            XCTAssertTrue(save.isEnabled && save.isHittable)
+            XCTAssertGreaterThanOrEqual(save.frame.height, 44)
+            save.tap()
+            XCTAssertTrue(needsWork.isSelected)
+            XCTAssertTrue(status.label.hasPrefix("Saved on this phone."), status.label)
+            XCTAssertEqual(use.label, selectedBefore)
+            assertAcceptanceFooterIsVisible()
+            attach("photo-feedback-\(mode)-saved-local-opinion")
+            let original = choices.buttons["Original"]
+            // The lazy chip may be unrealized above this long feedback form.
+            // Its always-mounted strip retains negative geometry, so the same
+            // eight-gesture helper correctly scrolls back toward Original.
+            revealForBoundedAcceptance(choices)
+            XCTAssertTrue(original.exists && original.isHittable)
+            original.tap()
+            XCTAssertFalse(useful.exists || needsWork.exists, "Original has no AI-output feedback")
+            XCTAssertEqual(photoReviewFooterButton(download: true).label, "Download original photo")
+            assertAcceptanceFooterIsVisible()
+            choices.buttons["Staged"].tap()
+            revealForBoundedAcceptance(needsWork)
+            XCTAssertTrue(needsWork.isSelected, "Browsing Original preserves the local opinion for the exact saved output")
+            XCTAssertEqual(use.label, selectedBefore)
+            app.buttons["Close"].tap()
+            revealForBoundedAcceptance(photo); photo.tap()
+            revealForBoundedAcceptance(needsWork)
+            XCTAssertTrue(needsWork.isSelected, "Reopening the same output retains its queued opinion")
+            XCTAssertEqual(use.label, selectedBefore)
+            attach("photo-feedback-\(mode)-reopened-same-output")
+            app.buttons["Close"].tap()
+        }
+    }
+
     /// The normal rich fixture has genuine captures and an explicitly reviewed saved stage.
     /// This tests saved selection, never claims a fresh-stage approval or generation.
     func testVerifiedSavedVersionsKeepSelectionAndUnselectAcrossReopen() {
