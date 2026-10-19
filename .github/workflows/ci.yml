@@ -1185,20 +1185,25 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          node tests/export-startup-browser.mjs
+          node tests/export-startup-browser.mjs --silent-audio-output
           control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-startup-control.XXXXXX")
           set +e
-          TMPDIR="$control_root" node tests/export-startup-browser.mjs --fault=omit-readiness > "$control_root/run.log" 2>&1
+          TMPDIR="$control_root" node tests/export-startup-browser.mjs --fault=omit-readiness --silent-audio-output > "$control_root/run.log" 2>&1
           control_status=$?
           set -e
           test "$control_status" -eq 1
           python3 - "$control_root" <<'PY'
-          import json, sys
+          import hashlib, json, sys
           from pathlib import Path
           receipts = list(Path(sys.argv[1]).glob('rendprop-export-startup-*/receipt.json'))
           assert len(receipts) == 1, receipts
           receipt = json.loads(receipts[0].read_text())
           assert receipt['status'] == 'failed' and receipt['mode'] == '--fault=omit-readiness'
+          assert receipt['audioOutput']['testOnly'] is True
+          assert receipt['audioOutput'] == {
+              'mode': 'silent-native-sink', 'testOnly': True,
+              'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
+          }
           assert receipt['sourceBoundAtEnd'] is True
           assert receipt['errors'] == [] and receipt['externalRequests'] == []
           assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Content and recording must not start while startup clock is frozen')
@@ -1214,10 +1219,10 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
         run: |
-          node tests/export-resume-browser.mjs
+          node tests/export-resume-browser.mjs --silent-audio-output
           control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-resume-control.XXXXXX")
           set +e
-          TMPDIR="$control_root" node tests/export-resume-browser.mjs --fault=omit-old-await > "$control_root/run.log" 2>&1
+          TMPDIR="$control_root" node tests/export-resume-browser.mjs --fault=omit-old-await --silent-audio-output > "$control_root/run.log" 2>&1
           control_status=$?
           set -e
           test "$control_status" -eq 1
@@ -1228,6 +1233,11 @@ jobs:
           assert len(receipts) == 1, receipts
           receipt = json.loads(receipts[0].read_text())
           assert receipt['status'] == 'failed' and receipt['fault'] == 'omit-old-await'
+          assert receipt['audioOutput']['testOnly'] is True
+          assert receipt['audioOutput'] == {
+              'mode': 'silent-native-sink', 'testOnly': True,
+              'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
+          }
           assert receipt['variants'] == ['baseline']
           assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Negative control must reproduce drift with the old await:')
           assert receipt['errors'] == [] and receipt['externalRequests'] == []
@@ -1251,25 +1261,25 @@ jobs:
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
           print('Omitted historical await reaches the intended bad-duration assertion')
           PY
-          node tests/export-audio-browser.mjs
-          if node tests/export-audio-browser.mjs --fault=live-original-audio > "$RUNNER_TEMP/export-original-audio-defect.log" 2>&1; then
+          node tests/export-audio-browser.mjs --silent-audio-output
+          if node tests/export-audio-browser.mjs --fault=live-original-audio --silent-audio-output > "$RUNNER_TEMP/export-original-audio-defect.log" 2>&1; then
             echo "::error::Original-audio regression control unexpectedly passed"
             exit 1
           fi
           grep -q "Continuous speech through cutaway boundaries: weakest40ms RMS" "$RUNNER_TEMP/export-original-audio-defect.log"
-          if node tests/export-audio-browser.mjs --fault=late-buffered-wall-origin > "$RUNNER_TEMP/export-clock-origin-defect.log" 2>&1; then
+          if node tests/export-audio-browser.mjs --fault=late-buffered-wall-origin --silent-audio-output > "$RUNNER_TEMP/export-clock-origin-defect.log" 2>&1; then
             echo "::error::Buffered-audio clock-origin regression control unexpectedly passed"
             exit 1
           fi
           grep -q "Audio and picture timing drifted during export" "$RUNNER_TEMP/export-clock-origin-defect.log"
-          if node tests/export-audio-browser.mjs --fault=omit-bucket-pacing > "$RUNNER_TEMP/export-paint-budget-defect.log" 2>&1; then
+          if node tests/export-audio-browser.mjs --fault=omit-bucket-pacing --silent-audio-output > "$RUNNER_TEMP/export-paint-budget-defect.log" 2>&1; then
             echo "::error::Redundant-paint regression control unexpectedly passed"
             exit 1
           fi
           grep -q "Duplicate30fps timeline bucket was repainted" "$RUNNER_TEMP/export-paint-budget-defect.log"
           control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-optional-control.XXXXXX")
           set +e
-          TMPDIR="$control_root" node tests/export-audio-browser.mjs --alignment-only --fault=late-optional-track-schedule > "$control_root/run.log" 2>&1
+          TMPDIR="$control_root" node tests/export-audio-browser.mjs --alignment-only --fault=late-optional-track-schedule --silent-audio-output > "$control_root/run.log" 2>&1
           control_status=$?
           set -e
           test "$control_status" -eq 1
@@ -1280,6 +1290,11 @@ jobs:
           assert len(receipts) == 1, receipts
           receipt = json.loads(receipts[0].read_text())
           assert receipt['status'] == 'failed' and receipt['fault'] == '--fault=late-optional-track-schedule'
+          assert receipt['audioOutput']['testOnly'] is True
+          assert receipt['audioOutput'] == {
+              'mode': 'silent-native-sink', 'testOnly': True,
+              'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
+          }
           assert receipt['errors'] == [] and receipt['externalRequests'] == []
           assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Narration onset must honor its saved offset before delayed play delivery')
           assert len(receipt['cases']) == 1
@@ -1298,10 +1313,50 @@ jobs:
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
           print('Late optional-track control reaches its encoded narration-onset assertion')
           PYCONTROL
-          node tests/cloud-editor-browser.mjs
-          node tests/conversation-browser.mjs
+          node tests/cloud-editor-browser.mjs --silent-audio-output
+          node tests/conversation-browser.mjs --silent-audio-output
           node tests/finishing-audio-probe-controls.mjs
-          node tests/finishing-browser.mjs
+          node tests/finishing-browser.mjs --silent-audio-output
+          # Bind every healthy and fault invocation to the explicit native output transport.
+          python3 - "$RUNNER_TEMP" <<'PYAUDIOOUTPUT'
+          import hashlib, json, sys
+          from pathlib import Path
+          base = Path(sys.argv[1])
+          expected_audio = {
+              'mode': 'silent-native-sink', 'testOnly': True,
+              'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
+          }
+          groups = (
+              ('startup healthy', 'rendprop-export-startup-*/receipt.json', 1),
+              ('startup omission', 'rendprop-export-startup-control.*/rendprop-export-startup-*/receipt.json', 1),
+              ('resume healthy', 'rendprop-export-resume-*/receipt.json', 1),
+              ('resume omission', 'rendprop-export-resume-control.*/rendprop-export-resume-*/receipt.json', 1),
+              ('original audio healthy and faults', 'rendprop-export-original-audio-*/receipt.json', 4),
+              ('optional schedule omission', 'rendprop-export-optional-control.*/rendprop-export-original-audio-*/receipt.json', 1),
+              ('cloud editor', 'rendprop-cloud-editor-*/receipt.json', 1),
+              ('conversation', 'rendprop-conversation-*/receipt.json', 1),
+              ('finishing', 'rendprop-finishing-*/receipt.json', 1),
+          )
+          bindings = []
+          for name, pattern, count in groups:
+              paths = sorted(base.glob(pattern))
+              if name == 'finishing':
+                  # The separate unchanged AAC probe has no browser AudioContext.
+                  paths = [path for path in paths
+                           if not path.parent.name.startswith('rendprop-finishing-audio-probe-')]
+              assert len(paths) == count, (name, len(paths), count)
+              for path in paths:
+                  raw = path.read_bytes()
+                  receipt = json.loads(raw)
+                  assert receipt['audioOutput']['testOnly'] is True, (name, path)
+                  assert receipt['audioOutput'] == expected_audio, (name, path)
+                  bindings.append({'suite': name, 'receipt': str(path.relative_to(base)),
+                                   'receiptSha256': hashlib.sha256(raw).hexdigest()})
+          assert len(bindings) == len({row['receipt'] for row in bindings}) == 12
+          with (base / 'studio-audio-output-bindings.json').open('x') as output:
+              json.dump({'audioOutput': expected_audio, 'invocationCount': 12, 'receipts': bindings}, output, indent=2)
+          print('All12 media export invocation receipts use the exact silent-native-sink helper')
+          PYAUDIOOUTPUT
       - name: Retain media export receipts and browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -1311,6 +1366,7 @@ jobs:
             ${{ runner.temp }}/rendprop-property-site-browser/**
             ${{ runner.temp }}/rendprop-property-site-browser-omit-preview-offset/**
             ${{ runner.temp }}/rendprop-property-video-*/**
+            ${{ runner.temp }}/studio-audio-output-bindings.json
             ${{ runner.temp }}/rendprop-export-original-audio-*/receipt.json
             ${{ runner.temp }}/rendprop-export-original-audio-*/*.mp4
             ${{ runner.temp }}/export-original-audio-defect.log
