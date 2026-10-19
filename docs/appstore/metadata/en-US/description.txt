@@ -20,7 +20,7 @@ Sign in with Apple to use your account and listing records across iPhone and Ren
 YOUR CONTENT, YOUR CHOICES
 Cloud AI asks permission before sending selected content to named providers. You control what to review and publish. Only use content you have permission to share.
 
-Aerial intro, floor plans, measurements and 3D tours are Coming soon and are not included in any plan.
+In the iPhone app, aerial intro, floor plans, measurements and 3D tours are Coming soon and are not included in any plan.
 
 SUBSCRIPTIONS
 Available plans and localized prices appear in the app before you confirm an Apple purchase. Subscriptions renew automatically unless cancelled at least 24 hours before the current period ends. Manage or cancel subscriptions in Apple account Settings. Deleting the app or account does not cancel an Apple subscription.
