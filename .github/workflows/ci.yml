@@ -1242,7 +1242,8 @@ jobs:
           outputs = [path for path in receipts[0].parent.glob('*.mp4') if path != fixture_input]
           assert len(outputs) == 1 and outputs[0].name == 'baseline-narrated.mp4'
           assert Path(run['output']).resolve() == outputs[0].resolve()
-          expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs'}
+          expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs',
+                              'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs'}
           expected_sources.update(f'src/editor/{name}.ts' for name in
                                   ('export', 'recording-clock', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
           assert set(receipt['sourceHashes']) == expected_sources
