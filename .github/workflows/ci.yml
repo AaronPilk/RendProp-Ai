@@ -1203,14 +1203,110 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+  studio-media-tools:
+    # Normal vendor installation happens here, never on the timing runner.
+    name: Prepare exact native media cache
+    runs-on: macos-26-arm64
+    permissions:
+      contents: read
+    env:
+      MEDIA_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      MEDIA_WORKFLOW_SHA: ${{ github.workflow_sha }}
+    outputs:
+      manifest-sha256: ${{ steps.snapshot.outputs.manifest-sha256 }}
+      cache-paths: ${{ steps.snapshot.outputs.cache-paths }}
+      cache-key: ${{ steps.snapshot.outputs.cache-key }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+      - name: Validate native cache boundaries with closed fixtures
+        timeout-minutes: 2
+        run: node --test tools/ci/native-media-cache.test.mjs
+      - name: Install locked dependencies for media preparation
+        working-directory: apps/studio
+        run: npm ci --ignore-scripts
+      - name: Verify locked full Chromium and synthetic media tools
+        working-directory: apps/studio
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright install chromium --no-shell
+          browser_path="$(node --input-type=module -e "import { chromium } from '@playwright/test'; console.log(chromium.executablePath());")"
+          test -x "$browser_path"
+          test "$("$browser_path" --version | sed 's/[[:space:]]*$//')" = "Google Chrome for Testing 153.0.8010.12"
+          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$browser_path" >> "$GITHUB_ENV"
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
+          test "$(ffmpeg -version | sed -n '1p')" = "ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers"
+          test "$(ffprobe -version | sed -n '1p')" = "ffprobe version 9.0.2 Copyright (c) 2007-2026 the FFmpeg developers"
+          test "$(/opt/homebrew/bin/brew --prefix ffmpeg)" = /opt/homebrew/opt/ffmpeg
+      - name: Snapshot exact native media files and preparation identity
+        id: snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$MEDIA_SOURCE_SHA"
+          export MEDIA_NATIVE_FORMULAE="$(printf 'ffmpeg\n'; /opt/homebrew/bin/brew deps --formula --installed ffmpeg)"
+          node tools/ci/native-media-cache.mjs record
+      - name: Save verified native media cache before any timing gate
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 3
+        with:
+          path: ${{ steps.snapshot.outputs.cache-paths }}
+          key: ${{ steps.snapshot.outputs.cache-key }}
+      - name: Confirm exact cache was saved
+        id: saved
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 3
+        with:
+          path: ${{ steps.snapshot.outputs.cache-paths }}
+          key: ${{ steps.snapshot.outputs.cache-key }}
+          lookup-only: true
+          fail-on-cache-miss: true
+      - name: Require exact immutable preparation cache
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.saved.outputs.cache-hit }}
+          CACHE_MATCH: ${{ steps.saved.outputs.cache-matched-key }}
+          EXPECTED_CACHE_KEY: ${{ steps.snapshot.outputs.cache-key }}
+        run: |
+          set -euo pipefail
+          test "$CACHE_HIT" = true
+          test "$CACHE_MATCH" = "$EXPECTED_CACHE_KEY"
+      - name: Retain native media preparation manifest
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: studio-media-cache-preparation-${{ github.run_attempt }}
+          path: .ci-media-cache/manifest.json
+          retention-days: 7
+          if-no-files-found: warn
+
   studio-media-export:
     # Recorded readiness is a prerequisite, not proof of a timing cause.
     name: Studio media exports and native audio timing
-    runs-on: macos-latest
+    runs-on: macos-26-arm64
+    needs: studio-media-tools
+    env:
+      MEDIA_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      MEDIA_WORKFLOW_SHA: ${{ github.workflow_sha }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -1223,27 +1319,45 @@ jobs:
       - name: Validate bounded media runner readiness controls
         timeout-minutes: 1
         run: node --test tools/ci/media-runner-ready.test.mjs
-      - name: Restore exact locked Chromium cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore exact same-run native media cache
+        id: native-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         timeout-minutes: 3
         with:
-          path: ~/Library/Caches/ms-playwright
-          key: studio-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/studio/package-lock.json') }}
-      - name: Verify locked full Chromium and synthetic media tools
-        working-directory: apps/studio
+          path: ${{ needs.studio-media-tools.outputs.cache-paths }}
+          key: ${{ needs.studio-media-tools.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Require exact hit and verify every restored native file before execution
+        id: verified-native
         shell: bash
+        env:
+          CACHE_HIT: ${{ steps.native-cache.outputs.cache-hit }}
+          CACHE_MATCH: ${{ steps.native-cache.outputs.cache-matched-key }}
+          EXPECTED_CACHE_KEY: ${{ needs.studio-media-tools.outputs.cache-key }}
+          EXPECTED_MANIFEST_SHA: ${{ needs.studio-media-tools.outputs.manifest-sha256 }}
         run: |
           set -euo pipefail
-          npx playwright install chromium --no-shell
-          browser_path="$(node --input-type=module -e "import { chromium } from '@playwright/test'; console.log(chromium.executablePath());")"
-          test -x "$browser_path"
-          "$browser_path" --version
-          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$browser_path" >> "$GITHUB_ENV"
-          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
-            brew install ffmpeg
-          fi
-          ffmpeg -version
-          ffprobe -version
+          test "$(git rev-parse HEAD)" = "$MEDIA_SOURCE_SHA"
+          test "$CACHE_HIT" = true
+          test "$CACHE_MATCH" = "$EXPECTED_CACHE_KEY"
+          node tools/ci/native-media-cache.mjs verify --expected-sha256 "$EXPECTED_MANIFEST_SHA"
+      - name: Verify restored full Chromium and synthetic media tools
+        shell: bash
+        env:
+          VERIFIED_BROWSER: ${{ steps.verified-native.outputs.browser-executable }}
+        run: |
+          set -euo pipefail
+          test -x "$VERIFIED_BROWSER"
+          test "$("$VERIFIED_BROWSER" --version | sed 's/[[:space:]]*$//')" = "Google Chrome for Testing 153.0.8010.12"
+          /usr/bin/codesign --verify --deep --strict "${VERIFIED_BROWSER%/Contents/MacOS/*}"
+          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$VERIFIED_BROWSER" >> "$GITHUB_ENV"
+          printf '/opt/homebrew/bin\n' >> "$GITHUB_PATH"
+          /usr/bin/codesign --verify --strict /opt/homebrew/bin/ffmpeg
+          /usr/bin/codesign --verify --strict /opt/homebrew/bin/ffprobe
+          /opt/homebrew/bin/ffmpeg -version
+          /opt/homebrew/bin/ffprobe -version
+          test "$(/opt/homebrew/bin/ffmpeg -version | sed -n '1p')" = "ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers"
+          test "$(/opt/homebrew/bin/ffprobe -version | sed -n '1p')" = "ffprobe version 9.0.2 Copyright (c) 2007-2026 the FFmpeg developers"
       - name: Record observed isolated media runner capacity
         working-directory: apps/studio
         timeout-minutes: 1
@@ -1478,6 +1592,7 @@ jobs:
             ${{ runner.temp }}/rendprop-finishing-*/*.mp4
             ${{ runner.temp }}/studio-media-export-runner-facts.json
             ${{ runner.temp }}/studio-media-export-readiness.json
+            .ci-media-cache/manifest.json
           retention-days: 7
           if-no-files-found: warn
 
