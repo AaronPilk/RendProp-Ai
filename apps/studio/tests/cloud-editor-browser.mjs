@@ -11,10 +11,13 @@ import { chromium, expect } from "@playwright/test";
 import { collectRunnerFacts, quickLoad } from "./runner-facts.mjs";
 import { startNativeTraceObserver, summarizeRecordingSilence, NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
 import { startNodeSchedulingProbe } from "./scheduling-probe.mjs";
+import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
+const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
+assert.equal(args.length, 0, "Unknown cloud editor test option");
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-cloud-editor-")), dist = join(artifacts, "dist");
 const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx","tests/runner-facts.mjs","tests/native-trace-observer.mjs","tests/scheduling-probe.mjs",...['export','recording-clock','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
 const sourceHashes=async()=>Object.fromEntries(await Promise.all(sourcePaths.map(async path=>[path,createHash('sha256').update(await readFile(join(root,path))).digest('hex')])));
-const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), runnerFacts: collectRunnerFacts(), loadBeforeExport: [], checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
+const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), audioOutput, runnerFacts: collectRunnerFacts(), loadBeforeExport: [], checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
 let browser, server, page;
 const timingDevices=[];
 // Test-only observation: every wrapper returns the original native result and
@@ -67,7 +70,12 @@ async function captureMediaTiming() {
   }
   receipt.mediaTiming=timingDevices.map(({id,listing,trace,clockRefusals,captureError})=>({id,listing,trace,clockRefusals,captureError}));
 }
-async function closeDevice(tab){await captureMediaTiming();await tab.close();}
+async function captureAudioOutputDevice(tab){
+  const device=timingDevices.find(device=>device.tab===tab);
+  assert(device,"Audio output must belong to a known browser device");
+  device.audioOutput=await verifyTestAudioOutput(tab,audioOutput);
+}
+async function closeDevice(tab){await captureAudioOutputDevice(tab);await captureMediaTiming();await tab.close();}
 async function saveExportDiagnostics(label,path,probe){await captureMediaTiming();receipt.exportProbes.push({label,path,ffprobe:probe});await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));}
 
 const pro=async tab=>{await tab.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();await expect(tab.getByRole("button",{name:"Pro view",exact:true})).toBeVisible();await tab.getByRole("button",{name:"Pro view",exact:true}).click();};
@@ -102,11 +110,14 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
   async function device(seed, listing = "20000000-0000-4000-8000-000000000002") {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, serviceWorkers: "block" });
+    await installTestAudioOutput(context, audioOutput);
     await context.addInitScript(installMediaTimingFixture);
     if (seed) await context.addInitScript(value => localStorage.setItem("fixture-cloud", JSON.stringify(value)), seed);
     await context.route("**/*", route => { const url = new URL(route.request().url()); if(url.href === `https://${"a".repeat(32)}.r2.cloudflarestorage.com/fixture/narration.wav`) return route.fulfill({status:200,contentType:"audio/wav",body:voiceBytes}); if (url.origin === origin && route.request().method() === "GET" || url.protocol === "blob:") return route.continue(); receipt.externalRequests.push(url.href); return route.abort(); });
     const tab = await context.newPage(); timingDevices.push({id:timingDevices.length+1,listing,tab}); tab.on("pageerror", error => receipt.errors.push(error.message)); tab.setDefaultTimeout(10000);
-    await tab.goto(`${origin}/tests/cloud-editor-fixture.html?listing=${listing}`); await pro(tab); return tab;
+    await tab.goto(`${origin}/tests/cloud-editor-fixture.html?listing=${listing}`);
+    await verifyTestAudioOutput(tab, audioOutput);
+    await pro(tab); return tab;
   }
   page = await device();
   await expect(page.getByLabel("Title overlay", { exact: true })).toBeVisible();
@@ -367,6 +378,8 @@ try {
   await pro(second);await expect(second.getByLabel("Title overlay", { exact: true })).toHaveValue("My local conflict title");
   receipt.checks.push("A newer cloud revision surfaces a CAS conflict without overwriting either the open draft or its conversation with remote content");
   await second.screenshot({ path: join(artifacts, "cloud-editor.png"), fullPage: true });
+  for(const {tab} of timingDevices)if(!tab.isClosed())await captureAudioOutputDevice(tab);
+  receipt.audioOutputDevices=timingDevices.map(({id,audioOutput})=>({id,audioOutput}));
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); receipt.visibleText = await page?.locator("body").innerText().catch(()=>""); process.exitCode = 1; if (page) await page.screenshot({ path: join(artifacts, "failure.png"), fullPage: true }).catch(() => {}); }
 finally { await captureMediaTiming();

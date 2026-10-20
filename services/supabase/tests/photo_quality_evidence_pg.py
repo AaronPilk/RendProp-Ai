@@ -9,6 +9,7 @@ import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 a=argparse.ArgumentParser();a.add_argument('--evidence-dir',type=Path);args=a.parse_args()
 OUT=args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-photo-quality-proof-'));OUT.mkdir(parents=True,exist_ok=True)
+assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve internal3GiB reserve'
 DATA=Path(tempfile.mkdtemp(prefix='rendprop-photo-quality-owned-pg-'));SOCK=Path(tempfile.mkdtemp(prefix='rendprop-photo-quality-socket-'))
 TOOLS={n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)for n in('initdb','pg_ctl','psql','createdb')}
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
@@ -31,11 +32,28 @@ try:
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
  for m in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
  print('Fresh migration chain compiled.',flush=True)
- run('exact-overlay-replay',[*PSQL,'-q','-1','-f',MIG]);run('exact-calibration-replay',[*PSQL,'-q','-1','-f',SQL/'migrations/20261015035100_photo_quality_existing_calibration.sql']);print('Both overlays replayed.',flush=True)
  if FIX.exists():
   out=run('actual-photo-quality-rpc-roles',[*PSQL,'-Atq','-f',FIX]);r['fixture']=out.strip();print(out.strip()[-1500:],flush=True)
+ # Replay both overlays at their historical points in a separate owned DB.
+ # Never replace the final schema's retained-context wrapper with its old body.
+ catalog_sql="select md5(string_agg(oid::regprocedure::text||prosrc||coalesce(proacl::text,'')||proowner::text||prosecdef::text||coalesce(proconfig::text,''),'|' order by oid::regprocedure::text)) from pg_proc where pronamespace='public'::regnamespace;"
+ final_catalog=run('final-function-catalog',[*PSQL,'-Atq'],catalog_sql)
+ run('createdb-historical-replay',[TOOLS['createdb'],*conn,'historical_replay'])
+ replay_psql=[TOOLS['psql'],'-X','--no-password',*conn,'-d','historical_replay','-v','ON_ERROR_STOP=1']
+ run('bootstrap-historical-replay',[*replay_psql,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
+ replayed=[]
+ for m in sorted((SQL/'migrations').glob('*.sql')):
+  run('replay-apply-'+m.stem,[*replay_psql,'-q','-1','-f',m])
+  if m.name in (MIG.name,'20261015035100_photo_quality_existing_calibration.sql'):
+   run('historical-exact-replay-'+m.stem,[*replay_psql,'-q','-1','-f',m]);replayed.append(m.name)
+ assert len(replayed)==2,'Both historical overlays must be replayed'
+ assert run('replayed-final-function-catalog',[*replay_psql,'-Atq'],catalog_sql)==final_catalog,'Historical replay changed final function authority'
+ r['replayMode']='Separate database; both overlays replayed at historical points, all later migrations then applied'
+ r['replayedOverlays']=replayed
+ r['replay']=run('replayed-final-photo-quality-rpc-roles',[*replay_psql,'-Atq','-f',FIX]).strip()
  # Compile actual SQL with narrow guards removed; independent fixture must fail.
  for label,signature,anchor,replacement,oracle in [
+  ('retained-context','photo_quality_check_bind(uuid,uuid,uuid,uuid)',"if e.judge_context is null then",'if false then','funded judge without retained context cannot dispatch'),
   ('quarantine','photo_quality_private_output_guard()',"if(new.storage_key like'ai-router/%/photo-evidence/%'", "if(false and new.storage_key like'ai-router/%/photo-evidence/%'", 'pending evidence cannot bypass ordinary registry'),
   ('legacy-quarantine','photo_quality_private_output_guard()',"or exists(select 1 from public.photo_edit_evidence e where e.legacy_keys?new.storage_key)", "", 'pending evidence cannot bypass legacy pointerless fallback'),
   ('settled-qc','photo_quality_finish(uuid,uuid,uuid,jsonb)',"and r.id is not null and l.id is not null", "and true", 'passing text without settled paid QC receipt is held'),

@@ -72,6 +72,71 @@ struct Probe: Encodable {
             checks += 1
             if !condition { violations.append(message); failures.append(message) }
         }
+        // Frozen original-source hashes keep valid create/replay identities stable.
+        let captureFinite = CommandLine.arguments.contains("--capture-finite-fingerprints")
+        let finiteGoldens: [String: [String]] = [
+            "finite-numeric-extremes": ["d5c36f2b79e890b25fb2dc56fdc5645688a257fd847fe2ae0c1c8b98e4abdeb1", "d5c36f2b79e890b25fb2dc56fdc5645688a257fd847fe2ae0c1c8b98e4abdeb1"],
+            "negative-zero": ["720283322d01f2db4c8234de19f0dc5145d9e8eac71d9bd43593eec75923da87", "720283322d01f2db4c8234de19f0dc5145d9e8eac71d9bd43593eec75923da87"],
+            "nil-optionals": ["30992b9b9c498a5f5b5372ac883306e8bf0eeb63d0e5e60d2f707bc0fcca0c05", "30992b9b9c498a5f5b5372ac883306e8bf0eeb63d0e5e60d2f707bc0fcca0c05"],
+            "north-boundaries": ["d55eaca387f3c44c5178ccbd2a9e9c862a9e4eecb1002dd54b1ec999bdc3e7f0", "d55eaca387f3c44c5178ccbd2a9e9c862a9e4eecb1002dd54b1ec999bdc3e7f0"],
+            "private-details": ["d1c00fd155f52313d57dd98ee6bd63251240c783938eb21d8152d5e14568e166", "30992b9b9c498a5f5b5372ac883306e8bf0eeb63d0e5e60d2f707bc0fcca0c05"],
+            "south-boundaries": ["8fd1a2a922462f23aa3e0afdb9478addeaa8d7d643e3d77fc653d8b80cfa5db3", "8fd1a2a922462f23aa3e0afdb9478addeaa8d7d643e3d77fc653d8b80cfa5db3"],
+            "zero": ["b8c9a370011f0f4848bbbc819caedcecb59a50aeb20240af1bd18d8ac4279ebb", "b8c9a370011f0f4848bbbc819caedcecb59a50aeb20240af1bd18d8ac4279ebb"]
+        ]
+        var finiteCases: [(String, Listing)] = [("nil-optionals", base)]
+        var zero = base; zero.latitude = 0; zero.longitude = 0; zero.baths = 0; zero.soldAt = Date(timeIntervalSince1970: 0)
+        finiteCases.append(("zero", zero))
+        var signedZero = zero; signedZero.latitude = -0.0; signedZero.longitude = -0.0; signedZero.baths = -0.0
+        finiteCases.append(("negative-zero", signedZero))
+        var north = base; north.latitude = 90; north.longitude = 180; north.baths = 99.5; north.soldAt = .distantFuture
+        finiteCases.append(("north-boundaries", north))
+        var south = base; south.latitude = -90; south.longitude = -180; south.baths = 0.5; south.soldAt = .distantPast
+        finiteCases.append(("south-boundaries", south))
+        var extremes = base; extremes.latitude = .greatestFiniteMagnitude; extremes.longitude = -.greatestFiniteMagnitude; extremes.baths = .leastNonzeroMagnitude
+        finiteCases.append(("finite-numeric-extremes", extremes))
+        var privateDetails = base; privateDetails.details?["floor_measurements_future"] = "opaque private geometry"
+        finiteCases.append(("private-details", privateDetails))
+        var numericViolations = [String]()
+        for (name, value) in finiteCases {
+            let hashes = [try CloudDraftCreation.fingerprint(value), try CloudDraftCreation.factsFingerprint(value)]
+            print("FINITE_FINGERPRINT " + String(decoding: try JSONEncoder().encode([name: hashes]), as: UTF8.self))
+            if !captureFinite {
+                check(hashes == finiteGoldens[name], "finite listing fingerprint preserves original bytes: \(name)", into: &numericViolations)
+                var prepared = value; try CloudDraftCreation.prepare(&prepared)
+                check(prepared.cloudCreateFingerprint == hashes[0] && prepared.cloudCreateFactsFingerprint == hashes[1], "finite prepare captures both original identities: \(name)", into: &numericViolations)
+            }
+        }
+        if captureFinite { return }
+        let invalidNumberMessage = "The listing contains an invalid number. Check its location, bathrooms and sold date, then try again."
+        for field in ["latitude", "longitude", "baths", "sold-time"] {
+            for (label, number) in [("nan", Double.nan), ("positive-infinity", Double.infinity), ("negative-infinity", -Double.infinity)] {
+                var invalid = base
+                switch field {
+                case "latitude": invalid.latitude = number
+                case "longitude": invalid.longitude = number
+                case "baths": invalid.baths = number
+                default: invalid.soldAt = Date(timeIntervalSince1970: number)
+                }
+                for operation in ["fingerprint", "facts-fingerprint", "prepare"] {
+                    // Flush a bounded marker before the old Cocoa writer can abort.
+                    FileHandle.standardOutput.write(Data("NUMBER_CHECK \(field) \(label) \(operation)\n".utf8))
+                    var prepared = invalid; prepared.cloudCreateFactsFingerprint = "retained-original-facts-intent"
+                    do {
+                        if operation == "fingerprint" { _ = try CloudDraftCreation.fingerprint(invalid) }
+                        else if operation == "facts-fingerprint" { _ = try CloudDraftCreation.factsFingerprint(invalid) }
+                        else { try CloudDraftCreation.prepare(&prepared) }
+                        check(false, "non-finite listing fact is rejected: \(field) \(label) \(operation)", into: &numericViolations)
+                    } catch {
+                        check(error is ListingWireDetails.ValidationError && error.localizedDescription == invalidNumberMessage,
+                              "non-finite listing fact has clear validation error: \(field) \(label) \(operation)", into: &numericViolations)
+                    }
+                    if operation == "prepare" {
+                        check(prepared.cloudCreateFingerprint == nil && prepared.cloudCreateFactsFingerprint == "retained-original-facts-intent" && prepared.tagline == invalid.tagline,
+                              "failed prepare preserves original fingerprint intent: \(field) \(label)", into: &numericViolations)
+                    }
+                }
+            }
+        }
         func receipt(_ draft: Listing, replay: Bool) -> Listing {
             var result = draft
             result.id = serverID; result.serverID = serverID; result.serverOrgID = orgID

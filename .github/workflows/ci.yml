@@ -50,7 +50,9 @@ jobs:
       - name: Exact rollout readback, freshness and artifact refusals (offline)
         env:
           PYTHONDONTWRITEBYTECODE: '1'
-        run: python3 tools/deploy/test_verify_rollout_readback.py
+        run: |
+          python3 tools/deploy/test_verify_rollout_readback.py
+          python3 tools/deploy/test_verify_release_binding.py
       - name: Invariant source registration contracts
         run: python3 tools/audit/test_database_invariant_sources.py
       - name: Republish retry clears a stale warning before its sync refusals (source gate)
@@ -1175,6 +1177,218 @@ jobs:
         run: |
           python3 tools/audit/run_render_quality.py
           python3 tools/audit/run_render_review_fences.py
+      - name: Retain media export receipts and browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tour-host-browser-native-quality-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-property-site-browser/**
+            ${{ runner.temp }}/rendprop-property-site-browser-omit-preview-offset/**
+            ${{ runner.temp }}/rendprop-property-video-*/**
+            ${{ runner.temp }}/rendprop-listing-browser-*/receipt.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/explore-handoff.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-seek.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-observation.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/playback-clock.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/decoded-frame.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/*.png
+            ${{ runner.temp }}/rendprop-listing-browser-*/*.mp4
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/receipt.json
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/*.log
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/**/*.json
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/failure-evidence/*.mp4
+            ${{ runner.temp }}/rendprop-render-review-fences-*/receipt.json
+            ${{ runner.temp }}/rendprop-render-review-fences-*/*.log
+          retention-days: 7
+          if-no-files-found: warn
+
+  studio-media-tools:
+    # Normal vendor installation happens here, never on the timing runner.
+    name: Prepare exact native media cache
+    runs-on: macos-26
+    permissions:
+      contents: read
+    env:
+      MEDIA_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      MEDIA_WORKFLOW_SHA: ${{ github.workflow_sha }}
+    outputs:
+      manifest-sha256: ${{ steps.snapshot.outputs.manifest-sha256 }}
+      cache-paths: ${{ steps.snapshot.outputs.cache-paths }}
+      cache-key: ${{ steps.snapshot.outputs.cache-key }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+      - name: Validate native cache boundaries with closed fixtures
+        timeout-minutes: 2
+        run: node --test tools/ci/native-media-cache.test.mjs tools/ci/browser-signature-policy.test.mjs
+      - name: Install locked dependencies for media preparation
+        working-directory: apps/studio
+        run: npm ci --ignore-scripts
+      - name: Verify locked full Chromium and synthetic media tools
+        timeout-minutes: 10
+        working-directory: apps/studio
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright install chromium --no-shell
+          browser_path="$(node --input-type=module -e "import { chromium } from '@playwright/test'; console.log(chromium.executablePath());")"
+          test -x "$browser_path"
+          # This pinned vendor build has ad-hoc code signatures and no resource seal.
+          # Cache integrity still covers every resource byte; this is no publisher claim.
+          browser_app="${browser_path%/Contents/MacOS/*}"
+          browser_signature="$(/usr/bin/codesign --display --verbose=4 "$browser_app" 2>&1)"
+          printf '%s\n' "$browser_signature" | node ../../tools/ci/browser-signature-policy.mjs --executable "$browser_path"
+          /usr/bin/codesign --verify --deep --strict --ignore-resources "$browser_app"
+          test "$("$browser_path" --version | sed 's/[[:space:]]*$//')" = "Google Chrome for Testing 153.0.8010.12"
+          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$browser_path" >> "$GITHUB_ENV"
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
+          test "$(ffmpeg -version | sed -n '1p')" = "ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers"
+          test "$(ffprobe -version | sed -n '1p')" = "ffprobe version 9.0.2 Copyright (c) 2007-2026 the FFmpeg developers"
+          test "$(/opt/homebrew/bin/brew --prefix ffmpeg)" = /opt/homebrew/opt/ffmpeg
+      - name: Snapshot exact native media files and preparation identity
+        id: snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$MEDIA_SOURCE_SHA"
+          export MEDIA_NATIVE_FORMULAE="$(printf 'ffmpeg\n'; /opt/homebrew/bin/brew deps --formula --installed ffmpeg)"
+          node tools/ci/native-media-cache.mjs record
+      - name: Save verified native media cache before any timing gate
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 3
+        with:
+          path: ${{ steps.snapshot.outputs.cache-paths }}
+          key: ${{ steps.snapshot.outputs.cache-key }}
+      - name: Confirm exact cache was saved
+        id: saved
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 3
+        with:
+          path: ${{ steps.snapshot.outputs.cache-paths }}
+          key: ${{ steps.snapshot.outputs.cache-key }}
+          lookup-only: true
+          fail-on-cache-miss: true
+      - name: Require exact immutable preparation cache
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.saved.outputs.cache-hit }}
+          CACHE_MATCH: ${{ steps.saved.outputs.cache-matched-key }}
+          EXPECTED_CACHE_KEY: ${{ steps.snapshot.outputs.cache-key }}
+        run: |
+          set -euo pipefail
+          test "$CACHE_HIT" = true
+          test "$CACHE_MATCH" = "$EXPECTED_CACHE_KEY"
+      - name: Retain native media preparation manifest
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: studio-media-cache-preparation-${{ github.run_attempt }}
+          path: .ci-media-cache/manifest.json
+          retention-days: 7
+          if-no-files-found: warn
+
+  studio-media-export:
+    # Recorded readiness is a prerequisite, not proof of a timing cause.
+    name: Studio media exports and native audio timing
+    runs-on: macos-26
+    needs: studio-media-tools
+    env:
+      MEDIA_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      MEDIA_WORKFLOW_SHA: ${{ github.workflow_sha }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+
+      - name: Install locked Studio dependencies for the media export gate
+        working-directory: apps/studio
+        run: npm ci --ignore-scripts
+      - name: Validate bounded media runner readiness controls
+        timeout-minutes: 1
+        run: node --test tools/ci/media-runner-ready.test.mjs
+      - name: Restore exact same-run native media cache
+        id: native-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 3
+        with:
+          path: ${{ needs.studio-media-tools.outputs.cache-paths }}
+          key: ${{ needs.studio-media-tools.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Require exact hit and verify every restored native file before execution
+        id: verified-native
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.native-cache.outputs.cache-hit }}
+          CACHE_MATCH: ${{ steps.native-cache.outputs.cache-matched-key }}
+          EXPECTED_CACHE_KEY: ${{ needs.studio-media-tools.outputs.cache-key }}
+          EXPECTED_MANIFEST_SHA: ${{ needs.studio-media-tools.outputs.manifest-sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$MEDIA_SOURCE_SHA"
+          test "$CACHE_HIT" = true
+          test "$CACHE_MATCH" = "$EXPECTED_CACHE_KEY"
+          node tools/ci/native-media-cache.mjs verify --expected-sha256 "$EXPECTED_MANIFEST_SHA"
+      - name: Verify restored full Chromium and synthetic media tools
+        timeout-minutes: 2
+        shell: bash
+        env:
+          VERIFIED_BROWSER: ${{ steps.verified-native.outputs.browser-executable }}
+        run: |
+          set -euo pipefail
+          test -x "$VERIFIED_BROWSER"
+          # Require the exact upstream unsealed variant before code-only validation.
+          # The preceding full-cache audit verifies every resource, link and byte.
+          browser_app="${VERIFIED_BROWSER%/Contents/MacOS/*}"
+          browser_signature="$(/usr/bin/codesign --display --verbose=4 "$browser_app" 2>&1)"
+          printf '%s\n' "$browser_signature" | node tools/ci/browser-signature-policy.mjs --executable "$VERIFIED_BROWSER"
+          /usr/bin/codesign --verify --deep --strict --ignore-resources "$browser_app"
+          test "$("$VERIFIED_BROWSER" --version | sed 's/[[:space:]]*$//')" = "Google Chrome for Testing 153.0.8010.12"
+          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$VERIFIED_BROWSER" >> "$GITHUB_ENV"
+          printf '/opt/homebrew/bin\n' >> "$GITHUB_PATH"
+          /usr/bin/codesign --verify --strict /opt/homebrew/bin/ffmpeg
+          /usr/bin/codesign --verify --strict /opt/homebrew/bin/ffprobe
+          /opt/homebrew/bin/ffmpeg -version
+          /opt/homebrew/bin/ffprobe -version
+          test "$(/opt/homebrew/bin/ffmpeg -version | sed -n '1p')" = "ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers"
+          test "$(/opt/homebrew/bin/ffprobe -version | sed -n '1p')" = "ffprobe version 9.0.2 Copyright (c) 2007-2026 the FFmpeg developers"
+      - name: Record observed isolated media runner capacity
+        working-directory: apps/studio
+        timeout-minutes: 1
+        run: |
+          node --input-type=module - "$RUNNER_TEMP/studio-media-export-runner-facts.json" <<'JSRUNNER'
+          import { writeFileSync } from 'node:fs';
+          import os from 'node:os';
+          import { quickLoad } from './tests/runner-facts.mjs';
+          const facts = { platform: process.platform, arch: process.arch, nodeVersion: process.version,
+            cpus: os.cpus().length, totalmem: os.totalmem(), ...quickLoad(),
+            scope: 'Observed before isolated media gates; capacity does not establish a timing cause' };
+          writeFileSync(process.argv[2], JSON.stringify(facts, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+          JSRUNNER
+      # Environment admission only. The media tests below still execute once
+      # with their original clock, refusal controls and time limits.
+      - name: Require bounded recorded media runner readiness
+        timeout-minutes: 4
+        run: node tools/ci/media-runner-ready.mjs --output "$RUNNER_TEMP/studio-media-export-readiness.json"
       - name: Studio waits for advancing audio before recording content
         working-directory: apps/studio
         timeout-minutes: 3
@@ -1183,20 +1397,25 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          node tests/export-startup-browser.mjs
+          node tests/export-startup-browser.mjs --silent-audio-output
           control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-startup-control.XXXXXX")
           set +e
-          TMPDIR="$control_root" node tests/export-startup-browser.mjs --fault=omit-readiness > "$control_root/run.log" 2>&1
+          TMPDIR="$control_root" node tests/export-startup-browser.mjs --fault=omit-readiness --silent-audio-output > "$control_root/run.log" 2>&1
           control_status=$?
           set -e
           test "$control_status" -eq 1
           python3 - "$control_root" <<'PY'
-          import json, sys
+          import hashlib, json, sys
           from pathlib import Path
           receipts = list(Path(sys.argv[1]).glob('rendprop-export-startup-*/receipt.json'))
           assert len(receipts) == 1, receipts
           receipt = json.loads(receipts[0].read_text())
           assert receipt['status'] == 'failed' and receipt['mode'] == '--fault=omit-readiness'
+          assert receipt['audioOutput']['testOnly'] is True
+          assert receipt['audioOutput'] == {
+              'mode': 'silent-native-sink', 'testOnly': True,
+              'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
+          }
           assert receipt['sourceBoundAtEnd'] is True
           assert receipt['errors'] == [] and receipt['externalRequests'] == []
           assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Content and recording must not start while startup clock is frozen')
@@ -1212,10 +1431,10 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
         run: |
-          node tests/export-resume-browser.mjs
+          node tests/export-resume-browser.mjs --silent-audio-output
           control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-resume-control.XXXXXX")
           set +e
-          TMPDIR="$control_root" node tests/export-resume-browser.mjs --fault=omit-old-await > "$control_root/run.log" 2>&1
+          TMPDIR="$control_root" node tests/export-resume-browser.mjs --fault=omit-old-await --silent-audio-output > "$control_root/run.log" 2>&1
           control_status=$?
           set -e
           test "$control_status" -eq 1
@@ -1226,6 +1445,11 @@ jobs:
           assert len(receipts) == 1, receipts
           receipt = json.loads(receipts[0].read_text())
           assert receipt['status'] == 'failed' and receipt['fault'] == 'omit-old-await'
+          assert receipt['audioOutput']['testOnly'] is True
+          assert receipt['audioOutput'] == {
+              'mode': 'silent-native-sink', 'testOnly': True,
+              'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
+          }
           assert receipt['variants'] == ['baseline']
           assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Negative control must reproduce drift with the old await:')
           assert receipt['errors'] == [] and receipt['externalRequests'] == []
@@ -1240,7 +1464,8 @@ jobs:
           outputs = [path for path in receipts[0].parent.glob('*.mp4') if path != fixture_input]
           assert len(outputs) == 1 and outputs[0].name == 'baseline-narrated.mp4'
           assert Path(run['output']).resolve() == outputs[0].resolve()
-          expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs'}
+          expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs',
+                              'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs'}
           expected_sources.update(f'src/editor/{name}.ts' for name in
                                   ('export', 'recording-clock', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
           assert set(receipt['sourceHashes']) == expected_sources
@@ -1248,25 +1473,25 @@ jobs:
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
           print('Omitted historical await reaches the intended bad-duration assertion')
           PY
-          node tests/export-audio-browser.mjs
-          if node tests/export-audio-browser.mjs --fault=live-original-audio > "$RUNNER_TEMP/export-original-audio-defect.log" 2>&1; then
+          node tests/export-audio-browser.mjs --silent-audio-output
+          if node tests/export-audio-browser.mjs --fault=live-original-audio --silent-audio-output > "$RUNNER_TEMP/export-original-audio-defect.log" 2>&1; then
             echo "::error::Original-audio regression control unexpectedly passed"
             exit 1
           fi
           grep -q "Continuous speech through cutaway boundaries: weakest40ms RMS" "$RUNNER_TEMP/export-original-audio-defect.log"
-          if node tests/export-audio-browser.mjs --fault=late-buffered-wall-origin > "$RUNNER_TEMP/export-clock-origin-defect.log" 2>&1; then
+          if node tests/export-audio-browser.mjs --fault=late-buffered-wall-origin --silent-audio-output > "$RUNNER_TEMP/export-clock-origin-defect.log" 2>&1; then
             echo "::error::Buffered-audio clock-origin regression control unexpectedly passed"
             exit 1
           fi
           grep -q "Audio and picture timing drifted during export" "$RUNNER_TEMP/export-clock-origin-defect.log"
-          if node tests/export-audio-browser.mjs --fault=omit-bucket-pacing > "$RUNNER_TEMP/export-paint-budget-defect.log" 2>&1; then
+          if node tests/export-audio-browser.mjs --fault=omit-bucket-pacing --silent-audio-output > "$RUNNER_TEMP/export-paint-budget-defect.log" 2>&1; then
             echo "::error::Redundant-paint regression control unexpectedly passed"
             exit 1
           fi
           grep -q "Duplicate30fps timeline bucket was repainted" "$RUNNER_TEMP/export-paint-budget-defect.log"
           control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-optional-control.XXXXXX")
           set +e
-          TMPDIR="$control_root" node tests/export-audio-browser.mjs --alignment-only --fault=late-optional-track-schedule > "$control_root/run.log" 2>&1
+          TMPDIR="$control_root" node tests/export-audio-browser.mjs --alignment-only --fault=late-optional-track-schedule --silent-audio-output > "$control_root/run.log" 2>&1
           control_status=$?
           set -e
           test "$control_status" -eq 1
@@ -1277,6 +1502,11 @@ jobs:
           assert len(receipts) == 1, receipts
           receipt = json.loads(receipts[0].read_text())
           assert receipt['status'] == 'failed' and receipt['fault'] == '--fault=late-optional-track-schedule'
+          assert receipt['audioOutput']['testOnly'] is True
+          assert receipt['audioOutput'] == {
+              'mode': 'silent-native-sink', 'testOnly': True,
+              'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
+          }
           assert receipt['errors'] == [] and receipt['externalRequests'] == []
           assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Narration onset must honor its saved offset before delayed play delivery')
           assert len(receipt['cases']) == 1
@@ -1295,19 +1525,57 @@ jobs:
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
           print('Late optional-track control reaches its encoded narration-onset assertion')
           PYCONTROL
-          node tests/cloud-editor-browser.mjs
-          node tests/conversation-browser.mjs
+          node tests/cloud-editor-browser.mjs --silent-audio-output
+          node tests/conversation-browser.mjs --silent-audio-output
           node tests/finishing-audio-probe-controls.mjs
-          node tests/finishing-browser.mjs
+          node tests/finishing-browser.mjs --silent-audio-output
+          # Bind every healthy and fault invocation to the explicit native output transport.
+          python3 - "$RUNNER_TEMP" <<'PYAUDIOOUTPUT'
+          import hashlib, json, sys
+          from pathlib import Path
+          base = Path(sys.argv[1])
+          expected_audio = {
+              'mode': 'silent-native-sink', 'testOnly': True,
+              'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
+          }
+          groups = (
+              ('startup healthy', 'rendprop-export-startup-*/receipt.json', 1),
+              ('startup omission', 'rendprop-export-startup-control.*/rendprop-export-startup-*/receipt.json', 1),
+              ('resume healthy', 'rendprop-export-resume-*/receipt.json', 1),
+              ('resume omission', 'rendprop-export-resume-control.*/rendprop-export-resume-*/receipt.json', 1),
+              ('original audio healthy and faults', 'rendprop-export-original-audio-*/receipt.json', 4),
+              ('optional schedule omission', 'rendprop-export-optional-control.*/rendprop-export-original-audio-*/receipt.json', 1),
+              ('cloud editor', 'rendprop-cloud-editor-*/receipt.json', 1),
+              ('conversation', 'rendprop-conversation-*/receipt.json', 1),
+              ('finishing', 'rendprop-finishing-*/receipt.json', 1),
+          )
+          bindings = []
+          for name, pattern, count in groups:
+              paths = sorted(base.glob(pattern))
+              if name == 'finishing':
+                  # The separate unchanged AAC probe has no browser AudioContext.
+                  paths = [path for path in paths
+                           if not path.parent.name.startswith('rendprop-finishing-audio-probe-')]
+              assert len(paths) == count, (name, len(paths), count)
+              for path in paths:
+                  raw = path.read_bytes()
+                  receipt = json.loads(raw)
+                  assert receipt['audioOutput']['testOnly'] is True, (name, path)
+                  assert receipt['audioOutput'] == expected_audio, (name, path)
+                  bindings.append({'suite': name, 'receipt': str(path.relative_to(base)),
+                                   'receiptSha256': hashlib.sha256(raw).hexdigest()})
+          assert len(bindings) == len({row['receipt'] for row in bindings}) == 12
+          with (base / 'studio-audio-output-bindings.json').open('x') as output:
+              json.dump({'audioOutput': expected_audio, 'invocationCount': 12, 'receipts': bindings}, output, indent=2)
+          print('All12 media export invocation receipts use the exact silent-native-sink helper')
+          PYAUDIOOUTPUT
       - name: Retain media export receipts and browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: studio-macos-media-export-${{ github.run_attempt }}
+          name: studio-isolated-media-export-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/rendprop-property-site-browser/**
-            ${{ runner.temp }}/rendprop-property-site-browser-omit-preview-offset/**
-            ${{ runner.temp }}/rendprop-property-video-*/**
+            ${{ runner.temp }}/studio-audio-output-bindings.json
             ${{ runner.temp }}/rendprop-export-original-audio-*/receipt.json
             ${{ runner.temp }}/rendprop-export-original-audio-*/*.mp4
             ${{ runner.temp }}/export-original-audio-defect.log
@@ -1335,20 +1603,9 @@ jobs:
             ${{ runner.temp }}/rendprop-finishing-*/receipt.json
             ${{ runner.temp }}/rendprop-finishing-*/*.png
             ${{ runner.temp }}/rendprop-finishing-*/*.mp4
-            ${{ runner.temp }}/rendprop-listing-browser-*/receipt.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/explore-handoff.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-seek.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-observation.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/playback-clock.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/decoded-frame.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/*.png
-            ${{ runner.temp }}/rendprop-listing-browser-*/*.mp4
-            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/receipt.json
-            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/*.log
-            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/**/*.json
-            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/failure-evidence/*.mp4
-            ${{ runner.temp }}/rendprop-render-review-fences-*/receipt.json
-            ${{ runner.temp }}/rendprop-render-review-fences-*/*.log
+            ${{ runner.temp }}/studio-media-export-runner-facts.json
+            ${{ runner.temp }}/studio-media-export-readiness.json
+            .ci-media-cache/manifest.json
           retention-days: 7
           if-no-files-found: warn
 

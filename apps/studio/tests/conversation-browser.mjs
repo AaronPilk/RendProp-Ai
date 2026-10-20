@@ -7,9 +7,12 @@ import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
 import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
+import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
+const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
+assert.equal(args.length, 0, "Unknown conversation test option");
 
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-conversation-")), dist = join(artifacts, "dist");
-const receipt = { proof: "Actual VideoEditor conversation UI, original synthetic media, real canvas preview and MP4 encoding. Only injected deferred text-plan and prompt-enhancement fixtures; no live account, model, generation or external requests.", checks: [], externalRequests: [], errors: [], status: "running" };
+const receipt = { proof: "Actual VideoEditor conversation UI, original synthetic media, real canvas preview and MP4 encoding. Only injected deferred text-plan and prompt-enhancement fixtures; no live account, model, generation or external requests.", audioOutput, checks: [], externalRequests: [], errors: [], status: "running" };
 let browser, server, page;
 try {
   await build({ configFile: false, root, publicDir: false, logLevel: "error", build: { outDir: dist, rollupOptions: { input: join(root, "tests/conversation-fixture.html") } } });
@@ -24,6 +27,7 @@ try {
   execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=640x360:r=30:d=4", "-f", "lavfi", "-i", "sine=frequency=660:duration=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", sourceVideo]);
   browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, serviceWorkers: "block", acceptDownloads: true });
+  await installTestAudioOutput(context, audioOutput);
   await context.route("**/*", route => {
     const url = new URL(route.request().url());
     if (url.origin === origin && route.request().method() === "GET" || url.protocol === "blob:") return route.continue();
@@ -31,6 +35,7 @@ try {
   });
   page = await context.newPage(); page.on("pageerror", error => receipt.errors.push(error.message)); page.setDefaultTimeout(12000);
   await page.goto(`${origin}/tests/conversation-fixture.html`);
+  await verifyTestAudioOutput(page,audioOutput);
   const snapshot = () => page.evaluate(() => window.conversationFixture.snapshot());
   const length = state => state.draft.clips.reduce((total, clip) => total + (clip.end - clip.start) / (clip.source.kind === "video" ? clip.speed ?? 1 : 1), 0);
   async function send(message) {
@@ -219,6 +224,7 @@ try {
   await page.evaluate(original=>window.conversationFixture.resolveEnhancement(4,{original,enhanced:'Set title "Former account secret"',notes:[],method:"ai"}),oldAccountPrompt);
   await flush();state=await snapshot();assert.deepEqual(state.draft,freshEnhanceAccount.draft);assert.deepEqual(state.conversation,freshEnhanceAccount.conversation);await expect(composer()).toHaveValue("");await expect(suggestion()).toHaveCount(0);await expect(page.getByText("Former account secret",{exact:false})).toHaveCount(0);
   receipt.checks.push("Account unmount aborts enhancement and fences a deliberately late suggestion from the new account's composer, conversation and draft");
+  receipt.audioOutputFinal=await verifyTestAudioOutput(page,audioOutput);
   assert.deepEqual(receipt.externalRequests, []); assert.deepEqual(receipt.errors, []); receipt.status = "passed";
 } catch (error) {
   receipt.status = "failed"; receipt.failure = error.stack ?? String(error);

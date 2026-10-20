@@ -190,7 +190,7 @@ export function openaiChatConfig(
 export async function openaiChat(
   target: string | RouteStep,
   input: unknown,
-  opts: { maxOutputTokens?: number; json?: boolean; jsonSchema?: {name:string;schema:Record<string,unknown>}; onUsage?: (usage:{inputTokens:number;outputTokens:number})=>void } = {},
+  opts: { maxOutputTokens?: number; json?: boolean; jsonSchema?: {name:string;schema:Record<string,unknown>}; onUsage?: (usage:{inputTokens:number;outputTokens:number})=>void; onResponseId?: (id:string|null)=>void } = {},
 ): Promise<string> {
   const model = typeof target === "string" ? target : target.model;
   const cfg = openaiChatConfig(typeof target === "string" ? null : paramsOf(target), opts.maxOutputTokens);
@@ -208,6 +208,9 @@ export async function openaiChat(
     { method: "POST", headers: { ...authHeader(), "Content-Type": "application/json" }, body: JSON.stringify(body) },
     BUDGETS.submitMs,
   );
+  // Original supplier evidence only, never an inline job id or a customer URL.
+  // Capture before completion checks: an incomplete answer may still be billed.
+  opts.onResponseId?.(typeof data.id === "string" && /^resp_[A-Za-z0-9]{1,123}$/.test(data.id) ? data.id : null);
   // Usage is accounting evidence even if a later completion/shape check fails.
   // Optional callback changes no historical adapter payload or return contract.
   const usage=data.usage as Record<string,unknown>|undefined;

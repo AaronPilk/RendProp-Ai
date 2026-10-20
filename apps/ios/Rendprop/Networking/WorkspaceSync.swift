@@ -69,8 +69,14 @@ enum ListingWireDetails {
 
     enum ValidationError: LocalizedError {
         case tooLarge
+        case invalidNumbers
         var errorDescription: String? {
-            "The listing details and measurements are too large to sync. Shorten the details and try again."
+            switch self {
+            case .tooLarge:
+                return "The listing details and measurements are too large to sync. Shorten the details and try again."
+            case .invalidNumbers:
+                return "The listing contains an invalid number. Check its location, bathrooms and sold date, then try again."
+            }
         }
     }
 
@@ -116,6 +122,7 @@ enum ListingWireDetails {
             "tagline": listing.tagline ?? "", "details": details, "zillow": listing.zillowURL ?? "",
             "lat": listing.latitude as Any? ?? NSNull(), "lng": listing.longitude as Any? ?? NSNull(),
             "sold": listing.soldAt?.timeIntervalSince1970 as Any? ?? NSNull(), "indexing": listing.allowSearchIndexing as Any? ?? NSNull()]
+        guard JSONSerialization.isValidJSONObject(facts) else { throw ListingWireDetails.ValidationError.invalidNumbers }
         let data = try JSONSerialization.data(withJSONObject: facts, options: [.sortedKeys])
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }

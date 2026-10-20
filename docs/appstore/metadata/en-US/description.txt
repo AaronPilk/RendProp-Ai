@@ -1,46 +1,30 @@
-Create content. Share the listing.
+Create your listing story from the photos you already have.
 
-Record or import a walkthrough, prepare your photos and make a reel on your iPhone. Bring them together on one listing page you can share by text, email or a printed QR code.
+Rendprop helps real estate agents prepare property photos, make videos and share a mobile property website. Start with your address and listing details, then add photos in the order you want buyers to see them.
 
-HOW IT WORKS
-1. Walk the space and record on your iPhone.
-2. Tag the rooms or areas you want people to jump to.
-3. Choose your cover photo, review the content and publish.
-4. Share the link. Visitors see photos and details first, then choose a scroll-through tour or ordinary video playback. Enquiries land in your Leads inbox.
+PHOTOS THAT STAY ORGANIZED
+Keep originals and saved edits separate. Review photo versions, compare changes, move between photos and choose what appears on your listing. Portrait and landscape guidance helps you choose the right images for your destination.
 
-TOOLS FOR YOUR LISTING
-• AI Photo Studio — blue sky, twilight, lawn, decluttering, virtual staging and custom edits. Review the result, keep photo versions and export images with the disclosure for the changes you made. Compare to retained source copies.
-• Reels — turn reviewed photos into a Tall or Wide video with your own voiceover and word-by-word captions.
-• Aerial intros are Coming soon and are not included in any plan. Previously saved aerial videos remain accessible and disclosed as AI-generated, not drone footage.
-• Measurements, 3D floor plans and 3D walkthroughs are shown as Coming soon. They do not open yet and are not part of any plan.
-• Listing links — a contact page for sharing and a separate unbranded tour link. Check your MLS's rules before posting.
-• Client delivery — photographers and videographers can put their client's name, business, photo and contact details on each listing. Route enquiries to that client's email, track delivery in Leads and send them again when needed. The client does not need a Rendprop account.
+AI PHOTO STUDIO
+Prepare selected photos with sky, lawn, twilight, decluttering, virtual staging and custom edits. Review every result before using it. AI can change details, and edited media carries disclosure.
 
-NOT ONLY HOMES
-Choose real estate, event venues, restaurants, retail stores or gyms. The listing fields, screen labels and samples match your business.
+MAKE A VIDEO
+Choose Listing for a landscape video or Social media for a portrait video. Select your photos in order and review framing. Optional narration and music stay under your control. Review the finished result before saving, sharing or choosing it for your website.
 
-WORK ON YOUR PHONE OR IN STUDIO
-Sign in with Apple to create your account. Listing records stay with your account across devices and Studio; local media is not automatically copied to every device. Team agents keep their own listings; only the Team owner can switch between linked agents. Recording and local editing work offline once signed in; AI, publishing and Studio need internet.
+YOUR PROPERTY WEBSITE
+Bring together photos, listing details, contact information and your selected listing video. A recorded drone-style walkthrough is optional and separate. Room tags require a recorded or uploaded walkthrough. Share the website link with buyers and review enquiries in Leads.
 
-WHAT A PLAN INCLUDES
-Your first published listing is free. Plans add hosted listings and monthly AI allowances:
-• Starter — 4 tour renders, high-resolution AI photo edits, 6 reel clips a month, 1 seat.
-• Pro — 10 tour renders, high-resolution AI photo edits, 12 reel clips a month, 1 seat.
-• Team — 25 tour renders, high-resolution AI photo edits, 25 reel clips and 2 video quality upgrades a month, and 2 seats.
-AI requests are also limited by a monthly cost budget sized to your plan.
+WORK ON IPHONE AND IN STUDIO
+Sign in with Apple to use your account and listing records across iPhone and Rendprop Studio. Local media is not automatically copied to every device. Internet is required for AI processing, publishing and Studio.
 
-SUBSCRIPTION DETAILS
-Auto-renewable subscriptions:
-• Starter Monthly — 1 month — $49.00
-• Pro Monthly — 1 month — $99.00
-• Team Monthly — 1 month — $249.00
-Every plan bills monthly.
-Eligible new subscribers can start with a 7-day free trial by confirming a subscription with Apple. Trial AI has a limited allowance. The app shows the offer and renewal price before confirmation.
-Payment is charged to your Apple ID account at confirmation of purchase, or when an eligible free trial ends. Subscriptions renew automatically unless cancelled at least 24 hours before the current period ends. Renewal is charged within 24 hours before the period ends. Manage or cancel in device Settings > your name > Subscriptions. Prices above are in U.S. dollars; the app shows your local price before you buy.
+YOUR CONTENT, YOUR CHOICES
+Cloud AI asks permission before sending selected content to named providers. You control what to review and publish. Only use content you have permission to share.
 
-Terms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
-Rendprop Terms of Service: https://rendprop.com/terms
-Privacy Policy: https://rendprop.com/privacy
+In the iPhone app, aerial intro, floor plans, measurements and 3D tours are Coming soon and are not included in any plan.
 
-AI AND YOUR CONTENT
-AI-generated and AI-altered media carries disclosure. Review every result: AI can change details or make mistakes. Cloud AI asks permission before sending selected media and text to named providers. Your content stays yours. Only publish content you have permission to use.
+SUBSCRIPTIONS
+Available plans and localized prices appear in the app before you confirm an Apple purchase. Subscriptions renew automatically unless cancelled at least 24 hours before the current period ends. Manage or cancel subscriptions in Apple account Settings. Deleting the app or account does not cancel an Apple subscription.
+
+Terms of Use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
+Rendprop terms: https://rendprop.com/terms
+Privacy: https://rendprop.com/privacy
