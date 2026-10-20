@@ -1228,11 +1228,12 @@ jobs:
           cache-dependency-path: apps/studio/package-lock.json
       - name: Validate native cache boundaries with closed fixtures
         timeout-minutes: 2
-        run: node --test tools/ci/native-media-cache.test.mjs
+        run: node --test tools/ci/native-media-cache.test.mjs tools/ci/browser-signature-policy.test.mjs
       - name: Install locked dependencies for media preparation
         working-directory: apps/studio
         run: npm ci --ignore-scripts
       - name: Verify locked full Chromium and synthetic media tools
+        timeout-minutes: 10
         working-directory: apps/studio
         shell: bash
         run: |
@@ -1240,6 +1241,12 @@ jobs:
           npx playwright install chromium --no-shell
           browser_path="$(node --input-type=module -e "import { chromium } from '@playwright/test'; console.log(chromium.executablePath());")"
           test -x "$browser_path"
+          # This pinned vendor build has ad-hoc code signatures and no resource seal.
+          # Cache integrity still covers every resource byte; this is no publisher claim.
+          browser_app="${browser_path%/Contents/MacOS/*}"
+          browser_signature="$(/usr/bin/codesign --display --verbose=4 "$browser_app" 2>&1)"
+          printf '%s\n' "$browser_signature" | node ../../tools/ci/browser-signature-policy.mjs --executable "$browser_path"
+          /usr/bin/codesign --verify --deep --strict --ignore-resources "$browser_app"
           test "$("$browser_path" --version | sed 's/[[:space:]]*$//')" = "Google Chrome for Testing 153.0.8010.12"
           printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$browser_path" >> "$GITHUB_ENV"
           if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
@@ -1342,14 +1349,20 @@ jobs:
           test "$CACHE_MATCH" = "$EXPECTED_CACHE_KEY"
           node tools/ci/native-media-cache.mjs verify --expected-sha256 "$EXPECTED_MANIFEST_SHA"
       - name: Verify restored full Chromium and synthetic media tools
+        timeout-minutes: 2
         shell: bash
         env:
           VERIFIED_BROWSER: ${{ steps.verified-native.outputs.browser-executable }}
         run: |
           set -euo pipefail
           test -x "$VERIFIED_BROWSER"
+          # Require the exact upstream unsealed variant before code-only validation.
+          # The preceding full-cache audit verifies every resource, link and byte.
+          browser_app="${VERIFIED_BROWSER%/Contents/MacOS/*}"
+          browser_signature="$(/usr/bin/codesign --display --verbose=4 "$browser_app" 2>&1)"
+          printf '%s\n' "$browser_signature" | node tools/ci/browser-signature-policy.mjs --executable "$VERIFIED_BROWSER"
+          /usr/bin/codesign --verify --deep --strict --ignore-resources "$browser_app"
           test "$("$VERIFIED_BROWSER" --version | sed 's/[[:space:]]*$//')" = "Google Chrome for Testing 153.0.8010.12"
-          /usr/bin/codesign --verify --deep --strict "${VERIFIED_BROWSER%/Contents/MacOS/*}"
           printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$VERIFIED_BROWSER" >> "$GITHUB_ENV"
           printf '/opt/homebrew/bin\n' >> "$GITHUB_PATH"
           /usr/bin/codesign --verify --strict /opt/homebrew/bin/ffmpeg
