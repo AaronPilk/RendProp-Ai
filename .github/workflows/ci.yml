@@ -1206,7 +1206,7 @@ jobs:
   studio-media-tools:
     # Normal vendor installation happens here, never on the timing runner.
     name: Prepare exact native media cache
-    runs-on: macos-26-arm64
+    runs-on: macos-26
     permissions:
       contents: read
     env:
@@ -1295,7 +1295,7 @@ jobs:
   studio-media-export:
     # Recorded readiness is a prerequisite, not proof of a timing cause.
     name: Studio media exports and native audio timing
-    runs-on: macos-26-arm64
+    runs-on: macos-26
     needs: studio-media-tools
     env:
       MEDIA_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
