@@ -1092,7 +1092,8 @@ struct FlythroughDetailView: View {
             Text("Record or upload a drone-style walkthrough before tagging rooms or areas. Tags follow that video's timeline. A photo-based listing video or sample tour doesn't add walkthrough footage.")
         }
         .fullScreenCover(item: $openedFile, onDismiss: { loadFiles(force: true) }) { item in
-            ListingFileViewer(item: item, listingID: listing.id)
+            ListingFileViewer(item: item, listingID: listing.id,
+                              canExport: mediaExportAdmission(for: currentListing))
         }
         .alert("Couldn't prepare the listing package", isPresented: Binding(get: { packageError != nil }, set: { if !$0 { packageError = nil } })) {
             Button("OK", role: .cancel) { packageError = nil }
@@ -4415,6 +4416,7 @@ private struct MediaThumb: View {
 private struct ListingFilePreview: View {
     let item: ListingMediaItem
     let listingID: UUID
+    let canExport: @MainActor () -> Bool
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
     @State private var saved = false
@@ -4511,7 +4513,7 @@ private struct ListingFilePreview: View {
         let url = item.url
         Task {
             do {
-                try await PhotosLibrarySaver.saveVideo(at: url)
+                try await PhotosLibrarySaver.saveVideo(at: url, while: canExport)
                 await MainActor.run {
                     isSaving = false
                     saved = true
@@ -4534,6 +4536,7 @@ private struct ListingFilePreview: View {
 private struct ListingFileViewer: View {
     let item: ListingMediaItem
     let listingID: UUID
+    let canExport: @MainActor () -> Bool
 
     var body: some View {
         switch item.kind {
@@ -4558,7 +4561,7 @@ private struct ListingFileViewer: View {
                     }
             }
         default:
-            ListingFilePreview(item: item, listingID: listingID)
+            ListingFilePreview(item: item, listingID: listingID, canExport: canExport)
         }
     }
 }
