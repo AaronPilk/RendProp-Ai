@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Rendprop</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<!-- PURPOSE STRINGS — one per API the app actually calls, and no others.
+	     An unused string invites a "we could not locate this functionality"
+	     review question; a MISSING one for an API in use is a hard crash.
+	       • Camera            — AVCaptureSession (Capture/CameraManager.swift)
+	                             + UIImagePickerController(.camera)
+	                             (Screens/FlythroughDetailView.swift · CameraPicker)
+	       • LocationWhenInUse — CLLocationManager one-shot fix to prefill the
+	                             listing address (Screens/NewListingView.swift)
+	       • Motion            — CMMotionManager device-motion log used for
+	                             stabilization (Capture/MotionRecorder.swift)
+	       • PhotoLibraryAdd   — PHPhotoLibrary .addOnly + UIImageWriteToSavedPhotosAlbum
+	       • Microphone        — AVAudioRecorder voiceover capture in Reel Studio
+	                             (Voice/VoiceRecorder.swift). The walkthrough
+	                             capture session still adds NO audio input
+	                             (CameraManager: "video only, no mic"); this
+	                             string exists for the reel voiceover alone.
+	       • SpeechRecognition — SFSpeechRecognizer transcribes that voiceover to
+	                             get word timings for burned-in captions
+	                             (Voice/SpeechTranscriber.swift). On-device
+	                             wherever the device supports it.
+	     DELIBERATELY ABSENT:
+	       • NSPhotoLibraryUsageDescription — every read path is the
+	         out-of-process picker (PHPickerViewController / SwiftUI PhotosPicker)
+	         with no `photoLibrary:` parameter, which needs NO authorization; the
+	         only authorization the app ever requests is `.addOnly`. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Rendprop uses your camera to record a walkthrough of your space and to take listing photos.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Rendprop uses your location to fill in your space's address automatically.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Rendprop records your voice with the microphone when you add a voiceover to a reel. The recording is saved on this iPhone and is only included in a reel you choose to export or share.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Rendprop reads motion data to stabilize your video and guide a steady, level walkthrough.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save rendered flythroughs, listing photos and reels to your photo library.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Rendprop transcribes the voiceover you record so it can put word-by-word captions on your reel. Transcription runs on this iPhone when the device supports it; otherwise the recording is sent to Apple's speech recognition service to be turned into text.</string>
+	<!-- SKADNETWORK — how Meta ads get credited without tracking anybody.
+	     The owner is running Meta ads at this app. SKAdNetwork is Apple's own
+	     attribution channel: iOS holds a per-install conversion value that only
+	     this app may raise (Analytics/Attribution.swift), and when the
+	     measurement window closes iOS — not us — sends a SIGNED postback to the
+	     ad network. The postback carries the campaign and the conversion value
+	     and NO identifier of any kind, so Meta can optimise for subscribers
+	     instead of installs while learning nothing about who anybody is.
+
+	     Listing a network here is what makes it eligible to receive that
+	     postback; it is not an SDK, it ships no code, and it collects nothing.
+	     The app therefore has NO IDFA, NO AppTrackingTransparency prompt and
+	     NSPrivacyTracking stays false in PrivacyInfo.xcprivacy — SKAdNetwork
+	     attribution is expressly not "tracking" as Apple defines it, because
+	     nothing is linked to a person or a device across apps.
+
+	     Both ids are Meta's own, verbatim from Meta's developer documentation
+	     (developers.facebook.com/docs/setting-up/platform-setup/ios/SKAdNetwork,
+	     checked 2026-09-05). Add nothing speculative here: an identifier for a
+	     network we do not buy from is dead weight in App Review. -->
+	<key>SKAdNetworkItems</key>
+	<array>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>v9wttpbfk9.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>n38lu8286q.skadnetwork</string>
+		</dict>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>com.rendprop.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>rendprop</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

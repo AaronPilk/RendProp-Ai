@@ -1,0 +1,1501 @@
+import Foundation
+
+/// Fully offline API — believable sample data + simulated render progress.
+/// The app runs end-to-end on-device with no backend. Every protocol method
+/// returns a plausible value; the AI video features report honestly that they
+/// need the live backend instead of handing back a fake file.
+actor MockAPIClient: APIClient {
+    private var mockRealEstateRole: RealEstateRole = .agent
+    private var mockClientContacts: [UUID: ListingClientContact] = [:]
+    func realEstateRole() async throws -> RealEstateRole { mockRealEstateRole }
+    func updateRealEstateRole(_ role: RealEstateRole) async throws { mockRealEstateRole = role }
+    func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact? { mockClientContacts[listingID] }
+    func saveClientContact(_ contact: ListingClientContact, listingID: UUID, orgID: UUID) async throws -> ListingClientContact {
+        try ClientContactPolicy.validate(contact)
+        guard contact.revision == (mockClientContacts[listingID]?.revision ?? 0) else { throw APIError.server(status: 409, code: "contact_revision_conflict", message: "Client details changed. Reload them before saving.") }
+        var saved = contact; saved.listingID = listingID; saved.revision += 1
+        saved.updatedAt = ISO8601DateFormatter().string(from: Date()); mockClientContacts[listingID] = saved
+        return saved
+    }
+    func sendLeadToClient(leadID: UUID, recipient: String, requestID: UUID, orgID: UUID) async throws -> ClientLeadDelivery {
+        ClientLeadDelivery(state: "email_sent", recipientEmail: recipient, clientName: nil,
+            lastAttemptAt: ISO8601DateFormatter().string(from: Date()), sentAt: ISO8601DateFormatter().string(from: Date()), canResend: true, reason: nil)
+    }
+    // Screenshot walks can open the real empty/error UI without pretending that
+    // an offline capture produced a model or a publicly shareable room.
+    func spatialJobs(listingID: UUID) async throws -> [SpatialJob] { [] }
+    func spatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func createSpatialJob(_ request: SpatialCreateRequest, operationID: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func attachSpatialInputs(jobID: UUID, files: [SpatialInput]) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func startSpatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func reviewSpatialJob(id: UUID, review: SpatialReviewRequest) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func publishSpatialJob(id: UUID, artifactRevision: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func retrySpatialJob(id: UUID, operationID: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func cancelSpatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func resumeSpatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    // The offline demo plays a switched-on service so the UI walk exercises the
+    // real product screen (the simulator still reports it cannot capture and the
+    // library stays empty — nothing is faked). `-ui.spatial disabled` plays the
+    // switched-off backend so a walk can prove the Home tile disappears.
+    func spatialCapability() async throws -> SpatialCapability {
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-ui.spatial"), i + 1 < args.count, args[i + 1] == "disabled" {
+            return SpatialCapability(enabled: false, reason: "mock")
+        }
+        return SpatialCapability(enabled: true, reason: "ok")
+    }
+    private var renders: [UUID: (render: Render, startedAt: Date)] = [:]
+    /// Listings created/updated offline, keyed by id — so `listings()` and
+    /// `updateListing` round-trip like a real server would.
+    private var created: [UUID: Listing] = [:]
+
+    // MARK: - Listings
+
+    func listings() async throws -> [Listing] {
+        try? await Task.sleep(nanoseconds: 350_000_000) // feel like a network
+        // Samples for the CURRENT business type (a venue owner sees venues, not
+        // houses) plus anything created offline this session.
+        let live = created.values.sorted { $0.createdAt > $1.createdAt }
+        return SpaceType.current.sampleListings + live
+    }
+
+    func createListing(_ listing: Listing) async throws -> Listing {
+        var l = listing
+        l.isSample = false
+        l.serverID = l.serverID ?? UUID()
+        created[l.id] = l
+        return l
+    }
+
+    func updateListing(_ listing: Listing) async throws -> Listing {
+        var l = listing
+        if l.status == .uploading { l.status = .processing }   // mirror the live mapping
+        created[l.id] = l
+        return l
+    }
+
+    func deleteListing(serverID: UUID) async throws {
+        // Offline Recently deleted: keep what the server would keep for 30 days.
+        if let row = created.first(where: { $0.value.serverID == serverID || $0.key == serverID })?.value {
+            mockTrash[serverID] = TrashedListing(id: serverID, orgID: row.serverOrgID ?? UUID(uuidString: "00000000-0000-4000-8000-00000000c0de")!,
+                                                 address: row.address, spaceType: row.spaceType, mainPhotoKey: nil,
+                                                 deletedAt: Date(), restorableUntil: Date().addingTimeInterval(30 * 86_400),
+                                                 hadPublishedTour: row.serverShareURL != nil, canRestore: true)
+            mockTrashRows[serverID] = row
+        }
+        created = created.filter { $0.value.serverID != serverID && $0.key != serverID }
+    }
+
+    private var mockTrash: [UUID: TrashedListing] = [:]
+    private var mockTrashRows: [UUID: Listing] = [:]
+    func trashedListings() async throws -> [TrashedListing] {
+        mockTrash.values.filter { $0.restorableUntil > Date() }.sorted { $0.deletedAt > $1.deletedAt }
+    }
+    func restoreListing(serverID: UUID) async throws -> RestoredListing {
+        guard let trashed = mockTrash.removeValue(forKey: serverID) else {
+            throw APIError.server(status: 410, code: "gone", message: "The restore window for this listing has closed.")
+        }
+        if let row = mockTrashRows.removeValue(forKey: serverID) { created[row.serverID ?? serverID] = row }
+        return RestoredListing(id: serverID, orgID: trashed.orgID, address: trashed.address,
+                               republishedRenders: trashed.hadPublishedTour ? 1 : 0, cancelledClientDeliveries: 0)
+    }
+
+
+    // MARK: - Uploads
+
+    func requestUpload(filename: String, bytes: Int64,
+                       listingID: UUID?, sha256: String?, kind: String,
+                       role: String, contentType: String?,
+                       idempotencyKey: String?) async throws -> UploadTicket {
+        // Offline dev: single-mode ticket with no presigned URL → UploadManager
+        // falls back to Simulate (video) / returns the id directly (poster).
+        // `role`/`contentType` are irrelevant with no real buckets.
+        UploadTicket(assetID: UUID().uuidString, mode: .single, putURL: nil, storageKey: nil)
+    }
+
+    func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] {
+        // Offline: no real R2 targets. The multipart path only runs under
+        // useLiveBackend, so this is never exercised offline.
+        [:]
+    }
+
+    func completeUpload(assetID: String,
+                        parts: [(number: Int, etag: String)]?,
+                        metadata: UploadMetadata) async throws {}
+
+    func abortUpload(assetID: String) async throws {}
+    func renewUpload(assetID: String) async throws -> UploadTicket {
+        UploadTicket(assetID: assetID, mode: .single, uploaded: true)
+    }
+
+    func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket] {
+        // Offline: synthetic slots so callers get the right shape. The placeholder
+        // host is never hit unless useLiveBackend is on (which uses LiveAPIClient).
+        files.enumerated().map { (i, _) in
+            let placeholder = URL(string: "https://offline.rendprop.invalid/\(UUID().uuidString)")
+                ?? URL(fileURLWithPath: NSTemporaryDirectory())
+            return PhotoTicket(index: i, assetID: UUID().uuidString,
+                               putURL: placeholder, storageKey: nil)
+        }
+    }
+
+    func completeUpload(id: String, sha256: String?) async throws {}
+
+    // MARK: - Renders
+
+    func createRender(listingID: UUID, assetID: UUID, tier: Render.Tier, durationS: Double,
+                      enhancements: Enhancements) async throws -> Render {
+        let render = Render(listingID: listingID, tier: tier, durationS: durationS,
+                            enhancements: enhancements, status: "queued", progress: 0)
+        renders[render.id] = (render, Date())
+        return render
+    }
+
+    func renderStatus(id: UUID) async throws -> Render {
+        guard let entry = renders[id] else {
+            throw APIError.server(status: 404, code: "not_found", message: "Render not found.")
+        }
+        // Simulated pipeline: ~14s base, +3s per enhancement step.
+        let steps = entry.render.pipelineSteps
+        let total = 14.0 + Double(max(0, steps.count - 7)) * 3.0
+        let elapsed = Date().timeIntervalSince(entry.startedAt)
+        var r = entry.render
+        r.progress = min(1.0, elapsed / total)
+        if r.progress >= 1.0 {
+            r.status = "ready"
+        } else if !steps.isEmpty {
+            r.status = steps[min(steps.count - 1, Int(r.progress * Double(steps.count)))]
+        }
+        return r
+    }
+
+    func publishApp(listingID: UUID, assetID: String, durationS: Double,
+                    speedFactor: Double, tier: RenderTier,
+                    enhancements: Enhancements, chapters: [ChapterInput],
+                    posterAssetID: String?) async throws -> PublishedTour {
+        // Offline dev: synthesize a believable local slug so the flow completes.
+        // Never reached in the live path (publishTour is gated on useLiveBackend,
+        // which uses LiveAPIClient). Deterministic per (listing, asset) — like the
+        // server's idempotent replay — so a retry yields the same slug.
+        let seed = DirectUploader.sha256Hex("publish:\(listingID.uuidString):\(assetID)")
+        let slug = String(seed.prefix(8))
+        return PublishedTour(slug: slug, shareURL: "https://rendprop.com/f/\(slug)",
+                             durationS: durationS, staged: enhancements.isActive,
+                             renderID: UUID())
+    }
+
+    func republishApp(listingID: UUID, assetID: String, durationS: Double,
+                      speedFactor: Double, tier: RenderTier,
+                      enhancements: Enhancements, chapters: [ChapterInput],
+                      posterAssetID: String?) async throws -> PublishedTour {
+        // Offline: the link never changes on a republish — the slug is derived
+        // from the listing alone, exactly what the server guarantees in place.
+        let seed = DirectUploader.sha256Hex("publish:\(listingID.uuidString)")
+        let slug = String(seed.prefix(8))
+        return PublishedTour(slug: slug, shareURL: "https://rendprop.com/f/\(slug)",
+                             durationS: durationS, staged: enhancements.isActive,
+                             renderID: UUID())
+    }
+
+    func updateChapters(renderID: UUID, chapters: [ChapterInput]) async throws {
+        // Offline: chapters live on the local tour already; nothing to sync.
+        _ = (renderID, chapters)
+    }
+
+    // MARK: - Account / usage / leads
+
+    func me() async throws -> UsageSummary {
+        // Offline: no plan, no allowances (nil → the UI hides the rows rather
+        // than showing an invented "Dev" plan). `isAdmin` IS true here so the
+        // owner console is reachable in the offline build — there is no server
+        // to ask, and the mock's job is to make every screen exercisable.
+        UsageSummary(aiSpendCents: 0, renderCount: 0, leadCount: 0, planName: nil,
+                     entitlements: nil, userName: nil, orgName: nil, brandName: nil,
+                     isAdmin: true, role: "owner")
+    }
+
+    func propertyLookup(address: String) async throws -> PropertyLookup {
+        // Offline dev and the UI walk: a plausible record, so the screenshot run
+        // exercises the filled state rather than the empty one. Never a live
+        // call — the real one is metered.
+        _ = address
+        return PropertyLookup(
+            configured: true, cached: true, source: "mock",
+            facts: PropertyFacts(matchedAddress: nil, beds: 4, baths: 3, sqft: 2480,
+                                 lotSqft: 8712, yearBuilt: 1998, propertyType: "Single Family",
+                                 lastSalePriceCents: 61_500_000, lastSaleDate: "2021-06-14"))
+    }
+
+    func leads(listingServerID: UUID?) async throws -> [Lead] {
+        // Offline: leads only exist once a tour is hosted — none to show.
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        // The store-screenshot walk (`-uiTesting -ui.sampleLeads`) gets a
+        // believable inbox so the Leads screen is photographed with leads in
+        // it; every name and message below is invented. Never returned
+        // outside that walk.
+        guard Config.uiTestSampleLeads else { return [] }
+        let now = Date()
+        let address = created.values.sorted { $0.createdAt > $1.createdAt }.first?.address
+            ?? SpaceType.current.sampleListings.first?.address.replacingOccurrences(of: " (Sample)", with: "")
+        func lead(_ n: UInt8, _ name: String, _ minutesAgo: Double, _ message: String,
+                  phone: String? = nil, email: String? = nil, extra: [String: String]? = nil) -> Lead {
+            Lead(id: UUID(uuid: (0, 0, 0, n, 0, 0, 0x40, 0, 0x80, 0, 0, 0, 0, 0, 0, 0xEE)),
+                 listingID: nil, name: name, phone: phone, email: email, message: message,
+                 extra: extra, createdAt: now.addingTimeInterval(-60 * minutesAgo),
+                 source: "tour", listingAddress: address)
+        }
+        return [
+            lead(1, "Jordan Whitfield", 42, "Is Saturday morning open for a showing? We're pre-approved and ready to move.",
+                 phone: "(555) 014-7720", email: "jordan.w@example.com", extra: ["preferred_date": "Saturday 10am"]),
+            lead(2, "Priya Raman", 190, "Loved the tour — what are the HOA fees, and is the pool heated?",
+                 email: "priya.r@example.com"),
+            lead(3, "Marcus & Elena Ortiz", 1_380, "Could we see it Thursday after 5? The kitchen won us over.",
+                 phone: "(555) 014-3391", extra: ["preferred_date": "Thursday evening"]),
+        ]
+    }
+
+    func updateBrand(_ fields: [String: String]) async throws {
+        // Offline: the card already lives in UserDefaults; nothing to sync.
+        _ = fields
+    }
+
+    private var businessLogos: [UUID: String] = [:]
+    private var businessLogoOperations: [UUID: (org: UUID, bytes: Data, expected: String?, url: String)] = [:]
+    func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard !image.isEmpty, image.count <= 512 * 1024, ["image/png", "image/jpeg"].contains(contentType) else { throw CloudSyncError.invalidResponse }
+        if let previous = businessLogoOperations[operationID] {
+            guard previous.org == orgID, previous.bytes == image, previous.expected == expectedLogoURL,
+                  businessLogos[orgID] == previous.url else { throw ClientContactError.conflict }
+            return .init(ok: true, orgID: orgID, businessLogoURL: previous.url, replayed: true)
+        }
+        guard businessLogos[orgID] == expectedLogoURL else { throw ClientContactError.conflict }
+        let value = "https://assets.fixture.invalid/brand/\(orgID.uuidString.lowercased())/\(operationID.uuidString.lowercased()).png"
+        businessLogos[orgID] = value
+        businessLogoOperations[operationID] = (orgID, image, expectedLogoURL, value)
+        return .init(ok: true, orgID: orgID, businessLogoURL: value)
+    }
+    func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard businessLogos[orgID] == expectedLogoURL || businessLogos[orgID] == nil else { throw ClientContactError.conflict }
+        businessLogos.removeValue(forKey: orgID)
+        return .init(ok: true, orgID: orgID, businessLogoURL: nil)
+    }
+    func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt {
+        .init(ok: true, orgID: orgID, businessLogoURL: businessLogos[orgID])
+    }
+
+    private var personalCards: [UUID: PersonalCardReceipt] = [:]
+    func personalCard() async throws -> PersonalCardReceipt {
+        guard let owner = await AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        return personalCards[owner] ?? .init(ok: true, userID: owner, spaceType: nil, publicCard: nil)
+    }
+    func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt {
+        let current = try await personalCard()
+        guard current.userID == expected.userID, SpaceType(rawValue: spaceType) != nil,
+              Set(fields.keys).isSubset(of: Set(AgentCard.fieldNames)) else { throw CloudSyncError.identityChanged }
+        var desired = current.publicCard ?? [:]
+        for (key, value) in fields { if value.isEmpty { desired.removeValue(forKey: key) } else { desired[key] = value } }
+        if current.publicCard != nil && desired == current.publicCard && current.spaceType == spaceType { return current }
+        guard current.spaceType == expected.spaceType,
+              fields.keys.allSatisfy({ current.publicCard?[$0] == expected.publicCard?[$0] }) else { throw ClientContactError.conflict }
+        let receipt = PersonalCardReceipt(ok: true, userID: current.userID, spaceType: spaceType, publicCard: desired)
+        personalCards[current.userID] = receipt
+        return receipt
+    }
+
+    // MARK: - Admin console (offline sample data)
+    //
+    // Believable enough to exercise every state of AdminConsoleView without a
+    // backend: a total that does NOT add up to real spend, a coverage object
+    // that says exactly why, one blocked workspace, and one provider whose
+    // credential is missing. Numbers are grounded in docs/AI-COST-MODEL.md so
+    // they read as plausible rather than random.
+    //
+    // NOTE: no credential value, prefix or length appears here — only env var
+    // NAMES and booleans, matching what the server is allowed to send.
+
+    func adminSpend(window: AdminSpendWindow) async throws -> AdminSpendReport {
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        let f = Self.spendFactor(window)
+        let providers: [AdminSpendBucket] = [
+            Self.bucket("fal", "fal.ai", 310.4, 41, f),
+            Self.bucket("gemini", "Google Gemini", 74.1, 33, f),
+            Self.bucket("anthropic", "Anthropic", 26.9, 18, f),
+            Self.bucket("cloudflare", "Cloudflare Stream", 7.34, 4, f),
+        ]
+        let features: [AdminSpendBucket] = [
+            Self.bucket("hero", "AI hero clip", 240.0, 10, f),
+            Self.bucket("restage", "Virtual restage", 96.3, 26, f),
+            Self.bucket("declutter", "Auto-declutter", 52.8, 41, f),
+            Self.bucket("qc", "QC drift judge", 22.5, 15, f),
+            Self.bucket("stream_deliver", "Tour delivery", 7.14, 4, f),
+        ]
+        let orgs: [AdminSpendOrg] = [
+            AdminSpendOrg(orgId: "0f1e2d3c-4b5a-4968-8776-655443322110",
+                          orgName: "Harbor Realty", plan: "pro",
+                          totalCents: Self.round4(299.84 * f),
+                          rows: Self.scaleRows(74, f), share: 0.7161),
+            AdminSpendOrg(orgId: "3c2b1a09-8877-4655-a443-322110ffeedd",
+                          orgName: "Fixture Agent", plan: "free",
+                          totalCents: Self.round4(118.9 * f),
+                          rows: Self.scaleRows(22, f), share: 0.2839),
+        ]
+        return AdminSpendReport(
+            window: window.rawValue,
+            from: Self.iso(Date().addingTimeInterval(-Self.windowSeconds(window))),
+            to: Self.iso(Date()),
+            generatedAt: Self.iso(Date()),
+            totalCents: Self.round4(418.74 * f),
+            ledgerRows: Self.scaleRows(96, f),
+            truncated: false,
+            byProvider: providers,
+            byFeature: features,
+            byOrg: orgs,
+            coverage: Self.sampleCoverage)
+    }
+
+    func adminProviders() async throws -> AdminProvidersReport {
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        let providers: [AdminProvider] = [
+            AdminProvider(
+                key: "gemini", name: "Google Gemini", kind: "ai", billable: true,
+                credentialEnv: "GEMINI_API_KEY", envNames: ["GEMINI_API_KEY"],
+                configured: true, ledgerProvider: "gemini",
+                models: [
+                    AdminProviderModel(
+                        sku: "gemini-2.5-flash-image",
+                        label: "Nano Banana — image edit",
+                        unit: "image", unitCostCents: 3.9,
+                        trigger: "POST /ai-photo (AI Photo Studio: twilight, sky, lawn, declutter, stage); worker restage",
+                        source: "docs/AI-COST-MODEL.md §1 — Nano Banana direct"),
+                ]),
+            AdminProvider(
+                key: "fal", name: "fal.ai", kind: "ai", billable: true,
+                credentialEnv: "FAL_KEY", envNames: ["FAL_KEY"],
+                configured: true, ledgerProvider: "fal",
+                models: [
+                    AdminProviderModel(
+                        sku: "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video",
+                        label: "Seedance 1.0 Pro Fast — image-to-video",
+                        unit: "second of generated clip", unitCostCents: 4.8,
+                        trigger: "POST /ai-video/reel-clip (Reel clip); POST /ai-video/aerial (grounded); worker hero clip",
+                        source: "docs/AI-COST-MODEL.md §1"),
+                    AdminProviderModel(
+                        sku: "fal-ai/flux-pro/v1/fill",
+                        label: "Flux Fill — masked inpaint",
+                        unit: "image", unitCostCents: 4.0,
+                        trigger: "Worker auto-declutter (masked region only)",
+                        source: "docs/AI-COST-MODEL.md §1"),
+                ]),
+            AdminProvider(
+                key: "anthropic", name: "Anthropic", kind: "ai", billable: true,
+                credentialEnv: "ANTHROPIC_API_KEY", envNames: ["ANTHROPIC_API_KEY"],
+                configured: true, ledgerProvider: "anthropic",
+                models: [
+                    AdminProviderModel(
+                        sku: "claude-haiku-4.5",
+                        label: "Claude Haiku 4.5 — QC drift judge",
+                        unit: "4-image QC call", unitCostCents: 0.9,
+                        trigger: "Worker QC after each enhanced segment; escalates to Sonnet on low confidence",
+                        source: "docs/AI-COST-MODEL.md §3"),
+                ]),
+            AdminProvider(
+                key: "kie", name: "KIE.ai (fallback route)", kind: "ai", billable: true,
+                credentialEnv: "KIE_API_KEY", envNames: ["KIE_API_KEY"],
+                configured: false, ledgerProvider: "kie",
+                models: [
+                    AdminProviderModel(
+                        sku: "kie/nano-banana",
+                        label: "Nano Banana via KIE",
+                        unit: "image", unitCostCents: 9.0,
+                        trigger: "Only when the Google direct route fails",
+                        source: "docs/AI-COST-MODEL.md §1 — via KIE"),
+                ]),
+            AdminProvider(
+                key: "cloudflare", name: "Cloudflare (R2 + Stream)", kind: "infra", billable: true,
+                credentialEnv: "CLOUDFLARE_ACCOUNT_ID",
+                envNames: ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"],
+                configured: true, ledgerProvider: "cloudflare",
+                models: [
+                    AdminProviderModel(
+                        sku: "stream/delivery",
+                        label: "Stream delivery",
+                        unit: "minute watched", unitCostCents: 0.1,
+                        trigger: "Every hosted tour view",
+                        source: "docs/AI-COST-MODEL.md §3"),
+                ]),
+            AdminProvider(
+                key: "topaz", name: "Topaz Labs", kind: "ai", billable: true,
+                credentialEnv: "TOPAZ_API_KEY", envNames: ["TOPAZ_API_KEY"],
+                configured: false, ledgerProvider: nil,
+                models: [
+                    AdminProviderModel(
+                        sku: "topaz/video-upscale",
+                        label: "Drone-glide upscale",
+                        unit: "clip", unitCostCents: nil,
+                        trigger: "POST /ai-video/drone (Team add-on)",
+                        source: "No committed price in the repo for this SKU."),
+                ]),
+        ]
+        return AdminProvidersReport(generatedAt: Self.iso(Date()),
+                                    providerCount: providers.count,
+                                    configuredCount: providers.filter { $0.configured == true }.count,
+                                    providers: providers)
+    }
+
+    func adminUsage() async throws -> AdminUsageReport {
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        let orgs: [AdminOrgUsage] = [
+            AdminOrgUsage(
+                orgId: "0f1e2d3c-4b5a-4968-8776-655443322110",
+                orgName: "Harbor Realty", plan: "pro", planRaw: "pro",
+                trialEndsAt: nil,
+                spendCentsMonth: 299.84, cogsCeilingCents: 5000,
+                spendShareOfCeiling: 0.06,
+                // Pro caps as of migration 0044 (Products.swift `allowances`).
+                rendersUsed: 6, rendersCap: 10,
+                photoEditsUsed: 88, photoEditsCap: 200,
+                reelsUsed: 3, reelsCap: 12,
+                aerialsUsed: 1, aerialsCap: 4,
+                droneUsed: 0, droneCap: 0,
+                jobsInFlight: 1, jobsOrphaned: 0,
+                blocked: false, blockedReasons: []),
+            AdminOrgUsage(
+                orgId: "3c2b1a09-8877-4655-a443-322110ffeedd",
+                orgName: "Fixture Agent", plan: "free", planRaw: "trial",
+                trialEndsAt: Self.iso(Date().addingTimeInterval(-3 * 86_400)),
+                spendCentsMonth: 118.9, cogsCeilingCents: 800,
+                spendShareOfCeiling: 0.1486,
+                // The real-estate free week (3 tours, 60 edits, 4 clips, 2
+                // aerial intros), used up — which is what blocks it.
+                rendersUsed: 3, rendersCap: 3,
+                photoEditsUsed: 60, photoEditsCap: 60,
+                reelsUsed: 2, reelsCap: 4,
+                aerialsUsed: 1, aerialsCap: 2,
+                droneUsed: 0, droneCap: 1,
+                jobsInFlight: 1, jobsOrphaned: 1,
+                blocked: true,
+                blockedReasons: ["renders_at_cap", "photo_edits_at_cap", "orphaned_jobs"]),
+        ]
+        return AdminUsageReport(generatedAt: Self.iso(Date()),
+                                month: Self.currentMonth,
+                                monthStart: Self.iso(Self.startOfMonth),
+                                orgCount: orgs.count,
+                                blockedCount: orgs.filter { $0.blocked == true }.count,
+                                truncated: false,
+                                orgs: orgs)
+    }
+
+    func adminHealth() async throws -> AdminHealthReport {
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        let providers: [AdminHealthProvider] = [
+            AdminHealthProvider(
+                key: "fal", name: "fal.ai", credentialEnv: "FAL_KEY",
+                configured: true, status: "ok", ledgerProvider: "fal",
+                lastSuccessAt: Self.iso(Date().addingTimeInterval(-1_800)),
+                lastSuccessDetail: "hero / fal-ai/bytedance/seedance/v1/pro/fast/image-to-video",
+                rowsInWindow: 41, spendCentsInWindow: 310.4),
+            AdminHealthProvider(
+                key: "gemini", name: "Google Gemini", credentialEnv: "GEMINI_API_KEY",
+                configured: true, status: "ok", ledgerProvider: "gemini",
+                lastSuccessAt: Self.iso(Date().addingTimeInterval(-7_400)),
+                lastSuccessDetail: "restage / gemini-2.5-flash-image",
+                rowsInWindow: 33, spendCentsInWindow: 74.1),
+            AdminHealthProvider(
+                key: "anthropic", name: "Anthropic", credentialEnv: "ANTHROPIC_API_KEY",
+                configured: true, status: "idle", ledgerProvider: "anthropic",
+                lastSuccessAt: nil, lastSuccessDetail: nil,
+                rowsInWindow: 0, spendCentsInWindow: 0),
+            AdminHealthProvider(
+                key: "topaz", name: "Topaz Labs", credentialEnv: "TOPAZ_API_KEY",
+                configured: false, status: "unconfigured", ledgerProvider: nil,
+                lastSuccessAt: nil, lastSuccessDetail: nil,
+                rowsInWindow: 0, spendCentsInWindow: 0),
+            AdminHealthProvider(
+                key: "kie", name: "KIE.ai (fallback route)", credentialEnv: "KIE_API_KEY",
+                configured: false, status: "unconfigured", ledgerProvider: "kie",
+                lastSuccessAt: nil, lastSuccessDetail: nil,
+                rowsInWindow: 0, spendCentsInWindow: 0),
+        ]
+        let failures = AdminJobFailures(
+            windowDays: 7, failedJobs: 3, orphanedJobs: 1,
+            lastFailureAt: Self.iso(Date().addingTimeInterval(-2 * 86_400)),
+            lastFailureStep: "enhance", lastFailureType: "ProviderError",
+            byStep: [AdminFailureStep(key: "enhance", count: 2),
+                     AdminFailureStep(key: "reaper", count: 1)])
+        return AdminHealthReport(
+            generatedAt: Self.iso(Date()),
+            checkedProviderApis: false,
+            note: "No provider API is called by this route. Success is inferred from cost ledger rows; "
+                + "failures are render-job failures, which are not attributed to a provider.",
+            windowDays: 7,
+            providers: providers,
+            jobFailures: failures)
+    }
+
+    // MARK: Admin sample-data helpers
+
+    /// The offline coverage story — the same shape and the same honesty the
+    /// live contract requires: the ledger does NOT see in-app AI spend.
+    private static let sampleCoverage = AdminSpendCoverage(
+        complete: false,
+        headline: "Ledger covers worker renders only — app AI spend is NOT counted.",
+        representedCount: 3,
+        missingCount: 2,
+        sources: [
+            AdminCoverageSource(
+                key: "worker_pipeline",
+                label: "Worker render pipeline (declutter / restage / hero / QC)",
+                represented: true,
+                detail: "The pipeline writes one cost ledger row per metered provider call.",
+                reference: "services/pipeline/cost_ledger.py"),
+            AdminCoverageSource(
+                key: "stream_delivery",
+                label: "Cloudflare Stream delivery",
+                represented: true,
+                detail: "Metered per minute watched and written to the ledger.",
+                reference: "docs/AI-COST-MODEL.md §3"),
+            AdminCoverageSource(
+                key: "r2_storage",
+                label: "R2 storage and operations",
+                represented: true,
+                detail: "Rolled up per job at completion.",
+                reference: "docs/AI-COST-MODEL.md §3"),
+            AdminCoverageSource(
+                key: "app_ai_photo",
+                label: "In-app AI photo edits (POST /ai-photo)",
+                represented: false,
+                detail: "The ai-photo edge function never writes a cost ledger row, so every Photo "
+                    + "Studio edit is invisible here and to the per-org monthly COGS ceiling. Real "
+                    + "spend is HIGHER than the number above.",
+                reference: "docs/handoff/E-network.md §2 (finding F-E-15)"),
+            AdminCoverageSource(
+                key: "app_ai_video",
+                label: "In-app AI video (reel clips, aerial intros, drone upscales)",
+                represented: false,
+                detail: "The ai-video edge function submits billable fal jobs and writes no ledger row.",
+                reference: "docs/handoff/E-network.md §2 (finding F-E-15)"),
+        ])
+
+    private static func bucket(_ key: String, _ label: String,
+                               _ cents: Double, _ rows: Int, _ factor: Double) -> AdminSpendBucket {
+        AdminSpendBucket(key: key, label: label,
+                         totalCents: round4(cents * factor),
+                         rows: scaleRows(rows, factor),
+                         share: round4(cents / 418.74))
+    }
+
+    /// Scales the 7-day sample so switching the window visibly changes the numbers.
+    private static func spendFactor(_ window: AdminSpendWindow) -> Double {
+        switch window {
+        case .today:      return 0.16
+        case .sevenDays:  return 1.0
+        case .thirtyDays: return 3.7
+        }
+    }
+
+    private static func windowSeconds(_ window: AdminSpendWindow) -> TimeInterval {
+        switch window {
+        case .today:      return 86_400
+        case .sevenDays:  return 7 * 86_400
+        case .thirtyDays: return 30 * 86_400
+        }
+    }
+
+    private static func round4(_ value: Double) -> Double {
+        (value * 10_000).rounded() / 10_000
+    }
+
+    private static func scaleRows(_ rows: Int, _ factor: Double) -> Int {
+        max(0, Int((Double(rows) * factor).rounded()))
+    }
+
+    private static func iso(_ date: Date) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.string(from: date)
+    }
+
+    private static var startOfMonth: Date {
+        let cal = Calendar.current
+        let parts = cal.dateComponents([.year, .month], from: Date())
+        return cal.date(from: parts) ?? Date()
+    }
+
+    private static var currentMonth: String {
+        let parts = Calendar.current.dateComponents([.year, .month], from: Date())
+        let year = parts.year ?? 2026
+        let month = parts.month ?? 1
+        return String(format: "%04d-%02d", year, month)
+    }
+
+    // MARK: - AI routing brain (offline sample data)
+    //
+    // Four tasks, chosen to put every state of AdminRoutingView on screen with
+    // no backend:
+    //
+    //   • photo.stage        a RETIREMENT tombstone (enabled:false + a
+    //                        retire_after) sitting next to its successor, and a
+    //                        `legacy` row that must never get a switch.
+    //   • video.reel_clip    an OPEN CIRCUIT on the third step, and a DISABLED
+    //                        Kie step whose note starts "Disabled until …" —
+    //                        the legal reason a provider is off, which the
+    //                        screen prints verbatim. It shares `same_model_as`
+    //                        with step 1, so the "same model as fal" chip draws
+    //                        and an owner can see it is a cheaper QUEUE, not a
+    //                        different model.
+    //   • judge.fair_housing our own offline regex at 0c / no_retention as
+    //                        step 1 — the row that proves "the regex always
+    //                        runs first" is a table row, not a convention.
+    //   • 3d.world           the one min_plan above free, and the one task with
+    //                        NO legacy row (`legacy: null`) because nothing
+    //                        ships for it yet.
+    //
+    // The flag starts OFF, exactly as it ships. Both writes MUTATE this actor's
+    // state and answer the server's small ack shape, so the screen's
+    // write → re-read loop behaves offline the way it does live: a switch moves
+    // only after the "server" has confirmed it. Route ids are stable uuids so a
+    // toggle survives the re-read.
+
+    /// The master flag, offline. Ships OFF — see `handleRoutingWrite`.
+    private var routingFlagEnabled = false
+    private var routingFlagChangedAt: String?
+    private var routingFlagChangedByYou = false
+    /// route_id → the `enabled` the console last set, overriding the fixture.
+    private var routingStepOverrides: [String: Bool] = [:]
+
+    func adminRouting() async throws -> AdminRoutingReport {
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        let tasks = Self.routingTasks(now: Date()).map { task in
+            var t = task
+            let steps = (t.steps ?? []).map { step -> AdminRoutingStep in
+                guard let id = step.routeId, let override = routingStepOverrides[id] else { return step }
+                var s = step
+                s.enabled = override
+                return s
+            }
+            t.steps = steps
+            // Recomputed, never carried over: a step the console just switched
+            // has to change this count or the summary line would lie.
+            t.liveStepCount = steps.filter {
+                $0.isEnabled && !$0.isLegacyStep && !$0.hasRetired
+            }.count
+            return t
+        }
+        return AdminRoutingReport(
+            generatedAt: Self.iso(Date()),
+            enabled: routingFlagEnabled,
+            // Both audit booleans are ALWAYS sent, like the server's — it emits
+            // `false`/`false` on a flag nobody has touched, never null. The
+            // console has to read "nobody has changed this yet" off that, so
+            // the mock must not hand it a friendlier shape than the wire does.
+            flag: AdminRoutingFlag(enabled: routingFlagEnabled,
+                                   changedAt: routingFlagChangedAt,
+                                   changedByIsYou: routingFlagChangedAt != nil && routingFlagChangedByYou,
+                                   changedByRecorded: routingFlagChangedAt != nil),
+            spendWindowDays: 30,
+            spendTruncated: false,
+            routesTruncated: false,
+            note: Self.routingNote,
+            policies: [AdminRoutingPolicy(plan: "free", policy: "cheapest"),
+                       AdminRoutingPolicy(plan: "solo", policy: "cheapest"),
+                       AdminRoutingPolicy(plan: "pro", policy: "best"),
+                       AdminRoutingPolicy(plan: "team", policy: "best")],
+            routes: tasks)
+    }
+
+    func adminSetRoutingFlag(enabled: Bool) async throws -> AdminRoutingWriteAck {
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        routingFlagEnabled = enabled
+        routingFlagChangedAt = Self.iso(Date())
+        routingFlagChangedByYou = true
+        // The server's own sentences, word for word — the screen shows this
+        // note verbatim, so a paraphrase here would hide a wording change.
+        return AdminRoutingWriteAck(
+            ok: true,
+            enabled: enabled,
+            changedAt: routingFlagChangedAt,
+            note: enabled
+                ? "The router is ON. Each task now resolves to its table-driven chain."
+                : "The router is OFF. Every task resolves to its legacy step — behaviour is exactly what shipped.")
+    }
+
+    func adminSetRouteStep(routeID: String, enabled: Bool) async throws -> AdminRoutingWriteAck {
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        let id = routeID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let all = Self.routingTasks(now: Date())
+        guard let task = all.first(where: { ($0.steps ?? []).contains { $0.routeId == id } }),
+              let step = (task.steps ?? []).first(where: { $0.routeId == id }) else {
+            throw APIError.server(status: 404, code: "not_found", message: "No such route step")
+        }
+        // The legacy row is the flag-OFF answer: enabling it would put today's
+        // model into a flag-ON chain too, disabling it would delete that
+        // answer. The server 409s it, so the mock does — offline must not be
+        // the one build where that switch appears to work.
+        guard !step.isLegacyStep else {
+            throw APIError.server(
+                status: 409, code: "conflict",
+                message: "That is the task's legacy step (the flag-off answer) and is not switchable. "
+                    + "Turn the router itself off with POST /admin/routing/flag instead.")
+        }
+        routingStepOverrides[id] = enabled
+        // The step ack carries NO `note` — the flag ack is the only one that
+        // does (docs/ADMIN-CONSOLE-CONTRACT.md §POST /admin/routing/step).
+        return AdminRoutingWriteAck(
+            ok: true,
+            enabled: enabled,
+            changedAt: Self.iso(Date()),
+            note: nil,
+            routeId: id,
+            task: task.task,
+            position: step.position,
+            provider: step.provider,
+            model: step.model,
+            auditRecorded: true)
+    }
+
+    // MARK: Routing sample-data helpers
+
+    /// The server's own paragraph about what the 30-day figures mean. Printed
+    /// verbatim by the console, so it is copied here verbatim too.
+    private static let routingNote =
+        "With `enabled` false every task resolves to its `legacy` step and behaviour is exactly "
+        + "what shipped. `spend_30d_cents` is matched on the EXACT (provider, model) pair a cost_ledger "
+        + "row carries, so a zero means no row with that exact pair in the window — not that the step is unused."
+
+    private static func routingTasks(now: Date) -> [AdminRoutingTask] {
+        [routingPhotoStage(now: now),
+         routingReelClip(now: now),
+         routingFairHousing(now: now),
+         routingWorld(now: now)]
+    }
+
+    /// A chain with a retirement tombstone in it, plus the legacy row.
+    private static func routingPhotoStage(now: Date) -> AdminRoutingTask {
+        let steps: [AdminRoutingStep] = [
+            routingStep(id: "8f1c0a41-0001-4c2a-9f10-1a2b3c4d5e01", position: 1,
+                        provider: "gemini", model: "gemini-3.1-flash-image",
+                        unit: "image", unitCents: 6.7,
+                        capabilities: ["prompt-edit", "fidelity"], maxLatencyS: 60,
+                        privacyTier: "retained_30d", enabled: true,
+                        health: routingHealth(now: now, okAgo: 1_800, failures: 0, p95: 4_200),
+                        spendCents: 74.1, spendRows: 33),
+            routingStep(id: "8f1c0a41-0002-4c2a-9f10-1a2b3c4d5e02", position: 2,
+                        provider: "openai", model: "gpt-image-2",
+                        unit: "image", unitCents: 4.1,
+                        capabilities: ["prompt-edit", "fidelity", "mask"], maxLatencyS: 120,
+                        privacyTier: "retained_30d", enabled: true,
+                        note: "This is the medium-quality 1024 floor — higher quality costs more",
+                        health: routingHealth(now: now, okAgo: 6 * 86_400, failures: 0, p95: 9_100),
+                        spendCents: 0, spendRows: 0),
+            // Retirement tombstone: never routed, kept so the retirement is a
+            // fact in the table rather than a sentence in a document.
+            routingStep(id: "8f1c0a41-0090-4c2a-9f10-1a2b3c4d5e90", position: 90,
+                        provider: "gemini", model: "gemini-2.5-flash-image",
+                        unit: "image", unitCents: 3.9,
+                        capabilities: ["prompt-edit"], maxLatencyS: 60,
+                        privacyTier: "retained_30d", enabled: false,
+                        retireAfter: "2026-10-02",
+                        note: "RETIRED 2026-10-02. Superseded by gemini-3.1-flash-image (step 1).",
+                        health: nil, spendCents: 0, spendRows: 0),
+            routingLegacyStep(id: "8f1c0a41-0099-4c2a-9f10-1a2b3c4d5e99", position: 99,
+                              provider: "gemini", model: "gemini-2.5-flash-image",
+                              unit: "image", unitCents: 3.9,
+                              capabilities: ["prompt-edit"],
+                              spendCents: 118.9, spendRows: 41),
+        ]
+        return routingTask("photo.stage", steps: steps)
+    }
+
+    /// The one with an OPEN CIRCUIT and the "Disabled until …" Kie step.
+    private static func routingReelClip(now: Date) -> AdminRoutingTask {
+        let family = "bytedance/seedance-1.0-pro-fast"
+        let steps: [AdminRoutingStep] = [
+            routingStep(id: "6b2d1e52-0001-4a33-8c44-5d6e7f801101", position: 1,
+                        provider: "fal", model: "bytedance/seedance/v1/pro/fast/image-to-video",
+                        unit: "second", unitCents: 4.86,
+                        capabilities: ["i2v", "1080p", "5s", "6s", "16:9", "9:16"], maxLatencyS: 600,
+                        sameModelAs: family, privacyTier: "retained_30d", enabled: true,
+                        health: routingHealth(now: now, okAgo: 900, failures: 0, p95: 41_000),
+                        spendCents: 310.4, spendRows: 41),
+            // Disabled on purpose. The note leads with "Disabled until" because
+            // that prefix is what the console prints VERBATIM — it is the legal
+            // reason the step is off, and paraphrasing one would be the bug.
+            routingStep(id: "6b2d1e52-0002-4a33-8c44-5d6e7f801102", position: 2,
+                        provider: "kie", model: "bytedance/v1-pro-fast-image-to-video",
+                        unit: "second", unitCents: 3.6,
+                        capabilities: ["i2v", "1080p", "5s", "6s", "16:9", "9:16"], maxLatencyS: 600,
+                        sameModelAs: family, privacyTier: "trains_by_default", enabled: false,
+                        note: "Disabled until commercial and redistribution rights are confirmed in "
+                            + "writing. privacy_tier is the conservative assumption until Kie's terms "
+                            + "are read — it also keeps customer media off this step if somebody "
+                            + "enables it early.",
+                        health: nil, spendCents: 0, spendRows: 0),
+            // Circuit OPEN: the only availability-independent fallback is the
+            // one having trouble, which is exactly the state worth seeing.
+            routingStep(id: "6b2d1e52-0003-4a33-8c44-5d6e7f801103", position: 3,
+                        provider: "fal", model: "minimax/hailuo-02/standard/image-to-video",
+                        unit: "second", unitCents: 4.5,
+                        capabilities: ["i2v", "768p", "6s", "16:9", "9:16"], maxLatencyS: 600,
+                        privacyTier: "retained_30d", enabled: true,
+                        note: "different model = the only availability-independent fallback; 768p and "
+                            + "6s max, so it is dropped for a caller that hard-requires 1080p",
+                        health: AdminRoutingHealth(
+                            open: true,
+                            openUntil: iso(now.addingTimeInterval(14 * 60)),
+                            consecutiveFailures: 5,
+                            p95LatencyMs: 96_000,
+                            lastOkAt: iso(now.addingTimeInterval(-3 * 86_400)),
+                            lastFailAt: iso(now.addingTimeInterval(-120)),
+                            lastErrorClass: "upstream"),
+                        spendCents: 22.5, spendRows: 5),
+            routingLegacyStep(id: "6b2d1e52-0099-4a33-8c44-5d6e7f801199", position: 99,
+                              provider: "fal",
+                              model: "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video",
+                              unit: "second", unitCents: 4.8,
+                              capabilities: ["i2v", "1080p", "5s", "16:9", "9:16"],
+                              spendCents: 240.0, spendRows: 10),
+        ]
+        return routingTask("video.reel_clip", steps: steps)
+    }
+
+    /// Not a failover chain: our own offline regex always runs first, free, and
+    /// the two models are an OR. Also the only `no_retention` row on screen.
+    private static func routingFairHousing(now: Date) -> AdminRoutingTask {
+        let steps: [AdminRoutingStep] = [
+            routingStep(id: "2a7f9c63-0001-4b18-9e55-0c1d2e3f4a01", position: 1,
+                        provider: "rendprop", model: "fairhousing-regex",
+                        unit: "call", unitCents: 0,
+                        capabilities: ["classifier", "deterministic", "offline"], maxLatencyS: 1,
+                        privacyTier: "no_retention", enabled: true,
+                        note: "our own code (_shared/fairhousing.ts). Runs BEFORE resolveRoute on "
+                            + "every free-text task and cannot be bypassed.",
+                        health: routingHealth(now: now, okAgo: 300, failures: 0, p95: 3),
+                        spendCents: 0, spendRows: 0),
+            routingStep(id: "2a7f9c63-0002-4b18-9e55-0c1d2e3f4a02", position: 2,
+                        provider: "anthropic", model: "claude-haiku-4-5",
+                        unit: "call", unitCents: 0.045,
+                        capabilities: ["classifier", "text"], maxLatencyS: 30,
+                        privacyTier: "retained_30d", enabled: true,
+                        note: "OR with step 3, not a failover: flag if EITHER flags. watch "
+                            + ">= 2026-10-15 for a successor.",
+                        health: routingHealth(now: now, okAgo: 5_400, failures: 0, p95: 1_900),
+                        spendCents: 26.9, spendRows: 18),
+            routingStep(id: "2a7f9c63-0003-4b18-9e55-0c1d2e3f4a03", position: 3,
+                        provider: "openai", model: "gpt-5.6-luna",
+                        unit: "call", unitCents: 0.01,
+                        capabilities: ["classifier", "text"], maxLatencyS: 30,
+                        privacyTier: "retained_30d", enabled: true,
+                        note: "OR with step 2, not a failover: flag if EITHER flags",
+                        health: routingHealth(now: now, okAgo: 5_500, failures: 1, p95: 2_400),
+                        spendCents: 1.2, spendRows: 12),
+        ]
+        return routingTask("judge.fair_housing", steps: steps)
+    }
+
+    /// The one task with NO legacy row — nothing ships for it yet — and the one
+    /// `min_plan` above free.
+    private static func routingWorld(now: Date) -> AdminRoutingTask {
+        let steps: [AdminRoutingStep] = [
+            routingStep(id: "4d5e6f70-0001-4c99-8a11-2b3c4d5e6f01", position: 1,
+                        provider: "worldlabs", model: "marble-1.1",
+                        unit: "world", unitCents: 120.0,
+                        capabilities: ["3d", "world", "image_to_world"], maxLatencyS: 1_800,
+                        minPlan: "pro", privacyTier: "retained_30d", enabled: true,
+                        note: "This is a COGS hole on an unpaid tier. No adapter exists yet, "
+                            + "and WorldLabs retention/training terms are UNVERIFIED — confirm them "
+                            + "before this carries customer media.",
+                        health: nil, spendCents: 0, spendRows: 0),
+        ]
+        return AdminRoutingTask(task: "3d.world",
+                                stepCount: steps.count,
+                                liveStepCount: 1,
+                                legacy: nil,
+                                steps: steps)
+    }
+
+    /// Group a task's steps, deriving both counts the way the server does.
+    private static func routingTask(_ slug: String, steps: [AdminRoutingStep]) -> AdminRoutingTask {
+        let legacy = steps.first(where: { $0.isLegacyStep })
+        return AdminRoutingTask(
+            task: slug,
+            stepCount: steps.count,
+            liveStepCount: steps.filter { $0.isEnabled && !$0.isLegacyStep && !$0.hasRetired }.count,
+            legacy: legacy.map {
+                AdminRoutingLegacy(routeId: $0.routeId, provider: $0.provider, model: $0.model)
+            },
+            steps: steps)
+    }
+
+    private static func routingStep(id: String, position: Int,
+                                    provider: String, model: String,
+                                    unit: String, unitCents: Double,
+                                    capabilities: [String], maxLatencyS: Double,
+                                    minPlan: String = "free",
+                                    sameModelAs: String? = nil,
+                                    privacyTier: String,
+                                    enabled: Bool,
+                                    retireAfter: String? = nil,
+                                    note: String? = nil,
+                                    health: AdminRoutingHealth?,
+                                    spendCents: Double, spendRows: Int) -> AdminRoutingStep {
+        var step = AdminRoutingStep()
+        step.routeId = id
+        step.position = position
+        step.provider = provider
+        step.model = model
+        step.unit = unit
+        step.unitCents = unitCents
+        step.capabilities = capabilities
+        step.maxLatencyS = maxLatencyS
+        step.minPlan = minPlan
+        step.enabled = enabled
+        step.sameModelAs = sameModelAs
+        step.privacyTier = privacyTier
+        step.retireAfter = retireAfter
+        step.isLegacy = false
+        step.note = note
+        step.updatedAt = iso(Date().addingTimeInterval(-86_400))
+        step.health = health
+        // The wire spelling the shared decoder produces is the capital-D one
+        // (`"30d".capitalized == "30D"`); the fixture fills it so the mock
+        // exercises the same accessor a live payload does.
+        step.spend30DCents = round4(spendCents)
+        step.spend30DRows = spendRows
+        return step
+    }
+
+    /// `note == "legacy"` exactly — router.ts looks these up by string
+    /// equality, and the console keys "this is what runs today" off it. Always
+    /// `enabled:false` so it can never leak into a flag-ON chain.
+    private static func routingLegacyStep(id: String, position: Int,
+                                          provider: String, model: String,
+                                          unit: String, unitCents: Double,
+                                          capabilities: [String],
+                                          spendCents: Double, spendRows: Int) -> AdminRoutingStep {
+        var step = routingStep(id: id, position: position, provider: provider, model: model,
+                               unit: unit, unitCents: unitCents, capabilities: capabilities,
+                               maxLatencyS: 600, privacyTier: "retained_30d", enabled: false,
+                               note: "legacy", health: nil,
+                               spendCents: spendCents, spendRows: spendRows)
+        step.isLegacy = true
+        return step
+    }
+
+    private static func routingHealth(now: Date, okAgo: TimeInterval, failures: Int,
+                                      p95: Double) -> AdminRoutingHealth {
+        AdminRoutingHealth(open: false,
+                           openUntil: nil,
+                           consecutiveFailures: failures,
+                           p95LatencyMs: p95,
+                           lastOkAt: iso(now.addingTimeInterval(-okAgo)),
+                           lastFailAt: nil,
+                           lastErrorClass: nil)
+    }
+
+    // MARK: - AI photo (offline stubs)
+
+    func aiPhotoEdit(_ request: AIPhotoEditRequest) async throws -> AIPhotoEditResult {
+        // Offline dev: no Gemini — echo the original back so the UI flow runs
+        // (style/prompt are ignored offline). The disclosure sentence mirrors
+        // public.provenance_disclosure() so the compliance copy is exercised
+        // offline too; nothing is recorded, because there is no audit log here.
+#if targetEnvironment(simulator)
+        if Config.isUITesting && ProcessInfo.processInfo.arguments.contains("-ui.photoWorkFixture") {
+            try await Task.sleep(nanoseconds: 6_000_000_000)
+        } else {
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+#else
+        try await Task.sleep(nanoseconds: 500_000_000)
+#endif
+        return AIPhotoEditResult(imageBase64: request.imageBase64,
+                                 mime: request.mime,
+                                 disclosure: Self.offlineDisclosure(for: request.edit),
+                                 provenanceID: nil,
+                                 provenanceRecorded: false,
+                                 provenanceReason: "You're offline — this edit isn't in the compliance log.")
+    }
+
+    /// Mirror of `public.provenance_disclosure(kind, edit)` for offline dev.
+    private static func offlineDisclosure(for edit: String) -> String {
+        switch edit {
+        case "stage":
+            return "This photo was virtually staged with AI: furniture and decor were digitally added "
+                + "or restyled. Compare with the original to check fixed features, layout and access before publication."
+        case "declutter":
+            return "This photo was digitally decluttered with AI: clutter and personal items were "
+                + "removed. Compare with the original to check fixed features, layout and access before publication."
+        case "twilight":
+            return "This photo was digitally altered with AI: the sky and lighting were changed to "
+                + "simulate dusk. Compare with the original to check property features before publication."
+        case "sky":
+            return "This photo was digitally altered with AI: the sky was replaced. Compare with the original to check property features before publication."
+        case "lawn":
+            return "This photo was digitally altered with AI: the lawn and landscaping were digitally "
+                + "repaired. Compare with the original to check property features before publication."
+        default:
+            return "This photo was digitally altered with AI. Compare with the original to check fixed features, layout and access before publication."
+        }
+    }
+
+    // MARK: - Compliance (offline: nothing is logged, so there is nothing to show)
+
+    func provenance(listingServerID: UUID) async throws -> [ProvenanceRecord] {
+        // Offline dev: the audit log lives server-side. An empty list is the
+        // honest answer — never invented compliance rows.
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        return []
+    }
+
+    func attachProvenanceMedia(provenanceID: String, originalAssetID: String?,
+                               alteredAssetID: String?) async throws {
+        // Offline: there is no provenance row to attach anything to.
+        _ = (provenanceID, originalAssetID, alteredAssetID)
+    }
+
+    func complianceCSV(listingServerID: UUID?) async throws -> Data {
+        // Header-only export so the share flow is exercisable offline.
+        let header = "created_at,listing_id,listing_address,kind,label,edit,style,"
+            + "model_id,disclosure,original_url,altered_url,prompt_summary,id\r\n"
+        return Data(header.utf8)
+    }
+
+    func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion] {
+        // Offline dev: two believable canned suggestions so the SuggestSheet
+        // flow (rows → tap → aiEdit) is fully exercisable without a backend.
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        return [
+            AIEditSuggestion(edit: "twilight",
+                             reason: "Warm dusk light would make this shot feel premium.",
+                             confidence: 0.9),
+            AIEditSuggestion(edit: "declutter",
+                             reason: "A few loose items pull focus from the space itself.",
+                             confidence: 0.65),
+        ]
+    }
+
+    // MARK: - AI copy (offline: plausible words, and the same refusals)
+
+    func aiImprovePrompt(rough: String, roomHint: String?,
+                         listingServerID: UUID?) async throws -> String {
+        _ = listingServerID   // offline: nothing to scope a gate against
+        // Offline dev: echo the idea back, embellished, so the replace-the-field
+        // UX runs end-to-end.
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        let idea = rough.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !idea.isEmpty else {
+            throw APIError.server(status: 400, code: "validation", message: "rough is required")
+        }
+        // The fair-housing gate lives on the server, so offline CANNOT be the
+        // place an agent learns the rule — the same reasoning as `aiVoiceTTS`
+        // below. A rough idea that steers gets refused here too, rather than
+        // being politely rewritten into a prompt the live backend will bounce.
+        if let offending = Self.offlineFairHousingHit(idea) {
+            throw APIError.server(
+                status: 400, code: "unsupported_edit",
+                message: "This can't be turned into an edit prompt: the phrase \"\(offending)\" describes "
+                    + "who should live in the home or what the neighborhood's people are like, rather than "
+                    + "the space in the photo. Describe what you want CHANGED about the picture. "
+                    + "(Offline check — the server's is the authoritative one.)")
+        }
+        let area = (roomHint ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let place = area.isEmpty ? "" : " in the \(area.lowercased())"
+        return idea + place + " — with balanced natural light, true-to-life colors, and crisp detail. "
+            + "Keep the layout and architecture exactly as photographed."
+    }
+
+    /// Offline dev: a believable script built from the SAME facts the live
+    /// route gets, so the whole "Write my script" path — button, replace
+    /// confirmation, the character counter, the address substitution — is
+    /// exercisable with no backend.
+    ///
+    /// It returns the literal `{address}` placeholder exactly as the server
+    /// does. That is deliberate: the substitution is the app's job, and a mock
+    /// that helpfully filled it in would hide a broken substitution until the
+    /// first live call.
+    func aiCopyScript(_ request: AIScriptRequest) async throws -> AIScriptResult {
+        try? await Task.sleep(nanoseconds: 900_000_000)   // feel like a real write
+
+        // Refuse what the live server refuses. A tagline like "great for
+        // families" would produce a script that reads back fine here and is
+        // then rejected by the TTS gate the moment the agent taps "Make the
+        // voice" — which teaches the rule at the worst possible moment.
+        var seededParts: [String] = Array(request.facts.details.values)
+        if let tagline = request.facts.tagline { seededParts.append(tagline) }
+        let seeded = seededParts.joined(separator: " ")
+        if let offending = Self.offlineFairHousingHit(seeded) {
+            throw APIError.server(
+                status: 400, code: "unsupported_edit",
+                message: "This \(request.spaceType == SpaceType.realEstate.rawValue ? "home" : "listing")'s "
+                    + "own details contain the phrase \"\(offending)\", which describes who should live "
+                    + "there rather than the property itself, so a script can't be written from them. "
+                    + "Fair-housing law applies to a spoken script exactly as it does to a written "
+                    + "listing description. Edit that detail and try again. "
+                    + "(Offline check — the server's is the authoritative one.)")
+        }
+        // Refusals a person can act on — these messages are shown VERBATIM by
+        // `AIFailure`, so they are written for the agent, not for a log.
+        guard request.photoCount > 0 else {
+            throw APIError.server(
+                status: 400, code: "validation",
+                message: "Pick the photos for your reel first — the script is written to fit them.")
+        }
+        // The SERVER's window (5-90), not the client's own 10-45 clamp — this
+        // stands in for the server, so it refuses what the server refuses.
+        guard request.targetSeconds >= 5, request.targetSeconds <= 90 else {
+            throw APIError.server(
+                status: 400, code: "validation",
+                message: "A script can only be written for a reel between 5 and 90 seconds long.")
+        }
+
+        let realEstate = request.spaceType == SpaceType.realEstate.rawValue
+        var parts: [String] = ["Welcome to {address}."]
+        let facts = Self.mockFactsLine(request.facts)
+        if !facts.isEmpty { parts.append(facts) }
+        if let tagline = request.facts.tagline?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !tagline.isEmpty {
+            parts.append(tagline.hasSuffix(".") ? tagline : tagline + ".")
+        }
+        let tour = Self.mockTourLine(request.roomTags)
+        if !tour.isEmpty { parts.append(tour) }
+        if let region = request.facts.region?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !region.isEmpty {
+            parts.append("All of it, right here in \(region).")
+        }
+        parts.append(realEstate ? "Come see it in person." : "Come see it for yourself.")
+
+        let script = parts.joined(separator: " ")
+        return AIScriptResult(
+            script: script,
+            characters: script.count,
+            estimatedSeconds: Double(script.count) / AIScriptResult.charactersPerSecond,
+            model: "mock-copy (offline sample)")
+    }
+
+    /// Offline dev: a believable EDIT, so the whole shot-plan path — the varied
+    /// motions, the burned-in shot captions, the varied pacing, the `{address}`
+    /// substitution inside a caption — is exercisable with no backend.
+    ///
+    /// The motions cycle deliberately. Six identical clips is the exact defect
+    /// the shot list exists to fix, so a mock that returned one motion for every
+    /// photo would hide a broken plan until the first live reel.
+    func aiCopyShotlist(_ request: AIShotListRequest) async throws -> AIShotList {
+        // Same script, same refusals, same shape — the shot list is a superset of
+        // the script route and must not disagree with it about anything.
+        let script = try await aiCopyScript(
+            AIScriptRequest(listingServerID: request.listingServerID,
+                            spaceType: request.spaceType,
+                            facts: request.facts,
+                            roomTags: request.photos.compactMap { $0.room },
+                            photoCount: request.photos.count,
+                            targetSeconds: request.targetSeconds,
+                            tone: request.tone))
+
+        let sentences = script.script
+            .replacingOccurrences(of: ". ", with: ".\u{1}")
+            .components(separatedBy: "\u{1}")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        // A hero opener that holds, then quicker detail shots — the pacing a
+        // realtor's editor actually uses. The moves come from `REEL_MOTIONS` (the
+        // real vocabulary `/ai-video/reel-clip` renders) and never repeat back to
+        // back, because six identical clips is the exact defect this route
+        // exists to fix.
+        let motions = ["push_in", "orbit_left", "tilt_up", "rack_focus",
+                       "static_parallax", "pull_back"]
+        let count = request.photos.count
+        var shots: [AIShot] = []
+        for (index, photo) in request.photos.enumerated() {
+            let isOpener = index == 0
+            let isCloser = index == count - 1
+            let room = photo.room?.trimmingCharacters(in: .whitespacesAndNewlines)
+            // NEVER `{address}` in a caption — the live route drops one outright
+            // (COPY-ASSIST-CONTRACT §4.4), and a mock that produced one would
+            // teach the client to expect a substitution the server never asks
+            // for. The token belongs in the spoken line, and it is there.
+            let text: String
+            if isOpener {
+                text = "TAKE THE TOUR"
+            } else if isCloser {
+                text = "BOOK YOUR SHOWING"
+            } else if let room, !room.isEmpty {
+                text = room.uppercased()
+            } else {
+                text = ""            // "" is a normal answer — not every shot carries a caption
+            }
+            shots.append(AIShot(photoID: photo.id,
+                                order: index + 1,                 // 1-based, per the contract
+                                motion: motions[index % motions.count],
+                                room: (room?.isEmpty == false) ? room : nil,
+                                onScreenText: text.isEmpty ? nil : text,
+                                seconds: (isOpener || isCloser) ? 6.0 : 4.0,
+                                voiceLine: index < sentences.count ? sentences[index] : nil))
+        }
+        return AIShotList(shots: shots, script: script.script,
+                          characters: script.characters,
+                          estimatedSeconds: script.estimatedSeconds,
+                          model: "mock-copy (offline sample)")
+    }
+
+    /// "3 beds, 2 baths, 2,100 square feet, $1,175,000." — spoken units, not
+    /// the card's abbreviations, because this is read aloud. Empty when the
+    /// listing has none of them (every non-real-estate type).
+    private static func mockFactsLine(_ f: AICopyFacts) -> String {
+        var bits: [String] = []
+        if let beds = f.beds, beds > 0 { bits.append("\(beds) bed\(beds == 1 ? "" : "s")") }
+        if let baths = f.baths, baths > 0 {
+            let whole = baths.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int(baths)) : String(baths)
+            bits.append("\(whole) bath\(baths == 1 ? "" : "s")")
+        }
+        if let sqft = f.sqft, sqft > 0 { bits.append("\(sqft.formatted()) square feet") }
+        if let price = f.priceLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !price.isEmpty {
+            bits.append(price)
+        }
+        return bits.isEmpty ? "" : bits.joined(separator: ", ") + "."
+    }
+
+    /// The first few tagged areas, in the walk order the caller sent them in.
+    private static func mockTourLine(_ tags: [String]) -> String {
+        let names = tags
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+            .prefix(3)
+        guard !names.isEmpty else { return "" }
+        return "We start at the " + names.joined(separator: ", then the ") + "."
+    }
+
+    // MARK: - AI video (offline stubs — the real flows run only on LiveAPIClient)
+
+    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?,
+                      idempotencyKey: String?) async throws -> AIVideoJob {
+        Self.mockAIVideoJob(kind: "drone", grounded: nil)
+    }
+
+    func aiVideoAerial(_ request: AerialRequest, idempotencyKey: String?) async throws -> AIVideoJob {
+        Self.mockAIVideoJob(kind: "aerial", grounded: request.isGrounded)
+    }
+
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         aspect: String?, framing: String? = nil, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                         listingServerID: UUID?, label: String?,
+                         idempotencyKey: String?) async throws -> AIVideoJob {
+        Self.mockAIVideoJob(kind: "reel", grounded: true)
+    }
+
+    func aiVideoDrift(_ request: DriftCheckRequest) async throws -> DriftVerdict {
+        // Offline dev + the UI walk: pass, so the screenshot run is not gated
+        // on a judge that has no network. The LIVE client is the one under
+        // test for this behaviour.
+        _ = request
+        return DriftVerdict(status: .pass, publishable: true, action: "publish",
+                            message: "", reason: nil)
+    }
+
+    func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {
+        // Offline dev: fail HONESTLY after a short beat. The old stub "completed"
+        // with a text file named .mp4, which AVPlayer and Photos then choked on.
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        return .failed("AI video needs the live backend — you're offline (mock mode).")
+    }
+
+    // MARK: - AI voiceover (offline: a real fixture, honestly labelled)
+
+    func aiVoices() async throws -> [AIVoice] {
+        try? await Task.sleep(nanoseconds: 400_000_000) // feel like a network
+        // The five ElevenLabs stock voices an agent is most likely to pick, so
+        // the picker, the selection state and the preview row all exercise
+        // offline. The ids are the real public premade ids, so a device that
+        // later points at the live backend keeps working with a stored choice.
+        return [
+            AIVoice(voiceId: "21m00Tcm4TlvDq8ikWAM", name: "Rachel", labels: "narration · american · calm"),
+            AIVoice(voiceId: "AZnzlk1XvdvUeBnXmlld", name: "Domi", labels: "narration · american · confident"),
+            AIVoice(voiceId: "EXAVITQu4vr4xnSDxMaL", name: "Sarah", labels: "narration · american · soft"),
+            AIVoice(voiceId: "TxGEqnHWrfWFTfGW9XjX", name: "Josh", labels: "narration · american · deep"),
+            AIVoice(voiceId: "onwK4e9ZLuTAKqWW03F9", name: "Daniel", labels: "narration · british · authoritative"),
+        ]
+    }
+
+    func aiVoiceTTS(text: String, voiceID: String, listingServerID: UUID?,
+                    label: String, idempotencyKey: String) async throws -> AIVoiceResult {
+        try? await Task.sleep(nanoseconds: 1_400_000_000) // TTS takes a beat
+
+        // Offline dev: the fair-housing gate lives on the server, so the offline
+        // path CANNOT be the place an agent learns the rule. Refusing here too
+        // keeps the two paths honest — and keeps a demo from recording a script
+        // that the live backend would reject the moment they go online.
+        if let offending = Self.offlineFairHousingHit(text) {
+            throw APIError.server(
+                status: 400, code: "unsupported_edit",
+                message: "This voiceover script can't be voiced: the phrase \"\(offending)\" describes "
+                    + "who should live in the home, the neighborhood's people, or its safety and schools, "
+                    + "rather than the property itself. Fair-housing law applies to a spoken script exactly "
+                    + "as it does to a written listing description. Describe the space and let the buyer "
+                    + "decide it fits. (Offline check — the server's is the authoritative one.)")
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw APIError.server(status: 400, code: "validation", message: "text is required")
+        }
+        guard trimmed.count <= 1000 else {
+            throw APIError.server(status: 400, code: "validation",
+                                  message: "Script is too long: \(trimmed.count) characters (max 1000).")
+        }
+
+        // Believable word timings: ~2.6 words a second, which is the real
+        // measured pace of an ElevenLabs narration voice, with a longer beat
+        // after sentence-ending punctuation. Real enough that the caption
+        // renderer and the reel stitcher are genuinely exercised offline.
+        let tokens = trimmed.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        var words: [CaptionWord] = []
+        var t = 0.18                                  // a short lead-in of silence
+        for token in tokens {
+            // Longer words take longer; punctuation buys a pause after.
+            let spoken = max(0.16, Double(token.count) * 0.062)
+            words.append(CaptionWord(text: token, start: (t * 1000).rounded() / 1000,
+                                     end: ((t + spoken) * 1000).rounded() / 1000))
+            t += spoken
+            // Written out rather than as a nested ternary: chained ternaries of
+            // Double literals are exactly the shape that has stalled this
+            // project's type-checker before.
+            let pause: Double
+            if token.hasSuffix(".") || token.hasSuffix("!") || token.hasSuffix("?") {
+                pause = 0.30
+            } else if token.hasSuffix(",") || token.hasSuffix(";") {
+                pause = 0.16
+            } else {
+                pause = 0.075
+            }
+            t += pause
+        }
+        let duration = ((t + 0.2) * 1000).rounded() / 1000
+
+        let catalogue = (try? await aiVoices()) ?? []
+        let voiceName = catalogue.first(where: { $0.voiceID == voiceID })?.displayName ?? "Rachel"
+
+        // There is no audio file offline. Point at a URL that does not resolve
+        // rather than at a fake file: the old ai-video stub "completed" with a
+        // text file named .mp4 and AVPlayer choked on it downstream. A caller
+        // that tries to download this gets a clean network failure it can
+        // report, not a corrupt asset it plays.
+        guard let url = URL(string: "https://mock.invalid/ai-voice/\(UUID().uuidString.lowercased()).mp3") else {
+            throw APIError.invalidURL
+        }
+        return AIVoiceResult(
+            audioURL: url,
+            durationS: duration,
+            words: words,
+            voiceName: voiceName,
+            characters: trimmed.count,
+            mime: "audio/mpeg",
+            durationSource: "alignment",
+            disclosure: "This voiceover was generated by AI from a written script. "
+                + "The voice is synthetic and is not the agent's own.",
+            provenanceID: nil,
+            provenanceRecorded: false)
+    }
+
+    // MARK: - AI room chapters (docs/AI-CHAPTERS-CONTRACT.md)
+
+    /// Six believable rooms for a 90-second walkthrough — the shape a real
+    /// `POST /ai-chapters` returns for a three-bedroom single-level house, so
+    /// the whole pre-fill flow (auto-call on an empty tagger, the "Suggest room
+    /// names" button, editing a chip, the warnings footnote) runs offline.
+    ///
+    /// The timestamps are in the SUBMITTED asset's own timeline, exactly as the
+    /// server's are, so a caller that forgets the `speedFactor` conversion for a
+    /// render asset gets the same wrong answer offline that it would get live.
+    /// Offline must not be kinder than production about a contract rule.
+    func aiChapters(listingServerID: UUID, assetID: UUID, maxChapters: Int,
+                    idempotencyKey: String) async throws -> AIChaptersResult {
+        try? await Task.sleep(nanoseconds: 1_200_000_000) // watching a video takes a beat
+
+        let all: [AIChapter] = [
+            AIChapter(label: "Entry", startS: 0, endS: 9, confidence: 0.94,
+                      description: "Tiled entry with a coat closet and a sightline down the hall."),
+            AIChapter(label: "Living Room", startS: 9, endS: 24, confidence: 0.96,
+                      description: "South-facing windows, oak floors and a gas fireplace."),
+            AIChapter(label: "Kitchen", startS: 24, endS: 41, confidence: 0.97,
+                      description: "Quartz counters, a gas range and a walk-in pantry."),
+            AIChapter(label: "Dining", startS: 41, endS: 55, confidence: 0.82,
+                      description: "Open to the kitchen, with a pendant over the table."),
+            AIChapter(label: "Primary", startS: 55, endS: 74, confidence: 0.91,
+                      description: "Corner room with an en-suite and a double closet."),
+            AIChapter(label: "Backyard", startS: 74, endS: 90, confidence: 0.88,
+                      description: "Fenced lawn with a covered patio and mature trees."),
+        ]
+        let kept = Array(all.prefix(max(1, min(24, maxChapters))))
+
+        return AIChaptersResult(
+            chapters: kept,
+            summary: "A single-level three-bedroom laid out around a central hall, "
+                + "with the living space at the front and the primary suite at the back.",
+            videoSeconds: 90,
+            model: "gemini-3.6-flash (offline sample)",
+            costCentsEstimate: 1.05,
+            warnings: kept.count < all.count
+                ? ["\(all.count - kept.count) extra suggestions were trimmed to keep the top \(kept.count)."]
+                : [],
+            disclosure: "This media was digitally altered or generated with AI.",
+            provenanceID: nil,
+            provenanceRecorded: false)
+    }
+
+    // MARK: - Coach (docs/COACH-CONTRACT.md)
+
+    /// Deterministic canned reply with exactly ONE action, so `-uiTesting`
+    /// (CoachShot.swift) can find a stable chip. Names the caller's own
+    /// first listing when one was sent, so the chip round-trips to a real
+    /// project instead of a dead id; with no listings yet, offers
+    /// `start_project` instead — never a fabricated listing id.
+    func coach(_ request: CoachRequest) async throws -> CoachResponse {
+        try? await Task.sleep(nanoseconds: 500_000_000)   // a beat, like a real reply
+
+        if let first = request.context.listings.first {
+            let name = first.title.isEmpty ? "your project" : first.title
+            return CoachResponse(
+                reply: "Let's finish \(name). Once the walkthrough's in, I can help with photos, "
+                    + "or a reel next. Aerial intro is Coming soon.",
+                actions: [CoachResponse.Action(type: "open_tour", label: "Open the tour", listingID: first.id)],
+                suggestedReplies: ["What does publishing do?", "How do I share to the MLS?"],
+                model: "mock-coach")
+        }
+        return CoachResponse(
+            reply: "Let's start your first project — name it, and I'll take it from there.",
+            actions: [CoachResponse.Action(type: "start_project", label: "Start my first project", listingID: nil)],
+            suggestedReplies: ["How do I share to the MLS?", "What does the AI do to my photos?"],
+            model: "mock-coach")
+    }
+
+    /// A DELIBERATELY SMALL offline echo of the server's fair-housing script
+    /// gate — the phrases the contract names, nothing more. The server's
+    /// `_shared/fairhousing.ts` is the authoritative and complete list; this
+    /// exists so an offline demo cannot teach an agent a habit the live backend
+    /// will refuse. Returns the offending phrase, or nil.
+    private static func offlineFairHousingHit(_ text: String) -> String? {
+        let patterns = [
+            "great for families", "perfect for families", "ideal for families",
+            "for a young couple", "young professionals", "family-friendly", "family friendly",
+            "safe neighborhood", "safe neighbourhood", "safe area", "low crime", "crime-free",
+            "good schools", "great schools", "school district",
+            "exclusive community", "exclusive neighborhood", "no kids", "no children",
+            "adults only", "raise a family", "walk to st.", "bachelor pad",
+        ]
+        let haystack = text.lowercased()
+        for p in patterns where haystack.contains(p) { return p }
+        return nil
+    }
+
+    private static func mockAIVideoJob(kind: String, grounded: Bool?) -> AIVideoJob {
+        let id = UUID().uuidString.lowercased()
+        return AIVideoJob(requestId: id,
+                          statusUrl: "https://queue.fal.run/mock/requests/\(id)/status",
+                          responseUrl: "https://queue.fal.run/mock/requests/\(id)",
+                          kind: kind, grounded: grounded, synthetic: true,
+                          // The aerial sentence is a legal requirement, not a
+                          // server nicety — it must be right offline too.
+                          disclosure: kind == "aerial" ? AIVideoJob.aerialFallbackDisclosure : nil,
+                          provenanceID: nil)
+    }
+}

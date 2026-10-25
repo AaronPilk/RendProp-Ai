@@ -1,0 +1,749 @@
+import SwiftUI
+import UIKit
+import Combine
+import AuthenticationServices
+
+/// Render progress. The work itself lives in `AppModel.renderCoordinator`
+/// (started by ReviewSubmitView) — this screen only OBSERVES it, so backing
+/// out, switching tabs or re-opening it never cancels or re-runs a render
+/// (audit F-B-04 / F-D-01). Cancel is an explicit button.
+///
+/// Live backend: a successful on-device render is PUBLISHED to the cloud
+/// (upload role=render → /renders/publish-app) so it gets a real shareable
+/// slug; the in-app tour works either way (local-first, contract §4). The AI
+/// tiers add the server Topaz pass first (skippable). Publishing refreshes the
+/// existing account session. A connection outage preserves the local tour and
+/// its pending publish; signing out regates the app without deleting that work.
+struct RenderStatusView: View {
+    @EnvironmentObject var model: AppModel
+
+    let listing: Listing
+    @State var render: Render
+
+    var body: some View {
+        RenderStatusContent(coordinator: model.renderCoordinator, listing: listing, render: render)
+    }
+}
+
+private struct RenderStatusContent: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var uploads: UploadManager
+    @ObservedObject var coordinator: RenderCoordinator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dismiss) private var dismiss
+
+    let listing: Listing
+    let render: Render
+
+    @State private var showCancelConfirm = false
+    /// The encode is CPU-bound for minutes; on a hot phone iOS throttles it and
+    /// the ring visibly crawls. Say so rather than looking stuck. (Seeded in
+    /// `onAppear` — a `@State` default can't read a type member here.)
+    @State private var isThrottled = false
+    /// When the CURRENT stage started, so the ETA is per-stage rather than
+    /// across the whole job — each stage resets the ring, so an estimate that
+    /// spanned all three would jump backwards every time one finished.
+    @State private var stageStartedAt: Date?
+    @State private var timedStage: RenderJobState.Stage?
+    /// Ticks so the ETA counts down even while `fraction` sits still. A frozen
+    /// "about 2 minutes left" that stays put for five minutes is a lie.
+    @State private var now = Date()
+
+    /// Live copy so the real server share URL (set by publishTour) is picked up.
+    private var currentListing: Listing {
+        model.listings.first(where: { $0.id == listing.id }) ?? listing
+    }
+    private var job: RenderJobState? { coordinator.jobs[listing.id] }
+    private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
+    private var shareURL: URL? {
+        guard let canonical = currentListing.serverShareURL else { return nil }
+        return DeepLink.buyerWebsiteURL(from: canonical, address: currentListing.spaceType == .realEstate ? currentListing.address : nil) ?? canonical
+    }
+    /// THIS listing's type — a type switch while a render is on screen must not
+    /// re-label a house as a venue (industry review P2-5). Samples never render.
+    private var noun: String { currentListing.spaceType.spaceNoun }
+
+    private enum Mode { case working, ready, failed, awaitingConnection, idle }
+
+    private var mode: Mode {
+        if let job {
+            // Waiting still owns a coordinator task so another tap cannot
+            // duplicate it. Keep the completed LOCAL tour usable meanwhile.
+            if job.stage == .awaitingConnection { return .awaitingConnection }
+            if job.isRunning { return .working }
+            switch job.stage {
+            case .failed:
+                return .failed
+            case .awaitingConnection:
+                return .awaitingConnection
+            case .published, .publishFailed, .rendered:
+                return .ready
+            case .cancelled:
+                return tour != nil ? .ready : .failed
+            case .rendering, .enhancing, .publishing:
+                return .working
+            }
+        }
+        // No job in memory (e.g. the app relaunched): decide from the model.
+        return tour != nil ? .ready : .idle
+    }
+
+    private var isWorking: Bool { mode == .working }
+    private var publishFailed: Bool { job?.stage == .publishFailed }
+
+    private static var thermallyThrottled: Bool {
+        let state = ProcessInfo.processInfo.thermalState
+        return state == .serious || state == .critical
+    }
+
+    /// This listing's publish upload is parked waiting for Wi-Fi — the user's
+    /// "ask before uploading on cellular" setting, or a very large file. The
+    /// tour is finished and on the phone; only the share link is waiting
+    /// (audit F-B-08). It finishes by itself on Wi-Fi.
+    private var cellularParked: Bool {
+        guard uploads.pendingCellularConfirmation,
+              let upload = uploads.state,
+              upload.status == .queued, upload.role == "render",
+              let serverID = currentListing.serverID else { return false }
+        return upload.listingID == serverID
+    }
+
+    private var fraction: Double {
+        if let job { return job.fraction }
+        return tour != nil ? 1 : 0
+    }
+
+    var body: some View {
+        VStack(spacing: 26) {
+            Spacer()
+            ring
+            titleBlock
+            captionBlock
+            Spacer()
+            actions
+        }
+        // Fill the whole screen: without this the VStack hugs its widest text and
+        // Theme.bg paints only a centered column.
+        .frame(maxWidth: .infinity)
+        .background(Theme.bg)
+        .navigationTitle(isWorking ? "Creating Tour" : "Your Tour")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(isWorking)
+        .onAppear {
+            isThrottled = Self.thermallyThrottled
+            if stageStartedAt == nil, mode == .working {
+                stageStartedAt = Date()
+                timedStage = job?.stage
+            }
+        }
+        // Each stage refills the ring from zero, so the ETA is per stage and
+        // the clock restarts when the stage does. One estimate spanning all
+        // three would jump backwards every time a stage finished.
+        .onChange(of: job?.stage) { stage in
+            guard stage != timedStage else { return }
+            timedStage = stage
+            stageStartedAt = Date()
+            now = Date()
+        }
+        // Drives the ETA countdown. 5 s is often enough to feel alive and rare
+        // enough to cost nothing; it only runs while something is working.
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { tick in
+            if mode == .working { now = tick }
+        }
+        // `.receive(on:)` is not optional here: the thermal notification is
+        // posted on an arbitrary queue, and touching @State off the main thread
+        // is a SwiftUI violation.
+        .onReceive(NotificationCenter.default
+                    .publisher(for: ProcessInfo.thermalStateDidChangeNotification)
+                    .receive(on: DispatchQueue.main)) { _ in
+            isThrottled = Self.thermallyThrottled
+        }
+        .sessionConnectionNotice(isActive: job?.isRunning == true, onCancel: { cancelNow() })
+        .confirmationDialog(tour == nil ? "Cancel this render?" : "Cancel publishing?",
+                            isPresented: $showCancelConfirm, titleVisibility: .visible) {
+            Button(tour == nil ? "Cancel render" : "Stop publishing", role: .destructive) { cancelNow() }
+            Button("Keep going", role: .cancel) {}
+        } message: {
+            Text(tour == nil
+                 ? "Your video stays on the \(noun) — you can render it again any time."
+                 : "The tour stays on your phone. Publish it later from the \(noun) to get a share link.")
+        }
+    }
+
+    // MARK: - Pieces
+
+    private var ring: some View {
+        ZStack {
+            // Theme.border (not fillSubtle) for the track — reads clearly
+            // against the background in both light and dark.
+            Circle()
+                .stroke(Theme.border, lineWidth: 8)
+            Circle()
+                .trim(from: 0, to: CGFloat(min(max(fraction, 0), 1)))
+                .stroke(Theme.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.easeInOut(duration: 0.3), value: fraction)
+            switch mode {
+            case .ready, .awaitingConnection:
+                Image(systemName: "checkmark")
+                    .font(.system(size: 40, weight: .semibold))
+                    .foregroundStyle(Theme.good)
+                    // The one earned "delight" beat in the whole flow — the
+                    // check pops in on the same frame Haptics.success() fires.
+                    .transition(reduceMotion
+                                ? .opacity
+                                : .scale(scale: 0.7).combined(with: .opacity))
+            case .failed:
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(Theme.warn)
+            case .working:
+                // The number belongs in EVERY running stage. It used to render
+                // only while `.rendering`, so `.enhancing` and `.publishing` —
+                // the two LONGEST stages — fell through to a bare spinner while
+                // the ring around it was still being driven by the real
+                // fraction. Owner feedback, 15 Sep: "there needs to be a actual
+                // loading bar" and "I had to click skip because it was taking
+                // too long". The data was always there; only this branch hid it.
+                Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.ink)
+                    .accessibilityLabel(Text("\(Int(fraction * 100)) percent complete"))
+            case .idle:
+                Image(systemName: "play.circle")
+                    .font(.system(size: 40, weight: .light))
+                    .foregroundStyle(Theme.inkDim)
+            }
+        }
+        .frame(width: 150, height: 150)
+        .animation(reduceMotion
+                   ? .easeOut(duration: 0.2)
+                   : .spring(response: 0.42, dampingFraction: 0.62),
+                   value: mode == .ready)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var title: String {
+        switch mode {
+        case .working:       return job?.phase ?? "Working…"
+        case .ready, .awaitingConnection:
+            return "Your tour is ready"
+        case .failed:        return job?.error ?? "The render didn't finish"
+        case .idle:          return "Ready to render"
+        }
+    }
+
+    private var subtitle: String {
+        switch mode {
+        case .working, .idle:
+            return "\(render.tier.displayName) · \(Formatters.duration(render.durationS)) walkthrough"
+        case .ready, .awaitingConnection:
+            return "Smooth, fast, and ready to fly through."
+        case .failed:
+            return "Nothing was lost — your video is still on this \(noun)."
+        }
+    }
+
+    private var titleBlock: some View {
+        VStack(spacing: 6) {
+            Text(title)
+                .font(.rpTitle)
+                .foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center)
+            Text(subtitle)
+                .font(.rpBody)
+                .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal)
+    }
+
+    @ViewBuilder private var captionBlock: some View {
+        VStack(spacing: 8) {
+            switch mode {
+            case .working:
+                if let step = stepLabel {
+                    Text(step)
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.ink)
+                        .multilineTextAlignment(.center)
+                }
+                if let eta = etaText {
+                    Text(eta)
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                        .multilineTextAlignment(.center)
+                        .monospacedDigit()
+                        .accessibilityIdentifier("render.eta")
+                }
+                Text(workingCaption)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                if isThrottled {
+                    Text("Your phone is hot, so this is running slower than usual. It will finish — leave it plugged in or let it cool if you can.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .multilineTextAlignment(.center)
+                }
+            case .awaitingConnection:
+                Text("Saved on your phone. Publishing will continue automatically when the connection returns — no re-render needed.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("render.awaitingConnection")
+            case .ready:
+                if cellularParked {
+                    Text("Your tour is saved on this phone. The share link finishes uploading on its own as soon as you're on Wi-Fi.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .multilineTextAlignment(.center)
+                } else if publishFailed, shareURL == nil, let message = job?.error {
+                    // `shareURL == nil` matters: a publish that later finished
+                    // out of band (resumed upload, Wi-Fi) must not keep showing
+                    // the old failure next to a working Share button.
+                    Text("Saved on your phone — we couldn't publish the share link. \(message)")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .multilineTextAlignment(.center)
+                    if job?.errorStatus == 402 {
+                        // In-app purchase, and ONLY in-app purchase: StoreKit 2
+                        // subscriptions work on every storefront
+                        // (Purchases/PaywallView.swift). No web pricing link
+                        // sits beside it — an external purchase CTA next to an
+                        // IAP is what 3.1.1 / 3.1.3 read as steering.
+                        // The server sentence above says why (free tier used,
+                        // plan needed). The paywall must not invent a second one.
+                        Button("View plans") {
+                            PaywallRouter.shared.present(reason: .upgrade)
+                        }
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                    }
+                }
+                if let note = job?.note {
+                    Text(note)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .multilineTextAlignment(.center)
+                }
+            case .failed:
+                if model.assets[listing.id] == nil {
+                    Text("The walkthrough video is missing from this phone. Add a video to render again.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.center)
+                }
+            case .idle:
+                Text("The render isn't running. Start it to build your tour on this phone.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(.horizontal, 28)
+    }
+
+    /// "Step 2 of 3 · Enhancing" — a ring that refills from zero on every
+    /// stage reads as starting over unless the stage is named and counted.
+    private var stepLabel: String? {
+        switch job?.stage {
+        case .rendering:  return "Step 1 of 3 · Rendering on your phone"
+        case .enhancing:  return "Step 2 of 3 · Enhancing with AI"
+        case .publishing: return "Step 3 of 3 · Publishing"
+        default:          return nil
+        }
+    }
+
+    /// A per-stage estimate from elapsed time and the real fraction. Says
+    /// nothing below 8% — an estimate off two seconds of data is worse than
+    /// no estimate, because people believe it.
+    private var etaText: String? {
+        guard mode == .working, let started = stageStartedAt else { return nil }
+        let f = min(max(fraction, 0), 1)
+        guard f >= 0.08, f < 1 else { return nil }
+        let elapsed = now.timeIntervalSince(started)
+        guard elapsed > 5 else { return nil }
+        let remaining = elapsed / f - elapsed
+        guard remaining.isFinite, remaining > 0 else { return nil }
+        if remaining < 45 { return "Less than a minute left" }
+        let minutes = Int((remaining / 60).rounded())
+        return minutes <= 1 ? "About a minute left" : "About \(minutes) minutes left"
+    }
+
+    private var workingCaption: String {
+        switch job?.stage {
+        case .enhancing:
+            return "Smoothing motion + upscaling on our render farm — this can take several minutes. Keep the app open."
+        case .publishing:
+            return "Uploading and publishing your tour…"
+        default:
+            return "Keep the app open — this runs right on your phone."
+        }
+    }
+
+    /// The MLS-safe twin of the share link, right where an agent grabs a link
+    /// the moment a tour goes live (W2-C1). The branded page carries the agent
+    /// card, the CTA and the lead form — unbranded virtual-tour rules ban all
+    /// three, and the unbranded field is what syndicates to Zillow/Realtor.com.
+    /// Pasting the branded link there is the fineable mistake. Real estate
+    /// only: `serverUnbrandedURL` is nil for every other business type, so a
+    /// bar or gym never reads "MLS" here (industry review P1-2).
+    @ViewBuilder private var mlsLinkRow: some View {
+        if let mls = currentListing.serverUnbrandedURL {
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    UIPasteboard.general.url = DeepLink.unbrandedWebsiteURL(from: mls, address: currentListing.address) ?? mls
+                    Haptics.success()
+                } label: {
+                    HStack {
+                        Image(systemName: "building.columns.fill")
+                        Text("Copy MLS link (unbranded)").fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 13)
+                    .background(Theme.fillSubtle)
+                    .foregroundStyle(Theme.ink)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                Label("Never put your branded link in an MLS unbranded field — most MLSs fine for that.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    @ViewBuilder private var actions: some View {
+        VStack(spacing: 12) {
+            switch mode {
+            case .working:
+                // Escape hatch for the up-to-20-min AI enhance wait: publish the
+                // standard on-device tour NOW instead of trapping the user.
+                if job?.canSkipEnhance == true {
+                    SecondaryButton(title: "Skip AI enhance & publish now", systemImage: "forward.fill") {
+                        coordinator.skipEnhance(listingID: listing.id)
+                    }
+                    .accessibilityLabel(Text("Skip the AI enhancement and publish the standard tour now"))
+                }
+                Button(role: .destructive) { showCancelConfirm = true } label: {
+                    Text("Cancel")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                }
+                .foregroundStyle(Theme.bad)
+
+            case .failed:
+                if model.assets[listing.id] != nil {
+                    PrimaryButton(title: "Try again", systemImage: "arrow.clockwise") { tryAgain() }
+                }
+                SecondaryButton(title: "Cancel", systemImage: "xmark") {
+                    coordinator.clear(listingID: listing.id)
+                    dismiss()
+                }
+
+            case .idle:
+                if model.assets[listing.id] != nil {
+                    PrimaryButton(title: "Start render", systemImage: "sparkles") { tryAgain() }
+                } else {
+                    SecondaryButton(title: "Back", systemImage: "chevron.left") { dismiss() }
+                }
+
+            case .ready, .awaitingConnection:
+                viewTourButton
+                if let shareURL {
+                    ShareLink(item: shareURL,
+                              subject: Text(listing.address),
+                              message: Text("Fly through \(listing.address) — scroll to walk the \(noun).")) {
+                        HStack {
+                            Image(systemName: "square.and.arrow.up")
+                            Text("Share your link").fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .modifier(RendpropActionLabelSurface(primary: false))
+                    }
+                    mlsLinkRow
+                } else if mode == .awaitingConnection {
+                    SecondaryButton(title: "Cancel publishing", systemImage: "xmark") {
+                        showCancelConfirm = true
+                    }
+                    .accessibilityIdentifier("render.cancelPendingPublish")
+                } else if cellularParked {
+                    // The parked upload finishes the publish by itself through
+                    // UploadManager.didCompleteNotification, so this only has to
+                    // release it — never start a second one.
+                    SecondaryButton(title: "Upload now on cellular", systemImage: "antenna.radiowaves.left.and.right") {
+                        uploads.confirmCellularAndStart()   // SecondaryButton taps the haptic itself
+                    }
+                } else if publishFailed {
+                    SecondaryButton(title: "Retry publish", systemImage: "arrow.clockwise") {
+                        coordinator.publish(listingID: listing.id)
+                    }
+                    .accessibilityIdentifier("render.retryPublish")
+                } else if Config.useLiveBackend, tour != nil {
+                    // Rendered but never published (e.g. publish cancelled).
+                    SecondaryButton(title: "Publish tour", systemImage: "link") {
+                        coordinator.publish(listingID: listing.id, allowEnhance: true)
+                    }
+                    .accessibilityIdentifier("render.publish")
+                }
+            }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 18)
+    }
+
+    private var viewTourButton: some View {
+        NavigationLink {
+            FlythroughDetailView(listing: currentListing)
+        } label: {
+            HStack {
+                Image(systemName: "play.fill")
+                Text("View my tour").fontWeight(.semibold)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 15)
+            .modifier(RendpropActionLabelSurface(primary: true))
+        }
+    }
+
+    // MARK: - Actions
+
+    /// No haptic here: both callers are `PrimaryButton`, which taps one itself —
+    /// firing a second made "Try again" buzz twice (audit F-D-25's rule).
+    private func tryAgain() {
+        guard let asset = model.assets[listing.id] else { return }
+        coordinator.start(listing: currentListing, asset: asset)
+    }
+
+    private func cancelNow() {
+        let hadTour = tour != nil
+        coordinator.cancel(listingID: listing.id)
+        Haptics.selection()
+        if !hadTour {
+            coordinator.clear(listingID: listing.id)
+            dismiss()   // render cancelled → back to Review (the video is still there)
+        }
+    }
+}
+
+// MARK: - Sign in with Apple (required launch and Settings)
+// Lives here (not a standalone file) so it's always in the Xcode target without
+// re-running xcodegen — see the repo's new-file-not-in-target rule.
+
+/// Account admission comes before onboarding and feature screens. Returning
+/// identified accounts can use saved work and on-device capture offline.
+///
+/// Uses the native `SignInWithAppleButton`: generate a fresh nonce, send its
+/// SHA256 as the request `nonce`, then exchange the returned identity token with
+/// Supabase using the RAW nonce (`AuthStore.exchangeAppleIdentityToken`).
+/// Concrete launch screen; Apple's credential exchange remains in SignInView.
+struct RequiredAccountGate: View {
+    var body: some View { SignInView.requiredAccount() }
+}
+
+struct SignInView: View {
+    /// Called once this explicit account sign-in succeeds.
+    var onSignedIn: () -> Void = {}
+    var title: String = "Use Rendprop on your other devices"
+    var subtitle: String = "Sign in with Apple to connect your listings and saved work to your Rendprop account."
+
+    var dismissNote: String = "Your saved work stays on this phone."
+    var requiresAccount = false
+
+    static func requiredAccount() -> SignInView {
+        SignInView(title: "Welcome to Rendprop",
+                   subtitle: "Create an account or sign in with Apple to continue. Your account keeps your listings, saved media and workspace connected.",
+                   dismissNote: "Existing work on this phone stays saved while you sign in.",
+                   requiresAccount: true)
+    }
+
+    /// Ready-made copy for the AI tools (photo edits, aerials, reels).
+    ///
+    /// Existing feature callers can explain a connection/session failure.
+    /// Fresh launches reach the required account gate before any feature UI.
+    static func forAI(_ what: String, onSignedIn: @escaping () -> Void = {}) -> SignInView {
+        SignInView(onSignedIn: onSignedIn,
+                   title: "Couldn't reach your account",
+                   subtitle: "\(what) runs on Rendprop's servers and this phone hasn't been able to connect. Check your connection and try again — or sign in with Apple, which also gets you connected.",
+                   dismissNote: "Not now closes this — everything you set up stays here, and nothing is generated.")
+    }
+
+    /// Reauthentication/account connection sheet for existing callers. The
+    /// launch gate uses requiredAccount(), which has no dismissal path.
+    static func optionalUpgrade(onSignedIn: @escaping () -> Void = {}) -> SignInView {
+        SignInView(onSignedIn: onSignedIn,
+                   title: "Use Rendprop on your other devices",
+                   subtitle: "Sign in with Apple to connect your plan, listings and saved media across your devices.",
+                   dismissNote: "Your saved work stays on this phone.")
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    @State private var rawNonce = ""
+    @State private var isExchanging = false
+    @State private var errorMessage: String?
+    @State private var showQuickStart = false
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Spacer()
+
+            Image(systemName: requiresAccount ? "house.lodge.fill" : "person.crop.circle.badge.checkmark")
+                .font(.system(size: 52, weight: .light))
+                .foregroundStyle(Theme.accent)
+
+            VStack(spacing: 8) {
+                Text(title)
+                    .font(.rpTitle)
+                    .foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center)
+                Text(subtitle)
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+
+            if requiresAccount {
+                Button { showQuickStart = true } label: {
+                    Label("See how Rendprop works", systemImage: "play.circle.fill")
+                        .font(.rpBody).foregroundStyle(Theme.accent)
+                        .padding(.vertical, 8)
+                }
+                .disabled(isExchanging)
+                .accessibilityHint("Plays a short video. No account is needed to watch.")
+                .accessibilityIdentifier("account.quickStartVideo")
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.warn)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+
+            SignInWithAppleButton(.signIn) { request in
+                let raw = AuthStore.randomNonceString()
+                rawNonce = raw
+                request.requestedScopes = [.fullName, .email]
+                request.nonce = AuthStore.sha256(raw)
+            } onCompletion: { result in
+                handle(result)
+            }
+            // Black button on light bg, white on dark — a .black button would
+            // disappear into the near-black dark-mode background.
+            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+            .frame(height: 50)
+            .padding(.horizontal)
+            .disabled(isExchanging)
+            .accessibilityIdentifier("account.signInApple")
+
+            if isExchanging {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Signing in…").foregroundStyle(Theme.inkDim)
+                }
+                .font(.rpCaption)
+            }
+
+            if !requiresAccount {
+                Button("Not now") { dismiss() }
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.inkDim)
+                    .padding(.top, 4)
+                    .disabled(isExchanging)
+            }
+
+            Text(dismissNote)
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 28)
+
+            if requiresAccount {
+                HStack(spacing: 18) {
+                    Link("Terms", destination: URL(string: "https://rendprop.com/terms")!)
+                        .accessibilityIdentifier("account.terms")
+                    Link("Privacy", destination: URL(string: "https://rendprop.com/privacy")!)
+                        .accessibilityIdentifier("account.privacy")
+                    Link("Get help", destination: SettingsView.supportMailURL(subject: "Rendprop account help"))
+                        .accessibilityIdentifier("account.help")
+                }
+                .font(.rpCaption)
+                .foregroundStyle(Theme.accent)
+            }
+
+            Spacer()
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+        .interactiveDismissDisabled(requiresAccount || isExchanging)
+        .sheet(isPresented: $showQuickStart) { QuickStartVideoView() }
+    }
+
+    private func handle(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .failure(let error):
+            // A user cancel isn't worth an error banner.
+            if (error as? ASAuthorizationError)?.code == .canceled { return }
+            errorMessage = error.localizedDescription
+        case .success(let auth):
+            guard let credential = auth.credential as? ASAuthorizationAppleIDCredential,
+                  let tokenData = credential.identityToken,
+                  let idToken = String(data: tokenData, encoding: .utf8) else {
+                errorMessage = "Apple didn't return a usable credential. Please try again."
+                return
+            }
+            let nonce = rawNonce
+            // Apple returns the name ONLY on the first authorization — keep it
+            // (it seeds the account row; the public card never falls back to an email).
+            let displayName = credential.fullName.flatMap { components -> String? in
+                let text = PersonNameComponentsFormatter().string(from: components)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return text.isEmpty ? nil : text
+            }
+            // TN3194: the single-use authorizationCode must reach the backend
+            // so DELETE /me can revoke the Apple grant. This sheet is the app's
+            // ONLY sign-in surface, so capturing it here is what makes account
+            // deletion actually sever Apple (audit P0-4 — it was being dropped).
+            let authCode = credential.authorizationCode
+                .flatMap { String(data: $0, encoding: .utf8) }
+            isExchanging = true
+            errorMessage = nil
+            Task {
+                do {
+                    let identity = try await AuthStore.shared.exchangeAppleIdentityToken(idToken: idToken, nonce: nonce)
+                    // Best-effort, after the session exists (the POST needs the
+                    // fresh JWT). Never blocks or fails sign-in.
+                    if let authCode {
+                        await AuthStore.submitAppleAuthorizationCode(authCode, for: identity)
+                    }
+                    await MainActor.run {
+                        guard identity.isCurrent else { isExchanging = false; return }
+                        if let displayName {
+                            AuthStore.shared.userName = displayName
+                            UserDefaults.standard.set(displayName, forKey: "auth.userName")
+                        }
+                        isExchanging = false
+                        onSignedIn()
+                        if !requiresAccount { dismiss() }
+                    }
+                } catch {
+                    await MainActor.run {
+                        isExchanging = false
+                        errorMessage = "Couldn't sign in: \(error.localizedDescription)"
+                    }
+                }
+            }
+        }
+    }
+}

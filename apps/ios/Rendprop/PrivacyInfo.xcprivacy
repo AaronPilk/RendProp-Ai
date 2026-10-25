@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Rendprop privacy manifest. Required-reason APIs + data-collection
+       declarations for App Store review (ITMS-91053). -->
+  <!-- STILL FALSE, and deliberately so, even though the owner runs Meta ads.
+       Apple defines tracking as linking this app's data with data from other
+       companies' apps or websites for targeted advertising or ad measurement,
+       or sharing it with a data broker. Rendprop does none of that: there is no
+       ad SDK, no IDFA, no ATT prompt, no pixel and no third-party analytics.
+       Attribution is SKAdNetwork ONLY (Info.plist SKAdNetworkItems +
+       Analytics/Attribution.swift), where iOS itself sends a signed postback
+       carrying a campaign id and a conversion value and NO identifier — Apple
+       expressly does not classify that as tracking. Product analytics is
+       first-party: our own POST /events, our own Postgres, read only by the
+       owner. -->
+  <key>NSPrivacyTracking</key>
+  <false/>
+  <key>NSPrivacyTrackingDomains</key>
+  <array/>
+
+  <key>NSPrivacyCollectedDataTypes</key>
+  <array>
+    <!-- Email + name from Sign in with Apple (account, not tracking, not ads). -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeEmailAddress</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeName</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
+    <!-- Account identifier: the Supabase auth user id / session that every
+         listing, tour and lead is linked to (account functionality only). -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeUserID</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
+    <!-- Photos/videos the user captures or imports to build a tour. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypePhotosorVideos</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
+    <!-- Voiceover audio submitted for caption transcription
+         (Voice/SpeechTranscriber.swift). requiresOnDeviceRecognition is set
+         to SFSpeechRecognizer.supportsOnDeviceRecognition, so recognition is
+         NOT forced on-device: a device/locale without an on-device model
+         gets requiresOnDeviceRecognition = false immediately, and even a
+         device that DOES support on-device recognition falls back to
+         requiresOnDeviceRecognition = false on a recogniser-side failure
+         (retry-once-on-server). Per Apple's own documentation for that
+         property ("Set this property to true to prevent ... sending audio
+         over the network"), requiresOnDeviceRecognition = false means the
+         recorded voiceover is sent to Apple's speech-recognition servers —
+         which is exactly what NSSpeechRecognitionUsageDescription in
+         Info.plist already tells the user happens. Found undeclared in the
+         2026-09 audit; see docs/handoff/audit-fixes.md.
+         Rendprop's OWN backend never receives audio through this path —
+         only the resulting transcript text comes back into the app. (The
+         same recording, once muxed into a PUBLISHED reel, does reach our
+         backend as part of the video file — that flow is already covered by
+         NSPrivacyCollectedDataTypePhotosorVideos above, so it is not
+         declared twice here.) -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeAudioData</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
+    <!-- Location of the LISTING, used to place its map pin and to derive the
+         city/state region label. Two sources, both rounded to 3 decimals
+         before they are stored on the listing or uploaded with it: (a) a
+         one-shot Core Location fix requested at kCLLocationAccuracyHundredMeters,
+         and (b) a forward geocode of the street address the user typed (fixed
+         2026-09 — this path previously stored the unrounded geocode result;
+         see docs/handoff/audit-fixes.md).
+         MUST BE DECLARED PRECISE, NOT COARSE: Apple defines Precise Location as
+         "the same or greater resolution as a latitude and longitude with three
+         or more decimal places", and both sources land at or above that. The
+         matching App Store Connect answer is Location -> Precise Location:
+         Yes / Linked to the user / Not used for tracking / App Functionality. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypePreciseLocation</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
+    <!-- Agent card phone number, shown on the agent's public tour pages. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypePhoneNumber</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
+    <!-- Listing street address the user enters — it's the product being toured. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypePhysicalAddress</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
+    <!-- Listing details/story text (taglines, room notes, business details). -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
+    <!-- Product interaction. TWO sources, and the stricter one sets the answer:
+           (a) tour view metering (view counts on shared tours) — not linked to
+               any viewer identity;
+           (b) the first-party product funnel (Analytics/Analytics.swift ->
+               POST /events): which screens and features were used, as a name
+               from a fixed 19-word vocabulary plus a few enum/count props. The
+               server attaches the signed-in account id when there is one, so
+               this IS linked and is declared linked.
+         DeveloperAdvertising is declared because the same milestones drive the
+         SKAdNetwork conversion value, which measures how well the owner's own
+         Meta ads perform. It is still not tracking: nothing is joined with any
+         other company's data and nothing goes to a data broker.
+         NO PII is in any of it — no e-mail, name, address, phone, photo, file
+         path, listing id or coordinate. Enforced three times: a fixed event
+         vocabulary, a per-event props whitelist, and a server-side regex scrub
+         (services/supabase/functions/events). -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeProductInteraction</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+        <string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+        <string>NSPrivacyCollectedDataTypePurposeDeveloperAdvertising</string>
+      </array>
+    </dict>
+    <!-- Device ID. TWO things land under this type, and both stay on our own
+         backend:
+           (a) a UUID this app generates on first launch and keeps in its own
+               Keychain item, sent with every analytics batch so the funnel can
+               count PEOPLE instead of taps;
+           (b) from 1.0.2, the APNs device token (Push/PushManager.swift ->
+               POST /me/devices), which exists so the server can tell the agent
+               that somebody enquired about their tour or that a render
+               finished. Sent only after the person grants notification
+               permission, and only with the app version, locale and APNs
+               environment the server needs to address it.
+         Neither is the IDFA (never requested, no ATT prompt), neither is the
+         IDFV, and neither is derivable from either; neither is shared with
+         anyone. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeDeviceID</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+        <string>NSPrivacyCollectedDataTypePurposeDeveloperAdvertising</string>
+      </array>
+    </dict>
+    <!-- Crash data: MetricKit crash SUMMARIES (Analytics/CrashReporter.swift).
+         A kind, a signal or exception number, a termination reason clipped to
+         120 characters with path-shaped tokens removed, and ONE frame name.
+         Never the full call stack — that stays in Xcode Organizer, which Apple
+         already provides. No third-party crash SDK is in the app. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeCrashData</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+        <string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+      </array>
+    </dict>
+    <!-- Performance data: MetricKit hang / CPU / disk-write diagnostics,
+         reduced to small duration/category fields. The routine metric-payload
+         callback does not upload launch histograms or a median launch time. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypePerformanceData</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+        <string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+      </array>
+    </dict>
+    <!-- Apple's signed transaction: transaction id, original transaction id,
+         product id, environment and expiry, stored server-side to unlock the
+         plan (migration 0019). No card details ever reach us. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypePurchaseHistory</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
+  </array>
+
+  <key>NSPrivacyAccessedAPITypes</key>
+  <array>
+    <!-- UserDefaults (appearance, onboarding, agent card, non-secret prefs, and
+         analytics: the SKAdNetwork conversion-value high-water mark, the
+         "has ever signed in" flag, and the device-id fallback used when the
+         Keychain is unreachable before first unlock). All of it is this app's
+         own data, read and written only by this app — CA92.1. -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array><string>CA92.1</string></array>
+    </dict>
+    <!-- File timestamps (creation/modification dates on captured media + AI edits). -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array><string>C617.1</string></array>
+    </dict>
+    <!-- Disk space (FileStore.freeSpaceBytes → volumeAvailableCapacityForImportantUsage).
+         BOTH approved reasons apply and both are declared:
+           E174.1 — CameraManager.startRecording() refuses a take that would not
+                    fit, so nothing is half-written.
+           85F4.1 — the same check DISPLAYS the numbers to the user
+                    ("…needs about 12 GB free, and only 3.1 GB is left").
+         Never leaves the device. -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>E174.1</string>
+        <string>85F4.1</string>
+      </array>
+    </dict>
+    <!-- systemUptime for capture pacing/motion timing (not for fingerprinting). -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array><string>35F9.1</string></array>
+    </dict>
+  </array>
+</dict>
+</plist>

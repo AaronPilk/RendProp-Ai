@@ -1,0 +1,288 @@
+import Foundation
+
+// MARK: - What Rendprop sells
+//
+// ONE source of truth for the product ids, the plan they map to, and the
+// "what you get" lines. The numbers below are COPIED from
+// `services/supabase/migrations/0044_plan_rework_and_industry_trial.sql`
+// with video-shot counts updated by `20261014200302_property_video_recipe_allowances.sql`
+// (`plan_entitlements`, the table 0010 introduced), which is what the server
+// actually enforces — if that table changes, change these in the same commit
+// or the paywall starts lying.
+//
+// A subscription trial begins only after Apple confirmation and server
+// verification. New workspaces start on the free plan. Existing historical
+// server trials may retain their original expiry, but are never newly granted
+// by this app. Prices come exclusively from StoreKit's Product.displayPrice.
+
+/// A sellable plan. Raw value === the `orgs.plan` / `plan_entitlements.plan`
+/// string the server uses, so `activePlan` and `/me` speak the same language.
+enum RendpropPlan: String, CaseIterable, Identifiable, Sendable {
+    case starter
+    case pro
+    case team
+
+    var id: String { rawValue }
+
+    /// Marketing name. Matches App Store Connect's localized display name.
+    var displayName: String {
+        switch self {
+        case .starter: return "Starter"
+        case .pro:     return "Pro"
+        case .team:    return "Team"
+        }
+    }
+
+    /// One plain line under the name — who the plan is for. Real estate keeps
+    /// its reviewed wording; every other business type is addressed as its own
+    /// trade (a bar is never "an agent listing homes" — industry review P1-3).
+    /// Every line stays under 60 characters.
+    var tagline: String {
+        let space = SpaceType.current
+        switch self {
+        case .starter:
+            return space == .realEstate
+                ? "For one agent listing a few homes a month."
+                : "For one \(space.businessNoun) shooting a few tours a month."
+        case .pro:
+            return space == .realEstate
+                ? "For a busy agent shooting every week."
+                : "For a busy \(space.businessNoun) shooting every week."
+        case .team:    return "For a small team sharing one workspace."
+        }
+    }
+
+    /// Pro is the one most people should pick. Exactly one plan may say this.
+    var isMostPopular: Bool { self == .pro }
+
+    /// Higher = more included. Used to pick which of several live entitlements
+    /// to show, never to gate anything.
+    var tier: Int {
+        switch self {
+        case .starter: return 1
+        case .pro:     return 2
+        case .team:    return 3
+        }
+    }
+
+    var monthlyProductID: String { "com.rendprop.app.\(rawValue).monthly" }
+    var annualProductID: String  { "com.rendprop.app.\(rawValue).annual" }
+
+    func productID(for period: BillingPeriod) -> String {
+        switch period {
+        case .monthly: return monthlyProductID
+        case .annual:  return annualProductID
+        }
+    }
+
+    /// True when this plan's product for `period` is on sale today — i.e. the
+    /// app asks StoreKit for it and the paywall may show a price for it.
+    /// See `RendpropProducts.notSoldAtLaunch`.
+    func isSold(_ period: BillingPeriod) -> Bool {
+        !RendpropProducts.notSoldAtLaunch.contains(productID(for: period))
+    }
+
+    /// The period this plan actually bills at when the paywall's picker is on
+    /// `period`: `period` itself when that product is on sale, otherwise the
+    /// other one (Team on Yearly → monthly, today). nil only when the plan
+    /// sells nothing at all, which no plan does.
+    func soldPeriod(for period: BillingPeriod) -> BillingPeriod? {
+        if isSold(period) { return period }
+        let fallback: BillingPeriod = (period == .annual) ? .monthly : .annual
+        return isSold(fallback) ? fallback : nil
+    }
+
+    /// Base monthly allowances (0044), with current generated-shot caps (20261014200302).
+    var allowances: PlanAllowances {
+        switch self {
+        // plan_entitlements: renders, photo_edits, reels, aerials, topaz, seats
+        case .starter: return PlanAllowances(renders: 4,  photoEdits: 100, reels: 30,  aerials: 2, topaz: 0, seats: 1)
+        case .pro:     return PlanAllowances(renders: 10, photoEdits: 200, reels: 60, aerials: 4, topaz: 0, seats: 1)
+        case .team:    return PlanAllowances(renders: 25, photoEdits: 400, reels: 150, aerials: 8, topaz: 2, seats: 2)
+        }
+    }
+
+    /// 4–5 short lines for the plan card. Plain words, same nouns Settings →
+    /// Plan & usage already uses, so "4 of 4" there matches "4 tours" here.
+    var benefits: [String] {
+        allowances.benefitLines
+    }
+}
+
+/// Monthly allowances, straight out of `plan_entitlements`.
+struct PlanAllowances: Hashable, Sendable {
+    let renders: Int
+    let photoEdits: Int
+    let reels: Int
+    let aerials: Int
+    /// Optional video-quality upscales. 0 means the tier is not included.
+    let topaz: Int
+    let seats: Int
+
+    /// "2 seats" / "1 seat".
+    var seatsPhrase: String { "\(seats) \(seats == 1 ? "seat" : "seats")" }
+
+    var benefitLines: [String] {
+        var lines: [String] = [
+            "\(renders) cloud tour \(renders == 1 ? "render" : "renders") a month",
+            "High-resolution AI photo edits",
+            "\(reels) AI video shots a month",
+        ]
+        if topaz > 0 {
+            // Quality upgrades have a separate expensive AI allowance.
+            lines.append("\(topaz) video quality \(topaz == 1 ? "upgrade" : "upgrades") · \(seatsPhrase)")
+        } else {
+            // Starter / Pro: "1 seat · unlimited tours to share"
+            lines.append("\(seatsPhrase) · unlimited tours to share")
+        }
+        return lines
+    }
+
+    static let videoAllowanceExplanation = "Cloud tour renders process existing footage. Publishing a tour video made on your iPhone doesn't use that allowance. Video quality upgrades are separate AI upscales; they improve resolution and detail but don't turn walking footage into a real drone shot. Each AI video shot animates one photo for about 5 seconds. Make a video combines shots into a Listing or Social video; the count is shots, not finished videos. Aerial openings are optional, separately processed clips. Review the provider terms and allow AI processing before creating one."
+}
+
+/// How often the subscription bills.
+enum BillingPeriod: String, CaseIterable, Identifiable, Sendable {
+    case monthly
+    case annual
+
+    var id: String { rawValue }
+
+    /// Segmented-control label.
+    var pickerLabel: String {
+        switch self {
+        case .monthly: return "Monthly"
+        case .annual:  return "Yearly"
+        }
+    }
+
+    /// What follows the price on a card: "$49.00/month".
+    var priceSuffix: String {
+        switch self {
+        case .monthly: return "/month"
+        case .annual:  return "/year"
+        }
+    }
+
+    /// One caption under the price.
+    var billingNote: String {
+        switch self {
+        case .monthly: return "Billed every month."
+        case .annual:  return "Billed once a year."
+        }
+    }
+
+    /// Small note on a card that sells only this period while the picker is on
+    /// the other one — Team, on the Yearly tab, today.
+    var onlyNote: String {
+        switch self {
+        case .monthly: return "Monthly only"
+        case .annual:  return "Yearly only"
+        }
+    }
+
+    /// The badge on the Yearly tab. 12 months for the price of 10 — see the
+    /// annual prices in docs/LAUNCH-CONTRACT.md (490 / 990). It names the plans
+    /// it is true for: Team has no yearly product at launch (see
+    /// `RendpropProducts.notSoldAtLaunch`), so promising it "2 months free"
+    /// would be a lie.
+    static let annualBadge = "Billed once a year"
+}
+
+// MARK: - Product id ⇄ plan
+
+enum RendpropProducts {
+    /// App Store Connect subscription group reference name. Every product
+    /// lives in ONE group so Apple manages upgrades/downgrades for us.
+    static let subscriptionGroupReferenceName = "rendprop_plans"
+
+    /// Product ids that are DEFINED but NOT SOLD. They still map to their plan
+    /// below — an existing (sandbox or production) purchase of one keeps its
+    /// entitlement — they are simply never requested from StoreKit and never
+    /// shown a price.
+    ///
+    /// 2026-10-09 — Rendprop sells MONTHLY plans only (owner decision). The
+    /// annual products cannot carry the advertised allowances inside the
+    /// per-month AI budget (ten monthly prices over twelve months), so none is
+    /// offered. Their ids stay mapped below so a stray historical or Sandbox
+    /// annual purchase still resolves to its plan; they are never requested
+    /// from StoreKit and never shown a price. The products must also be
+    /// removed from sale in App Store Connect.
+    static let notSoldAtLaunch: Set<String> = Set(RendpropPlan.allCases.map(\.annualProductID))
+
+    /// True when at least one annual product is on sale. Drives whether the
+    /// paywall shows the Monthly / Yearly picker at all.
+    static var sellsAnnual: Bool {
+        RendpropPlan.allCases.contains { $0.isSold(.annual) }
+    }
+
+    /// Every product id the app asks StoreKit for, in the order the paywall
+    /// shows them. Ids in `notSoldAtLaunch` are left out: asking the App Store
+    /// for a product that isn't on sale just returns nothing.
+    static let all: [String] = RendpropPlan.allCases
+        .flatMap { [$0.monthlyProductID, $0.annualProductID] }
+        .filter { !RendpropProducts.notSoldAtLaunch.contains($0) }
+
+    /// "com.rendprop.app.pro.annual" → .pro. nil for an id that was never ours.
+    /// Deliberately covers `notSoldAtLaunch` ids too: entitlement mapping is
+    /// about what somebody already bought, not about what is on sale today.
+    static func plan(for productID: String) -> RendpropPlan? {
+        RendpropPlan.allCases.first {
+            $0.monthlyProductID == productID || $0.annualProductID == productID
+        }
+    }
+
+    /// "com.rendprop.app.pro.annual" → .annual.
+    static func period(for productID: String) -> BillingPeriod? {
+        if RendpropPlan.allCases.contains(where: { $0.annualProductID == productID }) { return .annual }
+        if RendpropPlan.allCases.contains(where: { $0.monthlyProductID == productID }) { return .monthly }
+        return nil
+    }
+
+    /// The plan string (`"pro"`) for a product id — what the server calls it.
+    static func planName(for productID: String) -> String? {
+        plan(for: productID)?.rawValue
+    }
+
+    /// A plan string from anywhere (server `/me`, a StoreKit product id) mapped
+    /// onto a sellable plan. `solo` is the legacy alias of `starter`.
+    static func plan(fromPlanName raw: String?) -> RendpropPlan? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !raw.isEmpty else { return nil }
+        if raw == "solo" { return .starter }
+        return RendpropPlan(rawValue: raw)
+    }
+
+    /// True when a `/me` plan string means "there is nothing paid here yet" —
+    /// the state that should see an Upgrade button.
+    static func isUpgradeable(planName: String?) -> Bool {
+        let raw = (planName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch raw {
+        case "", "free", "trial", "starter", "solo": return true
+        default: return false
+        }
+    }
+}
+
+// MARK: - Legal (App Review 3.1.2 — auto-renewable subscriptions)
+
+enum PaywallLegal {
+    /// Apple's standard EULA. 3.1.2 requires a functional link to the terms of
+    /// use from the paywall; this is the link Apple names when the app uses the
+    /// standard licence agreement rather than a custom one.
+    static let termsURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")
+
+    static let privacyURL = URL(string: "https://rendprop.com/privacy")
+
+    /// The one-sentence auto-renew disclosure 3.1.2 requires next to the price.
+    static let autoRenewDisclosure =
+        "Renews automatically until cancelled. Cancel anytime in Settings → Apple ID → Subscriptions."
+
+    /// Legacy copy retained for old clients; current UI uses the selected
+    /// product's localized price in SubscriptionOfferPolicy.disclosure.
+    /// Shown under a trial button so nobody is surprised by the first charge.
+    /// "At least 24 hours": Apple bills the first period unless the
+    /// subscription is cancelled at least a day before the offer ends.
+    static let trialDisclosure =
+        "Free for 7 days, then the plan price. Cancel at least 24 hours before it ends and you pay nothing."
+}

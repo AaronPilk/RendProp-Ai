@@ -1,0 +1,196 @@
+import SwiftUI
+import StoreKit
+
+// MARK: - Presenting the paywall from anywhere
+//
+// One elected sheet host. Root owns the StoreKit lifecycle; visible AI
+// screens register a local host so their existing modal can present the paywall.
+// Every CTA in the app — Settings, the three 402 "Upgrade plan" buttons — calls
+// `PaywallRouter.shared.present(reason:)` instead of pushing its own sheet, so
+// there is exactly one paywall, one place it can be styled, and no chance of
+// two sheets fighting for the same slot.
+
+/// Why the paywall is on screen. Drives one context line and the analytics
+/// `reason` prop — nothing else.
+enum PaywallReason: Equatable, Sendable {
+    /// The user asked for it (Settings → Upgrade plan).
+    case upgrade
+    /// A 402 from the server: this feature's included allowance is used up.
+    /// `feature` is one of the `plan_entitlements` keys — renders, photo_edits,
+    /// reels, aerials, drone, seats — or a plain noun the caller passes.
+    case quota(feature: String)
+    /// The free week (server plan `trial`) has ended. NOT the StoreKit
+    /// introductory offer — that one is the "7-day free trial" on a paid plan,
+    /// and this sheet must never call the week by that name.
+    case trialEnded
+    /// A tier the current plan does not include at all.
+    case featureLocked(String)
+
+    /// The `reason` analytics prop. Never carries user text.
+    var analyticsValue: String {
+        switch self {
+        case .upgrade:              return "upgrade"
+        case .quota:                return "quota"
+        case .trialEnded:           return "trial_ended"
+        case .featureLocked:        return "feature_locked"
+        }
+    }
+
+    /// One short sentence at the top of the sheet, or nil for a plain upgrade.
+    var contextLine: String? {
+        switch self {
+        case .upgrade:
+            return nil
+        case .quota(let feature) where PaywallReason.isSeats(feature):
+            // Seats are a plan size, not a monthly allowance: "this month"
+            // would promise a reset that never comes (Team/TeamView.swift).
+            return "Every seat on your plan is taken. Pick a plan with more seats."
+        case .quota(let feature):
+            return "You've used your included \(PaywallReason.featureNoun(feature)). Your saved work remains available. Review your plan and usage below."
+        case .trialEnded:
+            return "Your workspace is on the free tier: one published listing and local tools. Choose a plan to add AI photo edits, reels and more listings."
+        case .featureLocked(let name):
+            return "\(name) isn't in your current plan. Pick a plan that includes it."
+        }
+    }
+
+    /// `plan_entitlements` key → the words Settings → Plan & usage already uses.
+    /// Anything unrecognised prints itself rather than pretending.
+    static func featureNoun(_ raw: String) -> String {
+        switch raw.lowercased() {
+        case "renders", "render":         return "tour renders"
+        case "photo_edits", "photo_edit": return "photo edits"
+        case "reels", "reel":             return "reel clips"
+        case "aerials", "aerial":         return "aerial intros"
+        case "drone", "topaz":            return "drone-glide upscales"
+        case "seats", "seat":             return "seats"
+        case "":                          return "allowance"
+        default:                          return raw.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
+    /// The one `plan_entitlements` key that is not a monthly meter.
+    static func isSeats(_ raw: String) -> Bool {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return key == "seats" || key == "seat"
+    }
+}
+
+@MainActor
+final class PaywallRouter: ObservableObject {
+    static let shared = PaywallRouter()
+
+    @Published var isPresented = false
+    /// Why it's up. Read by `PaywallView`; set only through `present(reason:)`.
+    @Published private(set) var reason: PaywallReason?
+
+    private var hosts: [UUID] = []
+    @Published private(set) var activeHost: UUID?
+
+    private init() {}
+
+    func registerHost(_ id: UUID) {
+        hosts.removeAll { $0 == id }
+        hosts.append(id)
+        activeHost = hosts.last
+    }
+
+    func removeHost(_ id: UUID) {
+        hosts.removeAll { $0 == id }
+        activeHost = hosts.last
+    }
+
+    func ownsPresentation(_ id: UUID) -> Bool { activeHost == id && isPresented }
+
+    func present(reason: PaywallReason) {
+        self.reason = reason
+        isPresented = true
+    }
+
+    func dismiss() {
+        isPresented = false
+    }
+}
+
+// MARK: - Analytics seam
+//
+// P3 owns `Analytics.track`. This file must not depend on it (the two land on
+// different branches), so the purchase flow calls a sink that starts nil and
+// costs nothing. Wired once at launch, in RendpropApp:
+//
+//     PaywallEvents.sink = Analytics.externalSink
+//
+// The names emitted here are exactly the ones in
+// docs/LAUNCH-CONTRACT.md § Events: paywall_viewed, purchase_started,
+// purchase_completed, purchase_failed, restore. Props are `plan`, `product_id`,
+// `period`, `reason` — no PII, ever, and never a price.
+
+@MainActor
+enum PaywallEvents {
+    static var sink: ((String, [String: String]) -> Void)?
+
+    static func track(_ name: String, _ props: [String: String] = [:]) {
+        sink?(name, props)
+    }
+
+    /// Convenience for the product-shaped events.
+    static func track(_ name: String, product: Product, extra: [String: String] = [:]) {
+        var props = extra
+        props["product_id"] = product.id
+        if let plan = RendpropProducts.planName(for: product.id) { props["plan"] = plan }
+        if let period = RendpropProducts.period(for: product.id) { props["period"] = period.rawValue }
+        sink?(name, props)
+    }
+}
+
+// MARK: - Plan-changed broadcast
+//
+// After the server accepts an entitlement, anything showing the plan is stale.
+// `AppModel` has no usage/plan cache to invalidate (Settings loads `/me` into
+// its own @State), so the signal is a notification rather than a model call.
+//
+// OBSERVED BY: SettingsView's "Plan & usage" section (re-runs `loadUsage()`).
+// If another screen starts showing the plan, observe this there too.
+
+extension Notification.Name {
+    /// Posted on the main actor right after `POST /me/entitlement` succeeds.
+    static let rendpropPlanChanged = Notification.Name("RendpropPlanChanged")
+}
+
+// MARK: - The host modifier
+
+struct PaywallHostModifier: ViewModifier {
+    @ObservedObject private var router = PaywallRouter.shared
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var hostID = UUID()
+    var managesLifecycle = true
+
+    func body(content: Content) -> some View {
+        content
+            .task {
+                // Idempotent: starts the Transaction.updates listener once and
+                // does the first entitlement check.
+                if managesLifecycle { PurchaseManager.shared.start() }
+            }
+            .onChange(of: scenePhase) { phase in
+                guard managesLifecycle, phase == .active else { return }
+                // Re-check entitlements and retry any purchase the server
+                // hasn't accepted yet (rule 2 in PurchaseManager).
+                PurchaseManager.shared.refreshOnForeground()
+            }
+            .onAppear { router.registerHost(hostID) }
+            .onDisappear { router.removeHost(hostID) }
+            .sheet(isPresented: Binding(get: { router.ownsPresentation(hostID) },
+                                       set: { if !$0, router.activeHost == hostID { router.dismiss() } })) {
+                PaywallView(reason: router.reason ?? .upgrade)
+            }
+    }
+}
+
+extension View {
+    /// Root owns the StoreKit lifecycle. Modal feature screens opt out of it
+    /// while registering a visible host for the same authoritative router.
+    func paywallHost(managesLifecycle: Bool = true) -> some View {
+        modifier(PaywallHostModifier(managesLifecycle: managesLifecycle))
+    }
+}

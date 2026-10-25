@@ -1,0 +1,3018 @@
+import Foundation
+
+/// Round a coordinate to 3 decimal places (~110 m). This is a
+/// data-minimization step, NOT a privacy-label reclassification: per
+/// Apple's own definition (quoted in full in PrivacyInfo.xcprivacy), a
+/// latitude/longitude at three or more decimal places is still Precise
+/// Location, so the manifest correctly declares
+/// NSPrivacyCollectedDataTypePreciseLocation either way — rounding here
+/// does NOT make this Coarse, and no comment or doc should claim it does.
+/// What it does do is cap every coordinate at that resolution instead of
+/// storing or sending a raw GPS/geocode fix that is far more precise than
+/// the product needs. Every write site routes through this — the outbound
+/// API body below, NewListingView's location capture, and
+/// FlythroughDetailView's forward-geocode result — and the Maps deep-link
+/// fallback in `mapsURL` does the same (2026-08 audit P0-6; the
+/// geocode-result and Maps-export gaps that stored/exported full precision
+/// were found and closed 2026-09). The street address stays exact — it's
+/// the product — and Maps is opened by address, never by a precise `ll=`.
+func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
+
+/// Live client against the Supabase Edge Functions API
+/// (docs/BACKEND-ARCHITECTURE.md §2). Base = `https://<ref>.supabase.co/functions/v1`.
+///
+/// Every request carries:
+///   • `apikey: <supabase anon key>`      (public, RLS enforces access)
+///   • `Authorization: Bearer <jwt>`      (owner routes; refreshed via AuthStore
+///                                         right before sending — never stale)
+///   • `Idempotency-Key`                  (on EVERY write — never a fresh UUID:
+///                                         the caller's stable key when it has
+///                                         one, otherwise sha256(method + path
+///                                         + body digest), so a retry after a
+///                                         lost response replays instead of
+///                                         double-creating or double-billing.
+///                                         See `Idempotency` for the one
+///                                         deliberate exception.)
+///
+/// Non-2xx responses are decoded from the server's `{error, code}` envelope
+/// into `APIError.server` so the UI shows the message the backend wrote for
+/// the user. A 401 is refreshed-and-retried exactly once; a second 401 signs
+/// the user out so the publish gate re-prompts.
+///
+/// Wire JSON is snake_case. We decode into private DTOs (snake_case → camelCase
+/// via `.convertFromSnakeCase`) and map to the app's models, and we build write
+/// bodies as explicit snake_case dictionaries (mirrors the AI/ clients' style),
+/// so the app models never have to match the DB column names.
+final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI, ListingGalleryRemovalAPI, ListingPhotoCloudSelectionAPI {
+    private let base: URL
+    private let session: URLSession
+    /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
+    /// photo edit or a fal submit routinely outlives the default 60 s.
+    private let aiSession: URLSession
+
+    init?(baseURL: URL? = Config.apiBaseURL) {
+        guard let baseURL else { return nil }
+        self.base = baseURL
+        self.session = URLSession(configuration: .default)
+        let aiConfig = URLSessionConfiguration.default
+        aiConfig.timeoutIntervalForRequest = Config.aiRequestTimeout
+        aiConfig.timeoutIntervalForResource = max(Config.aiRequestTimeout, 600)
+        self.aiSession = URLSession(configuration: aiConfig)
+    }
+
+    // MARK: - Request plumbing
+
+    /// Build a URL by appending path segments individually (never string-joins,
+    /// so ids with slashes/odd chars can't corrupt the path).
+    private func url(_ segments: [String], query: [URLQueryItem] = []) -> URL {
+        var u = base
+        for s in segments { u.appendPathComponent(s) }
+        guard !query.isEmpty,
+              var comps = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return u }
+        comps.queryItems = query
+        return comps.url ?? u
+    }
+
+    /// How one write's `Idempotency-Key` is chosen.
+    ///
+    /// The header exists so a retry after a LOST RESPONSE replays server-side
+    /// instead of creating a second render job / spending a second provider
+    /// call. A fresh UUID per attempt (the pre-audit behaviour) makes that
+    /// impossible by construction — see F-E-06.
+    private enum Idempotency {
+        /// The caller's own key for one logical operation ("publish:<listing>:<asset>",
+        /// one user tap). Always wins: the caller knows what "the same request"
+        /// means better than the wire payload does.
+        case key(String)
+        /// DEFAULT for writes: derived from route + payload digest, so it is
+        /// identical for every retry of the same request and different for any
+        /// other request.
+        case derived
+        /// A fresh UUID per attempt. Reserved for the `/ai-*` submit routes,
+        /// where the server DEDUPES a repeated key with a 409 rather than
+        /// replaying the original result: a derived key there would not recover
+        /// a lost response (there is nothing to replay) and WOULD block a
+        /// deliberate re-roll of the same photo with the same settings. Those
+        /// call sites pass an explicit per-tap key instead, which is what
+        /// actually stops a double-tap from billing twice.
+        case perAttempt
+    }
+
+    /// Assemble a request. The bearer token attached here may be stale;
+    /// `execute()` re-attaches a freshly-refreshed one.
+    private func makeRequest(url: URL, method: String = "GET", json: [String: Any]? = nil,
+                             idempotency: Idempotency = .derived) -> URLRequest {
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        // Active-context endpoints must never follow a server-side workspace
+        // change from another device while this request is in flight.
+        let mePath = base.appendingPathComponent("me").path
+        if (url.path == mePath || url.path.hasPrefix(mePath + "/")), let org = WorkspaceContext.selectedOrgID {
+            req.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        }
+        if let token = AuthStore.currentAccessToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        // Serialize once: the body we send and the body we digest must match.
+        var bodyData: Data? = nil
+        if let json {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            bodyData = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+            req.httpBody = bodyData
+        }
+        if method != "GET" {
+            let key: String
+            switch idempotency {
+            case .key(let raw):
+                key = Self.boundedIdempotencyKey(raw)
+            case .derived where json != nil && bodyData == nil:
+                // A body we could not serialize would leave two DIFFERENT
+                // requests to this route sharing one key. Never conflate them.
+                key = UUID().uuidString
+            case .derived:
+                key = Self.derivedIdempotencyKey(method: method, url: url, body: bodyData)
+            case .perAttempt:
+                key = UUID().uuidString
+            }
+            req.setValue(key, forHTTPHeaderField: "Idempotency-Key")
+        }
+        return req
+    }
+
+    /// The server accepts keys of 8…128 chars; longer ones are hashed so the
+    /// key stays stable AND valid.
+    private static func boundedIdempotencyKey(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count >= 8 && trimmed.count <= 128 { return trimmed }
+        if trimmed.count > 128 { return "k:" + DirectUploader.sha256Hex(trimmed) }
+        return "k:" + String(DirectUploader.sha256Hex(trimmed).prefix(32))
+    }
+
+    /// `"k:" + sha256(METHOD \n path \n sha256(canonical body))` — 66 chars, so
+    /// always inside the server's 8…128 bound.
+    ///
+    /// Deterministic by construction: the body is serialized ONCE with
+    /// `.sortedKeys` (so dictionary ordering can't change the digest between
+    /// two attempts) and only its digest goes into the key, so a multi-MB
+    /// base64 payload never lands in a header. Same route + same payload ⇒ same
+    /// key ⇒ a retry replays. Any different field ⇒ a different key ⇒ two
+    /// genuinely different requests are never conflated.
+    private static func derivedIdempotencyKey(method: String, url: URL, body: Data?) -> String {
+        let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.path ?? url.path
+        var material = method.uppercased() + "\n" + path
+        if let body { material += "\n" + DirectUploader.sha256Hex(body) }
+        return "k:" + DirectUploader.sha256Hex(material)
+    }
+
+    /// Caller key when there is one, otherwise derive it from the payload.
+    /// For routes the server REPLAYS (uploads ticket, render create/publish).
+    private static func idempotency(_ callerKey: String?) -> Idempotency {
+        guard let k = callerKey?.trimmingCharacters(in: .whitespacesAndNewlines), !k.isEmpty else {
+            return .derived
+        }
+        return .key(k)
+    }
+
+    /// Caller key when there is one, otherwise a fresh UUID. For the `/ai-*`
+    /// submit routes only — see `Idempotency.perAttempt` for why a derived key
+    /// is the wrong default there.
+    private static func aiIdempotency(_ callerKey: String?) -> Idempotency {
+        guard let k = callerKey?.trimmingCharacters(in: .whitespacesAndNewlines), !k.isEmpty else {
+            return .perAttempt
+        }
+        return .key(k)
+    }
+
+    /// Send, verify 2xx, decode the error envelope otherwise. Refreshes the JWT
+    /// first (never sends a token we know is expired), and on a 401 forces ONE
+    /// refresh + retry; a 401 after that means the session is dead → sign out.
+    @MainActor private func execute(_ req: URLRequest, session: URLSession? = nil,
+                                    beforeSend: (@MainActor () throws -> Void)? = nil,
+                                    replayAuthenticationAfter401: Bool = true) async throws -> Data {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        // The request can have been assembled before a hop to this actor. Its
+        // old bearer identifies the intended account; refresh may replace an
+        // expired token, but never replace that account with another one.
+        if Config.enableAuth, let header = req.value(forHTTPHeaderField: "Authorization"), header.hasPrefix("Bearer "),
+           let expected = AnonymousAdoptionRecovery.identity(String(header.dropFirst(7)))?.id,
+           actor.flatMap(UUID.init(uuidString:)) != expected { throw CloudSyncError.identityChanged }
+        let mePath = base.appendingPathComponent("me").path
+        let workspaceRead = req.httpMethod == "GET" && req.url?.path == mePath
+        let workspaceWrite = req.url?.path == mePath + "/brand" || req.url?.path.hasPrefix(mePath + "/compliance") == true
+        if Config.enableAuth, workspaceRead || workspaceWrite,
+           req.value(forHTTPHeaderField: "X-Org-Id") == nil { throw CloudSyncError.identityChanged }
+        let client = session ?? self.session
+        var request = req
+        if Config.enableAuth {
+            let token = await AuthStore.validAccessToken()
+            // makeRequest may have attached an older bearer. A failed refresh
+            // must never leave that expired/signed-out credential on dispatch.
+            request.setValue(token.map { "Bearer \($0)" }, forHTTPHeaderField: "Authorization")
+        }
+
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        try beforeSend?()
+        let (data, resp) = try await client.data(for: request)
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+        if (200..<300).contains(http.statusCode) { return data }
+
+        if http.statusCode == 401, replayAuthenticationAfter401, Config.enableAuth, AuthStore.shared.isSignedIn {
+            let refreshed = await AuthStore.shared.forceRefresh()
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+            if refreshed, let fresh = await AuthStore.validAccessToken() {
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+                request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+                try beforeSend?()
+                let (data2, resp2) = try await client.data(for: request)
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+                guard let http2 = resp2 as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+                if (200..<300).contains(http2.statusCode) { return data2 }
+                if http2.statusCode == 401 {
+                    // Refreshed token still rejected — the session is dead.
+                    await AuthStore.shared.signOut(preservingAdoption: true)
+                }
+                throw Self.serverError(status: http2.statusCode, data: data2)
+            }
+            // Refresh failed: `performRefresh` already signed out on a definitive
+            // 4xx; a network failure keeps the session for a later retry.
+        }
+        throw Self.serverError(status: http.statusCode, data: data)
+    }
+
+    /// Decode `{ error, code }` (contract §B4) into `APIError.server`. Tolerant:
+    /// a non-JSON body (gateway HTML) or a missing `error` falls back to a
+    /// friendly per-status message. `RPnnn:` RPC prefixes are stripped.
+    private struct ErrorEnvelope: Decodable {
+        let error: String?
+        let code: String?
+        let message: String?
+    }
+
+    static func serverError(status: Int, data: Data) -> APIError {
+        var message: String? = nil
+        var code: String? = nil
+        if let env = try? JSONDecoder().decode(ErrorEnvelope.self, from: data) {
+            message = env.error ?? env.message
+            code = env.code
+        }
+        let cleaned = message.map { raw -> String in
+            var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let range = s.range(of: #"^RP\d{3}:\s*"#, options: .regularExpression) {
+                s = String(s[range.upperBound...])
+            }
+            return s
+        }
+        let finalMessage = (cleaned?.isEmpty == false) ? cleaned : nil
+        return .server(status: status, code: code, message: finalMessage ?? APIError.defaultMessage(for: status))
+    }
+
+    // Decoder built per call (JSONDecoder isn't Sendable — no shared static).
+    // Decode failures surface as `APIError.decoding` (a readable message) rather
+    // than the raw DecodingError text.
+    /// Decode a type that declares its OWN `CodingKeys`, with no key
+    /// conversion.
+    ///
+    /// `decode(_:)` below applies `.convertFromSnakeCase`, which converts each
+    /// JSON key to camelCase and THEN matches it against the CodingKey's
+    /// `stringValue`. A type that spells its keys out in snake_case therefore
+    /// never matches: `suggested_replies` becomes `suggestedReplies`, gets
+    /// compared to the literal `"suggested_replies"`, and the decode fails with
+    /// `keyNotFound`. The two mechanisms are mutually exclusive and the failure
+    /// is silent — `CoachResponse` had it, and every coach reply was thrown
+    /// away and replaced by the offline answer AFTER the server had already
+    /// called the model and billed for it.
+    ///
+    /// So: types with explicit keys come through here, types that rely on the
+    /// conversion come through `decode`. Never both.
+    private func decodeExact<T: Decodable>(_ data: Data) throws -> T {
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw APIError.decoding
+        }
+    }
+
+    private func decode<T: Decodable>(_ data: Data) throws -> T {
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        do {
+            return try d.decode(T.self, from: data)
+        } catch {
+            throw APIError.decoding
+        }
+    }
+
+    /// ISO8601 → Date, tolerant of fractional seconds (Supabase timestamps).
+    private static func parseDate(_ s: String?) -> Date? {
+        guard let s, !s.isEmpty else { return nil }
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFraction.date(from: s) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: s)
+    }
+
+    /// Date → ISO8601 string for write bodies (e.g. sold_at on PATCH).
+    private static func isoString(from date: Date) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.string(from: date)
+    }
+
+    // MARK: - Listings
+
+    // Spatial uses explicit CodingKeys throughout. The ordinary `decode` path
+    // rewrites those keys and previously hid real server responses in this app.
+    func spatialJobs(listingID: UUID) async throws -> [SpatialJob] {
+        struct Envelope: Decodable { let jobs: [SpatialJob] }
+        let data = try await execute(makeRequest(url: url(["spatial"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString)])))
+        let response: Envelope = try decodeExact(data)
+        return try response.jobs.map { try $0.validated() }
+    }
+    func spatialJob(id: UUID) async throws -> SpatialJob {
+        let data = try await execute(makeRequest(url: url(["spatial", id.uuidString])))
+        let response: SpatialJob = try decodeExact(data)
+        return try response.validated()
+    }
+    private func spatialBody<T: Encodable>(_ value: T) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(value)
+        guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SpatialClientError.invalidResponse
+        }
+        return body
+    }
+    private func spatialWrite(_ path: [String], body: [String: Any], key: String? = nil) async throws -> SpatialJob {
+        let data = try await execute(makeRequest(url: url(["spatial"] + path), method: "POST", json: body,
+                                                idempotency: Self.idempotency(key)))
+        let response: SpatialJob = try decodeExact(data)
+        return try response.validated()
+    }
+    func createSpatialJob(_ request: SpatialCreateRequest, operationID: UUID) async throws -> SpatialJob {
+        try await spatialWrite([], body: spatialBody(request), key: operationID.uuidString)
+    }
+    func attachSpatialInputs(jobID: UUID, files: [SpatialInput]) async throws -> SpatialJob {
+        struct Body: Encodable { let files: [SpatialInput] }
+        return try await spatialWrite([jobID.uuidString, "inputs"], body: spatialBody(Body(files: files)))
+    }
+    func startSpatialJob(id: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "start"], body: [:])
+    }
+    func reviewSpatialJob(id: UUID, review: SpatialReviewRequest) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "review"], body: spatialBody(review))
+    }
+    func publishSpatialJob(id: UUID, artifactRevision: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "publish"], body: ["artifact_revision": artifactRevision.uuidString])
+    }
+    func retrySpatialJob(id: UUID, operationID: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "retry"], body: [:], key: operationID.uuidString)
+    }
+    func cancelSpatialJob(id: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "cancel"], body: [:])
+    }
+    func resumeSpatialJob(id: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "resume"], body: [:])
+    }
+    func spatialCapability() async throws -> SpatialCapability {
+        // Same auth/headers as every other spatial GET; the body is the two
+        // pinned fields, decoded exactly (no key rewriting).
+        let data = try await execute(makeRequest(url: url(["spatial", "capability"])))
+        return try decodeExact(data)
+    }
+
+    func listings() async throws -> [Listing] {
+        let data = try await execute(makeRequest(url: url(["listings"])))
+        let dtos: [ListingDTO] = try decode(data)
+        return dtos.map(mapListing)
+    }
+
+    /// A fresh actor-bound directory limits this complete snapshot to private
+    /// libraries the server currently authorizes. True row orgs are retained.
+    func cloudListings() async throws -> [Listing] {
+        let fence = await MainActor.run { (AuthStore.shared.userID, AuthStore.shared.syncSessionRevision, WorkspaceContext.selectedOrgID) }
+        guard let actor = fence.0.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        var directoryRequest = makeRequest(url: url(["me", "workspaces"]))
+        directoryRequest.setValue(nil, forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(directoryRequest)
+        guard let directory = try JSONDecoder().decode(WorkspaceDirectory.self, from: data).checked(actor: actor) else { throw CloudSyncError.invalidResponse }
+        var rows: [ListingDTO] = [], bytes = 0
+        struct Page: Decodable { let actorId: UUID; let listings: [ListingDTO]; let total: Int; let nextOffset: Int? }
+        for library in directory.selectionChoices {
+            var offset = 0, total: Int?
+            while true {
+                try Task.checkCancellation()
+                var request = makeRequest(url: url(["listings"], query: [URLQueryItem(name: "library", value: "1"), URLQueryItem(name: "limit", value: "500"), URLQueryItem(name: "offset", value: String(offset))]))
+                request.setValue(library.id.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+                let raw = try await execute(request); bytes += raw.count
+                let current = await MainActor.run { AuthStore.shared.userID == fence.0 && AuthStore.shared.syncSessionRevision == fence.1 && WorkspaceContext.selectedOrgID == fence.2 }
+                guard current else { throw CloudSyncError.identityChanged }
+                let page: Page = try decode(raw)
+                guard raw.count <= 8 * 1024 * 1024, bytes <= 32 * 1024 * 1024, page.actorId == actor,
+                      page.total >= 0, page.total <= 10_000, total == nil || total == page.total,
+                      page.listings.count == min(500, page.total - offset),
+                      page.listings.allSatisfy({ $0.libraryOrgId.flatMap(UUID.init(uuidString:)) == library.id }),
+                      page.nextOffset == (offset + page.listings.count < page.total ? offset + page.listings.count : nil)
+                else { throw CloudSyncError.incomplete }
+                total = page.total; rows += page.listings; offset += page.listings.count
+                guard rows.count <= 10_000 else { throw CloudSyncError.incomplete }
+                if page.nextOffset == nil { break }
+            }
+        }
+        guard rows.allSatisfy({ $0.id.flatMap(UUID.init(uuidString:)) != nil && $0.orgId.flatMap(UUID.init(uuidString:)) != nil }),
+              Set(rows.compactMap(\.id)).count == rows.count else { throw CloudSyncError.invalidResponse }
+        var result = rows.map(mapListing)
+        struct PublishedDTO: Decodable { let id: UUID; let listingId: UUID; let slug: String; let publishedAt: String }
+        let published: [PublishedDTO] = try await cloudRows(table: "renders", columns: "id,listing_id,slug,published_at", filters: [URLQueryItem(name: "published_at", value: "not.is.null")])
+        guard Set(published.map(\.id)).count == published.count else { throw CloudSyncError.incomplete }
+        var newest: [UUID: PublishedDTO] = [:]
+        for render in published {
+            guard CloudListingMerge.date(render.publishedAt) != nil,
+                  render.slug.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil else { throw CloudSyncError.invalidResponse }
+            if let old = newest[render.listingId], (CloudListingMerge.date(old.publishedAt) ?? .distantPast) > (CloudListingMerge.date(render.publishedAt) ?? .distantPast) { continue }
+            newest[render.listingId] = render
+        }
+        for i in result.indices {
+            guard let sid = result[i].serverID, let published = newest[sid] else { continue }
+            result[i].shareSlug = published.slug
+            result[i].shareURL = "https://rendprop.com/f/\(published.slug)"
+            result[i].unbrandedShareURL = "https://rendprop.com/u/\(published.slug)"
+            result[i].publishedRenderID = published.id
+        }
+        return result
+    }
+
+    private func cloudRows<T: Decodable>(table: String, columns: String, filters: [URLQueryItem]) async throws -> [T] {
+        guard ["listings", "renders"].contains(table), let token = await AuthStore.validAccessToken() else { throw CloudSyncError.identityChanged }
+        let fence = await MainActor.run { (AuthStore.shared.userID, AuthStore.shared.syncSessionRevision) }
+        guard fence.0 != nil else { throw CloudSyncError.identityChanged }
+        var root = base.deletingLastPathComponent().deletingLastPathComponent()
+        root.appendPathComponent("rest/v1/\(table)")
+        let size = 500
+        var total: Int?, offset = 0, bytes = 0, result: [T] = []
+        while true {
+            try Task.checkCancellation()
+            var components = URLComponents(url: root, resolvingAgainstBaseURL: false)!
+            components.queryItems = filters + [URLQueryItem(name: "select", value: columns), URLQueryItem(name: "order", value: "id.asc"), URLQueryItem(name: "limit", value: String(size)), URLQueryItem(name: "offset", value: String(offset))]
+            guard let target = components.url else { throw CloudSyncError.invalidResponse }
+            var request = makeRequest(url: target)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("count=exact", forHTTPHeaderField: "Prefer")
+            request.cachePolicy = .reloadIgnoringLocalCacheData; request.timeoutInterval = 30
+            let (data, response) = try await session.data(for: request)
+            let current = await MainActor.run { AuthStore.shared.isSignedIn && AuthStore.shared.userID == fence.0 && AuthStore.shared.syncSessionRevision == fence.1 }
+            guard current else { throw CloudSyncError.identityChanged }
+            guard let http = response as? HTTPURLResponse else { throw CloudSyncError.invalidResponse }
+            guard (200..<300).contains(http.statusCode) else { throw Self.serverError(status: http.statusCode, data: data) }
+            bytes += data.count
+            guard data.count <= 8 * 1024 * 1024, bytes <= 32 * 1024 * 1024,
+                  let range = http.value(forHTTPHeaderField: "Content-Range"), let countPart = range.split(separator: "/").last, let count = Int(countPart), count >= 0, count <= 10_000,
+                  total == nil || total == count else { throw CloudSyncError.incomplete }
+            total = count
+            let page: [T] = try decode(data)
+            let expected = min(size, count - offset)
+            guard expected >= 0, page.count == expected else { throw CloudSyncError.incomplete }
+            if expected > 0 {
+                guard range.hasPrefix("\(offset)-\(offset + expected - 1)/") else { throw CloudSyncError.incomplete }
+            } else if count != 0 || range != "*/0" { throw CloudSyncError.incomplete }
+            result += page; offset += page.count
+            if offset == count { return result }
+        }
+    }
+
+    func cloudListingState(listingID: UUID, orgID: UUID, offset: Int = 0) async throws -> CloudListingState {
+        guard offset >= 0, offset <= 10000, offset % 100 == 0 else { throw CloudSyncError.invalidResponse }
+        var request = makeRequest(url: url(["studio", "listing-state"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased()), URLQueryItem(name: "offset", value: String(offset))]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        let decoded: CloudListingState = try decodeExact(data)
+        return try decoded.checked(listingID: listingID, orgID: orgID, offset: offset)
+    }
+    func cloudMedia(listingID: UUID, orgID: UUID, offset: Int = 0) async throws -> CloudMediaPage {
+        guard offset >= 0, offset <= 10000, offset % 50 == 0 else { throw CloudSyncError.invalidResponse }
+        let context = try await CloudMediaAccessContext.capture(orgID: orgID)
+        var request = makeRequest(url: url(["studio", "media"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased()), URLQueryItem(name: "org_id", value: orgID.uuidString.lowercased()), URLQueryItem(name: "offset", value: String(offset))]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try await context.check()
+        let decoded: CloudMediaPage = try decodeExact(data)
+        return try decoded.checked(listingID: listingID, orgID: orgID, offset: offset, actorID: context.actorID)
+    }
+    func exportAccountData() async throws -> Data {
+        let data = try await execute(makeRequest(url: url(["me", "export"])))
+        guard data.count <= AccountExportReceipt.maximumBytes else { throw CloudSyncError.invalidResponse }
+        return data
+    }
+    func cloudBrand() async throws -> CloudBrand {
+        let data = try await execute(makeRequest(url: url(["me"])))
+        guard let r = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let user = r["user"] as? [String: Any], let userRaw = user["id"] as? String, let userID = UUID(uuidString: userRaw),
+              let org = r["org"] as? [String: Any], let orgRaw = org["id"] as? String, let orgID = UUID(uuidString: orgRaw),
+              let type = org["space_type"] as? String else { throw CloudSyncError.invalidResponse }
+        let fields = (org["brand_kit"] as? [String: Any] ?? [:]).compactMapValues { $0 as? String }
+        var personal: PersonalCardReceipt?
+        if user.keys.contains("public_card"), user.keys.contains("public_card_space_type") {
+            let bytes = try JSONSerialization.data(withJSONObject: ["ok": true, "user_id": userRaw,
+                "space_type": user["public_card_space_type"] ?? NSNull(), "public_card": user["public_card"] ?? NSNull()])
+            let receipt: PersonalCardReceipt = try decodeExact(bytes)
+            personal = try receipt.checked(owner: userID)
+        }
+        return CloudBrand(userID: userID, orgID: orgID, spaceType: type, fields: fields, personalCard: personal)
+    }
+    func cloudCreative(listingID: UUID, orgID: UUID) async throws -> CloudCreative {
+        let context = try await CloudMediaAccessContext.capture(orgID: orgID)
+        var resultRequest = makeRequest(url: url(["studio", "creative-results"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased())]))
+        resultRequest.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Results: Decodable { let results: [CloudCreative.Result] }
+        let results: Results = try decodeExact(try await execute(resultRequest, beforeSend: { try context.check() }))
+        try await context.check()
+        guard results.results.count <= 100, Set(results.results.map(\.id)).count == results.results.count,
+              results.results.allSatisfy({ $0.listing_id == listingID && ["voice", "video"].contains($0.kind) && $0.words.count <= 20_000 && $0.words.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end >= $0.start && $0.text.count <= 1000 }) }) else { throw CloudSyncError.invalidResponse }
+        for result in results.results {
+            if let media = result.url, let expiry = result.expires_at { try CloudListingMerge.validateMedia(media, expiry: expiry, listingID: listingID, orgID: orgID, now: Date(), voice: result.kind == "voice", actorID: context.actorID) }
+            else if result.url != nil { throw CloudSyncError.invalidResponse }
+        }
+        var documentRequest = makeRequest(url: url(["studio", "documents"], query: [URLQueryItem(name: "key", value: "creative:\(listingID.uuidString.lowercased())")]))
+        documentRequest.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct DocumentEnvelope: Decodable {
+            struct Document: Decodable { struct Payload: Decodable { let script: String }; let listing_id: UUID; let payload: Payload }
+            let document: Document?
+        }
+        let document: DocumentEnvelope = try decodeExact(try await execute(documentRequest, beforeSend: { try context.check() }))
+        try await context.check()
+        if let document = document.document { guard document.listing_id == listingID, document.payload.script.count <= 100_000 else { throw CloudSyncError.invalidResponse } }
+        return CloudCreative(script: document.document?.payload.script ?? "", results: results.results)
+    }
+
+    func cloudNativeReel(listingID: UUID, orgID: UUID) async throws -> CloudNativeReelDocument? {
+        var request = makeRequest(url: url(["studio", "documents"], query: [URLQueryItem(name: "key", value: "native:\(listingID.uuidString.lowercased())")]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let document: CloudNativeReelDocument? }
+        let result: Envelope = try decodeExact(try await execute(request))
+        return try result.document?.checked(listingID: listingID)
+    }
+    func saveCloudNativeReel(_ draft: NativeReelDraft, listingID: UUID, orgID: UUID, revision: Int) async throws -> CloudNativeReelDocument {
+        _ = try draft.checked()
+        guard revision >= 0, revision < 2_147_483_646 else { throw CloudSyncError.invalidResponse }
+        let payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(draft))
+        var request = makeRequest(url: url(["studio", "documents"]), method: "POST", json: ["key": "native:\(listingID.uuidString.lowercased())", "kind": "native", "listing_id": listingID.uuidString.lowercased(), "expected_revision": revision, "payload": payload])
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let document: CloudNativeReelDocument }
+        let result: Envelope = try decodeExact(try await execute(request))
+        return try result.document.checked(listingID: listingID)
+    }
+
+    func productionPlan(listingID: UUID, orgID: UUID) async throws -> CloudProductionDocument? {
+        var request = makeRequest(url: url(["studio", "documents"], query: [URLQueryItem(name: "key", value: "production:\(listingID.uuidString.lowercased())")]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let document: CloudProductionDocument? }
+        let result: Envelope = try decodeExact(try await execute(request))
+        return try result.document?.checked(listingID: listingID)
+    }
+
+    func saveProductionPlan(_ plan: ProductionPlan, listingID: UUID, orgID: UUID, revision: Int) async throws -> CloudProductionDocument {
+        _ = try plan.checked(listingID: listingID)
+        guard revision >= 0, revision < 2_147_483_646 else { throw ProductionPlanError.invalidDocument }
+        let payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plan))
+        var request = makeRequest(url: url(["studio", "documents"]), method: "POST", json: [
+            "key": "production:\(listingID.uuidString.lowercased())", "kind": "production",
+            "listing_id": listingID.uuidString.lowercased(), "expected_revision": revision, "payload": payload
+        ])
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let document: CloudProductionDocument }
+        let result: Envelope = try decodeExact(try await execute(request))
+        return try result.document.checked(listingID: listingID)
+    }
+
+    func createListing(_ listing: Listing) async throws -> Listing {
+        guard let org = listing.cloudDraftOrgID else { throw CloudSyncError.identityChanged }
+        var request = makeRequest(url: url(["listings"]), method: "POST",
+                                  json: try listingBody(listing, forPatch: false), idempotency: .key("listing-create:\(listing.id.uuidString.lowercased())"))
+        request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        return mapListing(try decode(data))
+    }
+
+    func updateListing(_ listing: Listing) async throws -> Listing {
+        _ = try ListingWireDetails.merged(listing)
+        let library = WorkspaceContext.selectedOrgID
+        guard let target = listing.serverID, let org = listing.serverOrgID,
+              (listing.serverLibraryOrgID ?? org) == library else { throw CloudSyncError.identityChanged }
+        var request = makeRequest(url: url(["listings", target.uuidString, "facts"]),
+                                  method: "PUT", json: try ListingFactsSync.body(listing))
+        request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == library else { throw CloudSyncError.identityChanged }
+        })
+        let dto: ListingDTO = try decode(data)
+        guard dto.id.flatMap(UUID.init(uuidString:)) == target,
+              dto.orgId.flatMap(UUID.init(uuidString:)) == org else { throw CloudSyncError.invalidResponse }
+        return mapListing(dto)
+    }
+
+    func updateMeasurements(_ listing: Listing) async throws -> Listing {
+        let library = WorkspaceContext.selectedOrgID
+        guard let target = listing.serverID, let org = listing.serverOrgID,
+              (listing.serverLibraryOrgID ?? org) == library,
+              let state = listing.measurementSync, state.pending, !state.conflict,
+              let value = FloorMeasurementPlan.wireValue(in: listing.details) else {
+            throw CloudSyncError.identityChanged
+        }
+        var request = makeRequest(url: url(["listings", target.uuidString, "measurements"]), method: "PUT",
+            json: ["expected": state.expected as Any? ?? NSNull(), "value": value])
+        request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == library else { throw CloudSyncError.identityChanged }
+        })
+        let dto: ListingDTO = try decode(data)
+        guard dto.id.flatMap(UUID.init(uuidString:)) == target,
+              dto.orgId.flatMap(UUID.init(uuidString:)) == org else { throw CloudSyncError.invalidResponse }
+        return mapListing(dto)
+    }
+
+    func deleteListing(serverID: UUID) async throws {
+        _ = try await execute(makeRequest(url: url(["listings", serverID.uuidString]),
+                                          method: "DELETE"))
+    }
+
+    func trashedListings() async throws -> [TrashedListing] {
+        // Recently deleted is per library: the route refuses without a selection.
+        guard let workspace = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        var request = makeRequest(url: url(["listings", "trash"]))
+        request.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }
+        })
+        let dto: TrashListDTO = try decode(data)
+        guard let org = UUID(uuidString: dto.orgId ?? ""), org == workspace else { throw APIError.decoding }
+        return (dto.listings ?? []).compactMap { row in
+            guard let id = UUID(uuidString: row.id ?? ""), let rowOrg = UUID(uuidString: row.orgId ?? ""),
+                  let deleted = Self.parseDate(row.deletedAt), let until = Self.parseDate(row.trashExpiresAt) else { return nil }
+            return TrashedListing(id: id, orgID: rowOrg, address: row.address ?? "", spaceType: row.spaceType.flatMap(SpaceType.init(rawValue:)),
+                                  mainPhotoKey: row.mainPhotoKey, deletedAt: deleted, restorableUntil: until,
+                                  hadPublishedTour: row.hadPublishedTour ?? false, canRestore: row.canRestore ?? false)
+        }
+    }
+
+    func restoreListing(serverID: UUID) async throws -> RestoredListing {
+        let context = await MainActor.run { (WorkspaceContext.selectedOrgID, AuthStore.shared.userID, AuthStore.shared.syncSessionRevision) }
+        guard let workspace = context.0 else { throw CloudSyncError.identityChanged }
+        let actor = context.1, revision = context.2
+        var request = makeRequest(url: url(["listings", serverID.uuidString, "restore"]), method: "POST", json: [:])
+        request.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == workspace, AuthStore.shared.userID == actor,
+                  AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        })
+        let current = await MainActor.run {
+            WorkspaceContext.selectedOrgID == workspace && AuthStore.shared.userID == actor
+                && AuthStore.shared.syncSessionRevision == revision
+        }
+        guard current else { throw CloudSyncError.identityChanged }
+        let dto: RestoreDTO = try decode(data)
+        guard dto.ok == true, let id = UUID(uuidString: dto.id ?? ""), id == serverID,
+              let org = UUID(uuidString: dto.orgId ?? "") else { throw APIError.decoding }
+        return RestoredListing(id: id, orgID: org, address: dto.address,
+                               republishedRenders: dto.republishedRenders ?? 0,
+                               cancelledClientDeliveries: dto.cancelledClientDeliveries ?? 0)
+    }
+
+    @MainActor func photoCloudSelection(identity: PhotoCloudSelectionIdentity, physicalOrgID: UUID?,
+                                         operationID: UUID?) async throws -> PhotoCloudSelectionSnapshot {
+        let context = try CloudMediaAccessContext.capture(orgID: identity.libraryOrgID)
+        guard context.actorID == identity.actorID, context.selectedLibraryID == identity.libraryOrgID else {
+            throw PhotoCloudSelectionFailure.identityChanged
+        }
+        let query = operationID.map { [URLQueryItem(name: "operation_id", value: $0.uuidString.lowercased())] } ?? []
+        var request = makeRequest(url: url(["listings", identity.serverListingID.uuidString.lowercased(), "photo-selection"], query: query))
+        request.setValue(identity.libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try context.check()
+        let snapshot: PhotoCloudSelectionSnapshot = try decodeExact(data)
+        try snapshot.validate(identity: identity, physicalOrgID: physicalOrgID, operationID: operationID)
+        guard operationID != nil || snapshot.operation == nil else { throw PhotoCloudSelectionFailure.invalidReply }
+        return snapshot
+    }
+
+    @MainActor func changePhotoCloudSelection(_ operation: PhotoCloudSelectionOperation) async throws -> PhotoCloudSelectionSnapshot {
+        try operation.validate()
+        let identity = operation.identity
+        let context = try CloudMediaAccessContext.capture(orgID: identity.libraryOrgID)
+        guard context.actorID == identity.actorID, context.selectedLibraryID == identity.libraryOrgID else {
+            throw PhotoCloudSelectionFailure.identityChanged
+        }
+        var request = makeRequest(url: url(["listings", identity.serverListingID.uuidString.lowercased(), "photo-selection"]),
+            method: "PATCH", json: try operation.request.body(operationID: operation.operationID),
+            idempotency: .key("photo-selection:" + operation.operationID.uuidString.lowercased()))
+        request.setValue(identity.libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        // A dispatch may have committed even if its reply is lost. This route
+        // never refreshes credentials and resends a mutation automatically.
+        let data = try await execute(request, beforeSend: { try context.check() }, replayAuthenticationAfter401: false)
+        try context.check()
+        let snapshot: PhotoCloudSelectionSnapshot = try decodeExact(data)
+        try snapshot.validate(identity: identity, physicalOrgID: operation.physicalOrgID, operationID: operation.operationID)
+        guard snapshot.ok == true, snapshot.replayed != nil, let receipt = snapshot.operation,
+              receipt.request == operation.request else { throw PhotoCloudSelectionFailure.invalidReply }
+        return snapshot
+    }
+
+    @MainActor func abandonPhotoCloudSelection(_ operation: PhotoCloudSelectionOperation) async throws -> PhotoCloudSelectionSnapshot {
+        try operation.validate()
+        let identity = operation.identity
+        let context = try CloudMediaAccessContext.capture(orgID: identity.libraryOrgID)
+        guard context.actorID == identity.actorID, context.selectedLibraryID == identity.libraryOrgID else { throw PhotoCloudSelectionFailure.identityChanged }
+        var request = makeRequest(url: url(["listings", identity.serverListingID.uuidString.lowercased(), "photo-selection", "abandon"]),
+            method: "POST", json: try operation.request.body(operationID: operation.operationID),
+            idempotency: .key("photo-selection:" + operation.operationID.uuidString.lowercased()))
+        request.setValue(identity.libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() }, replayAuthenticationAfter401: false)
+        try context.check()
+        let reply: PhotoCloudSelectionSnapshot = try decodeExact(data)
+        try reply.validate(identity: identity, physicalOrgID: operation.physicalOrgID, operationID: operation.operationID)
+        guard reply.ok == true, reply.replayed != nil, let closed = reply.abandoned else { throw PhotoCloudSelectionFailure.invalidReply }
+        if closed {
+            guard reply.operationStatus == "abandoned", let receipt = reply.abandonedOperation,
+                  receipt.operationID == operation.operationID, receipt.request == operation.request else { throw PhotoCloudSelectionFailure.invalidReply }
+        } else {
+            guard reply.operationStatus == "accepted", let receipt = reply.operation, receipt.request == operation.request else { throw PhotoCloudSelectionFailure.invalidReply }
+        }
+        return reply
+    }
+
+    private struct GallerySelectionWire: Decodable {
+        struct Asset: Decodable { let asset_id: UUID; let sha256: String; let bytes: Int64 }
+        struct Removal: Decodable {
+            let operation_id: UUID; let actor_id: UUID; let replayed: Bool
+            let requested_asset_ids: [UUID]; let removed_asset_ids: [UUID]
+        }
+        let id: UUID; let org_id: UUID; let library_org_id: UUID?
+        let gallery_asset_ids: [UUID]?; let main_photo_key: String?
+        let gallery_assets: [Asset]?; let gallery_remove: Removal?
+
+        func selection(serverID: UUID, libraryOrgID: UUID, requiresAssets: Bool) throws -> PhotoGallerySelection {
+            guard id == serverID, (library_org_id ?? org_id) == libraryOrgID,
+                  gallery_asset_ids.map({ $0.count <= 100 && Set($0).count == $0.count }) ?? true,
+                  !requiresAssets || gallery_assets != nil,
+                  (gallery_assets?.count ?? 0) <= 100 else { throw APIError.decoding }
+            let assets = gallery_assets ?? []
+            guard Set(assets.map(\.asset_id)).count == assets.count,
+                  assets.allSatisfy({ $0.bytes > 0 && $0.bytes <= 128 * 1024 * 1024
+                      && $0.sha256.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil
+                      && (gallery_asset_ids?.contains($0.asset_id) ?? true) }) else { throw APIError.decoding }
+            return .init(listingID: id, orgID: org_id, libraryOrgID: libraryOrgID,
+                galleryAssetIDs: gallery_asset_ids, mainPhotoKey: main_photo_key,
+                galleryAssets: assets.map { .init(assetID: $0.asset_id, sha256: $0.sha256, bytes: $0.bytes) })
+        }
+    }
+
+    @MainActor func gallerySelection(serverID: UUID, libraryOrgID: UUID) async throws -> PhotoGallerySelection {
+        let context = try await CloudMediaAccessContext.capture(orgID: libraryOrgID)
+        var request = makeRequest(url: url(["listings", serverID.uuidString], query: [URLQueryItem(name: "gallery_selection", value: "1")]))
+        request.setValue(libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try context.check()
+        let wire: GallerySelectionWire = try decodeExact(data)
+        return try wire.selection(serverID: serverID, libraryOrgID: libraryOrgID, requiresAssets: true)
+    }
+
+    @MainActor func removeGalleryAssets(_ operation: PhotoGalleryRemovalOperation) async throws -> PhotoGalleryRemovalReply {
+        let context = try await CloudMediaAccessContext.capture(orgID: operation.libraryOrgID)
+        guard context.actorID == operation.actorID else { throw CloudSyncError.identityChanged }
+        let body: [String: Any] = [
+            "gallery_remove_asset_ids": operation.requestedAssetIDs.map { $0.uuidString.lowercased() },
+            "gallery_remove_operation_id": operation.operationID.uuidString.lowercased(),
+            "expected_gallery_asset_ids": operation.expectedGalleryAssetIDs.map { $0.map { $0.uuidString.lowercased() } as Any } ?? NSNull(),
+            "expected_main_photo_key": operation.expectedMainPhotoKey.map { $0 as Any } ?? NSNull()
+        ]
+        var request = makeRequest(url: url(["listings", operation.serverListingID.uuidString]), method: "PATCH", json: body,
+            idempotency: .key("gallery-remove:" + operation.operationID.uuidString.lowercased()))
+        request.setValue(operation.libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try context.check()
+        let wire: GallerySelectionWire = try decodeExact(data)
+        let selection = try wire.selection(serverID: operation.serverListingID, libraryOrgID: operation.libraryOrgID, requiresAssets: false)
+        guard let receipt = wire.gallery_remove, receipt.operation_id == operation.operationID,
+              receipt.actor_id == operation.actorID, receipt.requested_asset_ids == operation.requestedAssetIDs,
+              Set(receipt.removed_asset_ids).count == receipt.removed_asset_ids.count,
+              receipt.removed_asset_ids.allSatisfy(operation.requestedAssetIDs.contains) else { throw APIError.decoding }
+        return .init(selection: selection, operationID: receipt.operation_id, replayed: receipt.replayed,
+            requestedAssetIDs: receipt.requested_asset_ids, removedAssetIDs: receipt.removed_asset_ids)
+    }
+
+    // MARK: - Uploads (contract §2)
+
+    func requestUpload(filename: String, bytes: Int64,
+                       listingID: UUID?, sha256: String?, kind: String,
+                       role: String, contentType: String?,
+                       idempotencyKey: String?) async throws -> UploadTicket {
+        var body: [String: Any] = ["filename": filename, "bytes": bytes, "kind": kind, "role": role]
+        if let listingID { body["listing_id"] = listingID.uuidString }
+        if let sha256, !sha256.isEmpty { body["sha256"] = sha256 }
+        // Declare the exact type the PUT will carry — `/complete` HEAD-verifies
+        // observed == declared and DELETES the object on mismatch (P0 fix).
+        if let contentType, !contentType.isEmpty { body["content_type"] = contentType }
+        let data = try await execute(makeRequest(url: url(["uploads"]), method: "POST", json: body,
+                                                 idempotency: Self.idempotency(idempotencyKey)))
+        return try uploadTicket(data)
+    }
+
+    private func uploadTicket(_ data: Data) throws -> UploadTicket {
+        let dto: UploadTicketDTO = try decode(data)
+        let mode = UploadTicket.Mode(rawValue: dto.mode ?? "single") ?? .single
+        return UploadTicket(assetID: dto.assetId, mode: mode,
+                            putURL: dto.putUrl, uploadID: dto.uploadId,
+                            partSize: dto.partSize, partCount: dto.partCount,
+                            storageKey: dto.storageKey, transportVersion: dto.transportVersion,
+                            uploaded: dto.uploaded, replayed: dto.replayed, confirmedParts: dto.confirmedParts,
+                            contentType: dto.contentType)
+    }
+
+    func renewUpload(assetID: String) async throws -> UploadTicket {
+        let data = try await execute(makeRequest(url: url(["uploads", assetID, "renew"]),
+                                                 method: "POST", json: [:]))
+        return try uploadTicket(data)
+    }
+
+    func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] {
+        let body: [String: Any] = ["numbers": numbers]
+        let data = try await execute(makeRequest(url: url(["uploads", assetID, "part-urls"]),
+                                                 method: "POST", json: body))
+        let dto: PartURLsDTO = try decode(data)
+        var out: [Int: URL] = [:]
+        for entry in dto.urls {
+            if let u = URL(string: entry.url) { out[entry.number] = u }
+        }
+        return out
+    }
+
+    func completeUpload(assetID: String,
+                        parts: [(number: Int, etag: String)]?,
+                        metadata: UploadMetadata) async throws {
+        var body: [String: Any] = [:]
+        if let parts {   // multipart: ETag manifest is REQUIRED
+            body["parts"] = parts.map { ["number": $0.number, "etag": $0.etag] }
+        }
+        if let v = metadata.durationS { body["duration_s"] = v }
+        if let v = metadata.fps       { body["fps"] = v }
+        if let v = metadata.width     { body["width"] = v }
+        if let v = metadata.height    { body["height"] = v }
+        if let v = metadata.codec     { body["codec"] = v }
+        if let v = metadata.isDrone   { body["is_drone"] = v }
+        if let v = metadata.hasGyro   { body["has_gyro"] = v }
+        if let v = metadata.bytes     { body["bytes"] = v }
+        if let v = metadata.sha256    { body["sha256"] = v }
+        // Stable per asset: a retried complete carries the same key.
+        _ = try await execute(makeRequest(url: url(["uploads", assetID, "complete"]),
+                                          method: "POST", json: body,
+                                          idempotency: .key("complete:\(assetID)")))
+    }
+
+    func abortUpload(assetID: String) async throws {
+        let data = try await execute(makeRequest(url: url(["uploads", assetID, "abort"]),
+                                                 method: "POST", json: [:]))
+        // A 2xx alone does not authorize replacing the reservation. The explicit
+        // acknowledgement also survives a lost reply and repeated cancellation.
+        let receipt: UploadAbortReceipt = try decodeExact(data)
+        guard receipt.isConfirmed else { throw APIError.decoding }
+    }
+
+    func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket] {
+        let body: [String: Any] = [
+            "listing_id": listingID.uuidString,
+            "kind": "photo",
+            "files": files.map { f -> [String: Any] in
+                var d: [String: Any] = ["filename": f.filename]
+                if let b = f.bytes { d["bytes"] = b }
+                if let s = f.sha256 { d["sha256"] = s }
+                if let c = f.contentType { d["content_type"] = c }
+                return d
+            },
+        ]
+        let data = try await execute(makeRequest(url: url(["uploads", "batch"]), method: "POST", json: body))
+        let dto: PhotoBatchDTO = try decode(data)
+        return dto.assets.compactMap { slot in
+            guard let put = slot.putUrl else { return nil }
+            return PhotoTicket(index: slot.index, assetID: slot.assetId,
+                               putURL: put, storageKey: slot.storageKey)
+        }
+    }
+
+    func completeUpload(id: String, sha256: String?) async throws {
+        // Legacy single-complete. Delegates to the richer path with a minimal body.
+        try await completeUpload(assetID: id, parts: nil,
+                                 metadata: UploadMetadata(sha256: sha256))
+    }
+
+    // MARK: - Renders
+
+    func createRender(listingID: UUID, assetID: UUID, tier: Render.Tier, durationS: Double,
+                      enhancements: Enhancements) async throws -> Render {
+        // Worker path (not the live app flow). `assetID` must be the SERVER
+        // capture_assets id returned by /uploads — the local CaptureAsset id is
+        // rejected by the server (RP409 asset not uploaded).
+        let body: [String: Any] = [
+            "listing_id": listingID.uuidString,
+            "asset_id": assetID.uuidString,
+            "tier": tier.rawValue,
+            "duration_s": durationS,
+            "enhancements": ["declutter": enhancements.declutter,
+                             "style": enhancements.style.rawValue],
+        ]
+        let data = try await execute(makeRequest(url: url(["renders"]), method: "POST", json: body,
+                                                 idempotency: .key("render:\(listingID.uuidString):\(assetID.uuidString):\(tier.rawValue)")))
+        let dto: RenderDTO = try decode(data)
+        return mapRender(dto, fallbackListingID: listingID, fallbackTier: tier,
+                         fallbackDuration: durationS, fallbackEnhancements: enhancements)
+    }
+
+    func renderStatus(id: UUID) async throws -> Render {
+        let data = try await execute(makeRequest(url: url(["renders", id.uuidString])))
+        let dto: RenderDTO = try decode(data)
+        // `GET /renders/:id` does not return `listing_id` (renders/index.ts) and
+        // this overload has no caller-supplied fallback, so `mapRender` used to
+        // invent one with `UUID()` — a Render pointing at a listing that does
+        // not exist, which any consumer would then fail to match (audit F-E-22).
+        // A response we cannot attach to a listing is a decode failure, not a
+        // Render.
+        guard dto.listingId.flatMap(UUID.init(uuidString:)) != nil else {
+            throw APIError.decoding
+        }
+        return mapRender(dto, fallbackListingID: nil, fallbackTier: .smooth,
+                         fallbackDuration: 0, fallbackEnhancements: Enhancements(), fallbackID: id)
+    }
+
+    func publishApp(listingID: UUID, assetID: String, durationS: Double,
+                    speedFactor: Double, tier: RenderTier,
+                    enhancements: Enhancements, chapters: [ChapterInput],
+                    posterAssetID: String?) async throws -> PublishedTour {
+        try await publishApp(route: "publish-app", listingID: listingID, assetID: assetID, durationS: durationS,
+                             speedFactor: speedFactor, tier: tier, enhancements: enhancements, chapters: chapters,
+                             posterAssetID: posterAssetID)
+    }
+
+    func republishApp(listingID: UUID, assetID: String, durationS: Double,
+                      speedFactor: Double, tier: RenderTier,
+                      enhancements: Enhancements, chapters: [ChapterInput],
+                      posterAssetID: String?) async throws -> PublishedTour {
+        // Same idempotency as a first publish: a retry of the same (listing,
+        // asset) replays the same job and therefore the same (unchanged) link.
+        try await publishApp(route: "republish-app", listingID: listingID, assetID: assetID, durationS: durationS,
+                             speedFactor: speedFactor, tier: tier, enhancements: enhancements, chapters: chapters,
+                             posterAssetID: posterAssetID)
+    }
+
+    @MainActor private func publishApp(route: String, listingID: UUID, assetID: String, durationS: Double,
+                            speedFactor: Double, tier: RenderTier,
+                            enhancements: Enhancements, chapters: [ChapterInput],
+                            posterAssetID: String?, composition: ListingVideoComposition? = nil, publicationID: UUID? = nil) async throws -> PublishedTour {
+        let publicationOwner = AuthStore.shared.userID, publicationRevision = AuthStore.shared.syncSessionRevision
+        let publicationLibrary = WorkspaceContext.selectedOrgID
+        var body: [String: Any] = [
+            "listing_id": listingID.uuidString,
+            "asset_id": assetID,
+            "duration_s": durationS,
+            "speed_factor": speedFactor,
+            // Derived server-side from `enhancements`; sent for older servers.
+            "staged": enhancements.isActive,
+            "tier": tier.rawValue,
+            "enhancements": ["declutter": enhancements.declutter,
+                             "style": enhancements.style.rawValue],
+        ]
+        if !chapters.isEmpty {
+            body["chapters"] = chapters
+                .sorted { $0.sort < $1.sort }
+                .prefix(60)
+                .map { $0.wireDictionary }
+        }
+        if let posterAssetID, !posterAssetID.isEmpty { body["poster_asset_id"] = posterAssetID }
+        if let composition {
+            guard let publicationID else { throw CloudSyncError.invalidResponse }
+            body["presentation_kind"] = "photo_video"
+            body["publication_id"] = publicationID.uuidString.lowercased()
+            body["composition"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(composition))
+        }
+        // Stable per (listing, asset): a retry after a lost response replays the
+        // SAME job + slug instead of publishing a second public tour.
+        let key = publicationID.map { "photo-video:\($0.uuidString.lowercased())" } ?? "publish:\(listingID.uuidString.lowercased()):\(assetID)"
+        let data = try await execute(makeRequest(url: url(["renders", route]),
+                                                 method: "POST", json: body, idempotency: .key(key)))
+        let dto: PublishAppDTO = try decode(data)
+        if composition != nil {
+            guard publicationOwner == AuthStore.shared.userID, publicationRevision == AuthStore.shared.syncSessionRevision,
+                  publicationLibrary == WorkspaceContext.selectedOrgID,
+                  dto.presentationKind == "photo_video", dto.presentationAssetId == assetID,
+                  dto.publicationId.flatMap(UUID.init(uuidString:)) == publicationID,
+                  dto.listingId.flatMap(UUID.init(uuidString:)) == listingID,
+                  dto.orgId.flatMap(UUID.init(uuidString:)) != nil,
+                  dto.libraryOrgId.flatMap(UUID.init(uuidString:)) == publicationLibrary else { throw CloudSyncError.invalidResponse }
+        }
+        guard let slug = dto.slug, let share = dto.shareUrl else {
+            throw APIError.decoding   // server didn't return a slug/share_url
+        }
+        // The MLS-safe twin. Optional on the wire — `Listing.serverUnbrandedURL`
+        // derives it from the slug when an older server omits it.
+        let unbranded = dto.unbrandedUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return PublishedTour(slug: slug, shareURL: share,
+                             unbrandedURL: (unbranded?.isEmpty == false) ? unbranded : nil,
+                             videoURL: dto.videoUrl, posterURL: dto.posterUrl ?? dto.poster,
+                             durationS: dto.durationS, staged: dto.staged,
+                             renderID: dto.id.flatMap(UUID.init(uuidString:)))
+    }
+
+    func publishListingVideo(listingID: UUID, assetID: String, record: ListingVideoRecord, operationID: UUID,
+                             posterAssetID: String?, republish: Bool) async throws -> PublishedTour {
+        guard record.canSelectForWebsite, record.serverListingID == listingID else { throw ListingVideoStore.Failure.invalidRecord }
+        return try await publishApp(route: republish ? "republish-app" : "publish-app",
+            listingID: listingID, assetID: assetID, durationS: record.durationS, speedFactor: 1,
+            tier: .smooth, enhancements: Enhancements(), chapters: [], posterAssetID: posterAssetID,
+            composition: ListingVideoComposition(record: record), publicationID: operationID)
+    }
+
+    func updateChapters(renderID: UUID, chapters: [ChapterInput]) async throws {
+        let body: [String: Any] = [
+            "chapters": chapters.sorted { $0.sort < $1.sort }.prefix(60).map { $0.wireDictionary },
+        ]
+        _ = try await execute(makeRequest(url: url(["renders", renderID.uuidString, "chapters"]),
+                                          method: "PATCH", json: body))
+    }
+
+    // MARK: - AI photo
+
+    @MainActor func aiPhotoEdit(_ request: AIPhotoEditRequest) async throws -> AIPhotoEditResult {
+        // This versioned route can retain a paid edit for a later status check.
+        // Its only production caller saves the exact request before calling us.
+        guard let key = request.idempotencyKey, UUID(uuidString: key) != nil,
+              let workspace = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let consent = AIConsent.shared.revocationRevision
+        func requireIdentity() throws {
+            guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+                  WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }
+        }
+        func requireUnsentPermission() throws {
+            try requireIdentity()
+            guard PhotoWorkQueue.shared.permitsUnsentDispatch else { throw CancellationError() }
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consent else {
+                throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
+            }
+        }
+        try requireUnsentPermission()
+        var body: [String: Any] = ["image_b64": request.imageBase64,
+                                   "mime": request.mime,
+                                   "edit": request.edit]
+        if let style = request.style, !style.trimmingCharacters(in: .whitespaces).isEmpty {
+            body["style"] = style                       // stage only
+        }
+        if let prompt = request.prompt {
+            let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { body["prompt"] = String(trimmed.prefix(600)) }
+        }
+        if request.edit == "stage", let reference = request.stagingReferenceBase64 {
+            body["staging_reference_b64"] = reference
+            body["staging_reference_mime"] = request.stagingReferenceMime ?? "image/jpeg"
+        }
+        // Industry-aware prompts server-side (a restaurant is not staged like a
+        // living room) — contract §B4. The LISTING's type when the caller has
+        // one; the selected type only as a fallback (industry review P2-5).
+        body["space_type"] = request.spaceType ?? SpaceType.current.rawValue
+        // COMPLIANCE (W2-B3/C3): without listing_id the server cannot enter the
+        // edit in the org's audit log at all; original_asset_id is what makes
+        // the public "View original" link real (California AB 723).
+        if let listing = request.listingServerID { body["listing_id"] = listing.uuidString }
+        if let label = request.label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            body["label"] = String(label.prefix(80))
+        }
+        if let original = request.originalAssetID?.trimmingCharacters(in: .whitespaces), !original.isEmpty {
+            body["original_asset_id"] = original
+        }
+        var prepared = makeRequest(url: url(["ai-photo-v2"]), method: "POST", json: body, idempotency: .key(key))
+        prepared.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        prepared.setValue("retained-operation-v1", forHTTPHeaderField: "x-rendprop-photo-quality-protocol")
+        let data = try await execute(prepared, session: aiSession, beforeSend: { try requireUnsentPermission() })
+        // Work already sent may finish after consent is withdrawn; retain its
+        // result only for the exact account/library, then fence the next photo.
+        try requireIdentity()
+        let r: AIPhotoEditDTO = try decode(data)
+        guard let out = r.imageB64, !out.isEmpty else { throw APIError.decoding }
+        let disclosure = r.disclosure?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AIPhotoEditResult(imageBase64: out,
+                                 mime: r.mime,
+                                 disclosure: (disclosure?.isEmpty == false) ? disclosure : nil,
+                                 provenanceID: r.provenance?.id,
+                                 provenanceRecorded: r.provenance?.recorded ?? false,
+                                 provenanceReason: r.provenance?.reason)
+    }
+
+    @MainActor func savedPhotoEdit(requestKey: String, listingServerID: UUID?) async throws -> AIPhotoEditResult {
+        guard UUID(uuidString: requestKey) != nil, let workspace = WorkspaceContext.selectedOrgID,
+              let owner = AuthStore.shared.userID else { throw CloudSyncError.identityChanged }
+        let revision = AuthStore.shared.syncSessionRevision
+        func requireIdentity() throws {
+            guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+                  workspace == WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        }
+        try requireIdentity()
+        var query = [URLQueryItem(name: "request_key", value: requestKey)]
+        if let listingServerID { query.append(URLQueryItem(name: "listing_id", value: listingServerID.uuidString)) }
+        var prepared = makeRequest(url: url(["ai-photo-v2", "status"], query: query), method: "GET")
+        prepared.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(prepared, session: aiSession, beforeSend: { try requireIdentity() })
+        try requireIdentity()
+        struct SavedDTO: Decodable {
+            let imageB64: String; let mime: String?; let disclosure: String?
+            let provenance: ProvenanceEnvelopeDTO?
+            let generationRequestKey: String; let listingId: UUID?
+            let orgId: UUID; let selectedLibraryOrgId: UUID
+            let checkId: UUID; let evidenceId: UUID
+        }
+        let result: SavedDTO = try decode(data)
+        guard result.generationRequestKey == requestKey, result.listingId == listingServerID,
+              result.selectedLibraryOrgId == workspace,
+              !result.imageB64.isEmpty else { throw APIError.decoding }
+        return AIPhotoEditResult(imageBase64: result.imageB64, mime: result.mime,
+            disclosure: result.disclosure, provenanceID: result.provenance?.id,
+            provenanceRecorded: result.provenance?.recorded ?? false, provenanceReason: result.provenance?.reason)
+    }
+
+    // MARK: - Compliance (GET /me/compliance — the broker's AI audit log)
+
+    func provenance(listingServerID: UUID) async throws -> [ProvenanceRecord] {
+        let query = [URLQueryItem(name: "listing_id", value: listingServerID.uuidString)]
+        let data = try await execute(makeRequest(url: url(["me", "compliance"], query: query)))
+        // `{ rows: [...] }` per W2-B3; tolerate a bare array too.
+        let rows: [ComplianceRowDTO]
+        if let wrapped: ComplianceDTO = try? decode(data), let list = wrapped.rows {
+            rows = list
+        } else if let bare: [ComplianceRowDTO] = try? decode(data) {
+            rows = bare
+        } else {
+            throw APIError.decoding
+        }
+        return rows.compactMap(Self.mapProvenance)
+    }
+
+    func complianceCSV(listingServerID: UUID?) async throws -> Data {
+        var query = [URLQueryItem(name: "format", value: "csv")]
+        if let listingServerID {
+            query.append(URLQueryItem(name: "listing_id", value: listingServerID.uuidString))
+        }
+        // The body is text/csv, not JSON — `execute` returns the raw bytes and
+        // still decodes the `{error, code}` envelope on a non-2xx.
+        return try await execute(makeRequest(url: url(["me", "compliance"], query: query)))
+    }
+
+    func attachProvenanceMedia(provenanceID: String, originalAssetID: String?,
+                               alteredAssetID: String?) async throws {
+        var body: [String: Any] = [:]
+        if let originalAssetID, !originalAssetID.isEmpty { body["original_asset_id"] = originalAssetID }
+        if let alteredAssetID, !alteredAssetID.isEmpty { body["altered_asset_id"] = alteredAssetID }
+        guard !body.isEmpty else { return }   // the server requires at least one field
+        // The derived key digests the BODY, so attaching the original and
+        // attaching the altered result — two different patches to the same row
+        // — get different keys and the second can never replay the first, while
+        // a retry of either still replays itself.
+        _ = try await execute(makeRequest(url: url(["me", "compliance", provenanceID]),
+                                          method: "PATCH", json: body))
+    }
+
+    /// One provenance row → the app model. A row with no disclosure sentence is
+    /// DROPPED: it would render a compliance line that discloses nothing.
+    private static func mapProvenance(_ r: ComplianceRowDTO) -> ProvenanceRecord? {
+        let disclosure = r.disclosure?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !disclosure.isEmpty else { return nil }
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+        func cleanURL(_ s: String?) -> URL? { clean(s).flatMap { URL(string: $0) } }
+        let kind = (clean(r.kind)?.lowercased()) ?? "other"
+        // `/me/compliance` sends the vendor `model_id`; `/tours` sends the plain
+        // words. Show plain words either way — never a vendor model string.
+        let model = clean(r.model) ?? ProvenanceRecord.modelFamily(kind)
+        return ProvenanceRecord(
+            id: clean(r.id) ?? UUID().uuidString,
+            listingID: r.listingId.flatMap(UUID.init(uuidString:)),
+            kind: kind,
+            label: clean(r.label),
+            edit: clean(r.edit),
+            style: clean(r.style),
+            model: model,
+            disclosure: disclosure,
+            originalURL: cleanURL(r.originalUrl),
+            alteredURL: cleanURL(r.alteredUrl),
+            createdAt: parseDate(r.createdAt))
+    }
+
+    func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion] {
+        let body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "edit": "suggest",
+                                   "space_type": SpaceType.current.rawValue]
+        var request = makeRequest(url: url(["ai-photo"]), method: "POST", json: body,
+                                  idempotency: .perAttempt)
+        // The vision helper uses the same retained-operation admission contract.
+        request.setValue("retained-operation-v1", forHTTPHeaderField: "x-rendprop-photo-quality-protocol")
+        let data = try await execute(request, session: aiSession)
+        // Tolerant decode: every field optional, malformed entries dropped, and
+        // only the five runnable preset edits pass through (so every row the UI
+        // shows maps to a real aiPhotoEdit mode). Cap at 3 per the contract.
+        struct Resp: Decodable {
+            struct Item: Decodable { let edit: String?; let reason: String?; let confidence: Double? }
+            let suggestions: [Item]?
+        }
+        let allowed: Set<String> = ["twilight", "sky", "lawn", "declutter", "stage"]
+        let r: Resp = try decode(data)
+        let mapped = (r.suggestions ?? []).compactMap { item -> AIEditSuggestion? in
+            guard let edit = item.edit?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                  allowed.contains(edit) else { return nil }
+            return AIEditSuggestion(edit: edit,
+                                    reason: item.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                                    confidence: item.confidence)
+        }
+        return Array(mapped.prefix(3))
+    }
+
+    func assessDeclutter(_ input: PhotoDeclutterAssessmentRequest) async throws -> PhotoDeclutterAssessmentResult {
+        let sessionRevision = AuthStore.shared.syncSessionRevision
+        func current() throws {
+            try Task.checkCancellation()
+            guard AuthStore.shared.userID == input.actor, AuthStore.shared.syncSessionRevision == sessionRevision,
+                  WorkspaceContext.selectedOrgID == input.library,
+                  AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == input.consentRevision else {
+                throw CloudSyncError.identityChanged
+            }
+        }
+        try current()
+        guard let bytes = Data(base64Encoded: input.imageBase64), bytes.count <= 1_000_000,
+              DeclutterGenerationApproval.sha256(bytes) == input.sourceSHA256 else { throw CloudSyncError.invalidResponse }
+        let operation = "declutter-assess:" + input.requestID.uuidString.lowercased()
+        var body: [String: Any] = ["edit": "suggest", "mime": "image/jpeg", "image_b64": input.imageBase64,
+                                  "space_type": input.spaceType, "source_sha256": input.sourceSHA256,
+                                  "declutter_assessment_protocol": AIPhotoDeclutterAssessment.protocolVersion]
+        if let listing = input.listingServerID { body["listing_id"] = listing.uuidString.lowercased() }
+        var request = makeRequest(url: url(["ai-photo-v2"]), method: "POST", json: body, idempotency: .key(operation))
+        request.setValue(input.library.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        request.setValue("retained-operation-v1", forHTTPHeaderField: "x-rendprop-photo-quality-protocol")
+        let data = try await execute(request, session: aiSession, beforeSend: { try current() })
+        try current()
+        struct Reply: Decodable {
+            let declutterAssessmentProtocol: String?
+            let sourceSha256: String?
+            let declutterAssessment: AIPhotoDeclutterAssessment?
+            let analysisCostBoundCents: Double?
+            let analysisOnly: Bool?
+            let analysisRequestKey: String?
+            let selectedLibraryOrgId: UUID?
+            let listingId: UUID?
+        }
+        let reply: Reply = try decode(data)
+        guard reply.declutterAssessmentProtocol == AIPhotoDeclutterAssessment.protocolVersion,
+              reply.sourceSha256 == input.sourceSHA256, reply.analysisOnly == true,
+              reply.analysisRequestKey == operation, reply.selectedLibraryOrgId == input.library,
+              reply.listingId == input.listingServerID, let assessment = reply.declutterAssessment,
+              let cost = reply.analysisCostBoundCents, cost.isFinite, cost >= 0, cost <= 100 else {
+            throw APIError.server(status: 503, code: "declutter_review_unavailable", message: "This photo could not be assessed safely. No image edit was started.")
+        }
+        return PhotoDeclutterAssessmentResult(assessment: assessment, costBoundCents: cost)
+    }
+
+    // MARK: - AI copy (ai-copy edge function — the two prompt assists)
+
+    func aiImprovePrompt(rough: String, roomHint: String?,
+                         listingServerID: UUID?) async throws -> String {
+        let idea = rough.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Text in, text out — and now nothing else. The photo was already off
+        // the wire (audit F-E-16), but the CALLER went on encoding a 1024 px
+        // JPEG for it on the main path, so both ends of that dead work are gone
+        // and the parameter with them.
+        var body: [String: Any] = ["rough": String(idea.prefix(600)),   // contract: ≤ 600
+                                   "space_type": SpaceType.current.rawValue]
+        // The area the photo shows, when the app knows it. Bounded to the
+        // contract's 60 because it is a label ("Primary bath"), not prose.
+        if let hint = roomHint?.trimmingCharacters(in: .whitespacesAndNewlines), !hint.isEmpty {
+            body["room_hint"] = String(hint.prefix(60))
+        }
+        // Scopes the fair-housing gate to this listing's REAL space type
+        // (contract §5). Absent = the strictest rules, which is fail-closed and
+        // right for a home but would refuse a restaurant's "family-style patio".
+        if let listingServerID { body["listing_id"] = listingServerID.uuidString }
+        let data = try await execute(makeRequest(url: url(["ai-copy", "edit-prompt"]),
+                                                 method: "POST", json: body,
+                                                 idempotency: .perAttempt),
+                                     session: aiSession)
+        struct Resp: Decodable { let prompt: String? }
+        let r: Resp = try decode(data)
+        guard let improved = r.prompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !improved.isEmpty else {
+            throw APIError.decoding   // server didn't return an improved prompt
+        }
+        return improved
+    }
+
+    func aiCopyScript(_ request: AIScriptRequest) async throws -> AIScriptResult {
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+
+        // Only facts that are actually SET go on the wire. A venue has no beds,
+        // and "beds: 0" reads to a language model as a studio apartment — an
+        // absent key is unambiguous in a way that a zero never is.
+        var facts: [String: Any] = [:]
+        if let beds = request.facts.beds, beds > 0 { facts["beds"] = beds }
+        if let baths = request.facts.baths, baths.isFinite, baths > 0 { facts["baths"] = baths }
+        if let sqft = request.facts.sqft, sqft > 0 { facts["sqft"] = sqft }
+        if let price = clean(request.facts.priceLabel) { facts["price_label"] = String(price.prefix(40)) }
+        if let tagline = clean(request.facts.tagline) { facts["tagline"] = String(tagline.prefix(200)) }
+        // City/state only. There is no address key here and there must never be
+        // one — see the header on `AICopyFacts`.
+        if let region = clean(request.facts.region) { facts["region"] = String(region.prefix(120)) }
+
+        // Owner-typed free text, so it is bounded on the way out: this is a
+        // prompt, not a database dump, and a pasted essay in one detail field
+        // must not crowd out the rest of the listing.
+        var details: [String: String] = [:]
+        for (rawKey, rawValue) in request.facts.details.sorted(by: { $0.key < $1.key }) {
+            guard details.count < 12 else { break }
+            let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !value.isEmpty else { continue }
+            details[String(key.prefix(40))] = String(value.prefix(80))
+        }
+        if !details.isEmpty { facts["details"] = details }
+
+        var body: [String: Any] = [
+            "space_type": request.spaceType,
+            "facts": facts,
+            "photo_count": max(0, request.photoCount),
+            // The contract's window. Clamped here rather than trusted: a reel
+            // with one clip and a reel with twenty both have to produce a
+            // request the server will answer.
+            "target_seconds": min(45, max(10, request.targetSeconds)),
+        ]
+        let tags: [String] = request.roomTags
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(12)
+            .map { String($0.prefix(40)) }
+        if !tags.isEmpty { body["room_tags"] = tags }
+        if let tone = clean(request.tone) { body["tone"] = tone }
+        if let listingID = request.listingServerID { body["listing_id"] = listingID.uuidString }
+
+        let data = try await execute(makeRequest(url: url(["ai-copy", "script"]),
+                                                 method: "POST", json: body,
+                                                 idempotency: .perAttempt),
+                                     session: aiSession)
+        // Every field optional and every NUMBER read as a Double: an integer
+        // JSON number decodes into a Double, a float does too, and a server
+        // that starts sending `12.0` for a count must not fail the whole
+        // response over the shape of a convenience field.
+        struct Resp: Decodable {
+            let script: String?
+            let characters: Double?
+            let estimatedSeconds: Double?
+            let model: String?
+        }
+        let r: Resp = try decode(data)
+        guard let script = clean(r.script) else {
+            throw APIError.decoding   // no words — nothing to put in the field
+        }
+        // The counts are conveniences, not truth. A missing or NaN count must
+        // not leave the UI showing "0 characters" over a script that plainly
+        // has some, so both fall back to something computed from the script
+        // itself.
+        var characters = script.count
+        // Bounded before the Int conversion: `Int(someHugeDouble)` traps, and a
+        // number this UI only prints is not worth a crash.
+        if let c = r.characters, c.isFinite, c > 0 { characters = Int(min(c, 1_000_000).rounded()) }
+        var seconds = Double(characters) / AIScriptResult.charactersPerSecond
+        if let s = r.estimatedSeconds, s.isFinite, s > 0 { seconds = s }
+        return AIScriptResult(script: script,
+                              characters: characters,
+                              estimatedSeconds: seconds,
+                              model: clean(r.model) ?? "AI")
+    }
+
+    func aiCopyShotlist(_ request: AIShotListRequest) async throws -> AIShotList {
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+
+        // The photos, in reel order. `photo_id` is opaque to the server and comes
+        // straight back on each shot; that is the whole matching mechanism, so it
+        // is bounded but never rewritten.
+        // The wire key is `id`, and the response's `photo_id` echoes it — that is
+        // the ONLY thing the plan is matched on, so it is bounded but never
+        // rewritten (COPY-ASSIST-CONTRACT §1.2, §4.5). Order is positional: the
+        // array order IS the tap order, which the planner uses as its tiebreak.
+        var photos: [[String: Any]] = []
+        for photo in request.photos.prefix(20) {
+            let id = photo.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else { continue }
+            var entry: [String: Any] = ["id": String(id.prefix(80))]
+            if let room = clean(photo.room) { entry["room"] = String(room.prefix(40)) }
+            photos.append(entry)
+        }
+        guard !photos.isEmpty else {
+            throw APIError.server(status: 400, code: "validation",
+                                  message: "Pick the photos for your reel first — the shot plan is written for them.")
+        }
+
+        // Identical fact packing to `aiCopyScript`, and identically bounded: only
+        // facts that are actually SET go on the wire, because "beds: 0" reads to a
+        // language model as a studio apartment while an absent key reads as
+        // "not applicable".
+        var facts: [String: Any] = [:]
+        if let beds = request.facts.beds, beds > 0 { facts["beds"] = beds }
+        if let baths = request.facts.baths, baths.isFinite, baths > 0 { facts["baths"] = baths }
+        if let sqft = request.facts.sqft, sqft > 0 { facts["sqft"] = sqft }
+        if let price = clean(request.facts.priceLabel) { facts["price_label"] = String(price.prefix(40)) }
+        if let tagline = clean(request.facts.tagline) { facts["tagline"] = String(tagline.prefix(200)) }
+        // City/state only. There is no address key here and there must never be
+        // one — see the header on `AICopyFacts`.
+        if let region = clean(request.facts.region) { facts["region"] = String(region.prefix(120)) }
+
+        var details: [String: String] = [:]
+        for (rawKey, rawValue) in request.facts.details.sorted(by: { $0.key < $1.key }) {
+            guard details.count < 12 else { break }
+            let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !value.isEmpty else { continue }
+            details[String(key.prefix(40))] = String(value.prefix(80))
+        }
+        if !details.isEmpty { facts["details"] = details }
+
+        // Exactly the four documented keys plus the two optional ones. The route
+        // takes no `room_tags` and no `photo_count`, and sending fields a
+        // contract does not list is how a client ends up depending on one.
+        var body: [String: Any] = [
+            "space_type": request.spaceType,
+            "facts": facts,
+            "photos": photos,
+            "target_seconds": min(45, max(10, request.targetSeconds)),
+        ]
+        if let tone = clean(request.tone) { body["tone"] = tone }
+        if let listingID = request.listingServerID { body["listing_id"] = listingID.uuidString }
+
+        let data = try await execute(makeRequest(url: url(["ai-copy", "shotlist"]),
+                                                 method: "POST", json: body,
+                                                 idempotency: .perAttempt),
+                                     session: aiSession)
+        // Every field optional and every NUMBER a Double, for the same reason the
+        // script route reads them that way: an integer JSON number decodes into a
+        // Double, a float does too, and a server that starts sending `5.0` for a
+        // count must not fail the whole response over the shape of a convenience
+        // field.
+        struct ShotDTO: Decodable {
+            let photoId: String?
+            let order: Double?
+            let motion: String?
+            let room: String?
+            let onScreenText: String?
+            let seconds: Double?
+            let voiceLine: String?
+        }
+        struct Resp: Decodable {
+            let shots: [ShotDTO]?
+            let script: String?
+            let characters: Double?
+            let estimatedSeconds: Double?
+            let model: String?
+        }
+        let r: Resp = try decode(data)
+        guard let script = clean(r.script) else {
+            throw APIError.decoding   // no words — nothing to put in the field
+        }
+
+        // A shot with no photo_id cannot be matched to a picture, so it is
+        // dropped rather than guessed at: a caption on the wrong room is worse
+        // than no caption. Order falls back to the array position.
+        var shots: [AIShot] = []
+        for (index, dto) in (r.shots ?? []).enumerated() {
+            guard let photoID = clean(dto.photoId) else { continue }
+            // `order` is 1-based on the wire; the array position is the fallback
+            // and is 0-based, so it is shifted to match rather than mixing two
+            // numbering schemes in one sort.
+            var order = index + 1
+            if let o = dto.order, o.isFinite, o >= 0, o < 1_000 { order = Int(o.rounded()) }
+            var seconds: Double? = nil
+            // The composer trims or holds to reach this, so a nonsense value is
+            // worse than none. 2…12 is the Seedance duration enum and therefore
+            // the whole believable range for one shot.
+            if let raw = dto.seconds, raw.isFinite, raw >= 2, raw <= 12 { seconds = raw }
+            // A move this app's video route cannot render is dropped, not passed
+            // on — see `AIShot.renderableMotions` for which way that drift cuts.
+            var motion: String? = nil
+            if let named = clean(dto.motion), AIShot.renderableMotions.contains(named) {
+                motion = named
+            }
+            shots.append(AIShot(photoID: photoID,
+                                order: order,
+                                motion: motion,
+                                room: clean(dto.room).map { String($0.prefix(40)) },
+                                onScreenText: clean(dto.onScreenText).map { String($0.prefix(60)) },
+                                seconds: seconds,
+                                voiceLine: clean(dto.voiceLine).map { String($0.prefix(300)) }))
+        }
+        // Sorted by the PLANNER's order, not the order the photos were tapped in:
+        // it opens on the best establishing shot and closes on the best CTA
+        // frame, and the caller reorders its own clips to match.
+        shots.sort { $0.order < $1.order }
+
+        var characters = script.count
+        // Bounded before the Int conversion: `Int(someHugeDouble)` traps, and a
+        // number this UI only prints is not worth a crash.
+        if let c = r.characters, c.isFinite, c > 0 { characters = Int(min(c, 1_000_000).rounded()) }
+        var estimated = Double(characters) / AIScriptResult.charactersPerSecond
+        if let e = r.estimatedSeconds, e.isFinite, e > 0 { estimated = e }
+        return AIShotList(shots: shots, script: script, characters: characters,
+                          estimatedSeconds: estimated, model: clean(r.model) ?? "AI")
+    }
+
+    // MARK: - AI video (ai-video edge function — async fal submit + poll)
+
+    func reflectionQuote(listingID: UUID) async throws -> ReflectionQuote {
+        let target = url(["ai-video", "declutter", "quote"],
+                         query: [URLQueryItem(name: "listing_id", value: listingID.uuidString)])
+        return try decode(await executeReflection(makeRequest(url: target)))
+    }
+
+    @MainActor private func executeReflection(_ request: URLRequest) async throws -> Data {
+        var request = request
+#if SPATIAL_CAPTURE_LAB
+        // Only the explicit internal TestFlight scheme can opt into the Bria
+        // beta. The server independently checks the configured tester list.
+        if AIConsent.shared.isGranted {
+            let revision = AIConsent.shared.revocationRevision
+            request.setValue("bria-video-v1", forHTTPHeaderField: "x-rendprop-ai-consent")
+            return try await execute(request, session: aiSession, beforeSend: {
+                guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == revision else {
+                    throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
+                }
+            })
+        }
+#endif
+        return try await execute(request, session: aiSession)
+    }
+
+    func removeReflections(assetID: String, listingID: UUID, batchID: UUID,
+                           idempotencyKey: UUID) async throws -> AIVideoJob {
+        try await submitAIVideo(path: "declutter", body: [
+            "asset_id": assetID, "listing_id": listingID.uuidString,
+            "batch_id": batchID.uuidString, "purpose": "reflection_removal",
+            "prompt": "the photographer and people reflected in mirrors or windows"
+        ], fallbackKind: "declutter", idempotencyKey: idempotencyKey.uuidString)
+    }
+
+    func cancelReflectionBatch(_ batchID: UUID) async throws {
+        _ = try await execute(makeRequest(url: url(["ai-video", "declutter", "cancel"]),
+                                           method: "POST", json: ["batch_id": batchID.uuidString]), session: aiSession)
+    }
+
+    func applyReflectionBatch(_ batchID: UUID, originalAssetID: String,
+                              alteredAssetID: String) async throws -> ReflectionApplication {
+        let data = try await execute(makeRequest(url: url(["ai-video", "declutter", "apply"]),
+                                                  method: "POST", json: [
+            "batch_id": batchID.uuidString, "original_asset_id": originalAssetID,
+            "altered_asset_id": alteredAssetID
+        ]), session: aiSession)
+        return try decode(data)
+    }
+
+    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?,
+                      idempotencyKey: String?) async throws -> AIVideoJob {
+        var body: [String: Any] = ["asset_id": assetID, "tier": tier]
+        if let targetFps { body["target_fps"] = targetFps }
+        return try await submitAIVideo(path: "drone", body: body, fallbackKind: "drone",
+                                       idempotencyKey: idempotencyKey)
+    }
+
+    func aiVideoAerial(_ request: AerialRequest, idempotencyKey: String?) async throws -> AIVideoJob {
+        var body: [String: Any] = [
+            "space_type": request.spaceType,
+            "time_of_day": request.timeOfDay,
+            "motion": request.motion,
+            "seconds": request.seconds,
+            "aspect": request.aspect,
+        ]
+        // Grounded: the exterior photo rides along (base64, no data: prefix) and
+        // the server runs image-to-video on it. Never the street address — only
+        // the coarse region ("Charlotte, NC") for scenery context.
+        if let image = request.imageJPEGBase64, !image.isEmpty {
+            body["image_b64"] = image
+            body["mime"] = request.mime ?? "image/jpeg"
+        }
+        if let region = request.region?.trimmingCharacters(in: .whitespacesAndNewlines), !region.isEmpty {
+            body["region"] = String(region.prefix(120))
+        }
+        if let style = request.style?.trimmingCharacters(in: .whitespacesAndNewlines), !style.isEmpty {
+            body["style"] = String(style.prefix(200))
+        }
+        // COMPLIANCE: anchors the aerial's provenance row so the simulated
+        // camera movement is disclosed on the tour and in the audit log.
+        if let listing = request.listingServerID { body["listing_id"] = listing.uuidString }
+        if let label = request.label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            body["label"] = String(label.prefix(80))
+        }
+        var job = try await submitAIVideo(path: "aerial", body: body, fallbackKind: "aerial",
+                                          idempotencyKey: idempotencyKey)
+        // Older servers don't echo the flags — derive from what we sent so the
+        // UI's disclosure is always correct.
+        if job.grounded == nil { job.grounded = request.isGrounded }
+        if job.synthetic == nil { job.synthetic = true }
+        return job
+    }
+
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         aspect: String?, framing: String? = nil, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                         listingServerID: UUID?, label: String?,
+                         idempotencyKey: String?) async throws -> AIVideoJob {
+        try await submitReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt, seconds: seconds,
+            aspect: aspect, framing: framing, presetVersion: presetVersion, motion: motion, room: room,
+            shotIndex: shotIndex, shotCount: shotCount, listingServerID: listingServerID, label: label,
+            idempotencyKey: idempotencyKey, sourceAssetID: nil, sourceProvenanceID: nil)
+    }
+
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                        aspect: String?, framing: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                        listingServerID: UUID?, label: String?, idempotencyKey: String?, sourceAssetID: String,
+                        sourceProvenanceID: String?) async throws -> AIVideoJob {
+        try await submitReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt, seconds: seconds,
+            aspect: aspect, framing: framing, presetVersion: presetVersion, motion: motion, room: room,
+            shotIndex: shotIndex, shotCount: shotCount, listingServerID: listingServerID, label: label,
+            idempotencyKey: idempotencyKey, sourceAssetID: sourceAssetID, sourceProvenanceID: sourceProvenanceID)
+    }
+
+    private func submitReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                        aspect: String?, framing: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                        listingServerID: UUID?, label: String?, idempotencyKey: String?, sourceAssetID: String?,
+                        sourceProvenanceID: String?) async throws -> AIVideoJob {
+        var body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "seconds": seconds]
+        if let sourceAssetID {
+            guard UUID(uuidString: sourceAssetID) != nil, listingServerID != nil else { throw CloudSyncError.invalidResponse }
+            body["source_asset_id"] = sourceAssetID
+        }
+        if let sourceProvenanceID {
+            guard UUID(uuidString: sourceProvenanceID) != nil, sourceAssetID != nil else { throw CloudSyncError.invalidResponse }
+            body["source_provenance_id"] = sourceProvenanceID
+        }
+        if let aspect {
+            guard aspect == "9:16" || aspect == "16:9" else { throw CloudSyncError.invalidResponse }
+            body["aspect"] = aspect
+        }
+        if let framing {
+            guard framing == "preserve_photo" else { throw CloudSyncError.invalidResponse }
+            body["framing"] = framing
+        }
+        if let presetVersion { body["preset_version"] = presetVersion }
+        if let prompt, !prompt.trimmingCharacters(in: .whitespaces).isEmpty {
+            body["prompt"] = prompt
+        }
+        // The shot plan's fields. Each one is written ONLY when it has a value:
+        // an absent `motion` is the signal that the server should use its own
+        // space-aware default, and a key present with an empty string is not the
+        // same signal.
+        if let motion = motion?.trimmingCharacters(in: .whitespacesAndNewlines), !motion.isEmpty {
+            body["motion"] = String(motion.prefix(200))
+        }
+        if let room = room?.trimmingCharacters(in: .whitespacesAndNewlines), !room.isEmpty {
+            body["room"] = String(room.prefix(40))
+        }
+        // Bounded on the way out: these are a position in a reel of at most nine
+        // clips, not an arbitrary integer.
+        if let shotIndex, shotIndex >= 0, shotIndex < 100 { body["shot_index"] = shotIndex }
+        if let shotCount, shotCount > 0, shotCount <= 100 { body["shot_count"] = shotCount }
+        if let listingServerID { body["listing_id"] = listingServerID.uuidString }
+        if let label = label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            body["label"] = String(label.prefix(80))
+        }
+        return try await submitAIVideo(path: "reel-clip", body: body, fallbackKind: "reel",
+                                       idempotencyKey: idempotencyKey)
+    }
+
+    /// Shared submit → decode for the three generate routes (202 responses).
+    @MainActor private func submitAIVideo(path: String, body: [String: Any],
+                               fallbackKind: String, idempotencyKey: String?) async throws -> AIVideoJob {
+        let consentRevision = AIConsent.shared.revocationRevision
+        let workspace = WorkspaceContext.selectedOrgID
+        guard AIConsent.shared.isGranted else {
+            throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
+        }
+        var request = makeRequest(url: url(["ai-video", path]),
+                                                 method: "POST", json: body,
+                                                 idempotency: Self.aiIdempotency(idempotencyKey))
+        if let workspace { request.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
+#if SPATIAL_CAPTURE_LAB
+        if path == "declutter" { request.setValue("bria-video-v1", forHTTPHeaderField: "x-rendprop-ai-consent") }
+#endif
+        let data = try await execute(request, session: aiSession, beforeSend: {
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consentRevision else {
+                throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
+            }
+            guard WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }
+        })
+        let dto: AIVideoJobDTO = try decode(data)
+        guard let requestId = dto.requestId, !requestId.isEmpty,
+              let statusUrl = dto.statusUrl, !statusUrl.isEmpty,
+              let responseUrl = dto.responseUrl, !responseUrl.isEmpty else {
+            throw APIError.decoding   // server didn't return the fal job ids
+        }
+        let disclosure = dto.disclosure?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AIVideoJob(requestId: requestId, statusUrl: statusUrl,
+                          responseUrl: responseUrl, kind: dto.kind ?? fallbackKind,
+                          grounded: dto.grounded, synthetic: dto.synthetic,
+                          disclosure: (disclosure?.isEmpty == false) ? disclosure : nil,
+                          provenanceID: dto.provenance?.id, sourceBound: dto.sourceBound, sourceAssetID: dto.sourceAssetId)
+    }
+
+    @MainActor func aiVideoOperation(operationID: UUID, listingServerID: UUID) async throws -> AIVideoJob? {
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let workspace = WorkspaceContext.selectedOrgID, consent = AIConsent.shared.revocationRevision
+        let current = {
+            guard owner != nil, AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == workspace, AIConsent.shared.isGranted,
+                  AIConsent.shared.revocationRevision == consent else { throw CloudSyncError.identityChanged }
+        }
+        try current()
+        var request = makeRequest(url: url(["ai-video", "operation"], query: [
+            URLQueryItem(name: "operation_id", value: operationID.uuidString),
+            URLQueryItem(name: "listing_id", value: listingServerID.uuidString)]))
+        if let workspace { request.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
+        let data = try await execute(request, session: aiSession, beforeSend: current)
+        try current()
+        let dto: AIVideoOperationDTO = try decode(data)
+        guard let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              raw.keys.contains("selected_library_org_id"), dto.operationId == operationID.uuidString,
+              dto.listingId.flatMap(UUID.init(uuidString:)) == listingServerID,
+              dto.orgId.flatMap(UUID.init(uuidString:)) != nil,
+              (workspace == nil ? raw["selected_library_org_id"] is NSNull
+                  : dto.selectedLibraryOrgId.flatMap(UUID.init(uuidString:)) == workspace) else { throw APIError.decoding }
+        if dto.status == "pending" {
+            guard !raw.keys.contains("request_id"), !raw.keys.contains("status_url"), !raw.keys.contains("response_url") else { throw APIError.decoding }
+            return nil
+        }
+        guard dto.status == "accepted", dto.kind == "reel", let id = dto.requestId, !id.isEmpty,
+              let status = dto.statusUrl, let response = dto.responseUrl,
+              [status, response].allSatisfy({ value in
+                  guard let url = URL(string: value) else { return false }
+                  return url.scheme == "https" && url.host != nil && url.user == nil && url.password == nil
+              }) else { throw APIError.decoding }
+        return AIVideoJob(requestId: id, statusUrl: status, responseUrl: response, kind: "reel",
+            disclosure: dto.disclosure, provenanceID: dto.provenance?.id,
+            sourceBound: dto.sourceBound, sourceAssetID: dto.sourceAssetId)
+    }
+
+    func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {
+        // status_url/response_url are full fal URLs — percent-encode them FULLY
+        // (URLComponents.percentEncodedQuery) so nothing inside them (:, /, or
+        // any future ? & =) can corrupt our own query string.
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        func enc(_ s: String) -> String {
+            s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s
+        }
+        let plain = url(["ai-video", "status"])
+        var comps = URLComponents(url: plain, resolvingAgainstBaseURL: false)
+        comps?.percentEncodedQuery = "status_url=\(enc(job.statusUrl))&response_url=\(enc(job.responseUrl))"
+        // Fallback keeps this total (a missing query just 400s server-side and
+        // surfaces as a normal APIError to the caller's retry/fallback path).
+        let target = comps?.url ?? plain
+
+        let request = makeRequest(url: target)
+        let data = job.kind == "declutter" ? try await executeReflection(request) : try await execute(request, session: aiSession)
+        let dto: AIVideoStatusDTO = try decode(data)
+        switch dto.status {
+        case "completed":
+            guard let s = dto.videoUrl, let videoURL = URL(string: s) else {
+                throw APIError.decoding   // completed but no video url
+            }
+            return .completed(videoURL: videoURL)
+        case "failed", "cancelled":
+            return .failed(dto.error ?? "The AI video job failed.")
+        default:
+            // "processing" and anything unknown → keep polling (tolerant decode).
+            return .processing(queuePosition: dto.queuePosition)
+        }
+    }
+
+    func aiVideoDrift(_ request: DriftCheckRequest) async throws -> DriftVerdict {
+        var body: [String: Any] = [
+            "request_id": String(request.requestID.prefix(200)),
+            "kind": request.kind,
+            "source_b64": request.sourceBase64,
+            "source_mime": request.sourceMime,
+            "frames": request.frames.map { f in
+                ["at": f.at,
+                 "b64": f.jpeg.base64EncodedString(),
+                 "mime": "image/jpeg"] as [String: Any]
+            },
+            "attempt": max(0, min(3, request.attempt)),
+        ]
+        if let s = request.seconds { body["seconds"] = s }
+        if let m = request.motion, !m.isEmpty { body["motion"] = m }
+        if let r = request.room, !r.isEmpty { body["room"] = String(r.prefix(40)) }
+        if let s = request.spaceType, !s.isEmpty { body["space_type"] = s }
+        if let id = request.listingServerID { body["listing_id"] = id.uuidString }
+        if let p = request.provenanceID, !p.isEmpty { body["provenance_id"] = p }
+        if let source = request.sourceAssetID { body["asset_id"] = source }
+
+        let data = try await execute(makeRequest(url: url(["ai-video", "drift"]),
+                                                 method: "POST", json: body,
+                                                 idempotency: .key("drift:\(request.requestID):\(request.attempt)")),
+                                     session: aiSession)
+        // Tolerant on purpose, and tolerant TOWARDS HOLDING: an unknown or
+        // missing status decodes to `.unavailable`, never to a pass. The
+        // server owns `publishable`; nothing here derives it from the scores.
+        struct DriftBlockDTO: Decodable {
+            let status: String?
+            let publishable: Bool?
+            let action: String?
+            let message: String?
+            let reason: String?
+        }
+        struct DriftDTO: Decodable { let drift: DriftBlockDTO? }
+        let dto: DriftDTO = try decode(data)
+        let b = dto.drift
+        let status = DriftVerdict.Status(rawValue: (b?.status ?? "").lowercased()) ?? .unavailable
+        return DriftVerdict(status: status,
+                            publishable: (b?.publishable ?? false) && status == .pass,
+                            action: b?.action ?? "hold",
+                            message: b?.message ?? "",
+                            reason: b?.reason)
+    }
+
+    // MARK: - AI voiceover (ai-voice edge function — docs/VOICEOVER-CONTRACT.md)
+
+    func aiVoices() async throws -> [AIVoice] {
+        let data = try await execute(makeRequest(url: url(["ai-voice", "voices"])), session: aiSession)
+        // `{ voices: [...] }`; tolerate a bare array from any future shape.
+        let raw: [AIVoice]
+        if let wrapped: AIVoicesDTO = try? decode(data), let list = wrapped.voices {
+            raw = list
+        } else if let bare: [AIVoice] = try? decode(data) {
+            raw = bare
+        } else {
+            throw APIError.decoding
+        }
+        // A voice with no id can't be spoken with, so it can't be offered.
+        return raw.filter { !$0.voiceID.isEmpty }
+    }
+
+    func aiVoiceTTS(text: String, voiceID: String, listingServerID: UUID?,
+                    label: String, idempotencyKey: String) async throws -> AIVoiceResult {
+        let script = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var body: [String: Any] = ["text": script, "voice_id": voiceID]
+        if let listingServerID { body["listing_id"] = listingServerID.uuidString }
+        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedLabel.isEmpty { body["label"] = String(trimmedLabel.prefix(80)) }
+
+        // The 1,000-char cap and the fair-housing gate are BOTH enforced
+        // server-side and are not re-implemented here: a client-side copy would
+        // drift from the server's rules and, being client-side, would be
+        // bypassable anyway. The server's refusal message is what the UI shows.
+        let data = try await execute(makeRequest(url: url(["ai-voice", "tts"]), method: "POST",
+                                                 json: body,
+                                                 idempotency: Self.aiIdempotency(idempotencyKey)),
+                                     session: aiSession)
+        let dto: AIVoiceTTSDTO = try decode(data)
+
+        guard let urlString = dto.audioUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !urlString.isEmpty, let audioURL = URL(string: urlString) else {
+            throw APIError.decoding   // no audio to play — not a usable result
+        }
+
+        // Words are dropped INDIVIDUALLY when malformed: a bad entry must not
+        // cost the caption track, and a missing/invalid timing must never be
+        // defaulted to 0 (that is a caption that drifts, which the contract
+        // forbids). No words at all is a normal, supported state.
+        let words: [CaptionWord] = (dto.words ?? []).compactMap { w in
+            guard let t = w.text, !t.isEmpty,
+                  let start = w.start, let end = w.end,
+                  start.isFinite, end.isFinite, end >= start else { return nil }
+            return CaptionWord(text: t, start: start, end: end)
+        }
+
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+        // A NaN / negative / missing duration becomes 0, which pairs with
+        // durationSource "unknown" — never a number a layout could trust.
+        var duration = 0.0
+        if let d = dto.durationS, d.isFinite, d > 0 { duration = d }
+
+        return AIVoiceResult(
+            audioURL: audioURL,
+            durationS: duration,
+            words: words,
+            voiceName: clean(dto.voiceName) ?? "AI voice",
+            characters: dto.characters?.value ?? script.count,
+            mime: clean(dto.mime) ?? "audio/mpeg",
+            // An older server that sends no duration_source is treated as
+            // "unknown" rather than silently trusted.
+            durationSource: clean(dto.durationSource) ?? "unknown",
+            disclosure: clean(dto.disclosure),
+            provenanceID: dto.provenance?.id,
+            provenanceRecorded: dto.provenance?.recorded ?? false,
+            sharedResultID: dto.sharedResultId.flatMap(UUID.init(uuidString:)))
+    }
+
+    /// Image-backed editing hints only. Every uploaded source remains private;
+    /// the backend revalidates owned bytes and returns closed scene/motion values.
+    @MainActor func propertyVideoPlan(listingID: UUID, orgID: UUID, photos: [PropertyVideoPlanPhoto],
+                                     idempotencyKey: String) async throws -> PropertyVideoPlanReply {
+        guard (1...20).contains(photos.count), Set(photos.map(\.photoID)).count == photos.count,
+              photos.allSatisfy({ !$0.photoID.isEmpty && $0.photoID.utf8.count <= 200 }),
+              !idempotencyKey.isEmpty else { throw PropertyVideoPlanner.Failure.invalidInput }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let consent = AIConsent.shared.revocationRevision
+        func requireCurrent() throws {
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consent,
+                  owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+                  WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        }
+        try requireCurrent()
+        let body: [String: Any] = ["listing_id": listingID.uuidString.lowercased(),
+            "expected_org_id": orgID.uuidString.lowercased(),
+            "photos": photos.map { ["photo_id": $0.photoID, "asset_id": $0.assetID.uuidString.lowercased()] }]
+        var request = makeRequest(url: url(["property-video-plan"]), method: "POST", json: body, idempotency: .key(idempotencyKey))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        request.setValue("property-video-plan-v1", forHTTPHeaderField: "x-rendprop-ai-consent")
+        let data = try await execute(request, session: aiSession, beforeSend: { try requireCurrent() })
+        try requireCurrent()
+        guard data.count <= 65536 else { throw PropertyVideoPlanner.Failure.invalidReply }
+        let reply = try JSONDecoder().decode(PropertyVideoPlanReply.self, from: data)
+        _ = try reply.checked(listingID: listingID, orgID: orgID, requested: photos)
+        return reply
+    }
+
+    // MARK: - AI room chapters (docs/AI-CHAPTERS-CONTRACT.md)
+
+    func aiChapters(listingServerID: UUID, assetID: UUID, maxChapters: Int,
+                    idempotencyKey: String) async throws -> AIChaptersResult {
+        // The ceiling is re-clamped server-side (1…24); this only stops an
+        // obviously wrong local value from becoming a wasted round trip.
+        let bounded = min(24, max(1, maxChapters))
+        let body: [String: Any] = [
+            "listing_id": listingServerID.uuidString,
+            "asset_id": assetID.uuidString,
+            "max_chapters": bounded,
+            "language": "en",
+        ]
+        // The AI session: Gemini has to fetch, transcode and watch the whole
+        // walkthrough, which routinely outlives the default 60 s timeout.
+        let data = try await execute(makeRequest(url: url(["ai-chapters"]), method: "POST",
+                                                 json: body,
+                                                 idempotency: Self.aiIdempotency(idempotencyKey)),
+                                     session: aiSession)
+        let dto: AIChaptersDTO = try decode(data)
+
+        // Chapters are dropped INDIVIDUALLY when malformed: one bad entry must
+        // not cost the whole pre-fill. A missing/invalid timestamp is never
+        // defaulted to 0 — a suggestion that lands on the wrong second is worse
+        // than one that never appears, because the agent has to notice it.
+        // A null label is fine (it reads "Other" — a chip the agent renames in one
+        // tap); a missing timestamp is not.
+        let chapters: [AIChapter] = (dto.chapters ?? []).filter { c in
+            guard let s = c.startS, s.isFinite, s >= 0 else { return false }
+            return true
+        }
+
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+        var seconds: Double? = nil
+        if let v = dto.videoSeconds, v.isFinite, v > 0 { seconds = v }
+
+        return AIChaptersResult(
+            chapters: chapters,
+            summary: clean(dto.summary),
+            videoSeconds: seconds,
+            model: clean(dto.model),
+            costCentsEstimate: dto.costCentsEstimate.flatMap { $0.isFinite ? $0 : nil },
+            // Server copy, shown verbatim — blank entries are dropped, not reworded.
+            warnings: (dto.warnings ?? []).compactMap(clean),
+            disclosure: clean(dto.disclosure),
+            provenanceID: dto.provenance?.id,
+            provenanceRecorded: dto.provenance?.recorded ?? false)
+    }
+
+    // MARK: - Coach (docs/COACH-CONTRACT.md)
+
+    /// Hand-built `[String: Any]` body, same style as every other call in
+    /// this file — `CoachRequest` carries no `Encodable` conformance because
+    /// nothing here goes through `JSONEncoder`. `screen` is added only when
+    /// non-nil (an `Optional` boxed as `Any` inside a JSON body is a known
+    /// `JSONSerialization` foot-gun, so the key is just omitted instead).
+    func coach(_ request: CoachRequest) async throws -> CoachResponse {
+        let body = request.wireBody
+        // `aiSession`, not the default one: this asks Claude a question with a
+        // system prompt and up to 25 listings of context behind it, and every
+        // other model-backed route on this client already uses the longer
+        // timeout. The default 60 s was one slow answer away from throwing away
+        // a reply the server had already paid for.
+        guard let org = request.orgID, org == WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        // One key for this user request. execute() retains this URLRequest on
+        // refresh/retry; asking the same question later is a new logical turn.
+        var httpRequest = makeRequest(url: url(["coach"]), method: "POST", json: body,
+                                      idempotency: .perAttempt)
+        httpRequest.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(httpRequest, session: aiSession, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
+        })
+        // decodeExact, NOT decode: `CoachResponse` spells its own CodingKeys in
+        // snake_case, which `.convertFromSnakeCase` cannot match. See the note
+        // on `decodeExact`.
+        return try decodeExact(data)
+    }
+
+    // MARK: - Account / usage / leads
+
+    func realEstateRole() async throws -> RealEstateRole {
+        let data = try await execute(makeRequest(url: url(["me"])))
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let user = root["user"] as? [String: Any] else { throw APIError.decoding }
+        return RealEstateRole(rawValue: user["real_estate_role"] as? String ?? "agent") ?? .agent
+    }
+
+    func updateRealEstateRole(_ role: RealEstateRole) async throws {
+        _ = try await execute(makeRequest(url: url(["me", "profile"]), method: "PATCH",
+            json: ["real_estate_role": role.rawValue]))
+    }
+
+    func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact? {
+        var request = makeRequest(url: url(["listings", listingID.uuidString.lowercased(), "client-contact"]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let contact: ListingClientContact? }
+        let envelope: Envelope = try decodeExact(try await execute(request))
+        return try envelope.contact?.checked(listingID: listingID)
+    }
+
+    func saveClientContact(_ contact: ListingClientContact, listingID: UUID, orgID: UUID) async throws -> ListingClientContact {
+        try ClientContactPolicy.validate(contact)
+        var request = makeRequest(url: url(["listings", listingID.uuidString.lowercased(), "client-contact"]),
+            method: "PUT", json: contact.writeBody)
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let contact: ListingClientContact }
+        let envelope: Envelope = try decodeExact(try await execute(request))
+        return try envelope.contact.checked(listingID: listingID)
+    }
+
+    func requestClientRecipientVerification(listingID: UUID, orgID: UUID) async throws -> ClientRecipientVerificationReceipt {
+        var request = makeRequest(url: url(["leads", "client-recipient-verification"]), method: "POST",
+            json: ["listing_id": listingID.uuidString.lowercased()])
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let receipt: ClientRecipientVerificationReceipt = try decodeExact(try await execute(request))
+        return try receipt.checked()
+    }
+    func deleteLead(leadID: UUID, orgID: UUID) async throws -> LeadDeletionReceipt {
+        var request = makeRequest(url: url(["leads", leadID.uuidString.lowercased()]), method: "DELETE")
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let receipt: LeadDeletionReceipt = try decodeExact(try await execute(request))
+        return try receipt.checked(leadID: leadID)
+    }
+
+    func sendLeadToClient(leadID: UUID, recipient: String, requestID: UUID, orgID: UUID) async throws -> ClientLeadDelivery {
+        guard ClientContactPolicy.isEmail(recipient) else { throw ClientContactError.invalidEmail }
+        var request = makeRequest(url: url(["leads", leadID.uuidString.lowercased(), "send-to-client"]),
+            method: "POST", json: ["request_id": requestID.uuidString.lowercased(), "expected_recipient_email": recipient],
+            idempotency: .key("client-lead:\(requestID.uuidString.lowercased())"))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let ok: Bool; let delivery: ClientLeadDelivery }
+        let result: Envelope = try decodeExact(try await execute(request))
+        guard result.ok else { throw ClientContactError.invalidResponse }
+        return result.delivery
+    }
+
+    func updateBrand(_ fields: [String: String]) async throws {
+        // PATCH /me/brand — the org brand kit is what the PUBLIC tour/portfolio
+        // pages render as the agent card, so this is what puts the agent's
+        // identity on every hosted share link (2026-08-26 audit P0-1).
+        guard let org = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        try await updateBrand(fields, orgID: org)
+    }
+
+    @MainActor func updateBrand(_ fields: [String: String], orgID: UUID) async throws {
+        var request = makeRequest(url: url(["me", "brand"]), method: "PATCH", json: fields)
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        _ = try await execute(request)
+    }
+
+    @MainActor func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard !image.isEmpty, image.count <= 512 * 1024, ["image/png", "image/jpeg"].contains(contentType) else { throw CloudSyncError.invalidResponse }
+        guard WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let body: [String: Any] = ["image_base64": image.base64EncodedString(), "content_type": contentType,
+            "expected_logo_url": expectedLogoURL as Any? ?? NSNull(), "client_operation_id": operationID.uuidString.lowercased()]
+        var request = makeRequest(url: url(["me", "brand", "logo"]), method: "POST", json: body)
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let receipt: BusinessLogoReceipt = try decodeExact(data)
+        guard receipt.ok, receipt.orgID == orgID, let value = receipt.businessLogoURL,
+              let logo = URL(string: value), logo.scheme == "https", logo.host != nil,
+              logo.user == nil, logo.password == nil else { throw CloudSyncError.invalidResponse }
+        return receipt
+    }
+
+    @MainActor func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        // Old /me handlers interpret every DELETE subpath as account deletion.
+        // A dedicated POST fails closed during a mixed-version rollout.
+        var request = makeRequest(url: url(["me", "brand", "logo", "clear"]), method: "POST",
+            json: ["expected_logo_url": expectedLogoURL as Any? ?? NSNull()])
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let receipt: BusinessLogoReceipt = try decodeExact(data)
+        guard receipt.ok, receipt.orgID == orgID, receipt.businessLogoURL == nil else { throw CloudSyncError.invalidResponse }
+        return receipt
+    }
+
+    @MainActor func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let brand = try await cloudBrand()
+        guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID, brand.orgID == orgID else { throw CloudSyncError.identityChanged }
+        let value = brand.fields["business_logo_url"]
+        if let value {
+            guard let logo = URL(string: value), logo.scheme == "https", logo.host != nil,
+                  logo.user == nil, logo.password == nil else { throw CloudSyncError.invalidResponse }
+        }
+        return .init(ok: true, orgID: orgID, businessLogoURL: value)
+    }
+
+    @MainActor func personalCard() async throws -> PersonalCardReceipt {
+        guard let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        let revision = AuthStore.shared.syncSessionRevision
+        let data = try await execute(makeRequest(url: url(["me", "card"])))
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner,
+              AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        let receipt: PersonalCardReceipt = try decodeExact(data)
+        return try receipt.checked(owner: owner)
+    }
+
+    @MainActor func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt {
+        guard let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)), expected.userID == owner,
+              SpaceType(rawValue: spaceType) != nil,
+              Set(fields.keys).isSubset(of: Set(AgentCard.fieldNames)) else { throw CloudSyncError.identityChanged }
+        _ = try expected.checked(owner: owner)
+        let revision = AuthStore.shared.syncSessionRevision
+        var changes = fields.mapValues { $0.isEmpty ? NSNull() as Any : $0 as Any }
+        changes["space_type"] = spaceType
+        let request = makeRequest(url: url(["me", "card"]), method: "PATCH",
+            json: ["changes": changes, "expected": expected.expectedWire(keys: Array(changes.keys))])
+        let data = try await execute(request)
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner,
+              AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        let receipt: PersonalCardReceipt = try decodeExact(data)
+        return try receipt.checked(owner: owner)
+    }
+
+    @MainActor func me() async throws -> UsageSummary {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let selectedOrg = WorkspaceContext.selectedOrgID
+        let billingOrg = WorkspaceContext.billingOrgID
+        let servingOrg = WorkspaceContext.servingOrgID
+        let data = try await execute(makeRequest(url: url(["me"])))
+        let dto: MeDTO = try decode(data)
+        if let billing = dto.billing {
+            guard (billing.contentOrgId == nil ? dto.org?.id.flatMap(UUID.init(uuidString:)) : billing.contentOrgId.flatMap(UUID.init(uuidString:))) == selectedOrg,
+                  billing.orgId.flatMap(UUID.init(uuidString:)) == billingOrg,
+                  (billing.servingOrgId ?? billing.orgId).flatMap(UUID.init(uuidString:)) == servingOrg else { throw CloudSyncError.invalidResponse }
+        }
+        // /me returns `plan` (effective), `plan_raw`, `trial_ends_at`,
+        // `entitlement {…_per_month}` and `usage.{cost_cents, leads, renders,
+        // listings, by_feature{…}}` — see services/supabase/functions/me/index.ts.
+        // cost_cents can be fractional (round4) → round to whole cents for Money.
+        let usage = dto.usage
+        if dto.trialUsage != nil || dto.trialOffer != nil || dto.servingActivation != nil || dto.servingPhotoPackage != nil {
+            guard let rawOrg = dto.org?.id, let org = UUID(uuidString: rawOrg),
+                  org == selectedOrg, WorkspaceContext.selectedOrgID == selectedOrg,
+                  let financialOrg = servingOrg,
+                  dto.trialUsage.map({ $0.checked(org: financialOrg) != nil }) ?? true,
+                  dto.trialOffer.map({ $0.checked() != nil }) ?? true,
+                  dto.servingActivation.map({ $0.checked(org: financialOrg) != nil }) ?? true else { throw CloudSyncError.invalidResponse }
+        }
+        if let package = dto.servingPhotoPackage {
+            guard let org = servingOrg, package.checked(org: org) != nil,
+                  let owner = actor.flatMap(UUID.init(uuidString:)),
+                  dto.user?.id.flatMap(UUID.init(uuidString:)) == owner,
+                  dto.servingActivation?.available != false else { throw CloudSyncError.invalidResponse }
+        }
+        var hosting: HostingRetentionSummary?
+        if let receipt = dto.hostingRetention {
+            guard let rawOrg = dto.org?.id, let org = UUID(uuidString: rawOrg),
+                  org == WorkspaceContext.selectedOrgID, let checked = receipt.checked(org: org) else { throw CloudSyncError.invalidResponse }
+            hosting = checked
+        }
+        var entitlements: Entitlements? = nil
+        if let ent = dto.entitlement {
+            var used: [String: Int] = [:]
+            if let bf = usage?.byFeature {
+                if let v = bf.renders?.value    { used["renders"] = v }
+                if let v = bf.photoEdits?.value { used["photo_edits"] = v }
+                if let v = bf.reels?.value      { used["reels"] = v }
+                if let v = bf.aerials?.value    { used["aerials"] = v }
+                if let v = bf.drone?.value      { used["drone"] = v }
+            }
+            if used["renders"] == nil, let r = usage?.renders?.value { used["renders"] = r }
+            entitlements = Entitlements(
+                plan: dto.plan ?? dto.org?.plan ?? "free",
+                planRaw: dto.planRaw,
+                trialEndsAt: Self.parseDate(dto.trialEndsAt),
+                rendersPerMonth: dto.servingActivation?.available == false ? 0 : ent.rendersPerMonth?.value ?? 0,
+                photoEditsPerMonth: dto.servingActivation?.available == false ? 0 : ent.photoEditsPerMonth?.value ?? 0,
+                reelsPerMonth: dto.servingActivation?.available == false ? 0 : ent.reelsPerMonth?.value ?? 0,
+                aerialsPerMonth: dto.servingActivation?.available == false ? 0 : ent.aerialsPerMonth?.value ?? 0,
+                topazPerMonth: dto.servingActivation?.available == false ? 0 : ent.topazPerMonth?.value ?? 0,
+                used: used,
+                leads: usage?.leads?.value ?? 0,
+                planSource: dto.planSource)
+        }
+        // Admin flag: whatever the SERVER says, never a local rule. Today's /me
+        // sends neither field, so both stay nil and the owner console probes
+        // GET /admin/spend once instead (a 403 hides the row).
+        let serverRole = (dto.role ?? dto.user?.role)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        var adminFlag: Bool? = dto.isAdmin ?? dto.user?.isAdmin
+        if adminFlag == nil, let serverRole, !serverRole.isEmpty {
+            adminFlag = (serverRole == "owner" || serverRole == "admin")
+        }
+        let summary = UsageSummary(
+            aiSpendCents: usage?.costCents.map { Int($0.rounded()) },
+            renderCount: usage?.renders?.value,
+            leadCount: usage?.leads?.value,
+            planName: dto.plan ?? dto.org?.plan,
+            entitlements: entitlements,
+            userName: dto.user?.name,
+            orgName: dto.org?.name,
+            brandName: dto.org?.brandKit?.name,
+            isAdmin: adminFlag,
+            role: serverRole,
+            hostingRetention: hosting,
+            trialUsage: dto.trialUsage,
+            trialOffer: dto.trialOffer,
+            servingActivation: dto.servingActivation,
+            servingPhotoPackage: dto.servingPhotoPackage,
+            servingEnvelope: dto.servingEnvelope?.checked())
+        // Let the Account row show the server-side name (never an email).
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == selectedOrg else { throw CloudSyncError.identityChanged }
+        AuthStore.shared.applyServerIdentity(userName: summary.userName, orgName: summary.orgName)
+        return summary
+    }
+
+    func propertyLookup(address: String) async throws -> PropertyLookup {
+        let target = url(["property"], query: [URLQueryItem(name: "address", value: address)])
+        // `aiSession`: a third-party record lookup is a network hop behind our
+        // own, and the default 60 s is the timeout that already threw away a
+        // paid coach reply once.
+        let data = try await execute(makeRequest(url: target), session: aiSession)
+        struct FactsDTO: Decodable {
+            let matchedAddress: String?
+            let beds: Double?
+            let baths: Double?
+            let sqft: Double?
+            let lotSqft: Double?
+            let yearBuilt: Double?
+            let propertyType: String?
+            let lastSalePriceCents: Double?
+            let lastSaleDate: String?
+        }
+        struct DTO: Decodable {
+            let configured: Bool?
+            let cached: Bool?
+            let source: String?
+            let facts: FactsDTO?
+        }
+        // Every number decodes as Double for the reason the shotlist route does:
+        // an integer JSON number decodes into a Double and a float does too, so
+        // a provider that starts sending `3.0` for a bedroom count must not fail
+        // the whole lookup over the shape of a convenience field.
+        let dto: DTO = try decode(data)
+        guard dto.configured == true else { return PropertyLookup(configured: false) }
+        let f = dto.facts.map { d in
+            PropertyFacts(matchedAddress: d.matchedAddress,
+                          beds: d.beds.map { Int($0.rounded()) },
+                          baths: d.baths,
+                          sqft: d.sqft.map { Int($0.rounded()) },
+                          lotSqft: d.lotSqft.map { Int($0.rounded()) },
+                          yearBuilt: d.yearBuilt.map { Int($0.rounded()) },
+                          propertyType: d.propertyType,
+                          lastSalePriceCents: d.lastSalePriceCents.map { Int($0.rounded()) },
+                          lastSaleDate: d.lastSaleDate)
+        }
+        return PropertyLookup(configured: true, cached: dto.cached ?? false,
+                              source: dto.source, facts: f)
+    }
+
+    func leads(listingServerID: UUID?) async throws -> [Lead] {
+        var query: [URLQueryItem] = []
+        if let listingServerID { query.append(URLQueryItem(name: "listing_id", value: listingServerID.uuidString)) }
+        var request = makeRequest(url: url(["leads"], query: query))
+        if let org = WorkspaceContext.selectedOrgID { request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
+        let data = try await execute(request)
+        // `{ leads: [...] }` per contract; tolerate a bare array too.
+        let dtos: [LeadDTO]
+        if let wrapped: LeadsDTO = try? decodeExact(data), let list = wrapped.leads {
+            dtos = list
+        } else if let bare: [LeadDTO] = try? decodeExact(data) {
+            dtos = bare
+        } else {
+            throw APIError.decoding
+        }
+        return dtos.map(mapLead).sorted { $0.createdAt > $1.createdAt }
+    }
+
+    // MARK: - Admin console (docs/ADMIN-CONSOLE-CONTRACT.md — owner/admin only)
+    //
+    // Four read-only GETs under `/functions/v1/admin`. The admin role is
+    // SERVER-enforced (`public.profiles.is_admin` for `auth.uid()`, read with
+    // the service-role client): a valid non-admin JWT gets 403 on every route,
+    // so nothing here is a permission check — it is a convenience surface whose
+    // visibility follows the server's answer.
+    //
+    // Nothing is written and no idempotency key is needed (GET). The shared
+    // `execute` already refreshes the JWT and maps `{error, code}` into
+    // `APIError.server`, so `.isForbidden` / `.isUnauthorized` classify the
+    // 403 ("not an admin") and 401 ("signed out") the console must tell apart.
+
+    func adminSpend(window: AdminSpendWindow) async throws -> AdminSpendReport {
+        let query = [URLQueryItem(name: "window", value: window.rawValue)]
+        let data = try await execute(makeRequest(url: url(["admin", "spend"], query: query)))
+        return try decode(data)
+    }
+
+    func adminProviders() async throws -> AdminProvidersReport {
+        let data = try await execute(makeRequest(url: url(["admin", "providers"])))
+        return try decode(data)
+    }
+
+    func adminUsage() async throws -> AdminUsageReport {
+        let data = try await execute(makeRequest(url: url(["admin", "usage"])))
+        return try decode(data)
+    }
+
+    func adminHealth() async throws -> AdminHealthReport {
+        let data = try await execute(makeRequest(url: url(["admin", "health"])))
+        return try decode(data)
+    }
+
+    // MARK: - AI routing brain (docs/ADMIN-CONSOLE-CONTRACT.md §GET /admin/routing)
+    //
+    // The read is the same shape as the four above. The two POSTs are the ONLY
+    // writes the admin function has, and each sends exactly one boolean.
+    //
+    // They take the DEFAULT derived `Idempotency-Key` — sha256(method + path +
+    // body digest) — which is the right choice for a switch: a retry after a
+    // lost response replays the same flip instead of racing a second one, and
+    // flipping the other way is a different body ⇒ a different key ⇒ the two
+    // directions are never conflated. Not `.perAttempt`: that exists for the
+    // `/ai-*` submit routes, where a repeated key is 409'd rather than replayed.
+    //
+    // Both writes answer a small ack (`{ok, enabled, changed_at, note?}`), not
+    // a fresh report, and nothing here re-reads. That is deliberate: the caller
+    // re-reads `adminRouting()`, so a UI switch only moves once the server has
+    // said it moved. The step ack carries no `note` at all — see the contract.
+
+    func adminRouting() async throws -> AdminRoutingReport {
+        let data = try await execute(makeRequest(url: url(["admin", "routing"])))
+        return try decode(data)
+    }
+
+    func adminSetRoutingFlag(enabled: Bool) async throws -> AdminRoutingWriteAck {
+        let data = try await execute(makeRequest(url: url(["admin", "routing", "flag"]),
+                                                 method: "POST",
+                                                 json: ["enabled": enabled]))
+        return try decode(data)
+    }
+
+    func adminSetRouteStep(routeID: String, enabled: Bool) async throws -> AdminRoutingWriteAck {
+        // The id is its OWN path segment (`url(_:)` appends each separately and
+        // never string-joins), so a route id carrying a slash or a space cannot
+        // rewrite the route. An empty id is refused here rather than sent: it
+        // would arrive as `POST /admin/routing/step`, which the server answers
+        // with the same 400 — this just says so without spending a round trip.
+        let id = routeID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else {
+            throw APIError.server(status: 400, code: "validation",
+                                  message: "That routing step has no id, so it can't be switched.")
+        }
+        let data = try await execute(makeRequest(url: url(["admin", "routing", "step", id]),
+                                                 method: "POST",
+                                                 json: ["enabled": enabled]))
+        return try decode(data)
+    }
+
+    // MARK: - Write bodies (explicit snake_case)
+
+    /// Listing → wire body. POST omits empty/zero fields (a fresh row); PATCH
+    /// sends the FULL local truth, using JSON null to clear a server value the
+    /// user removed (un-sell, drop the Zillow link, unknown beds) — a partial
+    /// PATCH that omits them would leave stale values on the hosted page.
+    private func listingBody(_ l: Listing, forPatch: Bool) throws -> [String: Any] {
+        var b: [String: Any] = [
+            "space_type": l.spaceType.rawValue,
+            "address": l.address,
+        ]
+        func put(_ key: String, _ value: Any, when present: Bool) {
+            if present { b[key] = value } else if forPatch { b[key] = NSNull() }
+        }
+        put("price_cents", l.price.cents, when: l.price.cents > 0)
+        put("beds", l.beds, when: l.beds > 0)
+        put("baths", l.baths, when: l.baths > 0)
+        put("sqft", l.sqft, when: l.sqft > 0)
+        let tagline = l.tagline?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        put("tagline", tagline, when: !tagline.isEmpty)
+        // `details` is the freeform jsonb bag `listings` accepts whole (it only
+        // checks that it is an object under the size cap) and the tour host
+        // reads its per-listing prefs out of. The search-engine answer rides in
+        // it under `allow_indexing` — the first key `allowsIndexing()` looks
+        // for, read from the LISTING's bag before the org brand kit, so the
+        // answer given for this tour wins (services/edge/tour-host/src/player.ts).
+        //
+        // Written as the string "true"/"false" because this bag is typed
+        // [String: String] end to end; `prefFlag` parses both spellings. "false"
+        // is sent EXPLICITLY rather than omitted, so a workspace-level opt-in
+        // can never quietly index a page whose owner said no. A server that
+        // does nothing with the key stores it harmlessly — publishing is
+        // unaffected either way.
+        // Measurements, like indexing, are independent of the generic form's
+        // details. Preserve all other keys, including an unsupported future
+        // measurements value, and reject invalid/oversized writes before HTTP.
+        let mergedDetails = try ListingWireDetails.merged(l)
+        // Private measurements have their own atomic endpoint. Full listing edits cannot replace them.
+        let details = forPatch ? mergedDetails.filter { !FloorMeasurementPlan.isPrivateKey($0.key) } : mergedDetails
+        if !details.isEmpty {
+            b["details"] = details
+        } else if forPatch {
+            b["details"] = [String: String]()   // column is NOT NULL default '{}'
+        }
+        if let lat = l.latitude, let lng = l.longitude, lat.isFinite, lng.isFinite {
+            b["lat"] = coarseCoordinate(lat)
+            b["lng"] = coarseCoordinate(lng)
+        } else if forPatch {
+            b["lat"] = NSNull()
+            b["lng"] = NSNull()
+        }
+        let zillow = l.zillowURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        put("zillow_url", zillow, when: !zillow.isEmpty)
+        if forPatch {
+            // The DB check set is draft|capturing|processing|ready|expired|archived —
+            // the app's transient `uploading` maps to `processing`; never sent raw.
+            b["status"] = Self.wireStatus(l.status)
+            b["sold_at"] = l.soldAt.map { Self.isoString(from: $0) } ?? NSNull()
+        } else if let sold = l.soldAt {
+            b["sold_at"] = Self.isoString(from: sold)
+        }
+        return b
+    }
+
+    /// Local → server status vocabulary (F-supabase-13).
+    private static func wireStatus(_ s: Listing.Status) -> String {
+        switch s {
+        case .uploading:  return "processing"
+        case .draft:      return "draft"
+        case .processing: return "processing"
+        case .ready:      return "ready"
+        case .expired:    return "expired"
+        }
+    }
+
+    /// Server → local status. `archived` (sold/archived folder) is a READY tour
+    /// whose `sold_at` carries the archive state; `capturing` is a draft.
+    private static func localStatus(_ raw: String?) -> Listing.Status {
+        switch raw ?? "" {
+        case "archived":  return .ready
+        case "capturing": return .draft
+        default:          return Listing.Status(rawValue: raw ?? "") ?? .draft
+        }
+    }
+
+    // MARK: - DTO → model mapping
+
+    private func mapListing(_ dto: ListingDTO) -> Listing {
+        let serverID = dto.id.flatMap(UUID.init(uuidString:))
+        var l = Listing(
+            id: serverID ?? UUID(),
+            address: dto.address ?? "",
+            beds: dto.beds ?? 0,
+            baths: dto.baths ?? 0,
+            sqft: dto.sqft ?? 0,
+            price: Money(cents: dto.priceCents ?? 0),
+            status: Self.localStatus(dto.status),
+            isSample: false,
+            spaceTypeRaw: dto.spaceType,
+            createdAt: Self.parseDate(dto.createdAt) ?? Date(),
+            soldAt: Self.parseDate(dto.soldAt),
+            zillowURL: dto.zillowUrl.flatMap { $0.isEmpty ? nil : $0 },
+            mainPhotoRelPath: nil,          // main_photo_key is a remote R2 key, not a local path
+            latitude: dto.lat,
+            longitude: dto.lng,
+            tagline: dto.tagline,
+            details: dto.details?.value
+        )
+        l.cloudArchived = dto.status == "archived"
+        l.serverID = serverID
+        l.serverOrgID = dto.orgId.flatMap(UUID.init(uuidString:))
+        l.serverLibraryOrgID = dto.libraryOrgId.flatMap(UUID.init(uuidString:))
+        l.cloudCreateReplayed = dto.createReplayed
+        l.floorMeasurements = FloorMeasurementPlan.decodeWireValue(FloorMeasurementPlan.wireValue(in: l.details))
+        l.measurementSync = FloorMeasurementSyncState(expected: FloorMeasurementPlan.wireValue(in: l.details))
+        if let raw = l.details?[Listing.searchIndexingKey]?.lowercased() {
+            l.allowSearchIndexing = ["true", "1", "yes"].contains(raw)
+        }
+        func text(_ value: String?) -> ListingFactValue { value.map(ListingFactValue.text) ?? .null }
+        func number(_ value: Double?) -> ListingFactValue { value.map(ListingFactValue.number) ?? .null }
+        var state = ListingFactsSyncState()
+        state.baseline = ["space_type": text(dto.spaceType), "address": text(dto.address),
+            "beds": number(dto.beds.map(Double.init)), "baths": number(dto.baths),
+            "sqft": number(dto.sqft.map(Double.init)), "price_cents": number(dto.priceCents.map(Double.init)),
+            "tagline": text(dto.tagline), "zillow_url": text(dto.zillowUrl), "lat": number(dto.lat), "lng": number(dto.lng),
+            "sold_at": text(dto.soldAt), "status": text(dto.status)]
+        state.detailBaseline = (dto.details?.raw ?? [:]).filter { ListingFactsSync.editableDetailKeys.contains($0.key) }
+        l.factsSync = state
+        return l
+    }
+
+    private func mapLead(_ dto: LeadDTO) -> Lead {
+        let name = dto.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+        return Lead(
+            id: dto.id.flatMap(UUID.init(uuidString:)) ?? UUID(),
+            listingID: dto.listingId.flatMap(UUID.init(uuidString:)),
+            name: name.isEmpty ? "Someone" : name,
+            phone: clean(dto.phone),
+            email: clean(dto.email),
+            message: clean(dto.message),
+            extra: dto.extra?.value,
+            createdAt: Self.parseDate(dto.createdAt) ?? Date(),
+            source: clean(dto.source),
+            listingAddress: clean(dto.listingAddress), status: clean(dto.status), clientDelivery: dto.clientDelivery)
+    }
+
+    /// Tolerant `[String: String]` decoder for jsonb maps: numbers/bools are
+    /// stringified and null/nested values are DROPPED (never thrown) — so one
+    /// off-type value (e.g. a future MLS import writing {"year_built": 1998})
+    /// can't fail the entire /listings array decode.
+    struct TolerantStringMap: Decodable {
+        let value: [String: String]
+        let raw: [String: ListingFactValue]
+
+        private struct Scalar: Decodable {
+            let value: String?
+            init(from decoder: Decoder) throws {
+                let c = try decoder.singleValueContainer()
+                if let s = try? c.decode(String.self) { value = s }
+                else if let i = try? c.decode(Int.self) { value = String(i) }
+                else if let d = try? c.decode(Double.self) { value = String(d) }
+                else if let b = try? c.decode(Bool.self) { value = String(b) }
+                else { value = nil } // null / arrays / objects remain tolerated.
+            }
+        }
+
+        init(from decoder: Decoder) throws {
+            // A String-keyed Dictionary bypasses convertFromSnakeCase. Dynamic
+            // details are stored keys, not DTO field names: rewriting them
+            // loses floor_measurements_v1, floorplan_url and future raw keys.
+            let c = try decoder.singleValueContainer()
+            raw = try c.decode([String: ListingFactValue].self)
+            value = try c.decode([String: Scalar].self).compactMapValues(\.value)
+        }
+    }
+
+    /// Tolerant integer: accepts JSON ints, doubles (rounded), numeric strings
+    /// and null — a count that arrives as `3.0` must not fail the whole /me.
+    struct LenientInt: Decodable {
+        let value: Int?
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if c.decodeNil() { value = nil; return }
+            if let i = try? c.decode(Int.self) { value = i; return }
+            if let d = try? c.decode(Double.self), d.isFinite { value = Int(d.rounded()); return }
+            if let s = try? c.decode(String.self) { value = Int(s.trimmingCharacters(in: .whitespaces)); return }
+            value = nil
+        }
+    }
+
+    private func mapRender(_ dto: RenderDTO, fallbackListingID: UUID?, fallbackTier: Render.Tier,
+                           fallbackDuration: Double, fallbackEnhancements: Enhancements,
+                           fallbackID: UUID? = nil) -> Render {
+        // `fallbackListingID` is the caller's own listing id (it knows which
+        // listing it asked about). The final `UUID()` is unreachable for every
+        // shipping caller — `createRender` always passes one and `renderStatus`
+        // rejects a listing-less response before getting here (F-E-22).
+        var r = Render(
+            listingID: dto.listingId.flatMap(UUID.init(uuidString:)) ?? fallbackListingID ?? UUID(),
+            tier: dto.tier.flatMap(Render.Tier.init(rawValue:)) ?? fallbackTier,
+            durationS: dto.durationS ?? fallbackDuration,
+            enhancements: dto.enhancements ?? fallbackEnhancements,
+            status: dto.status ?? "queued",
+            progress: dto.progress ?? 0
+        )
+        if let idStr = dto.id, let uuid = UUID(uuidString: idStr) { r.id = uuid }
+        else if let fallbackID { r.id = fallbackID }
+        if let t = dto.tour {
+            r.shareSlug = t.slug
+            r.shareURL = t.shareUrl
+            r.scrubURL = t.scrubUrl
+            r.videoURL = t.videoUrl
+            r.posterURL = t.poster
+        }
+        return r
+    }
+
+    // MARK: - Wire DTOs (snake_case decoded via .convertFromSnakeCase)
+
+    private struct ListingDTO: Decodable {
+        let id: String?
+        let orgId: String?
+        let libraryOrgId: String?
+        let createReplayed: Bool?
+        let spaceType: String?
+        let address: String?
+        let tagline: String?
+        let details: TolerantStringMap?
+        let priceCents: Int?
+        let beds: Int?
+        let baths: Double?
+        let sqft: Int?
+        let lat: Double?
+        let lng: Double?
+        let status: String?
+        let soldAt: String?
+        let zillowUrl: String?
+        let mainPhotoKey: String?
+        let createdAt: String?
+    }
+
+    private struct UploadTicketDTO: Decodable {
+        let assetId: String
+        let mode: String?
+        let putUrl: URL?
+        let uploadId: String?
+        let partSize: Int64?
+        let partCount: Int?
+        let storageKey: String?
+        let contentType: String?
+        let transportVersion: Int?
+        let uploaded: Bool?
+        let replayed: Bool?
+        let confirmedParts: [UploadTicket.ConfirmedPart]?
+    }
+
+    private struct PartURLsDTO: Decodable {
+        struct Entry: Decodable { let number: Int; let url: String }
+        let urls: [Entry]
+    }
+
+    private struct PhotoBatchDTO: Decodable {
+        struct Slot: Decodable {
+            let index: Int
+            let assetId: String
+            let putUrl: URL?
+            let storageKey: String?
+        }
+        let assets: [Slot]
+    }
+
+    private struct RenderDTO: Decodable {
+        let id: String?
+        let listingId: String?
+        let assetId: String?
+        let tier: String?
+        let durationS: Double?
+        let status: String?
+        let progress: Double?
+        let enhancements: Enhancements?
+        let costCents: Double?
+        let currentStep: String?
+        let error: String?
+        let tour: TourDTO?
+
+        /// Nested `tour` on GET /renders/:id (contract §2.6) — the worker-path
+        /// published tour. Keys arrive snake_case (share_url, scrub_url, …) and
+        /// are mapped via `.convertFromSnakeCase`.
+        struct TourDTO: Decodable {
+            let slug: String?
+            let shareUrl: String?
+            let scrubUrl: String?
+            let videoUrl: String?
+            let poster: String?
+        }
+    }
+
+    private struct TrashListDTO: Decodable {
+        struct Row: Decodable {
+            let id: String?
+            let orgId: String?
+            let address: String?
+            let spaceType: String?
+            let mainPhotoKey: String?
+            let deletedAt: String?
+            let trashExpiresAt: String?
+            let hadPublishedTour: Bool?
+            let canRestore: Bool?
+        }
+        let orgId: String?
+        let listings: [Row]?
+    }
+
+    private struct RestoreDTO: Decodable {
+        let ok: Bool?
+        let id: String?
+        let orgId: String?
+        let address: String?
+        let republishedRenders: Int?
+        let cancelledClientDeliveries: Int?
+    }
+
+    private struct PublishAppDTO: Decodable {
+        let id: String?
+        let slug: String?
+        let shareUrl: String?      // share_url
+        let durationS: Double?     // duration_s
+        let staged: Bool?
+        let videoKey: String?      // video_key (R2 object key, not a URL)
+        let posterKey: String?     // poster_key
+        let videoUrl: String?      // video_url (public URL, when the server sends one)
+        let posterUrl: String?     // poster_url
+        let poster: String?        // alt key some routes use
+        let unbrandedUrl: String?  // unbranded_url — the MLS-safe /u/<slug> twin
+        let presentationKind: String?
+        let presentationAssetId: String?
+        let publicationId: String?
+        let listingId: String?
+        let orgId: String?
+        let libraryOrgId: String?
+    }
+
+    /// 202 body of POST /ai-video/{drone,aerial,reel-clip} — fal's queue ids
+    /// verbatim plus the route's `kind` and the aerial's `grounded`/`synthetic`
+    /// flags. Extra fields (model_id, tier, …) are ignored. All optional →
+    /// tolerant decode; required ones re-checked in `submitAIVideo`.
+    private struct AIVideoJobDTO: Decodable {
+        let requestId: String?     // request_id
+        let statusUrl: String?     // status_url
+        let responseUrl: String?   // response_url
+        let kind: String?
+        let grounded: Bool?
+        let synthetic: Bool?
+        /// The exact public disclosure sentence for this generation (W2-B3).
+        let disclosure: String?
+        let provenance: ProvenanceEnvelopeDTO?
+        let sourceBound: Bool?
+        let sourceAssetId: String?
+    }
+
+    private struct AIVideoOperationDTO: Decodable {
+        let status: String?
+        let operationId: String?
+        let listingId: String?
+        let selectedLibraryOrgId: String?
+        let orgId: String?
+        let requestId: String?
+        let statusUrl: String?
+        let responseUrl: String?
+        let kind: String?
+        let disclosure: String?
+        let provenance: ProvenanceEnvelopeDTO?
+        let sourceBound: Bool?
+        let sourceAssetId: String?
+    }
+
+    /// `provenance: { id, recorded, reason? }` — the same envelope every AI
+    /// route returns once the compliance wave landed.
+    private struct ProvenanceEnvelopeDTO: Decodable {
+        let id: String?
+        let recorded: Bool?
+        let reason: String?
+    }
+
+    /// Body of POST /ai-photo (a completed edit).
+    private struct AIPhotoEditDTO: Decodable {
+        let imageB64: String?
+        let mime: String?
+        let disclosure: String?
+        let provenance: ProvenanceEnvelopeDTO?
+    }
+
+    /// Body of GET /me/compliance — the org's AI audit log.
+    private struct ComplianceDTO: Decodable {
+        let rows: [ComplianceRowDTO]?
+    }
+
+    /// One provenance row. `model` is the plain-words family (/tours);
+    /// `model_id` is the vendor string (/me/compliance) and is deliberately not
+    /// surfaced — the app shows the family.
+    private struct ComplianceRowDTO: Decodable {
+        let id: String?
+        let listingId: String?
+        let kind: String?
+        let label: String?
+        let edit: String?
+        let style: String?
+        let model: String?
+        let disclosure: String?
+        let originalUrl: String?
+        let alteredUrl: String?
+        let createdAt: String?
+    }
+
+    /// Body of GET /ai-voice/voices.
+    private struct AIVoicesDTO: Decodable {
+        let voices: [AIVoice]?
+    }
+
+    /// Body of POST /ai-voice/tts. Every field optional → tolerant decode; the
+    /// ones that must be there are re-checked in `aiVoiceTTS`.
+    private struct AIVoiceTTSDTO: Decodable {
+        /// One caption word on the wire. Optional so one malformed entry costs
+        /// only itself, never the whole response.
+        struct Word: Decodable {
+            let text: String?
+            let start: Double?
+            let end: Double?
+        }
+        let audioUrl: String?        // audio_url — short-lived signed R2 GET
+        let mime: String?
+        let durationS: Double?       // duration_s
+        let durationSource: String?  // duration_source
+        let words: [Word]?
+        let voiceName: String?       // voice_name
+        let characters: LenientInt?
+        let disclosure: String?
+        let provenance: ProvenanceEnvelopeDTO?
+        let sharedResultId: String? // shared_result_id; only present after a private history receipt
+    }
+
+    /// Body of POST /ai-chapters. Every field optional → tolerant decode; the
+    /// ones that must be there are re-checked in `aiChapters`. `AIChapter` is
+    /// itself the wire type (all-Optional, house style), so it decodes directly.
+    private struct AIChaptersDTO: Decodable {
+        let chapters: [AIChapter]?
+        let summary: String?
+        let model: String?
+        let provider: String?
+        let costCentsEstimate: Double?   // cost_cents_estimate
+        let videoSeconds: Double?        // video_seconds
+        /// Always "asset_seconds" in v1 — decoded so a future value is visible
+        /// in a debugger rather than silently ignored.
+        let timeBase: String?            // time_base
+        let assetId: String?             // asset_id
+        let warnings: [String]?
+        let disclosure: String?
+        let provenance: ProvenanceEnvelopeDTO?
+    }
+
+    /// Body of GET /ai-video/status — one of processing/completed/failed.
+    private struct AIVideoStatusDTO: Decodable {
+        let status: String?
+        let queuePosition: Int?    // queue_position (processing only, may be null)
+        let videoUrl: String?      // video_url (completed only — EXPIRES)
+        let error: String?         // failed only
+    }
+
+    private struct MeDTO: Decodable {
+        struct Billing: Decodable { let orgId: String?; let contentOrgId: String?; let servingOrgId: String? }
+        let billing: Billing?
+        struct User: Decodable {
+            let id: String?
+            let email: String?
+            let name: String?
+            /// Not sent by today's /me (the admin role lives in
+            /// `public.profiles.is_admin` and is read only by the admin
+            /// function). Decoded tolerantly so the owner console skips its
+            /// probe the moment the server starts sending it.
+            let isAdmin: Bool?
+            let role: String?
+        }
+        struct BrandKit: Decodable {
+            let name: String?      // other brand fields are ignored (tolerant)
+        }
+        struct Org: Decodable {
+            let id: String?
+            let name: String?
+            let handle: String?
+            let plan: String?
+            /// `space_type` — the industry the server sizes the free week by
+            /// (migration 0044). The app sends it (PATCH /me/brand, see
+            /// `AppModel.syncSpaceTypeIfNeeded`); decoded tolerantly here so a
+            /// server without the column changes nothing.
+            let spaceType: String?
+            let brandKit: BrandKit?
+        }
+        struct Entitlement: Decodable {
+            let rendersPerMonth: LenientInt?
+            let photoEditsPerMonth: LenientInt?
+            let reelsPerMonth: LenientInt?
+            let aerialsPerMonth: LenientInt?
+            let topazPerMonth: LenientInt?
+            let seats: LenientInt?
+        }
+        struct Usage: Decodable {
+            struct ByFeature: Decodable {
+                let renders: LenientInt?
+                let photoEdits: LenientInt?
+                let reels: LenientInt?
+                let aerials: LenientInt?
+                let drone: LenientInt?
+            }
+            let month: String?
+            let costCents: Double?   // cost_cents (round4 → may be fractional)
+            let leads: LenientInt?
+            let renders: LenientInt?
+            let listings: LenientInt?
+            let byFeature: ByFeature?
+        }
+        let user: User?
+        let org: Org?
+        let plan: String?
+        let planRaw: String?
+        let planSource: String?
+        let hostingRetention: HostingRetentionSummary?
+        let trialUsage: TrialUsageSummary?
+        let trialOffer: TrialOfferSummary?
+        let servingActivation: ServingActivationSummary?
+        let servingPhotoPackage: ServingPhotoPackageSummary?
+        /// `serving_envelope` (ceiling mode only). The summary decodes itself
+        /// leniently, so a malformed block drops to nil instead of failing /me.
+        let servingEnvelope: ServingEnvelopeSummary?
+        let trialEndsAt: String?
+        let entitlement: Entitlement?
+        let usage: Usage?
+        /// Top-level `is_admin` / `role`, if a future /me carries them.
+        let isAdmin: Bool?
+        let role: String?
+    }
+
+    private struct LeadsDTO: Decodable {
+        let leads: [LeadDTO]?
+    }
+
+    private struct LeadDTO: Decodable {
+        let id: String?
+        let listingId: String?
+        let name: String?
+        let phone: String?
+        let email: String?
+        let message: String?
+        let extra: TolerantStringMap?
+        let createdAt: String?
+        let source: String?
+        let listingAddress: String?
+        let status: String?
+        let clientDelivery: ClientLeadDelivery?
+        enum CodingKeys: String, CodingKey {
+            case id, listingId = "listing_id", name, phone, email, message, extra
+            case createdAt = "created_at", source, listingAddress = "listing_address", status
+            case clientDelivery = "client_delivery"
+        }
+    }
+}
+
+// MARK: - Photo feedback (photo-feedback edge function — docs/handoff/PHOTO-FEEDBACK-DESIGN-20261017.md §4)
+
+extension LiveAPIClient: PhotoFeedbackAPI {
+    /// Optional photo feedback keeps the server's error body: a 409
+    /// `feedback_exists` carries the client key this phone has to adopt, which
+    /// `execute` does not return. The account fences match `execute`: a fresh
+    /// bearer for the account that queued the item, checked again before the
+    /// request leaves and after the answer arrives. A 401 is not refreshed or
+    /// turned into a sign-out here; the item waits for the next pass.
+    @MainActor func photoFeedbackExchange(_ route: PhotoFeedback.Route, body: [String: Any],
+                                          libraryOrgID: UUID, actorID: String) async throws -> PhotoFeedback.Reply {
+        let revision = AuthStore.shared.syncSessionRevision
+        guard let actor = AuthStore.shared.userID, actor.lowercased() == actorID.lowercased(),
+              let actorUUID = UUID(uuidString: actor) else { throw CloudSyncError.identityChanged }
+        var request = makeRequest(url: url(route.pathSegments), method: "POST", json: body)
+        // Contract amendment A1: the library is `X-Org-Id` only, read by the
+        // server's shared preferredOrg() like every library-scoped route. It is
+        // the library the item was queued in; a later switch never redirects it.
+        let library = libraryOrgID.uuidString.lowercased()
+        request.setValue(library, forHTTPHeaderField: "X-Org-Id")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 30
+        guard let token = await AuthStore.validAccessToken(),
+              AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              AnonymousAdoptionRecovery.identity(token)?.id == actorUUID else { throw CloudSyncError.identityChanged }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else {
+            throw CloudSyncError.identityChanged
+        }
+        guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+        return PhotoFeedback.Reply(status: http.statusCode, data: data)
+    }
+}

@@ -1,0 +1,867 @@
+import Foundation
+
+/// Free local guidance; the server independently validates the actual listing
+/// and instruction before reserving funds or sending a photo to a model.
+enum CustomPhotoPromptPolicy {
+    enum Decision: Equatable { case ready, clarify, blocked }
+    enum Choice: String, CaseIterable, Identifiable {
+        case lighting, clutter, sky, furniture
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .lighting: return "Improve lighting"
+            case .clutter: return "Remove movable clutter"
+            case .sky: return "Change the sky"
+            case .furniture: return "Add furniture"
+            }
+        }
+        var prompt: String {
+            switch self {
+            case .lighting: return "Improve brightness and exposure only, preserving every paint color and material."
+            case .clutter: return "Remove movable clutter only; keep fixed features and actual property condition."
+            case .sky: return "Replace only the sky; keep the building, garage door, trim and landscaping unchanged."
+            case .furniture: return "Add movable furniture only; preserve all fixed features, paint colors and materials."
+            }
+        }
+    }
+    static let preservedFeatures = "Keep the structure, fixed features, materials, finishes and existing paint colors—including the garage door and trim—as photographed."
+    static let blockedMessage = "For a property listing, we can't repaint or remodel the home, repair damage or hide defects in a photo. Choose lighting, movable clutter, the sky or furniture instead."
+
+    static func decision(for prompt: String, realEstate: Bool) -> Decision {
+        let text = prompt.decomposedStringWithCompatibilityMapping
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .replacingOccurrences(of: "’", with: "'")
+            .replacingOccurrences(of: "[\\p{Cf}]", with: "", options: .regularExpression)
+        func matches(_ pattern: String, in value: String) -> Bool {
+            value.range(of: pattern, options: .regularExpression) != nil
+        }
+        // Mirrors the free server policy: split independent actions first, then
+        // exclude explicit preservation clauses. A negation cannot authorize a
+        // later positive request to change a permanent feature.
+        let clauses = text.replacingOccurrences(of: "[.,;!?\\n]+|\\b(?:but|however|then|and|except)\\b|\\s+(?=without\\b)",
+            with: "\n", options: .regularExpression).components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !matches("^(?:(?:please|also)\\s+)*(?:do\\s+not|don't|never|no\\s+|without\\s+|keep\\b|preserv\\w*\\b|retain\\b|leave\\b)", in: $0) }
+        let fixed = "(?:garage(?:[ -]door)?|trim|walls?|ceilings?|floors?|flooring|cabinets?|countertops?|counters?|windows?|doors?|roof|siding|facade|appliances?|fixtures?|built[ -]ins?|driveway|fences?|power poles?|utility (?:boxes|meters)|air[ -]conditioning units?)"
+        let unsafe = [
+            "\\b(?:repaint\\w*|painted|painting|recolor\\w*|recolour\\w*|remodel\\w*|renovat\\w*|resurfac\\w*|refinish\\w*|rebuild\\w*)\\b|\\bpaint\\s+(?:it|over)\\b",
+            "\\b(?:remove|replace|move|resize|cover|hide|change|alter|paint|repair|fix)\\s+(?:(?:the|a|an|existing|original|all|every)\\s+)*" + fixed + "\\b",
+            "\\b(?:repair|patch|fix|hide|erase|remove|cover|smooth|clean)\\b.{0,70}\\b(?:cracks?|damage|defects?|water ?(?:marks?|stains?)|stains?|mou?ld|rust|wear|holes?|dents?|peeling|chipped|broken|missing flooring)\\b",
+            "\\b(?:repair|fix)\\s+(?:the\\s+)?" + fixed + "\\b",
+            "\\b(?:make|turn|change)\\b.{0,70}\\b" + fixed + "\\b.{0,40}\\b(?:white|black|grey|gray|beige|blue|red|green|color|colour|finish|material)\\b|\\b(?:change|alter|replace)\\b.{0,50}\\b(?:paint|color|colour|finish|material)\\b",
+            "\\b(?:ignore|override|disregard|bypass)\\b.{0,60}\\b(?:instructions?|rules?|locks?|restrictions?|guardrails?)\\b"
+        ]
+        if clauses.contains(where: { clause in unsafe.contains { matches($0, in: clause) } }) { return .blocked }
+        let actionable = clauses.joined(separator: ". ")
+        let specific = [
+            "\\b(?:brighten|brighter|brightness|exposure|lighting|relight|illuminate|illumination|lighten|white balance|color balance)\\b",
+            "\\b(?:declutter|clutter|tidy)\\b|\\b(?:remove|clear|erase)\\b.{0,70}\\b(?:movable|personal items?|bags?|laundry|toys?|dishes|boxes|mess|loose items?|objects?|furniture|sofas?|couches?|chairs?|tables?|beds?|rugs?|cars?)\\b",
+            "\\bsky\\b",
+            "\\b(?:add|stage|furnish|place)\\b.{0,70}\\b(?:movable furniture|furniture|sofas?|couches?|chairs?|tables?|decor|beds?|rugs?)\\b|\\b(?:virtual staging|furnish)\\b",
+            "\\b(?:lawn|grass|planting)\\b",
+            "\\b(?:remove|erase)\\b.{0,70}\\b(?:photographer|my reflection|camera reflection)\\b"
+        ]
+        let vague = clauses.contains {
+            (matches("\\b(?:nicer|better|beautiful|beautify|modernize|modernise|upgrade|transform|refresh|clean|cleaner)\\b", in: $0)
+                && !matches("\\b(?:clutter|movable|brightness|exposure|lighting|sky|grass|lawn|furniture|decor)\\b", in: $0))
+                || (matches("\\b(?:make|look|feel)\\b.{0,50}\\bmodern\\b", in: $0) && !matches("\\b(?:furniture|decor)\\b", in: $0))
+        }
+        guard !vague, specific.contains(where: { matches($0, in: actionable) }) else { return .clarify }
+        return .ready
+    }
+}
+
+/// Local, durable photo lineage. Image files are immutable; selecting a newer
+/// version never deletes its source or the retained pre-enhancement capture.
+/// This is a local history, not a claim that a cloud provenance row was saved.
+enum PhotoVersionHistory {
+    /// A user's review of one displayed version, not an automated quality verdict.
+    struct StagingReview {
+        var comparedSource = false
+        var fixedFeaturesMatch = false
+        var accessIsClear = false
+        var furnitureMatchesOtherViews = false
+        var isComplete: Bool {
+            comparedSource && fixedFeaturesMatch && accessIsClear && furnitureMatchesOtherViews
+        }
+    }
+    struct CustomReview {
+        var comparedSource = false
+        var fixedFeaturesMatch = false
+        var colorsAndMaterialsMatch = false
+        var onlyRequestedChange = false
+        var isComplete: Bool {
+            comparedSource && fixedFeaturesMatch && colorsAndMaterialsMatch && onlyRequestedChange
+        }
+    }
+    enum LibraryKind: String, CaseIterable, Identifiable, Sendable {
+        case original = "Original", latest = "Latest", decluttered = "Decluttered", staged = "Staged", enhanced = "Enhanced"
+        var id: String { rawValue }
+    }
+    struct Version: Codable, Hashable, Sendable, Identifiable {
+        let id: String
+        let familyID: String
+        let imageFile: String
+        let originalFile: String?
+        let originalVerified: Bool
+        let parentID: String?
+        let sourceID: String?
+        let stagingBaseID: String?
+        let edit: String
+        let style: String?
+        let effects: [String]
+        let sourceHistoryKnown: Bool
+        let disclosure: String?
+        let provenanceID: String?
+        let originalAssetID: String?
+        let serverListingID: String?
+        let provenanceRecorded: Bool
+        let createdAt: Date
+        var stagingReviewed: Bool? = nil
+        var stagingReferenceID: String? = nil
+        var stagingBrief: String? = nil
+        /// nil belongs to older saved versions; it is never recorded as a new
+        /// review. New custom outputs and their descendants explicitly start false.
+        var customReviewed: Bool? = nil
+
+        var needsCustomReview: Bool { customReviewed == false }
+        var isRetainedOriginalSource: Bool {
+            parentID == nil && effects.isEmpty && imageFile == originalFile
+        }
+        var needsStagingReview: Bool { effects.contains("stage") && stagingReviewed != true }
+        var canAutomaticallySelectForListing: Bool { !effects.contains("stage") && !needsCustomReview }
+
+        var visibleLabel: String? {
+            var parts: [String] = []
+            if effects.contains("stage") { parts.append("Virtually staged") }
+            if effects.contains("declutter") { parts.append("Digitally decluttered") }
+            if effects.contains(where: { $0 != "stage" && $0 != "declutter" }) { parts.append("AI edited") }
+            if !sourceHistoryKnown { parts.append("Earlier edits unverified") }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        }
+
+        /// Presentation may correct old copy; immutable recorded disclosure is
+        /// retained verbatim in the saved audit/history, not used as a geometry certificate.
+        var reviewDisclosure: String? {
+            guard !effects.isEmpty else { return disclosure }
+            var changes: [String] = []
+            if effects.contains("stage") { changes.append("This photo was virtually staged with AI: furniture and decor were digitally added or restyled.") }
+            if effects.contains("declutter") { changes.append("This photo was digitally decluttered with AI: clutter and personal items were removed.") }
+            if effects.contains("twilight") { changes.append("This photo was digitally altered with AI to simulate dusk.") }
+            if effects.contains("sky") { changes.append("This photo was digitally altered with AI: the sky was replaced.") }
+            if effects.contains("lawn") { changes.append("This photo was digitally altered with AI: the lawn and landscaping were digitally repaired.") }
+            let named = Set(["stage", "declutter", "twilight", "sky", "lawn"])
+            if effects.contains(where: { !named.contains($0) }) { changes.append("This photo also contains a custom or imported AI edit; check its recorded history and source.") }
+            return changes.joined(separator: " ") + " Compare with the original to check fixed features, layout and access before publication."
+        }
+
+        var caption: String {
+            if edit == "capture-original" { return "Original capture. Its saved bytes stay unchanged when you create an AI edit." }
+            var parts: [String] = []
+            if let visibleLabel { parts.append(visibleLabel + ".") }
+            if let reviewDisclosure, !reviewDisclosure.isEmpty { parts.append(reviewDisclosure) }
+            if !originalVerified { parts.append("An unaltered original has not been verified for this photo.") }
+            return parts.isEmpty ? "Brightness, color and sharpness enhanced on this phone. Review the source before publishing." : parts.joined(separator: " ")
+        }
+
+        var title: String {
+            switch edit {
+            case "capture-original": return "Original"
+            case "capture": return "Original enhancement"
+            case "legacy": return "Earlier photo · history unverified"
+            case "stage": return "Virtual staging" + (style.map { " · \($0.capitalized)" } ?? "")
+            case "declutter": return "Decluttered"
+            case "twilight": return "Twilight sky"
+            case "sky": return "Blue sky"
+            case "lawn": return "Green lawn"
+            default: return "AI edit"
+            }
+        }
+
+        /// The label an exported copy of this version carries in its file
+        /// name: what the image is, readable off a file list by whoever
+        /// receives the package. Lower-case letters, digits and dashes only.
+        var exportSlug: String {
+            let base: String
+            switch edit {
+            case "capture-original": base = "original"
+            case "capture": base = "enhanced"
+            case "legacy": base = "earlier-unverified"
+            case "stage": base = "virtually-staged" + (style.map { "-" + $0 } ?? "")
+            case "declutter": base = "decluttered"
+            case "twilight": base = "twilight-sky"
+            case "sky": base = "blue-sky"
+            case "lawn": base = "green-lawn"
+            default: base = "ai-edit"
+            }
+            let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
+            let cleaned = String(base.lowercased().map { allowed.contains($0) ? $0 : "-" })
+            return cleaned.isEmpty ? "version" : cleaned
+        }
+
+        /// An old import may lack an orig-* file, but its retained pre-edit
+        /// version is still a useful, explicitly unverified review source.
+        func reviewSourceFile(in index: Index) -> String {
+            if let originalFile { return originalFile }
+            if let stagingBaseID, let base = index.versions[stagingBaseID] { return base.imageFile }
+            if let sourceID, let source = index.versions[sourceID] { return source.imageFile }
+            if let parentID, let parent = index.versions[parentID] { return parent.imageFile }
+            return imageFile
+        }
+    }
+
+    struct Index: Codable, Sendable {
+        var schema = 1
+        var versions: [String: Version] = [:]
+        var current: [String: String] = [:]
+        /// Staged previews stay separate from the approved public choice.
+        /// Optional so older on-disk indexes continue to decode unchanged.
+        var listingSelections: [String: String]? = nil
+        /// Explicit gallery removal survives later edits of this family.
+        /// Optional for existing indexes; unlike hiddenFamilies it never hides
+        /// saved versions from Photos or changes the editing workspace.
+        var excludedListingFamilies: Set<String>? = nil
+        /// Selected library order is separate from capture/edit timestamps.
+        /// Optional for older indexes; every descendant retains its family key.
+        var importOrder: [String: String]? = nil
+        /// Durable source-family positions. A later import appends without an
+        /// edit timestamp, file name or clock change moving existing photos.
+        var familyOrder: [String]? = nil
+        var hiddenFamilies: Set<String> = []
+
+        var orderedFamilyIDs: [String] {
+            let roots = Dictionary(grouping: versions.values, by: \.familyID)
+            let remembered = (familyOrder ?? []).filter { roots[$0] != nil }
+            let known = Set(remembered)
+            let legacy = roots.keys.filter { !known.contains($0) }.sorted { a, b in
+                let aDate = roots[a]!.map(\.createdAt).min() ?? .distantPast
+                let bDate = roots[b]!.map(\.createdAt).min() ?? .distantPast
+                if aDate != bDate { return aDate < bDate }
+                // Legacy import IDs descend inside one ordered picker batch.
+                let aOrder = importOrder?[a] ?? a, bOrder = importOrder?[b] ?? b
+                return aOrder != bOrder ? aOrder > bOrder : a > b
+            }
+            return remembered + legacy
+        }
+
+        func orderedForLibrary(_ candidates: [Version]) -> [Version] {
+            let positions = Dictionary(uniqueKeysWithValues: orderedFamilyIDs.enumerated().map { ($0.element, $0.offset) })
+            return candidates.sorted { a, b in
+                let aPosition = positions[a.familyID] ?? Int.max, bPosition = positions[b.familyID] ?? Int.max
+                if aPosition != bPosition { return aPosition < bPosition }
+                return a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.id > b.id
+            }
+        }
+
+        mutating func appendFamily(_ id: String) {
+            var ordered = orderedFamilyIDs
+            if !ordered.contains(id) { ordered.append(id) }
+            familyOrder = ordered
+        }
+
+        func history(for id: String) -> [Version] {
+            guard let family = versions[id]?.familyID else { return [] }
+            return versions.values.filter { $0.familyID == family }.sorted {
+                $0.createdAt != $1.createdAt ? $0.createdAt > $1.createdAt : $0.id > $1.id
+            }
+        }
+        func isVisible(_ id: String) -> Bool {
+            guard let version = versions[id] else { return true }
+            return !hiddenFamilies.contains(version.familyID) && current[version.familyID] == id
+        }
+        /// Every saved edit remains available. Originals and Latest have one
+        /// tile per source family; edit categories retain every saved choice.
+        func libraryVersions(_ kind: LibraryKind) -> [Version] {
+            let candidates = orderedForLibrary(versions.values.filter { version in
+                guard !hiddenFamilies.contains(version.familyID) else { return false }
+                switch kind {
+                case .original: return version.parentID == nil && version.effects.isEmpty && version.imageFile == version.originalFile
+                case .latest: return current[version.familyID] == version.id
+                case .decluttered: return version.effects.contains("declutter") && !version.effects.contains("stage")
+                case .staged: return version.effects.contains("stage")
+                // Match the existing Photo Versions Enhanced category, keeping
+                // older saved enhancements even when Latest is another edit.
+                case .enhanced: return !(version.parentID == nil && version.imageFile == version.originalFile)
+                    && !version.effects.contains("stage") && !version.effects.contains("declutter")
+                }
+            })
+            if kind == .staged || kind == .decluttered || kind == .enhanced { return candidates }
+            var families: Set<String> = []
+            return candidates.filter { families.insert($0.familyID).inserted }
+        }
+
+        func isSelectedForListing(_ id: String) -> Bool {
+            guard let version = versions[id], !hiddenFamilies.contains(version.familyID),
+                  excludedListingFamilies?.contains(version.familyID) != true else { return false }
+            return (listingSelections ?? current)[version.familyID] == id
+        }
+
+        /// A Latest tile may have a decluttered predecessor on the listing.
+        /// Resolve that family's choice from metadata, even when a different
+        /// family's selected image is missing and publication must stop.
+        func publicationChoice(for id: String) -> Version? {
+            guard let version = versions[id], !hiddenFamilies.contains(version.familyID),
+                  excludedListingFamilies?.contains(version.familyID) != true,
+                  let selected = (listingSelections ?? current)[version.familyID] else { return nil }
+            return versions[selected]
+        }
+        func publicationLabel(for id: String) -> String? {
+            guard let chosen = publicationChoice(for: id) else { return nil }
+            if chosen.id == id { return "Selected for listing" }
+            if chosen.effects.contains("stage") { return "Staged version on listing" }
+            if chosen.effects.contains("declutter") { return "Decluttered version on listing" }
+            if !chosen.effects.isEmpty { return "Edited version on listing" }
+            return "Earlier version on listing"
+        }
+    }
+
+    enum Failure: LocalizedError {
+        case invalidHistory, missingImage, duplicate, changedVersion, reviewRequired, customReviewRequired, coverNotSelected
+        var errorDescription: String? {
+            switch self {
+            case .invalidHistory: return "This photo's saved history couldn't be read. Its files are still safe. Reopen Photos or contact support before editing it."
+            case .missingImage: return "A source photo is missing from this phone. Import it again before editing."
+            case .duplicate: return "That photo version is already saved. Reopen Photos to see it."
+            case .changedVersion: return "This photo changed while the edit was running. Reopen Photos before editing again."
+            case .reviewRequired: return "Review this staged photo against its original before using it in a reel, on the listing or as the cover. A saved staging preview is not approved for publication."
+            case .customReviewRequired: return "Compare this edit with its source and check the paint colors, materials and fixed features before downloading it, using it on the listing or choosing it as the cover."
+            case .coverNotSelected: return "The cover isn't among the photos selected for this listing. Open Photos and choose a cover from a reviewed version. Your published gallery has been kept."
+            }
+        }
+    }
+
+    private static let lock = NSLock()
+    private static let filename = ".photo-history.json"
+    private static func safeName(_ value: String) -> Bool {
+        !value.isEmpty && value != "." && value != ".." && !value.contains("/") && !value.contains("\\")
+    }
+    private static func readIndex(directory: URL) throws -> Index {
+        let url = directory.appendingPathComponent(filename)
+        guard FileManager.default.fileExists(atPath: url.path) else { return Index() }
+        do {
+            let index = try JSONDecoder().decode(Index.self, from: Data(contentsOf: url))
+            guard index.schema == 1,
+                  index.versions.allSatisfy({ key, v in
+                      key == v.id && safeName(v.id) && safeName(v.familyID) && safeName(v.imageFile)
+                      && (v.originalFile.map(safeName) ?? true)
+                  }), Set(index.versions.values.map(\.imageFile)).count == index.versions.count,
+                  index.current.allSatisfy({ family, id in index.versions[id]?.familyID == family }),
+                  (index.listingSelections ?? [:]).allSatisfy({ family, id in index.versions[id]?.familyID == family }),
+                  (index.excludedListingFamilies ?? []).isSubset(of: Set(index.versions.values.map(\.familyID))),
+                  Set(index.familyOrder ?? []).count == (index.familyOrder ?? []).count,
+                  Set(index.familyOrder ?? []).isSubset(of: Set(index.versions.values.map(\.familyID)))
+            else { throw Failure.invalidHistory }
+            return index
+        } catch { throw Failure.invalidHistory }
+    }
+    /// Adopt every legacy sibling together before the first indexed change.
+    /// Known hidden/superseded files are never inferred as new families. Merely
+    /// having an orig-* filename does not verify an unaltered source.
+    private static func loadUnlocked(directory: URL) throws -> Index {
+        var index = try readIndex(directory: directory)
+        guard FileManager.default.fileExists(atPath: directory.path) else { return index }
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .creationDateKey])
+        let knownFiles = Set(index.versions.values.map(\.imageFile))
+        let names = Set(files.map(\.lastPathComponent))
+        for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            let name = file.lastPathComponent
+            guard name.hasPrefix("enh-"), !knownFiles.contains(name),
+                  ["jpg", "jpeg", "png", "heic", "webp"].contains(file.pathExtension.lowercased()) else { continue }
+            let values = try file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .creationDateKey])
+            guard values.isRegularFile == true, (values.fileSize ?? 0) > 0 else { continue }
+            let id = String(file.deletingPathExtension().lastPathComponent.dropFirst(4))
+            guard safeName(id), index.versions[id] == nil else { throw Failure.invalidHistory }
+            let preferred = "orig-\(id).jpg"
+            let prior = names.contains(preferred) ? preferred : names.sorted().first { $0.hasPrefix("orig-\(id).") }
+            let version = Version(id: id, familyID: id, imageFile: name, originalFile: prior,
+                originalVerified: false, parentID: nil, sourceID: nil, stagingBaseID: nil,
+                edit: "legacy", style: nil, effects: [], sourceHistoryKnown: false,
+                disclosure: nil, provenanceID: nil, originalAssetID: nil, serverListingID: nil,
+                provenanceRecorded: false, createdAt: values.creationDate ?? .distantPast)
+            index.versions[id] = version; index.current[id] = id
+            index.listingSelections?[id] = id
+        }
+        return index
+    }
+    static func load(directory: URL) throws -> Index {
+        lock.lock(); defer { lock.unlock() }
+        return try loadUnlocked(directory: directory)
+    }
+    /// Exports work on immutable file copies. A concurrent edit, review or
+    /// selection must not make their recorded captions disagree with history.
+    static func requireUnchanged(_ expected: Index, directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        let current = try loadUnlocked(directory: directory)
+        guard current.schema == expected.schema, current.versions == expected.versions,
+              current.current == expected.current, current.listingSelections == expected.listingSelections,
+              current.excludedListingFamilies == expected.excludedListingFamilies,
+              current.familyOrder == expected.familyOrder,
+              current.hiddenFamilies == expected.hiddenFamilies else { throw Failure.changedVersion }
+    }
+    /// Publication must not silently replace a saved gallery when its history
+    /// is corrupt or a selected file is missing. nil means legacy/no index.
+    static func publicationVersions(directory: URL) throws -> [Version]? {
+        lock.lock(); defer { lock.unlock() }
+        guard FileManager.default.fileExists(atPath: directory.path) else { return nil }
+        let index = try loadUnlocked(directory: directory)
+        return try (index.listingSelections ?? index.current).compactMap { family, id in
+            guard !index.hiddenFamilies.contains(family),
+                  index.excludedListingFamilies?.contains(family) != true else { return nil }
+            guard let version = index.versions[id], version.familyID == family else { throw Failure.invalidHistory }
+            guard !version.needsCustomReview else { throw Failure.customReviewRequired }
+            try requireImage(version.imageFile, directory: directory)
+            return version
+        }
+    }
+
+    /// Cover fallback must use a real selected image, not the latest staged
+    /// workspace. One unavailable family doesn't hide all other candidates.
+    static func availableCoverVersion(directory: URL) throws -> Version? {
+        let index = try load(directory: directory)
+        return (index.listingSelections ?? index.current).compactMap { family, id -> Version? in
+            guard !index.hiddenFamilies.contains(family), index.excludedListingFamilies?.contains(family) != true,
+                  let version = index.versions[id], !version.needsCustomReview,
+                  (try? requireImage(version.imageFile, directory: directory)) != nil else { return nil }
+            return version
+        }.sorted { $0.createdAt != $1.createdAt ? $0.createdAt > $1.createdAt : $0.id > $1.id }.first
+    }
+
+    static func familyContains(id: String, imageFile: String?, directory: URL) throws -> Bool {
+        guard let imageFile else { return false }
+        let index = try load(directory: directory)
+        guard let version = index.versions[id] else { return false }
+        return index.versions.values.contains { $0.familyID == version.familyID && $0.imageFile == imageFile }
+    }
+    private static func save(_ index: Index, directory: URL,
+                             write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        try write(encoder.encode(index), directory.appendingPathComponent(filename))
+    }
+    private static func requireImage(_ name: String, directory: URL) throws {
+        guard safeName(name),
+              let values = try? directory.appendingPathComponent(name).resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, (values.fileSize ?? 0) > 0 else { throw Failure.missingImage }
+    }
+
+    /// Register the exact retained capture as an immutable editing source.
+    /// Existing enhanced/AI IDs must never be reused for different image bytes.
+    /// Current and explicit publication selections stay unchanged.
+    static func ensureOriginalSources(directory: URL) throws -> Index {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        var changed = false
+        let captures = index.versions.values.filter {
+            $0.originalVerified && $0.parentID == nil && $0.effects.isEmpty && $0.originalFile != nil
+        }.sorted { $0.createdAt < $1.createdAt }
+        for capture in captures {
+            guard !index.hiddenFamilies.contains(capture.familyID), let file = capture.originalFile else { continue }
+            try requireImage(file, directory: directory)
+            if index.versions.values.contains(where: {
+                $0.familyID == capture.familyID && $0.parentID == nil && $0.imageFile == file && $0.originalFile == file
+            }) { continue }
+            let id = capture.familyID + "-original"
+            guard safeName(id), index.versions[id] == nil else { throw Failure.invalidHistory }
+            index.versions[id] = Version(id: id, familyID: capture.familyID, imageFile: file,
+                originalFile: file, originalVerified: true, parentID: nil, sourceID: nil, stagingBaseID: nil,
+                edit: "capture-original", style: nil, effects: [], sourceHistoryKnown: true, disclosure: nil,
+                provenanceID: nil, originalAssetID: nil, serverListingID: nil, provenanceRecorded: false,
+                createdAt: capture.createdAt)
+            changed = true
+        }
+        if changed { try save(index, directory: directory) }
+        return index
+    }
+
+    /// Individual review actions always start from this exact family's retained
+    /// capture, never from staged pixels or an unverified earlier-source file.
+    static func originalForEditing(id: String, directory: URL) throws -> Version {
+        let index = try ensureOriginalSources(directory: directory)
+        guard let viewed = index.versions[id], !index.hiddenFamilies.contains(viewed.familyID),
+              let file = viewed.originalFile,
+              let source = index.versions.values.first(where: {
+                  $0.familyID == viewed.familyID && $0.isRetainedOriginalSource
+                      && $0.originalVerified && $0.imageFile == file
+              }) else { throw Failure.missingImage }
+        try requireImage(source.imageFile, directory: directory)
+        return source
+    }
+
+    /// Register only a newly captured/imported image whose pre-enhancement bytes
+    /// this call owns. Older orig-* files may be AI predecessors, so never infer
+    /// this guarantee from a filename.
+    @discardableResult
+    static func saveCapture(original: Data, enhanced: Data, id: String, directory: URL,
+                            importOrderID: String? = nil, deduplicateOriginal: Bool = false,
+                            write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        guard index.versions[id] == nil else { throw Failure.duplicate }
+        if deduplicateOriginal {
+            // Import reuse is exact-byte only. Never identify a source by its
+            // filename, enhanced pixels, legacy history or cloud selection.
+            // Existing files, edits and explicit choices are left untouched.
+            for capture in index.versions.values where capture.originalVerified && capture.sourceHistoryKnown
+                && capture.parentID == nil && capture.effects.isEmpty
+                && (capture.edit == "capture" || capture.edit == "capture-original")
+                && !index.hiddenFamilies.contains(capture.familyID) {
+                guard let name = capture.originalFile, safeName(name) else { continue }
+                let file = directory.appendingPathComponent(name)
+                let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
+                guard let before = try? file.resourceValues(forKeys: keys),
+                      before.isRegularFile == true, before.isSymbolicLink != true,
+                      before.fileSize == original.count,
+                      let retained = try? Data(contentsOf: file, options: .mappedIfSafe), retained == original,
+                      let after = try? file.resourceValues(forKeys: keys),
+                      after.isRegularFile == true, after.isSymbolicLink != true,
+                      after.fileSize == before.fileSize, after.contentModificationDate == before.contentModificationDate
+                else { continue }
+                return false
+            }
+        }
+        try PhotoCaptureStorage.writePair(original: original, enhanced: enhanced, id: id, directory: directory, write: write)
+        let originalName = "orig-\(id).jpg", imageName = "enh-\(id).jpg"
+        do {
+            index.appendFamily(id)
+            let version = Version(id: id, familyID: id, imageFile: imageName, originalFile: originalName,
+                                  originalVerified: true, parentID: nil, sourceID: nil, stagingBaseID: nil,
+                                  edit: "capture", style: nil, effects: [], sourceHistoryKnown: true,
+                                  disclosure: nil, provenanceID: nil, originalAssetID: nil, serverListingID: nil,
+                                  provenanceRecorded: false, createdAt: Date())
+            index.versions[id] = version; index.current[id] = id
+            index.listingSelections?[id] = id
+            if let importOrderID {
+                if index.importOrder == nil { index.importOrder = [:] }
+                index.importOrder?[id] = importOrderID
+            }
+            try save(index, directory: directory, write: write)
+            return true
+        } catch {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(originalName))
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(imageName))
+            throw error
+        }
+    }
+
+    /// Adopt an old photo into the version tree without inventing its provenance.
+    /// Its prior-source file remains downloadable, but is not a verified original.
+    @discardableResult
+    static func trackExisting(id: String, imageFile: String, priorFile: String?, directory: URL) throws -> Version {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        if let existing = index.versions[id] { return existing }
+        guard safeName(id), priorFile.map(safeName) ?? true else { throw Failure.invalidHistory }
+        try requireImage(imageFile, directory: directory)
+        let version = Version(id: id, familyID: id, imageFile: imageFile, originalFile: priorFile,
+                              originalVerified: false, parentID: nil, sourceID: nil, stagingBaseID: nil,
+                              edit: "legacy", style: nil, effects: [], sourceHistoryKnown: false,
+                              disclosure: nil, provenanceID: nil, originalAssetID: nil, serverListingID: nil,
+                                  provenanceRecorded: false, createdAt: Date())
+        index.appendFamily(id)
+        index.versions[id] = version; index.current[id] = id
+        index.listingSelections?[id] = id
+        try save(index, directory: directory)
+        return version
+    }
+
+    /// Restyling starts from the persisted image used BEFORE furniture was added.
+    /// Other edits start from the current image. Missing bases fail rather than
+    /// silently generating on top of old virtual furniture.
+    static func source(for id: String, edit: String, directory: URL) throws -> Version {
+        try editContext(for: id, edit: edit, directory: directory).source
+    }
+
+    /// An original can start a new style while the family's newest saved edit
+    /// remains its concurrency parent. Freeze both before any paid request.
+    static func editContext(for id: String, edit: String, directory: URL) throws -> (parent: Version, source: Version) {
+        let index = try load(directory: directory)
+        guard let requested = index.versions[id], !index.hiddenFamilies.contains(requested.familyID) else { throw Failure.changedVersion }
+        if requested.isRetainedOriginalSource {
+            guard let currentID = index.current[requested.familyID], let parent = index.versions[currentID],
+                  index.isVisible(currentID) else { throw Failure.changedVersion }
+            try requireImage(requested.imageFile, directory: directory)
+            return (parent, requested)
+        }
+        guard index.isVisible(id) else { throw Failure.changedVersion }
+        let parent = requested
+        let source: Version
+        if edit == "stage", let base = parent.stagingBaseID {
+            guard let saved = index.versions[base], saved.familyID == parent.familyID else { throw Failure.invalidHistory }
+            source = saved
+        } else { source = parent }
+        try requireImage(source.imageFile, directory: directory)
+        return (parent, source)
+    }
+
+    /// Schema-1 journals predate a frozen parent. They are recoverable only
+    /// while their source family has no intervening AI edit. Never graft an
+    /// old paid result onto a newer edit selected after its dispatch.
+    static func savedEditContext(sourceID: String, parentID: String?, directory: URL) throws -> (parent: Version, source: Version) {
+        let index = try load(directory: directory)
+        guard let source = index.versions[sourceID], !index.hiddenFamilies.contains(source.familyID) else { throw Failure.changedVersion }
+        try requireImage(source.imageFile, directory: directory)
+        if let parentID {
+            guard let parent = index.versions[parentID], parent.familyID == source.familyID else { throw Failure.changedVersion }
+            return (parent, source)
+        }
+        guard let currentID = index.current[source.familyID], let parent = index.versions[currentID],
+              index.isVisible(currentID),
+              (currentID == sourceID || source.isRetainedOriginalSource),
+              !index.versions.values.contains(where: { $0.familyID == source.familyID && !$0.effects.isEmpty }) else {
+            throw Failure.changedVersion
+        }
+        return (parent, source)
+    }
+
+    /// The image is staged under a name the legacy disk scanner cannot expose.
+    /// Only the atomic history commit makes it the current grid/gallery version.
+    /// Failure removes only the new output; all old versions remain unchanged.
+    static func saveEdit(jpeg: Data, id: String, parentID: String, sourceID: String,
+                         edit: String, style: String?, disclosure: String?, provenanceID: String?,
+                         provenanceRecorded: Bool, directory: URL, originalAssetID: String? = nil, serverListingID: String? = nil,
+                         stagingReferenceID: String? = nil, stagingBrief: String? = nil,
+                         imageExtension: String = "jpg",
+                         write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws -> Version {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        guard safeName(id), !jpeg.isEmpty, ["jpg", "png", "webp"].contains(imageExtension) else { throw Failure.invalidHistory }
+        guard index.versions[id] == nil else { throw Failure.duplicate }
+        guard let parent = index.versions[parentID], let source = index.versions[sourceID],
+              parent.familyID == source.familyID, index.isVisible(parentID) else { throw Failure.changedVersion }
+        let expectedSourceID = edit == "stage" ? (parent.stagingBaseID ?? parentID) : parentID
+        guard sourceID == expectedSourceID || source.isRetainedOriginalSource else { throw Failure.changedVersion }
+        try requireImage(source.imageFile, directory: directory)
+        if let stagingReferenceID {
+            guard edit == "stage", let reference = index.versions[stagingReferenceID],
+                  reference.effects.contains("stage"), reference.stagingReviewed == true else { throw Failure.reviewRequired }
+        }
+        let imageName = "edit-\(id).\(imageExtension)", imageURL = directory.appendingPathComponent(imageName)
+        guard !FileManager.default.fileExists(atPath: imageURL.path) else { throw Failure.duplicate }
+        var effects = source.effects
+        if !effects.contains(edit) { effects.append(edit) }
+        var version = Version(id: id, familyID: parent.familyID, imageFile: imageName,
+                              originalFile: parent.originalFile, originalVerified: parent.originalVerified,
+                              parentID: parentID, sourceID: sourceID,
+                              stagingBaseID: edit == "stage" ? sourceID : source.stagingBaseID,
+                              edit: edit, style: style, effects: effects, sourceHistoryKnown: source.sourceHistoryKnown,
+                              disclosure: disclosure, provenanceID: provenanceID,
+                              originalAssetID: originalAssetID, serverListingID: serverListingID,
+                              provenanceRecorded: provenanceRecorded, createdAt: Date())
+        version.stagingReferenceID = stagingReferenceID
+        version.stagingBrief = stagingBrief
+        if effects.contains("custom") || source.customReviewed != nil { version.customReviewed = false }
+        do {
+            try write(jpeg, imageURL)
+            if index.listingSelections == nil { index.listingSelections = index.current }
+            index.versions[id] = version; index.current[parent.familyID] = id
+            // A generated window, displaced fixture, blocked door or mismatched
+            // furniture must be reviewed rather than automatically published.
+            if version.canAutomaticallySelectForListing,
+               index.excludedListingFamilies?.contains(parent.familyID) != true {
+                index.listingSelections?[parent.familyID] = id
+            }
+            try save(index, directory: directory, write: write)
+        } catch {
+            try? FileManager.default.removeItem(at: imageURL)
+            throw error
+        }
+        return version
+    }
+
+    /// Admit the actual file being delivered, independent of a view's cached
+    /// version id. Retained original files stay available for comparison.
+    static func requireDownloadReview(imageURL: URL) throws {
+        let directory = imageURL.deletingLastPathComponent()
+        let index = try load(directory: directory)
+        if index.versions.values.contains(where: { $0.imageFile == imageURL.lastPathComponent && $0.needsCustomReview }) {
+            throw Failure.customReviewRequired
+        }
+    }
+
+    /// Video QC compares motion against its selected photo. It cannot approve
+    /// property edits already present in that photo, so review precedes spending.
+    static func requireReelReview(imageURL: URL) throws {
+        let index = try load(directory: imageURL.deletingLastPathComponent())
+        for version in index.versions.values where version.imageFile == imageURL.lastPathComponent {
+            if version.needsCustomReview { throw Failure.customReviewRequired }
+            if version.needsStagingReview { throw Failure.reviewRequired }
+        }
+    }
+
+    /// Existing batches retain exact JPEGs even if their gallery tile changed.
+    /// Consult the recorded source version rather than today's visible tile.
+    /// Older photos without a history record remain unverified legacy sources.
+    static func requireReelReview(versionID: String, directory: URL) throws {
+        let index = try load(directory: directory)
+        guard let version = index.versions[versionID] else { return }
+        if version.needsCustomReview { throw Failure.customReviewRequired }
+        if version.needsStagingReview { throw Failure.reviewRequired }
+    }
+
+    /// Record comparison of this exact custom output without selecting it for
+    /// publication or changing the editing workspace. Downloads use the same
+    /// persisted marker, including bulk exports opened from another screen.
+    static func confirmCustomReview(id: String, imageFile: String, sourceFile: String,
+                                    review: CustomReview, directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        guard review.isComplete else { throw Failure.customReviewRequired }
+        guard let version = index.versions[id], version.imageFile == imageFile,
+              !index.hiddenFamilies.contains(version.familyID),
+              version.reviewSourceFile(in: index) == sourceFile, sourceFile != imageFile
+        else { throw Failure.changedVersion }
+        try requireImage(imageFile, directory: directory)
+        try requireImage(sourceFile, directory: directory)
+        // Missing legacy markers remain missing; a comparison does not invent
+        // new provenance or certify that an imported source was unaltered.
+        if version.customReviewed != nil { index.versions[id]?.customReviewed = true }
+        try save(index, directory: directory)
+    }
+
+    /// Select a saved version without generating again or discarding later edits.
+    /// Only a complete retained image can become the listing's current version.
+    static func select(id: String, directory: URL, reviewed: Bool = false, customReviewed: Bool = false) throws {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        guard let version = index.versions[id], !index.hiddenFamilies.contains(version.familyID) else {
+            throw Failure.changedVersion
+        }
+        try requireImage(version.imageFile, directory: directory)
+        guard reviewed || version.stagingReviewed == true || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
+        guard customReviewed || !version.needsCustomReview else { throw Failure.customReviewRequired }
+        if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }
+        if customReviewed, version.customReviewed != nil { index.versions[id]?.customReviewed = true }
+        index.current[version.familyID] = id
+        if index.listingSelections == nil { index.listingSelections = index.current }
+        if index.excludedListingFamilies?.contains(version.familyID) != true {
+            index.listingSelections?[version.familyID] = id
+        }
+        try save(index, directory: directory)
+    }
+
+    /// Choosing the public photo doesn't replace the editing workspace's latest
+    /// version. Browsing/exporting a saved edit never calls this operation.
+    static func selectForPublication(id: String, directory: URL, reviewed: Bool = false, customReviewed: Bool = false) throws {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        guard let version = index.versions[id], !index.hiddenFamilies.contains(version.familyID) else {
+            throw Failure.changedVersion
+        }
+        try requireImage(version.imageFile, directory: directory)
+        guard reviewed || version.stagingReviewed == true || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
+        guard customReviewed || !version.needsCustomReview else { throw Failure.customReviewRequired }
+        if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }
+        if customReviewed, version.customReviewed != nil { index.versions[id]?.customReviewed = true }
+        if index.listingSelections == nil { index.listingSelections = index.current }
+        index.excludedListingFamilies?.remove(version.familyID)
+        index.listingSelections?[version.familyID] = id
+        try save(index, directory: directory)
+    }
+
+    /// Remove this logical photo from the listing, retaining its complete
+    /// source/edit history. A stale sheet cannot remove another selected version.
+    /// Materialize legacy defaults before omission, including an explicit empty
+    /// selection when the last photo is removed; nil would revive old defaults.
+    static func removeFromPublication(id: String, directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        guard let version = index.versions[id], !index.hiddenFamilies.contains(version.familyID),
+              index.isSelectedForListing(id) || index.excludedListingFamilies?.contains(version.familyID) == true
+        else { throw Failure.changedVersion }
+        if index.listingSelections == nil { index.listingSelections = index.current }
+        index.listingSelections?.removeValue(forKey: version.familyID)
+        if index.excludedListingFamilies == nil { index.excludedListingFamilies = [] }
+        index.excludedListingFamilies?.insert(version.familyID)
+        try save(index, directory: directory)
+    }
+
+    /// References are local to this listing directory and require an explicit
+    /// user review recorded on this phone. They never replace the target source.
+    static func stagingReference(id: String, directory: URL) throws -> Version {
+        lock.lock(); defer { lock.unlock() }
+        let index = try loadUnlocked(directory: directory)
+        guard let version = index.versions[id], version.effects.contains("stage"),
+              version.stagingReviewed == true, !index.hiddenFamilies.contains(version.familyID)
+        else { throw Failure.reviewRequired }
+        try requireImage(version.imageFile, directory: directory)
+        return version
+    }
+
+    /// Cloud originals remain explicitly unverified; staged imports start as
+    /// previews with their retained source selected until reviewed on this phone.
+    static func registerImport(id: String, imageFile: String, originalFile: String,
+                               staged: Bool, altered: Bool, directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        // Read first, before legacy adoption can misclassify the imported output.
+        var index = try readIndex(directory: directory)
+        if let existing = index.versions[id] {
+            guard !index.hiddenFamilies.contains(existing.familyID) else { throw Failure.changedVersion }
+            guard existing.imageFile == imageFile else { throw Failure.duplicate }
+            return
+        }
+        guard safeName(id) else { throw Failure.invalidHistory }
+        try requireImage(imageFile, directory: directory); try requireImage(originalFile, directory: directory)
+        let baseID = id + "-source"
+        guard index.versions[baseID] == nil else { throw Failure.duplicate }
+        let source = Version(id: baseID, familyID: id, imageFile: originalFile, originalFile: originalFile,
+            originalVerified: false, parentID: nil, sourceID: nil, stagingBaseID: nil,
+            edit: "legacy", style: nil, effects: [], sourceHistoryKnown: false, disclosure: nil,
+            provenanceID: nil, originalAssetID: nil, serverListingID: nil, provenanceRecorded: false, createdAt: Date())
+        let effects = staged ? ["stage"] : altered ? ["cloud-edit"] : []
+        var output = Version(id: id, familyID: id, imageFile: imageFile, originalFile: originalFile,
+            originalVerified: false, parentID: baseID, sourceID: baseID, stagingBaseID: staged ? baseID : nil,
+            edit: staged ? "stage" : altered ? "cloud-edit" : "legacy", style: nil, effects: effects,
+            sourceHistoryKnown: false, disclosure: nil, provenanceID: nil, originalAssetID: nil,
+            serverListingID: nil, provenanceRecorded: false, createdAt: Date())
+        // The cloud's altered flag doesn't identify a custom edit separately.
+        // New non-staged AI imports therefore require the same source/color
+        // comparison. Existing ids returned above are never retroactively changed.
+        if altered && !staged { output.customReviewed = false }
+        if index.listingSelections == nil { index.listingSelections = index.current }
+        index.versions[baseID] = source; index.versions[id] = output; index.current[id] = id
+        index.listingSelections?[id] = staged || altered ? baseID : id
+        // Save the new metadata before adopting other legacy families; reads
+        // reconcile them as a set and the next change makes that set durable.
+        try save(index, directory: directory)
+    }
+
+    /// Removing a family from the gallery keeps every image needed by its edit
+    /// history and prior disclosures. It does not delete an already published asset.
+    static func hide(id: String, directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        guard let version = index.versions[id] else { throw Failure.invalidHistory }
+        index.hiddenFamilies.insert(version.familyID)
+        try save(index, directory: directory)
+    }
+}
+
+/// Integer geometry is shared by the full-resolution renderer and its tests.
+/// Fit adds a neutral border; crop deliberately removes edges. Neither guesses
+/// a listing service's requirements or upscales the photo's pixels.
+enum PhotoExportLayout {
+    enum Aspect: String, CaseIterable, Identifiable, Sendable {
+        case original, landscape = "4:3", wide = "16:9", portrait = "9:16", feed = "4:5"
+        var id: String { rawValue }
+        var title: String { self == .original ? "Original aspect" : rawValue }
+        var ratio: Double? {
+            switch self { case .original: return nil; case .landscape: return 4 / 3
+            case .wide: return 16 / 9; case .portrait: return 9 / 16; case .feed: return 4 / 5 }
+        }
+    }
+    enum Framing: String, CaseIterable, Identifiable, Sendable {
+        case fit = "Fit · keep everything", crop = "Crop · trim edges"
+        var id: String { rawValue }
+    }
+    struct Size: Equatable { let width: Int; let height: Int }
+    static func size(width: Int, height: Int, aspect: Aspect, framing: Framing) -> Size {
+        guard width > 0, height > 0, let ratio = aspect.ratio else { return Size(width: width, height: height) }
+        let actual = Double(width) / Double(height)
+        if framing == .crop {
+            return actual > ratio ? Size(width: max(1, Int((Double(height) * ratio).rounded())), height: height)
+                : Size(width: width, height: max(1, Int((Double(width) / ratio).rounded())))
+        }
+        let longest = max(width, height)
+        return ratio >= 1 ? Size(width: longest, height: max(1, Int((Double(longest) / ratio).rounded())))
+            : Size(width: max(1, Int((Double(longest) * ratio).rounded())), height: longest)
+    }
+}
