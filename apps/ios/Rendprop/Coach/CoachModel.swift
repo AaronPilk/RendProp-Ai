@@ -544,8 +544,10 @@ enum CoachOffline {
         // The introductory trial starts only after Apple's purchase confirmation.
         Topic(keywords: ["trial", "free week", "first week"], reply:
             "Open Settings → Plan & usage → View plans. Eligible subscriptions offer 7 days free, " +
-            "but the trial starts only after you confirm the subscription with Apple. Apple shows " +
-            "the renewal price before you confirm. Manage or cancel it in Settings → Plan & usage."),
+            "but the trial starts only after you confirm the subscription with Apple. The free week " +
+            "lets you create one listing and use limited AI photo edits; video and aerial generation " +
+            "start after the first paid renewal. Apple shows the renewal price before you confirm. " +
+            "Manage or cancel in Settings → Plan & usage."),
         Topic(keywords: ["reel", "social video"], reply:
             "Choose reviewed photos in Make a video, then Listing (landscape) or Social media (portrait). " +
             "Automatic arranges scenes and chooses gentle movement; Fly-through is simulated, not real drone footage. " +

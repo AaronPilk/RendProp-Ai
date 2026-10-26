@@ -110,10 +110,8 @@ struct PlanBanner: View {
             if let forced = Config.uiTestPlanBanner {
                 let day: TimeInterval = 86_400
                 let iso = ISO8601DateFormatter()
-                // Fixed numbers, so the screenshot is the same on every run:
-                // the real-estate free week for the trial states, and the Pro
-                // literals from Products.swift for the paid one.
-                let week = Allowances(renders: 3, photoEdits: 60, reels: 4)
+                // Fixed numbers for the limited free week and paid Pro state.
+                let week = Allowances(renders: 0, photoEdits: 5, reels: 0)
                 let pro = RendpropPlan.pro.allowances
                 let paid = Allowances(renders: pro.renders, photoEdits: pro.photoEdits, reels: pro.reels)
                 switch forced {
@@ -152,9 +150,9 @@ struct PlanBanner: View {
                 // exclusive — MeSlice declares none, so `trial_ends_at` maps.
                 d.keyDecodingStrategy = .convertFromSnakeCase
                 guard let me = try? d.decode(MeSlice.self, from: data) else { return }
-                // The server's own numbers for THIS org — the free week is sized
-                // per industry from `orgs.space_type`, so these, not a literal
-                // in the app, are the promise the server will actually keep.
+                // Use the server's effective allowances for this workspace;
+                // an Apple introductory week can have a narrower allowance
+                // than the paid SKU named by `plan`.
                 if let activation = me.servingActivation {
                     guard me.org?.id.flatMap(UUID.init(uuidString:)) == org,
                           activation.checked(org: billingOrg) != nil else { state = nil; return }
@@ -169,6 +167,17 @@ struct PlanBanner: View {
                     state = PlanBanner.pendingActivationState()
                 } else if let trial = me.trialUsage {
                     state = PlanBanner.boundedTrialState(trial)
+                } else if me.servingEnvelope?.window == "intro_window" {
+                    // A malformed introductory snapshot must never fall
+                    // through to the full paid-plan banner.
+                    guard me.org?.id.flatMap(UUID.init(uuidString:)) == org,
+                          let envelope = me.servingEnvelope?.checked(), envelope.kind == "trial",
+                          let end = envelope.periodEndDate, end > Date(),
+                          let photoEdits = me.entitlement?.allowances?.photoEdits else {
+                        state = nil
+                        return
+                    }
+                    state = PlanBanner.appleIntroState(plan: me.plan, photoEdits: photoEdits, ends: end)
                 } else {
                     state = PlanBanner.state(plan: me.plan, trialEndsAt: me.trialEndsAt,
                                              allowances: me.entitlement?.allowances, now: Date())
@@ -226,6 +235,7 @@ struct PlanBanner: View {
         let trialEndsAt: String?
         let trialUsage: TrialUsageSummary?
         let servingActivation: ServingActivationSummary?
+        let servingEnvelope: ServingEnvelopeSummary?
         let entitlement: Entitlement?
         let org: Org?
     }
@@ -272,6 +282,14 @@ struct PlanBanner: View {
     static func pendingActivationState() -> PlanState {
         PlanState(kind: .activationPending, title: ServingActivationSummary.pendingTitle,
                   detail: ServingActivationSummary.pendingExplanation)
+    }
+
+    static func appleIntroState(plan: String?, photoEdits: Int, ends: Date) -> PlanState {
+        let name = (plan ?? "").lowercased()
+        let title = ["starter", "solo", "pro", "team"].contains(name)
+            ? "\(name == "solo" ? "Starter" : name.capitalized) free week" : "Your free week"
+        return PlanState(kind: .trial, title: title,
+            detail: "\(SpaceType.makeFreeWeekLine(photoEdits: photoEdits)) during this week. Video and aerial generation start after the first paid renewal. Ends \(ends.formatted(date: .abbreviated, time: .omitted)).")
     }
 
     /// New trials use recorded independent counters, not monthly plan numbers
@@ -331,10 +349,9 @@ struct PlanBanner: View {
     /// otherwise.
     static func state(plan: String?, trialEndsAt: String?, allowances: Allowances?, now: Date,
                       space: SpaceType = .current) -> PlanState? {
-        // "Your free week has ended" is said in two places below; one string.
         let ended = PlanState(kind: .ended,
                               title: "Choose your Rendprop plan",
-                              detail: "Your first published listing is free. A plan adds AI photo edits, reels and more listings; eligible new subscribers get 7 days free.")
+                              detail: "Your saved listings and photos remain available. Choose a plan for more AI edits, videos and publishing; eligible new subscribers get 7 days free.")
         switch (plan ?? "").lowercased() {
         case "pro":
             return PlanState(kind: .paid, title: "Pro", detail: paidDetail(allowances, fallback: RendpropPlan.pro))
@@ -345,12 +362,9 @@ struct PlanBanner: View {
         case "free":
             return ended
         case "trial":
-            // What the week gives, in the server's numbers when it sent them —
-            // the week is sized per industry (`orgs.space_type`), and the
-            // server's figure is the one it enforces.
-            let week = allowances.map {
-                SpaceType.makeFreeWeekLine(tours: $0.renders, photoEdits: $0.photoEdits, reelClips: $0.reels)
-            } ?? space.freeWeekLine
+            // Display the server's effective photo allowance when available.
+            let week = allowances.map { SpaceType.makeFreeWeekLine(photoEdits: $0.photoEdits) }
+                ?? space.freeWeekLine
             let days = daysLeft(trialEndsAt, now: now)
             guard let days else {
                 return PlanState(kind: .trial, title: "Existing trial access",

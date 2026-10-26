@@ -50,7 +50,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
         case .leads: return "Follow up on inquiries"
         case .team: return "Work with a team"
         case .studio: return "Continue on desktop"
-        case .plan: return "Plans, credits and billing"
+        case .plan: return "Plans and billing"
         case .spatial: return "3D features"
         }
     }
@@ -124,7 +124,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Open the same listing", "Your own uploaded listings and synced changes are available there. Team owners can choose an authorized agent’s listings. Local-only files need to upload first."),
             ("Continue producing", "Use Studio to organize assets, create content and review work with your team. On the phone, use Retry Studio sync if a listing update is still waiting.")]
         case .plan: return [
-            ("Check your allowance", "Open Settings → Plan & usage to see the account's plan, feature limits and credits."),
+            ("Check your allowance", "Open Settings → Plan & usage to see the account's plan and feature limits."),
             ("Review before purchasing", "Choose a plan. Every plan bills monthly. Apple's purchase sheet shows the actual price and any eligible free trial. A trial starts only after you confirm the subscription."),
             ("Manage your subscription", "Use Manage subscription to change or cancel with Apple. Restore purchases after reinstalling or signing back in.")]
         case .spatial: return [
