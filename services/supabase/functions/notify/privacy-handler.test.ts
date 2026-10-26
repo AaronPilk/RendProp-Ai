@@ -1,6 +1,7 @@
 // Actual notify dispatcher; all Auth, PostgREST and provider traffic is synthetic.
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 const USER="de550103-0000-4000-8000-000000000001",ORG="de550103-0000-4000-8000-000000000002",VERIFY="de550103-0000-4000-8000-000000000003";
+const LEAD="de550103-0000-4000-8000-000000000004",LISTING="de550103-0000-4000-8000-000000000005";
 const SERVICE="sb_secret_"+"notify_fixture_only_".repeat(2);
 const env={SUPABASE_URL:"https://notify-privacy-fixture.invalid",SUPABASE_ANON_KEY:"fixture-public",SUPABASE_SERVICE_ROLE_KEY:"fixture-service",SUPABASE_SECRET_KEYS:JSON.stringify({default:SERVICE}),RENDPROP_SECRET_KEY_NAME:"default",RENDPROP_LEGACY_SERVICE_AUTH:"disabled"};
 const previous=new Map(Object.keys(env).map(key=>[key,Deno.env.get(key)]));
@@ -10,8 +11,8 @@ const serve=Object.getOwnPropertyDescriptor(Deno,"serve")!;
 Object.defineProperty(Deno,"serve",{configurable:serve.configurable,enumerable:serve.enumerable,writable:true,value:(fn:typeof handler)=>{handler=fn;return{};}});
 try{await import("./index.ts?privacy-handler-proof");}finally{Object.defineProperty(Deno,"serve",serve);for(const[key,value]of previous)if(value===undefined)Deno.env.delete(key);else Deno.env.set(key,value);}
 if(!handler)throw new Error("Actual notify handler not captured");
-const row=(category="lead_received")=>({id:"fixture-outbox-"+category,org_id:ORG,user_id:USER as string|null,to_email:"editable-profile@fixture.invalid",category,channel:"email",dedupe_key:"fixture-"+category,payload:{data:{lead_name:"Synthetic buyer",listing_address:"Synthetic property"}} as Record<string,unknown>,attempts:1});
-async function invoke(rows:Array<ReturnType<typeof row> & {client_verification_id?:string}>,options:{lookupError?:boolean,verificationError?:boolean,authenticated?:boolean,serviceHeaders?:Record<string,string>,opsCurrent?:boolean}={}){
+const row=(category="lead_received")=>({id:"fixture-outbox-"+category,org_id:ORG,user_id:USER as string|null,to_email:"editable-profile@fixture.invalid",category,channel:"email",dedupe_key:"fixture-"+category,payload:{data:{lead_id:LEAD,listing_id:LISTING,lead_name:"Synthetic buyer",listing_address:"Synthetic property"}} as Record<string,unknown>,attempts:1});
+async function invoke(rows:Array<ReturnType<typeof row> & {client_verification_id?:string}>,options:{lookupError?:boolean,verificationError?:boolean,authenticated?:boolean,serviceHeaders?:Record<string,string>,opsCurrent?:boolean,leadAccess?:"revoked"|"outage"|"foreign"}={}){
  const oldFetch=globalThis.fetch,keys=["SUPABASE_SERVICE_ROLE_KEY","RESEND_API_KEY","NOTIFY_FROM_EMAIL","APNS_KEY_P8","APNS_KEY_ID","APNS_TEAM_ID"];
  const saved=new Map(keys.map(key=>[key,Deno.env.get(key)]));
  Deno.env.set("SUPABASE_SERVICE_ROLE_KEY","fixture-service");Deno.env.set("RESEND_API_KEY","fixture-only");Deno.env.set("NOTIFY_FROM_EMAIL","Rendprop <notify@fixture.invalid>");for(const key of keys.slice(3))Deno.env.delete(key);
@@ -22,6 +23,7 @@ async function invoke(rows:Array<ReturnType<typeof row> & {client_verification_i
   if(url.hostname!=="notify-privacy-fixture.invalid")throw new Error("Unmodeled external network dispatch");
   if(url.pathname==="/rest/v1/rpc/notification_claim_batch")return Response.json(rows);
   if(url.pathname==="/rest/v1/rpc/notification_verified_recipients")return options.lookupError?Response.json({message:"private SQL unavailable"},{status:503}):Response.json([{id:USER,email:"confirmed-auth@fixture.invalid"}]);
+  if(url.pathname==="/rest/v1/rpc/lead_library_scope")return options.leadAccess==="revoked"?Response.json({message:"RP403: Inquiry is not available"},{status:403}):options.leadAccess==="outage"?Response.json({message:"private database unavailable"},{status:503}):Response.json({actor_id:USER,lead_id:LEAD,listing_id:LISTING,org_id:options.leadAccess==="foreign"?VERIFY:ORG,can_read:true});
   if(url.pathname==="/rest/v1/rpc/client_recipient_verification_prepare")return options.verificationError?Response.json({to:"other@fixture.invalid"}):Response.json({to:"client@fixture.invalid",from:"Rendprop <notify@fixture.invalid>",subject:"Confirm your listing inquiry email",text:"Confirm only if expected. https://rendprop.com/verify-client-email#token="+"a".repeat(64),idempotency_key:"client-verification/"+VERIFY});
   if(url.pathname==="/rest/v1/rpc/notification_mark"){marked.push(body);return Response.json({ok:true});}
   if(url.pathname==="/rest/v1/rpc/ops_alert_current")return Response.json(options.opsCurrent!==false);
@@ -36,6 +38,16 @@ Deno.test("actual drain ignores editable destination and sends private email to 
  const mail=out.calls.find(c=>new URL(c.url).hostname==="api.resend.com")!.body;
  assertEquals(mail.to,["confirmed-auth@fixture.invalid"]);assertEquals(mail.reply_to,"aaron@pilk.ai");assert(String(mail.text).endsWith("RendProp LLC\n855 Central Avenue\nSaint Petersburg, FL 33701\nQuestions or email preferences: aaron@pilk.ai"));
  assert(!out.calls.some(c=>new URL(c.url).pathname==="/rest/v1/profiles"));
+});
+Deno.test("queued buyer alert is skipped after access revocation or a mismatched workspace",async()=>{
+ for(const leadAccess of ["revoked","foreign"] as const){
+  const out=await invoke([row()],{leadAccess});assertEquals(out.body.sent,0);assertEquals(out.body.skipped,1);
+  assertEquals(out.marked[0].p_state,"skipped");assert(!out.calls.some(c=>new URL(c.url).hostname==="api.resend.com"));
+ }
+});
+Deno.test("inquiry authority outage retries without exposing buyer details",async()=>{
+ const out=await invoke([row()],{leadAccess:"outage"});assertEquals(out.body.sent,0);assertEquals(out.body.failed,1);
+ assertEquals(out.marked[0].p_state,"failed");assert(!out.calls.some(c=>new URL(c.url).hostname==="api.resend.com"));
 });
 Deno.test("actual drain retries private recipient outage without delivering to typed contact",async()=>{
  const out=await invoke([row()],{lookupError:true});assertEquals(out.body.failed,1);assertEquals(out.body.sent,0);assert(!out.calls.some(c=>new URL(c.url).hostname==="api.resend.com"));assertEquals(out.marked[0].p_state,"failed");
