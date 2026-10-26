@@ -105,7 +105,10 @@ try:
     base = (SQL / "tests/property_video_jobs.sql").read_text()
     seed = base[base.index("insert into auth.users"):
                 base.index("select pg_temp.ok((select bool_and")]
-    paid = "begin;\n" + seed + "\n" + (
+    # The background-video fixture above now buys its owner a manual plan so
+    # it can test publication. The separate paid-quality fixture specifically
+    # tests a fresh Apple purchase, so restore that synthetic org to Free.
+    paid = "begin;\n" + seed + "\nupdate public.orgs set plan='free',plan_source=null where id=(select org from bf);\n" + (
         SQL / "tests/paid_quality_processing.sql").read_text()
     output = run("paid-quality-regression", [*psql, "-Atq"], body=paid)
     rows = [json.loads(line) for line in output.splitlines()

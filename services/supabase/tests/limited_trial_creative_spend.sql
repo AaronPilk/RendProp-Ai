@@ -388,5 +388,20 @@ do $$declare f record;v uuid:=gen_random_uuid();spec jsonb;begin
 end$$;
 reset role;
 
+-- A paid job that was already admitted can finish after a downgrade. The
+-- new-job gate still refuses unpaid dispatch; completion is an idempotent
+-- settlement of earlier authority, not fresh service admission.
+do $$declare f record;j uuid;begin
+  select * into f from trial_funded_fixture;
+  update public.orgs set plan='starter',plan_source='manual' where id=f.org;
+  insert into public.render_jobs(listing_id,source)
+    values(f.first_listing,'app') returning id into j;
+  update public.orgs set plan='free',plan_source=null where id=f.org;
+  insert into public.renders(job_id,listing_id,slug,duration_s,speed_factor,published_at)
+    values(j,f.first_listing,'prior-paid-'||j::text,8,2,now());
+  perform pg_temp.trial_ok(exists(select 1 from public.renders where job_id=j),
+    'previously admitted paid video can finish after account downgrades');
+end$$;
+
 select jsonb_build_object('passed',true,'assertions',(select n from trial_checks));
 rollback;

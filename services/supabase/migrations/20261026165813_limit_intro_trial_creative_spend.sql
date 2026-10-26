@@ -199,14 +199,23 @@ create or replace function public.trial_intro_publication_guard()
 returns trigger language plpgsql security definer set search_path='' as $$
 declare org uuid; billing uuid; listing uuid; source text; paid_website boolean;
 begin
+  -- Completion may lag admission. A job created while the account was paid
+  -- must still publish after a later downgrade; no second generation or
+  -- supplier reservation is granted by this completion path.
+  if tg_table_name='renders' then
+    if not exists(select 1 from public.render_jobs j
+      where j.id=new.job_id and j.listing_id=new.listing_id) then
+      raise exception 'RP403: A previously admitted video job is required';
+    end if;
+    return new;
+  end if;
   listing:=new.listing_id;
   select l.org_id into org from public.listings l
     where l.id=listing and l.deleted_at is null;
   if org is null then raise exception 'RP403: A current publication workspace is required';end if;
   billing:=public.library_billing_org(org);
   if public.plan_serving_ceiling(billing)->>'kind' in('trial','free') then
-    if tg_table_name='render_jobs' then source:=new.source;
-    else select j.source into source from public.render_jobs j where j.id=new.job_id;end if;
+    source:=new.source;
     select exists(select 1 from public.property_website_transactions t
       where t.assigned_listing_id=listing and t.revoked_at is null
         and t.environment in('Production','Sandbox')) into paid_website;
