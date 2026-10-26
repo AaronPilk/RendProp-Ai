@@ -417,12 +417,22 @@ reset role;
 -- A paid job that was already admitted can finish after a downgrade. The
 -- new-job gate still refuses unpaid dispatch; completion is an idempotent
 -- settlement of earlier authority, not fresh service admission.
-do $$declare f record;j uuid;begin
+do $$declare f record;j uuid;third_listing uuid:=gen_random_uuid();begin
   select * into f from trial_funded_fixture;
   update public.orgs set plan='starter',plan_source='manual' where id=f.org;
+  insert into public.listings(id,org_id,agent_id,address)
+    values(f.second_listing,f.org,f.actor,'Second listing after payment');
+  perform pg_temp.trial_ok(exists(select 1 from public.listings
+    where id=f.second_listing),
+    'manual paid upgrade can create a second listing');
   insert into public.render_jobs(listing_id,source)
     values(f.first_listing,'app') returning id into j;
   update public.orgs set plan='free',plan_source=null where id=f.org;
+  perform pg_temp.trial_refuses(format(
+    'insert into public.listings(id,org_id,agent_id,address) values(%L,%L,%L,''Third unpaid listing'')',
+    third_listing,f.org,f.actor),
+    'RP402: Unpaid access includes one listing',
+    'downgraded account cannot create another free listing');
   insert into public.renders(job_id,listing_id,slug,duration_s,speed_factor,published_at)
     values(j,f.first_listing,'prior-paid-'||j::text,8,2,now());
   perform pg_temp.trial_ok(exists(select 1 from public.renders where job_id=j),
