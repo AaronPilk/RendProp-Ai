@@ -218,8 +218,8 @@ struct ServingActivationSummary: Codable, Hashable, Sendable {
     }
     func shouldShowPending(plan: String?, recordedTrial: TrialUsageSummary?) -> Bool {
         guard !available else { return false }
-        if let recordedTrial { return recordedTrial.status == .active }
-        return !["free", "trial"].contains((plan ?? "").lowercased())
+        // A historical, expired trial must not hide an unavailable paid plan.
+        return recordedTrial?.status == .active || RecordedTrialPresentation.isPaid(planName: plan)
     }
     static let pendingTitle = "Service activation pending"
     static let pendingExplanation = "Your Apple subscription is recorded. Rendprop service is still waiting for activation. Restore purchases to check again, or manage your subscription with Apple. Your saved work remains available under your workspace's access and retention terms."
@@ -284,6 +284,21 @@ struct TrialUsageSummary: Codable, Hashable, Sendable {
          ("Trial upload space", uploadSpaceValue)]
     }
     static let explanation = "These trial allowances belong to the account that started the trial in this workspace. The same counters apply on iPhone and Studio. Each allowance is separate and does not reset. Your saved work stays available to view and download under your workspace's access and retention terms. Using your allowance does not change Apple's renewal date."
+}
+
+/// Trial counters are a lifetime record, not the allowance for a later paid
+/// subscription or for a downgraded free account. Use the effective server
+/// plan when deciding whether they describe current access.
+enum RecordedTrialPresentation {
+    static func isCurrent(planName: String?) -> Bool {
+        let name = planName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        return name.isEmpty || name == "trial"
+    }
+
+    static func isPaid(planName: String?) -> Bool {
+        let name = planName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        return !name.isEmpty && name != "free" && name != "trial"
+    }
 }
 
 /// A numeric trial promise is displayed only from an enabled server offer.

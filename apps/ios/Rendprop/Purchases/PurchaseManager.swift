@@ -76,9 +76,9 @@ final class PurchaseManager: ObservableObject {
     /// account, products not yet approved) — the paywall says so plainly.
     @Published private(set) var products: [Product] = []
 
-    /// The plan the SERVER last confirmed ("starter" | "pro" | "team"), or a
-    /// local product-id mapping when we have a verified entitlement but the
-    /// sync hasn't landed yet. nil = nothing active that we know of.
+    /// The plan the SERVER last confirmed ("starter" | "pro" | "team"). A
+    /// verified Apple transaction still awaiting Rendprop fulfilment does not
+    /// mark its plan active here. nil = nothing active that we know of.
     @Published private(set) var activePlan: String?
 
     /// The product id behind `activePlan`, so the paywall can mark the exact
@@ -750,6 +750,7 @@ final class PurchaseManager: ObservableObject {
             activeProductID = nil
             activeOriginalTransactionID = nil
             activeExpiresAt = nil
+            activeBillingOwner = nil
             return false
         }
 
@@ -869,13 +870,6 @@ final class PurchaseManager: ObservableObject {
             return false
         }
 
-        // Optimistic display value so the paywall stops looking broken while
-        // the round trip happens. Never a gate — the server decides.
-        if activePlan == nil {
-            activePlan = RendpropProducts.planName(for: pending.transaction.productID)
-            activeProductID = pending.transaction.productID
-        }
-
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         do {
             let result = try await api.syncEntitlement(signedTransaction: pending.signedTransaction,
@@ -893,7 +887,9 @@ final class PurchaseManager: ObservableObject {
                 lastError = "Apple's subscription is recorded, but service activation is pending. Your transaction is retained. Contact support in Settings → Legal & support, then explicitly Restore purchases; Manage or cancel with Apple if needed."
                 return false
             }
-            applyServerPlan(result, productID: pending.transaction.productID)
+            applyServerPlan(result, productID: pending.transaction.productID,
+                            originalTransactionID: String(pending.transaction.originalID),
+                            billingOwner: pending.transaction.appAccountToken)
             if result.servingActivation?.available == false {
                 notice = ServingActivationSummary.pendingExplanation
             }
@@ -921,17 +917,25 @@ final class PurchaseManager: ObservableObject {
     }
 
     /// The plan the server just wrote wins over any local guess.
-    private func applyServerPlan(_ result: EntitlementSync, productID: String) {
+    private func applyServerPlan(_ result: EntitlementSync, productID: String,
+                                 originalTransactionID: String, billingOwner: UUID?) {
         let plan = result.plan.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if plan.isEmpty || plan == "free" {
             activePlan = nil
             activeProductID = nil
+            activeOriginalTransactionID = nil
             activeExpiresAt = nil
+            activeBillingOwner = nil
             return
         }
         activePlan = plan
         activeProductID = result.productId ?? productID
+        // A reinstall loses the local workspace binding. Keep the server's
+        // verified original ID so a later plan change can prove that this
+        // Apple subscription still belongs to the selected workspace.
+        activeOriginalTransactionID = result.originalTransactionId ?? originalTransactionID
         activeExpiresAt = result.expiresAt
+        activeBillingOwner = billingOwner
     }
 
     private func remember(_ pending: PendingSync) {

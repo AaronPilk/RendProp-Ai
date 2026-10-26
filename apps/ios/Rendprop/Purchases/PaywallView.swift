@@ -127,7 +127,8 @@ struct PaywallView: View {
             trialDetails
             if purchases.billingContext?.servingActivation?.available != false {
                 SelectedPlanDetails(plan: selectedPlan, period: planOffer(for: selectedPlan).period,
-                                    afterTrial: purchases.billingContext?.trialUsage != nil || selectedHasIntroOffer)
+                                    afterTrial: (purchases.billingContext?.trialUsage != nil &&
+                                                 RecordedTrialPresentation.isCurrent(planName: purchases.billingContext?.planName)) || selectedHasIntroOffer)
             }
         }
         messageBlock
@@ -138,7 +139,8 @@ struct PaywallView: View {
     }
 
     @ViewBuilder private var trialDetails: some View {
-        if let trial = purchases.billingContext?.trialUsage {
+        if RecordedTrialPresentation.isCurrent(planName: purchases.billingContext?.planName),
+           let trial = purchases.billingContext?.trialUsage {
             VStack(alignment: .leading, spacing: 10) {
                 Text(trial.statusLabel).font(.rpHeadline).foregroundStyle(Theme.ink)
                 ForEach(trial.rows, id: \.title) { row in

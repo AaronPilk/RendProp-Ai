@@ -43,9 +43,11 @@ import StoreKitTest
         XCTAssertTrue(plans.exists && plans.isHittable); plans.tap()
         XCTAssertTrue(app.otherElements["paywall.root"].waitForExistence(timeout: 10) || app.scrollViews["paywall.root"].exists)
     }
-    private func trialButton() -> XCUIElement {
-        let button = app.buttons["Start 7-day free trial"]
-        XCTAssertTrue(button.waitForExistence(timeout: 25), "The local seven-day free offer must be loaded and eligible")
+    private func purchaseButton() -> XCUIElement {
+        // Offline preview never promises a funded seven-day trial. StoreKit's
+        // local sheet may still show its configured introductory offer.
+        let button = app.buttons["Subscribe with Apple"]
+        XCTAssertTrue(button.waitForExistence(timeout: 25), "The local subscription product must be loaded")
         return button
     }
     private func waitFor(_ predicate: @escaping () -> Bool, timeout: TimeInterval = 15) {
@@ -53,10 +55,10 @@ import StoreKitTest
         XCTAssertEqual(XCTWaiter.wait(for: [condition], timeout: timeout), .completed)
     }
 
-    func testConfirmedTrialPurchaseAndRestore() throws {
+    func testConfirmedSubscriptionPurchaseAndRestore() throws {
         openPaywall()
-        XCTAssertTrue(store.allTransactions().isEmpty, "Opening the paywall must never activate a trial")
-        trialButton().tap()
+        XCTAssertTrue(store.allTransactions().isEmpty, "Opening the paywall must never start a purchase")
+        purchaseButton().tap()
         XCTAssertTrue(app.staticTexts["Your plan is active. Manage or cancel it in Settings → Plan & usage."].waitForExistence(timeout: 20), "Success appears only after the mock server accepted the verified transaction")
         XCTAssertTrue(app.buttons["Manage current subscription"].waitForExistence(timeout: 10))
         XCTAssertEqual(store.allTransactions().filter { $0.state == .purchased }.count, 1)
@@ -68,18 +70,18 @@ import StoreKitTest
         XCTAssertEqual(store.allTransactions().filter { $0.state == .purchased }.count, 1, "Restore cannot create another purchase")
     }
 
-    func testCancelledPurchaseDoesNotActivateTrial() async throws {
+    func testCancelledPurchaseDoesNotActivatePlan() async throws {
         try await store.setSimulatedError(.generic(.userCancelled), forAPI: .purchase)
-        openPaywall(); trialButton().tap()
-        waitFor { self.app.buttons["Start 7-day free trial"].isEnabled }
+        openPaywall(); purchaseButton().tap()
+        waitFor { self.app.buttons["Subscribe with Apple"].isEnabled }
         XCTAssertFalse(app.buttons["Manage current subscription"].exists)
         XCTAssertTrue(store.allTransactions().filter { $0.state == .purchased }.isEmpty)
     }
 
     func testPendingApprovalDoesNotActivateUntilApproved() throws {
         store.askToBuyEnabled = true
-        openPaywall(); trialButton().tap()
-        XCTAssertTrue(app.staticTexts["Your request was sent for approval. Your plan turns on as soon as it's approved — you can close this."].waitForExistence(timeout: 15))
+        openPaywall(); purchaseButton().tap()
+        XCTAssertTrue(app.staticTexts["Your request is awaiting Apple's approval. Service activates after Apple and Rendprop verify it. Any trial reservation and its workspace binding are retained; you can close this."].waitForExistence(timeout: 15))
         XCTAssertFalse(app.buttons["Manage current subscription"].exists)
         let pending = try XCTUnwrap(store.allTransactions().first(where: \.pendingAskToBuyConfirmation))
         try store.approveAskToBuyTransaction(identifier: pending.identifier)
