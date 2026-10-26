@@ -36,6 +36,7 @@ private struct RenderStatusContent: View {
     let render: Render
 
     @State private var showCancelConfirm = false
+    @State private var linkShareTarget: PublicLinkShareTarget?
     /// The encode is CPU-bound for minutes; on a hot phone iOS throttles it and
     /// the ring visibly crawls. Say so rather than looking stuck. (Seeded in
     /// `onAppear` — a `@State` default can't read a type member here.)
@@ -167,6 +168,9 @@ private struct RenderStatusContent: View {
             Text(tour == nil
                  ? "Your video stays on the \(noun) — you can render it again any time."
                  : "The tour stays on your phone. Publish it later from the \(noun) to get a share link.")
+        }
+        .sheet(item: $linkShareTarget) { target in
+            ShareSheet(items: target.activityItems)
         }
     }
 
@@ -456,9 +460,16 @@ private struct RenderStatusContent: View {
             case .ready, .awaitingConnection:
                 viewTourButton
                 if let shareURL {
-                    ShareLink(item: shareURL,
-                              subject: Text(listing.address),
-                              message: Text("Fly through \(listing.address) — scroll to walk the \(noun).")) {
+                    Button {
+                        Task {
+                            let published = currentListing.serverShareURL ?? shareURL
+                            let resolved = await PublicShareLinkResolver.resolve(
+                                publishedURL: published, fallbackURL: shareURL)
+                            linkShareTarget = PublicLinkShareTarget(
+                                url: resolved, subject: currentListing.address,
+                                message: "Fly through \(currentListing.address) — scroll to walk the \(noun).")
+                        }
+                    } label: {
                         HStack {
                             Image(systemName: "square.and.arrow.up")
                             Text("Share your link").fontWeight(.semibold)

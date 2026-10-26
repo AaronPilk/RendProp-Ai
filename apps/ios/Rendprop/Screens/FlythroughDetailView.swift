@@ -714,6 +714,8 @@ struct FlythroughDetailView: View {
     @State private var isDeleting = false
     /// Which of the two links a QR sheet is being shown for (nil = none).
     @State private var qrTarget: QRTarget?
+    @State private var linkShareTarget: PublicLinkShareTarget?
+    @State private var verifiedBuyerLink: (key: String, url: URL)?
     @StateObject private var connection = FeatureSessionAction()
     @State private var isPublishing = false
     @State private var publishFailure: AIFailure?
@@ -1259,6 +1261,9 @@ struct FlythroughDetailView: View {
             QRShareSheet(url: target.url, title: currentListing.address,
                          linkName: target.linkName, caption: target.caption)
         }
+        .sheet(item: $linkShareTarget) { target in
+            ShareSheet(items: target.activityItems)
+        }
         .sheet(item: $auditExport) { export in
             ShareSheet(items: [export.url])
         }
@@ -1419,6 +1424,7 @@ struct FlythroughDetailView: View {
 
             linkCard(
                 url: DeepLink.buyerWebsiteURL(from: url, address: currentListing.spaceType == .realEstate ? currentListing.address : nil) ?? url,
+                verifyBrandedLink: true,
                 icon: "person.text.rectangle.fill",
                 tint: Theme.accent,
                 name: "Your link",
@@ -1534,10 +1540,12 @@ struct FlythroughDetailView: View {
 
     /// One labelled link: what it is, the URL itself, Copy / QR, and Share.
     /// `warning` renders the MLS one-liner under the row.
-    private func linkCard(url: URL, icon: String, tint: Color, name: String, blurb: String,
+    private func linkCard(url: URL, verifyBrandedLink: Bool = false, icon: String, tint: Color, name: String, blurb: String,
                           shareSubject: String, shareMessage: String, shareTitle: String,
                           qrCaption: String, warning: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let linkKey = "\(listing.id):\(url.absoluteString):\(currentListing.address)"
+        let displayURL = verifyBrandedLink && verifiedBuyerLink?.key == linkKey ? verifiedBuyerLink!.url : url
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: icon)
                     .font(.system(size: 16, weight: .semibold))
@@ -1555,7 +1563,7 @@ struct FlythroughDetailView: View {
                 Spacer(minLength: 0)
             }
 
-            Text(url.absoluteString)
+            Text(displayURL.absoluteString)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(Theme.inkDim)
                 .lineLimit(2)
@@ -1567,35 +1575,45 @@ struct FlythroughDetailView: View {
 
             HStack(spacing: 10) {
                 Button {
-                    UIPasteboard.general.url = url
-                    Haptics.success()
+                    Task {
+                        UIPasteboard.general.url = await currentLink(url, verifyBrandedLink: verifyBrandedLink, key: linkKey)
+                        Haptics.success()
+                    }
                 } label: {
                     Label("Copy", systemImage: "doc.on.doc")
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 11)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .background(.ultraThinMaterial, in: Capsule())
                 }
                 .accessibilityLabel(Text("Copy \(name)"))
                 Button {
-                    qrTarget = QRTarget(url: url, linkName: name, caption: qrCaption)
+                    Task {
+                        let target = await currentLink(url, verifyBrandedLink: verifyBrandedLink, key: linkKey)
+                        qrTarget = QRTarget(url: target, linkName: name, caption: qrCaption)
+                    }
                 } label: {
                     Label("QR", systemImage: "qrcode")
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 11)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .background(.ultraThinMaterial, in: Capsule())
                 }
                 .accessibilityLabel(Text("QR code for \(name)"))
             }
             .font(.rpBody)
 
-            ShareLink(item: url, subject: Text(shareSubject), message: Text(shareMessage)) {
+            Button {
+                Task {
+                    let target = await currentLink(url, verifyBrandedLink: verifyBrandedLink, key: linkKey)
+                    linkShareTarget = PublicLinkShareTarget(url: target, subject: shareSubject, message: shareMessage)
+                }
+            } label: {
                 Label(shareTitle, systemImage: "square.and.arrow.up")
                     .font(.rpBody.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 13)
                     .background(tint)
                     .foregroundStyle(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .clipShape(Capsule())
             }
 
             if let warning {
@@ -1608,6 +1626,19 @@ struct FlythroughDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+        .task(id: linkKey) {
+            guard verifyBrandedLink else { return }
+            _ = await currentLink(url, verifyBrandedLink: true, key: linkKey)
+        }
+    }
+
+    private func currentLink(_ fallback: URL, verifyBrandedLink: Bool, key: String) async -> URL {
+        guard verifyBrandedLink, let published = currentListing.serverShareURL else { return fallback }
+        let resolved = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: fallback)
+        if key == "\(listing.id):\(fallback.absoluteString):\(currentListing.address)" {
+            verifiedBuyerLink = (key, resolved)
+        }
+        return resolved
     }
 
     // MARK: - "List this tour on Google"

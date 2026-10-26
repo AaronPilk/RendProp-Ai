@@ -43,6 +43,21 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertFalse(app.buttons["listing.clientContact"].exists)
     }
 
+    func testPublishedShareControlsOpenQRWithTheDisplayedFallbackLink() {
+        launch("published-no-source")
+        let copy = app.buttons["Copy Your link"]
+        scrollTo(copy)
+        XCTAssertTrue(copy.isEnabled)
+        let qr = app.buttons["QR code for Your link"]
+        XCTAssertTrue(qr.exists && qr.isEnabled)
+        attach("published-share-controls")
+        qr.tap()
+        let expected = "https://example.invalid/f/metadata-fixture"
+        XCTAssertTrue(app.staticTexts[expected].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.images["QR code that opens \(expected)"].exists, app.debugDescription)
+        attach("published-share-qr")
+    }
+
     func testEmptyListingStillOpensPhotoLibraryAndStudioWhileMeasurementsIsComingSoon() {
         launch("empty")
         assertTiles(sample: false, hasCapture: false)
