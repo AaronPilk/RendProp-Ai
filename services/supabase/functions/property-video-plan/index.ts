@@ -3,7 +3,7 @@
 import {corsHeaders} from '../_shared/cors.ts';
 import {assert,HttpError,json,pathSegments,readJsonLimited,respondError,throwRpc} from '../_shared/http.ts';
 import {adminClient,assertNotDeleting,assertPaidAiIdentity,contentOrgForUser,getUser,preferredOrg} from '../_shared/supabase.ts';
-import {assertMediaVisible} from '../_shared/media-source-access.ts';
+import {assertPlannerSourceCustody} from './source-custody.ts';
 import {durableRateLimit} from '../_shared/ratelimit.ts';
 import {headObject,R2_BUCKET_UPLOADS,R2_BUCKET_RENDERS} from '../_shared/r2.ts';
 import {ProviderError,presignGet} from '../_shared/providers/common.ts';
@@ -31,7 +31,7 @@ Deno.serve(async req=>{
     &&['image/jpeg','image/png','image/webp'].includes(data.content_type)&&Number.isSafeInteger(data.bytes)&&data.bytes>0&&data.bytes<=8*1024*1024&&typeof data.etag==='string'&&data.etag.length>0,409,'Use the exact saved image source for each selected photo.');
    saved.push({asset:photo.asset_id,key:data.storage_key,bucket:data.bucket==='uploads'?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS,bytes:data.bytes,etag:data.etag,contentType:data.content_type});
   }
-  const checkSaved=async()=>{for(const s of saved){const h=await headObject(s.bucket,s.key,AbortSignal.timeout(10000));assert(h.exists&&h.bytes===s.bytes&&h.etag===s.etag&&h.contentType?.split(';')[0].trim().toLowerCase()===s.contentType,409,'A selected source photo changed. Upload it again.');}await assertMediaVisible(admin,body.listing_id,{assets:saved.map(s=>s.asset)});};
+  const checkSaved=async()=>{for(const s of saved){const h=await headObject(s.bucket,s.key,AbortSignal.timeout(10000));assert(h.exists&&h.bytes===s.bytes&&h.etag===s.etag&&h.contentType?.split(';')[0].trim().toLowerCase()===s.contentType,409,'A selected source photo changed. Upload it again.');}await assertPlannerSourceCustody(admin,{actor:user.id,org,library:body.expected_org_id,listing:body.listing_id},saved);};
   await checkSaved();
   // Durable result replay happens before presigned URL creation/provider work.
   funding=await fundingContext(user.id,org,req,body,(name,args)=>admin.rpc(name,args));

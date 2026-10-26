@@ -55,3 +55,13 @@ export function variedJobInput(input:JobInput):JobInput&{motion_variety:MotionVa
  const motion_variety=varyMotions(input.sources.map(s=>s.motion),input.operation_id);
  return{...input,sources:input.sources.map((s,i)=>({...s,motion:motion_variety.chosen[i]})),motion_variety};
 }
+
+/** An explicit saved camera choice keeps every selected source unchanged.
+ * Automatic/legacy requests retain the original deterministic variety pass.
+ * The explicit override itself is frozen by the complete manifest SHA; it is
+ * never mislabeled as satisfying the automatic variety rules. */
+export function admissionJobInput(input:JobInput):JobInput{
+ if(input.motion_override===undefined)return variedJobInput(input);
+ if(!['fly_through','push_in','side_glide','pull_back'].includes(input.motion_override)||!input.sources.every(s=>s.motion===input.motion_override))throw new Error('Explicit camera motion changed.');
+ return{...input,sources:input.sources.map(s=>({...s}))};
+}

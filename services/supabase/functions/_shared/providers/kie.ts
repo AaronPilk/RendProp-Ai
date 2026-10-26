@@ -77,6 +77,8 @@ import {
   kiePropertyPromptPinned,
 } from "../property-video-kie.ts";
 
+import {aerialOpeningKieRequest,AERIAL_OMNI_REFERENCE_MODEL} from "../aerial-kie.ts";
+
 const PROVIDER = "kie";
 const KIE_BASE = "https://api.kie.ai";
 const KIE_HOSTS = ["api.kie.ai"] as const;
@@ -358,6 +360,11 @@ export const kieAdapter: ProviderAdapter = {
   key: PROVIDER,
 
   async submit(step: RouteStep, input: GenerateInput): Promise<JobRef> {
+    if(input.extra?.aerial_opening_profile!==undefined){
+      let request;try{request=aerialOpeningKieRequest(step,input);}catch{throw new ProviderError(PROVIDER,'validation','Aerial opening profile refused before dispatch.',400,true);}
+      const data=await kieCall<{taskId?:unknown}>(`${KIE_BASE}/api/v1/jobs/createTask`,{method:'POST',headers:kieHeaders(true),body:JSON.stringify(request)},BUDGETS.submitMs,true);
+      const fourK='mode'in request.input&&request.input.mode==='4K';const want:Asked={duration:'5',resolution:fourK?'4K':'1080p'};if(fourK)nativeFourKAsks.add(want);return acceptedJob(step,receiptId(data.taskId),want,false);
+    }
     if (input.extra?.property_video_quality_profile === KIE_PROPERTY_PROFILE) {
       // Fully validated before the key is read or a request exists.
       const request = kiePropertyRequest(step, input);
@@ -470,6 +477,7 @@ export const kieAdapter: ProviderAdapter = {
       BUDGETS.pollMs,
     );
 
+    if(ref.model===AERIAL_OMNI_REFERENCE_MODEL&&(data.taskId!==ref.id||data.model!==AERIAL_OMNI_REFERENCE_MODEL))return{status:'failed',error_class:'upstream',message:'The saved aerial reference task identity changed'};
     const want = asked.get(ref.id);
     const done = (
       first: string | undefined,

@@ -3,7 +3,11 @@ import{assert,HttpError}from'../_shared/http.ts';
 import{bucket}from'./runtime.ts';
 export class MissingPrivateMedia extends HttpError{constructor(){super(409,'The completed private output is unavailable.');}}
 const client=()=>new AwsClient({accessKeyId:Deno.env.get('R2_ACCESS_KEY_ID')?.trim()??'',secretAccessKey:Deno.env.get('R2_SECRET_ACCESS_KEY')?.trim()??'',service:'s3',region:'auto'});
-function url(which:string,key:string){assert(/^(renders\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/background\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/(master\.mp4|first-clip\.jpg)|uploads\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/prepared-video\/[a-f0-9-]{36}\/[a-f0-9-]{36}\.jpg|presenter-private\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/narration\/[a-f0-9-]{36}\.(m4a|mp3))$/.test(key),403,'Use an exact private job media key.');const account=Deno.env.get('CLOUDFLARE_ACCOUNT_ID');assert(account,503,'Private storage activation pending.');return new URL(`https://${account}.r2.cloudflarestorage.com/${bucket(which)}/${key}`);}
+const AERIAL_UUID='[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}';
+// These keys come only from the existing scoped SQL reservations. This grammar
+// admits their exact layout; job/lease/source authority stays with the callers.
+const AERIAL_KEY=new RegExp(`^renders/${AERIAL_UUID}/${AERIAL_UUID}/(?:aerial-input/${AERIAL_UUID}\\.jpg|aerial-provider/${AERIAL_UUID}\\.mp4|aerial-opening/${AERIAL_UUID}\\.(?:mp4|jpg)|aerial-review/${AERIAL_UUID}/frame-(?:0|60|119|120)\\.jpg)$(?![\\s\\S])`);
+function url(which:string,key:string){assert(/^(renders\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/background\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/(master\.mp4|first-clip\.jpg)|uploads\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/prepared-video\/[a-f0-9-]{36}\/[a-f0-9-]{36}\.jpg|presenter-private\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/narration\/[a-f0-9-]{36}\.(m4a|mp3))$/.test(key)||(which==='renders'&&AERIAL_KEY.test(key)),403,'Use an exact private job media key.');const account=Deno.env.get('CLOUDFLARE_ACCOUNT_ID');assert(account,503,'Private storage activation pending.');return new URL(`https://${account}.r2.cloudflarestorage.com/${bucket(which)}/${key}`);}
 /** A single immutable object write binds all bytes/type/digest capability headers.
  * Browser/audio and trusted CPU call no cookies/JWT; one lost PUT stays retained.
  * R2 Content-Length is signed; digest metadata is independently checked by the

@@ -10,6 +10,8 @@ const ORG = "a0200216-0000-4000-8000-000000000001",
   LIBRARY = "a0200216-0000-4000-8000-000000000005",
   OTHER = "a0200216-0000-4000-8000-000000000006",
   OP = "a0200216-0000-4000-8000-000000000007";
+const PHOTO=new Uint8Array([255,216,255,192,0,11,8,0,1,0,1,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]);
+const SHA=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",PHOTO)),n=>n.toString(16).padStart(2,"0")).join("");
 const KEY = `renders/${ORG}/${LISTING}/gallery-${ASSET}.jpg`;
 for (
   const [k, v] of Object.entries({
@@ -41,7 +43,7 @@ try {
 }
 const intent = () => ({
   family_asset_ids: [ASSET],
-  target: { asset_id: ASSET, sha256: "a".repeat(64), bytes: 1024 },
+  target: { asset_id: ASSET, sha256: SHA, bytes: PHOTO.length },
   expected_selection: {
     gallery_asset_ids: [] as string[],
     main_photo_key: null,
@@ -76,6 +78,10 @@ async function invoke(value: Row = body(), o: Options = {}) {
     });
   globalThis.fetch = async (input, init) => {
     const req = new Request(input, init), url = new URL(req.url);
+    if(url.hostname.endsWith(".r2.cloudflarestorage.com")){
+      assertEquals(req.method,"GET");assertEquals(req.headers.get("if-match"),'"fixture"');
+      return new Response(PHOTO,{headers:{"content-length":String(PHOTO.length),"content-type":"image/jpeg",etag:'"fixture"'}});
+    }
     assertEquals(url.hostname, "native-selection-fixture.invalid");
     if (url.pathname === "/auth/v1/user") {
       return response({ id: USER, is_anonymous: false });
@@ -102,6 +108,10 @@ async function invoke(value: Row = body(), o: Options = {}) {
       return response(o.deleting ? [{ id: OTHER }] : []);
     }
     const name = url.pathname.split("/").at(-1)!;
+    if(name==="hosting_retention_state")return response({org_id:LIBRARY,policy:"preserved",protected:false,retention_ends_at:null,hosting_available:true});
+    if(name==="library_media_delivery_admit")return response({admitted:true,legacy_unbudgeted:false});
+    if(name==="photo_publication_target")return response({actor_id:USER,org_id:ORG,library_org_id:LIBRARY,listing_id:LISTING,target:{asset_id:ASSET,key:KEY,sha256:SHA,bytes:PHOTO.length,mime:"image/jpeg",etag:'"fixture"',operation_id:OP},publication:null});
+    if(name==="photo_publication_resolve")return response(null);
     if (
       name === "native_gallery_selection_snapshot_v2" ||
       name === "native_gallery_selection_change_v2" ||
@@ -126,8 +136,8 @@ async function invoke(value: Row = body(), o: Options = {}) {
         main_photo_key: null,
         gallery_assets: [{
           asset_id: ASSET,
-          sha256: "a".repeat(64),
-          bytes: 1024,
+          sha256: SHA,
+          bytes: PHOTO.length,
           storage_key: KEY,
         }],
         operation_status:
@@ -281,9 +291,9 @@ Deno.test("actual choice rejects malformed bounded footprint and target before R
       { family_asset_ids: [] },
       { family_asset_ids: [ASSET, ASSET.toUpperCase()] },
       { family_asset_ids: Array(101).fill(ASSET) },
-      { target: { asset_id: OTHER, sha256: "a".repeat(64), bytes: 1024 } },
-      { target: { asset_id: ASSET, sha256: "a".repeat(64), bytes: 0 } },
-      { target: { asset_id: ASSET, sha256: "z".repeat(64), bytes: 1024 } },
+      { target: { asset_id: OTHER, sha256: SHA, bytes: PHOTO.length } },
+      { target: { asset_id: ASSET, sha256: SHA, bytes: 0 } },
+      { target: { asset_id: ASSET, sha256: "z".repeat(64), bytes: PHOTO.length } },
       { target: null, reviewed: true },
       {
         expected_selection: {
@@ -351,15 +361,15 @@ Deno.test("actual malformed upstream identity membership or bytes never confirms
       {
         gallery_assets: [{
           asset_id: ASSET,
-          sha256: "a".repeat(64),
-          bytes: 1024,
+          sha256: SHA,
+          bytes: PHOTO.length,
           storage_key: KEY.replace(ORG, OTHER),
         }],
       },
       {
         gallery_assets: [{
           asset_id: ASSET,
-          sha256: "a".repeat(64),
+          sha256: SHA,
           bytes: 0,
           storage_key: KEY,
         }],

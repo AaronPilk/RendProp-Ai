@@ -211,7 +211,7 @@ Deno.serve(async (req) => {
         value = await readPhotoSelection(adminClient(), selectionScope, user.id, query.get("operation_id"));
       } else {
         await assertNotDeleting(user.id);
-        value = await changePhotoSelection(adminClient(), selectionScope, user.id, await readJsonLimited<Record<string, unknown>>(req, 16384), req.headers.get("Idempotency-Key"), abandon);
+        value = await changePhotoSelection(adminClient(), selectionScope, user.id, await readJsonLimited<Record<string, unknown>>(req, 16384), req.headers.get("Idempotency-Key"), abandon, req.signal);
       }
       const current = await listingLibraryScope(adminClient(), user.id, id);
       assert(current.org_id === selectionScope.orgId && current.library_org_id === selectionScope.libraryOrgId, 503, "This home's library changed during the photo request.");
