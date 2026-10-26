@@ -1035,6 +1035,14 @@ struct FlythroughDetailView: View {
                         .accessibilityIdentifier("listing.photoCoverPreserved")
                 }
                 toolboxSection
+                if !currentListing.isSample {
+                    NavigationLink { ProductionPlanView(listing: currentListing) } label: {
+                        nextStepHeader("checklist", "Plan recorded shots", "Keep a shot checklist for this property before recording.")
+                            .padding(14).background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(ScalePressStyle())
+                    .accessibilityIdentifier("listing.productionPlan")
+                }
                 tourSection
                 if let smoothing = tour?.motionSmoothing {
                     Text(smoothing == "unavailable"

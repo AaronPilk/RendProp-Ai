@@ -686,7 +686,7 @@ struct NewListingView: View {
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     Button("Use these details in this workspace") {
                         guard createdListing == nil, photosListing == nil, pendingAsset == nil,
-                              !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else { return }
+                              !Config.useLiveBackend || Config.isOfflineAccountFixture || WorkspaceContext.selectedOrgID != nil else { return }
                         bindFormContext()
                     }.buttonStyle(.bordered)
                         .disabled(createdListing != nil || photosListing != nil || pendingAsset != nil)
@@ -728,7 +728,7 @@ struct NewListingView: View {
     private var formContextIsCurrent: Bool {
         formOwnerID == AuthStore.shared.userID && formSessionRevision == AuthStore.shared.syncSessionRevision
             && formWorkspaceID == WorkspaceContext.selectedOrgID
-            && (!Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil)
+            && (!Config.useLiveBackend || Config.isOfflineAccountFixture || WorkspaceContext.selectedOrgID != nil)
     }
     private func bindFormContext() {
         formOwnerID = AuthStore.shared.userID

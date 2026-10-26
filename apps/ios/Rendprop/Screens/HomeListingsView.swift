@@ -192,7 +192,9 @@ struct HomeListingsView: View {
     @State private var pendingDelete: Listing?
     @ObservedObject private var workspaceStore = WorkspaceStore.shared
 
-    private var needsWorkspaceSelection: Bool { Config.useLiveBackend && workspaceStore.selected == nil }
+    private var needsWorkspaceSelection: Bool {
+        Config.useLiveBackend && !Config.isOfflineAccountFixture && workspaceStore.selected == nil
+    }
 
     /// Only listings for the CURRENT business type (a gym never sees houses),
     /// active (not sold), plus search.
