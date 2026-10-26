@@ -51,26 +51,34 @@ struct TabEntry:View {
  var label:String="";var tag:Int = -1;var action:(()->Void)?
  func tabItem(_ content:()->Label)->TabEntry { var c=self;c.label=content().title;return c }
  func tag(_ tag:Int)->TabEntry { var c=self;c.tag=tag;return c }
+ func badge(_ count:Int)->TabEntry { self }
 }
 @resultBuilder enum TabBuilder { static func buildBlock(_ values:TabEntry...)->[TabEntry]{values} }
 struct TabView:View { let entries:[TabEntry];init(selection:State<Int>,@TabBuilder content:()->[TabEntry]){entries=content()} }
 func NavigationStack(_ content:()->TabEntry)->TabEntry { content() }
 func HomeDashboardView(goToListings:@escaping()->Void)->TabEntry { TabEntry(action:goToListings) }
 func HomeListingsView()->TabEntry { TabEntry() }
+func NativeActivityView()->TabEntry { TabEntry() }
+func NativeAccountView(navigation:State<NativeAccountNavigation>)->TabEntry { TabEntry() }
 func ProfileView()->TabEntry { TabEntry() }
 func LeadsView()->TabEntry { TabEntry() }
 func SettingsView()->TabEntry { TabEntry() }
+struct ActivityState { let isActive=false }
+struct ActivityEntry { let state=ActivityState() }
+struct ActivityStub { let entries:[ActivityEntry]=[] }
 '''
 generated += block(coach, 'enum CoachRoute:') + '\n'
 generated += block(app, 'enum NativeRootTab:') + '\n'
+generated += block(app, 'enum NativeAccountDestination') + '\n'
+generated += block(app, 'struct NativeAccountNavigation') + '\n'
 generated += block(api, 'struct Lead:') + '\n'
 generated += block(inbox, 'private struct DeletionContext:').replace('private ', '', 1) + '\n'
-generated += 'struct RootTabFixture { @State var tab = NativeRootTab.home.rawValue\n'
+generated += 'struct RootTabFixture { @State var tab = NativeRootTab.home.rawValue; @State var accountNavigation = NativeAccountNavigation(); var activity = ActivityStub()\n'
 generated += block(root_tabs, 'private var tabs:').replace('private ', '', 1) + '\n}\n'
 generated += grouping.replace('import Foundation', '') + '\n'
 controls = [
     ('misroute-photo-only-share', 'case .project, .listingDetails, .startProject, .home: return .home', 'case .listingDetails: return .settings\n        case .project, .startProject, .home: return .home', 'photo-only Share route uses Home listing resolver'),
-    ('settings-renumbered', 'settings = 3, leads = 4', 'settings = 4, leads = 3', 'stable tags preserve existing profile and settings routes'),
+    ('settings-renumbered', 'settings = 3, leads = 4', 'settings = 4, leads = 3', 'visible activity, leads and account routes retain stable tags'),
     ('drop-listing-filter', 'return lead.listingID == id', 'return true', 'listing filter cannot mix another property inquiry'),
     ('foreign-listing-label', '!$0.isSample && canView($0)', '!$0.isSample', 'sample and foreign context labels stay unavailable'),
     ('sample-listing-label', '!$0.isSample && canView($0)', 'canView($0)', 'sample and foreign context labels stay unavailable'),
