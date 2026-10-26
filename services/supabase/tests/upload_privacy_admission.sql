@@ -9,8 +9,10 @@ create temp table fixture(a uuid,g uuid,o uuid,go uuid,l uuid,gl uuid,asset uuid
 do $$declare a uuid:=gen_random_uuid();g uuid:=gen_random_uuid();o uuid;go uuid;l uuid:=gen_random_uuid();gl uuid:=gen_random_uuid();begin
  insert into auth.users(id,email,is_anonymous)values(a,'named-upload@fixture.invalid',false),(g,'guest-upload@fixture.invalid',true);
  select org_id into o from memberships where user_id=a;select org_id into go from memberships where user_id=g;
- insert into listings(id,org_id,agent_id,address)values(l,o,a,'Named fixture'),(gl,go,g,'Guest fixture');
+ -- The fixture tests upload identity, not expired-Free listing creation.
  update orgs set plan='starter',plan_source='manual',plan_expires_at=null where id=o;
+ update orgs set plan='trial',plan_source='manual',trial_ends_at=now()+interval '7 days' where id=go;
+ insert into listings(id,org_id,agent_id,address)values(l,o,a,'Named fixture'),(gl,go,g,'Guest fixture');
  insert into fixture values(a,g,o,go,l,gl,gen_random_uuid());
 end$$;
 grant select on fixture to service_role,anon,authenticated;
