@@ -22,6 +22,10 @@ do $$begin
       and aerials_per_month=2 and topaz_per_month=1 and cogs_ceiling_cents=1500) then
     raise exception 'Review changed trial catalog before limited-trial migration';
   end if;
+  if not exists(select 1 from public.plan_entitlements where plan='free'
+      and renders_per_month=1 and photo_edits_per_month=5) then
+    raise exception 'Review changed Free catalog before limited-trial migration';
+  end if;
   if not exists(select 1 from public.app_config where key='serving_envelope'
       and value->'trial_ceiling_cents'='1500'::jsonb) then
     raise exception 'Review changed trial serving ceiling before limited-trial migration';
@@ -37,6 +41,11 @@ update public.plan_entitlements set
   reels_per_month=0, aerials_per_month=0, topaz_per_month=0,
   cogs_ceiling_cents=500
 where plan='trial';
+
+-- A lapsed or never-subscribed Free workspace can still prepare its one
+-- listing, but it cannot start a hosted render. The effective /me allowance
+-- must agree with the publication gate.
+update public.plan_entitlements set renders_per_month=0 where plan='free';
 
 -- Industry-specific trial rows must not reintroduce a video quota or larger
 -- photo/cost allowance over the base trial row.
@@ -56,14 +65,14 @@ where key='serving_envelope';
 
 -- A zero video-render entitlement must not collapse photo ingress to five
 -- hundred MiB: every upload reservation holds roughly twice the source bytes.
--- Forty ordinary 8 MiB iPhone photos reserve 640 MiB. Give the one-listing
--- intro a fixed 2 GiB monthly technical cap while its supplier spend remains
+-- Forty ordinary 8 MiB iPhone photos reserve 640 MiB. Give unpaid
+-- Trial and Free access a fixed 2 GiB monthly technical cap while its supplier spend remains
 -- separately limited to five edits and 500 cents. New video uploads are
 -- refused below unless a verified per-property website credit has been paid.
 do $$declare def text;needle text;replacement text;begin
   def:=pg_get_functiondef('public.upload_new_admission(uuid,uuid,bigint)'::regprocedure);
   needle:='  cap:=e.renders_per_month::bigint*12884901888::bigint+e.photo_edits_per_month::bigint*104857600::bigint;';
-  replacement:='  cap:=case when public.plan_serving_ceiling(public.library_actor_billing_org(p_actor,p_org))->>''kind''=''trial'' then 2147483648::bigint else e.renders_per_month::bigint*12884901888::bigint+e.photo_edits_per_month::bigint*104857600::bigint end;';
+  replacement:='  cap:=case when public.plan_serving_ceiling(public.library_actor_billing_org(p_actor,p_org))->>''kind'' in(''trial'',''free'') then 2147483648::bigint else e.renders_per_month::bigint*12884901888::bigint+e.photo_edits_per_month::bigint*104857600::bigint end;';
   if (length(def)-length(replace(def,needle,'')))/length(needle)<>1 then
     raise exception 'Review changed trial upload-cap anchor before limited-trial migration';
   end if;
@@ -190,6 +199,203 @@ drop trigger if exists trial_intro_upload_admission on public.upload_reservation
 create trigger trial_intro_upload_admission before insert on public.upload_reservations
   for each row execute function public.trial_intro_upload_guard();
 
+-- A background video may finish after its paid supplier attempt but before
+-- the customer publishes the resulting MP4. Freeze the payment authority at
+-- the provider reservation, since a queued recipe alone is no authority.
+create table if not exists public.trial_intro_paid_video_attempts(
+  reservation_id uuid primary key references public.app_video_cost_reservations(id) on delete cascade,
+  content_org_id uuid not null, billing_org_id uuid not null,
+  actor_id uuid not null, feature text not null check(feature='reel'),
+  admitted_at timestamptz not null default now()
+);
+alter table public.trial_intro_paid_video_attempts enable row level security;
+revoke all on public.trial_intro_paid_video_attempts from public,anon,authenticated,service_role;
+grant select on public.trial_intro_paid_video_attempts to service_role;
+
+create or replace function public.trial_intro_capture_paid_video_attempt()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare billing uuid;
+begin
+  if new.feature<>'reel' then return new;end if;
+  billing:=public.library_actor_billing_org(new.actor_id,new.org_id);
+  if public.plan_serving_ceiling(billing)->>'kind' not in('trial','free') then
+    insert into public.trial_intro_paid_video_attempts
+      (reservation_id,content_org_id,billing_org_id,actor_id,feature,admitted_at)
+    values(new.id,new.org_id,billing,new.actor_id,new.feature,new.created_at);
+  end if;
+  return new;
+end$$;
+revoke all on function public.trial_intro_capture_paid_video_attempt()
+  from public,anon,authenticated;
+grant execute on function public.trial_intro_capture_paid_video_attempt()
+  to service_role,postgres;
+drop trigger if exists trial_intro_video_cost_admitted on public.app_video_cost_reservations;
+create trigger trial_intro_video_cost_admitted after insert on public.app_video_cost_reservations
+  for each row execute function public.trial_intro_capture_paid_video_attempt();
+
+-- Existing paid attempts in progress at rollout retain the same authority.
+-- An earlier free/trial reservation is not converted into paid authority.
+insert into public.trial_intro_paid_video_attempts
+  (reservation_id,content_org_id,billing_org_id,actor_id,feature,admitted_at)
+select r.id,r.org_id,public.library_actor_billing_org(r.actor_id,r.org_id),
+  r.actor_id,r.feature,r.created_at
+from public.app_video_cost_reservations r
+where r.feature='reel' and r.released_at is null
+  and public.plan_serving_ceiling(public.library_actor_billing_org(r.actor_id,r.org_id))->>'kind'
+    not in('trial','free')
+on conflict(reservation_id)do nothing;
+
+-- The only unpaid late-publication exception is an exact ready server output
+-- containing a clip with a settled paid reservation and its matching ledger.
+-- The job's original content org, actor, source and output are all pinned;
+-- preflight, unaccepted and cancelled requests cannot gain publication.
+create or replace function public.trial_intro_paid_background_result(p_asset uuid,p_listing uuid)
+returns boolean language sql stable security definer set search_path='' as $$
+ select exists(select 1
+  from public.property_video_jobs j
+  join public.property_video_job_outputs o on o.job_id=j.id and o.asset_id=p_asset
+  join public.capture_assets ca on ca.id=o.asset_id and ca.listing_id=j.listing_id
+  join public.property_video_job_sources s on s.job_id=j.id and s.state='ready'
+  join public.app_video_cost_reservations r
+    on r.org_id=j.org_id and r.actor_id=j.actor_id and r.idempotency_key=s.request_key
+  join public.trial_intro_paid_video_attempts a on a.reservation_id=r.id
+  join public.cost_ledger l on l.id=r.cost_ledger_id
+  where j.listing_id=p_listing and j.output_asset_id=p_asset
+    and j.state='ready' and j.cancelled_at is null and j.result is not null
+    and j.manifest->>'purpose'='listing'
+    and o.kind='video' and o.state='ready' and o.etag is not null
+    and ca.kind='video' and ca.uploaded and not ca.upload_aborted
+    and r.feature='reel' and r.released_at is null
+    and r.provider_request_id=s.receipt->>'request_id'
+    and r.cost_ledger_id is not null and r.settled_at is not null
+    and a.content_org_id=j.org_id and a.actor_id=j.actor_id
+    and a.billing_org_id=r.billing_org_id and a.feature=r.feature
+    and l.org_id=r.org_id and l.feature='reel' and l.total_cents>0
+    and l.meta->>'app_video_reservation_id'=r.id::text);
+$$;
+revoke all on function public.trial_intro_paid_background_result(uuid,uuid)
+  from public,anon,authenticated;
+grant execute on function public.trial_intro_paid_background_result(uuid,uuid)
+  to service_role,postgres;
+
+-- Capture publication authority when the job is admitted. A bare job row is
+-- preflight, not proof that a worker was entitled to spend after a downgrade.
+-- On-device app publication is cost-free and admitted when its job is created;
+-- a worker is admitted to start billable work only at its first processing
+-- claim while the workspace is still paid. The receipt is private and never
+-- rewritten by the client. An already admitted worker may be reclaimed later.
+create table if not exists public.trial_intro_render_admissions(
+  job_id uuid primary key references public.render_jobs(id) on delete cascade,
+  listing_id uuid not null, content_org_id uuid not null,
+  billing_org_id uuid not null, source text not null
+    check(source in('app','worker')),
+  job_admitted_at timestamptz not null default now(),
+  work_admitted_at timestamptz
+);
+alter table public.trial_intro_render_admissions enable row level security;
+revoke all on public.trial_intro_render_admissions from public,anon,authenticated,service_role;
+grant select on public.trial_intro_render_admissions to service_role;
+
+create or replace function public.trial_intro_paid_job_can_finish(p_job uuid,p_listing uuid)
+returns boolean language sql stable security definer set search_path='' as $$
+ select exists(select 1 from public.trial_intro_render_admissions a
+  join public.render_jobs j on j.id=a.job_id
+  join public.listings l on l.id=j.listing_id
+  where j.id=p_job and j.listing_id=p_listing and a.listing_id=j.listing_id
+   and a.content_org_id=l.org_id
+   and (j.billing_org_id is null or j.billing_org_id=a.billing_org_id)
+   and a.source=j.source
+   and ((j.source='app' and a.job_admitted_at is not null)
+     or(j.source='worker' and a.work_admitted_at is not null)));
+$$;
+revoke all on function public.trial_intro_paid_job_can_finish(uuid,uuid)
+  from public,anon,authenticated;
+grant execute on function public.trial_intro_paid_job_can_finish(uuid,uuid)
+  to service_role,postgres;
+
+create or replace function public.trial_intro_capture_job_admission()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare billing uuid; content_org uuid; kind text; website_paid boolean;
+begin
+  select l.org_id,public.library_billing_org(l.org_id)
+    into content_org,billing from public.listings l
+    where l.id=new.listing_id and l.deleted_at is null;
+  if billing is null then raise exception 'RP403: A current publication workspace is required';end if;
+  kind:=public.plan_serving_ceiling(billing)->>'kind';
+  if tg_op='INSERT' then
+    select exists(select 1 from public.property_website_transactions t
+      where t.assigned_listing_id=new.listing_id and t.revoked_at is null
+        and t.environment in('Production','Sandbox')) into website_paid;
+    if kind not in('trial','free') or(new.source='app' and
+      (website_paid or public.trial_intro_paid_background_result(new.capture_asset_id,new.listing_id))) then
+      insert into public.trial_intro_render_admissions
+        (job_id,listing_id,content_org_id,billing_org_id,source)
+      values(new.id,new.listing_id,content_org,billing,new.source);
+    end if;
+  elsif new.source='worker' and new.status='processing'
+      and old.status in('created','queued') then
+    if kind in('trial','free') and not exists(select 1
+      from public.trial_intro_render_admissions a
+      where a.job_id=new.id and a.work_admitted_at is not null) then
+      raise exception 'RP402: A queued render needs paid service before processing';
+    end if;
+    if kind not in('trial','free') then
+      update public.trial_intro_render_admissions a set work_admitted_at=coalesce(a.work_admitted_at,now())
+      where a.job_id=new.id and a.source='worker' and a.billing_org_id=billing;
+    end if;
+  end if;
+  return new;
+end$$;
+revoke all on function public.trial_intro_capture_job_admission()
+  from public,anon,authenticated;
+grant execute on function public.trial_intro_capture_job_admission()
+  to service_role,postgres;
+drop trigger if exists trial_intro_job_admitted on public.render_jobs;
+create trigger trial_intro_job_admitted after insert on public.render_jobs
+  for each row execute function public.trial_intro_capture_job_admission();
+drop trigger if exists trial_intro_worker_cost_admitted on public.render_jobs;
+create trigger trial_intro_worker_cost_admitted after update of status on public.render_jobs
+  for each row execute function public.trial_intro_capture_job_admission();
+
+-- Existing jobs that already entered work while paid need the same immutable
+-- completion authority after rollout. Queued jobs deliberately receive no
+-- worker-start receipt and must recheck the plan at claim time.
+insert into public.trial_intro_render_admissions
+  (job_id,listing_id,content_org_id,billing_org_id,source,job_admitted_at,work_admitted_at)
+select j.id,j.listing_id,l.org_id,public.library_billing_org(l.org_id),j.source,j.created_at,
+  case when j.source='worker' and j.status='processing' then coalesce(j.started_at,j.created_at) end
+from public.render_jobs j join public.listings l on l.id=j.listing_id
+where l.deleted_at is null and j.source in('app','worker')
+  and (public.plan_serving_ceiling(public.library_billing_org(l.org_id))->>'kind' not in('trial','free')
+    or(j.source='app' and exists(select 1 from public.property_website_transactions t
+      where t.assigned_listing_id=j.listing_id and t.revoked_at is null
+        and t.environment in('Production','Sandbox')))
+  ) on conflict(job_id)do nothing;
+
+-- The older bounded-trial trigger runs before our new render trigger. Permit
+-- settlement only when this frozen paid admission belongs to the same job
+-- and listing; its ordinary no-new-work and free-slot checks remain intact.
+do $$declare def text;needle text;replacement text;begin
+  if (select md5(prosrc) from pg_proc
+      where oid='public.subscription_trial_render_guard()'::regprocedure)
+      <> 'ef9c94cb23e294a11094ccc3b4961a16' then
+    raise exception 'Review changed bounded-trial render guard before intro repair';
+  end if;
+  def:=pg_get_functiondef('public.subscription_trial_render_guard()'::regprocedure);
+  needle:=' if public.subscription_trial_paid_or_override(org)then return new;end if;';
+  replacement:=' if tg_table_name=''renders'' then'||E'\n'||
+    '  if public.trial_intro_paid_job_can_finish(new.job_id,new.listing_id)then return new;end if;'||E'\n'||
+    ' else'||E'\n'||
+    '  if new.source=''app'' and public.trial_intro_paid_background_result(new.capture_asset_id,new.listing_id)then return new;end if;'||E'\n'||
+    ' end if;'||E'\n'||needle;
+  if (length(def)-length(replace(def,needle,'')))/length(needle)<>1 then
+    raise exception 'Review changed bounded-trial completion anchor';
+  end if;
+  execute replace(def,needle,replacement);
+end$$;
+revoke all on function public.subscription_trial_render_guard()
+  from public,anon,authenticated;
+
 -- Both server renders and on-device video publication create render_jobs.
 -- The monthly render meter covers only workers; source='app' bypasses it.
 -- Refuse both sources during an unpaid introductory or later free term. A verified one-time
@@ -199,13 +405,18 @@ create or replace function public.trial_intro_publication_guard()
 returns trigger language plpgsql security definer set search_path='' as $$
 declare org uuid; billing uuid; listing uuid; source text; paid_website boolean;
 begin
-  -- Completion may lag admission. A job created while the account was paid
-  -- must still publish after a later downgrade; no second generation or
-  -- supplier reservation is granted by this completion path.
+  -- Completion may lag admission. A paid app job or a worker that began
+  -- costed processing while paid can settle after a downgrade. A queued job
+  -- alone is not authority to spend or publish under Free.
   if tg_table_name='renders' then
-    if not exists(select 1 from public.render_jobs j
-      where j.id=new.job_id and j.listing_id=new.listing_id) then
-      raise exception 'RP403: A previously admitted video job is required';
+    select l.org_id into org from public.render_jobs j
+      join public.listings l on l.id=j.listing_id
+      where j.id=new.job_id and j.listing_id=new.listing_id and l.deleted_at is null;
+    if org is null then raise exception 'RP403: A previously admitted video job is required';end if;
+    billing:=public.library_billing_org(org);
+    if public.plan_serving_ceiling(billing)->>'kind' in('trial','free')
+      and not public.trial_intro_paid_job_can_finish(new.job_id,new.listing_id) then
+      raise exception 'RP402: Video completion needs a paid admission';
     end if;
     return new;
   end if;
@@ -219,7 +430,8 @@ begin
     select exists(select 1 from public.property_website_transactions t
       where t.assigned_listing_id=listing and t.revoked_at is null
         and t.environment in('Production','Sandbox')) into paid_website;
-    if not (paid_website and source='app') then
+    if not (source='app' and (paid_website or
+      public.trial_intro_paid_background_result(new.capture_asset_id,listing))) then
       raise exception 'RP402: Video and public website creation start after payment';
     end if;
   end if;

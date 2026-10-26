@@ -27,6 +27,8 @@ select pg_temp.trial_ok((select renders_per_month=0 and photo_edits_per_month=5
   and reels_per_month=0 and aerials_per_month=0 and topaz_per_month=0
   and cogs_ceiling_cents=500 from public.plan_entitlements where plan='trial'),
   'trial catalog allows five photo edits but no walkthrough render or generated video');
+select pg_temp.trial_ok((select renders_per_month=0 from public.plan_entitlements where plan='free'),
+  'post-intro Free catalog does not promise a render that publication denies');
 select pg_temp.trial_ok((select count(*)=5 from public.plan_entitlement_overrides
   where plan='trial' and renders_per_month=0 and photo_edits_per_month=5 and reels_per_month=0
     and aerials_per_month=0 and topaz_per_month=0 and cogs_ceiling_cents=500),
@@ -315,6 +317,47 @@ select pg_temp.trial_refuses($q$insert into public.listings(id,org_id,agent_id,a
   'RP402: Unpaid access includes one listing',
   'second private Team library cannot create another trial listing');
 
+-- The parent Team binding can disappear on downgrade. A paid job in a child's
+-- second listing retains its admission-time parent payer and content identity,
+-- so completing it must not re-resolve to the now-Free child billing org.
+do $$declare f record;app_job uuid;worker_job uuid;begin
+  select * into f from trial_team_fixture;
+  update public.apple_subscriptions set transaction_purchased_at=now(),
+    transaction_signed_at=now(),expires_at=now()+interval '29 days'
+    where org_id=f.team_org;
+  update public.orgs set plan_expires_at=now()+interval '29 days'
+    where id=f.team_org;
+  perform pg_temp.trial_ok(public.library_billing_org(f.second_org)=f.team_org
+    and public.plan_serving_ceiling(f.team_org)->>'kind'='retail',
+    'renewed Team binds the second private library to its paid parent');
+  insert into public.listings(id,org_id,agent_id,address)
+    values(f.second_listing,f.second_org,f.agent_two,'Paid Team second library listing');
+  insert into public.render_jobs(listing_id,billing_org_id,source)
+    values(f.second_listing,f.team_org,'app') returning id into app_job;
+  insert into public.render_jobs(listing_id,billing_org_id,source)
+    values(f.second_listing,f.team_org,'worker') returning id into worker_job;
+  update public.render_jobs set status='processing',started_at=now()
+    where id=worker_job;
+  perform pg_temp.trial_ok((select billing_org_id=f.team_org and content_org_id=f.second_org
+    from public.trial_intro_render_admissions where job_id=app_job),
+    'private library admission freezes its parent payer and child content identity');
+  update public.orgs set plan='free',plan_source=null,plan_expires_at=null
+    where id=f.team_org;
+  perform pg_temp.trial_ok(public.library_billing_org(f.second_org)=f.second_org,
+    'Team downgrade revokes the live child-to-parent billing binding');
+  insert into public.renders(job_id,listing_id,slug,duration_s,speed_factor,published_at)
+    values(app_job,f.second_listing,'team-prior-paid-app-'||app_job::text,8,2,now());
+  insert into public.renders(job_id,listing_id,slug,duration_s,speed_factor,published_at)
+    values(worker_job,f.second_listing,'team-prior-paid-worker-'||worker_job::text,8,2,now());
+  perform pg_temp.trial_ok((select count(*)=2 from public.renders
+    where job_id in(app_job,worker_job)),
+    'paid Team child app and cost-admitted worker complete after parent downgrade');
+  perform pg_temp.trial_refuses(format(
+    'insert into public.render_jobs(listing_id,source) values(%L,''app'')',f.second_listing),
+    'RP402: Video and public website creation start after payment',
+    'downgraded Team child cannot start another app video');
+end$$;
+
 -- If the dormant funded-serving mode is deliberately enabled later, the
 -- owner policy still allows one draft and refuses video. It does not depend
 -- on the current ceiling-mode switch.
@@ -369,6 +412,7 @@ create temporary table trial_free_fixture as select
   (select org_id from public.memberships
     where user_id='a9030001-0000-4000-8000-000000000001' and role='owner' limit 1)org,
   gen_random_uuid()first_listing,gen_random_uuid()second_listing;
+grant select on trial_free_fixture to service_role;
 update public.orgs set plan='free',plan_source=null,trial_ends_at=null
 where id=(select org from trial_free_fixture);
 insert into public.listings(id,org_id,agent_id,address)
@@ -380,6 +424,40 @@ select pg_temp.trial_refuses($q$insert into public.listings(id,org_id,agent_id,a
   select second_listing,org,actor,'Free second draft' from trial_free_fixture$q$,
   'RP402: Unpaid access includes one listing',
   'fresh free account cannot prepare a second lifetime listing');
+set local role service_role;
+do $$declare f record;photos jsonb;r jsonb;begin
+  select * into f from trial_free_fixture;
+  select jsonb_agg(jsonb_build_object(
+    'id',a.id,'listing_id',f.first_listing,'kind','photo','bucket','renders',
+    'storage_key','renders/'||f.org||'/'||f.first_listing||'/gallery-'||a.id||'.jpg',
+    'bytes',8388608,'content_type','image/jpeg','content_type_declared',true,
+    'idem_key','free-photo-'||a.n) order by a.n) into photos
+  from (select gen_random_uuid()id,n from generate_series(1,40)n)a;
+  r:=public.reserve_upload_assets(f.actor,photos);
+  perform pg_temp.trial_ok(jsonb_array_length(r)=40 and
+    (select count(*)=40 and sum(held_bytes)=671088640
+      from public.upload_reservations where listing_id=f.first_listing),
+    'free listing reserves forty ordinary photos inside the 2 GiB technical cap');
+  r:=public.reserve_upload_assets(f.actor,photos);
+  perform pg_temp.trial_ok(jsonb_array_length(r)=40 and
+    (select bool_and((x.value->>'replayed')::boolean) from jsonb_array_elements(r)x)
+    and (select count(*)=40 from public.upload_reservations where listing_id=f.first_listing),
+    'Free replays existing photo upload tickets without consuming another budget');
+  select jsonb_agg(jsonb_build_object(
+    'id',a.id,'listing_id',f.first_listing,'kind','photo','bucket','renders',
+    'storage_key','renders/'||f.org||'/'||f.first_listing||'/gallery-'||a.id||'.jpg',
+    'bytes',8388608,'content_type','image/jpeg','content_type_declared',true,
+    'idem_key','free-extra-photo-'||a.n) order by a.n) into photos
+  from (select gen_random_uuid()id,n from generate_series(1,100)n)a;
+  perform pg_temp.trial_refuses(format(
+    'select public.reserve_upload_assets(%L,%L::jsonb)',f.actor,photos),
+    'RP429: monthly technical upload reservation ceiling exhausted',
+    'Free cannot reserve fresh photos beyond its 2 GiB monthly technical cap');
+  perform pg_temp.trial_ok((select count(*)=40 from public.upload_reservations
+    where listing_id=f.first_listing),
+    'denied over-cap batch created no partial photo tickets');
+end$$;
+reset role;
 do $$declare f record;h text:=repeat('a',64);begin
   select * into f from trial_funded_fixture;
   perform pg_temp.trial_refuses(format(
@@ -414,10 +492,15 @@ do $$declare f record;v uuid:=gen_random_uuid();spec jsonb;begin
 end$$;
 reset role;
 
--- A paid job that was already admitted can finish after a downgrade. The
--- new-job gate still refuses unpaid dispatch; completion is an idempotent
--- settlement of earlier authority, not fresh service admission.
-do $$declare f record;j uuid;third_listing uuid:=gen_random_uuid();begin
+-- A paid app job and a worker admitted to processing can finish after a
+-- downgrade on a second listing. A queued worker job has not entered costed
+-- work, so a later claim must recheck current payment and stop before spend.
+set local role service_role;
+do $$declare f record;app_job uuid;started_worker uuid;queued_worker uuid;
+  bg_job uuid:=gen_random_uuid();bg_asset uuid:=gen_random_uuid();source_asset uuid:=gen_random_uuid();
+  bg_render_job uuid;attempt uuid:=gen_random_uuid();lease uuid:=gen_random_uuid();
+  bg_key text:='bgvideo:'||gen_random_uuid()::text;reserved jsonb;
+  third_listing uuid:=gen_random_uuid();begin
   select * into f from trial_funded_fixture;
   update public.orgs set plan='starter',plan_source='manual' where id=f.org;
   insert into public.listings(id,org_id,agent_id,address)
@@ -426,18 +509,97 @@ do $$declare f record;j uuid;third_listing uuid:=gen_random_uuid();begin
     where id=f.second_listing),
     'manual paid upgrade can create a second listing');
   insert into public.render_jobs(listing_id,source)
-    values(f.first_listing,'app') returning id into j;
+    values(f.second_listing,'app') returning id into app_job;
+  insert into public.render_jobs(listing_id,source)
+    values(f.second_listing,'worker') returning id into started_worker;
+  update public.render_jobs set status='processing',started_at=now()
+    where id=started_worker;
+  insert into public.render_jobs(listing_id,source)
+    values(f.second_listing,'worker') returning id into queued_worker;
+  -- Paid supplier admission is frozen before the background result exists.
+  -- The eventual public render job is created only when the saved output is
+  -- published, so it needs a separate exact paid-attempt receipt.
+  reserved:=public.app_video_cost_reserve(f.actor,f.org,bg_key,'reel','kie',
+    'synthetic/background-reel',repeat('a',64),25,5,5,'{}');
+  perform pg_temp.trial_ok((reserved->>'reserved')::boolean and exists(
+    select 1 from public.trial_intro_paid_video_attempts a
+    where a.reservation_id=(reserved->>'id')::uuid and a.content_org_id=f.org),
+    'paid supplier reservation freezes background generation authority');
+  perform public.app_video_cost_settle(f.actor,f.org,bg_key,'synthetic-paid-bg');
+  insert into public.capture_assets(id,listing_id,kind,bucket,storage_key,bytes,
+    content_type,content_type_declared,uploaded,transport_version,sha256) values
+    (source_asset,f.second_listing,'photo','uploads',
+      'uploads/'||f.org||'/'||f.second_listing||'/original-'||source_asset||'.jpg',
+      1000,'image/jpeg',true,true,2,repeat('b',64)),
+    (bg_asset,f.second_listing,'video','renders',
+      'renders/'||f.org||'/'||f.second_listing||'/background/'||bg_job||'/'||lease||'/master.mp4',
+      100000,'video/mp4',true,true,2,repeat('c',64));
+  insert into public.property_video_jobs(id,operation_id,actor_id,listing_id,org_id,
+    library_org_id,manifest,manifest_sha256,source_count,state,consent_revision,
+    output_asset_id,result) values(bg_job,gen_random_uuid(),f.actor,f.second_listing,
+    f.org,f.org,'{"purpose":"listing"}'::jsonb,repeat('d',64),1,'queued',
+    'property-video-jobs-v1',bg_asset,'{}'::jsonb);
+  insert into public.property_video_job_sources(job_id,position,photo_id,asset_id,
+    version_id,source,motion,state,attempt_id,request_key,receipt) values
+    (bg_job,0,'source-photo',source_asset,'original', '{}'::jsonb,'push_in',
+      'ready',attempt,bg_key,'{"request_id":"synthetic-paid-bg"}'::jsonb);
+  insert into public.property_video_job_outputs(asset_id,job_id,lease_token,kind,
+    storage_key,bytes,sha256,content_type,etag,state)
+    select bg_asset,bg_job,lease,'video',a.storage_key,a.bytes,a.sha256,
+      'video/mp4','synthetic-etag','ready' from public.capture_assets a where a.id=bg_asset;
+  perform pg_temp.trial_ok(not public.trial_intro_paid_background_result(bg_asset,f.second_listing),
+    'charged but unfinished background preflight is not publication authority');
+  perform pg_temp.trial_ok((select work_admitted_at is not null
+    from public.trial_intro_render_admissions where job_id=started_worker)
+    and (select work_admitted_at is null
+    from public.trial_intro_render_admissions where job_id=queued_worker),
+    'only the started worker has frozen paid cost admission');
   update public.orgs set plan='free',plan_source=null where id=f.org;
+  perform pg_temp.trial_ok((public.org_entitlement(f.org)).renders_per_month=0,
+    'downgraded Free /me entitlement no longer advertises a render');
   perform pg_temp.trial_refuses(format(
     'insert into public.listings(id,org_id,agent_id,address) values(%L,%L,%L,''Third unpaid listing'')',
     third_listing,f.org,f.actor),
     'RP402: Unpaid access includes one listing',
     'downgraded account cannot create another free listing');
+  perform pg_temp.trial_refuses(format(
+    'insert into public.render_jobs(listing_id,capture_asset_id,source) values(%L,%L,''app'')',
+    f.second_listing,bg_asset),
+    'RP402: Video and public website creation start after payment',
+    'paid supplier receipt alone does not publish an unfinished background video');
+  update public.property_video_jobs set state='ready' where id=bg_job;
+  perform pg_temp.trial_ok(public.trial_intro_paid_background_result(bg_asset,f.second_listing),
+    'exact ready output and settled paid supplier receipt authorize late publication');
+  insert into public.render_jobs(listing_id,capture_asset_id,source)
+    values(f.second_listing,bg_asset,'app') returning id into bg_render_job;
   insert into public.renders(job_id,listing_id,slug,duration_s,speed_factor,published_at)
-    values(j,f.first_listing,'prior-paid-'||j::text,8,2,now());
-  perform pg_temp.trial_ok(exists(select 1 from public.renders where job_id=j),
-    'previously admitted paid video can finish after account downgrades');
+    values(bg_render_job,f.second_listing,'prior-paid-background-'||bg_render_job::text,8,2,now());
+  perform pg_temp.trial_ok(exists(select 1 from public.renders where job_id=bg_render_job),
+    'ready paid background video publishes after downgrade on second listing');
+  perform pg_temp.trial_refuses(format(
+    'update public.render_jobs set status=''processing'',started_at=now() where id=%L',
+    queued_worker),
+    'RP402: A queued render needs paid service before processing',
+    'paid preflight-only worker cannot start costed work after downgrade');
+  perform pg_temp.trial_refuses(format(
+    'insert into public.renders(job_id,listing_id,slug,duration_s,speed_factor,published_at) values(%L,%L,%L,8,2,now())',
+    queued_worker,f.second_listing,'queued-'||queued_worker::text),
+    'RP402: Video completion needs a paid admission',
+    'queued preflight-only job cannot publish after downgrade');
+  insert into public.renders(job_id,listing_id,slug,duration_s,speed_factor,published_at)
+    values(app_job,f.second_listing,'prior-paid-app-'||app_job::text,8,2,now());
+  perform pg_temp.trial_ok(exists(select 1 from public.renders where job_id=app_job),
+    'previously admitted paid app video on second listing completes after downgrade');
+  insert into public.renders(job_id,listing_id,slug,duration_s,speed_factor,published_at)
+    values(started_worker,f.second_listing,'prior-paid-worker-'||started_worker::text,8,2,now());
+  perform pg_temp.trial_ok(exists(select 1 from public.renders where job_id=started_worker),
+    'paid cost-admitted worker on second listing completes after downgrade');
+  perform pg_temp.trial_refuses(format(
+    'insert into public.render_jobs(listing_id,source) values(%L,''app'')',f.second_listing),
+    'RP402: Video and public website creation start after payment',
+    'downgrade does not admit another app publication job');
 end$$;
+reset role;
 
 select jsonb_build_object('passed',true,'assertions',(select n from trial_checks));
 rollback;

@@ -115,9 +115,10 @@ try:
  for row in expected_matrix:
   if row['plan']in paid:row['reels_per_month'],row['cogs_ceiling_cents']=paid[row['plan']]
   elif row['plan']=='trial':row.update(renders_per_month=0,reels_per_month=0,photo_edits_per_month=5,aerials_per_month=0,topaz_per_month=0,cogs_ceiling_cents=500)
+  elif row['plan']=='free':row.update(renders_per_month=0)
  assert json.loads(query('allowance-matrix-after',matrix))==expected_matrix
  receipt['historicalChronologyAllowancesPreserved']=True
- receipt['laterReviewedPolicyDelta']={'migrations':['20261014200302_property_video_recipe_allowances.sql','20261026165813_limit_intro_trial_creative_spend.sql'],'paid':paid,'trial':{'renders':0,'reels':0,'photos':5,'aerials':0,'topaz':0,'ceiling_cents':500},'everyOtherOriginalCellPreserved':True}
+ receipt['laterReviewedPolicyDelta']={'migrations':['20261014200302_property_video_recipe_allowances.sql','20261026165813_limit_intro_trial_creative_spend.sql'],'paid':paid,'trial':{'renders':0,'reels':0,'photos':5,'aerials':0,'topaz':0,'ceiling_cents':500},'free':{'renders':0},'everyOtherOriginalCellPreserved':True}
  for phase in ['fresh','replayed']:
   checks=query('chronology-'+phase,(SQL/'tests/subscription_chronology.sql').read_text())
   count=checks.count('|t');assert count>=25,count

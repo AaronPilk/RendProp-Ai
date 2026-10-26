@@ -7,11 +7,10 @@
 // the backend allowed 20/100/400. tests/invariants.sql asserts the table equals
 // the pricing page.
 //
-// Since 0044 the TRIAL is industry-aware: an org whose `orgs.space_type` is a
-// single-location business (venue, restaurant, retail, fitness, other) gets a
-// 1-tour free week from public.plan_entitlement_overrides, while real estate
-// keeps the 3-tour base row. Paid plans and free are not industry-aware. The
-// database resolves all of that in ONE function, org_entitlement(org) —
+// Since 0044 the TRIAL has industry-aware overrides. The current introductory
+// policy caps all unpaid accounts at one listing, five photo edits, and zero
+// video renders; no industry override may enlarge those limits. The database
+// resolves that in ONE function, org_entitlement(org) —
 // effective_plan() (an expired trial is `free`) + the base row + the override
 // — and it is the same function create_render_job() and log_job_cost() read,
 // so what this helper returns is what the charge paths enforce.
@@ -53,7 +52,7 @@ export interface Entitlement {
  *  (entitlementForCharge), so these numbers only ever reach a display. */
 const TRIAL_FALLBACK: Entitlement = {
   plan: "trial",
-  renders_per_month: 3,
+  renders_per_month: 0,
   photo_edits_per_month: 5,
   reels_per_month: 0,
   aerials_per_month: 0,

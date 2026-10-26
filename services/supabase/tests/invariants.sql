@@ -178,15 +178,15 @@ where (lat is not null and lat <> round(lat::numeric, 3))
 -- ── Plan coherence: enforced must equal published (pricing.html) ─────────────
 -- Paid sizes include the reviewed multi-photo recipe allowances: prices unchanged,
 -- 4/10/25 renders,100/200/400 edits,30/60/150 generated shots,2/4/8 aerials,
--- Team2 seats +2 Topaz; trial0 renders/5 edits/no generated video/500c, Free300c unchanged. The
+-- Team2 seats +2 Topaz; trial0 renders/5 edits/no generated video/500c, Free0 renders/300c. The
 -- single-location trial override lives in plan_entitlement_overrides and is
 -- asserted in the 0044 section at the end of this file.
 
 insert into _inv(name, pass, note)
-select 'render caps match paid plans and limited signup trial/free (4/10/25; trial 0; free 1)',
+select 'render caps match paid plans and limited signup trial/free (4/10/25; trial 0; free 0)',
        plan_render_cap('solo') = 4 and plan_render_cap('starter') = 4
        and plan_render_cap('pro') = 10 and plan_render_cap('team') = 25
-       and plan_render_cap('trial') = 0 and plan_render_cap('free') = 1,
+       and plan_render_cap('trial') = 0 and plan_render_cap('free') = 0,
        format('solo=%s starter=%s pro=%s team=%s trial=%s free=%s',
               plan_render_cap('solo'), plan_render_cap('starter'), plan_render_cap('pro'),
               plan_render_cap('team'), plan_render_cap('trial'), plan_render_cap('free'));
@@ -202,7 +202,7 @@ from (
            is not distinct from
           (x.renders, x.edits, x.reels, x.aerials, x.topaz, x.seats, x.cogs, x.price)) as ok
     from (values ('trial',   0,   5, 0,  0, 0, 1,  500,     0),
-                 ('free',    1,   5, 0,  0, 0, 1,  300,     0),
+                 ('free',    0,   5, 0,  0, 0, 1,  300,     0),
                  ('starter', 4, 100,30,  2, 0, 1, 2032,  4900),
                  ('solo',    4, 100,30,  2, 0, 1, 2032,  4900),
                  ('pro',    10, 200,60,  4, 0, 1, 4157,  9900),
@@ -2198,7 +2198,7 @@ begin
     values ('an expired single-location trial reads the plain free row (the override does not follow it)',
             (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
              e.topaz_per_month, e.seats, e.cogs_ceiling_cents)
-              is not distinct from ('free', 1, 5, 0, 0, 0, 1, 300),
+              is not distinct from ('free', 0, 5, 0, 0, 0, 1, 300),
             e::text);
   update orgs set plan = 'pro', plan_source = 'manual', trial_ends_at = null where id = oFit;
   e := org_entitlement(oFit);
