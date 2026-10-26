@@ -33,8 +33,11 @@ export async function propertyAddressLookup(req: Request, descriptor: string, ad
       Object.keys(data).length === 1 && data.status === "ambiguous")
     return json({ status: "ambiguous" }, 200, { "Cache-Control": "no-store" });
   if (data && typeof data === "object" && !Array.isArray(data) &&
-      Object.keys(data).length === 2 && data.status === "unique" &&
-      typeof data.slug === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(data.slug))
-    return json({ status: "unique", slug: data.slug }, 200, { "Cache-Control": "no-store" });
+      (Object.keys(data).sort().join(",") === "slug,status" ||
+       (Object.keys(data).sort().join(",") === "claimed,slug,status" && data.claimed === true)) &&
+      data.status === "unique" && typeof data.slug === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(data.slug))
+    return json(data.claimed === true
+      ? { status: "unique", slug: data.slug, claimed: true }
+      : { status: "unique", slug: data.slug }, 200, { "Cache-Control": "no-store" });
   throw new HttpError(503, "The property address could not be verified. Please retry.");
 }

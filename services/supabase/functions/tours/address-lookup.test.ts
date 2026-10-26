@@ -45,6 +45,9 @@ Deno.test("address route returns only a current unique slug proof, including noi
     body: { status: "unique", slug: "published-main-1" },
     calls: [{ p_descriptor: "123-main-st" }] });
   assert(!JSON.stringify(result).includes("listing_id"));
+  const claimed = await invoke({ status: "unique", slug: "published-main-1", claimed: true });
+  assertEquals(claimed.status, 200);
+  assertEquals(claimed.body, { status: "unique", slug: "published-main-1", claimed: true });
 });
 
 Deno.test("ambiguous and missing address remain non-canonical without leaking listing IDs", async () => {
@@ -69,6 +72,8 @@ Deno.test("direct guessed addresses cannot enumerate noindex slugs without Worke
 
 Deno.test("malformed authority and database errors fail closed without private SQL detail", async () => {
   for (const value of ["published-main-1", {}, { status: "unique", slug: "bad/slash" },
+    { status: "unique", slug: "published-main-1", claimed: false },
+    { status: "unique", slug: "published-main-1", claimed: true, extra: "untrusted" },
     { status: "unique", slug: "published-main-1", listing_id: "private" },
     { status: "ambiguous", slug: "wrong" }]) {
     const result = await invoke(value);
