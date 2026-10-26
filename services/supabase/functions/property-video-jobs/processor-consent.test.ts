@@ -36,6 +36,7 @@ async function invoke(path='',method='POST',requestBody:unknown=body,options:Opt
     if(name==='property_video_operation_lookup')return response({operation_id:operation,listing_id:listing,org_id:org,selected_library_org_id:org,operation_closed:false,message:null,job_id:options.replay?job:null});
     if(name==='property_photo_reference')return response({actor_id:actor,org_id:org,listing_id:listing,asset_id:args.p_asset,bucket:'uploads',storage_key:`uploads/${org}/${listing}/${args.p_asset}.jpg`,bytes:4,etag:'"source-etag"',content_type:'image/jpeg',sha256:'a'.repeat(64)});
     if(name==='property_video_quality_profile_for')return options.grantRefusal?response({message:options.grantRefusal,code:'P0001'},400):response(KIE_PROFILE);
+    if(name==='property_video_prompt_recipe_quote')return response({profile:KIE_PROFILE,quality_identity:KIE,quote_profile:KIE_PROFILE,revision:'v1'});
     if(name==='property_video_processor_consent_current')return response(current);
     if(name==='property_video_job_admit_v2'){
      // The SQL permission rule: admit_v2's exact token shapes, then property_video_processor_consent_record.
@@ -46,7 +47,7 @@ async function invoke(path='',method='POST',requestBody:unknown=body,options:Opt
      return response({accepted:true,job:j});
     }
     if(name==='property_video_job_enqueue'||name==='property_video_job_scope')return response(j);
-    if(['property_video_compose_resume_available','property_video_missing_result_resume_available','property_video_submit_resume_available','property_video_delivery_resume_available','property_video_job_quality_resume_available'].includes(name))return response(false);
+    if(['property_video_compose_resume_available','property_video_missing_result_resume_available','property_video_submit_resume_available','property_video_delivery_resume_available','property_video_job_quality_resume_available','property_video_job_terminal_temporal_resume_block'].includes(name))return response(false);
     if(name==='property_video_job_resume'){resumed=true;return response({...j,state:'generating'});}
     throw Error('Unexpected closed RPC '+name);
    }
@@ -175,8 +176,8 @@ Deno.test('resume: v1 only for work saved under v1; v2 resumes any job; v1 never
  const refused=await invoke(job+'/resume','POST',{},{resume:true,jobConsent:V2,jobProfile:KIE_PROFILE});
  assertEquals(refused.status,403);
  assertEquals(refused.body,{error:'Allow the listed AI processors for this native-4K video before resuming it.',code:'processor_consent_required',job_id:job,required_consent:V2});
- assertEquals(refused.rpcs.map(x=>x.name),['property_video_job_scope'],'refused right after the saved job is read');
- for(const consent of[null,'property-video-jobs-v3']){const r=await invoke(job+'/resume','POST',{},{resume:true,consent});assertEquals([r.status,r.body.code],[403,'consent_required']);assertEquals(r.rpcs,[]);}
+ assertEquals(refused.rpcs.map(x=>x.name),['property_video_job_scope','property_video_job_scope'],'the photo-motion guard and consent check only read the saved job');
+ for(const consent of[null,'property-video-jobs-v3']){const r=await invoke(job+'/resume','POST',{},{resume:true,consent});assertEquals([r.status,r.body.code],[403,'consent_required']);assertEquals(r.rpcs.map(x=>x.name),['property_video_job_scope']);}
 });
 
 Deno.test('GET /processor-consent returns the published contract or 404, for signed-in named users only',async()=>{

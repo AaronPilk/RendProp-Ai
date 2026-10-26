@@ -21,14 +21,17 @@ export async function draftListingID(key: string | null, userId: string, orgId: 
  * reads the saved row; it cannot overwrite office edits or revive deletion. */
 export async function createListingRow(db: any, patch: Record<string, unknown>, userId: string, orgId: string, key: string | null, ownerId = userId) {
   const id = await draftListingID(key, userId, orgId);
-  const row = { ...patch, org_id: orgId, agent_id: ownerId, ...(id ? { id } : {}) };
-  const inserted = await db.from("listings").insert(row).select().single();
-  if (!inserted.error) return { data: inserted.data, replayed: false };
-  if (id && inserted.error.code === "23505") {
-    const replay = await db.from("listings").select("*").eq("id", id).eq("org_id", orgId).eq("agent_id", ownerId).is("deleted_at", null).maybeSingle();
-    if (replay.error) throw new HttpError(503, "The saved listing could not be checked. Refresh before trying again.");
-    if (!replay.data) throw new HttpError(409, "This listing was deleted or is no longer available. Create a new listing to start again.");
-    return { data: replay.data, replayed: true };
-  }
-  throw new HttpError(400, "The listing could not be created. Check your workspace access and listing details.");
+  const target = id ?? crypto.randomUUID(); // Server-chosen identity for older callers too.
+  const row = { ...patch, org_id: orgId, agent_id: ownerId, id: target };
+  // STABLE listing SELECT policies re-read the row. INSERT RETURNING cannot
+  // see that new row in its statement snapshot; a fresh caller-RLS read can.
+  const inserted = await db.from("listings").insert(row);
+  if (inserted.error && !(id && inserted.error.code === "23505"))
+    throw new HttpError(400, "The listing could not be created. Check your workspace access and listing details.");
+  const saved = await db.from("listings").select("*").eq("id", target).eq("org_id", orgId).eq("agent_id", ownerId).is("deleted_at", null).maybeSingle();
+  if (saved.error) throw new HttpError(503, "The saved listing could not be checked. Refresh before trying again.");
+  if (!saved.data) throw new HttpError(409, "This listing was deleted or is no longer available. Create a new listing to start again.");
+  if (saved.data.id !== target || saved.data.org_id !== orgId || saved.data.agent_id !== ownerId)
+    throw new HttpError(503, "The saved listing identity could not be verified.");
+  return { data: saved.data, replayed: !!inserted.error };
 }

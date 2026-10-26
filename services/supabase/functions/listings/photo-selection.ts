@@ -1,5 +1,6 @@
 import { assert, HttpError, throwRpc } from "../_shared/http.ts";
 import { propertyGalleryKey } from "../_shared/property-cover.ts";
+import { ensureAcceptedPhotoPublication } from "../_shared/photo-publication.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Row = Record<string, unknown>;
@@ -361,6 +362,7 @@ export async function changePhotoSelection(
   body: Row,
   key: string | null,
   abandon = false,
+  signal?: AbortSignal,
 ): Promise<Row> {
   assert(
     (exact(body, [
@@ -392,6 +394,14 @@ export async function changePhotoSelection(
   );
   const { operation_id: _, ...raw } = body;
   const intent = request(raw);
+  if (!abandon && intent.target !== null) {
+    const target = intent.target as Row;
+    // A prior upload may have completed before its disclosure PATCH failed.
+    // The saved upload journal is not publication authority; guard retries at
+    // this same explicit selection boundary before the unchanged CAS.
+    await ensureAcceptedPhotoPublication(admin,scope,actor,target.asset_id as string,
+      {reviewed:intent.reviewed as boolean,expected:{sha256:target.sha256 as string,bytes:target.bytes as number},signal});
+  }
   const value = checkedSnapshot(
     await call(
       admin,
