@@ -426,7 +426,8 @@ struct NativeActivityEntry: Codable, Identifiable, Equatable {
         return .init(completed: useCounts ? measured : simpleReady ? 1 : steps, total: useCounts ? total : simpleReady ? 1 : stepTotal,
             unit: useCounts ? (countUnit ?? (kind == .photos ? "photos attempted" : kind == .analysis ? "photos checked" : "clips complete")) : "steps complete",
             phase: stage, active: state == .working || state == .waiting, lastCheckedAt: lastCheckedAt,
-            lastProgressAt: lastProgressAt, checksExpected: expectsStatusChecks ?? (kind == .aerial), checkFailed: checkFailed == true)
+            lastProgressAt: lastProgressAt, checksExpected: (expectsStatusChecks ?? (kind == .aerial)) && state.isActive,
+            checkFailed: checkFailed == true)
     }
     var orderingDate: Date { lastProgressAt ?? startedAt ?? firstObservedAt }
     var signature: String { "\(progressToken ?? stage)|\(completed ?? -1)|\(total ?? -1)" }
@@ -603,7 +604,13 @@ struct NativeActivityPresentationState {
         }
         for job in ReelWorkQueue.shared.reviewableJobs {
             let state: NativeActivityEntry.State = job.phase == .done ? .ready : job.phase == .failed ? .failed : job.paused ? .waiting : job.serverStatusCheckNote != nil ? .attention : .working
-            let stage = job.serverJob?.reply.map { PropertyVideoJobRunner.status($0) } ?? (job.paused ? "Paused on this iPhone" : job.phase == .stitching ? "Finishing video" : job.phase == .done ? "Video saved" : job.phase == .failed ? "Video needs attention" : "Checking saved video request")
+            let stage: String
+            switch job.phase {
+            case .done: stage = "Video saved. Ready to review."
+            case .failed: stage = "Video needs attention"
+            default: stage = job.serverJob?.reply.map { PropertyVideoJobRunner.status($0) } ??
+                (job.paused ? "Paused on this iPhone" : job.phase == .stitching ? "Finishing video" : "Checking saved video request")
+            }
             observe(id: Self.reelID(job), listingID: job.listingID, kind: .video, state: state, stage: stage,
                     completed: job.usesPhotoMotion ? nil : job.completedClips, total: job.totalClips,
                     startedAt: job.serverJob?.createdAt ?? job.activityStartedAt, progressToken: job.serverJob?.reply?.state, lastCheckedAt: job.lastServerStatusCheck, progressKind: job.usesPhotoMotion ? "photo_motion" : "video", expectsStatusChecks: job.serverJob != nil)

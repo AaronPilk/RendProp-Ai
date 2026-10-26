@@ -523,8 +523,13 @@ struct NativeGenerationProgressView: View {
                     Text(progress.lastCheckedAt.map { "Last checked \(NativeActivityCard.elapsed(from: $0, now: timeline.date)) ago" } ?? "No successful status check yet")
                         .font(.caption2).foregroundStyle(Theme.inkDim)
                 }
-                Text(progress.lastProgressAt.map { "Last progress \(NativeActivityCard.elapsed(from: $0, now: timeline.date)) ago" } ?? "Progress update time unavailable")
-                    .font(.caption2).foregroundStyle(Theme.inkDim)
+                if let lastProgressAt = progress.lastProgressAt {
+                    Text("Last progress \(NativeActivityCard.elapsed(from: lastProgressAt, now: timeline.date)) ago")
+                        .font(.caption2).foregroundStyle(Theme.inkDim)
+                } else if progress.active || progress.checksExpected {
+                    Text("Progress update time unavailable")
+                        .font(.caption2).foregroundStyle(Theme.inkDim)
+                }
             }.frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityElement(children: .combine)
         }
