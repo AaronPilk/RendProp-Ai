@@ -716,6 +716,7 @@ struct FlythroughDetailView: View {
     @State private var qrTarget: QRTarget?
     @State private var linkShareTarget: PublicLinkShareTarget?
     @State private var verifiedBuyerLink: (key: String, url: URL)?
+    @State private var resolvingBuyerLinkKey: String?
     @StateObject private var connection = FeatureSessionAction()
     @State private var isPublishing = false
     @State private var publishFailure: AIFailure?
@@ -811,6 +812,7 @@ struct FlythroughDetailView: View {
         showRoomTagsWalkthroughHelp = false; showWalkthroughForRoomTags = false; availableRoomTagAsset = nil
         showAerialIntro = false; showEdit = false; showListingFactsReview = false
         qrTarget = nil
+        linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil
         connection.cancel()
         dismiss()
     }
@@ -1543,8 +1545,10 @@ struct FlythroughDetailView: View {
     private func linkCard(url: URL, verifyBrandedLink: Bool = false, icon: String, tint: Color, name: String, blurb: String,
                           shareSubject: String, shareMessage: String, shareTitle: String,
                           qrCaption: String, warning: String? = nil) -> some View {
-        let linkKey = "\(listing.id):\(url.absoluteString):\(currentListing.address)"
-        let displayURL = verifyBrandedLink && verifiedBuyerLink?.key == linkKey ? verifiedBuyerLink!.url : url
+        let published = currentListing.serverShareURL
+        let linkKey = shareLinkKey(for: url, listing: currentListing)
+        let displayURL = verifyBrandedLink && verifiedBuyerLink?.key == linkKey
+            ? verifiedBuyerLink?.url ?? url : url
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: icon)
@@ -1575,10 +1579,10 @@ struct FlythroughDetailView: View {
 
             HStack(spacing: 10) {
                 Button {
-                    Task {
-                        UIPasteboard.general.url = await currentLink(url, verifyBrandedLink: verifyBrandedLink, key: linkKey)
-                        Haptics.success()
-                    }
+                    guard let target = actionLink(url, key: linkKey,
+                                                  verifyBrandedLink: verifyBrandedLink) else { return }
+                    UIPasteboard.general.url = target
+                    Haptics.success()
                 } label: {
                     Label("Copy", systemImage: "doc.on.doc")
                         .frame(maxWidth: .infinity)
@@ -1587,10 +1591,9 @@ struct FlythroughDetailView: View {
                 }
                 .accessibilityLabel(Text("Copy \(name)"))
                 Button {
-                    Task {
-                        let target = await currentLink(url, verifyBrandedLink: verifyBrandedLink, key: linkKey)
-                        qrTarget = QRTarget(url: target, linkName: name, caption: qrCaption)
-                    }
+                    guard let target = actionLink(url, key: linkKey,
+                                                  verifyBrandedLink: verifyBrandedLink) else { return }
+                    qrTarget = QRTarget(url: target, linkName: name, caption: qrCaption)
                 } label: {
                     Label("QR", systemImage: "qrcode")
                         .frame(maxWidth: .infinity)
@@ -1602,10 +1605,11 @@ struct FlythroughDetailView: View {
             .font(.rpBody)
 
             Button {
-                Task {
-                    let target = await currentLink(url, verifyBrandedLink: verifyBrandedLink, key: linkKey)
-                    linkShareTarget = PublicLinkShareTarget(url: target, subject: shareSubject, message: shareMessage)
-                }
+                guard let target = actionLink(url, key: linkKey,
+                                              verifyBrandedLink: verifyBrandedLink) else { return }
+                linkShareTarget = PublicLinkShareTarget(
+                    url: target,
+                    subject: shareSubject, message: shareMessage)
             } label: {
                 Label(shareTitle, systemImage: "square.and.arrow.up")
                     .font(.rpBody.weight(.semibold))
@@ -1614,6 +1618,13 @@ struct FlythroughDetailView: View {
                     .background(tint)
                     .foregroundStyle(Color.white)
                     .clipShape(Capsule())
+            }
+
+            if verifyBrandedLink && resolvingBuyerLinkKey == linkKey {
+                ProgressView("Checking address link")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if let warning {
@@ -1627,18 +1638,44 @@ struct FlythroughDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
         .task(id: linkKey) {
-            guard verifyBrandedLink else { return }
-            _ = await currentLink(url, verifyBrandedLink: true, key: linkKey)
+            guard verifyBrandedLink, let published,
+                  canShareLink(url, key: linkKey, verifyBrandedLink: true) else { return }
+            resolvingBuyerLinkKey = linkKey
+            let resolved = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: url)
+            guard !Task.isCancelled,
+                  canShareLink(url, key: linkKey, verifyBrandedLink: true) else {
+                if resolvingBuyerLinkKey == linkKey { resolvingBuyerLinkKey = nil }
+                return
+            }
+            verifiedBuyerLink = (linkKey, resolved)
+            resolvingBuyerLinkKey = nil
         }
     }
 
-    private func currentLink(_ fallback: URL, verifyBrandedLink: Bool, key: String) async -> URL {
-        guard verifyBrandedLink, let published = currentListing.serverShareURL else { return fallback }
-        let resolved = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: fallback)
-        if key == "\(listing.id):\(fallback.absoluteString):\(currentListing.address)" {
-            verifiedBuyerLink = (key, resolved)
+    private func actionLink(_ fallback: URL, key: String, verifyBrandedLink: Bool) -> URL? {
+        PublicShareLinkResolver.linkForAction(
+            fallbackURL: fallback, linkKey: key,
+            currentContext: canShareLink(fallback, key: key, verifyBrandedLink: verifyBrandedLink),
+            cached: verifyBrandedLink ? verifiedBuyerLink : nil)
+    }
+
+    private func shareLinkKey(for fallback: URL, listing current: Listing) -> String {
+        "\(current.id):\(fallback.absoluteString):\(current.serverShareURL?.absoluteString ?? ""):\(current.address):\(current.allowSearchIndexing == true)"
+    }
+
+    private func canShareLink(_ fallback: URL, key: String, verifyBrandedLink: Bool) -> Bool {
+        guard hasCurrentPresentationContext,
+              let current = model.listings.first(where: { $0.id == listing.id }),
+              current.cloudUnavailable != true, model.isInSelectedWorkspace(current) else { return false }
+        if verifyBrandedLink {
+            guard let published = current.serverShareURL else { return false }
+            let currentFallback = DeepLink.buyerWebsiteURL(
+                from: published, address: current.spaceType == .realEstate ? current.address : nil) ?? published
+            return currentFallback == fallback && key == shareLinkKey(for: fallback, listing: current)
         }
-        return resolved
+        guard let published = current.serverUnbrandedURL else { return false }
+        let currentFallback = DeepLink.unbrandedWebsiteURL(from: published, address: current.address) ?? published
+        return currentFallback == fallback && key == shareLinkKey(for: fallback, listing: current)
     }
 
     // MARK: - "List this tour on Google"

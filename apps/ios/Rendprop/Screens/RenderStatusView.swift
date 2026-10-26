@@ -29,6 +29,8 @@ private struct RenderStatusContent: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var uploads: UploadManager
     @ObservedObject var coordinator: RenderCoordinator
+    @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var workspace = WorkspaceStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
 
@@ -37,6 +39,10 @@ private struct RenderStatusContent: View {
 
     @State private var showCancelConfirm = false
     @State private var linkShareTarget: PublicLinkShareTarget?
+    @State private var shareScope = NativePresentationScope(
+        actorID: AuthStore.shared.userID, orgID: WorkspaceContext.selectedOrgID)
+    @State private var resolvedShareLink: (key: String, url: URL)?
+    @State private var resolvingShareLinkKey: String?
     /// The encode is CPU-bound for minutes; on a hot phone iOS throttles it and
     /// the ring visibly crawls. Say so rather than looking stuck. (Seeded in
     /// `onAppear` — a `@State` default can't read a type member here.)
@@ -59,6 +65,17 @@ private struct RenderStatusContent: View {
     private var shareURL: URL? {
         guard let canonical = currentListing.serverShareURL else { return nil }
         return DeepLink.buyerWebsiteURL(from: canonical, address: currentListing.spaceType == .realEstate ? currentListing.address : nil) ?? canonical
+    }
+    private var shareLinkKey: String? {
+        guard let published = currentListing.serverShareURL, let fallback = shareURL else { return nil }
+        return "\(listing.id):\(published.absoluteString):\(fallback.absoluteString):\(currentListing.address):\(currentListing.allowSearchIndexing == true)"
+    }
+    private var canShareCurrentListing: Bool {
+        shareScope.matches(actorID: auth.userID, orgID: WorkspaceContext.selectedOrgID) &&
+            model.listings.contains {
+                $0.id == listing.id && $0.cloudUnavailable != true &&
+                    $0.serverShareURL != nil && model.isInSelectedWorkspace($0)
+            }
     }
     /// THIS listing's type — a type switch while a render is on screen must not
     /// re-label a house as a venue (industry review P2-5). Samples never render.
@@ -171,6 +188,25 @@ private struct RenderStatusContent: View {
         }
         .sheet(item: $linkShareTarget) { target in
             ShareSheet(items: target.activityItems)
+        }
+        .task(id: shareLinkKey) {
+            guard let key = shareLinkKey, let published = currentListing.serverShareURL,
+                  let fallback = shareURL, canShareCurrentListing else { return }
+            resolvingShareLinkKey = key
+            let resolved = await PublicShareLinkResolver.resolve(
+                publishedURL: published, fallbackURL: fallback)
+            guard !Task.isCancelled, canShareCurrentListing, shareLinkKey == key else {
+                if resolvingShareLinkKey == key { resolvingShareLinkKey = nil }
+                return
+            }
+            resolvedShareLink = (key, resolved)
+            resolvingShareLinkKey = nil
+        }
+        .onChange(of: auth.userID) { _ in
+            if !canShareCurrentListing { linkShareTarget = nil; resolvedShareLink = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            if !canShareCurrentListing { linkShareTarget = nil; resolvedShareLink = nil }
         }
     }
 
@@ -398,6 +434,7 @@ private struct RenderStatusContent: View {
         if let mls = currentListing.serverUnbrandedURL {
             VStack(alignment: .leading, spacing: 6) {
                 Button {
+                    guard canShareCurrentListing, currentListing.serverUnbrandedURL == mls else { return }
                     UIPasteboard.general.url = DeepLink.unbrandedWebsiteURL(from: mls, address: currentListing.address) ?? mls
                     Haptics.success()
                 } label: {
@@ -411,6 +448,7 @@ private struct RenderStatusContent: View {
                     .foregroundStyle(Theme.ink)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
+                .disabled(!canShareCurrentListing)
                 Label("Never put your branded link in an MLS unbranded field — most MLSs fine for that.",
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.rpCaption.weight(.semibold))
@@ -461,14 +499,14 @@ private struct RenderStatusContent: View {
                 viewTourButton
                 if let shareURL {
                     Button {
-                        Task {
-                            let published = currentListing.serverShareURL ?? shareURL
-                            let resolved = await PublicShareLinkResolver.resolve(
-                                publishedURL: published, fallbackURL: shareURL)
-                            linkShareTarget = PublicLinkShareTarget(
-                                url: resolved, subject: currentListing.address,
-                                message: "Fly through \(currentListing.address) — scroll to walk the \(noun).")
-                        }
+                        guard shareURL == self.shareURL, let key = shareLinkKey,
+                              let target = PublicShareLinkResolver.linkForAction(
+                                fallbackURL: shareURL, linkKey: key,
+                                currentContext: canShareCurrentListing,
+                                cached: resolvedShareLink) else { return }
+                        linkShareTarget = PublicLinkShareTarget(
+                            url: target, subject: currentListing.address,
+                            message: "Fly through \(currentListing.address) — scroll to walk the \(noun).")
                     } label: {
                         HStack {
                             Image(systemName: "square.and.arrow.up")
@@ -477,6 +515,12 @@ private struct RenderStatusContent: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 13)
                         .modifier(RendpropActionLabelSurface(primary: false))
+                    }
+                    .disabled(!canShareCurrentListing)
+                    if resolvingShareLinkKey == shareLinkKey {
+                        ProgressView("Checking address link")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
                     }
                     mlsLinkRow
                 } else if mode == .awaitingConnection {

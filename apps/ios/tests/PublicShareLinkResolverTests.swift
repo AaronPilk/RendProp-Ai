@@ -20,6 +20,22 @@ import FoundationNetworking
             (Data(body.utf8), HTTPURLResponse(url: endpoint, statusCode: status, httpVersion: nil, headerFields: nil)!)
         }
 
+        verify(PublicShareLinkResolver.linkForAction(
+            fallbackURL: stable, linkKey: "account-a:listing-a", currentContext: true,
+            cached: nil) == stable, "A tap can immediately share the published link during lookup")
+        verify(PublicShareLinkResolver.linkForAction(
+            fallbackURL: stable, linkKey: "account-a:listing-a", currentContext: true,
+            cached: ("account-a:listing-a", addressOnly)) == addressOnly,
+            "A completed proof supplies the address-only link without another request")
+        verify(PublicShareLinkResolver.linkForAction(
+            fallbackURL: stable, linkKey: "account-b:listing-b", currentContext: true,
+            cached: ("account-a:listing-a", addressOnly)) == stable,
+            "An older listing's resolved address never carries into a new link")
+        verify(PublicShareLinkResolver.linkForAction(
+            fallbackURL: stable, linkKey: "account-b:listing-b", currentContext: false,
+            cached: ("account-b:listing-b", addressOnly)) == nil,
+            "A changed account or workspace cannot use either cached or fallback link")
+
         let verified = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { request in
             verify(request.url == endpoint && request.cachePolicy == .reloadIgnoringLocalCacheData,
                    "Lookup is keyed by the public slug and bypasses cache")

@@ -8,6 +8,15 @@ import FoundationNetworking
 /// slug. The host alone can prove that an address path is unique and allowed to
 /// be discovered. A failed or malformed lookup keeps the existing token link.
 enum PublicShareLinkResolver {
+    /// A tap never waits for the lookup. Until a verified address link arrives,
+    /// the already-published token link is immediately usable. A result from a
+    /// previous listing/account key can never be used by a new presentation.
+    static func linkForAction(fallbackURL: URL, linkKey: String, currentContext: Bool,
+                              cached: (key: String, url: URL)?) -> URL? {
+        guard currentContext else { return nil }
+        return cached?.key == linkKey ? cached?.url ?? fallbackURL : fallbackURL
+    }
+
     static func resolve(publishedURL: URL, fallbackURL: URL) async -> URL {
         await resolve(publishedURL: publishedURL, fallbackURL: fallbackURL) { request in
             try await URLSession.shared.data(for: request)
