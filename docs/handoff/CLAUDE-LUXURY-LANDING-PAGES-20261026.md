@@ -12,6 +12,10 @@ The listing video is the main website hero when one is selected. The visitor mus
 
 ## Source and observed state
 
+The short native, Worker, and database source SHAs below are provenance from separate local release lineages. They are not commits reachable from this GitHub branch. Use the branch's files as the current collaboration source; do not try to fetch or cherry-pick those historical SHAs.
+
+The full native source history is also published on [`source/native-ios-20261026-a7f661c`](https://github.com/AaronPilk/RendProp-Ai/tree/source/native-ios-20261026-a7f661c). The iOS files here are a source snapshot. Backend video function entrypoints in this handoff still differ from the deployed service; this branch is not a complete live-backend snapshot. Keep the luxury-site work in the Tour Host presentation layer.
+
 - Native **TestFlight Build 123** is installed on the owner's physical iPhone 15 Pro, iOS 18.7.3. Its tested source commit is `0c03af0`. The Build 122 crash when opening listings was fixed and the formerly failing listings opened on Build 123. Physical acceptance is partial; Build 123 is **not** a launch approval.
 - Native commits after Build 123 include paywall copy `e1733c7` and website StoreKit no-charge recovery `a7f661c`. They are included in this handoff's source tree but have **not** been delivered or verified in TestFlight.
 - The deployed Tour Host Worker version last verified for the public property site is `f70ff6d5-2a18-435c-95b2-d611121e3930`, from source base `8a45658`. The newer duplicate-address URL code (`261ec56` Worker and `635b8f47` DB/Tours candidate) is in this handoff as **source-only**. It has not been deployed or checked on a production phone. The live 38-photo listing preview is <https://rendprop.com/property/855-central-ave-1120-saint-petersburg-fl-united-states/3482b697c5f34c26a83b5d1b2b6f429a>.
@@ -21,6 +25,8 @@ The listing video is the main website hero when one is selected. The visitor mus
 - App Store submission is explicitly **on hold** until broader QA and the owner's TestFlight review. Do not submit or mark the app release-ready.
 
 Primary web source: `services/edge/tour-host/src/property-design.ts` for the paid designs, `property-site.ts` for Classic, `player.ts` and `property-video.ts` for the shared hero/video composition, plus shared assets/styles. Inspect `services/edge/tour-host` tests and run the relevant web checks. Native design tokens live in `apps/ios/Rendprop/DesignSystem`; use them as product context, not as a reason to rebuild native views.
+
+For the premium browser check, use a full clone, run `npm ci` in `services/edge/tour-host`, install Playwright Chromium if needed with `npx playwright install chromium` (or set `STUDIO_BROWSER_EXECUTABLE`), and have `ffmpeg` and `ffprobe` on `PATH`. Then run `node scripts/check-premium-luxury.mjs --evidence=/tmp/rendprop-luxury-proof`. Its Classic/MLS comparison uses the pushed parent of the initial handoff commit, `6fc7485a1aae7b8354fd7c21ff2a01e71c3e1376`.
 
 ## Claude deliverable
 

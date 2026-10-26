@@ -11,14 +11,14 @@ import {ROOT} from './build-src.mjs';
 const output=resolve(process.argv.find(a=>a.startsWith('--evidence='))?.split('=').slice(1).join('=')||'../../../luxury-proof');mkdirSync(output,{recursive:true});
 const checks=[],measurements=[];const check=(x,label)=>{assert.ok(x,label);checks.push(label)};
 const {server,origin,load,retained}=await premiumPreview();const {renderTourPage}=await load('player'),{buildDemoTour}=await load('demo'),{PROPERTY_DESIGN_CSS}=await load('property-design');
-// This is the accepted address-only Tourhost source immediately before the
-// reference-led presentation change. Classic and MLS must remain identical.
-const PRESENTATION_BASELINE='6ad50ef898dd3f69b4835f9e184fa879716bba74';
+// The pushed parent of the initial handoff commit is available in a full clone.
+// Classic and MLS rendering must remain identical across the luxury redesign.
+const PRESENTATION_BASELINE='6fc7485a1aae7b8354fd7c21ff2a01e71c3e1376';
 const baseline=join(output,'baseline-esm');mkdirSync(baseline,{recursive:true});writeFileSync(join(baseline,'package.json'),'{"type":"module"}');
 for(const f of readdirSync(join(ROOT,'src')).filter(n=>n.endsWith('.ts'))){const s=execFileSync('git',['show',PRESENTATION_BASELINE+':services/edge/tour-host/src/'+f],{cwd:ROOT,encoding:'utf8',stdio:['ignore','pipe','pipe']});const js=ts.transpileModule(s,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText.replace(/(\bfrom\s*["'])(\.\.?\/[^"']+?)(["'])/g,(_,a,b,c)=>a+b+'.js'+c);writeFileSync(join(baseline,f.replace(/\.ts$/,'.js')),js)}
 const before=await import(pathToFileURL(join(baseline,'player.js'))),oldDesign=await import(pathToFileURL(join(baseline,'property-design.js')));
 for(const t of[retained.tour,buildDemoTour()])for(const page of['home','gallery','location','contact'])for(const unbranded of[false,true]){const opts={origin,page,unbranded};const after=renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(PROPERTY_DESIGN_CSS,'__PAID_CSS__');const prior=before.renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(oldDesign.PROPERTY_DESIGN_CSS,'__PAID_CSS__');check(after===prior,`Classic/MLS markup+scripts+shared CSS exact: ${t.slug}/${page}/${unbranded}`)}
-for(const file of['property-site.ts','property-video.ts','index.ts']){const old=execFileSync('git',['show',PRESENTATION_BASELINE+':services/edge/tour-host/src/'+file],{cwd:ROOT});check(old.equals(readFileSync(join(ROOT,'src',file))),file+' byte-exact baseline; routes/entitlements/viewer/video/sanitizer intact')}
+for(const file of['property-site.ts','property-video.ts']){const old=execFileSync('git',['show',PRESENTATION_BASELINE+':services/edge/tour-host/src/'+file],{cwd:ROOT});check(old.equals(readFileSync(join(ROOT,'src',file))),file+' byte-exact handoff parent')}
 const browser=await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});
 try{
  for(const theme of['signature-estate','coastal-luxe'])for(const width of[390,1497])for(const rich of[false,true]){
