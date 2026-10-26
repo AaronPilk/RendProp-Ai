@@ -7887,6 +7887,14 @@ private struct PhotoReviewEditSheet: View {
     private func select(_ action: PhotoReviewEdit) { choose(action); dismiss() }
 }
 
+private struct PhotoReviewFooterHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct PhotoCompareView: View {
     let photo: EnhancedPhoto
     var disclosure: String? = nil
@@ -7923,6 +7931,7 @@ struct PhotoCompareView: View {
     @State private var singleStagingSetup: PhotoStagingSetup?
     @State private var singleCustomPhoto: EnhancedPhoto?
     @State private var singleEditJobID: UUID?
+    @State private var actionFooterHeight: CGFloat = 0
 
     private struct FeedbackReasonReveal: Equatable {
         let versionID: String
@@ -8029,6 +8038,10 @@ struct PhotoCompareView: View {
                                     .font(.caption).foregroundStyle(Theme.inkDim)
                             }
                         }
+                        // At accessibility text sizes the two fixed actions can
+                        // occupy much of the viewport. Keep the final review
+                        // control scrollable above their measured height.
+                        .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? actionFooterHeight : 0)
                         .padding(16)
                         .frame(maxWidth: 760)
                         .frame(maxWidth: .infinity)
@@ -8038,6 +8051,7 @@ struct PhotoCompareView: View {
                         actionFooter(stacked: PhotoReviewLayout.stacksActions(width: geometry.size.width,
                             accessibilityType: dynamicTypeSize.isAccessibilitySize))
                     }
+                    .onPreferenceChange(PhotoReviewFooterHeightPreferenceKey.self) { actionFooterHeight = $0 }
                     .onChange(of: feedbackReasonReveal) { request in
                         guard let request, !showOriginal, viewed.savedVersion?.id == request.versionID else { return }
                         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
@@ -8493,6 +8507,11 @@ struct PhotoCompareView: View {
         .background(.regularMaterial)
         .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 0.5) }
         .accessibilityIdentifier("photoVersion.fixedActions")
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: PhotoReviewFooterHeightPreferenceKey.self, value: proxy.size.height)
+            }
+        }
     }
 
     @ViewBuilder private var useOnListingButton: some View {
