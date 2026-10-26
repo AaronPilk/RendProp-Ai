@@ -366,7 +366,9 @@ struct NativeActivityView: View {
     }
     private func stopAction(_ entry: NativeActivityEntry) -> (() -> Void)? {
         guard entry.scope == NativeActivityStore.currentScope, entry.state.isActive else { return nil }
-        if entry.kind == .aerial, exactAerial(entry), !activity.stoppingIDs.contains(entry.id) {
+        if entry.kind == .aerial {
+            guard exactAerialJournal(entry)?.canStopUnfinishedRequest == true,
+                  !activity.stoppingIDs.contains(entry.id) else { return nil }
             return { Task { await activity.stopAerial(entry) } }
         }
         if let stop = activity.localStop(for: entry) { return stop }
@@ -385,12 +387,14 @@ struct NativeActivityView: View {
            } }
         return nil // Historical or unavailable work has review access only.
     }
-    private func exactAerial(_ entry: NativeActivityEntry) -> Bool {
+    private func exactAerial(_ entry: NativeActivityEntry) -> Bool { exactAerialJournal(entry) != nil }
+    private func exactAerialJournal(_ entry: NativeActivityEntry) -> AerialOpeningJournal? {
         guard entry.state.isActive, entry.scope == NativeActivityStore.currentScope, let actor = entry.scope.actor, let library = entry.scope.library,
-              let listing = model.listings.first(where: { $0.id == entry.listingID }), let server = listing.serverID else { return false }
+              let listing = model.listings.first(where: { $0.id == entry.listingID }), let server = listing.serverID else { return nil }
         let context = PropertyVideoJobContext(localListingID: listing.id, listingID: server, actorID: actor, orgID: library)
-        guard let saved = try? AerialOpeningStore.load(context), saved.physicalOrgID == listing.serverOrgID else { return false }
-        return entry.id == "aerial:\(saved.manifest.operationID)"
+        guard let saved = try? AerialOpeningStore.load(context), saved.physicalOrgID == listing.serverOrgID,
+              entry.id == "aerial:\(saved.manifest.operationID)" else { return nil }
+        return saved
     }
     @ViewBuilder private func review(_ entry: NativeActivityEntry, listing: Listing) -> some View {
         if entry.kind == .aerial && exactAerial(entry) {
@@ -461,7 +465,7 @@ struct NativeActivityCard: View {
                 }
                 NativeGenerationProgressView(progress: entry.generationProgress)
                 VStack(alignment: .leading, spacing: 5) {
-                    if let start = entry.startedAt { Text(entry.state.isActive ? "Elapsed \(Self.elapsed(from: start, now: timeline.date))" : "Started \(Self.elapsed(from: start, now: timeline.date)) ago") }
+                    if let start = entry.startedAt { Text(entry.state.isActive && !entry.isAerialAwaitingReview ? "Elapsed \(Self.elapsed(from: start, now: timeline.date))" : "Started \(Self.elapsed(from: start, now: timeline.date)) ago") }
                     else { Text("Start time unavailable for this saved request") }
 
                 }.font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)

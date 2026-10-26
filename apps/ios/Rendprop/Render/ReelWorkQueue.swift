@@ -413,6 +413,7 @@ struct NativeActivityEntry: Codable, Identifiable, Equatable {
     var expectsStatusChecks: Bool? = nil
     var countUnit: String? = nil
     var progressKind: String? = nil
+    var isAerialAwaitingReview: Bool { kind == .aerial && progressToken == "ready_for_acceptance" }
     var generationProgress: NativeGenerationProgress {
         let terminalIncomplete = state == .failed || state == .stopped
         let measuredKind = kind == .aerial ? "aerial" : progressKind
@@ -430,7 +431,7 @@ struct NativeActivityEntry: Codable, Identifiable, Equatable {
         return .init(completed: useCounts ? measured : simpleReady ? 1 : steps, total: useCounts ? total : simpleReady ? 1 : stepTotal,
             unit: useCounts ? (countUnit ?? (kind == .photos ? "photos attempted" : kind == .analysis ? "photos checked" : "clips complete")) : "steps complete",
             phase: stage, active: state == .working || state == .waiting, lastCheckedAt: lastCheckedAt,
-            lastProgressAt: lastProgressAt, checksExpected: (expectsStatusChecks ?? (kind == .aerial)) && state.isActive,
+            lastProgressAt: lastProgressAt, checksExpected: (expectsStatusChecks ?? (kind == .aerial)) && state.isActive && !isAerialAwaitingReview,
             checkFailed: checkFailed == true)
     }
     var orderingDate: Date { lastProgressAt ?? startedAt ?? firstObservedAt }
@@ -728,8 +729,7 @@ struct NativeActivityPresentationState {
               !listing.isSample, listing.cloudUnavailable != true, let server = listing.serverID else { return }
         let context = PropertyVideoJobContext(localListingID: listing.id, listingID: server, actorID: actor, orgID: library)
         guard var saved = try? AerialOpeningStore.load(context), saved.physicalOrgID == listing.serverOrgID,
-              "aerial:\(saved.manifest.operationID)" == entry.id, saved.dispatched, saved.status?.isTerminal != true,
-              saved.notAdmittedCancelled != true, !saved.stopRequested else { return }
+              "aerial:\(saved.manifest.operationID)" == entry.id, saved.canStopUnfinishedRequest else { return }
         suspendAerialRefresh(); stoppingIDs.insert(entry.id); defer { stoppingIDs.remove(entry.id) }
         let revision = AuthStore.shared.syncSessionRevision, consentRevision = AIConsent.shared.revocationRevision
         do {

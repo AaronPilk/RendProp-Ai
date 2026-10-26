@@ -99,12 +99,15 @@ struct AerialOpeningStatus: Codable, Equatable {
             countUnit: nil, progressKind: nil)
         for (phase, completed) in aerialPhases {
             assert(NativeGenerationProgress.steps(kind: "aerial", phase: phase) == completed)
-            aerial.state = phase == "accepted" ? .ready : .working
+            aerial.state = phase == "accepted" ? .ready : phase == "ready_for_acceptance" ? .attention : .working
             aerial.progressToken = phase
             let progress = aerial.generationProgress
             assert(progress.completed == completed && progress.total == 5,
                    "Incorrect completed stages for \\(phase)")
             assert(progress.percent == completed * 20, "Incorrect percent for \\(phase)")
+            if phase == "ready_for_acceptance" {
+                assert(aerial.isAerialAwaitingReview && !progress.active && !progress.checksExpected)
+            }
         }
         assert(NativeGenerationProgress.stepTotal(kind: "aerial") == 5)
 
@@ -153,6 +156,7 @@ struct AerialOpeningStatus: Codable, Equatable {
         var journal = try! JSONDecoder().decode(AerialOpeningJournal.self, from: Data(legacyJournalJSON.utf8))
         assert(journal.progressVersion == nil)
         assert(journal.generationProgress().completed == 4)
+        assert(journal.canStopUnfinishedRequest)
         let previousChange = Date(timeIntervalSince1970: 10)
         journal.lastPhaseChangedAt = previousChange
         journal.recordConfirmedStatus(.init(state: "queued_assessment"), at: Date(timeIntervalSince1970: 20))
@@ -163,8 +167,10 @@ struct AerialOpeningStatus: Codable, Equatable {
         assert(journal.generationProgress().completed == 4)
         journal.recordConfirmedStatus(.init(state: "ready_for_acceptance"), at: Date(timeIntervalSince1970: 40))
         assert(journal.generationProgress().completed == 5)
+        assert(!journal.canStopUnfinishedRequest)
         journal.recordConfirmedStatus(.init(state: "cancelled"), at: Date(timeIntervalSince1970: 50))
         assert(journal.generationProgress().percent == nil)
+        assert(!journal.canStopUnfinishedRequest)
         print("Activity terminal/active status model: passed")
     }
 }
@@ -181,6 +187,11 @@ progress_view = declaration(VIEW, "struct NativeGenerationProgressView: View")
 assert "if progress.checksExpected {" in progress_view
 assert "if let lastProgressAt = progress.lastProgressAt {" in progress_view
 assert "else if progress.active || progress.checksExpected {" in progress_view
+activity_view = declaration(VIEW, "struct NativeActivityView: View")
+activity_card = declaration(VIEW, "struct NativeActivityCard: View")
+assert "exactAerialJournal(entry)?.canStopUnfinishedRequest == true" in activity_view
+assert "entry.state.isActive && !entry.isAerialAwaitingReview" in activity_card
+assert "saved.canStopUnfinishedRequest else { return }" in QUEUE
 assert SERVICE.count("total: NativeGenerationProgress.aerialTotal") >= 2
 assert "incoming: NativeGenerationProgress.steps(kind: \"aerial\", phase: status?.state)" in SERVICE
 

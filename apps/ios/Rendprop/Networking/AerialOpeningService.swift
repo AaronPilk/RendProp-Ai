@@ -178,6 +178,13 @@ struct AerialOpeningJournal: Codable, Equatable {
     var completedMilestones: Int? = nil
     var progressVersion: Int? = nil
 
+    /// Activity's Stop control is for unfinished processing. A generated
+    /// candidate awaiting the person's review has no remaining work to stop.
+    var canStopUnfinishedRequest: Bool {
+        dispatched && !stopRequested && notAdmittedCancelled != true &&
+            status?.isTerminal != true && status?.state != "ready_for_acceptance"
+    }
+
     mutating func recordConfirmedStatus(_ result: AerialOpeningStatus, at now: Date) {
         let incoming = NativeGenerationProgress.steps(kind: "aerial", phase: result.state)
         let previous = NativeGenerationProgress.retained(

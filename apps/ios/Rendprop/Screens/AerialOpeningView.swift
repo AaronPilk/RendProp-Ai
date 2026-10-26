@@ -880,9 +880,9 @@ private struct AerialOpeningFramingPreview: View {
         if let previous = journal.status, previous.isTerminal, previous.state != result.state {
             throw PropertyVideoJobStore.Failure.invalidReceipt
         }
-        state.canStopSavedRequest = !result.isTerminal
         var durable = result; durable.previewURL = nil
         journal.recordConfirmedStatus(durable, at: Date()); try AerialOpeningStore.save(journal); saved = journal; state.generationProgress = journal.generationProgress()
+        state.canStopSavedRequest = journal.canStopUnfinishedRequest
         if result.state == "accepted", let opening = result.opening {
             if await restoreExplicitChoice(insteadOf: opening) { return }
             let preview = try await previewValue(result)
@@ -988,7 +988,7 @@ private struct AerialOpeningFramingPreview: View {
         polling?.cancel()
         state.availabilityMessage = error.localizedDescription
         state.generationProgress = saved?.dispatched == true ? saved?.generationProgress(checkFailed: true) : nil
-        state.canStopSavedRequest = saved?.dispatched == true && saved?.status?.isTerminal != true && saved?.notAdmittedCancelled != true
+        state.canStopSavedRequest = saved?.canStopUnfinishedRequest == true
         state.phase = saved?.dispatched == true && saved?.status?.isTerminal != true && saved?.notAdmittedCancelled != true
             ? .needsAttention(error.localizedDescription) : .stopped
         if (try? requireCurrent()) == nil {
