@@ -130,7 +130,7 @@ end$$;
 revoke all on function public.org_entitlement(uuid) from public,anon,authenticated;
 grant execute on function public.org_entitlement(uuid) to authenticated,service_role,postgres;
 
--- A free introductory account may prepare one listing, including its photos.
+-- An unpaid account may prepare one lifetime listing, including its photos.
 -- Reserve the same lifetime free-listing slot at INSERT, not at render upload:
 -- neither a draft nor its gallery selection is a published video/website.
 -- The parent billing org owns the slot for Team private libraries. Existing
@@ -140,7 +140,7 @@ returns trigger language plpgsql security definer set search_path='' as $$
 declare billing uuid; existing integer;
 begin
   billing:=public.library_billing_org(new.org_id);
-  if public.plan_serving_ceiling(billing)->>'kind'='trial' then
+  if public.plan_serving_ceiling(billing)->>'kind' in('trial','free') then
     -- The count also catches listings made before this migration, including
     -- deleted ones. The advisory lock serializes two first-listing inserts.
     perform pg_advisory_xact_lock(hashtextextended('free_publication:'||billing,72454));
@@ -148,7 +148,7 @@ begin
       where public.library_billing_org(l.org_id)=billing;
     if existing>0 or (public.serving_mode()='ceiling' and
        not public.free_publication_admit(billing,new.id)) then
-      raise exception 'RP402: The introductory week includes one listing';
+      raise exception 'RP402: Unpaid access includes one listing';
     end if;
   end if;
   return new;

@@ -120,7 +120,7 @@ begin
     'Apple intro consumes exactly one listing slot when creating its draft');
   perform pg_temp.trial_refuses(format(
     'insert into public.listings(id,org_id,agent_id,address) values(%L,%L,%L,''Second trial listing'')',
-    second_listing,apple_org,actor),'RP402: The introductory week includes one listing',
+    second_listing,apple_org,actor),'RP402: Unpaid access includes one listing',
     'Apple intro cannot create a second draft listing before payment');
   update public.listings set address='Updated introductory listing' where id=intro_listing;
   perform pg_temp.trial_ok((select count(*)=1
@@ -312,7 +312,7 @@ select pg_temp.trial_ok((select count(*)=1 from public.workspace_publication_slo
 select pg_temp.trial_refuses($q$insert into public.listings(id,org_id,agent_id,address)
   select second_listing,second_org,agent_two,'Synthetic second private listing'
   from trial_team_fixture$q$,
-  'RP402: The introductory week includes one listing',
+  'RP402: Unpaid access includes one listing',
   'second private Team library cannot create another trial listing');
 
 -- If the dormant funded-serving mode is deliberately enabled later, the
@@ -338,7 +338,7 @@ select pg_temp.trial_ok((select count(*)=1 from public.listings l
   'funded trial retains its first draft without a video grant');
 select pg_temp.trial_refuses($q$insert into public.listings(id,org_id,agent_id,address)
   select second_listing,org,actor,'Funded second draft' from trial_funded_fixture$q$,
-  'RP402: The introductory week includes one listing',
+  'RP402: Unpaid access includes one listing',
   'funded trial also refuses a second draft');
 select pg_temp.trial_refuses($q$insert into public.render_jobs(listing_id,source)
   select first_listing,'app' from trial_funded_fixture$q$,
@@ -354,6 +354,32 @@ where id=(select org from trial_funded_fixture);
 select pg_temp.trial_ok((select public.plan_serving_ceiling(org)->>'kind'='free'
   from trial_funded_fixture),
   'expired unpaid account has the free serving envelope');
+select pg_temp.trial_refuses($q$insert into public.listings(id,org_id,agent_id,address)
+  select second_listing,org,actor,'Expired-intro second draft'
+  from trial_funded_fixture$q$,
+  'RP402: Unpaid access includes one listing',
+  'expired introductory account cannot create a second free draft');
+
+-- A newly free account may prepare its first listing, but no second one. The
+-- same parent-owned lifetime slot is reserved at draft creation.
+insert into auth.users(id,email,is_anonymous) values
+  ('a9030001-0000-4000-8000-000000000001','limited-free-account@example.invalid',false);
+create temporary table trial_free_fixture as select
+  'a9030001-0000-4000-8000-000000000001'::uuid actor,
+  (select org_id from public.memberships
+    where user_id='a9030001-0000-4000-8000-000000000001' and role='owner' limit 1)org,
+  gen_random_uuid()first_listing,gen_random_uuid()second_listing;
+update public.orgs set plan='free',plan_source=null,trial_ends_at=null
+where id=(select org from trial_free_fixture);
+insert into public.listings(id,org_id,agent_id,address)
+  select first_listing,org,actor,'Free first draft' from trial_free_fixture;
+select pg_temp.trial_ok((select count(*)=1 from public.workspace_publication_slots s
+  join trial_free_fixture f on s.org_id=f.org and s.listing_id=f.first_listing),
+  'fresh free account reserves its single lifetime listing slot at draft creation');
+select pg_temp.trial_refuses($q$insert into public.listings(id,org_id,agent_id,address)
+  select second_listing,org,actor,'Free second draft' from trial_free_fixture$q$,
+  'RP402: Unpaid access includes one listing',
+  'fresh free account cannot prepare a second lifetime listing');
 do $$declare f record;h text:=repeat('a',64);begin
   select * into f from trial_funded_fixture;
   perform pg_temp.trial_refuses(format(
