@@ -10,6 +10,8 @@ create temp table af(actor uuid,other_actor uuid,org uuid,other_org uuid,listing
 do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();o uuid;other_o uuid;l uuid:=gen_random_uuid();other_l uuid:=gen_random_uuid();ids uuid[]:='{}';asset uuid;u uuid:=gen_random_uuid();f uuid:=gen_random_uuid();n integer;begin
  insert into auth.users(id,email,is_anonymous)values(a,'append-capacity-owner@fixture.invalid',false),(b,'append-capacity-other@fixture.invalid',false);
  select org_id into o from memberships where user_id=a;select org_id into other_o from memberships where user_id=b;
+ -- Capacity assertions concern an existing paid gallery, not Free creation.
+ update orgs set plan='starter',plan_source='manual' where id in(o,other_o);
  insert into listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic capacity home'),(other_l,other_o,b,'Other synthetic home');
  for n in 1..101 loop
   asset:=gen_random_uuid();ids:=array_append(ids,asset);

@@ -17,6 +17,8 @@ do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();m uuid:=gen_ran
  insert into auth.users(id,email,is_anonymous)values(a,'remove-owner@fixture.invalid',false),(b,'remove-outsider@fixture.invalid',false),(m,'remove-marketing@fixture.invalid',false);
  select org_id into o from public.memberships where user_id=a;select org_id into oo from public.memberships where user_id=b;
  insert into public.memberships(user_id,org_id,role)values(m,o,'marketing');
+ -- Gallery removal is tested on existing paid homes, not Free creation.
+ update public.orgs set plan='starter',plan_source='manual' where id in(o,oo);
  insert into public.listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic selected home'),(ol,oo,b,'Synthetic other home');
  insert into public.capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,created_at,bytes,sha256)values
  (p1,l,'photo','renders','renders/'||o||'/'||l||'/gallery-'||p1||'.jpg',true,now()-interval'3 minutes',100,repeat('1',64)),

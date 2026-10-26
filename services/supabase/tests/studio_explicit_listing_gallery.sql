@@ -9,6 +9,8 @@ create temp table bf(actor uuid,other_actor uuid,org uuid,other_org uuid,listing
 do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();o uuid;oo uuid;l uuid:=gen_random_uuid();ol uuid:=gen_random_uuid();ids uuid[]:='{}';pids uuid[]:='{}';asset uuid;mp uuid:=gen_random_uuid();badmp uuid:=gen_random_uuid();n integer;begin
  insert into auth.users(id,email,is_anonymous)values(a,'explicit-gallery-owner@fixture.invalid',false),(b,'explicit-gallery-other@fixture.invalid',false);
  select org_id into o from memberships where user_id=a;select org_id into oo from memberships where user_id=b;
+ -- Explicit saved-version selection is independent of Free listing admission.
+ update orgs set plan='starter',plan_source='manual' where id in(o,oo);
  insert into listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic Studio home'),(ol,oo,b,'Other synthetic Studio home');
  for n in 1..105 loop asset:=gen_random_uuid();ids:=array_append(ids,asset);
   insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,created_at,bytes,content_type)values(asset,l,'photo','renders','renders/'||o||'/'||l||'/gallery-'||asset||'.jpg',true,'2026-01-01 00:00:00Z'::timestamptz+n*interval'1 second',100,'image/jpeg');
