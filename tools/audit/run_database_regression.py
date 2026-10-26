@@ -141,8 +141,11 @@ def main():
     environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "TZ": "UTC"}
     bins = {name: shutil.which(name) for name in ("initdb", "pg_ctl", "psql", "createdb")}
     require(all(bins.values()), "Use an already installed PostgreSQL distribution")
-    require(shutil.disk_usage("/tmp").free >= 1024**3, "Less than 1 GiB available on the evidence filesystem")
-    out = Path(tempfile.mkdtemp(prefix="rendprop-db-audit-", dir="/tmp"))
+    evidence_parent = Path(os.environ.get("RENDP_AUDIT_EVIDENCE_DIR", "/tmp"))
+    evidence_parent.mkdir(parents=True, exist_ok=True)
+    require(shutil.disk_usage(evidence_parent).free >= 1024**3,
+            "Less than 1 GiB available on the evidence filesystem")
+    out = Path(tempfile.mkdtemp(prefix="rendprop-db-audit-", dir=evidence_parent))
     data, sockets = out / "cluster", out / "socket"
     sockets.mkdir(mode=0o700)
     receipt = {"sourceCommit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
