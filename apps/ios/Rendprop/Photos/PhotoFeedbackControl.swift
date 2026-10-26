@@ -12,6 +12,15 @@ struct PhotoFeedbackControl: View {
     /// and records those outcomes as separate signals. Never written back.
     let listingSelected: Bool
     let exportOpened: Bool
+    /// Presentation only: reveal the inserted reasons for this exact version.
+    var onRevealReasons: (String) -> Void = { _ in }
+    /// When this control already lives in a full feedback sheet, keep its
+    /// reasons in that sheet instead of stacking a second modal on top.
+    var presentsReasonSheet = true
+
+    static func reasonPromptID(for versionID: String) -> String {
+        "photoVersion.feedback.reasons." + versionID
+    }
 
     @ObservedObject private var queue = PhotoFeedbackQueue.shared
     @State private var saved: PhotoFeedbackStore.FeedbackRecord?
@@ -20,6 +29,8 @@ struct PhotoFeedbackControl: View {
     @State private var note = ""
     @State private var saveFailed = false
     @State private var baseline: PhotoFeedback.LocalOutcome?
+    @AccessibilityFocusState private var reasonPromptFocused: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -35,7 +46,7 @@ struct PhotoFeedbackControl: View {
                 VStack(spacing: 8) { verdictButton(.useful); verdictButton(.needsWork) }
             }
             if choosingReasons {
-                reasonPicker
+                if !dynamicTypeSize.isAccessibilitySize || !presentsReasonSheet { reasonPicker }
             } else if let saved, saved.verdict == .needsWork {
                 Text(saved.reasons.map(\.label).joined(separator: " · "))
                     .font(.caption).foregroundStyle(Theme.inkDim)
@@ -62,6 +73,30 @@ struct PhotoFeedbackControl: View {
         .onChange(of: queue.changeCount) { _ in saved = queue.savedFeedback(for: version) }
         .onChange(of: listingSelected) { _ in noticeReviewOutcome() }
         .onChange(of: exportOpened) { _ in noticeReviewOutcome() }
+        .sheet(isPresented: Binding(
+            get: { choosingReasons && dynamicTypeSize.isAccessibilitySize && presentsReasonSheet },
+            set: { if !$0 { choosingReasons = false } }
+        )) {
+            NavigationStack {
+                ScrollView {
+                    reasonPicker
+                        .padding(20)
+                        .frame(maxWidth: 760)
+                        .frame(maxWidth: .infinity)
+                }
+                .accessibilityIdentifier("photoVersion.feedback.reasonSheet.scroll")
+                .navigationTitle("Photo feedback")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Cancel") { choosingReasons = false }
+                            .accessibilityIdentifier("photoVersion.feedback.cancel")
+                    }
+                }
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
     }
 
     private var shownVerdict: PhotoFeedback.Verdict? { choosingReasons ? .needsWork : saved?.verdict }
@@ -98,6 +133,10 @@ struct PhotoFeedbackControl: View {
             Text("What needs work? Choose all that apply.")
                 .font(.caption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
+                .id(Self.reasonPromptID(for: version.id))
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityFocused($reasonPromptFocused)
+                .accessibilityIdentifier("photoVersion.feedback.reasonsPrompt")
             ForEach(PhotoFeedback.Reason.allCases) { reason in
                 reasonRow(reason)
             }
@@ -119,7 +158,19 @@ struct PhotoFeedbackControl: View {
             .disabled(reasons.isEmpty)
             .padding(.top, 6)
             .accessibilityIdentifier("photoVersion.feedback.save")
+            if saveFailed, dynamicTypeSize.isAccessibilitySize, let status {
+                Text(status)
+                    .font(.caption).foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+        .task {
+            await Task.yield()
+            guard choosingReasons, !Task.isCancelled else { return }
+            if !dynamicTypeSize.isAccessibilitySize || !presentsReasonSheet { onRevealReasons(version.id) }
+            reasonPromptFocused = true
+        }
+        .onDisappear { reasonPromptFocused = false }
     }
 
     private func reasonRow(_ reason: PhotoFeedback.Reason) -> some View {

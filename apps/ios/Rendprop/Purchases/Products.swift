@@ -138,7 +138,7 @@ struct PlanAllowances: Hashable, Sendable {
         return lines
     }
 
-    static let videoAllowanceExplanation = "Cloud tour renders process existing footage. Publishing a tour video made on your iPhone doesn't use that allowance. Video quality upgrades are separate AI upscales; they improve resolution and detail but don't turn walking footage into a real drone shot. Each AI video shot animates one photo for about 5 seconds. Make a video combines shots into a Listing or Social video; the count is shots, not finished videos. Aerial intro is Coming soon and is not included at launch."
+    static let videoAllowanceExplanation = "Cloud tour renders process existing footage. Publishing a tour video made on your iPhone doesn't use that allowance. Video quality upgrades are separate AI upscales; they improve resolution and detail but don't turn walking footage into a real drone shot. Each AI video shot animates one photo for about 5 seconds. Make a video combines shots into a Listing or Social video; the count is shots, not finished videos. Aerial openings are optional, separately processed clips. Review the provider terms and allow AI processing before creating one."
 }
 
 /// How often the subscription bills.

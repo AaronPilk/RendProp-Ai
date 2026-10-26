@@ -8,6 +8,7 @@ import AVFoundation
 /// (App Store 3.1). AI tiers are gated by the plan's allowances from `/me` —
 /// a locked tier reads "Team plan", never a dollar amount.
 struct ReviewSubmitView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
 
@@ -294,13 +295,13 @@ struct ReviewSubmitView: View {
             // hand it to Topaz Labs for motion smoothing + upscale. Picking one
             // is the moment to ask; Smooth (on-device) never leaves the phone.
             guard t.usesServerAI else {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { tier = t }
+                withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.9)) { tier = t }
                 Haptics.selection()
                 return
             }
             Task {
                 guard await AIConsent.shared.ensureGranted() else { return }
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { tier = t }
+                withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.9)) { tier = t }
                 Haptics.selection()
             }
         } label: {
@@ -370,9 +371,7 @@ struct ReviewSubmitView: View {
                     .font(.body)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
-                    .background(Theme.accent)
-                    .foregroundStyle(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .modifier(RendpropActionLabelSurface(primary: true))
                 }
                 .buttonStyle(ScalePressStyle())
                 SecondaryButton(title: "Render again with these settings", systemImage: "arrow.clockwise") {

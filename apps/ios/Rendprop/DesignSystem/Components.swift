@@ -1,6 +1,110 @@
 import SwiftUI
 
-// MARK: - Primary button (big, obvious, purple)
+/// Shared adaptive surface. Materials are decorative: hierarchy, borders and
+/// explicit labels remain available with transparency or motion reduced.
+struct RendpropGlassSurface: ViewModifier {
+    var selected = false
+    var capsule = false
+    var interactive = false
+    var tint: Color? = nil
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if capsule { surface(content, in: Capsule()) }
+        else { surface(content, in: RoundedRectangle(cornerRadius: 24, style: .continuous)) }
+    }
+
+    @ViewBuilder private func surface<S: Shape>(_ content: Content, in shape: S) -> some View {
+        Group {
+            if reduceTransparency {
+                content.background { shape.fill(Theme.card).overlay(shape.fill(selected ? Theme.accentSoft : Color.clear)) }
+            } else if #available(iOS 26.0, *) {
+                content.glassEffect(.regular.tint(tint ?? (selected ? Theme.accent.opacity(0.10) : nil)).interactive(interactive), in: shape)
+            } else {
+                content.background { shape.fill(.ultraThinMaterial).overlay(shape.fill(selected ? Theme.accentSoft : Color.clear)) }
+            }
+        }
+        .overlay(shape.stroke(selected ? Theme.accent : Theme.border,
+                              lineWidth: selected || contrast == .increased ? 1.5 : 0.75).allowsHitTesting(false))
+        .shadow(color: Theme.ink.opacity(selected ? 0.08 : 0.035), radius: selected ? 10 : 5, y: 3)
+    }
+}
+
+/// For existing Button, NavigationLink and ShareLink label builders. The
+/// caller keeps its original action, padding, availability and identity.
+struct RendpropActionLabelSurface: ViewModifier {
+    var primary = true
+    var selected = false
+    var primaryFill: Color? = nil
+    var primaryInk: Color? = nil
+    @Environment(\.isEnabled) private var isEnabled
+
+    func body(content: Content) -> some View {
+        content
+            .frame(minHeight: 44)
+            .foregroundStyle(!isEnabled ? Theme.disabledInk : primary ? (primaryInk ?? Color.white) : Theme.accent)
+            .background {
+                if !isEnabled { Capsule().fill(Theme.disabledFill) }
+                else if primary { Capsule().fill(primaryFill ?? Theme.actionFill) }
+            }
+            .modifier(RendpropGlassSurface(selected: selected && isEnabled, capsule: true, interactive: isEnabled,
+                                           tint: primary && isEnabled ? (primaryFill ?? Theme.actionFill) : nil))
+    }
+}
+
+/// Selection pills and the material fallback for primary/secondary actions.
+/// Disabled appearance follows both the caller and inherited environment.
+struct RendpropPillButtonStyle: ButtonStyle {
+    var selected = false
+    var prominent = false
+    var compact = false
+    var horizontalPadding: CGFloat = 18
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, horizontalPadding).padding(.vertical, compact ? 10 : 14)
+            .modifier(RendpropActionLabelSurface(primary: prominent, selected: selected))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
+            .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: configuration.isPressed)
+    }
+}
+
+struct RendpropActionAppearance: ViewModifier {
+    var primary = true
+    var compact = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            if primary {
+                content.buttonStyle(.glassProminent).buttonBorderShape(.capsule)
+                    .controlSize(compact ? .regular : .large).tint(Theme.actionFill)
+            } else {
+                content.buttonStyle(.glass).buttonBorderShape(.capsule)
+                    .controlSize(compact ? .regular : .large).tint(Theme.accent)
+            }
+        } else {
+            content.buttonStyle(RendpropPillButtonStyle(prominent: primary, compact: compact))
+        }
+    }
+}
+
+/// Content stays on an opaque, adaptive surface. Glass is reserved for the
+/// floating actions and navigation rather than placed behind dense forms/media.
+struct RendpropContentSurface: ViewModifier {
+    @Environment(\.colorSchemeContrast) private var contrast
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+        content
+            .background(Theme.card, in: shape)
+            .overlay(shape.strokeBorder(Theme.border, lineWidth: contrast == .increased ? 1.5 : 0.75))
+            .shadow(color: Theme.ink.opacity(0.045), radius: 12, y: 4)
+    }
+}
+
+// MARK: - Primary action
 struct PrimaryButton: View {
     let title: String
     var systemImage: String? = nil
@@ -22,35 +126,22 @@ struct PrimaryButton: View {
             }
             .font(isCompact ? .subheadline : .body)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, isCompact ? 10 : 16)
-            .frame(minHeight: isCompact ? 44 : nil)
-            .background(isDisabled ? Theme.disabledFill : Theme.accent)
-            .foregroundStyle(isDisabled ? Theme.disabledInk : Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(isDisabled ? Theme.border : Color.clear)
-            )
+            .frame(minHeight: isCompact ? 24 : 28)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .buttonStyle(ScalePressStyle())   // same crisp press as every card CTA
+        .modifier(RendpropActionAppearance(compact: isCompact))
         .disabled(isDisabled)
         .accessibilityLabel(Text(title))
     }
 }
 
-// MARK: - Card (adaptive surface: white in light, elevated indigo in dark)
-// The hairline border does the separation work in dark mode; the soft black
-// shadow is intentionally modest (it simply fades out on dark backgrounds).
+// MARK: - Content surface (media keeps its own image/video shape)
 struct CardBackground: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(Theme.spacing)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                    .strokeBorder(Theme.border)
-            )
-            .shadow(color: Color.black.opacity(0.05), radius: 12, x: 0, y: 4)
+            .modifier(RendpropContentSurface())
     }
 }
 
@@ -76,6 +167,7 @@ struct StatusChip: View {
 // MARK: - Persistent upload mini-bar (shown across screens while uploading)
 struct UploadMiniBar: View {
     @EnvironmentObject var uploads: UploadManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if let s = uploads.state, s.status == .uploading || s.status == .paused {
@@ -96,14 +188,9 @@ struct UploadMiniBar: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Theme.border)
-            )
-            .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 3)
+            .modifier(RendpropGlassSurface())
             .padding(.horizontal)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             .accessibilityElement(children: .combine)
         }
     }
@@ -122,7 +209,7 @@ struct AttentionChip: View {
     }
 }
 
-// MARK: - Secondary (soft purple) full-width button, shared by the flow screens
+// MARK: - Secondary action
 struct SecondaryButton: View {
     let title: String
     var systemImage: String? = nil
@@ -147,17 +234,11 @@ struct SecondaryButton: View {
             }
             .font(isCompact ? .subheadline : .rpBody)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, isCompact ? 8 : 13)
-            .frame(minHeight: isCompact ? 44 : nil)
-            .background(isDisabled ? Theme.disabledFill : Theme.accentSoft)
-            .foregroundStyle(isDisabled ? Theme.disabledInk : Theme.accent)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(isDisabled ? Theme.border : Color.clear)
-            )
+            .frame(minHeight: isCompact ? 24 : 26)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .buttonStyle(ScalePressStyle())
+        .modifier(RendpropActionAppearance(primary: false, compact: isCompact))
         .disabled(isDisabled || isLoading)
         .accessibilityLabel(Text(title))
     }

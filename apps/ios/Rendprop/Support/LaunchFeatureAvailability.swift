@@ -4,6 +4,11 @@ import Foundation
 /// Aerial prompting is still being tested; no runtime or simulator flag enables
 /// new generation. Already accepted requests and saved clips remain readable.
 enum LaunchFeatureAvailability {
+    // The generic legacy request stays disabled. New front-of-home work uses
+    // the separate quoted, scoped and explicitly accepted opening protocol.
     static let canGenerateAerial = false
-    static let aerialMessage = "Aerial intro is Coming soon. Saved clips remain in your listing's files."
+    static let canCreateOpening = true
+    static let openingMessage = "Choose an original front exterior photo in Aerial intro. Review its framing and processing terms, then create one opening clip. Use an accepted opening first in a new Listing or Social video."
+    static let legacyAerialHeader = "Review or resume an earlier aerial request here. For a new front-of-home opening, use Aerial intro in the listing toolbox."
+    static let aerialMessage = "This earlier aerial generator no longer starts new requests. Saved clips remain in your listing's files."
 }

@@ -80,7 +80,7 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             } else if purchases.billingContext?.isCeilingMode == true {
-                Text("Apple handles payment and cancellation. Your first published listing is free; a plan adds AI photo edits, reels and more listings.")
+                Text("The 7-day trial lets you create one listing and make limited AI photo edits. Video, aerial openings and website publishing begin after payment. Apple handles billing and cancellation.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
             } else {
@@ -154,7 +154,7 @@ struct PaywallView: View {
         } else if selectedHasIntroOffer, purchases.billingContext?.isCeilingMode == true {
             VStack(alignment: .leading, spacing: 10) {
                 Text("7-day free trial").font(.rpHeadline).foregroundStyle(Theme.ink)
-                Text("Confirm your subscription with Apple to start the trial. Your workspace's plan and usage limits apply to AI tools and publishing. Reaching a usage limit does not bring forward Apple's charge date.")
+                Text("Confirm with Apple to start seven days to create one listing and use a limited number of AI photo edits. Video and aerial generation are not included until the first paid renewal. The selected plan's full monthly limits begin after the trial. Apple shows the renewal price and date before you confirm.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             }.frame(maxWidth: .infinity, alignment: .leading).card()

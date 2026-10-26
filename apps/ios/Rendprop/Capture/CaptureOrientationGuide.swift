@@ -73,16 +73,29 @@ struct DeliveryFramingPreview: View {
     let image: UIImage
     let aspect: Double
     var isGeneratedFrame = false
+    var photoMotion = false
+    var photoMotionScale: Double = 1.02
+    var photoMotionDirection = "push_in"
+    @State private var endFrame = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             GeometryReader { geometry in
+                if let frame = photoMotion ? PhotoMotionPreviewFrame.frame(scale: photoMotionScale, direction: photoMotionDirection, end: endFrame) : PhotoMotionPreviewFrame(scale: 1, translationX: 0) {
                 Image(uiImage: image).resizable().aspectRatio(contentMode: .fill)
-                    .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .scaleEffect(frame.scale).offset(x: frame.translationX * geometry.size.width).clipped()
+                }
             }
             .aspectRatio(CGFloat(aspect), contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .accessibilityLabel(isGeneratedFrame ? "Actual generated clip frame in the final video canvas" : "Selected photo in the final video canvas")
-            Text(isGeneratedFrame ? "Final framing from this generated clip. Review the complete video before publishing." : "Framing preview from your selected photo. AI motion may change the final crop; your saved photo stays unchanged.")
+            if photoMotion {
+                HStack(spacing: 10) {
+                    Button("Start frame") { endFrame = false }.buttonStyle(RendpropPillButtonStyle(selected: !endFrame, compact: true))
+                    Button("End frame") { endFrame = true }.buttonStyle(RendpropPillButtonStyle(selected: endFrame, compact: true))
+                }
+            }
+            Text(photoMotion ? PhotoMotionPreviewFrame.caption(direction: photoMotionDirection, percent: Int(((photoMotionScale - 1) * 100).rounded())) + " The saved photo stays unchanged." : isGeneratedFrame ? "Final framing from this generated clip. Review the complete video before publishing." : "Framing preview from your selected photo. AI motion may change the final crop; your saved photo stays unchanged.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

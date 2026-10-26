@@ -185,7 +185,6 @@ struct ListingFieldsForm<Middle: View>: View {
     var locationAction: (() -> Void)? = nil
     var locating = false
     var expandPropertyDetails = false
-    @ViewBuilder var middle: () -> Middle
 
     /// Step 2's buttons are gated on Step 1 being filled in. When someone taps
     /// a blocked button we move the keyboard TO the field that is blocking it
@@ -197,6 +196,8 @@ struct ListingFieldsForm<Middle: View>: View {
     /// keeps the other callers (`ListingEditSheet`, `AddVideoFlowView`) working
     /// without one.
     var addressFocus: FocusState<Bool>.Binding? = nil
+    var automaticResearchEnabled = false
+    @ViewBuilder var middle: () -> Middle
     @FocusState private var ownAddressFocus: Bool
     @FocusState private var unitFocused: Bool
     @State private var propertyDetailsExpanded = false
@@ -238,7 +239,8 @@ struct ListingFieldsForm<Middle: View>: View {
             middle()
             if space.showsPropertyDetails {
                 propertyDetailsCard
-                NearbyPlacesEditor(address: form.address, value: Binding(
+                NearbyPlacesEditor(address: form.address, isAddressBeingEdited: addressFocused.wrappedValue,
+                    automaticResearchEnabled: automaticResearchEnabled, value: Binding(
                     get: { form.details["nearbyAttractions"] ?? "" },
                     set: { form.details["nearbyAttractions"] = $0 }))
             } else {
@@ -302,10 +304,7 @@ struct ListingFieldsForm<Middle: View>: View {
                                 in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 Button("Use") { applyPastedLink() }
                     .font(.rpBody.weight(.semibold))
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, 16).padding(.vertical, 14)
-                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .buttonStyle(ScalePressStyle())
+                    .modifier(RendpropActionAppearance(compact: true))
                     .disabled(pastedLink.trimmingCharacters(in: .whitespaces).isEmpty)
                     .accessibilityIdentifier("newListing.useLink")
             }
@@ -687,7 +686,7 @@ struct NewListingView: View {
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     Button("Use these details in this workspace") {
                         guard createdListing == nil, photosListing == nil, pendingAsset == nil,
-                              !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else { return }
+                              !Config.useLiveBackend || Config.isOfflineAccountFixture || WorkspaceContext.selectedOrgID != nil else { return }
                         bindFormContext()
                     }.buttonStyle(.bordered)
                         .disabled(createdListing != nil || photosListing != nil || pendingAsset != nil)
@@ -696,7 +695,8 @@ struct NewListingView: View {
             ListingFieldsForm(form: $form,
                               locationAction: { useCurrentLocation() },
                               locating: locating,
-                              addressFocus: $addressFocused) {
+                              addressFocus: $addressFocused,
+                              automaticResearchEnabled: formContextIsCurrent) {
                 videoCard
             }
             .padding()
@@ -728,7 +728,7 @@ struct NewListingView: View {
     private var formContextIsCurrent: Bool {
         formOwnerID == AuthStore.shared.userID && formSessionRevision == AuthStore.shared.syncSessionRevision
             && formWorkspaceID == WorkspaceContext.selectedOrgID
-            && (!Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil)
+            && (!Config.useLiveBackend || Config.isOfflineAccountFixture || WorkspaceContext.selectedOrgID != nil)
     }
     private func bindFormContext() {
         formOwnerID = AuthStore.shared.userID
@@ -1154,6 +1154,9 @@ struct VideoSourcePicker: View {
 struct ListingEditSheet: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var researchAuth = AuthStore.shared
+    @ObservedObject private var researchWorkspace = WorkspaceStore.shared
+    @State private var researchContext: String
 
     let listing: Listing
     @State private var form: ListingFormData
@@ -1172,6 +1175,7 @@ struct ListingEditSheet: View {
         self.ownerID = AuthStore.shared.userID
         self.sessionRevision = AuthStore.shared.syncSessionRevision
         self.workspaceID = WorkspaceContext.selectedOrgID
+        self._researchContext = State(initialValue: NearbyPlacesSearch.currentContext)
     }
 
     private var canSave: Bool { form.isValid && form != original }
@@ -1179,7 +1183,12 @@ struct ListingEditSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                ListingFieldsForm(form: $form, expandPropertyDetails: true) {
+                ListingFieldsForm(form: $form, expandPropertyDetails: true,
+                    automaticResearchEnabled: !listing.isSample && researchContext == NearbyPlacesSearch.currentContext
+                        && ownerID == researchAuth.userID
+                        && sessionRevision == researchAuth.syncSessionRevision
+                        && workspaceID == WorkspaceContext.selectedOrgID
+                        && (listing.serverOrgID == nil || listing.serverOrgID == workspaceID)) {
                     EmptyView()
                 }
                 .padding()
@@ -1353,12 +1362,22 @@ final class OneShotLocation: NSObject, ObservableObject, CLLocationManagerDelega
 struct DetailFieldsEditor: View {
     let fields: [DetailField]
     @Binding var values: [String: String]
+    @State private var choiceField: DetailField?
+
+    private var currentChoiceField: DetailField? {
+        guard let choiceField,
+              fields.contains(where: { $0.key == choiceField.key && $0.label == choiceField.label && $0.type == choiceField.type }) else { return nil }
+        return choiceField
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             ForEach(fields) { field in
                 fieldRow(field)
             }
+        }
+        .sheet(item: Binding(get: { currentChoiceField }, set: { choiceField = $0 })) { field in
+            choiceSheet(field)
         }
     }
 
@@ -1377,26 +1396,15 @@ struct DetailFieldsEditor: View {
                 .pickerStyle(.segmented)
             }
 
-        case .singleSelect(let options):
+        case .singleSelect, .multiSelect:
             labeled(field.label) {
-                Menu {
-                    Button("None") { values[field.key] = "" }
-                    ForEach(options, id: \.self) { opt in
-                        Button(opt) { values[field.key] = opt }
-                    }
-                } label: { selectLabel(values[field.key] ?? "") }
-            }
-
-        case .multiSelect(let options):
-            labeled(field.label) {
-                Menu {
-                    ForEach(options, id: \.self) { opt in
-                        Button { toggleMulti(field.key, opt) } label: {
-                            if multiContains(field.key, opt) { Label(opt, systemImage: "checkmark") }
-                            else { Text(opt) }
-                        }
-                    }
-                } label: { selectLabel(values[field.key] ?? "") }
+                Button { choiceField = field } label: {
+                    selectLabel(values[field.key] ?? "")
+                }
+                .modifier(RendpropActionAppearance(primary: false))
+                .accessibilityLabel(field.label)
+                .accessibilityValue((values[field.key] ?? "").isEmpty ? "Not selected" : field.display(values[field.key] ?? ""))
+                .accessibilityIdentifier("listing.details." + field.key + ".choose")
             }
 
         case .multilineText:
@@ -1427,15 +1435,78 @@ struct DetailFieldsEditor: View {
     }
 
     private func selectLabel(_ value: String) -> some View {
-        HStack {
-            Text(value.isEmpty ? "Select" : value)
-                .foregroundStyle(value.isEmpty ? Theme.inkDim : Theme.ink)
-                .lineLimit(1)
-            Spacer()
-            Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(Theme.inkDim)
+        HStack(spacing: 12) {
+            Text(value.isEmpty ? "Choose" : value)
+                .font(.rpBody)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                .accessibilityHidden(true)
         }
-        .padding(12)
-        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func choiceSheet(_ field: DetailField) -> some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    switch field.type {
+                    case .singleSelect(let options):
+                        choiceOption("None", selected: (values[field.key] ?? "").isEmpty) { chooseSingle(field, nil) }
+                        ForEach(options, id: \.self) { option in
+                            choiceOption(option, selected: values[field.key] == option) { chooseSingle(field, option) }
+                        }
+                    case .multiSelect(let options):
+                        ForEach(options, id: \.self) { option in
+                            choiceOption(option, selected: multiContains(field.key, option)) { chooseMultiple(field, option) }
+                        }
+                    default:
+                        EmptyView()
+                    }
+                }
+                .padding()
+            }
+            .background(Theme.bg)
+            .navigationTitle(field.label)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { choiceField = nil }
+                }
+            }
+        }
+    }
+
+    private func choiceOption(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Text(title).font(.rpBody)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(RendpropPillButtonStyle(selected: selected))
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func chooseSingle(_ field: DetailField, _ option: String?) {
+        guard let current = currentChoiceField, current.key == field.key,
+              current.label == field.label, current.type == field.type, case .singleSelect(let options) = field.type,
+              option.map { options.contains($0) } ?? true else { return }
+        values[field.key] = option ?? ""
+    }
+
+    private func chooseMultiple(_ field: DetailField, _ option: String) {
+        guard let current = currentChoiceField, current.key == field.key,
+              current.label == field.label, current.type == field.type, case .multiSelect(let options) = field.type,
+              options.contains(option) else { return }
+        toggleMulti(field.key, option)
     }
 
     private func strBinding(_ key: String) -> Binding<String> {
@@ -1561,8 +1632,9 @@ private struct NearbyPlaceChoice: Identifiable {
     var line: String { "\(name) · approx. \(String(format: "%.1f", metres / 1609.344)) mi" }
 }
 
-/// Every search is deliberate. Neither geocoding nor a delayed Maps response
-/// can write into a different address/account/workspace's form.
+/// Automatic searches create draft suggestions only. The existing explicit
+/// review/apply action is the only path that writes a nearby-place note.
+/// A bounded session cache prevents rerenders/reopens from repeating a lookup.
 @MainActor private final class NearbyPlacesSearch: ObservableObject {
     @Published var choices: [NearbyPlaceChoice] = []
     @Published var locationLabel = ""
@@ -1572,6 +1644,16 @@ private struct NearbyPlaceChoice: Identifiable {
     private let geocoder = CLGeocoder()
     private var search: MKLocalSearch?
     private var context: String?
+    private struct Snapshot {
+        let choices: [NearbyPlaceChoice]
+        let locationLabel: String
+        let error: String?
+    }
+    private static var cacheContext: String?
+    private static var automaticCache: [String: Snapshot] = [:]
+    // At capacity, automatic research pauses; explicit Refresh remains usable.
+    // Never evict an attempted address and silently repeat its network request.
+    private static let automaticCacheLimit = 32
     static var currentContext: String {
         "\(AuthStore.shared.userID ?? "local")|\(AuthStore.shared.syncSessionRevision)|\(WorkspaceContext.selectedOrgID?.uuidString ?? "local")"
     }
@@ -1580,19 +1662,56 @@ private struct NearbyPlaceChoice: Identifiable {
         generation = UUID(); geocoder.cancelGeocode(); search?.cancel(); search = nil
         isLoading = false; choices = []; locationLabel = ""; context = nil; error = nil
     }
-    func find(address: String) async {
+    static func automaticAddressKey(_ address: String) -> String? {
+        let parts = address.split(separator: ",", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard address.utf8.count <= 500, parts.count >= 2,
+              let street = parts.first, street.contains(where: \.isNumber), street.contains(where: \.isLetter),
+              parts.dropFirst().contains(where: { $0.contains(where: \.isLetter) }),
+              !address.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { return nil }
+        return address.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
+    }
+    func findAutomatically(address: String, isEditing: Bool, isFormCurrent: Bool) async {
+        guard isFormCurrent, !isEditing, Self.automaticAddressKey(address) != nil else { cancel(); return }
+        let token = generation, opened = Self.currentContext
+        do { try await Task.sleep(nanoseconds: 400_000_000) } catch { return }
+        guard !Task.isCancelled, token == generation, opened == Self.currentContext else { return }
+        await find(address: address, automatic: true)
+    }
+    private func remember(_ key: String?, opened: String) {
+        guard let key, opened == Self.currentContext, Self.cacheContext == opened,
+              Self.automaticCache[key] != nil || Self.automaticCache.count < Self.automaticCacheLimit else { return }
+        Self.automaticCache[key] = Snapshot(choices: choices, locationLabel: locationLabel, error: error)
+    }
+    func find(address: String, automatic: Bool = false) async {
         cancel()
-        let opened = Self.currentContext
+        let opened = Self.currentContext, key = Self.automaticAddressKey(address)
+        if Self.cacheContext != opened { Self.automaticCache = [:]; Self.cacheContext = opened }
         context = opened
+        if automatic {
+            guard let key else { return }
+            if let saved = Self.automaticCache[key] {
+                choices = saved.choices; locationLabel = saved.locationLabel; error = saved.error
+                return
+            }
+            guard Self.automaticCache.count < Self.automaticCacheLimit else { return }
+            // Reserve before the first await. An interrupted attempt needs an
+            // explicit Refresh rather than an invisible duplicate on reopen.
+            Self.automaticCache[key] = Snapshot(choices: [], locationLabel: "",
+                error: "Research paused. Refresh nearby places to continue.")
+        }
         let token = generation
         isLoading = true
         defer { if generation == token { isLoading = false } }
         do {
             let matches = try await geocoder.geocodeAddressString(address)
-            guard generation == token, opened == Self.currentContext else { return }
+            guard !Task.isCancelled, generation == token, opened == Self.currentContext else { return }
             guard matches.count == 1, let match = matches.first, let origin = match.location,
-                  CLLocationCoordinate2DIsValid(origin.coordinate) else {
+                  CLLocationCoordinate2DIsValid(origin.coordinate),
+                  !automatic || (match.subThoroughfare?.isEmpty == false && match.thoroughfare?.isEmpty == false
+                    && match.locality?.isEmpty == false) else {
                 error = "Couldn't identify one property. Enter a complete street address and try again."
+                remember(key, opened: opened)
                 return
             }
             locationLabel = [match.name, match.locality, match.administrativeArea, match.postalCode]
@@ -1601,7 +1720,7 @@ private struct NearbyPlaceChoice: Identifiable {
             request.pointOfInterestFilter = MKPointOfInterestFilter(including: [.park, .museum, .cafe, .restaurant, .store, .publicTransport])
             let next = MKLocalSearch(request: request); search = next
             let response = try await next.start()
-            guard generation == token, opened == Self.currentContext else { return }
+            guard !Task.isCancelled, generation == token, opened == Self.currentContext else { return }
             var seen = Set<String>()
             choices = response.mapItems.compactMap { item -> NearbyPlaceChoice? in
                 guard let raw = item.name, CLLocationCoordinate2DIsValid(item.placemark.coordinate) else { return nil }
@@ -1614,35 +1733,47 @@ private struct NearbyPlaceChoice: Identifiable {
                 return NearbyPlaceChoice(id: key, name: name, metres: metres)
             }.sorted { $0.metres < $1.metres }.prefix(20).map { $0 }
             if choices.isEmpty { error = "No nearby places came back. You can enter a reviewed note yourself." }
+            remember(key, opened: opened)
         } catch {
-            guard generation == token, opened == Self.currentContext else { return }
+            guard !Task.isCancelled, generation == token, opened == Self.currentContext else { return }
             self.error = "Apple Maps couldn't complete the search. Try again or enter a reviewed note yourself."
+            remember(key, opened: opened)
         }
     }
 }
 
 private struct NearbyPlacesEditor: View {
     let address: String
+    let isAddressBeingEdited: Bool
+    let automaticResearchEnabled: Bool
     @Binding var value: String
     @StateObject private var lookup = NearbyPlacesSearch()
     @ObservedObject private var auth = AuthStore.shared
     @State private var selected = Set<String>()
     @State private var verifiedLocation = false
     @State private var changedAddress = false
+    @State private var workspaceEpoch = 0
+    private var researchIdentity: String {
+        "\(NearbyPlacesSearch.currentContext)|\(workspaceEpoch)|\(automaticResearchEnabled)|\(isAddressBeingEdited)|\(address)"
+    }
+    private var researchSummary: String {
+        lookup.isLoading ? "Finding…" : lookup.choices.isEmpty ? "Automatic draft research" : "\(lookup.choices.count) places · Review"
+    }
     private var canApply: Bool {
         verifiedLocation && !selected.isEmpty && selected.count <= 3 && lookup.hasCurrentContext
     }
     var body: some View {
-        DisclosureGroup("Nearby places (optional)") {
+        DisclosureGroup {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Search Apple Maps, check the property location, then choose up to 3 places to include. Distances are approximate straight-line distances, not driving or walking times.")
+                Text("Suggestions load from Apple Maps when the address is ready. Check the location and choose up to 3 places. Distances are approximate, not travel times.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 Button {
                     selected = []; verifiedLocation = false
                     Task { await lookup.find(address: address.trimmingCharacters(in: .whitespacesAndNewlines)) }
                 } label: {
-                    Label(lookup.isLoading ? "Finding places…" : "Find nearby places", systemImage: "map")
-                }.disabled(lookup.isLoading || address.trimmingCharacters(in: .whitespacesAndNewlines).count < 6)
+                    Label(lookup.isLoading ? "Finding places…" : "Refresh nearby places", systemImage: "arrow.clockwise")
+                }.modifier(RendpropActionAppearance(primary: false, compact: true))
+                    .disabled(lookup.isLoading || address.trimmingCharacters(in: .whitespacesAndNewlines).count < 6)
                     .accessibilityIdentifier("listing.nearby.search")
                 if !lookup.locationLabel.isEmpty {
                     Text("Search location: \(lookup.locationLabel)").font(.rpCaption)
@@ -1668,7 +1799,8 @@ private struct NearbyPlacesEditor: View {
                         value = String(("Apple Maps: " + lines.joined(separator: "; ")).prefix(500))
                         changedAddress = false
                         lookup.cancel(); selected = []; verifiedLocation = false
-                    }.disabled(!canApply).accessibilityIdentifier("listing.nearby.apply")
+                    }.modifier(RendpropActionAppearance(primary: true, compact: true))
+                        .disabled(!canApply).accessibilityIdentifier("listing.nearby.apply")
                 }
                 if !lookup.choices.isEmpty && !lookup.hasCurrentContext {
                     Text("The account or workspace changed. Find the places again before adding them.")
@@ -1686,8 +1818,22 @@ private struct NearbyPlacesEditor: View {
                     .onChange(of: value) { text in if text.count > 500 { value = String(text.prefix(500)) } }
                 if !value.isEmpty { Button("Remove nearby-place note", role: .destructive) { value = ""; changedAddress = false } }
             }.padding(.top, 12)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Nearby places", systemImage: "map")
+                Text(researchSummary).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .accessibilityIdentifier("listing.nearby.researchStatus")
+            }.fixedSize(horizontal: false, vertical: true)
         }.font(.rpHeadline).foregroundStyle(Theme.ink).card()
+            .task(id: researchIdentity) {
+                selected = []; verifiedLocation = false
+                await lookup.findAutomatically(address: address, isEditing: isAddressBeingEdited,
+                    isFormCurrent: automaticResearchEnabled)
+            }
             .onChange(of: address) { _ in lookup.cancel(); selected = []; verifiedLocation = false; changedAddress = true }
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+                lookup.cancel(); selected = []; verifiedLocation = false; workspaceEpoch += 1
+            }
             .onDisappear { lookup.cancel() }
     }
 }

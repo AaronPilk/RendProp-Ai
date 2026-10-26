@@ -6,6 +6,7 @@ import UserNotifications
 /// No View state is read by work that continues after the screen is dismissed.
 @MainActor
 final class PhotoEditService {
+    private static var recoveryInProgress = false
     private let model: AppModel
     private let listing: Listing
     private let space: SpaceType
@@ -31,11 +32,13 @@ final class PhotoEditService {
     }
     private func requireUnsentWork() throws {
         try requireIdentity()
-        guard consentIsCurrent else { throw CancellationError() }
+        guard consentIsCurrent, !Self.recoveryInProgress,
+              PhotoWorkQueue.shared.permitsUnsentDispatch else { throw CancellationError() }
     }
 
     func edit(_ p: EnhancedPhoto, edit: String, style: String?, prompt: String?, batch: Bool,
-              stagingReferenceID: String? = nil, progress: ((PhotoWorkQueue.Phase) -> Void)? = nil) async throws {
+              stagingReferenceID: String? = nil, declutterApproval: DeclutterGenerationApproval? = nil,
+              progress: ((PhotoWorkQueue.Phase) -> Void)? = nil) async throws {
         try requireUnsentWork()
         progress?(.preparing)
         let api = model.api
@@ -63,6 +66,7 @@ final class PhotoEditService {
             throw AIImagePrep.error("Couldn't read that photo.")
         }
         try requireUnsentWork()
+        if let declutterApproval { try await requireDeclutterApproval(declutterApproval, source: sourceVersion, prepared: b64, edit: edit) }
         let wasMain = model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath
             == FileStore.relativePath(for: p.enhancedURL)
         var serverID: UUID?
@@ -88,7 +92,7 @@ final class PhotoEditService {
         if let owner, let workspace {
             pending = try PhotoPendingEdit.begin(request,
                 identity: .init(actor: owner, library: workspace, listing: listing.id, sourceVersion: sourceVersion.id),
-                directory: directory)
+                directory: directory, parentVersion: parent.id, stagingReferenceID: stagingReferenceID)
             request = pending!.request
         } else {
             guard listing.isSample else { throw CloudSyncError.identityChanged }
@@ -100,6 +104,8 @@ final class PhotoEditService {
         if let stagingReferenceID {
             _ = try PhotoVersionHistory.stagingReference(id: stagingReferenceID, directory: directory)
         }
+        if let declutterApproval { try await requireDeclutterApproval(declutterApproval, source: sourceVersion, prepared: b64, edit: edit) }
+        try requireUnsentWork()
         progress?(.generatingAndChecking)
         let result: AIPhotoEditResult
         do { result = try await api.aiPhotoEdit(request) }
@@ -114,13 +120,92 @@ final class PhotoEditService {
                let pending { try? PhotoPendingEdit.finish(pending) }
             throw error
         }
-        // This request was already sent. Keep its returned edit under the same
-        // account/workspace; consent revocation fences the next unsent photo.
+        // Sent work may finish after consent is withdrawn. Preserve its exact
+        // account/library and retain the paid result before any next edit.
+        try await save(result, request: request, pending: pending, parent: parent, source: sourceVersion,
+                       stagingReferenceID: stagingReferenceID, batch: batch, progress: progress,
+                       coverSource: wasMain ? p.enhancedURL : nil)
+    }
+
+    private func requireDeclutterApproval(_ approval: DeclutterGenerationApproval, source: PhotoVersionHistory.Version,
+                                          prepared: String, edit: String) async throws {
+        try requireUnsentWork()
+        guard edit == "declutter", source.isRetainedOriginalSource, let owner, let workspace,
+              let bytes = Data(base64Encoded: prepared) else { throw PhotoVersionHistory.Failure.reviewRequired }
+        let url = EnhancedPhoto.directory(for: listing.id).appendingPathComponent(source.imageFile)
+        let original = try await Task.detached(priority: .userInitiated) {
+            let info = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+            guard info.isRegularFile == true, info.isSymbolicLink != true, let count = info.fileSize,
+                  count > 0, count <= 80_000_000 else { throw PhotoVersionHistory.Failure.missingImage }
+            return DeclutterGenerationApproval.sha256(try Data(contentsOf: url, options: .mappedIfSafe))
+        }.value
+        try requireUnsentWork()
+        guard approval.permits(actor: owner, library: workspace, listing: listing.id, sourceVersionID: source.id,
+            originalSHA256: original, preparedSHA256: DeclutterGenerationApproval.sha256(bytes),
+            consentGranted: AIConsent.shared.isGranted, consentRevision: AIConsent.shared.revocationRevision) else {
+            throw PhotoVersionHistory.Failure.reviewRequired
+        }
+    }
+
+    /// A status GET cannot create an operation, even when the old journal was
+    /// written before the original POST reached the service.
+    func recover(_ selected: PhotoPendingEdit.Saved) async throws {
+        try requireIdentity()
+        guard !Self.recoveryInProgress, PhotoWorkQueue.shared.job?.running != true else { throw PhotoPendingEdit.Failure.unavailable }
+        Self.recoveryInProgress = true
+        defer { Self.recoveryInProgress = false }
+        guard let owner, let workspace, selected.identity.actor == owner,
+              selected.identity.library == workspace, selected.identity.listing == listing.id,
+              let api = model.api as? PhotoSavedEditAPI else { throw PhotoPendingEdit.Failure.unavailable }
+        let directory = EnhancedPhoto.directory(for: listing.id)
+        let saved = try PhotoPendingEdit.read(selected.url, directory: directory, expected: selected.identity)
+        guard saved.request == selected.request else { throw PhotoPendingEdit.Failure.unavailable }
+        let index = try PhotoVersionHistory.load(directory: directory)
+        guard let source = index.versions[saved.identity.sourceVersion],
+              !index.hiddenFamilies.contains(source.familyID) else { throw PhotoVersionHistory.Failure.changedVersion }
+        // No prepare, consent grant, begin, new UUID, upload or compliance lookup.
+        let result = try await api.savedPhotoEdit(requestKey: saved.request.idempotencyKey!,
+                                                listingServerID: saved.request.listingServerID)
+        try requireIdentity()
+        // A completed local save can outlive the journal's final removal.
+        if try retainedVersion(result, request: saved.request, source: source, directory: directory) != nil {
+            try PhotoPendingEdit.finish(saved)
+            return
+        }
+        let context = try PhotoVersionHistory.savedEditContext(sourceID: source.id,
+            parentID: saved.parentVersion, directory: directory)
+        try await save(result, request: saved.request, pending: saved, parent: context.parent, source: context.source,
+                       stagingReferenceID: saved.stagingReferenceID, batch: false, progress: nil, coverSource: nil)
+    }
+
+    private func retainedVersion(_ result: AIPhotoEditResult, request: AIPhotoEditRequest,
+                                 source: PhotoVersionHistory.Version, directory: URL) throws -> PhotoVersionHistory.Version? {
+        guard let provenance = result.provenanceID else { return nil }
+        let index = try PhotoVersionHistory.load(directory: directory)
+        let matches = index.versions.values.filter { $0.provenanceID == provenance }
+        guard matches.count <= 1 else { throw PhotoPendingEdit.Failure.unavailable }
+        guard let existing = matches.first else { return nil }
+        guard existing.familyID == source.familyID, existing.sourceID == source.id,
+              existing.edit == request.edit, existing.style == request.style,
+              existing.disclosure == result.disclosure, existing.originalAssetID == request.originalAssetID,
+              existing.serverListingID == request.listingServerID?.uuidString,
+              existing.provenanceRecorded == result.provenanceRecorded,
+              let bytes = Data(base64Encoded: result.imageBase64),
+              try Data(contentsOf: directory.appendingPathComponent(existing.imageFile)) == bytes else {
+            throw PhotoPendingEdit.Failure.unavailable
+        }
+        return existing
+    }
+
+    private func save(_ result: AIPhotoEditResult, request: AIPhotoEditRequest, pending: PhotoPendingEdit.Saved?,
+                      parent: PhotoVersionHistory.Version, source: PhotoVersionHistory.Version,
+                      stagingReferenceID: String?, batch: Bool, progress: ((PhotoWorkQueue.Phase) -> Void)?,
+                      coverSource: URL?) async throws {
         try requireIdentity()
         progress?(.checkingReturnedImage)
         let raw = try await Task.detached(priority: .userInitiated) {
             guard let raw = Data(base64Encoded: result.imageBase64), UIImage(data: raw) != nil else {
-                throw AIImagePrep.error("The AI didn't return an image. Try again.")
+                throw AIImagePrep.error("The saved edit could not be read. Your request is retained; check it again later.")
             }
             return raw
         }.value
@@ -131,26 +216,30 @@ final class PhotoEditService {
         else { throw AIImagePrep.error("The returned image format could not be saved. Your paid request is retained.") }
         try requireIdentity()
         progress?(.saving)
-        let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000)) + "-" + UUID().uuidString
-        let version = try PhotoVersionHistory.saveEdit(jpeg: raw, id: id, parentID: parent.id,
-            sourceID: sourceVersion.id, edit: edit, style: style, disclosure: result.disclosure,
-            provenanceID: result.provenanceID, provenanceRecorded: result.provenanceRecorded,
-            directory: directory, originalAssetID: request.originalAssetID, serverListingID: request.listingServerID?.uuidString,
-            stagingReferenceID: stagingReferenceID, stagingBrief: edit == "stage" ? prompt : nil,
-            imageExtension: imageExtension)
+        let directory = EnhancedPhoto.directory(for: listing.id)
+        let version: PhotoVersionHistory.Version
+        if let retained = try retainedVersion(result, request: request, source: source, directory: directory) {
+            version = retained
+        } else {
+            let id = pending?.outputID ?? (String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000)) + "-" + UUID().uuidString)
+            version = try PhotoVersionHistory.saveEdit(jpeg: raw, id: id, parentID: parent.id,
+                sourceID: source.id, edit: request.edit, style: request.style, disclosure: result.disclosure,
+                provenanceID: result.provenanceID, provenanceRecorded: result.provenanceRecorded,
+                directory: directory, originalAssetID: request.originalAssetID,
+                serverListingID: request.listingServerID?.uuidString, stagingReferenceID: stagingReferenceID,
+                stagingBrief: request.edit == "stage" ? request.prompt : nil, imageExtension: imageExtension)
+            NotificationCenter.default.post(name: Notification.Name("rendprop.photoEditSaved"), object: nil,
+                                            userInfo: ["directory": directory, "versionID": version.id])
+        }
         let output = directory.appendingPathComponent(version.imageFile)
-        // Observed by optional photo feedback (Notification.Name.rendpropPhotoEditSaved)
-        // to note an automatic listing selection; it cannot change this edit.
-        NotificationCenter.default.post(name: Notification.Name("rendprop.photoEditSaved"), object: nil,
-                                        userInfo: ["directory": directory, "versionID": version.id])
         if let pending { try? PhotoPendingEdit.finish(pending) }
-        if wasMain && version.canAutomaticallySelectForListing
-            && model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath == FileStore.relativePath(for: p.enhancedURL) {
+        if let coverSource, version.canAutomaticallySelectForListing,
+           model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath == FileStore.relativePath(for: coverSource) {
             model.setMainPhoto(FileStore.relativePath(for: output), for: listing.id)
         }
-        Analytics.track("ai_photo_edit", ["task": edit, "ok": "true", "batch": batch ? "true" : "false"])
+        Analytics.track("ai_photo_edit", ["task": request.edit, "ok": "true", "batch": batch ? "true" : "false"])
         if !listing.isSample { FirstProjectGuide.recordAIPhotoEditCompleted() }
-        if let provenanceID = result.provenanceID, let serverID {
+        if let provenanceID = result.provenanceID, let serverID = request.listingServerID {
             try requireIdentity()
             await model.attachAlteredPhotoForDisclosure(provenanceID: provenanceID,
                                                        listingServerID: serverID, fileURL: output)
@@ -159,8 +248,11 @@ final class PhotoEditService {
     }
 
     func start(title: String, photos: [EnhancedPhoto], edit: String, style: String?, prompt: String?,
-               stagingReferenceID: String? = nil) -> Bool {
-        guard consentIsCurrent else { return false }
+               stagingReferenceID: String? = nil, declutterApprovals: [String: DeclutterGenerationApproval]? = nil) -> Bool {
+        guard consentIsCurrent, !Self.recoveryInProgress else { return false }
+        if let declutterApprovals {
+            guard edit == "declutter", photos.allSatisfy({ declutterApprovals[$0.id] != nil }) else { return false }
+        }
         var background: UIBackgroundTaskIdentifier = .invalid
         let queue = PhotoWorkQueue.shared
         let byID = Dictionary(photos.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -170,7 +262,8 @@ final class PhotoEditService {
                 let failure = AIFailure(error)
                 // A busy or held saved review keeps its exact paid request.
                 // Stop unsent photos instead of buying more pending edits.
-                let savedReview = ["photo_quality_pending", "photo_quality_hold", "photo_quality_closed"].contains((error as? APIError)?.code ?? "")
+                let savedReview = AIFailure.requiresSavedPhotoCheck(error)
+                    || (error as? APIError)?.code == "photo_quality_closed"
                 // A refused or unreachable generation service fails every photo
                 // the same way; stop instead of uploading N more to fail N times.
                 return savedReview || failure.isQuota || failure.isUnauthorized || failure.isServiceUnavailable || failure.isTrialCapacityUnavailable
@@ -179,7 +272,7 @@ final class PhotoEditService {
                 guard let photo = byID[id] else { throw PhotoVersionHistory.Failure.missingImage }
                 guard let jobID = queue.visibleJob?.id else { throw CloudSyncError.identityChanged }
                 try await self.edit(photo, edit: edit, style: style, prompt: prompt, batch: photos.count > 1,
-                                    stagingReferenceID: stagingReferenceID, progress: { phase in
+                                    stagingReferenceID: stagingReferenceID, declutterApproval: declutterApprovals?[id], progress: { phase in
                     queue.report(phase, jobID: jobID, photoID: id)
                 })
             }, completion: { result in

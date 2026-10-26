@@ -38,6 +38,8 @@ struct UploadTicket: Codable, Sendable {
     var uploaded: Bool? = nil
     var replayed: Bool? = nil
     var confirmedParts: [ConfirmedPart]? = nil
+    /// Existing server declaration; absent in legacy journals. Never infer it.
+    var contentType: String? = nil
     struct ConfirmedPart: Codable, Sendable, Equatable {
         let number: Int
         let etag: String
@@ -194,6 +196,25 @@ struct AIEditSuggestion: Codable, Sendable {
     let confidence: Double?
 }
 
+/// Separately funded analysis; this capability has no image-generation method.
+struct PhotoDeclutterAssessmentRequest: Sendable {
+    let imageBase64: String
+    let sourceSHA256: String
+    let requestID: UUID
+    let actor: String
+    let library: UUID
+    let listingServerID: UUID?
+    let consentRevision: UInt64
+    let spaceType: String
+}
+struct PhotoDeclutterAssessmentResult: Sendable {
+    let assessment: AIPhotoDeclutterAssessment
+    let costBoundCents: Double
+}
+protocol PhotoDeclutterAssessmentAPI: Sendable {
+    @MainActor func assessDeclutter(_ request: PhotoDeclutterAssessmentRequest) async throws -> PhotoDeclutterAssessmentResult
+}
+
 /// One AI-altered or AI-generated asset in the org's provenance log
 /// (`GET /me/compliance?listing_id=`, W2-B3). This is the row a broker or a
 /// compliance officer is entitled to see, and the row the public tour prints
@@ -305,6 +326,11 @@ struct AIPhotoEditResult: Sendable, Hashable {
     var provenanceRecorded: Bool = false
     /// The server's reason, when it sent one.
     var provenanceReason: String? = nil
+}
+
+/// Read an existing paid operation. This capability has no admission method.
+protocol PhotoSavedEditAPI: Sendable {
+    @MainActor func savedPhotoEdit(requestKey: String, listingServerID: UUID?) async throws -> AIPhotoEditResult
 }
 
 /// Everything the Aerial intro sheet knows about THE PROPERTY, sent to

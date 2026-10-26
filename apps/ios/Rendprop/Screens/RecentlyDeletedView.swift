@@ -89,9 +89,7 @@ struct RecentlyDeletedView: View {
                                     .font(.rpBody.weight(.semibold))
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 10)
-                                    .background(Theme.accentSoft)
-                                    .foregroundStyle(Theme.accent)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    .modifier(RendpropActionLabelSurface(primary: false))
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(restoring != nil)

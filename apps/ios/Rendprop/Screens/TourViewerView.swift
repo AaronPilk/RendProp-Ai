@@ -118,8 +118,7 @@ struct TourViewerView: View {
                 Label("Message the agent", systemImage: "bubble.left.and.text.bubble.right.fill")
                     .font(.rpBody.weight(.semibold))
                     .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(Theme.accent).foregroundStyle(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .modifier(RendpropActionLabelSurface(primary: true))
             }
             .buttonStyle(ScalePressStyle())
             .accessibilityIdentifier("viewer.contact")

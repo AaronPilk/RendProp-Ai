@@ -12,8 +12,39 @@ struct PhotoCloudLocalVersion: Codable, Equatable, Sendable {
     let bytes: Int64
     let knownAssetID: UUID?
     let historyComplete: Bool
+    /// A browser delivery copy has its own bytes. The saved source above never
+    /// changes identity or pretends to have the JPEG's digest.
+    let browserDelivery: PhotoCloudBrowserDelivery?
+    /// Old source assets are retained as separate immutable family members.
+    let sourceAssetID: UUID?
+    let requiresBrowserDelivery: Bool?
+    init(id: String, familyID: String, imageFile: String, sha256: String, bytes: Int64,
+         knownAssetID: UUID?, historyComplete: Bool, browserDelivery: PhotoCloudBrowserDelivery? = nil,
+         sourceAssetID: UUID? = nil, requiresBrowserDelivery: Bool? = nil) {
+        self.id = id; self.familyID = familyID; self.imageFile = imageFile
+        self.sha256 = sha256; self.bytes = bytes; self.knownAssetID = knownAssetID
+        self.historyComplete = historyComplete; self.browserDelivery = browserDelivery
+        self.sourceAssetID = sourceAssetID; self.requiresBrowserDelivery = requiresBrowserDelivery
+    }
+    var deliverySHA256: String { browserDelivery?.sha256 ?? sha256 }
+    var deliveryBytes: Int64 { browserDelivery?.bytes ?? bytes }
+    var needsBrowserDelivery: Bool { requiresBrowserDelivery == true }
+    var familyAssetIDs: [UUID] { Array(Set([knownAssetID, sourceAssetID].compactMap { $0 })) }
+    var deliverySource: PhotoCloudDeliverySource? {
+        browserDelivery == nil ? nil : .init(sha256: sha256, bytes: bytes)
+    }
 }
 
+struct PhotoCloudDeliverySource: Codable, Equatable, Sendable {
+    let sha256: String
+    let bytes: Int64
+}
+
+struct PhotoCloudBrowserDelivery: Codable, Equatable, Sendable {
+    let sha256: String
+    let bytes: Int64
+    let physicalOrgID: UUID
+}
 
 /// Server publication is separate from the editing workspace's local choice.
 struct PhotoCloudSelectionIdentity: Codable, Equatable, Hashable, Sendable {
@@ -246,6 +277,16 @@ struct PhotoCloudSelectionOperation: Codable, Equatable, Sendable {
     let sha256: String
     let bytes: Int64
     let request: PhotoCloudSelectionRequest
+    let deliverySource: PhotoCloudDeliverySource?
+    init(operationID: UUID, identity: PhotoCloudSelectionIdentity, physicalOrgID: UUID,
+         familyID: String, versionID: String, imageFile: String, sha256: String, bytes: Int64,
+         request: PhotoCloudSelectionRequest, deliverySource: PhotoCloudDeliverySource? = nil) {
+        self.operationID = operationID; self.identity = identity; self.physicalOrgID = physicalOrgID
+        self.familyID = familyID; self.versionID = versionID; self.imageFile = imageFile
+        self.sha256 = sha256; self.bytes = bytes; self.request = request; self.deliverySource = deliverySource
+    }
+    var sourceSHA256: String { deliverySource?.sha256 ?? sha256 }
+    var sourceBytes: Int64 { deliverySource?.bytes ?? bytes }
     func validate() throws {
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
         for id in [familyID, versionID, imageFile] {
@@ -253,6 +294,10 @@ struct PhotoCloudSelectionOperation: Codable, Equatable, Sendable {
                   id.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { throw PhotoCloudSelectionFailure.invalidReply }
         }
         try PhotoCloudSelectionTarget(assetID: request.target?.assetID ?? operationID, sha256: sha256, bytes: bytes).validate()
+        if let source = deliverySource {
+            try PhotoCloudSelectionTarget(assetID: operationID, sha256: source.sha256, bytes: source.bytes).validate()
+            guard bytes <= 9_500_000 else { throw PhotoCloudSelectionFailure.invalidReply }
+        }
         try request.validate()
         if let target = request.target { guard target.sha256 == sha256, target.bytes == bytes else { throw PhotoCloudSelectionFailure.invalidReply } }
     }
@@ -379,7 +424,7 @@ final class PhotoCloudSelectionJournal: @unchecked Sendable {
         if accepted, operation.request.target != nil, var intent = try readInitial(operation.identity),
            let captured = intent.versions.first(where: { $0.id == operation.versionID }),
            captured.familyID == operation.familyID, captured.imageFile == operation.imageFile,
-           captured.sha256 == operation.sha256, captured.bytes == operation.bytes {
+           captured.sha256 == operation.sourceSHA256, captured.bytes == operation.sourceBytes {
             // Persist queue progress BEFORE retiring the accepted operation.
             // A crash can replay bookkeeping, never the network mutation.
             if operation.request.promoteCover, intent.coverVersionID == operation.versionID,

@@ -43,7 +43,7 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 /// via `.convertFromSnakeCase`) and map to the app's models, and we build write
 /// bodies as explicit snake_case dictionaries (mirrors the AI/ clients' style),
 /// so the app models never have to match the DB column names.
-final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI, ListingGalleryRemovalAPI, ListingPhotoCloudSelectionAPI {
+final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI, ListingGalleryRemovalAPI, ListingPhotoCloudSelectionAPI, PublishedListingVideoReading {
     private let base: URL
     private let session: URLSession
     /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
@@ -387,6 +387,21 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
         let data = try await execute(makeRequest(url: url(["listings"])))
         let dtos: [ListingDTO] = try decode(data)
         return dtos.map(mapListing)
+    }
+
+    /// The public tour resolves its selected photo-video composition from the
+    /// server on every read. This is the same authority the property's website
+    /// uses, independent of which device saved or published the MP4.
+    @MainActor func publishedListingVideo(slug: String) async throws -> PublishedListingVideoState {
+        guard slug.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil else {
+            throw CloudSyncError.invalidResponse
+        }
+        var request = makeRequest(url: url(["tours", slug]))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 25
+        let data = try await execute(request)
+        guard data.count <= 4 * 1024 * 1024 else { throw CloudSyncError.invalidResponse }
+        return try PublishedListingVideoState.checked(data, slug: slug)
     }
 
     /// A fresh actor-bound directory limits this complete snapshot to private
@@ -825,7 +840,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
                             putURL: dto.putUrl, uploadID: dto.uploadId,
                             partSize: dto.partSize, partCount: dto.partCount,
                             storageKey: dto.storageKey, transportVersion: dto.transportVersion,
-                            uploaded: dto.uploaded, replayed: dto.replayed, confirmedParts: dto.confirmedParts)
+                            uploaded: dto.uploaded, replayed: dto.replayed, confirmedParts: dto.confirmedParts,
+                            contentType: dto.contentType)
     }
 
     func renewUpload(assetID: String) async throws -> UploadTicket {
@@ -1026,7 +1042,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
         return try await publishApp(route: republish ? "republish-app" : "publish-app",
             listingID: listingID, assetID: assetID, durationS: record.durationS, speedFactor: 1,
             tier: .smooth, enhancements: Enhancements(), chapters: [], posterAssetID: posterAssetID,
-            composition: ListingVideoComposition(sources: record.sources), publicationID: operationID)
+            composition: ListingVideoComposition(record: record), publicationID: operationID)
     }
 
     func updateChapters(renderID: UUID, chapters: [ChapterInput]) async throws {
@@ -1052,6 +1068,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
         }
         func requireUnsentPermission() throws {
             try requireIdentity()
+            guard PhotoWorkQueue.shared.permitsUnsentDispatch else { throw CancellationError() }
             guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consent else {
                 throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
             }
@@ -1101,6 +1118,37 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
                                  provenanceID: r.provenance?.id,
                                  provenanceRecorded: r.provenance?.recorded ?? false,
                                  provenanceReason: r.provenance?.reason)
+    }
+
+    @MainActor func savedPhotoEdit(requestKey: String, listingServerID: UUID?) async throws -> AIPhotoEditResult {
+        guard UUID(uuidString: requestKey) != nil, let workspace = WorkspaceContext.selectedOrgID,
+              let owner = AuthStore.shared.userID else { throw CloudSyncError.identityChanged }
+        let revision = AuthStore.shared.syncSessionRevision
+        func requireIdentity() throws {
+            guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+                  workspace == WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        }
+        try requireIdentity()
+        var query = [URLQueryItem(name: "request_key", value: requestKey)]
+        if let listingServerID { query.append(URLQueryItem(name: "listing_id", value: listingServerID.uuidString)) }
+        var prepared = makeRequest(url: url(["ai-photo-v2", "status"], query: query), method: "GET")
+        prepared.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(prepared, session: aiSession, beforeSend: { try requireIdentity() })
+        try requireIdentity()
+        struct SavedDTO: Decodable {
+            let imageB64: String; let mime: String?; let disclosure: String?
+            let provenance: ProvenanceEnvelopeDTO?
+            let generationRequestKey: String; let listingId: UUID?
+            let orgId: UUID; let selectedLibraryOrgId: UUID
+            let checkId: UUID; let evidenceId: UUID
+        }
+        let result: SavedDTO = try decode(data)
+        guard result.generationRequestKey == requestKey, result.listingId == listingServerID,
+              result.selectedLibraryOrgId == workspace,
+              !result.imageB64.isEmpty else { throw APIError.decoding }
+        return AIPhotoEditResult(imageBase64: result.imageB64, mime: result.mime,
+            disclosure: result.disclosure, provenanceID: result.provenance?.id,
+            provenanceRecorded: result.provenance?.recorded ?? false, provenanceReason: result.provenance?.reason)
     }
 
     // MARK: - Compliance (GET /me/compliance — the broker's AI audit log)
@@ -1175,9 +1223,11 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
     func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion] {
         let body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "edit": "suggest",
                                    "space_type": SpaceType.current.rawValue]
-        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body,
-                                                 idempotency: .perAttempt),
-                                     session: aiSession)
+        var request = makeRequest(url: url(["ai-photo"]), method: "POST", json: body,
+                                  idempotency: .perAttempt)
+        // The vision helper uses the same retained-operation admission contract.
+        request.setValue("retained-operation-v1", forHTTPHeaderField: "x-rendprop-photo-quality-protocol")
+        let data = try await execute(request, session: aiSession)
         // Tolerant decode: every field optional, malformed entries dropped, and
         // only the five runnable preset edits pass through (so every row the UI
         // shows maps to a real aiPhotoEdit mode). Cap at 3 per the contract.
@@ -1195,6 +1245,50 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
                                     confidence: item.confidence)
         }
         return Array(mapped.prefix(3))
+    }
+
+    func assessDeclutter(_ input: PhotoDeclutterAssessmentRequest) async throws -> PhotoDeclutterAssessmentResult {
+        let sessionRevision = AuthStore.shared.syncSessionRevision
+        func current() throws {
+            try Task.checkCancellation()
+            guard AuthStore.shared.userID == input.actor, AuthStore.shared.syncSessionRevision == sessionRevision,
+                  WorkspaceContext.selectedOrgID == input.library,
+                  AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == input.consentRevision else {
+                throw CloudSyncError.identityChanged
+            }
+        }
+        try current()
+        guard let bytes = Data(base64Encoded: input.imageBase64), bytes.count <= 1_000_000,
+              DeclutterGenerationApproval.sha256(bytes) == input.sourceSHA256 else { throw CloudSyncError.invalidResponse }
+        let operation = "declutter-assess:" + input.requestID.uuidString.lowercased()
+        var body: [String: Any] = ["edit": "suggest", "mime": "image/jpeg", "image_b64": input.imageBase64,
+                                  "space_type": input.spaceType, "source_sha256": input.sourceSHA256,
+                                  "declutter_assessment_protocol": AIPhotoDeclutterAssessment.protocolVersion]
+        if let listing = input.listingServerID { body["listing_id"] = listing.uuidString.lowercased() }
+        var request = makeRequest(url: url(["ai-photo-v2"]), method: "POST", json: body, idempotency: .key(operation))
+        request.setValue(input.library.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        request.setValue("retained-operation-v1", forHTTPHeaderField: "x-rendprop-photo-quality-protocol")
+        let data = try await execute(request, session: aiSession, beforeSend: { try current() })
+        try current()
+        struct Reply: Decodable {
+            let declutterAssessmentProtocol: String?
+            let sourceSha256: String?
+            let declutterAssessment: AIPhotoDeclutterAssessment?
+            let analysisCostBoundCents: Double?
+            let analysisOnly: Bool?
+            let analysisRequestKey: String?
+            let selectedLibraryOrgId: UUID?
+            let listingId: UUID?
+        }
+        let reply: Reply = try decode(data)
+        guard reply.declutterAssessmentProtocol == AIPhotoDeclutterAssessment.protocolVersion,
+              reply.sourceSha256 == input.sourceSHA256, reply.analysisOnly == true,
+              reply.analysisRequestKey == operation, reply.selectedLibraryOrgId == input.library,
+              reply.listingId == input.listingServerID, let assessment = reply.declutterAssessment,
+              let cost = reply.analysisCostBoundCents, cost.isFinite, cost >= 0, cost <= 100 else {
+            throw APIError.server(status: 503, code: "declutter_review_unavailable", message: "This photo could not be assessed safely. No image edit was started.")
+        }
+        return PhotoDeclutterAssessmentResult(assessment: assessment, costBoundCents: cost)
     }
 
     // MARK: - AI copy (ai-copy edge function — the two prompt assists)
@@ -2586,6 +2680,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
         let partSize: Int64?
         let partCount: Int?
         let storageKey: String?
+        let contentType: String?
         let transportVersion: Int?
         let uploaded: Bool?
         let replayed: Bool?

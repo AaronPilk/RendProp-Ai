@@ -31,6 +31,9 @@ enum UploadRecovery {
         var cancellationAuthorizedFor: String?
         var dispatched = false
         var completed = false
+        /// Only new magic-verified public-photo requests set this, before PUT.
+        /// Absent legacy fields stay unknown; they are never inferred or upgraded.
+        var photoContentType: String? = nil
         /// A whole call's rounds ran dry on `ticket` (or the server retired it).
         /// `dispatched` stays true — the next attempt still reconciles first —
         /// but that next, explicit attempt may retire and replace the ticket

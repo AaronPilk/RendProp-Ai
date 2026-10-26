@@ -6,13 +6,14 @@ import XCTest
 /// camera, microphone, customer account, upload, AI call or destructive action.
 final class DetailMetadataRegressionUITests: XCTestCase {
     private var app: XCUIApplication!
-    private let tileIDs = ["detail.photos", "detail.photoStudio", "detail.reelStudio", "detail.roomTags"]
-    /// Plain cards, never buttons — the same contract as Home's
-    /// `home.comingSoon.*`. Measurements joined them in build 57.
+    private let tileIDs = ["detail.photos", "detail.photoStudio", "detail.reelStudio",
+                           "detail.recordedWalkthrough", "detail.roomTags", "detail.aerialOpening"]
+    /// Floor plans and 3D remain plain Coming soon cards in release builds.
+    /// Aerial intro is an active tool with its own review screen.
 #if SPATIAL_CAPTURE_LAB
-    private let comingSoonIDs = ["detail.aerialComingSoon"]
+    private let comingSoonIDs: [String] = []
 #else
-    private let comingSoonIDs = ["detail.aerialComingSoon", "detail.measurementsComingSoon", "detail.spatialComingSoon"]
+    private let comingSoonIDs = ["detail.measurementsComingSoon", "detail.spatialComingSoon"]
 #endif
 
     override func setUpWithError() throws {
@@ -43,6 +44,21 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertFalse(app.buttons["listing.clientContact"].exists)
     }
 
+    func testPublishedShareControlsOpenQRWithTheDisplayedFallbackLink() {
+        launch("published-no-source")
+        let copy = app.buttons["Copy Your link"]
+        scrollTo(copy)
+        XCTAssertTrue(copy.isEnabled)
+        let qr = app.buttons["QR code for Your link"]
+        XCTAssertTrue(qr.exists && qr.isEnabled)
+        attach("published-share-controls")
+        qr.tap()
+        let expected = "https://example.invalid/f/metadata-fixture"
+        XCTAssertTrue(app.staticTexts[expected].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.images["QR code that opens \(expected)"].exists, app.debugDescription)
+        attach("published-share-qr")
+    }
+
     func testEmptyListingStillOpensPhotoLibraryAndStudioWhileMeasurementsIsComingSoon() {
         launch("empty")
         assertTiles(sample: false, hasCapture: false)
@@ -66,7 +82,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["studio.edit.declutter"].exists, app.debugDescription)
         back(from: "AI Photo Studio")
         assertMeasurementsStaysComingSoon(fixture: "empty")
-        XCTAssertFalse(app.buttons["detail.aerialIntro"].exists, "Aerial generation is unavailable at launch")
+        XCTAssertTrue(app.buttons["detail.aerialOpening"].exists, "Aerial intro stays discoverable before a front exterior photo is added")
     }
 
     func testCapturedUnrenderedListingKeepsRoomTaggingAndNoRerenderTile() {
@@ -77,15 +93,26 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         openSheet("detail.roomTags", title: "Tag rooms", close: "Done")
     }
 
+    func testAerialIntroReturnKeepsVideoToolReachable() {
+        launch("rich")
+        openLink("detail.aerialOpening", title: "Aerial intro")
+        back(from: "Aerial intro")
+        let video = app.buttons["detail.reelStudio"]
+        scrollTo(video); video.tap()
+        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Choose your photos"].exists, app.debugDescription)
+        // Navigation only: no photo selection, processing or purchase.
+    }
+
     func testPhotosCaptureTourAerialAndClientNavigateEveryTool() {
         launch("rich")
         assertTiles(sample: false, hasCapture: true)
         let photos = app.buttons["detail.photos"]
         scrollTo(photos)
         XCTAssertTrue(photos.label.contains("3 photos"), photos.label)
-        let aerial = element("detail.aerialComingSoon")
+        let aerial = app.buttons["detail.aerialOpening"]
         scrollTo(aerial)
-        XCTAssertTrue(aerial.label.contains("Coming soon"), aerial.label)
+        XCTAssertTrue(aerial.isEnabled && aerial.label.contains("Front of home · opening only"), aerial.label)
         let rerender = app.buttons["detail.rerenderTour"]
         scrollTo(rerender)
         XCTAssertTrue(rerender.isEnabled)
@@ -111,22 +138,19 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["studio.edit.declutter"].exists, app.debugDescription)
         back(from: "AI Photo Studio")
         assertMeasurementsStaysComingSoon(fixture: "rich")
+        openLink("detail.aerialOpening", title: "Aerial intro")
+        back(from: "Aerial intro") // Inspect the route only; never start a generation.
         openLink("listing.clientContact", title: "Listing contact")
         XCTAssertEqual(app.textFields["clientContact.name"].value as? String, "Fixture client")
         back(from: "Listing contact") // No save or client photo picker.
         openSheet("detail.roomTags", title: "Tag rooms", close: "Done")
         openLink("detail.rerenderTour", title: "Review & Submit")
         back(from: "Review & Submit") // Never submit or change render source.
-        XCTAssertFalse(app.buttons["detail.aerialIntro"].exists, "Aerial generation is unavailable at launch")
 
         openVideo(purpose: "social_media")
-        let firstPhoto = app.buttons["reel.photo.fixture-0"]
-        scrollTo(firstPhoto)
-        XCTAssertTrue(firstPhoto.exists, "Reel must receive the detail listing's local photos")
         // The presenting detail remains in the accessibility tree behind the
-        // cover and has the same title. Match the actual video clips control,
-        // whose existing subtitle distinguishes it from the toolbox tile.
-        openVideoOptions()
+        // cover. Match the clip's subtitle, which distinguishes it from the
+        // toolbox tile without relying on the step's navigation title.
         let aerialClips = app.buttons.matching(NSPredicate(format:
             "label CONTAINS %@ AND label CONTAINS %@", "Aerial intro", "Opens the video"))
         XCTAssertEqual(aerialClips.count, 1, "Reel must receive exactly one local aerial clip")
@@ -134,41 +158,57 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         scrollTo(reelAerial)
         XCTAssertTrue(reelAerial.exists, "Reel must receive the detail listing's aerial clip")
         attach("detail-rich-reel")
-        app.navigationBars["Make a video"].buttons["Close"].tap()
+        closeVideo()
         XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10))
         scrollTo(app.buttons["detail.photos"])
         XCTAssertTrue(app.buttons["detail.photos"].isEnabled)
     }
 
-    private func openVideo(purpose: String) {
+    private func openVideo(purpose: String, aiCamera: Bool = false) {
         let video = app.buttons["detail.reelStudio"]
         scrollTo(video); video.tap()
-        XCTAssertTrue(app.navigationBars["Make a video"].waitForExistence(timeout: 15), app.debugDescription)
-        let title: String
+        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 15), app.debugDescription)
+        let firstPhoto = app.buttons["reel.photo.fixture-0"]
+        scrollTo(firstPhoto)
+        XCTAssertTrue(firstPhoto.exists, "Video must receive the detail listing's local photos")
+        firstPhoto.tap()
+        let next = app.buttons["video.setup.next"]
+        XCTAssertTrue(next.isEnabled, app.debugDescription)
+        next.tap()
+        XCTAssertTrue(app.navigationBars["Look"].waitForExistence(timeout: 10), app.debugDescription)
+        let choiceID: String
         switch purpose {
-        case "social_media": title = "Social media"
-        case "listing": title = "Listing"
+        case "social_media": choiceID = "video.purpose.social_media"
+        case "listing": choiceID = "video.purpose.listing"
         default: XCTFail("Unsupported video purpose: \(purpose)"); return
         }
-        // SwiftUI inherits the chooser identifier into its cards. Match the
-        // visible purpose and still require one card and the configured screen.
-        let choices = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title + ","))
-        let choice = choices.firstMatch
+        let choice = app.buttons[choiceID]
         XCTAssertTrue(choice.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertEqual(choices.count, 1, app.debugDescription)
         scrollTo(choice); XCTAssertTrue(choice.isHittable); choice.tap()
-        XCTAssertFalse(element("video.purposeChooser").exists)
-        XCTAssertTrue(element("video.deliveryFormat").exists, app.debugDescription)
+        XCTAssertTrue(choice.isSelected, app.debugDescription)
+        if aiCamera {
+            // The enclosing Movement style group supplies its identifier to
+            // child pills in SwiftUI's accessibility tree. Match the label.
+            let camera = app.buttons.matching(NSPredicate(format: "label == %@", "AI camera")).firstMatch
+            scrollTo(camera); camera.tap()
+            XCTAssertTrue(camera.isSelected, app.debugDescription)
+        }
     }
 
     private func openVideoOptions() {
-        let optional = app.staticTexts["Optional · voice, music and style"]
-        scrollTo(optional); XCTAssertTrue(optional.isHittable); optional.tap()
-        let automatic = app.buttons.matching(NSPredicate(format:
-            "label BEGINSWITH %@", "Automatic · choose for each photo")).firstMatch
+        let automatic = app.buttons["video.motion.automatic"]
         XCTAssertTrue(automatic.waitForExistence(timeout: 5), app.debugDescription)
         scrollTo(automatic)
         XCTAssertTrue(automatic.isEnabled && automatic.isHittable, app.debugDescription)
+    }
+
+    private func closeVideo() {
+        let lookBack = app.navigationBars["Look"].buttons.firstMatch
+        XCTAssertTrue(lookBack.exists, app.debugDescription)
+        lookBack.tap()
+        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
+        app.buttons["video.setup.back"].tap()
+        XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10), app.debugDescription)
     }
 
     func testMissingSourceIsAPlainUnavailableCardEvenWithLocalTour() {
@@ -207,7 +247,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
 
     func testReelCameraPresetsAndPhotoZIPDeliveryChoice() {
         launch("rich")
-        openVideo(purpose: "social_media")
+        openVideo(purpose: "social_media", aiCamera: true)
         openVideoOptions()
         for title in ["Fly-through", "Slow push-in", "Side glide", "Pull-back"] {
             // The enclosing Optional group overrides child accessibility IDs.
@@ -220,7 +260,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         }
         XCTAssertFalse(app.textFields["e.g. 'slow push-in, golden-hour feel'"].exists)
         attach("build58-four-camera-presets")
-        app.navigationBars["Make a video"].buttons["Close"].tap()
+        closeVideo()
         openLink("detail.photos", title: "Photos")
         let all = app.buttons["photos.shareAll"]; revealActive(all); all.tap()
         let delivery = app.segmentedControls["export.deliverAs"]

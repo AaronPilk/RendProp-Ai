@@ -108,6 +108,10 @@ final class AuthStore: ObservableObject {
         static let accessToken  = "auth.supabase.accessToken"
         static let refreshToken = "auth.supabase.refreshToken"
         static let expiresAt    = "auth.supabase.expiresAt"    // unix seconds
+        // Non-secret barriers survive a failed Keychain delete or a process
+        // exit between the two credential writes. Fixture auth has its own keys.
+        static var sessionSuppressed: String { Config.isSessionNetworkTesting ? "auth.phase1.\(Config.sessionTestRun).suppressed" : "auth.supabase.sessionSuppressed.v1" }
+        static var sessionWritePending: String { Config.isSessionNetworkTesting ? "auth.phase1.\(Config.sessionTestRun).writePending" : "auth.supabase.sessionWritePending.v1" }
         static let userID       = "auth.supabase.userID"       // JWT sub (non-secret)
         /// Whether the session remembered in `userID` was an identified one
         /// (Sign in with Apple) rather than an anonymous guest. Written beside
@@ -212,6 +216,7 @@ final class AuthStore: ObservableObject {
     /// Keychain first; falls back to (and silently migrates from) the legacy
     /// UserDefaults slot so pre-Keychain sessions survive the update.
     private static func secret(_ key: String) -> String? {
+        if (key == Keys.accessToken || key == Keys.refreshToken), sessionStorageSuppressed { return nil }
         if let v = SecureStore.get(key) { return v }
         if Config.isSessionNetworkTesting { return nil } // never migrate a real credential into fixtures
         if let legacy = UserDefaults.standard.string(forKey: key) {
@@ -384,7 +389,7 @@ final class AuthStore: ObservableObject {
     /// Local cached admission only; the server still verifies JWT signatures.
     /// Expired named sessions with a refresh credential keep offline access.
     private static func cachedSessionOwner(_ token: String) -> String? {
-        guard let owner = jwtSubject(token), UUID(uuidString: owner) != nil,
+        guard !sessionStorageSuppressed, let owner = jwtSubject(token), UUID(uuidString: owner) != nil,
               tokenIdentityClaimIsValid(token), let expiry = jwtExpiry(token),
               expiry > Date() || storedRefreshToken()?.isEmpty == false else { return nil }
         return owner
@@ -415,13 +420,51 @@ final class AuthStore: ObservableObject {
         return Date(timeIntervalSince1970: expiry.doubleValue)
     }
 
-    private static func persistTokens(access: String, refresh: String?, expiresAt: Date?) {
-        SecureStore.set(Keys.accessToken, access)
-        if let refresh { SecureStore.set(Keys.refreshToken, refresh) }
+    private static var sessionStorageSuppressed: Bool {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: Keys.sessionSuppressed) != nil
+            || defaults.object(forKey: Keys.sessionWritePending) != nil
+    }
+
+    @discardableResult private static func suppressCachedSession() -> Bool {
+        let defaults = UserDefaults.standard
+        defaults.set(true, forKey: Keys.sessionSuppressed)
+        // Do not touch credentials until the cold-launch barrier is durable.
+        let saved = defaults.synchronize()
+        if !saved { log.error("Could not persist the signed-out session barrier") }
+        return saved
+    }
+
+    private static func persistTokens(access: String, refresh: String?, expiresAt: Date?, explicitNewSession: Bool) -> Bool {
+        guard explicitNewSession || !sessionStorageSuppressed else { return false }
+        let defaults = UserDefaults.standard
+        defaults.set(true, forKey: Keys.sessionWritePending)
+        guard defaults.synchronize() else { return false }
+        var committed = false
+        defer {
+            if !committed { _ = suppressCachedSession() }
+        }
+        guard SecureStore.set(Keys.accessToken, access) else { return false }
+        if let refresh {
+            guard SecureStore.set(Keys.refreshToken, refresh) else { return false }
+        } else {
+            guard SecureStore.remove(Keys.refreshToken) else { return false }
+        }
+        do {
+            guard try SecureStore.getChecked(Keys.accessToken) == access,
+                  try SecureStore.getChecked(Keys.refreshToken) == refresh else { return false }
+        } catch { return false }
         // Expiry is non-secret scheduling metadata — UserDefaults is fine.
         if let expiresAt {
-            UserDefaults.standard.set(expiresAt.timeIntervalSince1970, forKey: Keys.expiresAt)
+            defaults.set(expiresAt.timeIntervalSince1970, forKey: Keys.expiresAt)
         }
+        if explicitNewSession { defaults.removeObject(forKey: Keys.sessionSuppressed) }
+        // A normal refresh can retire only the write intent it just created;
+        // a previous sign-out/failure requires an explicit new Apple session.
+        defaults.removeObject(forKey: Keys.sessionWritePending)
+        guard defaults.synchronize() else { return false }
+        committed = true
+        return true
     }
 
     private static func clearTokens() {
@@ -431,6 +474,13 @@ final class AuthStore: ObservableObject {
         d.removeObject(forKey: Keys.accessToken)    // legacy slots, belt-and-braces
         d.removeObject(forKey: Keys.refreshToken)
         d.removeObject(forKey: Keys.expiresAt)
+    }
+
+    private static func priorAccessTokenForAdoption() throws -> String? {
+        // Explicit sign-out also retires any undeleted old guest credential.
+        // It must not become a transfer source during the next Apple sign-in.
+        guard !sessionStorageSuppressed else { return nil }
+        return try SecureStore.getChecked(Keys.accessToken) ?? storedAccessToken()
     }
 
     /// Outgoing credentials are only used for their captured account. A
@@ -514,10 +564,23 @@ final class AuthStore: ObservableObject {
     private func applySession(accessToken: String, refreshToken: String?, expiresAt: Date?, preservingSyncIdentity: Bool = false) -> Bool {
         guard Self.tokenIdentityClaimIsValid(accessToken),
               let expiry = Self.jwtExpiry(accessToken), expiry > Date() else { return false }
-        sessionEpoch &+= 1
         let sameIdentityRefresh = preservingSyncIdentity && isSignedIn &&
             userID != nil && Self.jwtSubject(accessToken) == userID &&
             Self.tokenIsIdentified(accessToken) == isIdentified
+        if !sameIdentityRefresh {
+            // Capture the outgoing account's cleanup before the write barrier
+            // hides its bearer or a new account's token replaces it.
+            PushManager.shared.accountWillChange()
+            PurchaseManager.shared.clearAccountPresentation()
+        }
+        guard Self.persistTokens(access: accessToken, refresh: refreshToken,
+                                 expiresAt: min(expiry, expiresAt ?? expiry), explicitNewSession: !preservingSyncIdentity) else {
+            // No account/model identity may commit around a partial credential
+            // write. Preserve transfer evidence while requiring a fresh sign-in.
+            signOut(preservingAdoption: true)
+            return false
+        }
+        sessionEpoch &+= 1
         if !sameIdentityRefresh { syncIdentityEpoch &+= 1 }
         // Account-switch detection BEFORE persisting: the JWT `sub` identifies
         // the Supabase user. A different `sub` than the last one on this device
@@ -526,10 +589,6 @@ final class AuthStore: ObservableObject {
         if let sub = Self.jwtSubject(accessToken) {
             let previous = UserDefaults.standard.string(forKey: Keys.userID)
             let switched = (previous != nil && previous != sub)
-            if !sameIdentityRefresh {
-                PushManager.shared.accountWillChange()
-                PurchaseManager.shared.clearAccountPresentation()
-            }
             if switched, let id = UUID(uuidString: sub) {
                 onAccountChanged?(id)
                 AccountLocalPreferences.activate(previous: previous.flatMap(UUID.init(uuidString:)), next: id)
@@ -546,8 +605,6 @@ final class AuthStore: ObservableObject {
                 UserDefaults.standard.removeObject(forKey: Keys.orgName)
             }
         }
-        // Scheduling metadata cannot extend the JWT's actual validity.
-        Self.persistTokens(access: accessToken, refresh: refreshToken, expiresAt: min(expiry, expiresAt ?? expiry))
         isSignedIn = true
         isIdentified = Self.tokenIsIdentified(accessToken)
         if !sameIdentityRefresh { PushManager.shared.accountDidChange() }
@@ -566,6 +623,7 @@ final class AuthStore: ObservableObject {
     @MainActor
     func signOut(preservingAdoption: Bool = false, serverAccountDeleted: Bool = false) {
         PushManager.shared.accountWillChange(retainCleanup: !serverAccountDeleted)
+        let suppressionSaved = Self.suppressCachedSession()
         PurchaseManager.shared.clearAccountPresentation()
         // Cancel any in-flight refresh FIRST — otherwise a refresh that resolves
         // after sign-out would call applySession and re-persist tokens, silently
@@ -579,7 +637,10 @@ final class AuthStore: ObservableObject {
         refreshInFlight = nil
         autoRefreshTask?.cancel()
         autoRefreshTask = nil
-        Self.clearTokens()
+        // A failed durable barrier still invalidates every in-memory session
+        // and captured request. Do not erase credentials before that barrier
+        // has been confirmed; the storage failure is logged above.
+        if suppressionSaved { Self.clearTokens() }
         if !preservingAdoption { discardPendingAdoption() }
         isSignedIn = Config.enableAuth ? false : true
         isIdentified = Config.enableAuth ? false : true
@@ -650,6 +711,7 @@ final class AuthStore: ObservableObject {
     @discardableResult
     func refreshIfNeeded(leeway: TimeInterval = 60) async -> Bool {
         guard !Config.isUITesting || Config.isSessionNetworkTesting else { return true }
+        guard !Config.enableAuth || !Self.sessionStorageSuppressed else { return false }
         guard Config.enableAuth, isSignedIn else { return true }   // dev stub / signed out
         guard Self.storedRefreshToken() != nil else {
             if let expiry = Self.tokenExpiresAt, Date() >= expiry {
@@ -671,6 +733,7 @@ final class AuthStore: ObservableObject {
     @discardableResult
     func forceRefresh() async -> Bool {
         guard !Config.isUITesting || Config.isSessionNetworkTesting else { return true }
+        guard !Config.enableAuth || !Self.sessionStorageSuppressed else { return false }
         guard Config.enableAuth, isSignedIn else { return true }
         guard Self.storedRefreshToken() != nil else {
             signOut(preservingAdoption: true)
@@ -965,7 +1028,7 @@ final class AuthStore: ObservableObject {
         // replaced. Failure leaves this device's anonymous session intact.
         // A Keychain read error must not masquerade as "no anonymous work".
         // The legacy fallback is consulted only after a successful absent read.
-        let priorAccess = try SecureStore.getChecked(Keys.accessToken) ?? Self.storedAccessToken()
+        let priorAccess = try Self.priorAccessTokenForAdoption()
         let priorAnonymous = priorAccess.flatMap {
             Self.tokenIdentityClaimIsValid($0) && !Self.tokenIsIdentified($0) ? $0 : nil
         }
@@ -999,7 +1062,10 @@ final class AuthStore: ObservableObject {
         }
         guard applySession(accessToken: session.accessToken,
                            refreshToken: session.refreshToken,
-                           expiresAt: session.expiryDate) else { throw APIError.decoding }
+                           expiresAt: session.expiryDate) else {
+            throw APIError.server(status: 503, code: "session_storage",
+                message: "Your sign-in could not be securely saved on this iPhone. Your saved work is kept. Please try signing in again.")
+        }
         let acceptedEpoch = sessionEpoch
         let acceptedOwner = Self.jwtSubject(session.accessToken)
         await retryPendingAdoptionIfNeeded()

@@ -29,12 +29,15 @@ final class ProductionPlanUITests: XCTestCase {
         let address = app.textFields["Type the home's address"]
         XCTAssertTrue(address.waitForExistence(timeout: 10), app.debugDescription)
         address.tap(); address.typeText("Production plan fixture")
+        let done = app.keyboards.buttons["Done"]
+        if done.exists { done.tap() }
         let photos = app.buttons["newListing.startWithPhotos"]
         scrollTo(photos); photos.tap()
         XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
         app.navigationBars["Photos"].buttons.element(boundBy: 0).tap()
         let open = app.buttons["listing.productionPlan"]
         XCTAssertTrue(open.waitForExistence(timeout: 10), app.debugDescription)
+        scrollTo(open)
         open.tap()
         XCTAssertTrue(app.navigationBars["Plan your video"].waitForExistence(timeout: 10), app.debugDescription)
         let firstShot = app.buttons["production.shot.exterior"]
@@ -43,7 +46,7 @@ final class ProductionPlanUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["5 required shots still to capture or account for."].exists, app.debugDescription)
 
         app.navigationBars["Plan your video"].buttons.element(boundBy: 0).tap()
-        app.buttons["listing.productionPlan"].tap()
+        scrollTo(open); open.tap()
         scrollTo(app.buttons["production.shot.exterior"])
         XCTAssertTrue(app.staticTexts["5 required shots still to capture or account for."].exists, app.debugDescription)
         XCTAssertTrue(app.buttons["production.shot.exterior"].label.contains("Captured"), app.debugDescription)

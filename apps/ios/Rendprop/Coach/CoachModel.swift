@@ -263,7 +263,7 @@ final class CoachModel: ObservableObject {
     }
 
     private func route(for kind: CoachActionType, action: CoachResponse.Action) -> CoachRoute? {
-        guard kind != .openAerial || LaunchFeatureAvailability.canGenerateAerial else { return nil }
+        guard kind != .openAerial || LaunchFeatureAvailability.canCreateOpening else { return nil }
         if kind.needsListing {
             guard let idString = action.listingID,
                   let listingID = UUID(uuidString: idString),
@@ -502,8 +502,8 @@ enum CoachOffline {
     private struct Topic { let keywords: [String]; let reply: String }
 
     private static let topics: [Topic] = [
-        Topic(keywords: ["aerial", "flyover"], reply: LaunchFeatureAvailability.aerialMessage +
-            " If a request was already submitted, open its listing and tap Resume earlier aerial. New generation is unavailable and no launch plan includes it."),
+        Topic(keywords: ["aerial", "flyover"], reply: LaunchFeatureAvailability.openingMessage +
+            " For an earlier legacy request, open its listing and tap Resume earlier aerial to check that saved request."),
         Topic(keywords: ["mls", "unbranded", "branded link", "two link"], reply:
             "Publishing gives you two links. The branded one carries your card and contact form " +
             "— text or post that one. The unbranded one has no name or branding — that's the one " +
@@ -544,8 +544,10 @@ enum CoachOffline {
         // The introductory trial starts only after Apple's purchase confirmation.
         Topic(keywords: ["trial", "free week", "first week"], reply:
             "Open Settings → Plan & usage → View plans. Eligible subscriptions offer 7 days free, " +
-            "but the trial starts only after you confirm the subscription with Apple. Apple shows " +
-            "the renewal price before you confirm. Manage or cancel it in Settings → Plan & usage."),
+            "but the trial starts only after you confirm the subscription with Apple. The free week " +
+            "lets you create one listing and use limited AI photo edits; video and aerial generation " +
+            "start after the first paid renewal. Apple shows the renewal price before you confirm. " +
+            "Manage or cancel in Settings → Plan & usage."),
         Topic(keywords: ["reel", "social video"], reply:
             "Choose reviewed photos in Make a video, then Listing (landscape) or Social media (portrait). " +
             "Automatic arranges scenes and chooses gentle movement; Fly-through is simulated, not real drone footage. " +
@@ -650,9 +652,9 @@ enum CoachOffline {
     static func nextStep(model: AppModel, space: SpaceType, orgID: UUID? = nil, liveBackend: Bool = false,
                          selectedListingID: UUID? = nil, intent: String = "", screen: String? = nil) -> (text: String, action: CoachResponse.Action?) {
         let noun = space.spaceNoun
-        if !LaunchFeatureAvailability.canGenerateAerial,
+        if !LaunchFeatureAvailability.canCreateOpening,
            intent.lowercased().contains("aerial") || intent.lowercased().contains("flyover") || screen == "aerial" {
-            return (LaunchFeatureAvailability.aerialMessage,
+            return (LaunchFeatureAvailability.openingMessage,
                     CoachResponse.Action(type: CoachActionType.openHome.rawValue,
                                          label: CoachActionType.openHome.defaultLabel, listingID: nil))
         }

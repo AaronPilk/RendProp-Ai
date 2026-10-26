@@ -29,6 +29,8 @@ private struct RenderStatusContent: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var uploads: UploadManager
     @ObservedObject var coordinator: RenderCoordinator
+    @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var workspace = WorkspaceStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
 
@@ -36,6 +38,11 @@ private struct RenderStatusContent: View {
     let render: Render
 
     @State private var showCancelConfirm = false
+    @State private var linkShareTarget: PublicLinkShareTarget?
+    @State private var shareScope = NativePresentationScope(
+        actorID: AuthStore.shared.userID, orgID: WorkspaceContext.selectedOrgID)
+    @State private var resolvedShareLink: (key: String, url: URL)?
+    @State private var resolvingShareLinkKey: String?
     /// The encode is CPU-bound for minutes; on a hot phone iOS throttles it and
     /// the ring visibly crawls. Say so rather than looking stuck. (Seeded in
     /// `onAppear` — a `@State` default can't read a type member here.)
@@ -55,7 +62,21 @@ private struct RenderStatusContent: View {
     }
     private var job: RenderJobState? { coordinator.jobs[listing.id] }
     private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
-    private var shareURL: URL? { currentListing.serverShareURL }
+    private var shareURL: URL? {
+        guard let canonical = currentListing.serverShareURL else { return nil }
+        return DeepLink.buyerWebsiteURL(from: canonical, address: currentListing.spaceType == .realEstate ? currentListing.address : nil) ?? canonical
+    }
+    private var shareLinkKey: String? {
+        guard let published = currentListing.serverShareURL, let fallback = shareURL else { return nil }
+        return "\(listing.id):\(published.absoluteString):\(fallback.absoluteString):\(currentListing.address):\(currentListing.allowSearchIndexing == true)"
+    }
+    private var canShareCurrentListing: Bool {
+        shareScope.matches(actorID: auth.userID, orgID: WorkspaceContext.selectedOrgID) &&
+            model.listings.contains {
+                $0.id == listing.id && $0.cloudUnavailable != true &&
+                    $0.serverShareURL != nil && model.isInSelectedWorkspace($0)
+            }
+    }
     /// THIS listing's type — a type switch while a render is on screen must not
     /// re-label a house as a venue (industry review P2-5). Samples never render.
     private var noun: String { currentListing.spaceType.spaceNoun }
@@ -164,6 +185,28 @@ private struct RenderStatusContent: View {
             Text(tour == nil
                  ? "Your video stays on the \(noun) — you can render it again any time."
                  : "The tour stays on your phone. Publish it later from the \(noun) to get a share link.")
+        }
+        .sheet(item: $linkShareTarget) { target in
+            ShareSheet(items: target.activityItems)
+        }
+        .task(id: shareLinkKey) {
+            guard let key = shareLinkKey, let published = currentListing.serverShareURL,
+                  let fallback = shareURL, canShareCurrentListing else { return }
+            resolvingShareLinkKey = key
+            let resolved = await PublicShareLinkResolver.resolve(
+                publishedURL: published, fallbackURL: fallback)
+            guard !Task.isCancelled, canShareCurrentListing, shareLinkKey == key else {
+                if resolvingShareLinkKey == key { resolvingShareLinkKey = nil }
+                return
+            }
+            resolvedShareLink = (key, resolved)
+            resolvingShareLinkKey = nil
+        }
+        .onChange(of: auth.userID) { _ in
+            if !canShareCurrentListing { linkShareTarget = nil; resolvedShareLink = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            if !canShareCurrentListing { linkShareTarget = nil; resolvedShareLink = nil }
         }
     }
 
@@ -391,7 +434,8 @@ private struct RenderStatusContent: View {
         if let mls = currentListing.serverUnbrandedURL {
             VStack(alignment: .leading, spacing: 6) {
                 Button {
-                    UIPasteboard.general.url = mls
+                    guard canShareCurrentListing, currentListing.serverUnbrandedURL == mls else { return }
+                    UIPasteboard.general.url = DeepLink.unbrandedWebsiteURL(from: mls, address: currentListing.address) ?? mls
                     Haptics.success()
                 } label: {
                     HStack {
@@ -404,6 +448,7 @@ private struct RenderStatusContent: View {
                     .foregroundStyle(Theme.ink)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
+                .disabled(!canShareCurrentListing)
                 Label("Never put your branded link in an MLS unbranded field — most MLSs fine for that.",
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.rpCaption.weight(.semibold))
@@ -453,18 +498,29 @@ private struct RenderStatusContent: View {
             case .ready, .awaitingConnection:
                 viewTourButton
                 if let shareURL {
-                    ShareLink(item: shareURL,
-                              subject: Text(listing.address),
-                              message: Text("Fly through \(listing.address) — scroll to walk the \(noun).")) {
+                    Button {
+                        guard shareURL == self.shareURL, let key = shareLinkKey,
+                              let target = PublicShareLinkResolver.linkForAction(
+                                fallbackURL: shareURL, linkKey: key,
+                                currentContext: canShareCurrentListing,
+                                cached: resolvedShareLink) else { return }
+                        linkShareTarget = PublicLinkShareTarget(
+                            url: target, subject: currentListing.address,
+                            message: "Fly through \(currentListing.address) — scroll to walk the \(noun).")
+                    } label: {
                         HStack {
                             Image(systemName: "square.and.arrow.up")
                             Text("Share your link").fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 13)
-                        .background(Theme.accentSoft)
-                        .foregroundStyle(Theme.accent)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .modifier(RendpropActionLabelSurface(primary: false))
+                    }
+                    .disabled(!canShareCurrentListing)
+                    if resolvingShareLinkKey == shareLinkKey {
+                        ProgressView("Checking address link")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
                     }
                     mlsLinkRow
                 } else if mode == .awaitingConnection {
@@ -507,9 +563,7 @@ private struct RenderStatusContent: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 15)
-            .background(Theme.accent)
-            .foregroundStyle(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .modifier(RendpropActionLabelSurface(primary: true))
         }
     }
 

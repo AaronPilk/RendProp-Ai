@@ -470,9 +470,7 @@ struct CaptureView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 15)
-                        .background(Theme.accent)
-                        .foregroundStyle(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .modifier(RendpropActionLabelSurface(primary: true))
                     }
                     .disabled(isSavingTake)
 

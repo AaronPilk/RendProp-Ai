@@ -181,9 +181,12 @@ enum VideoPreparedSourcePolicy {
 /// Reads the saved version's actual image metadata and decodes a tiny,
 /// orientation-correct thumbnail. No original is rewritten or stretched.
 enum VideoPhotoFramingReader {
-    static func read(photoID: String, url: URL, aspect: Double) -> VideoPhotoFramingAssessment? {
+    static func read(photoID: String, url: URL, aspect: Double, photoMotion: Bool = false, photoMotionScale: Double = 1.02, photoMotionDirection: String = "push_in") -> VideoPhotoFramingAssessment? {
         guard let size = PhotoGeometryReader.read(url: url),
               let crop = DeliveryCrop.centered(sourceWidth: Double(size.width), sourceHeight: Double(size.height), deliveryAspect: aspect) else { return nil }
-        return .init(photoID: photoID, sourceURL: url, displayedWidth: size.width, displayedHeight: size.height, crop: crop)
+        guard let startCrop = photoMotion ? crop.photoMotionFrame(scale: photoMotionScale, direction: photoMotionDirection, end: false) : crop,
+              let endCrop = photoMotion ? crop.photoMotionFrame(scale: photoMotionScale, direction: photoMotionDirection, end: true) : crop else { return nil }
+        let finalCrop = startCrop.width * startCrop.height < endCrop.width * endCrop.height ? startCrop : endCrop
+        return .init(photoID: photoID, sourceURL: url, displayedWidth: size.width, displayedHeight: size.height, crop: finalCrop)
     }
 }

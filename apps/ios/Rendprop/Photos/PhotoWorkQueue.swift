@@ -36,6 +36,7 @@ final class PhotoWorkQueue: ObservableObject {
     }
     struct Job {
         let id = UUID()
+        let startedAt = Date()
         let listingID: UUID
         let title: String
         let total: Int
@@ -45,6 +46,7 @@ final class PhotoWorkQueue: ObservableObject {
         var done = 0
         var failures: [Failure] = []
         var running = true
+        var stopRequested = false
         var interrupted = false
         var attempted: Int { done + failures.count }
         var fraction: Double { total > 0 ? Double(attempted) / Double(total) : 0 }
@@ -56,6 +58,9 @@ final class PhotoWorkQueue: ObservableObject {
     private var identityCheck: (() -> Bool)?
     var isContextCurrent: Bool { identityCheck?() == true }
     var visibleJob: Job? { isContextCurrent ? job : nil }
+    /// A user stop fences unsent work without throwing away an answer already
+    /// being generated. Account changes still use immediate cancellation.
+    var permitsUnsentDispatch: Bool { job?.running != true || job?.stopRequested != true }
 
     @discardableResult
     func start(listingID: UUID, title: String, photoIDs: [String],
@@ -70,7 +75,7 @@ final class PhotoWorkQueue: ObservableObject {
         task = Task { @MainActor [weak self] in
             guard let self else { return }
             for (index, id) in photoIDs.enumerated() {
-                guard !Task.isCancelled, identityIsCurrent() else {
+                guard !Task.isCancelled, self.job?.stopRequested != true, identityIsCurrent() else {
                     self.job?.interrupted = true; break
                 }
                 self.job?.current = index + 1
@@ -111,5 +116,10 @@ final class PhotoWorkQueue: ObservableObject {
     }
 
     func cancel() { task?.cancel() }
+    func stopRemaining() {
+        guard isContextCurrent, job?.running == true else { return }
+        job?.stopRequested = true
+        job?.interrupted = true
+    }
     func dismissResult() { if job?.running != true { job = nil } }
 }

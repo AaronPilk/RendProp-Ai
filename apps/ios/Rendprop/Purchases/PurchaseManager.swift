@@ -653,6 +653,13 @@ final class PurchaseManager: ObservableObject {
     func restore() async {
         guard !isRestoring else { return }
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let selectedOrgID = WorkspaceContext.selectedOrgID
+        let billingOrgID = WorkspaceContext.billingOrgID
+        func contextIsCurrent() -> Bool {
+            AuthStore.shared.userID == actor && AuthStore.shared.syncSessionRevision == revision
+                && WorkspaceContext.selectedOrgID == selectedOrgID
+                && WorkspaceContext.billingOrgID == billingOrgID
+        }
         isRestoring = true
         lastError = nil
         notice = nil
@@ -664,13 +671,13 @@ final class PurchaseManager: ObservableObject {
             try await AppStore.sync()
         } catch {
             if Self.isCancellation(error) { return }
-            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+            guard contextIsCurrent() else { return }
             lastError = Self.message(for: error, fallback: "We couldn't reach the App Store. Please try again.")
             return
         }
-        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+        guard contextIsCurrent() else { return }
         let confirmed = await refreshEntitlements(event: "restore")
-        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+        guard contextIsCurrent() else { return }
         if activePlan == nil {
             notice = "No subscription found on this Apple ID."
         } else if confirmed && unsyncedCount == 0 && notice == nil {
@@ -719,6 +726,13 @@ final class PurchaseManager: ObservableObject {
     /// Runs at launch, on foreground, and after a restore.
     @discardableResult func refreshEntitlements(event: String = "entitlement") async -> Bool {
         let identity = "\(AuthStore.shared.userID ?? "none"):\(AuthStore.shared.syncSessionRevision)"
+        let selectedOrgID = WorkspaceContext.selectedOrgID
+        let billingOrgID = WorkspaceContext.billingOrgID
+        func contextIsCurrent() -> Bool {
+            identity == "\(AuthStore.shared.userID ?? "none"):\(AuthStore.shared.syncSessionRevision)"
+                && WorkspaceContext.selectedOrgID == selectedOrgID
+                && WorkspaceContext.billingOrgID == billingOrgID
+        }
         var found: [VerificationResult<Transaction>] = []
         for await entitlement in Transaction.currentEntitlements {
             guard case .verified(let transaction) = entitlement else { continue }
@@ -728,7 +742,7 @@ final class PurchaseManager: ObservableObject {
             found.append(entitlement)
         }
 
-        guard identity == "\(AuthStore.shared.userID ?? "none"):\(AuthStore.shared.syncSessionRevision)" else { return false }
+        guard contextIsCurrent() else { return false }
         guard !found.isEmpty else {
             // Nothing active on this Apple ID. Do NOT write "free" anywhere —
             // the org's plan may be a manual/comped one the server owns.
@@ -739,11 +753,6 @@ final class PurchaseManager: ObservableObject {
             return false
         }
 
-        // Show the local answer straight away (highest tier wins if there is
-        // more than one live entitlement) so the paywall can mark "Your plan"
-        // without waiting on a round trip. Still display only.
-        applyLocalPlan(from: found)
-
         var confirmed = true
         for entitlement in found {
             guard case .verified(let transaction) = entitlement else { continue }
@@ -751,7 +760,7 @@ final class PurchaseManager: ObservableObject {
             if syncedThisSession.contains("\(identity):\(transaction.id)"), unsynced[transaction.id] == nil { continue }
             if !(await handle(entitlement, event: event)) { confirmed = false }
         }
-        return confirmed && identity == "\(AuthStore.shared.userID ?? "none"):\(AuthStore.shared.syncSessionRevision)"
+        return confirmed && contextIsCurrent()
     }
 
     /// Best local guess at the plan from StoreKit alone. Never a gate.

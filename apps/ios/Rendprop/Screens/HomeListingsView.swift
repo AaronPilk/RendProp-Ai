@@ -43,14 +43,14 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
         case .photos: return "Add and choose photos"
         case .editing: return "Declutter or stage photos"
         case .reel: return "Make a social reel"
-        case .aerial: return "Aerial intro · Coming soon"
+        case .aerial: return "Aerial opening"
         case .measurements: return "Measurements and floor plans"
         case .contact: return "Your card and client details"
         case .sharing: return "Publish and share"
         case .leads: return "Follow up on inquiries"
         case .team: return "Work with a team"
         case .studio: return "Continue on desktop"
-        case .plan: return "Plans, credits and billing"
+        case .plan: return "Plans and billing"
         case .spatial: return "3D features"
         }
     }
@@ -96,8 +96,8 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Choose movement and sound", "Set the clip style and voice options, then review the quote before creating. If processing stops, recover a confirmed saved request or finish a shorter reel from saved clips. Review an unconfirmed request before starting another generation."),
             ("Watch the whole result", "Review transitions, scene accuracy, captions and audio. Save the finished video before posting it to social media.")]
         case .aerial: return [
-            ("Coming soon", "Aerial intro is still being tested. New generation is unavailable and no launch plan includes it."),
-            ("Keep saved work", "Previously saved aerial clips stay in the listing's files and can still be used in a reel."),
+            ("Start at the front", "Choose an original exterior photo showing the front of this home. Review the frame and processing terms before creating an opening."),
+            ("Opening only", "Watch the result, then use it as the first clip in a new Listing or Social video. To show it on your website, select the finished Listing video. Recorded walkthroughs stay unchanged."),
             ("Resume an earlier request", "If an aerial was already submitted, open its listing and tap Resume earlier aerial. This checks the existing request; it does not generate a new clip.")]
         case .measurements: return [
             ("Coming soon", "Measurements, 3D floor plans and 3D walkthroughs are still being tested. The cards on Home and in each listing's toolbox do not open yet, and no plan includes them."),
@@ -124,7 +124,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Open the same listing", "Your own uploaded listings and synced changes are available there. Team owners can choose an authorized agent’s listings. Local-only files need to upload first."),
             ("Continue producing", "Use Studio to organize assets, create content and review work with your team. On the phone, use Retry Studio sync if a listing update is still waiting.")]
         case .plan: return [
-            ("Check your allowance", "Open Settings → Plan & usage to see the account's plan, feature limits and credits."),
+            ("Check your allowance", "Open Settings → Plan & usage to see the account's plan and feature limits."),
             ("Review before purchasing", "Choose a plan. Every plan bills monthly. Apple's purchase sheet shows the actual price and any eligible free trial. A trial starts only after you confirm the subscription."),
             ("Manage your subscription", "Use Manage subscription to change or cancel with Apple. Restore purchases after reinstalling or signing back in.")]
         case .spatial: return [
@@ -148,23 +148,32 @@ private struct AppGuideStepsView: View {
                 Text(topic.steps[step].1).font(.rpBody).foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 12) {
-                    Button("Back") { step = max(0, step - 1) }
-                        .disabled(step == 0)
-                    Spacer()
                     if step + 1 < topic.steps.count {
                         Button("Next step") { step += 1; Haptics.selection() }
-                            .buttonStyle(.borderedProminent).tint(Theme.accent)
+                            .modifier(RendpropActionAppearance(compact: true))
                     } else {
                         Label("You're ready", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.accent)
                     }
                 }.padding(.top, 8)
                 if step + 1 == topic.steps.count && topic == .listing {
                     NavigationLink("Add a listing") { NewListingView() }
-                        .buttonStyle(.borderedProminent).tint(Theme.accent)
+                        .modifier(RendpropActionAppearance(compact: true))
                 }
             }.padding(22)
         }.background(Theme.bg)
             .navigationTitle(topic.title).navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(step > 0)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if step > 0 {
+                        Button { step = max(0, step - 1) } label: {
+                            Label("Back", systemImage: "chevron.left")
+                        }
+                        .accessibilityLabel("Previous help step")
+                        .accessibilityIdentifier("guide.previousStep")
+                    }
+                }
+            }
             .accessibilityIdentifier("guide.steps.\(topic.rawValue)")
     }
 }
@@ -183,7 +192,9 @@ struct HomeListingsView: View {
     @State private var pendingDelete: Listing?
     @ObservedObject private var workspaceStore = WorkspaceStore.shared
 
-    private var needsWorkspaceSelection: Bool { Config.useLiveBackend && workspaceStore.selected == nil }
+    private var needsWorkspaceSelection: Bool {
+        Config.useLiveBackend && !Config.isOfflineAccountFixture && workspaceStore.selected == nil
+    }
 
     /// Only listings for the CURRENT business type (a gym never sees houses),
     /// active (not sold), plus search.
@@ -230,13 +241,9 @@ struct HomeListingsView: View {
                         }
                         .font(.body)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Theme.accent)
-                        .foregroundStyle(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .shadow(color: Theme.accent.opacity(0.3), radius: 10, x: 0, y: 4)
+                        .frame(minHeight: 28)
                     }
-                    .buttonStyle(ScalePressStyle())
+                    .modifier(RendpropActionAppearance())
                     .disabled(needsWorkspaceSelection)
                     .padding(.horizontal)
                     .accessibilityLabel(Text("Add a \(noun)"))

@@ -95,9 +95,7 @@ struct FloorMeasurementsView: View {
                     Button { addRoom() } label: {
                         Label("Add a room", systemImage: "plus")
                             .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(15)
-                            .background(plan.rooms.count < 24 ? Theme.accent : Theme.disabledFill)
-                            .foregroundStyle(plan.rooms.count < 24 ? Color.white : Theme.disabledInk)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .modifier(RendpropActionLabelSurface())
                     }
                     .disabled(plan.rooms.count >= 24)
                     .accessibilityIdentifier("measurements.addRoom")
@@ -110,9 +108,7 @@ struct FloorMeasurementsView: View {
                             Button { addOutline() } label: {
                                 Label("Draw a floor outline", systemImage: "pencil.and.outline")
                                     .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(15)
-                                    .background(plan.outlines.count < FloorMeasurementPlan.maximumOutlines ? Theme.accent : Theme.disabledFill)
-                                    .foregroundStyle(plan.outlines.count < FloorMeasurementPlan.maximumOutlines ? Color.white : Theme.disabledInk)
-                                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                                    .modifier(RendpropActionLabelSurface())
                             }.disabled(plan.outlines.count >= FloorMeasurementPlan.maximumOutlines)
                                 .accessibilityIdentifier("measurements.addOutline")
                         }.padding(.top, 10)
@@ -327,8 +323,7 @@ struct FloorMeasurementsView: View {
             Button { makeExport() } label: {
                 Label("Download plan · image or PDF", systemImage: "square.and.arrow.down")
                     .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(14)
-                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .modifier(RendpropActionLabelSurface(primary: false))
             }.accessibilityIdentifier("measurements.export").disabled(!isFresh(plan))
             Button { show3D = true } label: {
                 Label("View measurement layout in 3D", systemImage: "cube.transparent")

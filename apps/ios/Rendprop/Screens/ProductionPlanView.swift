@@ -22,6 +22,7 @@ struct ProductionPlanView: View {
     @State private var confirmRecipe = false
     @State private var confirmLoad = false
     @State private var work: Task<Void, Never>?
+    @Environment(\.dynamicTypeSize) private var planDynamicTypeSize
 
     private var current: Listing { model.listings.first(where: { $0.id == listing.id }) ?? listing }
     private var owner: String { auth.userID ?? "device-only" }
@@ -116,22 +117,50 @@ struct ProductionPlanView: View {
     private func goalCard(_ plan: ProductionPlan) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("1 · Choose your video", systemImage: "film.stack").font(.rpHeadline)
-            Picker("Video type", selection: Binding(get: { plan.recipe }, set: { recipe in
-                guard recipe != plan.recipe else { return }
-                pendingRecipe = recipe; confirmRecipe = true
-            })) {
-                ForEach(ProductionRecipe.allCases) { recipe in
-                    Label(recipe.title, systemImage: recipe.symbol).tag(recipe)
+            Text("Video type").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.inkDim)
+            VStack(spacing: 10) {
+            ForEach(ProductionRecipe.allCases) { recipe in
+                Button {
+                    guard recipe != plan.recipe else { return }
+                    pendingRecipe = recipe; confirmRecipe = true
+                } label: {
+                    Label(recipe.title, systemImage: recipe.symbol)
+                        .font(.rpBody.weight(.medium)).frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .buttonStyle(RendpropPillButtonStyle(selected: plan.recipe == recipe))
+                .accessibilityAddTraits(plan.recipe == recipe ? .isSelected : [])
+                .accessibilityIdentifier("production.recipe.\(recipe.rawValue)")
             }
-            .accessibilityIdentifier("production.recipe")
+            }.accessibilityIdentifier("production.recipe")
             Text(plan.recipe.subtitle).font(.rpCaption).foregroundStyle(Theme.inkDim)
-            Picker("How you’ll tell the story", selection: Binding(get: { plan.presentation }, set: { value in update { $0.presentation = value } })) {
-                ForEach(ProductionPresentation.allCases) { Text($0.title).tag($0) }
+            Text("How you’ll tell the story").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.inkDim)
+            ForEach(ProductionPresentation.allCases) { value in
+                Button {
+                    guard value != plan.presentation else { return }
+                    update { $0.presentation = value }
+                } label: {
+                    Text(value.title).font(.rpBody.weight(.medium))
+                        .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                }
+                .buttonStyle(RendpropPillButtonStyle(selected: plan.presentation == value))
+                .accessibilityAddTraits(plan.presentation == value ? .isSelected : [])
             }
             Text(plan.presentation.tip).font(.rpCaption).foregroundStyle(Theme.inkDim)
-            Picker("Target length", selection: Binding(get: { plan.targetSeconds }, set: { value in update { $0.targetSeconds = value } })) {
-                ForEach([30, 45, 60], id: \.self) { Text("\($0) seconds").tag($0) }
+            Text("Target length").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.inkDim)
+            LazyVGrid(columns: planDynamicTypeSize.isAccessibilitySize
+                      ? [GridItem(.flexible())] : Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
+                ForEach([30, 45, 60], id: \.self) { value in
+                    Button {
+                        guard value != plan.targetSeconds else { return }
+                        update { $0.targetSeconds = value }
+                    } label: {
+                        Text("\(value)s").font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(RendpropPillButtonStyle(selected: plan.targetSeconds == value))
+                    .accessibilityLabel("\(value) seconds")
+                    .accessibilityAddTraits(plan.targetSeconds == value ? .isSelected : [])
+                }
             }
             Text("Target length guides the edit; it doesn’t trim or generate any media.")
                 .font(.caption2).foregroundStyle(Theme.inkDim)

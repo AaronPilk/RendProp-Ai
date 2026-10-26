@@ -970,8 +970,13 @@ final class AppModel: ObservableObject {
         if let draft = listings.first(where: { $0.id == id }), draft.serverID == nil {
             guard AuthStore.shared.isIdentified, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
                   CloudDraftCreation.canAutoSync(draft, userID: owner) else { return }
+            let revision = AuthStore.shared.syncSessionRevision
+            let library = WorkspaceContext.selectedOrgID
             do { _ = try await ensureServerListing(draft) }
-            catch { return }
+            catch {
+                noteDraftCreationFailure(error, snapshot: draft, owner: owner, revision: revision, library: library)
+                return
+            }
         }
 
         var attempts = 0
@@ -1055,6 +1060,21 @@ final class AppModel: ObservableObject {
         for id in dirty {
             await syncListing(id)
         }
+    }
+
+    /// Keep the actual create refusal on the draft that requested it. A late
+    /// answer can never write an error onto another account or library's work.
+    private func noteDraftCreationFailure(_ error: Error, snapshot: Listing, owner: UUID,
+                                          revision: UInt64, library: UUID?) {
+        guard !(error is CancellationError), AuthStore.shared.isIdentified,
+              AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner,
+              AuthStore.shared.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == library,
+              let i = index(of: snapshot.id), listings[i].serverID == nil,
+              listings[i].cloudUnavailable != true, listings[i].cloudDetachedServerID == nil,
+              listings[i].cloudSyncOwnerID == nil || listings[i].cloudSyncOwnerID == owner,
+              listings[i].cloudDraftOrgID == (snapshot.cloudDraftOrgID ?? library) else { return }
+        listings[i].lastError = "Studio sync couldn't finish. Your listing and photos are saved on this iPhone. "
+            + Self.userMessage(for: error)
     }
 
     /// Two-way refresh for launch, foreground, sign-in and pull-to-refresh.
@@ -1206,7 +1226,13 @@ final class AppModel: ObservableObject {
             create: { try await self.api.createListing($0) },
             current: { self.listings.first(where: { $0.id == localID }) },
             activeIdentity: { .init(userID: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision) },
-            save: { updated in if let i = self.index(of: localID) { self.listings[i] = updated } },
+            save: { updated in
+                if let i = self.index(of: localID) {
+                    var bound = updated
+                    if bound.lastError?.hasPrefix("Studio sync couldn't finish. ") == true { bound.lastError = nil }
+                    self.listings[i] = bound
+                }
+            },
             deleteRemoved: { sid in try? await self.api.deleteListing(serverID: sid) })
     }
 
@@ -1386,12 +1412,23 @@ final class AppModel: ObservableObject {
                 return (digest, Int64(size))
             }.value
             try requireIdentity()
-            let known = try await CloudPhotoReferences.shared.galleryAssetID(fileURL: file,
+            let binding = try browserGallerySource(version, identity: identity, sha256: measured.0, bytes: measured.1)
+            let derivative = try await PhotoGalleryDerivativeStore.shared.lookup(sourceURL: file, source: binding)
+            try requireIdentity()
+            let originalAsset = try await CloudPhotoReferences.shared.galleryAssetID(fileURL: file,
                 ownerID: identity.actorID, orgID: identity.libraryOrgID, listingID: identity.serverListingID,
                 physicalOrgID: physicalOrgID)
+            let known: UUID?
+            if let derivative {
+                known = try await CloudPhotoReferences.shared.galleryAssetID(fileURL: derivative.url,
+                    ownerID: identity.actorID, orgID: identity.libraryOrgID, listingID: identity.serverListingID,
+                    physicalOrgID: physicalOrgID)
+            } else { known = originalAsset }
             try requireIdentity()
             facts.append(.init(id: version.id, familyID: version.familyID, imageFile: version.imageFile,
-                sha256: measured.0, bytes: measured.1, knownAssetID: known, historyComplete: version.sourceHistoryKnown))
+                sha256: measured.0, bytes: measured.1, knownAssetID: known, historyComplete: version.sourceHistoryKnown,
+                browserDelivery: derivative?.delivery, sourceAssetID: derivative == nil ? nil : originalAsset,
+                requiresBrowserDelivery: PhotoGalleryDerivativeStore.needsBrowserDelivery(file) ? true : nil))
         }
         // A later local edit/removal cannot be accepted as the earlier catalog.
         let current = try PhotoVersionHistory.load(directory: directory)
@@ -1400,6 +1437,14 @@ final class AppModel: ObservableObject {
               current.hiddenFamilies == index.hiddenFamilies, current.familyOrder == index.familyOrder,
               current.importOrder == index.importOrder else { throw PhotoCloudSelectionFailure.changed }
         return facts
+    }
+
+    private func browserGallerySource(_ version: PhotoVersionHistory.Version, identity: PhotoCloudSelectionIdentity,
+                                      sha256: String, bytes: Int64) throws -> PhotoGalleryDerivativeStore.Source {
+        return .init(identity: identity, versionID: version.id, familyID: version.familyID,
+            imageFile: version.imageFile,
+            historySHA256: try PhotoGalleryDerivativeStore.historySHA256(version, directory: EnhancedPhoto.directory(for: identity.localListingID)),
+            sha256: sha256, bytes: bytes)
     }
 
     @discardableResult func refreshCloudPhotoSelection(listingID: UUID) async throws -> PhotoCloudSelectionProjection {
@@ -1418,7 +1463,7 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult func changeCloudPhotoSelection(listingID: UUID, versionID: String, selecting: Bool,
-                                                      followFamilyCover: Bool = false, reviewed: Bool, promoteCover: Bool = false, requireEmptyCover: Bool = false) async throws -> PhotoCloudSelectionProjection {
+                                                      followFamilyCover: Bool = false, reviewed: Bool, promoteCover: Bool = false, requireEmptyCover: Bool = false, requireSelectedVersion: Bool = false, requireCurrentSelection: Bool = false) async throws -> PhotoCloudSelectionProjection {
         guard cloudPhotoMutationInFlight.insert(listingID).inserted else { throw PhotoCloudSelectionFailure.busy }
         defer { cloudPhotoMutationInFlight.remove(listingID) }
         let (identity, context, physical) = try cloudPhotoIdentity(listingID)
@@ -1427,7 +1472,7 @@ final class AppModel: ObservableObject {
         cloudPhotoStates.removeValue(forKey: listingID)
         func check() throws { try self.requireCloudPhotoIdentity(identity, context: context, physicalOrgID: physical, generation: generation) }
         let projection = try await photoCloudCoordinator.change(identity: identity, physicalOrgID: physical,
-            versionID: versionID, selecting: selecting, followFamilyCover: followFamilyCover, reviewed: reviewed, promoteCover: promoteCover, requireEmptyCover: requireEmptyCover, api: selectionAPI,
+            versionID: versionID, selecting: selecting, followFamilyCover: followFamilyCover, reviewed: reviewed, promoteCover: promoteCover, requireEmptyCover: requireEmptyCover, requireSelectedVersion: requireSelectedVersion, requireCurrentSelection: requireCurrentSelection, api: selectionAPI,
             catalog: { try await self.cloudPhotoCatalog(identity: identity, physicalOrgID: physical, requireIdentity: check) },
             prepare: { measured, org in
                 try check()
@@ -1440,28 +1485,64 @@ final class AppModel: ObservableObject {
                     throw PhotoCloudSelectionFailure.changed
                 }
                 let source = version.originalFile.map { directory.appendingPathComponent($0) } ?? file
+                let binding = try self.browserGallerySource(version, identity: identity, sha256: measured.sha256, bytes: measured.bytes)
+                var derivative = try await PhotoGalleryDerivativeStore.shared.lookup(sourceURL: file, source: binding)
+                try check()
+                if derivative == nil {
+                    let needsDelivery: Bool
+                    do { needsDelivery = try DirectUploader.browserPhoto(file).bytes > Self.maxPublishedPhotoBytes }
+                    catch DirectUploader.BrowserPhotoFailure.unsupportedFormat {
+                        needsDelivery = true
+                    }
+                    if needsDelivery {
+                        // Only a verified unchanged capture gains a bounded
+                        // browser copy. The exact retained source stays intact;
+                        // edited/reviewed results keep their byte/provenance gate.
+                        derivative = try await PhotoGalleryDerivativeStore.shared.prepare(sourceURL: file, source: binding,
+                            physicalOrgID: org, version: version, originalURL: source)
+                        try check()
+                    }
+                }
+                guard derivative?.delivery.physicalOrgID == nil || derivative?.delivery.physicalOrgID == org else {
+                    throw PhotoCloudSelectionFailure.identityChanged
+                }
+                let deliveryFile = derivative?.url ?? file
+                let disclosureLimit = derivative == nil ? Self.maxPublishedPhotoBytes : Int64(128 * 1024 * 1024)
                 let retainedOriginal = try PhotoGalleryDisclosure.retainedOriginal(version: version,
-                    imageURL: file, sourceURL: source, maxBytes: Self.maxPublishedPhotoBytes)
+                    imageURL: file, sourceURL: source, maxBytes: disclosureLimit)
                 if version.edit != "capture", version.edit != "legacy", retainedOriginal == nil {
                     guard version.provenanceRecorded, version.provenanceID != nil else {
                         throw AIImagePrep.error("This edited photo's disclosure hasn't been saved. Keep the earlier version selected and retry its AI edit.")
                     }
                 }
-                let asset = try await UploadManager.shared.uploadGalleryPhoto(fileURL: file, listingID: identity.serverListingID)
+                let asset = try await UploadManager.shared.uploadGalleryPhoto(fileURL: deliveryFile, listingID: identity.serverListingID)
                 try check()
                 guard let galleryID = UUID(uuidString: asset), DirectUploader.sha256(of: file) == measured.sha256,
                       FileStore.fileSize(file) == measured.bytes else { throw PhotoCloudSelectionFailure.changed }
                 if let retainedOriginal {
                     try PhotoGalleryDisclosure.requireUnchanged(retainedOriginal, imageURL: file,
-                        sourceURL: source, maxBytes: Self.maxPublishedPhotoBytes)
+                        sourceURL: source, maxBytes: disclosureLimit)
                 }
                 if version.edit != "capture", version.edit != "legacy", retainedOriginal == nil {
                     guard version.provenanceRecorded, let provenance = version.provenanceID else { throw PhotoCloudSelectionFailure.unmapped }
                     try await self.api.attachProvenanceMedia(provenanceID: provenance, originalAssetID: nil, alteredAssetID: asset)
                     try check()
                 }
-                try await CloudPhotoReferences.shared.saveGalleryAssetID(assetID: galleryID, fileURL: file,
+                try await CloudPhotoReferences.shared.saveGalleryAssetID(assetID: galleryID, fileURL: deliveryFile,
                     ownerID: identity.actorID, orgID: identity.libraryOrgID, listingID: identity.serverListingID, physicalOrgID: org)
+                try check()
+            }, validateTarget: { measured, assetID, storageKey in
+                try check()
+                let file = EnhancedPhoto.directory(for: listingID).appendingPathComponent(measured.imageFile)
+                let history = try PhotoVersionHistory.load(directory: file.deletingLastPathComponent())
+                guard let version = history.versions[measured.id], version.imageFile == measured.imageFile else { throw PhotoCloudSelectionFailure.changed }
+                let binding = try self.browserGallerySource(version, identity: identity, sha256: measured.sha256, bytes: measured.bytes)
+                let derivative = try await PhotoGalleryDerivativeStore.shared.lookup(sourceURL: file, source: binding)
+                try check()
+                guard derivative?.delivery == measured.browserDelivery else { throw PhotoCloudSelectionFailure.changed }
+                try await DirectUploader.requireGalleryReceipt(fileURL: derivative?.url ?? file, ownerID: identity.actorID,
+                    listingID: identity.serverListingID, assetID: assetID, sha256: measured.deliverySHA256,
+                    bytes: measured.deliveryBytes, storageKey: storageKey)
                 try check()
             }, requireIdentity: check)
         try check()
@@ -1531,6 +1612,33 @@ final class AppModel: ObservableObject {
                   current.serverOrgID == physical, current.cloudUnavailable != true else { throw PhotoCloudSelectionFailure.identityChanged }
         }
         try check()
+        // Explicit publication can repair the delivery of a CURRENT selected
+        // original, including a completed historical queue entry. It never
+        // replays that historical source choice over a newer Studio selection.
+        let currentPhotos = try await refreshCloudPhotoSelection(listingID: listingID)
+        try check()
+        guard !currentPhotos.pending else { throw PhotoCloudSelectionFailure.pending }
+        guard currentPhotos.snapshot.effectiveAssetIDs.isEmpty || !currentPhotos.mutableFamilyIDs.isEmpty else {
+            throw PhotoCloudSelectionFailure.unmapped
+        }
+        let browserRepairs = currentPhotos.versions.filter {
+            currentPhotos.selectedVersionIDs.contains($0.id) && $0.needsBrowserDelivery && !currentPhotos.browserReadyVersionIDs.contains($0.id)
+        }
+        for captured in browserRepairs {
+            let current = try await refreshCloudPhotoSelection(listingID: listingID)
+            try check()
+            guard !current.pending, current.selectedVersionIDs.contains(captured.id),
+                  let version = current.versions.first(where: { $0.id == captured.id }),
+                  version.familyID == captured.familyID, version.imageFile == captured.imageFile,
+                  version.sha256 == captured.sha256, version.bytes == captured.bytes,
+                  current.versions.filter({ $0.familyID == captured.familyID && current.selectedVersionIDs.contains($0.id) }).count == 1 else {
+                throw PhotoCloudSelectionFailure.changed
+            }
+            if current.browserReadyVersionIDs.contains(captured.id) { continue }
+            _ = try await changeCloudPhotoSelection(listingID: listingID, versionID: captured.id,
+                selecting: true, followFamilyCover: current.coverVersionIDs.contains(captured.id), reviewed: false, requireCurrentSelection: true)
+            try check()
+        }
         let saved = try photoCloudJournal.initialIntent(identity)
         guard saved != nil || (listings.first(where: { $0.id == listingID })?.serverShareURL == nil
             && listings.first(where: { $0.id == listingID })?.cloudImported != true) else { return }
@@ -1568,10 +1676,15 @@ final class AppModel: ObservableObject {
                   measured.familyID == next.familyID, measured.imageFile == next.imageFile,
                   measured.sha256 == next.sha256, measured.bytes == next.bytes else { throw PhotoCloudSelectionFailure.changed }
             let selectedFamily = projection.versions.filter { $0.familyID == next.familyID && projection.selectedVersionIDs.contains($0.id) }
-            if projection.selectedVersionIDs.contains(next.id), selectedFamily.count == 1 {
+            if projection.browserReadyVersionIDs.contains(next.id), selectedFamily.count == 1 {
                 try photoCloudJournal.confirmInitialCurrent(identity, version: measured)
             } else {
-                _ = try await changeCloudPhotoSelection(listingID: listingID, versionID: next.id, selecting: true, reviewed: false)
+                // The same frozen original can gain a browser delivery without
+                // changing its version/source intent or another family's cover.
+                let repairingCurrent = measured.needsBrowserDelivery && selectedFamily.count == 1 && selectedFamily.first?.id == next.id
+                let follow = repairingCurrent && projection.coverVersionIDs.contains(next.id)
+                _ = try await changeCloudPhotoSelection(listingID: listingID, versionID: next.id,
+                    selecting: true, followFamilyCover: follow, reviewed: false, requireCurrentSelection: repairingCurrent)
             }
             try check()
         }
@@ -2249,6 +2362,10 @@ final class RenderCoordinator: ObservableObject {
 
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private var runs: [UUID: UUID] = [:]
+    private(set) var activityRuns: [UUID: UUID] = [:]
+    private(set) var activityScopes: [UUID: NativeActivityScope] = [:]
+    private(set) var activityStartedAt: [UUID: Date] = [:]
+    func activityID(_ id: UUID) -> String { "tour:\(activityRuns[id]?.uuidString ?? id.uuidString)" }
     private var skipRequested: Set<UUID> = []
     /// Listings whose AI-enhance upload the stall watchdog gave up on. The
     /// watchdog cancels the upload, so the `await` in `enhance` lands in its
@@ -2991,6 +3108,7 @@ final class RenderCoordinator: ObservableObject {
     private func beginRun(_ id: UUID) -> UUID {
         let run = UUID()
         runs[id] = run
+        activityRuns[id] = run; activityScopes[id] = NativeActivityStore.currentScope; activityStartedAt[id] = Date()
         skipRequested.remove(id)
         uploadStalled.remove(id)
         if backgroundTasks[id] == nil {
@@ -3685,6 +3803,7 @@ struct RendpropApp: App {
             // `externalSink` is `nonisolated` and hops to the main actor itself,
             // so the purchase flow keeps knowing nothing about Analytics.
             .onAppear { PaywallEvents.sink = Analytics.externalSink }
+            .buttonBorderShape(.capsule)
             // MARK: - end analytics additions
         }
     }
@@ -3777,10 +3896,10 @@ struct NativePresentationScope: Hashable {
     }
 }
 
-/// Tab identity stays stable when display order changes. Existing Profile and
-/// Settings routes keep their original tags; Leads gets its own new identity.
+/// Five direct destinations. Legacy Profile/Settings route identities remain
+/// stable and resolve through Account without losing the existing settings path.
 enum NativeRootTab: Int {
-    case home = 0, listings = 1, profile = 2, settings = 3, leads = 4
+    case home = 0, listings = 1, profile = 2, settings = 3, leads = 4, activity = 5, account = 6
 
     static func destination(for route: CoachRoute) -> NativeRootTab? {
         switch route {
@@ -3794,9 +3913,11 @@ enum NativeRootTab: Int {
 struct RootTabView: View {
     @ObservedObject private var workspace = WorkspaceStore.shared
     @ObservedObject private var workspaceAuth = AuthStore.shared
+    @ObservedObject private var activity = NativeActivityStore.shared
     @EnvironmentObject var model: AppModel
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var tab = NativeRootTab.home.rawValue
+    @State private var accountNavigation = NativeAccountNavigation()
 
     private var tabs: some View {
         TabView(selection: $tab) {
@@ -3809,15 +3930,16 @@ struct RootTabView: View {
                           systemImage: SpaceType.current == .realEstate ? "list.bullet.rectangle" : SpaceType.current.systemImage)
                 }
                 .tag(NativeRootTab.listings.rawValue)
+            NativeActivityView()
+                .tabItem { Label("Activity", systemImage: "waveform.path") }
+                .tag(NativeRootTab.activity.rawValue)
+                .badge(activity.entries.filter { $0.state.isActive }.count)
             NavigationStack { LeadsView() }
                 .tabItem { Label("Leads", systemImage: "person.crop.circle.badge.checkmark") }
                 .tag(NativeRootTab.leads.rawValue)
-            ProfileView()
-                .tabItem { Label("Profile", systemImage: "person.crop.circle.fill") }
-                .tag(NativeRootTab.profile.rawValue)
-            NavigationStack { SettingsView() }
-                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
-                .tag(NativeRootTab.settings.rawValue)
+            NativeAccountView(navigation: $accountNavigation)
+                .tabItem { Label("Account", systemImage: "person.crop.circle.fill") }
+                .tag(NativeRootTab.account.rawValue)
         }
     }
 
@@ -3829,7 +3951,9 @@ struct RootTabView: View {
                                             orgID: workspace.snapshot?.selectedOrgID))
         }
         .task {
+            NativeActivityStore.shared.attach(model: model)
             await model.load()        // idempotent
+            NativeActivityStore.shared.synchronize()
             await model.syncRealEstateRole()
             model.reseedSamples()     // the intro may have changed the type before this mounted
             model.syncSpaceTypeIfNeeded()   // …and the server has not heard about it yet
@@ -3837,6 +3961,8 @@ struct RootTabView: View {
         // Resolve the App Store storefront once. Informational only — no UI and
         // no purchase path is conditioned on it (see `Storefronts`, below).
         .resolveStorefront()
+        .onChange(of: workspaceAuth.syncSessionRevision) { _ in NativeActivityStore.shared.synchronize() }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in NativeActivityStore.shared.synchronize() }
         .onChange(of: spaceTypeRaw) { _ in
             model.reseedSamples()     // venue owners see venues, not houses
             model.syncSpaceTypeIfNeeded()   // the free week is sized by industry, server-side
@@ -3851,12 +3977,50 @@ struct RootTabView: View {
         .onChange(of: model.coachRoute) { route in
             guard let route else { return }
             if let destination = NativeRootTab.destination(for: route) {
-                tab = destination.rawValue
+                if accountNavigation.open(destination) {
+                    tab = NativeRootTab.account.rawValue
+                } else { tab = destination.rawValue }
             } else if case .support = route {
                 UIApplication.shared.open(SettingsView.supportMailURL(subject: "Rendprop support"))
             }
             DispatchQueue.main.async { model.coachRoute = nil }
         }
+    }
+}
+
+
+enum NativeAccountDestination { case profile, settings }
+struct NativeAccountNavigation {
+    private(set) var destination: NativeAccountDestination?
+    var presentsProfile: Bool { destination == .profile }
+    var presentsSettings: Bool { destination == .settings }
+    @discardableResult mutating func open(_ tab: NativeRootTab) -> Bool {
+        switch tab {
+        case .profile: destination = .profile; return true
+        case .settings: destination = .settings; return true
+        default: return false
+        }
+    }
+    mutating func close(_ expected: NativeAccountDestination) {
+        if destination == expected { destination = nil }
+    }
+}
+struct NativeAccountView: View {
+    @Binding var navigation: NativeAccountNavigation
+    var body: some View {
+        ProfileView(accountSettings: { navigation.open(.settings) })
+            .sheet(isPresented: Binding(get: { navigation.presentsSettings }, set: { if !$0 { navigation.close(.settings) } })) {
+                NavigationStack {
+                    SettingsView().toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { navigation.close(.settings) }
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: Binding(get: { navigation.presentsProfile }, set: { if !$0 { navigation.close(.profile) } })) {
+                ProfileView(modalDone: { navigation.close(.profile) })
+            }
     }
 }
 
@@ -4185,7 +4349,7 @@ struct HomeDashboardView: View {
     ///   • 2+      → "Which home?"
     /// Samples are never candidates — `projects` excludes them.
     private func open(_ feature: ProjectFeature) {
-        guard feature != .aerial || LaunchFeatureAvailability.canGenerateAerial else { return }
+        guard feature != .aerial || LaunchFeatureAvailability.canCreateOpening else { return }
         guard !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else {
             goToListings(); return
         }
@@ -4202,7 +4366,7 @@ struct HomeDashboardView: View {
     /// Open `feature` on `listing`. The aerial tool is a sheet; everything else
     /// is a push.
     private func go(_ listing: Listing, _ feature: ProjectFeature) {
-        guard feature != .aerial || LaunchFeatureAvailability.canGenerateAerial else { return }
+        guard feature != .aerial || LaunchFeatureAvailability.canCreateOpening else { return }
         if feature == .aerial {
             gate = .aerial(listing)
         } else if feature == .reel {
@@ -4251,8 +4415,8 @@ struct HomeDashboardView: View {
             })
             .environmentObject(model)
         case .aerial(let listing):
-            // The aerial is grounded on a REAL home's exterior photo.
-            AerialIntroSheet(listing: listing)
+            // Home presents this tool in a sheet; listing links use native Back.
+            AerialOpeningScreen(listing: listing, isPresentedModally: true)
                 .environmentObject(model)
         case .reel(let listing):
             // Same two inputs the listing screen's tile passes: the listing's
@@ -4405,7 +4569,7 @@ struct HomeDashboardView: View {
             featureButton(.photoStudio)
             featureButton(.reel)
             featureButton(.tour)
-            comingSoonTile("Aerial intro", "AI opening shots are still being tested", "airplane.departure", id: "aerial")
+            featureButton(.aerial)
 #if SPATIAL_CAPTURE_LAB
             featureButton(.floorPlan)
             featureButton(.spatial)
@@ -4942,10 +5106,11 @@ enum RPGradient {
 /// interruptible for rapid taps — a toy-like bounce on a discrete tap is
 /// exactly the kind of motion Apple's own controls avoid.
 struct ScalePressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.spring(response: 0.3, dampingFraction: 0.85),
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85),
                        value: configuration.isPressed)
     }
 }

@@ -56,6 +56,23 @@ struct SettingsView: View {
     // re-checks `profiles.is_admin` server-side on every request.
     @State private var showAdminConsole = false
     @State private var adminProbeDone = false
+    @State private var adminAccessContext: AdminAccessContext?
+
+    /// Supplier costs belong to the existing owner diagnostics, never a
+    /// customer's credit balance or a workspace owner's membership role.
+    private struct AdminAccessContext: Equatable {
+        let actor: String
+        let revision: UInt64
+        let org: UUID?
+        func matches(actor: String?, revision: UInt64, org: UUID?, signedIn: Bool) -> Bool {
+            signedIn && self.actor == actor && self.revision == revision && self.org == org
+        }
+    }
+    private var canShowSupplierCosts: Bool {
+        Config.useLiveBackend && showAdminConsole && usage != nil && usage?.isAdmin != false
+            && adminAccessContext?.matches(actor: auth.userID, revision: auth.syncSessionRevision,
+                org: WorkspaceContext.selectedOrgID, signedIn: auth.isSignedIn) == true
+    }
 
     // Sign in / sign out
     @State private var showSignIn = false
@@ -859,7 +876,7 @@ struct SettingsView: View {
         } header: {
             Text("Plan & usage")
         } footer: {
-            Text(usage?.servingEnvelope != nil ? ServingEnvelopeSummary.explanation : usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo and reel allowances use their 30-day window. Pull down to refresh.")
+            Text(canShowSupplierCosts && usage?.servingEnvelope != nil ? ServingEnvelopeSummary.explanation : usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo and reel allowances use their 30-day window. Pull down to refresh.")
         }
     }
 
@@ -970,21 +987,22 @@ struct SettingsView: View {
         }
     }
 
-    /// The shared AI budget the server admits work against (ceiling mode).
-    /// Meters below it are plan allowances; this is the money gate behind
-    /// them, so a refusal reads the same here as in the RP402 copy.
+    /// Internal supplier-envelope diagnostics. Customer feature allowances
+    /// remain visible independently; supplier dollars are not retail credits.
     @ViewBuilder
     private func envelopeRows(_ envelope: ServingEnvelopeSummary) -> some View {
-        LabeledContent(envelope.budgetTitle, value: envelope.budgetValue)
-            .accessibilityIdentifier("settings.aiBudget")
-        if let line = envelope.resetLine {
-            Text(line).font(.rpCaption).foregroundStyle(Theme.inkDim)
-        }
-        if let line = envelope.heldLine {
-            Text(line).font(.rpCaption).foregroundStyle(Theme.inkDim)
-        }
-        if let line = envelope.poolLine {
-            Text(line).font(.rpCaption).foregroundStyle(Theme.inkDim)
+        if canShowSupplierCosts {
+            LabeledContent(envelope.budgetTitle, value: envelope.budgetValue)
+                .accessibilityIdentifier("settings.aiBudget")
+            if let line = envelope.resetLine {
+                Text(line).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+            if let line = envelope.heldLine {
+                Text(line).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+            if let line = envelope.poolLine {
+                Text(line).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
         }
     }
 
@@ -1075,10 +1093,17 @@ struct SettingsView: View {
     /// every admin route re-checks `profiles.is_admin` on every call.
     @MainActor
     private func resolveAdminAccess() async {
-        guard Config.useLiveBackend, auth.isSignedIn, let usage else {
+        guard Config.useLiveBackend, auth.isSignedIn, let usage, let actor = auth.userID, !actor.isEmpty else {
             showAdminConsole = false
             adminProbeDone = false
+            adminAccessContext = nil
             return
+        }
+        let context = AdminAccessContext(actor: actor, revision: auth.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+        if adminAccessContext != context {
+            adminAccessContext = context
+            showAdminConsole = false
+            adminProbeDone = false
         }
         if let flag = usage.isAdmin {
             showAdminConsole = flag
@@ -1089,8 +1114,14 @@ struct SettingsView: View {
         adminProbeDone = true
         do {
             _ = try await model.api.adminSpend(window: .today)
+            guard context.matches(actor: auth.userID, revision: auth.syncSessionRevision,
+                    org: WorkspaceContext.selectedOrgID, signedIn: auth.isSignedIn),
+                  adminAccessContext == context, self.usage?.isAdmin != false else { return }
             showAdminConsole = true
         } catch {
+            guard context.matches(actor: auth.userID, revision: auth.syncSessionRevision,
+                    org: WorkspaceContext.selectedOrgID, signedIn: auth.isSignedIn),
+                  adminAccessContext == context, self.usage?.isAdmin == nil else { return }
             // 403 = not an admin, 401 = signed out, anything else = can't tell.
             // In every case the honest answer is to draw no row.
             if error is CancellationError { adminProbeDone = false }
@@ -1273,7 +1304,7 @@ struct SettingsView: View {
                 // An older view's task can outlive its navigation stack. Its
                 // error and retry must not become the replacement account's UI.
                 guard context.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) else { return }
-                deleteErrorMessage = "Your account was NOT deleted. \(UserFacingError.message(error))"
+                deleteErrorMessage = "Deletion could not be confirmed. Your local files have been kept. \(UserFacingError.message(error))"
                 showDeleteError = true
                 return
             }
@@ -1345,6 +1376,7 @@ struct SettingsView: View {
     ///   reels/<id>-parked/      finished, ALREADY-BILLED reel clips kept when
     ///                           Reel Studio is closed mid-job                  FlythroughDetailView
     ///   Voiceovers/             <id>-<stamp>.m4a|mp3 reel voiceovers           Voiceover.persistAudio
+    ///   activity/               scoped metadata-only Activity history         NativeActivityStore
     ///   Previews/               generated preview-*.html                       PlayerWebView
     ///   agent-headshot*.jpg     brand photo per business type                  AgentCard
     ///   rendprop-state.json     the model snapshot (+ .corrupt-* quarantines)  PersistentStore
@@ -1380,6 +1412,8 @@ struct SettingsView: View {
         // Stop any render/publish first — a job finishing after the wipe would
         // write a tour for a listing that no longer exists.
         for id in Array(model.renderCoordinator.jobs.keys) { model.renderCoordinator.cancel(listingID: id) }
+
+        NativeActivityStore.shared.eraseDeviceCache()
 
         // In-memory state — every didSet re-persists, so the snapshot on disk
         // ends up empty too (PersistentStore never saves samples).
@@ -3239,6 +3273,14 @@ private struct ProfilePortfolioPicker: View {
 
 // MARK: - Profile tab (the friendly "about me / contact card" view)
 struct ProfileView: View {
+    private let modalDone: (() -> Void)?
+    private let accountSettings: (() -> Void)?
+
+    init(modalDone: (() -> Void)? = nil, accountSettings: (() -> Void)? = nil) {
+        self.modalDone = modalDone
+        self.accountSettings = accountSettings
+    }
+
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
     // Observed so the card reloads the moment the business type changes.
@@ -3301,18 +3343,15 @@ struct ProfileView: View {
                     NavigationLink { AgentCardEditorView() } label: {
                         Label(card.isSet ? "Edit card" : "Set up card", systemImage: "pencil")
                             .font(.rpBody.weight(.semibold))
-                            .frame(maxWidth: .infinity).padding(.vertical, 14)
-                            .background(Theme.accent).foregroundStyle(Color.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
+                            .frame(maxWidth: .infinity).frame(minHeight: 28)
+                    }.modifier(RendpropActionAppearance())
 
                     Button { buildBusinessCard() } label: {
                         Label("Send business card", systemImage: "person.crop.rectangle")
                             .font(.rpBody.weight(.semibold))
-                            .frame(maxWidth: .infinity).padding(.vertical, 13)
-                            .background(Theme.accentSoft).foregroundStyle(Theme.accent)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .frame(maxWidth: .infinity).frame(minHeight: 26)
                     }
+                    .modifier(RendpropActionAppearance(primary: false))
                     .disabled(!card.isSet || isBuildingPortfolio || displayedContext != .current)
                     .accessibilityIdentifier("profile.sendBusinessCard")
                     Text(card.isSet ? "Share your contact details without any listings." : "Set up your card before sending your contact details.")
@@ -3322,10 +3361,8 @@ struct ProfileView: View {
                         NavigationLink { LeadsView() } label: {
                             Label("Your leads", systemImage: "person.crop.circle.badge.plus")
                                 .font(.rpBody.weight(.semibold))
-                                .frame(maxWidth: .infinity).padding(.vertical, 13)
-                                .background(Theme.accentSoft).foregroundStyle(Theme.accent)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        }
+                                .frame(maxWidth: .infinity).frame(minHeight: 26)
+                        }.modifier(RendpropActionAppearance(primary: false))
                     }
 
                     if !shareable.isEmpty {
@@ -3338,10 +3375,9 @@ struct ProfileView: View {
                                 Label("Share my portfolio (\(shareable.count))", systemImage: "square.and.arrow.up")
                             }
                             .font(.rpBody.weight(.semibold))
-                            .frame(maxWidth: .infinity).padding(.vertical, 13)
-                            .background(Theme.accentSoft).foregroundStyle(Theme.accent)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .frame(maxWidth: .infinity).frame(minHeight: 26)
                         }
+                        .modifier(RendpropActionAppearance(primary: false))
                         .disabled(isBuildingPortfolio || displayedContext != .current)
                         .accessibilityIdentifier("profile.sharePortfolio")
                         Text("Choose which published \(SpaceType.current.spaceNoun)s accompany your card. Each opens its tour.")
@@ -3362,8 +3398,27 @@ struct ProfileView: View {
                 }
                 .padding()
             }
-            .navigationTitle("Profile")
+            .navigationTitle(accountSettings == nil ? "Profile" : "Account")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let accountSettings {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: accountSettings) {
+                            Label("Settings and plan", systemImage: "gearshape")
+                                .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                        }
+                        .modifier(RendpropActionAppearance(primary: false, compact: true))
+                        .accessibilityLabel("Settings and plan")
+                        .accessibilityIdentifier("account.settings")
+                    }
+                }
+                if let modalDone {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done", action: modalDone)
+                            .accessibilityIdentifier("profile.modal.done")
+                    }
+                }
+            }
             .background(Theme.bg)
             .onAppear {
                 displayedContext = .current
@@ -3812,6 +3867,7 @@ struct ProfileFeedbackFixtureHost: View {
 // tab identity, fields, area tags, and the tour's call-to-action. Lives in
 // this in-target file (new-file rule).
 struct BusinessTypeView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @EnvironmentObject var model: AppModel
 
@@ -3884,7 +3940,7 @@ struct BusinessTypeView: View {
                 radius: selected ? 10 : 6, x: 0, y: 4)
         // Selecting a business re-themes the whole app — let the picked card's
         // fill/glow settle in rather than snapping as the grid reseeds.
-        .animation(.easeInOut(duration: 0.22), value: selected)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: selected)
         .accessibilityLabel(Text("\(type.displayName). \(type.pitch)\(selected ? ". Selected" : "")"))
     }
 
@@ -4446,7 +4502,7 @@ struct AdminConsoleView: View {
             Label(isProbingKeys ? "Testing…" : "Test all keys", systemImage: "key.fill")
                 .font(.rpBody.weight(.semibold))
         }
-        .buttonStyle(.borderedProminent)
+        .modifier(RendpropActionAppearance())
         .disabled(isProbingKeys)
         .padding(.vertical, 2)
         .accessibilityIdentifier("admin.testAllKeys")

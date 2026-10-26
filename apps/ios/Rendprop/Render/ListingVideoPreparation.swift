@@ -5,7 +5,7 @@ enum ListingVideoPreparation {
     /// Called after encoding and before retiring the paid clips/recipe. Actual
     /// encoded dimensions and duration, plus a streamed digest, identify output.
     static func retain(output: URL, listingID: UUID, ownerID: String?, workspaceID: UUID?, serverListingID: UUID?,
-                       purpose: VideoAspectChoice, sources: [ListingVideoSource], includesOpeningClip: Bool, brandingPolicy: String? = nil, music: VideoMusicSelection? = nil) async throws -> ListingVideoRecord {
+                       purpose: VideoAspectChoice, sources: [ListingVideoSource], includesOpeningClip: Bool, brandingPolicy: String? = nil, music: VideoMusicSelection? = nil, sourceMode: String? = nil, compositionProfile: String? = nil, fps: Int? = nil, totalFrames: Int? = nil, sourceMotions: [String]? = nil, opening: PropertyVideoAcceptedOpening? = nil) async throws -> ListingVideoRecord {
         let asset = AVURLAsset(url: output)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw ListingVideoStore.Failure.invalidRecord }
         let size = try await track.load(.naturalSize), transform = try await track.load(.preferredTransform)
@@ -19,7 +19,8 @@ enum ListingVideoPreparation {
             let record = ListingVideoRecord(id: UUID(), listingID: listingID, ownerID: ownerID, workspaceID: workspaceID,
                 serverListingID: serverListingID, relativePath: FileStore.relativePath(for: output), purpose: purpose,
                 width: width, height: height, durationS: duration, bytes: bytes, sha256: try ListingVideoStore.digest(output),
-                sources: sources, includesOpeningClip: includesOpeningClip, createdAt: Date(), brandingPolicy: brandingPolicy, music: music)
+                sources: sources, includesOpeningClip: includesOpeningClip, createdAt: Date(), brandingPolicy: brandingPolicy, music: music, sourceMode: sourceMode, compositionProfile: compositionProfile, fps: fps, totalFrames: totalFrames, sourceMotions: sourceMotions, opening: opening)
+            guard record.hasValidMotionIdentity else { throw ListingVideoStore.Failure.invalidRecord }
             try ListingVideoStore.save(record, documents: documents)
             return record
         }.value

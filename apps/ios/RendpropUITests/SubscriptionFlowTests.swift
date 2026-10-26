@@ -31,8 +31,10 @@ import StoreKitTest
         app.launch()
     }
     private func openPaywall() {
-        let settings = app.tabBars.buttons["Settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 20)); settings.tap()
+        let account = app.tabBars.buttons["Account"]
+        XCTAssertTrue(account.waitForExistence(timeout: 20)); account.tap()
+        let settings = app.buttons["account.settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10)); settings.tap()
         let plans = app.buttons["settings.upgradePlan"]
         for _ in 0..<12 {
             if plans.exists && plans.isHittable { break }
@@ -120,8 +122,10 @@ import StoreKitTest
     }
     func testSettingsPlanAndRecoveryRoutesRemainVisible() {
         launch()
-        let settings = app.tabBars.buttons["Settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 20)); settings.tap()
+        let account = app.tabBars.buttons["Account"]
+        XCTAssertTrue(account.waitForExistence(timeout: 20)); account.tap()
+        let settings = app.buttons["account.settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10)); settings.tap()
         let plans = app.buttons["settings.upgradePlan"]
         show(plans)
         XCTAssertTrue(app.buttons["settings.manageSubscription"].exists)
@@ -134,7 +138,13 @@ import StoreKitTest
         XCTAssertTrue(app.staticTexts["Selected: Pro · Monthly"].waitForExistence(timeout: 15))
         screenshot("billing-paywall-workspace-and-recovery")
         app.buttons["Close"].tap()
-        XCTAssertTrue(app.buttons["settings.upgradePlan"].waitForExistence(timeout: 10))
+        let plansAgain = app.buttons["settings.upgradePlan"]
+        if !plansAgain.waitForExistence(timeout: 3) {
+            let settingsAgain = app.buttons["account.settings"]
+            XCTAssertTrue(settingsAgain.waitForExistence(timeout: 10))
+            settingsAgain.tap()
+        }
+        show(plansAgain)
     }
     func testPaidHomeBannerOpensPlanManagement() {
         launch(["-ui.planBanner", "paid"])

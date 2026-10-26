@@ -770,9 +770,7 @@ struct PushPrePromptView: View {
                         .font(.rpBody.weight(.semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(Theme.accent)
-                        .foregroundStyle(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .modifier(RendpropActionLabelSurface(primary: true))
                 }
                 .accessibilityIdentifier("push.prePrompt.allow")
                 Button {
@@ -783,7 +781,7 @@ struct PushPrePromptView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .foregroundStyle(Theme.ink)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .modifier(RendpropActionLabelSurface(primary: false))
                 }
                 .accessibilityIdentifier("push.prePrompt.notNow")
             }

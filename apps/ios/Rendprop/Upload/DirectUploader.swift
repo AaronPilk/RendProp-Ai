@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Darwin
 
 /// Helpers for the presigned PUT / multipart path. Every file read here is
 /// BOUNDED — nothing loads a whole walkthrough (2–8 GB) into memory.
@@ -14,8 +15,14 @@ enum DirectUploader {
                             transfer: (URLRequest, URL) async throws -> URLResponse = { request, file in
                                 try await URLSession.shared.upload(for: request, fromFile: file).1
                             }, delay: (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }) async throws -> String {
-        let bytes = FileStore.fileSize(fileURL)
-        guard bytes > 0, let digest = sha256(of: fileURL) else { throw UploadRecovery.Failure.invalidTicket }
+        // Public photo receipts describe the retained bytes, never their legacy filename.
+        let browser = ["gallery", "original", "render"].contains(role) ? try browserPhoto(fileURL) : nil
+        if let browser, browser.contentType != contentType { throw BrowserPhotoFailure.unsupportedFormat }
+        let bytes = browser?.bytes ?? FileStore.fileSize(fileURL)
+        guard bytes > 0, let digest = browser?.sha256 ?? sha256(of: fileURL) else { throw UploadRecovery.Failure.invalidTicket }
+        func checkBody() throws {
+            if let browser, try browserPhoto(fileURL) != browser { throw BrowserPhotoFailure.sourceChanged }
+        }
         if Config.useLiveBackend && Config.enableAuth {
             // An anonymous session may still be connecting on first launch.
             // Bind the journal AFTER that normal connection, never to a nil
@@ -31,10 +38,13 @@ enum DirectUploader {
             guard AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == owner else { throw CancellationError() }
         }
         func create() async throws -> UploadTicket {
-            try checkOwner()
-            return try await api.requestUpload(filename: fileURL.lastPathComponent, bytes: bytes,
+            try checkOwner(); try checkBody()
+            let ticket = try await api.requestUpload(filename: fileURL.lastPathComponent, bytes: bytes,
                 listingID: listingID, sha256: digest, kind: "photo", role: role,
                 contentType: contentType, idempotencyKey: key)
+            try checkOwner(); try checkBody()
+            if let browser { try requireBrowserTicket(ticket, contentType: browser.contentType, role: role, listingID: listingID, allowUnknown: ticket.replayed != false) }
+            return ticket
         }
         if !Config.useLiveBackend { return try await create().assetID }
         let store = journalStore
@@ -42,21 +52,37 @@ enum DirectUploader {
         do {
             var record = try await store.load(journalKey) ?? UploadRecovery.Journal()
             let explicitResume = record.ticket != nil
+            // Validate BEFORE changing any recovery flags or issuing a probe.
+            // Missing legacy MIME stays unknown, never mismatch or replacement authority.
+            if let browser, let ticket = record.ticket {
+                if let declared = record.photoContentType, declared != browser.contentType { throw BrowserPhotoFailure.legacyReceipt }
+                try requireBrowserTicket(ticket, contentType: browser.contentType, role: role, listingID: listingID, allowUnknown: true)
+                try checkOwner(); try checkBody()
+            }
             // A ticket that already ran a whole call dry may be retired and
             // replaced on THIS later, explicit attempt — once. The flag is
             // cleared in memory now so a ticket saved by this call starts with
             // a clean slate; a failed call below sets it again.
             let allowReplacement = record.recoveryExhausted == true
             record.recoveryExhausted = nil
-            if record.ticket == nil { record.ticket = try await create(); try await store.save(record, for: journalKey) }
+            if record.ticket == nil {
+                let ticket = try await create()
+                if let browser {
+                    // A replay may be an older reservation. Keep its MIME unknown
+                    // and reconcile it normally; never adopt or relabel a declaration.
+                    if ticket.replayed == false { record.photoContentType = browser.contentType }
+                }
+                record.ticket = ticket; try await store.save(record, for: journalKey)
+            }
             guard let initial = record.ticket, initial.mode == .single else { throw UploadRecovery.Failure.invalidTicket }
-            if record.completed { try checkOwner(); await store.release(journalKey); return initial.assetID }
+            if record.completed { try checkOwner(); try checkBody(); await store.release(journalKey); return initial.assetID }
             var metadata = UploadMetadata(); metadata.bytes = bytes; metadata.sha256 = digest
             var lastError: Error = UploadRecovery.Failure.invalidTicket
             for attempt in 0..<3 {
                 try checkOwner()
                 if attempt > 0 { try await delay(UInt64(attempt) * 1_000_000_000) }
                 do {
+                    try checkBody()
                     if record.dispatched || record.ticket?.replayed != false {
                         let result = try await UploadRecovery.reconcile(journal: record,
                             allowLegacyCancellation: explicitResume,
@@ -66,37 +92,47 @@ enum DirectUploader {
                                 record.cancellationAuthorizedFor = id
                                 try await store.save(record, for: journalKey)
                             }, complete: { id in
-                                try checkOwner()
+                                try checkOwner(); try checkBody()
                                 try await api.completeUpload(assetID: id, parts: nil, metadata: metadata)
-                            }, renew: { id in try checkOwner(); return try await api.renewUpload(assetID: id) },
+                            }, renew: { id in
+                                try checkOwner(); try checkBody()
+                                let renewed = try await api.renewUpload(assetID: id)
+                                try checkOwner(); try checkBody()
+                                if let browser { try requireBrowserTicket(renewed, contentType: browser.contentType, role: role, listingID: listingID, allowUnknown: record.photoContentType == nil) }
+                                return renewed
+                            },
                             cancel: { id in try checkOwner(); try await api.abortUpload(assetID: id) }, create: create)
                         switch result {
                         case .complete(let id):
+                            try checkOwner(); try checkBody()
                             record.completed = true; try await store.save(record, for: journalKey)
                             try checkOwner(); await store.release(journalKey); return id
                         case .ticket(let ticket):
+                            if let browser { try requireBrowserTicket(ticket, contentType: browser.contentType, role: role, listingID: listingID, allowUnknown: record.photoContentType == nil) }
+                            try checkOwner(); try checkBody()
                             record.ticket = ticket
                             try await store.save(record, for: journalKey)
                         }
                     }
                     guard let ticket = record.ticket, let put = ticket.putURL,
                           put.scheme == "https", ticket.mode == .single else { throw UploadRecovery.Failure.invalidTicket }
-                    try checkOwner()
+                    try checkOwner(); try checkBody()
                     // Persist BEFORE handing bytes to URLSession: app death or
                     // network handover afterward is always reconciled first.
                     record.dispatched = true
                     try await store.save(record, for: journalKey)
                     let response = try await transfer(photoPutRequest(url: put, contentType: contentType), fileURL)
-                    try checkOwner()
+                    try checkOwner(); try checkBody()
                     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                     guard (200..<300).contains(status) else { throw APIError.badResponse(status) }
                     try await api.completeUpload(assetID: ticket.assetID, parts: nil, metadata: metadata)
+                    try checkOwner(); try checkBody()
                     record.completed = true; try await store.save(record, for: journalKey)
                     try checkOwner(); await store.release(journalKey); return ticket.assetID
                 } catch is CancellationError { throw CancellationError() }
                 catch {
                     lastError = error
-                    if error is UploadRecovery.Failure { throw error }
+                    if error is UploadRecovery.Failure || error is BrowserPhotoFailure { throw error }
                     // Retry means reconcile on the next iteration, never reuse
                     // this PUT URL. A service rollout may legitimately pause it.
                     // These are the request's own fault (or the session's), not
@@ -125,6 +161,104 @@ enum DirectUploader {
             throw error
         }
     }
+    enum BrowserPhotoFailure: LocalizedError {
+        case unsupportedFormat, sourceChanged, legacyReceipt
+        var errorDescription: String? {
+            switch self {
+            case .unsupportedFormat:
+                return "This selected photo is not a JPEG, PNG or WebP file. Choose a browser-compatible saved version; its unchanged original remains in Photos."
+            case .sourceChanged:
+                return "The selected photo changed while its upload was being checked. Check its saved upload before continuing; no automatic replacement was started and its history is kept."
+            case .legacyReceipt:
+                return "This saved upload's photo format conflicts with the selected file. Its original, saved upload and current listing selection are kept. Check or discard any pending photo choice in Photos; no replacement upload was started."
+            }
+        }
+    }
+
+    struct BrowserPhoto: Equatable {
+        let contentType: String
+        let bytes: Int64
+        let sha256: String
+    }
+
+    /// Same-descriptor, bounded signature and streaming hash. No image conversion,
+    /// file rename, or whole-photo allocation. Filename is deliberately irrelevant.
+    static func browserPhoto(_ url: URL) throws -> BrowserPhoto {
+        let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw BrowserPhotoFailure.unsupportedFormat }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var before = stat()
+        guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
+              before.st_size > 0, before.st_size <= 128 * 1024 * 1024 else { throw BrowserPhotoFailure.unsupportedFormat }
+        var total: Int64 = 0, prefix = Data(), hash = SHA256()
+        while true {
+            let chunk: Data
+            do { chunk = try handle.read(upToCount: 1024 * 1024) ?? Data() }
+            catch { throw BrowserPhotoFailure.sourceChanged }
+            if chunk.isEmpty { break }
+            total += Int64(chunk.count)
+            guard total <= before.st_size else { throw BrowserPhotoFailure.sourceChanged }
+            if prefix.count < 12 { prefix.append(chunk.prefix(12 - prefix.count)) }
+            hash.update(data: chunk)
+        }
+        var after = stat(), current = stat()
+        guard fstat(fd, &after) == 0, lstat(url.path, &current) == 0,
+              total == before.st_size, before.st_dev == current.st_dev, before.st_ino == current.st_ino,
+              before.st_size == after.st_size, before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+              before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
+              before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec else { throw BrowserPhotoFailure.sourceChanged }
+        let mime: String
+        if prefix.starts(with: [0xFF, 0xD8, 0xFF]) { mime = "image/jpeg" }
+        else if prefix.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { mime = "image/png" }
+        else if prefix.count >= 12, prefix.prefix(4) == Data("RIFF".utf8), prefix.dropFirst(8).prefix(4) == Data("WEBP".utf8) { mime = "image/webp" }
+        else { throw BrowserPhotoFailure.unsupportedFormat }
+        return BrowserPhoto(contentType: mime, bytes: total, sha256: hash.finalize().map { String(format: "%02x", $0) }.joined())
+    }
+
+    /// Server public-photo key suffixes are derived from its declared MIME, not
+    /// the caller filename. This rejects contradictions; it is NOT a conversion
+    /// or sufficient proof by itself to adopt a legacy receipt.
+    static func requireBrowserTicket(_ ticket: UploadTicket, contentType: String, role: String, listingID: UUID, allowUnknown: Bool = false) throws {
+        guard ticket.mode == .single, let asset = UUID(uuidString: ticket.assetID) else { throw UploadRecovery.Failure.invalidTicket }
+        if let declared = ticket.contentType, declared != contentType { throw BrowserPhotoFailure.legacyReceipt }
+        guard let key = ticket.storageKey else {
+            if allowUnknown { return } // Preserve old strict server reconciliation, not a MIME proof.
+            throw UploadRecovery.Failure.invalidTicket
+        }
+        let pieces = key.split(separator: "/", omittingEmptySubsequences: false)
+        let ext = contentType == "image/jpeg" ? "jpg" : contentType == "image/png" ? "png" : contentType == "image/webp" ? "webp" : ""
+        let stem = role == "gallery" ? "gallery-" : role == "original" ? "original-" : ""
+        let name = pieces.last.map(String.init) ?? ""
+        let pattern = "^" + stem + asset.uuidString.lowercased() + "(?:-complete-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?\\." + ext + "$"
+        guard !ext.isEmpty, pieces.count == 4, pieces[0] == "renders", UUID(uuidString: String(pieces[1])) != nil,
+              UUID(uuidString: String(pieces[2])) == listingID,
+              name.range(of: pattern, options: .regularExpression) != nil else { throw BrowserPhotoFailure.legacyReceipt }
+    }
+
+    /// Mutation-only admission. Read-only identity discovery and explicit Discard
+    /// retain old receipts. Reject known contradictions before journal/PATCH;
+    /// unknown legacy MIME still faces the unchanged strict server oracle.
+    static func requireGalleryReceipt(fileURL: URL, ownerID: UUID, listingID: UUID, assetID: UUID,
+                                      sha256: String, bytes: Int64, storageKey: String?,
+                                      journalStore: DirectUploadJournal = .shared) async throws {
+        let body = try browserPhoto(fileURL)
+        guard body.sha256 == sha256, body.bytes == bytes else { throw BrowserPhotoFailure.sourceChanged }
+        let key = photoJournalKey(owner: ownerID.uuidString.lowercased(), listingID: listingID,
+            role: "gallery", keyPrefix: "gallery", digest: sha256, bytes: bytes)
+        if let saved = try await journalStore.load(key), let ticket = saved.ticket {
+            guard saved.completed, UUID(uuidString: ticket.assetID) == assetID else { throw UploadRecovery.Failure.invalidTicket }
+            if let declared = saved.photoContentType, declared != body.contentType { throw BrowserPhotoFailure.legacyReceipt }
+            try requireBrowserTicket(ticket, contentType: body.contentType, role: "gallery", listingID: listingID, allowUnknown: true)
+        }
+        if let storageKey {
+            let current = UploadTicket(assetID: assetID.uuidString, mode: .single, storageKey: storageKey)
+            try requireBrowserTicket(current, contentType: body.contentType, role: "gallery", listingID: listingID)
+        }
+        guard try browserPhoto(fileURL) == body else { throw BrowserPhotoFailure.sourceChanged }
+    }
+
     /// One shared definition for writes and later, read-only photo identity lookup.
     static func photoJournalKey(owner: String, listingID: UUID, role: String, keyPrefix: String,
                                 digest: String, bytes: Int64) -> String {

@@ -95,7 +95,7 @@ enum PhotoVersionHistory {
         }
     }
     enum LibraryKind: String, CaseIterable, Identifiable, Sendable {
-        case original = "Original", latest = "Latest", decluttered = "Decluttered", staged = "Staged"
+        case original = "Original", latest = "Latest", decluttered = "Decluttered", staged = "Staged", enhanced = "Enhanced"
         var id: String { rawValue }
     }
     struct Version: Codable, Hashable, Sendable, Identifiable {
@@ -270,7 +270,7 @@ enum PhotoVersionHistory {
             return !hiddenFamilies.contains(version.familyID) && current[version.familyID] == id
         }
         /// Every saved edit remains available. Originals and Latest have one
-        /// tile per source family; Staged and Decluttered retain every choice.
+        /// tile per source family; edit categories retain every saved choice.
         func libraryVersions(_ kind: LibraryKind) -> [Version] {
             let candidates = orderedForLibrary(versions.values.filter { version in
                 guard !hiddenFamilies.contains(version.familyID) else { return false }
@@ -279,9 +279,13 @@ enum PhotoVersionHistory {
                 case .latest: return current[version.familyID] == version.id
                 case .decluttered: return version.effects.contains("declutter") && !version.effects.contains("stage")
                 case .staged: return version.effects.contains("stage")
+                // Match the existing Photo Versions Enhanced category, keeping
+                // older saved enhancements even when Latest is another edit.
+                case .enhanced: return !(version.parentID == nil && version.imageFile == version.originalFile)
+                    && !version.effects.contains("stage") && !version.effects.contains("declutter")
                 }
             })
-            if kind == .staged || kind == .decluttered { return candidates }
+            if kind == .staged || kind == .decluttered || kind == .enhanced { return candidates }
             var families: Set<String> = []
             return candidates.filter { families.insert($0.familyID).inserted }
         }
@@ -485,12 +489,35 @@ enum PhotoVersionHistory {
     /// Register only a newly captured/imported image whose pre-enhancement bytes
     /// this call owns. Older orig-* files may be AI predecessors, so never infer
     /// this guarantee from a filename.
+    @discardableResult
     static func saveCapture(original: Data, enhanced: Data, id: String, directory: URL,
-                            importOrderID: String? = nil,
-                            write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws {
+                            importOrderID: String? = nil, deduplicateOriginal: Bool = false,
+                            write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws -> Bool {
         lock.lock(); defer { lock.unlock() }
         var index = try loadUnlocked(directory: directory)
         guard index.versions[id] == nil else { throw Failure.duplicate }
+        if deduplicateOriginal {
+            // Import reuse is exact-byte only. Never identify a source by its
+            // filename, enhanced pixels, legacy history or cloud selection.
+            // Existing files, edits and explicit choices are left untouched.
+            for capture in index.versions.values where capture.originalVerified && capture.sourceHistoryKnown
+                && capture.parentID == nil && capture.effects.isEmpty
+                && (capture.edit == "capture" || capture.edit == "capture-original")
+                && !index.hiddenFamilies.contains(capture.familyID) {
+                guard let name = capture.originalFile, safeName(name) else { continue }
+                let file = directory.appendingPathComponent(name)
+                let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
+                guard let before = try? file.resourceValues(forKeys: keys),
+                      before.isRegularFile == true, before.isSymbolicLink != true,
+                      before.fileSize == original.count,
+                      let retained = try? Data(contentsOf: file, options: .mappedIfSafe), retained == original,
+                      let after = try? file.resourceValues(forKeys: keys),
+                      after.isRegularFile == true, after.isSymbolicLink != true,
+                      after.fileSize == before.fileSize, after.contentModificationDate == before.contentModificationDate
+                else { continue }
+                return false
+            }
+        }
         try PhotoCaptureStorage.writePair(original: original, enhanced: enhanced, id: id, directory: directory, write: write)
         let originalName = "orig-\(id).jpg", imageName = "enh-\(id).jpg"
         do {
@@ -507,6 +534,7 @@ enum PhotoVersionHistory {
                 index.importOrder?[id] = importOrderID
             }
             try save(index, directory: directory, write: write)
+            return true
         } catch {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(originalName))
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(imageName))
@@ -561,6 +589,26 @@ enum PhotoVersionHistory {
             source = saved
         } else { source = parent }
         try requireImage(source.imageFile, directory: directory)
+        return (parent, source)
+    }
+
+    /// Schema-1 journals predate a frozen parent. They are recoverable only
+    /// while their source family has no intervening AI edit. Never graft an
+    /// old paid result onto a newer edit selected after its dispatch.
+    static func savedEditContext(sourceID: String, parentID: String?, directory: URL) throws -> (parent: Version, source: Version) {
+        let index = try load(directory: directory)
+        guard let source = index.versions[sourceID], !index.hiddenFamilies.contains(source.familyID) else { throw Failure.changedVersion }
+        try requireImage(source.imageFile, directory: directory)
+        if let parentID {
+            guard let parent = index.versions[parentID], parent.familyID == source.familyID else { throw Failure.changedVersion }
+            return (parent, source)
+        }
+        guard let currentID = index.current[source.familyID], let parent = index.versions[currentID],
+              index.isVisible(currentID),
+              (currentID == sourceID || source.isRetainedOriginalSource),
+              !index.versions.values.contains(where: { $0.familyID == source.familyID && !$0.effects.isEmpty }) else {
+            throw Failure.changedVersion
+        }
         return (parent, source)
     }
 

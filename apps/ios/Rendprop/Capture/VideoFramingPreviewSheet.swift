@@ -4,6 +4,9 @@ import ImageIO
 struct VideoFramingPreviewSheet: View {
     let url: URL
     let aspect: Double
+    var photoMotion = false
+    var photoMotionScale: Double = 1.02
+    var photoMotionDirection = "push_in"
     @Environment(\.dismiss) private var dismiss
     @State private var image: UIImage?
     @State private var previewFailed = false
@@ -11,7 +14,7 @@ struct VideoFramingPreviewSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    if let image { DeliveryFramingPreview(image: image, aspect: aspect) }
+                    if let image { DeliveryFramingPreview(image: image, aspect: aspect, photoMotion: photoMotion, photoMotionScale: photoMotionScale, photoMotionDirection: photoMotionDirection) }
                     else if previewFailed { Text("This preview could not be read. Your saved photo is unchanged.") }
                     else { ProgressView("Preparing framing preview…") }
                     Text(aspect > 1 ? "Landscape · listing video" : "Portrait · social media")

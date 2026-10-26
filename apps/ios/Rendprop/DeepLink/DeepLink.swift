@@ -52,14 +52,47 @@ enum DeepLink: Equatable, Identifiable {
     /// Derive only a buyer-facing presentation URL from an already-published
     /// server link. Its token is unchanged; stored canonical URLs, publication
     /// receipts, API identities and the MLS-unbranded URL are never modified.
-    static func buyerWebsiteURL(from canonical: URL) -> URL? {
+    static func buyerWebsiteURL(from canonical: URL, address: String? = nil) -> URL? {
         guard publicWebsiteURL(canonical) != nil else { return nil }
         let parts = canonical.pathComponents.filter { $0 != "/" && !$0.isEmpty }
-        guard parts.count == 2, parts[0] == "f",
-              parts[1].range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil,
+        guard (parts.count == 2 && ["f", "property"].contains(parts[0]))
+                || (parts.count == 3 && parts[0] == "property"
+                    && parts[1].range(of: "^[a-z0-9][a-z0-9-]{0,119}$", options: .regularExpression) != nil),
+              let token = parts.last,
+              token.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil,
               var components = URLComponents(url: canonical, resolvingAgainstBaseURL: false) else { return nil }
-        components.path = "/property/" + parts[1]
+        let descriptor = address.map(propertyAddressSlug) ?? (parts.count == 3 ? parts[1] : "")
+        components.path = "/property/" + (descriptor.isEmpty ? "" : descriptor + "/") + token
         return components.url
+    }
+
+    /// Address spelling is presentation only. The same publication token and
+    /// unbranded renderer remain authoritative; stored server receipts stay exact.
+    static func unbrandedWebsiteURL(from canonical: URL, address: String) -> URL? {
+        guard publicWebsiteURL(canonical) != nil else { return nil }
+        let parts = canonical.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+        guard (parts.count == 2 || (parts.count == 3
+                && parts[1].range(of: "^[a-z0-9][a-z0-9-]{0,119}$", options: .regularExpression) != nil)),
+              parts[0] == "u", let token = parts.last,
+              token.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil,
+              var components = URLComponents(url: canonical, resolvingAgainstBaseURL: false) else { return nil }
+        let descriptor = propertyAddressSlug(address)
+        components.path = "/u/" + (descriptor.isEmpty ? "" : descriptor + "/") + token
+        return components.url
+    }
+
+    /// Matches tour-host's propertyAddressSlug, including its UTF-16 input
+    /// bound and compatibility decomposition. Never use this as a lookup key.
+    static func propertyAddressSlug(_ address: String) -> String {
+        let bounded = String(decoding: address.utf16.prefix(500), as: UTF16.self)
+        let decomposed = bounded.decomposedStringWithCompatibilityMapping
+        let unmarked = String(String.UnicodeScalarView(decomposed.unicodeScalars.filter {
+            !(0x0300...0x036f).contains($0.value)
+        }))
+        let normalized = unmarked.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return String(normalized.prefix(120)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 
     /// Parse an incoming URL. nil for anything this app has no screen for, and

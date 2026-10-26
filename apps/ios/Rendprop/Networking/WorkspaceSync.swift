@@ -97,6 +97,27 @@ enum ListingWireDetails {
     }
 }
 
+/// Retire only the legacy create refusal after a fresh, authenticated cloud
+/// result proves this exact local listing is bound. A stored serverID alone
+/// is not a successful refresh and never authorizes clearing another warning.
+enum ListingCreateWarning {
+    static let legacy = "The listing could not be created. Check your workspace access and listing details."
+    static func retire(in listing: inout Listing, prior: Listing, verified: Listing, actorID: UUID?) {
+        guard let actorID, !prior.isSample, !verified.isSample,
+              prior.cloudUnavailable != true, prior.cloudDetachedServerID == nil,
+              prior.cloudSyncOwnerID == nil || prior.cloudSyncOwnerID == actorID,
+              let serverID = verified.serverID, let orgID = verified.serverOrgID,
+              verified.cloudUnavailable != true,
+              prior.serverID == nil || prior.serverID == serverID,
+              prior.serverOrgID == nil || prior.serverOrgID == orgID,
+              prior.cloudDraftOrgID == nil || prior.cloudDraftOrgID == orgID,
+              listing.id == prior.id, listing.serverID == serverID, listing.serverOrgID == orgID,
+              listing.cloudSyncOwnerID == actorID, listing.cloudUnavailable != true,
+              listing.cloudDetachedServerID == nil, listing.lastError == legacy else { return }
+        listing.lastError = nil
+    }
+}
+
 /// The actual asynchronous create handoff used by AppModel. Tests can suspend
 /// its create closure to exercise edits, deletion and account changes in flight.
 @MainActor enum CloudDraftCreation {
@@ -152,6 +173,7 @@ enum ListingWireDetails {
             throw CancellationError()
         }
         if let existing = latest.serverID { return existing }
+        let beforeCloudBinding = latest
         let unchanged = try snapshot.cloudCreateFingerprint.map { try matchesFingerprint(latest, original: $0) } ?? false
         let factsUnchanged = try snapshot.cloudCreateFactsFingerprint.map { try factsFingerprint(latest) == $0 } ?? false
         if !unchanged, latest.measurementSync == nil, let plan = latest.floorMeasurements {
@@ -284,6 +306,8 @@ enum ListingWireDetails {
         } else {
             ListingFactsSync.acknowledge(submitted: snapshot, receipt: created, current: &latest)
         }
+        ListingCreateWarning.retire(in: &latest, prior: beforeCloudBinding, verified: created,
+            actorID: identity.userID.flatMap(UUID.init(uuidString:)))
         save(latest)
         return latest.serverID!
     }
@@ -461,6 +485,7 @@ enum CloudListingMerge {
             merged.cloudDetachedServerID = nil
             merged.cloudUnavailable = false
             if existing.cloudUnavailable == true { merged.lastError = nil }
+            ListingCreateWarning.retire(in: &merged, prior: existing, verified: fresh, actorID: ownerID)
             // The most recent dirty state is checked at APPLY time, not at fetch
             // start, so typing while a foreground read runs cannot lose an edit.
             if existing.needsServerSync != true && !protected.contains(existing.id) {

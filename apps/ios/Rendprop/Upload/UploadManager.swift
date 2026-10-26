@@ -510,7 +510,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// allowlist, same 10 MB ceiling. The caller enforces the ceiling first so a
     /// too-big photo is skipped rather than charged for and rejected.
     func uploadGalleryPhoto(fileURL: URL, listingID: UUID) async throws -> String {
-        let contentType = DirectUploader.uploadContentType(for: fileURL, kind: "photo")
+        let contentType = try DirectUploader.browserPhoto(fileURL).contentType
         guard ["image/jpeg", "image/png", "image/webp"].contains(contentType) else {
             throw UploadError.server("A gallery photo has to be a JPEG, PNG or WebP to show on the page.")
         }
@@ -526,7 +526,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// "Before / after" pair NorthstarMLS asks for. Server ceiling for this role
     /// is 10 MB and jpeg/png/webp. `listingID` is the SERVER listing id.
     func uploadAlteredPhoto(fileURL: URL, listingID: UUID) async throws -> String {
-        let contentType = DirectUploader.uploadContentType(for: fileURL, kind: "photo")
+        let contentType = try DirectUploader.browserPhoto(fileURL).contentType
         guard ["image/jpeg", "image/png", "image/webp"].contains(contentType) else {
             throw UploadError.server("The edited photo has to be a JPEG, PNG or WebP to be published.")
         }

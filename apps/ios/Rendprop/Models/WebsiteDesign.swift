@@ -22,8 +22,8 @@ enum WebsiteDesign: String, Codable, CaseIterable, Identifiable, Sendable {
     }
     var isPremium: Bool { self != .basic }
 
-    func previewURL(canonical: URL) -> URL? {
-        guard let buyer = DeepLink.buyerWebsiteURL(from: canonical),
+    func previewURL(canonical: URL, address: String? = nil) -> URL? {
+        guard let buyer = DeepLink.buyerWebsiteURL(from: canonical, address: address),
               var components = URLComponents(url: buyer, resolvingAgainstBaseURL: false) else { return nil }
         components.queryItems = [URLQueryItem(name: "preview_theme", value: rawValue)]
         components.fragment = nil
