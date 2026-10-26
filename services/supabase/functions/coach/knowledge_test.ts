@@ -78,12 +78,13 @@ Deno.test("knowledge: known defective account statement is rejected", () => {
 
 Deno.test("knowledge: introductory trial requires Apple's subscription confirmation", () => {
   const trial = fact("Free trial");
-  for (const required of ["7-day", "choosing a subscription", "confirming it in Apple's purchase sheet", "does not start that trial", "selected plan's allowances", "renews at the displayed subscription price", "original end date"]) {
+  for (const required of ["7-day", "choosing a subscription", "confirming it in Apple's purchase sheet", "does not start that trial", "one listing and up to five AI photo edits", "AI-generated video and aerial openings wait until payment", "selected plan's full", "after the first paid renewal", "renews at the displayed subscription price", "original end date"]) {
     assert(trial.includes(required), `trial policy omitted: ${required}`);
   }
   const block = knowledgeBlock();
   assert(block.includes(trial), "actual guidance must contain the trial policy");
   assert(block.includes("never on signup"), "allowances summary must not grant an automatic trial");
+  assert(!block.includes("20 generated shots"), "introductory offer must not advertise generated shots");
 });
 
 Deno.test("knowledge: Measurements, 3D floor plans and 3D walkthroughs are all Coming soon (build 57)", () => {

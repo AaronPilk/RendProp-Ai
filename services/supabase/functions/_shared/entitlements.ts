@@ -47,19 +47,19 @@ export interface Entitlement {
   degraded?: boolean;
 }
 
-/** Conservative fallback if the table is unreachable: the (real-estate) trial
- *  allowance as 0032 seeds it. Fail CLOSED — a lookup failure must never hand
+/** Conservative fallback if the table is unreachable: the current limited
+ *  real-estate trial allowance. Fail CLOSED — a lookup failure must never hand
  *  out a Team-sized budget. Callers on a charge path 503 on `degraded` anyway
  *  (entitlementForCharge), so these numbers only ever reach a display. */
 const TRIAL_FALLBACK: Entitlement = {
   plan: "trial",
   renders_per_month: 3,
-  photo_edits_per_month: 60,
-  reels_per_month: 4,
-  aerials_per_month: 2,
-  topaz_per_month: 1,
+  photo_edits_per_month: 5,
+  reels_per_month: 0,
+  aerials_per_month: 0,
+  topaz_per_month: 0,
   seats: 1,
-  cogs_ceiling_cents: 1200,
+  cogs_ceiling_cents: 500,
   price_cents: 0,
 };
 

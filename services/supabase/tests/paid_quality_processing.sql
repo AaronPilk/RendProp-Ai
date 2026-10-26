@@ -82,7 +82,7 @@ select pg_temp.ok(paid_quality_processing_budget((select org from bf))=0,'Sandbo
 reset role;update orgs set plan='free',plan_source=null,plan_expires_at=null where id=(select org from bf);set local role service_role;
 select pg_temp.ok(paid_quality_processing_budget((select org from bf))=0 and(org_entitlement((select org from bf))).cogs_ceiling_cents=300,'ordinary Free lifetime boundary unchanged');
 reset role;update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval'7 days'where id=(select org from bf);set local role service_role;
-select pg_temp.ok(paid_quality_processing_budget((select org from bf))=0 and(org_entitlement((select org from bf))).reels_per_month=20 and(plan_serving_ceiling((select org from bf))->>'ceiling_cents')::numeric=1500,'unverified trial does not receive new funds or quota');
+select pg_temp.ok(paid_quality_processing_budget((select org from bf))=0 and(org_entitlement((select org from bf))).reels_per_month=0 and(plan_serving_ceiling((select org from bf))->>'ceiling_cents')::numeric=500,'unverified trial does not receive new funds or quota');
 reset role;update orgs set plan='starter',plan_source='manual'where id=(select org from bf);set local role service_role;
 select pg_temp.ok(paid_quality_processing_budget((select org from bf))=0,'manual or claimed plan is not a paid receipt');
 reset role;update plan_entitlements set cogs_ceiling_cents=50000 where plan='starter';set local role service_role;

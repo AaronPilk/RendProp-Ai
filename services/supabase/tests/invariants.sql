@@ -178,7 +178,7 @@ where (lat is not null and lat <> round(lat::numeric, 3))
 -- ── Plan coherence: enforced must equal published (pricing.html) ─────────────
 -- Paid sizes include the reviewed multi-photo recipe allowances: prices unchanged,
 -- 4/10/25 renders,100/200/400 edits,30/60/150 generated shots,2/4/8 aerials,
--- Team2 seats +2 Topaz; trial20 edits/20 shots/1500c and Free300c unchanged. The
+-- Team2 seats +2 Topaz; trial5 edits/no generated video/500c, Free300c unchanged. The
 -- single-location trial override lives in plan_entitlement_overrides and is
 -- asserted in the 0044 section at the end of this file.
 
@@ -201,7 +201,7 @@ from (
            e.aerials_per_month, e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
            is not distinct from
           (x.renders, x.edits, x.reels, x.aerials, x.topaz, x.seats, x.cogs, x.price)) as ok
-    from (values ('trial',   3,  20,20,  2, 1, 1, 1500,     0),
+    from (values ('trial',   3,   5, 0,  0, 0, 1,  500,     0),
                  ('free',    1,   5, 0,  0, 0, 1,  300,     0),
                  ('starter', 4, 100,30,  2, 0, 1, 2032,  4900),
                  ('solo',    4, 100,30,  2, 0, 1, 2032,  4900),
@@ -2076,7 +2076,7 @@ end $ap$;
 -- after the kept-red astra ceiling assertion so that one keeps its number.
 
 insert into _inv(name, pass, note)
-select 'plan_entitlement_overrides holds exactly the five single-location trial rows (1/20/20/1/1, 1500¢)',
+select 'plan_entitlement_overrides holds exactly the five single-location trial rows (1/5/0/0/0, 500¢)',
        (select count(*) from plan_entitlement_overrides) = 5 and coalesce(bool_and(ok), false),
        format('%s row(s) total; wrong or missing: %s',
               (select count(*) from plan_entitlement_overrides),
@@ -2086,7 +2086,7 @@ from (
          ((o.plan, o.renders_per_month, o.photo_edits_per_month, o.reels_per_month,
            o.aerials_per_month, o.topaz_per_month, o.seats, o.cogs_ceiling_cents)
            is not distinct from
-          ('trial', 1, 20,20, 1, 1, null::integer, 1500)) as ok
+          ('trial', 1, 5,0, 0, 0, null::integer, 500)) as ok
     from unnest(array['venue','restaurant','retail','fitness','other']) as x(space_type)
     left join plan_entitlement_overrides o on o.plan = 'trial' and o.space_type = x.space_type
 ) s;
@@ -2179,18 +2179,18 @@ begin
 
   e := org_entitlement(oRE);
   insert into _inv(name, pass, note)
-    values ('org_entitlement on a real-estate trial org is the current base row (3/20/20/2/1, 1 seat, 1500¢)',
+    values ('org_entitlement on a real-estate trial org is the current base row (3/5/0/0/0, 1 seat, 500¢)',
             (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
              e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
-              is not distinct from ('trial', 3, 20,20, 2, 1, 1, 1500, 0),
+              is not distinct from ('trial', 3, 5,0, 0, 0, 1, 500, 0),
             e::text);
 
   e := org_entitlement(oFit);
   insert into _inv(name, pass, note)
-    values ('org_entitlement on a fitness trial org is the single-location free week (1/20/20/1/1, 1 seat, 1500¢)',
+    values ('org_entitlement on a fitness trial org is the single-location free week (1/5/0/0/0, 1 seat, 500¢)',
             (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
              e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
-              is not distinct from ('trial', 1, 20,20, 1, 1, 1, 1500, 0),
+              is not distinct from ('trial', 1, 5,0, 0, 0, 1, 500, 0),
             e::text);
 
   -- Only the trial is industry-aware: an expired single-location trial is
@@ -2254,21 +2254,21 @@ begin
   insert into _inv(name, pass, note)
     values ('an app publish is still free on a single-location trial at its render cap', v_job.source = 'app', '');
 
-  -- The current1500c trial ceiling is shared across industry/base rows:
-  -- a1501c line is refused without writing, then a1499c line lands.
+  -- The current500c trial ceiling is shared across industry/base rows:
+  -- a501c line is refused without writing, then a499c line lands.
   select rj.* into v_job from render_jobs rj where rj.idem_key = '_inv-fit-000001';
   ok := false; msg := null;
   begin
-    perform log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 1501, '{"_inv":"industry"}'::jsonb, 5000);
-  exception when others then msg := sqlerrm; ok := msg like 'RP402: monthly AI spend ceiling reached for the trial plan (0¢ of 1500¢)%';
+    perform log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 501, '{"_inv":"industry"}'::jsonb, 5000);
+  exception when others then msg := sqlerrm; ok := msg like 'RP402: monthly AI spend ceiling reached for the trial plan (0¢ of 500¢)%';
   end;
   insert into _inv(name, pass, note)
-    values ('log_job_cost enforces the current single-location trial ceiling (1500¢)',
+    values ('log_job_cost enforces the current single-location trial ceiling (500¢)',
             ok, coalesce(msg, 'NO ERROR RAISED'));
-  v_cost := log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 1499, '{"_inv":"industry"}'::jsonb, 5000);
+  v_cost := log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 499, '{"_inv":"industry"}'::jsonb, 5000);
   select count(*) into n from cost_ledger where meta->>'_inv' = 'industry';
   insert into _inv(name, pass, note)
-    values ('and a line inside that ceiling is recorded', v_cost = 1499 and n = 1, format('total=%s rows=%s', v_cost, n));
+    values ('and a line inside that ceiling is recorded', v_cost = 499 and n = 1, format('total=%s rows=%s', v_cost, n));
 
   -- Cleanup (children cascade from listings/orgs; profiles cascade from
   -- auth.users; cost_ledger only SET NULLs on org/job deletion).

@@ -136,12 +136,13 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Free trial",
-    source: "Subscription-confirmed trial policy (2026-10-01)",
+    source: "Subscription-confirmed limited trial policy (2026-10-26)",
     fact:
       "Eligible customers can start a 7-day introductory trial by choosing a subscription " +
       "and confirming it in Apple's purchase sheet. Apple determines eligibility; creating " +
-      "an account or installing Rendprop does not start that trial. The selected plan's " +
-      "allowances apply after confirmation, subject to the shared trial AI limit and trial availability. It renews at the displayed subscription price " +
+      "an account or installing Rendprop does not start that trial. During the free week, " +
+      "one listing and up to five AI photo edits are included; AI-generated video and aerial openings wait until payment. The selected plan's full " +
+      "allowances apply after the first paid renewal, subject to the shared AI limit and availability. It renews at the displayed subscription price " +
       "unless cancelled through Apple. Existing previously granted trial windows keep their " +
       "original end date. Plan & usage shows the current access and Apple's offer terms.",
   },
@@ -238,7 +239,7 @@ export function knowledgeBlock(): string {
     "",
     "• Plan allowances (NEVER state a price — every price comes from the App Store, never from " +
     "you): " + allowances +
-    " These are current catalog examples, not a replacement for the verified account snapshot. Existing funded/grant windows retain their own caps. Use Plan & usage for actual remaining generated-shot/edit allowance and shared AI capacity; never promise all meter maxima can be used together. An eligible trial can have 20 photo edits, 20 generated shots and a shared usage ceiling, but only its effective snapshot grants access. An eligible 7-day introductory trial starts only after the " +
+    " These are post-payment catalog examples, not a replacement for the verified account snapshot. Existing funded/grant windows retain their own caps. Use Plan & usage for actual remaining generated-shot/edit allowance and shared AI capacity; never promise all meter maxima can be used together. A new introductory week includes one listing and up to five AI photo edits, with no AI-generated video or aerial opening before payment. An eligible 7-day introductory trial starts only after the " +
     "user selects a subscription and confirms Apple's purchase sheet, never on signup. For " +
     "the current plan, this month's usage, or any price, tell the user to open Plan & usage.",
   ].join("\n");
