@@ -208,6 +208,35 @@ private struct ListingToolUnavailableTile: View {
     }
 }
 
+/// Keep the production planner's large destination type out of the listing
+/// screen's generic view tree. On iOS 18.7.3, resolving that tree while
+/// opening any listing overflowed the main thread's metadata stack.
+private struct ListingProductionPlanLink: View {
+    let listing: Listing
+
+    var body: some View {
+        NavigationLink { AnyView(ProductionPlanView(listing: listing)) } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Plan recorded shots").font(.rpHeadline).foregroundStyle(Theme.ink)
+                    Text("Keep a shot checklist for this property before recording.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(ScalePressStyle())
+        .accessibilityIdentifier("listing.productionPlan")
+    }
+}
+
 /// Only app-owned raw recording/import paths can supply a room-tag timeline.
 /// A rendered tour, photo video, cloud render or bundled sample is not a take.
 enum RoomTagWalkthroughPolicy {
@@ -1023,71 +1052,13 @@ struct FlythroughDetailView: View {
         ScrollView {
             if hasCurrentPresentationContext {
             VStack(spacing: Theme.spacing) {
-                if !currentListing.isSample {
-                    Button { showEdit = true } label: {
-                        Label("Manage listing details", systemImage: "pencil")
-                            .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
-                            .padding().background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: Theme.radius))
-                    }.foregroundStyle(Theme.accent).accessibilityIdentifier("listing.editDetails")
-                }
-                if !currentListing.isSample && listingFactsNeedReview {
-                    ListingFactsReviewCard { showListingFactsReview = true }
-                }
-                if let notice = model.cloudPhotoNotice(for: listing.id) {
-                    Text(notice).font(.rpCaption).foregroundStyle(Theme.inkDim)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("listing.photoCoverPreserved")
-                }
-                toolboxSection
-                if !currentListing.isSample {
-                    NavigationLink { ProductionPlanView(listing: currentListing) } label: {
-                        nextStepHeader("checklist", "Plan recorded shots", "Keep a shot checklist for this property before recording.")
-                            .padding(14).background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    .buttonStyle(ScalePressStyle())
-                    .accessibilityIdentifier("listing.productionPlan")
-                }
-                tourSection
-                if let smoothing = tour?.motionSmoothing {
-                    Text(smoothing == "unavailable"
-                         ? "Motion smoothing wasn't available for this footage. Preview the video before sharing."
-                         : smoothing == "applied"
-                         ? "Camera-shake correction applied. Preview the video to check walking movement and framing."
-                         : "The video had little measured shake. Preview the movement before sharing.")
-                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if !currentListing.isSample { ListingClientContactSummary(listing: currentListing) }
-                if !currentListing.isSample {
-                    NavigationLink { WebsiteDesignPickerView(listing: currentListing) } label: {
-                        nextStepHeader("rectangle.3.group", "Website design", "Choose the look of this property's website.")
-                            .padding(14).background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
-                    }.buttonStyle(ScalePressStyle()).accessibilityIdentifier("listing.websiteDesign")
-                }
-                if let shareURL {
-                    shareSection(shareURL)
-                } else {
-                    nextStepCard
-                }
-                filesSection
-                performanceSection
-                infoSection
-                detailsSection
-                mapSection
-                searchIndexingCard
-                if !currentListing.isSample, currentListing.serverID != nil {
-                    NavigationLink { CloudMediaView(listing: currentListing) } label: {
-                        Label("Cloud files from Studio & iPhone", systemImage: "icloud.and.arrow.down")
-                            .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(16)
-                            .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
-                    }
-                }
-                complianceSection
-                if !currentListing.isSample {
-                    manageSection
-                    DesktopStudioCard().padding(16)
-                        .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.radius))
-                }
+                // Nominal sections bound the depth of SwiftUI generic metadata.
+                // A single concrete 20-child VStack caused an iOS 18.7.3 stack
+                // overflow when NavigationStack opened any listing in build 122.
+                AnyView(VStack(spacing: Theme.spacing) { listingPrimarySection })
+                AnyView(VStack(spacing: Theme.spacing) { listingPresentationSection })
+                AnyView(VStack(spacing: Theme.spacing) { listingDetailsSection })
+                AnyView(VStack(spacing: Theme.spacing) { listingAdminSection })
             }
             .padding()
             .askAI(.listing, listingID: listing.id)
@@ -1275,6 +1246,78 @@ struct FlythroughDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(deleteMessage)
+        }
+    }
+
+    @ViewBuilder private var listingPrimarySection: some View {
+        if !currentListing.isSample {
+            Button { showEdit = true } label: {
+                Label("Manage listing details", systemImage: "pencil")
+                    .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
+                    .padding().background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: Theme.radius))
+            }.foregroundStyle(Theme.accent).accessibilityIdentifier("listing.editDetails")
+        }
+        if !currentListing.isSample && listingFactsNeedReview {
+            ListingFactsReviewCard { showListingFactsReview = true }
+        }
+        if let notice = model.cloudPhotoNotice(for: listing.id) {
+            Text(notice).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("listing.photoCoverPreserved")
+        }
+        toolboxSection
+        if !currentListing.isSample {
+            ListingProductionPlanLink(listing: currentListing)
+        }
+    }
+
+    @ViewBuilder private var listingPresentationSection: some View {
+        tourSection
+        if let smoothing = tour?.motionSmoothing {
+            Text(smoothing == "unavailable"
+                 ? "Motion smoothing wasn't available for this footage. Preview the video before sharing."
+                 : smoothing == "applied"
+                 ? "Camera-shake correction applied. Preview the video to check walking movement and framing."
+                 : "The video had little measured shake. Preview the movement before sharing.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if !currentListing.isSample { ListingClientContactSummary(listing: currentListing) }
+        if !currentListing.isSample {
+            NavigationLink { AnyView(WebsiteDesignPickerView(listing: currentListing)) } label: {
+                nextStepHeader("rectangle.3.group", "Website design", "Choose the look of this property's website.")
+                    .padding(14).background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
+            }.buttonStyle(ScalePressStyle()).accessibilityIdentifier("listing.websiteDesign")
+        }
+        if let shareURL {
+            shareSection(shareURL)
+        } else {
+            nextStepCard
+        }
+    }
+
+    @ViewBuilder private var listingDetailsSection: some View {
+        filesSection
+        performanceSection
+        infoSection
+        detailsSection
+        mapSection
+        searchIndexingCard
+        if !currentListing.isSample, currentListing.serverID != nil {
+            NavigationLink { AnyView(CloudMediaView(listing: currentListing)) } label: {
+                Label("Cloud files from Studio & iPhone", systemImage: "icloud.and.arrow.down")
+                    .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(16)
+                    .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
+            }
+        }
+    }
+
+    @ViewBuilder private var listingAdminSection: some View {
+        complianceSection
+        if !currentListing.isSample {
+            manageSection
+            DesktopStudioCard().padding(16)
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.radius))
         }
     }
 
