@@ -56,7 +56,7 @@ try:
         run("apply-" + migration.stem, [*psql, "-q", "-1", "-f", migration])
     output = run("address-contract", [*psql, "-Atq", "-f", SQL / "tests/property_address_lookup.sql"])
     proofs = [json.loads(line) for line in output.splitlines() if line.startswith("{") and '"assertions"' in line]
-    assert len(proofs) == 1 and proofs[0]["passed"] and proofs[0]["assertions"] >= 22, proofs
+    assert len(proofs) == 1 and proofs[0]["passed"] and proofs[0]["assertions"] >= 24, proofs
     receipt["unit"] = proofs[0]
     assert hashes() == receipt["sourceHashes"], "source changed during verification"
     receipt["passed"] = True

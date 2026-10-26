@@ -70,7 +70,31 @@ set local role service_role;
 select pg_temp.ok(public.public_property_address_lookup('123-main-st')='{"status":"ambiguous"}'::jsonb,
   'cross-workspace duplicate includes noindex page');
 reset role;
+-- Listing B has an older approved publication and a newer revoked one. The
+-- newest *hostable* render is B's older publication, so A is still ambiguous.
+-- Moving the presenter check outside the lateral LIMIT incorrectly returns A.
 set local session_replication_role=replica;
+insert into public.render_jobs(id,listing_id,status,source)values
+ ('ad300000-0000-4000-8000-000000000004','ad200000-0000-4000-8000-000000000002','ready','app');
+insert into public.renders(id,job_id,listing_id,slug,duration_s,published_at)values
+ ('ad400000-0000-4000-8000-000000000004','ad300000-0000-4000-8000-000000000004',
+  'ad200000-0000-4000-8000-000000000002','newer-revoked-b',15,now()-interval '30 seconds');
+set local session_replication_role=origin;
+create temporary table saved_presenter_selection_def as
+  select pg_get_functiondef('public.studio_presenter_render_access(uuid)'::regprocedure) body;
+create or replace function public.studio_presenter_render_access(p_render uuid)
+  returns boolean language sql security definer set search_path='' as $$
+  select p_render<>'ad400000-0000-4000-8000-000000000004'::uuid$$;
+set local role service_role;
+select pg_temp.ok(not public.studio_presenter_render_access('ad400000-0000-4000-8000-000000000004')
+  and public.studio_presenter_render_access('ad400000-0000-4000-8000-000000000002'),
+  'B newer render is revoked while its older publication is approved');
+select pg_temp.ok(public.public_property_address_lookup('123-main-st')='{"status":"ambiguous"}'::jsonb,
+  'older approved B still prevents false uniqueness for A');
+reset role;
+do $$begin execute (select body from saved_presenter_selection_def);end$$;
+set local session_replication_role=replica;
+update public.renders set published_at=null where id='ad400000-0000-4000-8000-000000000004';
 update public.listings set status='archived'where id='ad200000-0000-4000-8000-000000000002';
 set local session_replication_role=origin;
 set local role service_role;

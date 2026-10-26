@@ -50,6 +50,7 @@ begin
         select published.id,published.slug from public.renders published
           where published.listing_id=l.id and published.published_at is not null
             and published.published_at<=now()
+            and public.studio_presenter_render_access(published.id)
           order by published.published_at desc,published.id desc limit 1
       ) r on true
       where l.deleted_at is null and o.deleted_at is null
@@ -58,7 +59,6 @@ begin
         and not exists(select 1 from public.deletion_requests d
           where d.user_id=l.agent_id and d.status in ('pending','processing'))
         and (public.hosting_retention_state(l.org_id)->>'hosting_available')::boolean
-        and public.studio_presenter_render_access(r.id)
       limit 2
   )
   select count(*)::integer,max(slug) into matches,current_slug from hits;

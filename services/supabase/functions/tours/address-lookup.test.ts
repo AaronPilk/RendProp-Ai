@@ -6,6 +6,7 @@ for (const [name, value] of Object.entries({
   SUPABASE_URL: "https://address-fixture.invalid",
   SUPABASE_SERVICE_ROLE_KEY: "inert-address-service",
   SUPABASE_ANON_KEY: "inert-address-public",
+  ADDRESS_LOOKUP_SECRET: "b".repeat(64),
 })) Deno.env.set(name, value);
 let handler!: (req: Request) => Promise<Response>;
 const oldServe = Object.getOwnPropertyDescriptor(Deno, "serve")!;
@@ -16,7 +17,7 @@ Object.defineProperty(Deno, "serve", { configurable: true, value: (fn: typeof ha
 try { await import("./index.ts"); } finally { Object.defineProperty(Deno, "serve", oldServe); }
 
 async function invoke(value: unknown, path = "/tours/address-lookup/123-main-st", rpcError = false,
-  method = "GET") {
+  method = "GET", secret: string | null = "b".repeat(64)) {
   const original = globalThis.fetch;
   const calls: unknown[] = [];
   globalThis.fetch = async (raw, init) => {
@@ -31,7 +32,8 @@ async function invoke(value: unknown, path = "/tours/address-lookup/123-main-st"
       : Response.json(value);
   };
   try {
-    const response = await handler(new Request(`https://api-fixture.invalid${path}`, { method }));
+    const response = await handler(new Request(`https://api-fixture.invalid${path}`, { method,
+      headers: secret === null ? {} : { "X-Rendprop-Address-Lookup": secret } }));
     return { status: response.status, cache: response.headers.get("Cache-Control"),
       body: await response.json(), calls };
   } finally { globalThis.fetch = original; }
@@ -53,6 +55,16 @@ Deno.test("ambiguous and missing address remain non-canonical without leaking li
   const missing = await invoke(null);
   assertEquals(missing.status, 404);
   assert(!JSON.stringify(missing.body).includes("slug"));
+});
+
+Deno.test("direct guessed addresses cannot enumerate noindex slugs without Worker credential", async () => {
+  for (const secret of [null, "0".repeat(64)]) {
+    const result = await invoke({ status: "unique", slug: "private-noindex-slug" },
+      "/tours/address-lookup/123-main-st", false, "GET", secret);
+    assertEquals(result.status, 403);
+    assertEquals(result.calls, []);
+    assert(!JSON.stringify(result.body).includes("private-noindex-slug"));
+  }
 });
 
 Deno.test("malformed authority and database errors fail closed without private SQL detail", async () => {
