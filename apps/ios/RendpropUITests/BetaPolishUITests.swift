@@ -1016,7 +1016,16 @@ final class BetaPolishUITests: XCTestCase {
             XCTAssertTrue(library.buttons["Original"].isSelected)
             library.buttons["Latest"].tap()
             let photo = app.buttons["photos.version.fixture-0"]
+            if largestText {
+                // The photo grid is lazy and starts well below the fold at
+                // Accessibility XXXL. Bring its first row into the AX tree.
+                for _ in 0..<6 {
+                    if photo.exists { break }
+                    acceptancePageDrag(up: true)
+                }
+            }
             revealForBoundedAcceptance(photo); photo.tap()
+            XCTAssertTrue(app.scrollViews["photoVersion.scroll"].waitForExistence(timeout: 5))
             let choices = element("photoVersion.savedChoices")
             XCTAssertTrue(choices.buttons["Staged"].waitForExistence(timeout: 10))
             XCTAssertTrue(choices.buttons["Staged"].isSelected)
@@ -1057,8 +1066,13 @@ final class BetaPolishUITests: XCTestCase {
             XCTAssertTrue(useful.isSelected); XCTAssertEqual(use.label, selectedBefore)
             revealForBoundedAcceptance(needsWork)
             needsWork.tap()
+            if largestText {
+                XCTAssertTrue(app.navigationBars["Photo feedback"].waitForExistence(timeout: 5),
+                              "Accessibility-sized reasons open in a native sheet")
+                XCTAssertTrue(app.buttons["photoVersion.feedback.cancel"].exists)
+            }
             let save = app.buttons["photoVersion.feedback.save"]
-            XCTAssertTrue(save.exists); XCTAssertFalse(save.isEnabled, "Needs work requires a reason")
+            XCTAssertTrue(save.waitForExistence(timeout: 5)); XCTAssertFalse(save.isEnabled, "Needs work requires a reason")
             let prompt = app.staticTexts["photoVersion.feedback.reasonsPrompt"]
             let reason = app.buttons["photoVersion.feedback.reason.changed_permanent_features"]
             // No manual reveal after tapping: expansion must bring its first choice into view.
@@ -1068,15 +1082,35 @@ final class BetaPolishUITests: XCTestCase {
                     && prompt.frame.minY >= top - 8 && reason.frame.maxY <= bottom
             }, evaluatedWith: reason)
             waitForExpectations(timeout: 5)
-            assertPhotoReviewNavigationIsVisible()
+            if largestText { XCTAssertTrue(app.navigationBars["Photo feedback"].isHittable) }
+            else { assertPhotoReviewNavigationIsVisible() }
             reason.tap()
             XCTAssertTrue(reason.isSelected)
             let note = app.textFields["photoVersion.feedback.note"]
             revealForBoundedAcceptance(note)
             XCTAssertTrue(note.isHittable, "The optional note remains reachable")
+            if largestText {
+                guard let (_, _, bottom) = acceptanceViewport() else { return }
+                XCTAssertLessThanOrEqual(note.frame.maxY, bottom,
+                    "The optional note must fit the native sheet viewport")
+            } else {
+                XCTAssertLessThanOrEqual(note.frame.maxY, use.frame.minY - 8,
+                    "The optional note must clear the fixed actions")
+            }
             attach("photo-feedback-\(mode)-reasons-and-note")
+            attachAccessibility("photo-feedback-\(mode)-note-accessibility")
             revealForBoundedAcceptance(save)
             XCTAssertTrue(save.isEnabled && save.isHittable)
+            if largestText {
+                guard let (_, _, bottom) = acceptanceViewport() else { return }
+                XCTAssertLessThanOrEqual(save.frame.maxY, bottom,
+                    "Save feedback must fit the native sheet viewport")
+            } else {
+                XCTAssertLessThanOrEqual(save.frame.maxY, use.frame.minY - 8,
+                    "Save feedback must clear the fixed actions")
+            }
+            attach("photo-feedback-\(mode)-save-clear")
+            attachAccessibility("photo-feedback-\(mode)-save-accessibility")
             if #available(iOS 26.0, *) {
                 // Native compact glass reports its 38pt visible pill. Save
                 // through the effective edge instead of assuming AX height
@@ -1087,16 +1121,26 @@ final class BetaPolishUITests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(save.frame.height, 44)
                 save.tap()
             }
+            if largestText {
+                XCTAssertFalse(app.navigationBars["Photo feedback"].waitForExistence(timeout: 1))
+                assertPhotoReviewNavigationIsVisible()
+            }
             XCTAssertTrue(needsWork.isSelected)
             XCTAssertTrue(status.label.hasPrefix("Saved on this phone."), status.label)
             XCTAssertEqual(use.label, selectedBefore)
             assertAcceptanceFooterIsVisible()
             attach("photo-feedback-\(mode)-saved-local-opinion")
             let original = choices.buttons["Original"]
-            // The lazy chip may be unrealized above this long feedback form.
-            // Its always-mounted strip retains negative geometry, so the same
-            // eight-gesture helper correctly scrolls back toward Original.
-            revealForBoundedAcceptance(choices)
+            // The chip strip is unrealized at the bottom of this long page;
+            // its AX container has a zero frame. Rewind the page toward the
+            // top before targeting the actual Original chip.
+            if largestText {
+                for _ in 0..<12 {
+                    if original.exists && original.isHittable { break }
+                    acceptancePageDrag(up: false)
+                }
+            }
+            revealForBoundedAcceptance(original)
             XCTAssertTrue(original.exists && original.isHittable)
             original.tap()
             XCTAssertFalse(useful.exists || needsWork.exists, "Original has no AI-output feedback")
@@ -1710,14 +1754,23 @@ final class BetaPolishUITests: XCTestCase {
             childID, "photoVersion.fixedActions", labels as NSArray)).firstMatch
     }
     private func acceptanceViewport() -> (XCUIElement, CGFloat, CGFloat)? {
-        guard let outer = app.scrollViews.allElementsBoundByIndex.reversed().first(where: {
+        // Photos remains mounted behind the modal. Select the foreground
+        // Photo versions page by its own ID, even when AX says both full-width
+        // scroll views are hittable.
+        let reasonSheet = app.scrollViews["photoVersion.feedback.reasonSheet.scroll"]
+        let photoPage = app.scrollViews["photoVersion.scroll"]
+        let outer: XCUIElement
+        if reasonSheet.exists { outer = reasonSheet }
+        else if photoPage.exists { outer = photoPage }
+        else if let page = app.scrollViews.allElementsBoundByIndex.reversed().first(where: {
             $0.frame.width >= app.frame.width - 8 && $0.isHittable
-        }) else { XCTFail("No visible app page scroll view: \(app.debugDescription)"); return nil }
+        }) { outer = page }
+        else { XCTFail("No visible app page scroll view: \(app.debugDescription)"); return nil }
         let navigation = app.navigationBars.allElementsBoundByIndex.reversed().first { $0.isHittable }
         let top = max(outer.frame.minY, navigation?.frame.maxY ?? outer.frame.minY) + 8
         var bottom = min(outer.frame.maxY, app.frame.maxY) - 20
         let footer = element("photoVersion.fixedActions")
-        if footer.exists && footer.isHittable { bottom = min(bottom, footer.frame.minY - 8) }
+        if !reasonSheet.exists && footer.exists && footer.isHittable { bottom = min(bottom, footer.frame.minY - 8) }
         if let tabs = app.tabBars.allElementsBoundByIndex.first(where: { $0.isHittable }) {
             bottom = min(bottom, tabs.frame.minY - 8)
         }
@@ -1734,33 +1787,39 @@ final class BetaPolishUITests: XCTestCase {
             dx: 0.08, dy: (top - outer.frame.minY + (bottom - top) * 0.8) / outer.frame.height))
         (up ? low : high).press(forDuration: 0.05, thenDragTo: up ? high : low)
     }
-    private func dragAcceptancePage(_ requested: CGFloat, outer: XCUIElement, top: CGFloat, bottom: CGFloat) {
+    private func dragAcceptancePage(_ requested: CGFloat, outer: XCUIElement, top: CGFloat, bottom: CGFloat,
+                                    horizontalPosition: CGFloat) {
         // A full-viewport fling can leap over a short control at accessibility
         // text sizes. Move only the distance needed to expose it, from a point
-        // inside the page and outside the system's navigation-edge swipe zone.
+        // inside the visible page; callers choose a clear horizontal lane.
         let height = bottom - top
         // Under ~30pt, XCTest sends a press that never becomes a scroll.
         let travel = requested < 0 ? -max(30, abs(requested)) : max(30, requested)
         let distance = min(height * 0.32, max(-height * 0.32, travel))
         let middle = (top + bottom) / 2
         let start = outer.coordinate(withNormalizedOffset: CGVector(
-            dx: 0.08, dy: (middle - outer.frame.minY) / outer.frame.height))
+            dx: horizontalPosition, dy: (middle - outer.frame.minY) / outer.frame.height))
         let end = outer.coordinate(withNormalizedOffset: CGVector(
-            dx: 0.08, dy: (middle + distance - outer.frame.minY) / outer.frame.height))
+            dx: horizontalPosition, dy: (middle + distance - outer.frame.minY) / outer.frame.height))
         start.press(forDuration: 0.05, thenDragTo: end)
     }
     private func revealForBoundedAcceptance(_ control: XCUIElement) {
         for attempt in 0...8 {
             guard let (outer, top, bottom) = acceptanceViewport() else { return }
-            if control.exists && control.isHittable && control.frame.height > 0
+            let exists = control.exists
+            if exists && control.isHittable && control.frame.height > 0
                 && control.frame.minY >= top && control.frame.maxY <= bottom { return }
             if attempt < 8 {
                 let distance: CGFloat
-                if !control.exists || control.frame.height <= 0 { distance = -(bottom - top) * 0.3 }
+                if !exists || control.frame.height <= 0 { distance = -(bottom - top) * 0.3 }
                 else if control.frame.minY < top { distance = top + 8 - control.frame.minY }
                 else if control.frame.maxY > bottom { distance = bottom - 8 - control.frame.maxY }
                 else { distance = -24 }
-                dragAcceptancePage(distance, outer: outer, top: top, bottom: bottom)
+                // x≈24pt stays clear of the feedback rows (x≥30) and of
+                // the screen-edge dismissal recognizer.
+                let horizontalPosition: CGFloat = outer.identifier == "photoVersion.scroll" ? 0.06 : 0.08
+                dragAcceptancePage(distance, outer: outer, top: top, bottom: bottom,
+                                   horizontalPosition: horizontalPosition)
             }
         }
         XCTFail("Control was unreachable after eight app-local gestures: \(control.debugDescription)\n\(app.debugDescription)")
@@ -1811,5 +1870,9 @@ final class BetaPolishUITests: XCTestCase {
     }
     private func attach(_ name: String) {
         let image = XCTAttachment(screenshot: app.screenshot()); image.name = name; image.lifetime = .keepAlways; add(image)
+    }
+    private func attachAccessibility(_ name: String) {
+        let snapshot = XCTAttachment(string: app.debugDescription)
+        snapshot.name = name; snapshot.lifetime = .keepAlways; add(snapshot)
     }
 }

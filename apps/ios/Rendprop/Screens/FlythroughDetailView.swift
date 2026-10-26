@@ -8054,6 +8054,7 @@ struct PhotoCompareView: View {
                         .frame(maxWidth: 760)
                         .frame(maxWidth: .infinity)
                     }
+                    .accessibilityIdentifier("photoVersion.scroll")
                     .background(Theme.bg.ignoresSafeArea())
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         actionFooter(stacked: PhotoReviewLayout.stacksActions(width: geometry.size.width,

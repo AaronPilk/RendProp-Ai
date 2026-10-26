@@ -27,6 +27,7 @@ struct PhotoFeedbackControl: View {
     @State private var saveFailed = false
     @State private var baseline: PhotoFeedback.LocalOutcome?
     @AccessibilityFocusState private var reasonPromptFocused: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -42,7 +43,7 @@ struct PhotoFeedbackControl: View {
                 VStack(spacing: 8) { verdictButton(.useful); verdictButton(.needsWork) }
             }
             if choosingReasons {
-                reasonPicker
+                if !dynamicTypeSize.isAccessibilitySize { reasonPicker }
             } else if let saved, saved.verdict == .needsWork {
                 Text(saved.reasons.map(\.label).joined(separator: " · "))
                     .font(.caption).foregroundStyle(Theme.inkDim)
@@ -69,6 +70,30 @@ struct PhotoFeedbackControl: View {
         .onChange(of: queue.changeCount) { _ in saved = queue.savedFeedback(for: version) }
         .onChange(of: listingSelected) { _ in noticeReviewOutcome() }
         .onChange(of: exportOpened) { _ in noticeReviewOutcome() }
+        .sheet(isPresented: Binding(
+            get: { choosingReasons && dynamicTypeSize.isAccessibilitySize },
+            set: { if !$0 { choosingReasons = false } }
+        )) {
+            NavigationStack {
+                ScrollView {
+                    reasonPicker
+                        .padding(20)
+                        .frame(maxWidth: 760)
+                        .frame(maxWidth: .infinity)
+                }
+                .accessibilityIdentifier("photoVersion.feedback.reasonSheet.scroll")
+                .navigationTitle("Photo feedback")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Cancel") { choosingReasons = false }
+                            .accessibilityIdentifier("photoVersion.feedback.cancel")
+                    }
+                }
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
     }
 
     private var shownVerdict: PhotoFeedback.Verdict? { choosingReasons ? .needsWork : saved?.verdict }
@@ -130,11 +155,16 @@ struct PhotoFeedbackControl: View {
             .disabled(reasons.isEmpty)
             .padding(.top, 6)
             .accessibilityIdentifier("photoVersion.feedback.save")
+            if saveFailed, dynamicTypeSize.isAccessibilitySize, let status {
+                Text(status)
+                    .font(.caption).foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .task {
             await Task.yield()
             guard choosingReasons, !Task.isCancelled else { return }
-            onRevealReasons(version.id)
+            if !dynamicTypeSize.isAccessibilitySize { onRevealReasons(version.id) }
             reasonPromptFocused = true
         }
         .onDisappear { reasonPromptFocused = false }
