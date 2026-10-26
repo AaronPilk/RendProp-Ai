@@ -31,7 +31,7 @@ begin
   r:=pg_temp.apply_snapshot(o,'chronology-refund','tx-1','com.rendprop.app.pro.monthly','pro','active',-1000,-900,null,null);
   perform pg_temp.ok(r->>'reason'='stale_notification'and(select plan='free'from orgs where id=o),'old pre-refund restore preserves refund');
   perform pg_temp.ok((select to_jsonb(s)=before_row from apple_subscriptions s where original_transaction_id='chronology-refund'),'stale restore leaves complete receipt and cancellation unchanged');
-  perform pg_temp.ok((org_entitlement(o)).reels_per_month=0 and (org_entitlement(o)).photo_edits_per_month=5,'refunded workspace has Free allowance');
+  perform pg_temp.ok((org_entitlement(o)).reels_per_month=0 and (org_entitlement(o)).photo_edits_per_month=0,'refunded workspace has no new Free AI allowance');
   r:=pg_temp.apply_snapshot(o,'chronology-refund','tx-1','com.rendprop.app.pro.monthly','pro','active',-1000,-550,null,null);
   perform pg_temp.ok(r->>'reason'='stale_notification'and(select plan='free'from orgs where id=o),'re-signed same purchase cannot reverse refund');
   r:=pg_temp.apply_snapshot(o,'chronology-refund','tx-1','com.rendprop.app.pro.monthly','pro','active',-1000,-900,-540,'METADATA_UPDATE');

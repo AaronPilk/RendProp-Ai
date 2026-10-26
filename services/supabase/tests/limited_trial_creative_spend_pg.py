@@ -125,12 +125,12 @@ try:
         seed = f"""
 insert into auth.users(id,email,is_anonymous)
   values('{actor}','race-{actor}@fixture.invalid',false);
-insert into public.orgs(id,name,plan,plan_source)
-  values('{org}','Disposable race workspace','free',null);
+insert into public.orgs(id,name,plan,plan_source,trial_ends_at)
+  values('{org}','Disposable race workspace','trial','trial',now()+interval '7 days');
 insert into public.memberships(user_id,org_id,role)
   values('{actor}','{org}','owner');
 insert into public.listings(id,org_id,agent_id,address)
-  values('{first_listing}','{org}','{actor}','First free draft');
+  values('{first_listing}','{org}','{actor}','First introductory draft');
 update public.orgs set plan='starter',plan_source='manual' where id='{org}';
 insert into public.listings(id,org_id,agent_id,address)
   values('{paid_listing}','{org}','{actor}','Second paid draft');

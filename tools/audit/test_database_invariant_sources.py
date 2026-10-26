@@ -42,24 +42,23 @@ def require_contract(sql):
     assert 'ceiling > visible and ceiling <= 8000' in sql, 'reasoning headroom rule weakened'
     assert "when 'copy.agent_reel' then 500" in sql, 'agent-reel visible contract drifted'
     matrix = plan_matrix(sql)
-    assert re.search(r"\('trial',\s*3,\s*20,\s*20,\s*2,\s*1,\s*1,\s*1500,\s*0\)", matrix)
-    assert re.search(r"\('free',\s*1,\s*5,\s*0,\s*0,\s*0,\s*1,\s*300,\s*0\)", matrix)
-    assert 'for v_n in 1..3 loop' in sql
-    assert "'_inv-wrk-000004'" in sql
-    assert "worker job #4 exceeds the trial cap (RP402)" in sql
-    # 0044 retained tour/edit sizes and prices; the reviewed 20261014200302
-    # migration changes shot allowances and ceilings for multi-photo videos.
-    # The one-tour single-location trial override still applies. The matrix must keep stating
-    # these literally — deriving them from the table would test nothing.
+    assert re.search(r"\('trial',\s*0,\s*5,\s*0,\s*0,\s*0,\s*1,\s*500,\s*0\)", matrix)
+    assert re.search(r"\('free',\s*0,\s*0,\s*0,\s*0,\s*0,\s*1,\s*0,\s*0\)", matrix)
+    assert 'for v_n in 1..4 loop' in sql
+    assert "'_inv-wrk-000005'" in sql
+    assert "worker job #5 exceeds the paid Starter cap (RP402)" in sql
+    # The later reviewed introductory policy caps Trial at five edits with no
+    # video, and Free at no new AI spend. These literals stay independent of
+    # the catalog query so a source-only expectation drift is detected.
     assert re.search(r"\('starter',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)", matrix), 'starter rework'
     assert re.search(r"\('solo',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)", matrix), 'solo alias'
     assert re.search(r"\('pro',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9900\)", matrix), 'pro rework'
     assert re.search(r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*2,\s*10532,\s*24900\)", matrix), 'team rework'
-    assert re.search(r"\('trial',\s*1,\s*20,\s*20,\s*1,\s*1,\s*null::integer,\s*1500\)", sql), 'single-location trial override'
+    assert re.search(r"\('trial',\s*0,\s*5,\s*0,\s*0,\s*0,\s*null::integer,\s*500\)", sql), 'single-location trial override'
     assert "'_inv-fit-000002'" in sql
-    assert "worker job #2 exceeds the single-location trial cap (RP402, 1 of 1)" in sql
-    assert "log_job_cost enforces the current single-location trial ceiling (1500¢)" in sql
-    assert "monthly AI spend ceiling reached for the trial plan (0¢ of 1500¢)" in sql
+    assert "new worker job exceeds the introductory zero-render cap (RP402)" in sql
+    assert "log_job_cost enforces the current single-location trial ceiling (500¢)" in sql
+    assert "monthly AI spend ceiling reached for the trial plan (0¢ of 500¢)" in sql
 
 
 class DatabaseInvariantSourceTests(unittest.TestCase):
@@ -111,7 +110,7 @@ class DatabaseInvariantSourceTests(unittest.TestCase):
             require_contract(mutant)
 
     def test_old_trial_expectation_negative_control_is_rejected(self):
-        mutant = re.sub(r"\('trial',\s*3,\s*20", "('trial', 1, 10", self.invariants, count=1)
+        mutant = re.sub(r"\('trial',\s*0,\s*5", "('trial', 1, 10", self.invariants, count=1)
         self.assertNotEqual(mutant, self.invariants)
         with self.assertRaises(AssertionError):
             require_contract(mutant)
@@ -129,7 +128,7 @@ class DatabaseInvariantSourceTests(unittest.TestCase):
                     require_contract(mutant)
 
     def test_single_location_trial_override_negative_control_is_rejected(self):
-        mutant = re.sub(r"\('trial',\s*1,\s*20,\s*20,\s*1,\s*1,\s*null::integer,\s*1500\)",
+        mutant = re.sub(r"\('trial',\s*0,\s*5,\s*0,\s*0,\s*0,\s*null::integer,\s*500\)",
                         "('trial', 3, 60, 4, 2, 1, null::integer, 1200)", self.invariants, count=1)
         self.assertNotEqual(mutant, self.invariants)
         with self.assertRaises(AssertionError):
@@ -139,7 +138,7 @@ class DatabaseInvariantSourceTests(unittest.TestCase):
         # A second historical boundary: the previous 0044-era matrix must not
         # replace current shot/ceiling contracts while retaining tour/edit sizes.
         for current, previous in (
-            (r"\('trial',\s*3,\s*20,\s*20,\s*2,\s*1,\s*1,\s*1500,\s*0\)",
+            (r"\('trial',\s*0,\s*5,\s*0,\s*0,\s*0,\s*1,\s*500,\s*0\)",
              "('trial', 3, 60, 4, 2, 1, 1, 1200, 0)"),
             (r"\('starter',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)",
              "('starter', 4, 100, 6, 2, 0, 1, 1200, 4900)"),

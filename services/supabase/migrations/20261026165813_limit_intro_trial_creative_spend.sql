@@ -23,11 +23,12 @@ do $$begin
     raise exception 'Review changed trial catalog before limited-trial migration';
   end if;
   if not exists(select 1 from public.plan_entitlements where plan='free'
-      and renders_per_month=1 and photo_edits_per_month=5) then
+      and renders_per_month=1 and photo_edits_per_month=5 and cogs_ceiling_cents=300) then
     raise exception 'Review changed Free catalog before limited-trial migration';
   end if;
   if not exists(select 1 from public.app_config where key='serving_envelope'
-      and value->'trial_ceiling_cents'='1500'::jsonb) then
+      and value->'trial_ceiling_cents'='1500'::jsonb
+      and value->'free_lifetime_cents'='300'::jsonb) then
     raise exception 'Review changed trial serving ceiling before limited-trial migration';
   end if;
   if not exists(select 1 from public.subscription_trial_config where singleton
@@ -42,10 +43,10 @@ update public.plan_entitlements set
   cogs_ceiling_cents=500
 where plan='trial';
 
--- A lapsed or never-subscribed Free workspace can still prepare its one
--- listing, but it cannot start a hosted render. The effective /me allowance
--- must agree with the publication gate.
-update public.plan_entitlements set renders_per_month=0 where plan='free';
+-- After the seven-day window, saved listings/photos remain available but no
+-- new AI edit or paid generation is funded by an unpaid Free workspace.
+update public.plan_entitlements set renders_per_month=0,
+  photo_edits_per_month=0,cogs_ceiling_cents=0 where plan='free';
 
 -- Industry-specific trial rows must not reintroduce a video quota or larger
 -- photo/cost allowance over the base trial row.
@@ -60,19 +61,26 @@ where plan='trial';
 update public.subscription_trial_config set photo_edits=5 where singleton;
 
 update public.app_config set
-  value=jsonb_set(value,'{trial_ceiling_cents}','500'::jsonb)
+  value=jsonb_set(jsonb_set(value,'{trial_ceiling_cents}','500'::jsonb),
+    '{free_lifetime_cents}','0'::jsonb)
 where key='serving_envelope';
 
 -- A zero video-render entitlement must not collapse photo ingress to five
 -- hundred MiB: every upload reservation holds roughly twice the source bytes.
--- Forty ordinary 8 MiB iPhone photos reserve 640 MiB. Give unpaid
--- Trial and Free access a fixed 2 GiB monthly technical cap while its supplier spend remains
--- separately limited to five edits and 500 cents. New video uploads are
--- refused below unless a verified per-property website credit has been paid.
+-- Forty ordinary 8 MiB iPhone photos reserve 640 MiB. Give the active
+-- introductory week a fixed 2 GiB technical cap. Free and expired intro
+-- reservations are refused by the row trigger below; the same cap lets an
+-- exact paid per-property website credit continue to upload its video.
 do $$declare def text;needle text;replacement text;begin
   def:=pg_get_functiondef('public.upload_new_admission(uuid,uuid,bigint)'::regprocedure);
+  needle:='declare anonymous boolean;raw_source text;selected_plan text;e public.plan_entitlements;cap bigint;used numeric;';
+  replacement:='declare anonymous boolean;raw_source text;selected_plan text;e public.plan_entitlements;cap bigint;used numeric;envelope jsonb;';
+  if (length(def)-length(replace(def,needle,'')))/length(needle)<>1 then
+    raise exception 'Review changed trial upload declaration before limited-trial migration';
+  end if;
+  def:=replace(def,needle,replacement);
   needle:='  cap:=e.renders_per_month::bigint*12884901888::bigint+e.photo_edits_per_month::bigint*104857600::bigint;';
-  replacement:='  cap:=case when public.plan_serving_ceiling(public.library_actor_billing_org(p_actor,p_org))->>''kind'' in(''trial'',''free'') then 2147483648::bigint else e.renders_per_month::bigint*12884901888::bigint+e.photo_edits_per_month::bigint*104857600::bigint end;';
+  replacement:='  envelope:=public.plan_serving_ceiling(public.library_actor_billing_org(p_actor,p_org));'||E'\n'||'  cap:=case when envelope->>''kind'' in(''trial'',''free'') or (envelope->>''kind''=''grace'' and (envelope->>''ceiling_cents'')::integer=0) then 2147483648::bigint else e.renders_per_month::bigint*12884901888::bigint+e.photo_edits_per_month::bigint*104857600::bigint end;';
   if (length(def)-length(replace(def,needle,'')))/length(needle)<>1 then
     raise exception 'Review changed trial upload-cap anchor before limited-trial migration';
   end if;
@@ -92,6 +100,7 @@ declare
   b uuid;
   budget integer;
   intro_week boolean;
+  unfunded_grace boolean;
 begin
   b:=public.library_billing_org(p_org);
   e:=public.org_entitlement_before_team(b);
@@ -119,8 +128,19 @@ begin
         where s.org_id=b and s.environment='Production' and s.status='active'
           and s.product_id=o.apple_product_id
           and s.expires_at=o.plan_expires_at
-          and s.expires_at>now() and s.transaction_purchased_at is not null
+          and s.transaction_purchased_at is not null
           and s.expires_at<=s.transaction_purchased_at+interval '8 days'));
+  -- A grace snapshot has no signed paid-term evidence in this schema. Its
+  -- serving wallet is zero, so /me must not advertise paid creative quotas.
+  unfunded_grace:=e.plan in ('starter','solo','pro','team')
+    and not public.library_internal_content_unlimited(p_org)
+    and not public.org_has_app_review_funding(b)
+    and exists(select 1 from public.orgs o where o.id=b and o.deleted_at is null
+      and o.plan_source='apple'
+      and exists(select 1 from public.apple_subscriptions s
+        where s.org_id=b and s.environment='Production' and s.status='grace'
+          and s.product_id=o.apple_product_id
+          and s.expires_at=o.plan_expires_at));
 
   budget:=public.paid_quality_processing_budget(b);
   e.cogs_ceiling_cents:=greatest(e.cogs_ceiling_cents,budget);
@@ -132,6 +152,17 @@ begin
     e.photo_edits_per_month:=least(e.photo_edits_per_month,trial_limit.photo_edits_per_month);
     e.reels_per_month:=0;e.aerials_per_month:=0;e.topaz_per_month:=0;
     e.cogs_ceiling_cents:=least(e.cogs_ceiling_cents,trial_limit.cogs_ceiling_cents);
+    -- A delayed Apple renewal notification must not advertise the five edits
+    -- after the introductory term has ended. The SKU identity remains intact
+    -- for an eventual verified renewal, while the unpaid grace has no AI use.
+    if exists(select 1 from public.orgs o where o.id=b and o.plan_expires_at<=now()) then
+      e.photo_edits_per_month:=0;e.cogs_ceiling_cents:=0;
+    end if;
+  end if;
+  if unfunded_grace then
+    e.renders_per_month:=0;e.photo_edits_per_month:=0;
+    e.reels_per_month:=0;e.aerials_per_month:=0;e.topaz_per_month:=0;
+    e.cogs_ceiling_cents:=0;
   end if;
   return e;
 end$$;
@@ -181,17 +212,25 @@ revoke all on function public.trial_intro_actor_billing_org_for_admission(uuid,u
 grant execute on function public.trial_intro_actor_billing_org_for_admission(uuid,uuid)
   to service_role,postgres;
 
--- An unpaid account may prepare one lifetime listing, including its photos.
+-- An active introductory account may prepare one lifetime listing, including
+-- its photos. Expired intro and Free retain existing drafts but cannot create
+-- another without payment.
 -- Reserve the same lifetime free-listing slot at INSERT, not at render upload:
 -- neither a draft nor its gallery selection is a published video/website.
 -- The parent billing org owns the slot for Team private libraries. Existing
 -- listings remain editable and their uploads are untouched by this trigger.
 create or replace function public.trial_intro_listing_guard()
 returns trigger language plpgsql security definer set search_path='' as $$
-declare billing uuid; existing integer;
+declare billing uuid; existing integer; envelope jsonb;
 begin
   billing:=public.trial_intro_billing_org_for_admission(new.org_id);
-  if public.plan_serving_ceiling(billing)->>'kind' in('trial','free') then
+  envelope:=public.plan_serving_ceiling(billing);
+  if envelope->>'kind'='free' or
+     (envelope->>'kind'='trial' and (envelope->>'period_end')::timestamptz<=now()) or
+     (envelope->>'kind'='grace' and (envelope->>'ceiling_cents')::integer=0) then
+    raise exception 'RP402: Listing creation starts after the free week';
+  end if;
+  if envelope->>'kind'='trial' then
     -- The count also catches listings made before this migration, including
     -- deleted ones. The advisory lock serializes two first-listing inserts.
     perform pg_advisory_xact_lock(hashtextextended('free_publication:'||billing,72454));
@@ -212,23 +251,57 @@ drop trigger if exists trial_intro_listing_admission on public.listings;
 create trigger trial_intro_listing_admission before insert on public.listings
   for each row execute function public.trial_intro_listing_guard();
 
--- An unpaid photo workspace must not admit fresh video ingress merely
--- because its fixed photo upload cap has room. A separately paid website
--- credit can upload the exact property's on-device presentation. An existing
--- completed reservation is unaffected because this fires only on INSERT.
+-- Free and expired-intro workspaces may read saved photos and finish or replay
+-- already admitted tickets, but cannot reserve new photo uploads. An exact
+-- paid property website credit still admits that property's video. Existing
+-- reservations are unaffected because this fires only on INSERT.
 create or replace function public.trial_intro_upload_guard()
 returns trigger language plpgsql security definer set search_path='' as $$
-declare org uuid; billing uuid;
+declare org uuid; billing uuid; envelope jsonb; paid_property boolean;
 begin
-  if new.spec->>'kind'='video' then
-    select l.org_id into org from public.listings l where l.id=new.listing_id and l.deleted_at is null;
-    if org is null then raise exception 'RP403: A current upload workspace is required';end if;
-    billing:=public.trial_intro_actor_billing_org_for_admission(new.actor_id,org);
-    if public.plan_serving_ceiling(billing)->>'kind' in('trial','free') and not exists(
-      select 1 from public.property_website_transactions t
+  -- Business-logo reservations use the org ID as a deliberate non-listing
+  -- sentinel. Preserve that separate upload flow only with its exact private
+  -- logo asset receipt; all ordinary photo/video tickets require a listing.
+  if new.spec->>'role'='business_logo' then
+    if new.listing_id=new.org_id and new.state='cancelled' and new.held_bytes=0
+      and exists(select 1 from public.org_brand_assets a
+        where a.id=new.asset_id and a.org_id=new.org_id
+          and a.actor_id=new.actor_id and a.sha256=new.spec->>'sha256') then
+      return new;
+    end if;
+    raise exception 'RP403: Invalid business logo reservation';
+  end if;
+  -- Cancelling a legacy v1 upload writes a zero-byte, terminal reservation so
+  -- its old physical object can be swept. This is cleanup of a prior asset,
+  -- never a fresh transport ticket or added storage allowance.
+  if new.spec='{"legacy_physical_bytes":"unknown"}'::jsonb then
+    if new.state='cancelled' and new.held_bytes=0 and new.spent_bytes=0
+      and new.settled_at is not null and exists(
+        select 1 from public.capture_assets a
+        join public.listings l on l.id=a.listing_id
+        where a.id=new.asset_id and a.listing_id=new.listing_id
+          and l.org_id=new.org_id and not a.uploaded
+          and a.transport_version is distinct from 2
+          and public.listing_content_access(new.actor_id,l.id,true)) then
+      return new;
+    end if;
+    raise exception 'RP403: Invalid legacy upload cancellation';
+  end if;
+  select l.org_id into org from public.listings l where l.id=new.listing_id and l.deleted_at is null;
+  if org is null then raise exception 'RP403: A current upload workspace is required';end if;
+  billing:=public.trial_intro_actor_billing_org_for_admission(new.actor_id,org);
+  envelope:=public.plan_serving_ceiling(billing);
+  if envelope->>'kind' in('trial','free') or
+     (envelope->>'kind'='grace' and (envelope->>'ceiling_cents')::integer=0) then
+    select exists(select 1 from public.property_website_transactions t
       where t.assigned_listing_id=new.listing_id and t.revoked_at is null
-        and t.environment in('Production','Sandbox')) then
-      raise exception 'RP402: Video uploads start after payment';
+        and t.environment in('Production','Sandbox')) into paid_property;
+    if new.spec->>'kind'='video' then
+      if not paid_property then raise exception 'RP402: Video uploads start after payment';end if;
+    elsif envelope->>'kind'='free' or
+      (envelope->>'kind'='trial' and (envelope->>'period_end')::timestamptz<=now()) or
+      (envelope->>'kind'='grace' and (envelope->>'ceiling_cents')::integer=0) then
+      raise exception 'RP402: Photo uploads start after the free week';
     end if;
   end if;
   return new;

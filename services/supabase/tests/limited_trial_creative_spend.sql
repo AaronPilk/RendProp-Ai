@@ -27,15 +27,18 @@ select pg_temp.trial_ok((select renders_per_month=0 and photo_edits_per_month=5
   and reels_per_month=0 and aerials_per_month=0 and topaz_per_month=0
   and cogs_ceiling_cents=500 from public.plan_entitlements where plan='trial'),
   'trial catalog allows five photo edits but no walkthrough render or generated video');
-select pg_temp.trial_ok((select renders_per_month=0 from public.plan_entitlements where plan='free'),
-  'post-intro Free catalog does not promise a render that publication denies');
+select pg_temp.trial_ok((select renders_per_month=0 and photo_edits_per_month=0
+  and reels_per_month=0 and aerials_per_month=0 and topaz_per_month=0
+  and cogs_ceiling_cents=0 from public.plan_entitlements where plan='free'),
+  'post-intro Free catalog promises no new AI edits or generated media');
 select pg_temp.trial_ok((select count(*)=5 from public.plan_entitlement_overrides
   where plan='trial' and renders_per_month=0 and photo_edits_per_month=5 and reels_per_month=0
     and aerials_per_month=0 and topaz_per_month=0 and cogs_ceiling_cents=500),
   'industry overrides cannot resurrect trial video or larger spend');
 select pg_temp.trial_ok((select value->'trial_ceiling_cents'='500'::jsonb
+  and value->'free_lifetime_cents'='0'::jsonb
   from public.app_config where key='serving_envelope'),
-  'shared financial trial ceiling is five dollars');
+  'shared financial trial ceiling is five dollars and Free has no new AI spend');
 select pg_temp.trial_ok((select enabled=false and max_days=7 and photo_edits=5
   from public.subscription_trial_config where singleton),
   'separate bounded trial stays disabled and limited to five photo edits');
@@ -150,6 +153,24 @@ begin
     and paid.photo_edits_per_month=2147483647
     and paid.cogs_ceiling_cents=2147483647,
     'verified owner testing grant retains its original unmetered entitlement');
+
+  insert into public.listings(org_id,agent_id,address)
+    values(sandbox_org,actor,'Saved intro draft after expiry');
+  update public.orgs set trial_ends_at=now()-interval '1 minute'
+    where id=sandbox_org;
+  paid:=public.org_entitlement(sandbox_org);
+  perform pg_temp.trial_ok(paid.plan='free' and paid.photo_edits_per_month=0
+    and paid.renders_per_month=0 and paid.cogs_ceiling_cents=0
+    and public.plan_serving_ceiling(sandbox_org)->>'kind'='free'
+    and (public.plan_serving_ceiling(sandbox_org)->>'ceiling_cents')::numeric=0,
+    'expired seven-day trial retains its account but has no new AI allowance');
+  perform pg_temp.trial_ok(exists(select 1 from public.listings l
+    where l.org_id=sandbox_org and l.address='Saved intro draft after expiry'),
+    'expired intro retains its prepared listing');
+  perform pg_temp.trial_refuses(format(
+    'select public.serving_envelope_admit(%L,1,%L)',sandbox_org,'expired-photo-edit'),
+    'RP402: AI usage limit reached',
+    'expired intro cannot create a new paid photo-edit hold');
 end$$;
 
 -- Reserve a representative batch of forty 8 MiB iPhone photos on the one
@@ -158,6 +179,11 @@ end$$;
 set local role service_role;
 do $$declare f record;photos jsonb;r jsonb;video jsonb;video_id uuid:=gen_random_uuid();begin
   select * into f from trial_oneoff_fixture;
+  r:=public.subscription_trial_context(f.actor,f.org);
+  perform pg_temp.trial_ok(r->'trial_usage'='null'::jsonb
+    and r->'trial_offer'='null'::jsonb
+    and public.subscription_trial_held_offer(f.actor,f.org) is null,
+    'ceiling-mode Apple intro exposes no incompatible legacy bounded-trial response');
   select jsonb_agg(jsonb_build_object(
     'id',a.id,'listing_id',f.listing,'kind','photo','bucket','renders',
     'storage_key','renders/'||f.org||'/'||f.listing||'/gallery-'||a.id||'.jpg',
@@ -225,14 +251,102 @@ select pg_temp.trial_ok((select count(*)=1 from public.workspace_publication_slo
   join trial_oneoff_fixture f on f.org=s.org_id and f.listing=s.listing_id),
   'one-time website credit does not mint another free-listing slot');
 
+-- Apple's introductory transaction can remain marked active while its
+-- seven-day expiry passes and the paid renewal notification is delayed. The
+-- purchased SKU remains visible, but no unpaid creative work or new ingress
+-- may start. A previously purchased website credit is still property-bound.
+update public.apple_subscriptions set expires_at=now()-interval '1 minute'
+where org_id=(select org from trial_oneoff_fixture);
+-- The chronology trigger deliberately clears signatures when term identity
+-- changes. Reattach the synthetic verified date in a separate statement,
+-- exactly as apply_apple_entitlement_v2 does after writing the snapshot.
+update public.apple_subscriptions set
+  transaction_purchased_at=now()-interval '7 days',
+  transaction_signed_at=now()
+where org_id=(select org from trial_oneoff_fixture);
+update public.orgs set plan_expires_at=now()-interval '1 minute'
+where id=(select org from trial_oneoff_fixture);
+select pg_temp.trial_ok((select (public.org_entitlement(org)).plan='starter'
+  and (public.org_entitlement(org)).photo_edits_per_month=0
+  and (public.org_entitlement(org)).renders_per_month=0
+  and (public.org_entitlement(org)).cogs_ceiling_cents=0
+  and public.plan_serving_ceiling(org)->>'kind'='trial'
+  and (public.plan_serving_ceiling(org)->>'ceiling_cents')::integer=0
+  from trial_oneoff_fixture),
+  'expired Apple intro keeps SKU identity but offers zero creative allowance');
+select pg_temp.trial_refuses($q$insert into public.listings(org_id,agent_id,address)
+  select org,actor,'Expired Apple intro extra draft' from trial_oneoff_fixture$q$,
+  'RP402: Listing creation starts after the free week',
+  'expired Apple intro cannot prepare another listing');
+set local role service_role;
+do $$declare f record;spec jsonb;ticket uuid:=gen_random_uuid();begin
+  select * into f from trial_oneoff_fixture;
+  spec:=jsonb_build_array(jsonb_build_object(
+    'id',ticket,'listing_id',f.listing,'kind','photo','bucket','renders',
+    'storage_key','renders/'||f.org||'/'||f.listing||'/gallery-'||ticket||'.jpg',
+    'bytes',8388608,'content_type','image/jpeg','content_type_declared',true,
+    'idem_key','expired-intro-photo-denied'));
+  perform pg_temp.trial_refuses(format(
+    'select public.reserve_upload_assets(%L,%L::jsonb)',f.actor,spec),
+    'RP402: Photo uploads start after the free week',
+    'expired Apple intro cannot reserve a new photo');
+  perform pg_temp.trial_refuses(format(
+    'select public.serving_envelope_admit(%L,1,%L)',f.org,'expired-apple-edit'),
+    'RP402: AI usage limit reached',
+    'expired Apple intro cannot reserve paid supplier work');
+  spec:=jsonb_build_array(jsonb_build_object(
+    'id',ticket,'listing_id',f.listing,'kind','video','bucket','renders',
+    'storage_key','renders/'||f.org||'/'||f.listing||'/'||ticket||'.mp4',
+    'bytes',10485760,'content_type','video/mp4','content_type_declared',true,
+    'idem_key','paid-expired-website-video'));
+  perform pg_temp.trial_ok(jsonb_array_length(public.reserve_upload_assets(f.actor,spec))=1,
+    'exact paid website credit can still upload its video after intro expiry');
+end$$;
+reset role;
+
+update public.apple_subscriptions set status='grace',
+  expires_at=now()+interval '27 days'
+where org_id=(select org from trial_oneoff_fixture);
+update public.orgs set plan_expires_at=now()+interval '27 days'
+where id=(select org from trial_oneoff_fixture);
+select pg_temp.trial_ok((select (public.org_entitlement(org)).plan='starter'
+  and (public.org_entitlement(org)).photo_edits_per_month=0
+  and (public.org_entitlement(org)).renders_per_month=0
+  and (public.org_entitlement(org)).cogs_ceiling_cents=0
+  and public.plan_serving_ceiling(org)->>'kind'='grace'
+  and (public.plan_serving_ceiling(org)->>'ceiling_cents')::integer=0
+  from trial_oneoff_fixture),
+  'unfunded Apple grace keeps SKU but cannot advertise paid creative use');
+select pg_temp.trial_refuses($q$insert into public.listings(org_id,agent_id,address)
+  select org,actor,'Unfunded grace extra draft' from trial_oneoff_fixture$q$,
+  'RP402: Listing creation starts after the free week',
+  'unfunded Apple grace cannot prepare a new listing');
+set local role service_role;
+do $$declare f record;spec jsonb;ticket uuid:=gen_random_uuid();begin
+  select * into f from trial_oneoff_fixture;
+  spec:=jsonb_build_array(jsonb_build_object(
+    'id',ticket,'listing_id',f.listing,'kind','photo','bucket','renders',
+    'storage_key','renders/'||f.org||'/'||f.listing||'/gallery-'||ticket||'.jpg',
+    'bytes',8388608,'content_type','image/jpeg','content_type_declared',true,
+    'idem_key','grace-photo-denied'));
+  perform pg_temp.trial_refuses(format(
+    'select public.reserve_upload_assets(%L,%L::jsonb)',f.actor,spec),
+    'RP402: Photo uploads start after the free week',
+    'unfunded Apple grace cannot reserve a new photo');
+end$$;
+reset role;
+
 do $$declare actor uuid;apple_org uuid;second_listing uuid;paid public.plan_entitlements;r jsonb;h text:=repeat('a',64);begin
   select f.actor,f.org,f.listing into actor,apple_org,second_listing from trial_renewal_fixture f;
 
   -- Renewed paid term: same org, same subscription and old ledger, only the
   -- signed current transaction dates change. Full purchased quotas return.
   update public.apple_subscriptions set
-    transaction_purchased_at=now(),transaction_signed_at=now(),
+    status='active',
     expires_at=now()+interval '29 days'
+  where org_id=apple_org;
+  update public.apple_subscriptions set
+    transaction_purchased_at=now(),transaction_signed_at=now()
   where org_id=apple_org;
   update public.orgs set plan_expires_at=now()+interval '29 days'
   where id=apple_org;
@@ -269,6 +383,20 @@ do $$declare actor uuid;apple_org uuid;second_listing uuid;paid public.plan_enti
     'paid renewal can reserve video through the real atomic gate');
 
 end$$;
+
+set local role service_role;
+do $$declare f record;operation uuid:=gen_random_uuid();result jsonb;begin
+  select * into f from trial_renewal_fixture;
+  result:=public.prepare_org_brand_logo(f.actor,f.org,operation,null,100,
+    'image/png',repeat('a',64),
+    'https://cdn.fixture.invalid/renders/'||f.org||'/brand/'||operation||'.png');
+  perform pg_temp.trial_ok((result->>'dispatch')::boolean and exists(
+    select 1 from public.upload_reservations r
+    where r.asset_id=operation and r.org_id=f.org and r.listing_id=f.org
+      and r.spec->>'role'='business_logo' and r.state='cancelled'),
+    'paid business-logo sentinel reservation bypasses listing-photo guard');
+end$$;
+reset role;
 
 -- A Team intro shares one publication allowance across two agent-owned
 -- private libraries; each listing still retains its original content org.
@@ -400,11 +528,19 @@ select pg_temp.trial_ok((select public.plan_serving_ceiling(org)->>'kind'='free'
 select pg_temp.trial_refuses($q$insert into public.listings(id,org_id,agent_id,address)
   select second_listing,org,actor,'Expired-intro second draft'
   from trial_funded_fixture$q$,
-  'RP402: Unpaid access includes one listing',
+  'RP402: Listing creation starts after the free week',
   'expired introductory account cannot create a second free draft');
 
--- A newly free account may prepare its first listing, but no second one. The
--- same parent-owned lifetime slot is reserved at draft creation.
+-- A fresh Free account has no new-listing allowance. An active trial can
+-- prepare one draft, reserve its photos, and replay those tickets after its
+-- free week expires; the saved draft remains readable.
+insert into auth.users(id,email,is_anonymous) values
+  ('a9030001-0000-4000-8000-000000000002','limited-new-free@example.invalid',false);
+select pg_temp.trial_refuses($q$insert into public.listings(org_id,agent_id,address)
+  select org_id,user_id,'Free account first draft' from public.memberships
+  where user_id='a9030001-0000-4000-8000-000000000002' and role='owner'$q$,
+  'RP402: Listing creation starts after the free week',
+  'fresh Free account cannot prepare even its first listing');
 insert into auth.users(id,email,is_anonymous) values
   ('a9030001-0000-4000-8000-000000000001','limited-free-account@example.invalid',false);
 create temporary table trial_free_fixture as select
@@ -413,17 +549,19 @@ create temporary table trial_free_fixture as select
     where user_id='a9030001-0000-4000-8000-000000000001' and role='owner' limit 1)org,
   gen_random_uuid()first_listing,gen_random_uuid()second_listing;
 grant select on trial_free_fixture to service_role;
-update public.orgs set plan='free',plan_source=null,trial_ends_at=null
+update public.orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days'
 where id=(select org from trial_free_fixture);
 insert into public.listings(id,org_id,agent_id,address)
-  select first_listing,org,actor,'Free first draft' from trial_free_fixture;
+  select first_listing,org,actor,'Saved introductory draft' from trial_free_fixture;
 select pg_temp.trial_ok((select count(*)=1 from public.workspace_publication_slots s
   join trial_free_fixture f on s.org_id=f.org and s.listing_id=f.first_listing),
-  'fresh free account reserves its single lifetime listing slot at draft creation');
+  'introductory account reserves its single lifetime listing slot at draft creation');
 select pg_temp.trial_refuses($q$insert into public.listings(id,org_id,agent_id,address)
-  select second_listing,org,actor,'Free second draft' from trial_free_fixture$q$,
+  select second_listing,org,actor,'Trial second draft' from trial_free_fixture$q$,
   'RP402: Unpaid access includes one listing',
-  'fresh free account cannot prepare a second lifetime listing');
+  'introductory account cannot prepare a second lifetime listing');
+create temporary table trial_free_photo_specs(photos jsonb);
+grant select,insert on trial_free_photo_specs to service_role;
 set local role service_role;
 do $$declare f record;photos jsonb;r jsonb;begin
   select * into f from trial_free_fixture;
@@ -433,16 +571,17 @@ do $$declare f record;photos jsonb;r jsonb;begin
     'bytes',8388608,'content_type','image/jpeg','content_type_declared',true,
     'idem_key','free-photo-'||a.n) order by a.n) into photos
   from (select gen_random_uuid()id,n from generate_series(1,40)n)a;
+  insert into trial_free_photo_specs values(photos);
   r:=public.reserve_upload_assets(f.actor,photos);
   perform pg_temp.trial_ok(jsonb_array_length(r)=40 and
     (select count(*)=40 and sum(held_bytes)=671088640
       from public.upload_reservations where listing_id=f.first_listing),
-    'free listing reserves forty ordinary photos inside the 2 GiB technical cap');
+    'introductory listing reserves forty ordinary photos inside the 2 GiB technical cap');
   r:=public.reserve_upload_assets(f.actor,photos);
   perform pg_temp.trial_ok(jsonb_array_length(r)=40 and
     (select bool_and((x.value->>'replayed')::boolean) from jsonb_array_elements(r)x)
     and (select count(*)=40 from public.upload_reservations where listing_id=f.first_listing),
-    'Free replays existing photo upload tickets without consuming another budget');
+    'introductory photo ticket replay does not consume another budget');
   select jsonb_agg(jsonb_build_object(
     'id',a.id,'listing_id',f.first_listing,'kind','photo','bucket','renders',
     'storage_key','renders/'||f.org||'/'||f.first_listing||'/gallery-'||a.id||'.jpg',
@@ -452,10 +591,56 @@ do $$declare f record;photos jsonb;r jsonb;begin
   perform pg_temp.trial_refuses(format(
     'select public.reserve_upload_assets(%L,%L::jsonb)',f.actor,photos),
     'RP429: monthly technical upload reservation ceiling exhausted',
-    'Free cannot reserve fresh photos beyond its 2 GiB monthly technical cap');
+    'introductory week cannot reserve fresh photos beyond its 2 GiB technical cap');
   perform pg_temp.trial_ok((select count(*)=40 from public.upload_reservations
     where listing_id=f.first_listing),
     'denied over-cap batch created no partial photo tickets');
+end$$;
+reset role;
+update public.orgs set plan='free',plan_source=null,trial_ends_at=null
+where id=(select org from trial_free_fixture);
+select pg_temp.trial_ok((select count(*)=1 from public.listings l
+  join trial_free_fixture f on l.id=f.first_listing and l.org_id=f.org),
+  'expired free week retains its saved introductory listing');
+select pg_temp.trial_refuses($q$insert into public.listings(id,org_id,agent_id,address)
+  select second_listing,org,actor,'Expired-intro extra draft' from trial_free_fixture$q$,
+  'RP402: Listing creation starts after the free week',
+  'expired free week cannot prepare another listing');
+set local role service_role;
+do $$declare f record;photos jsonb;r jsonb;new_photo jsonb;ticket uuid:=gen_random_uuid();
+  legacy uuid:=gen_random_uuid();counterfeit uuid:=gen_random_uuid();begin
+  select * into f from trial_free_fixture;
+  select s.photos into photos from trial_free_photo_specs s;
+  r:=public.reserve_upload_assets(f.actor,photos);
+  perform pg_temp.trial_ok(jsonb_array_length(r)=40 and
+    (select bool_and((x.value->>'replayed')::boolean) from jsonb_array_elements(r)x)
+    and (select count(*)=40 from public.upload_reservations where listing_id=f.first_listing),
+    'expired free week replays previously admitted photo tickets');
+  new_photo:=jsonb_build_array(jsonb_build_object(
+    'id',ticket,'listing_id',f.first_listing,'kind','photo','bucket','renders',
+    'storage_key','renders/'||f.org||'/'||f.first_listing||'/gallery-'||ticket||'.jpg',
+    'bytes',8388608,'content_type','image/jpeg','content_type_declared',true,
+    'idem_key','free-photo-after-week-denied'));
+  perform pg_temp.trial_refuses(format(
+    'select public.reserve_upload_assets(%L,%L::jsonb)',f.actor,new_photo),
+    'RP402: Photo uploads start after the free week',
+    'expired Free account cannot reserve another source photo');
+  insert into public.capture_assets(id,listing_id,kind,bucket,storage_key,
+    uploaded,transport_version,bytes)
+    values(legacy,f.first_listing,'photo','uploads',
+      'uploads/'||f.org||'/'||f.first_listing||'/legacy-trial-cleanup.jpg',false,1,10),
+      (counterfeit,f.first_listing,'photo','uploads',
+      'uploads/'||f.org||'/'||f.first_listing||'/legacy-counterfeit.jpg',false,1,10);
+  r:=public.cancel_legacy_upload(legacy,f.actor);
+  perform pg_temp.trial_ok((r->>'upload_aborted')::boolean and exists(
+    select 1 from public.upload_reservations where asset_id=legacy
+      and state='cancelled' and held_bytes=0),
+    'expired Free account can cancel a previously admitted v1 upload');
+  perform pg_temp.trial_refuses(format(
+    'insert into public.upload_reservations(asset_id,org_id,listing_id,actor_id,day,spec,held_bytes) values(%L,%L,%L,%L,current_date,%L::jsonb,1)',
+    counterfeit,f.org,f.first_listing,f.actor,'{"legacy_physical_bytes":"unknown"}'),
+    'RP403: Invalid legacy upload cancellation',
+    'legacy cleanup marker cannot disguise a fresh positive-byte reservation');
 end$$;
 reset role;
 do $$declare f record;h text:=repeat('a',64);begin
@@ -555,12 +740,19 @@ do $$declare f record;app_job uuid;started_worker uuid;queued_worker uuid;
     from public.trial_intro_render_admissions where job_id=queued_worker),
     'only the started worker has frozen paid cost admission');
   update public.orgs set plan='free',plan_source=null where id=f.org;
-  perform pg_temp.trial_ok((public.org_entitlement(f.org)).renders_per_month=0,
-    'downgraded Free /me entitlement no longer advertises a render');
+  perform pg_temp.trial_ok((public.org_entitlement(f.org)).renders_per_month=0
+    and (public.org_entitlement(f.org)).photo_edits_per_month=0
+    and (public.org_entitlement(f.org)).cogs_ceiling_cents=0
+    and (public.plan_serving_ceiling(f.org)->>'ceiling_cents')::numeric=0,
+    'downgraded Free /me and wallet offer no new AI work');
+  perform pg_temp.trial_refuses(format(
+    'select public.serving_envelope_admit(%L,1,%L)',f.org,'downgraded-photo-edit'),
+    'RP402: AI usage limit reached',
+    'downgraded former subscriber cannot start a new paid photo edit');
   perform pg_temp.trial_refuses(format(
     'insert into public.listings(id,org_id,agent_id,address) values(%L,%L,%L,''Third unpaid listing'')',
     third_listing,f.org,f.actor),
-    'RP402: Unpaid access includes one listing',
+    'RP402: Listing creation starts after the free week',
     'downgraded account cannot create another free listing');
   perform pg_temp.trial_refuses(format(
     'insert into public.render_jobs(listing_id,capture_asset_id,source) values(%L,%L,''app'')',

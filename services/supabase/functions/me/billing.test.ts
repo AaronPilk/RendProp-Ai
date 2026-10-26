@@ -5,7 +5,7 @@ import {HttpError} from "../_shared/http.ts";
 const USER="d0100103-0000-4000-8000-000000000001", ORG="d0100103-0000-4000-8000-000000000002", OTHER="d0100103-0000-4000-8000-000000000003";
 type Handler=(req:Request)=>Promise<Response>;
 let handler:Handler;
-type Options={teamParent?:string;delegatedOwner?:boolean;role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean;servingMode?:string;servingEnvelope?:unknown};
+type Options={teamParent?:string;delegatedOwner?:boolean;role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;intro?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean;servingMode?:string;servingEnvelope?:unknown};
 async function invoke(o:Options={}) {
  const values={SUPABASE_URL:"https://billing-fixture.invalid",SUPABASE_SERVICE_ROLE_KEY:"fixture-service",SUPABASE_ANON_KEY:"fixture-anon",
   SUPABASE_SECRET_KEYS:JSON.stringify({default:"sb_secret_synthetic_billing_fixture"}),
@@ -29,7 +29,7 @@ async function invoke(o:Options={}) {
     return o.membershipError?json({message:"fixture unavailable"},400):json({actor_id:USER,org_id:args.p_org,library_owner_user_id:o.delegatedOwner&&!parent?OTHER:USER,role:o.delegatedOwner&&!parent?"team_owner":o.role??"owner",access_mode:o.delegatedOwner&&!parent?"team_owner":"own",can_read:true,can_write:o.role!=="marketing",can_manage_subscription:(!o.teamParent||parent&&o.delegatedOwner)&&["owner","admin"].includes(o.role??"owner")&&!o.testingContext,billing_org_id:o.teamParent??o.selector??ORG,team_org_id:o.teamParent??null});
    }
    if(table==="library_usage_summary")return json({actor_id:USER,org_id:o.selector??ORG,billing_org_id:o.teamParent??o.selector??ORG,listings:o.teamParent?2:0,leads:0,leads_new:0,render_count:o.teamParent?7:0,cost_cents:0});
-   if(table==="org_entitlement")return json(o.degraded?null:{plan:o.plan??"free",renders_per_month:o.projection?2147483647:0,photo_edits_per_month:o.projection?2147483647:0,reels_per_month:o.projection?2147483647:0,aerials_per_month:o.projection?2147483647:0,topaz_per_month:o.projection?2147483647:0,seats:1,cogs_ceiling_cents:o.projection?2147483647:250,price_cents:0});
+   if(table==="org_entitlement")return json(o.degraded?null:{plan:o.plan??"free",renders_per_month:o.projection?2147483647:0,photo_edits_per_month:o.projection?2147483647:o.intro?5:0,reels_per_month:o.projection?2147483647:0,aerials_per_month:o.projection?2147483647:0,topaz_per_month:o.projection?2147483647:0,seats:1,cogs_ceiling_cents:o.projection?2147483647:o.intro?500:0,price_cents:0});
    if(table==="org_has_internal_testing_grant")return json(o.master??false);
    if(table==="hosting_retention_state") {
     assertEquals(await req.json(),{p_org:o.selector??ORG});
@@ -53,7 +53,7 @@ async function invoke(o:Options={}) {
    if(table==="serving_mode") return json(o.servingMode??"ceiling");
    if(table==="serving_envelope_state") {
     assertEquals(await req.json(),{p_org:o.teamParent??o.selector??ORG});
-    return json(o.servingEnvelope??{kind:"free",plan:"free",ceiling_cents:300,spent_cents:12.5,held_cents:0,available_cents:287.5,period_start:null,period_end:null,window:"lifetime",pool:null});
+    return json(o.servingEnvelope??{kind:"free",plan:"free",ceiling_cents:0,spent_cents:12.5,held_cents:0,available_cents:0,period_start:null,period_end:null,window:"lifetime",pool:null});
    }
    if(table==="serving_photo_package_context") {
     assertEquals(req.method,"POST");
@@ -88,10 +88,14 @@ async function invoke(o:Options={}) {
  }finally{globalThis.fetch=oldFetch;Object.defineProperty(Deno,"serve",serve);for(const[key,value]of previous)value===undefined?Deno.env.delete(key):Deno.env.set(key,value);}
 }
 Deno.test("/me reports the serving mode the paywall keys on (ceiling → ordinary StoreKit purchase)",async()=>{
- const ceiling=await invoke({});assertEquals(ceiling.response.status,200);assertEquals(ceiling.body.serving_mode,"ceiling");assertEquals(ceiling.body.entitlement.renders_per_month,0,"Free /me cannot promise a render the admission gate denies");
- assertEquals(ceiling.body.serving_envelope,{kind:"free",ceiling_cents:300,spent_cents:12.5,held_cents:0,available_cents:287.5,period_start:null,period_end:null,window:"lifetime",pool:null});
+ const ceiling=await invoke({});assertEquals(ceiling.response.status,200);assertEquals(ceiling.body.serving_mode,"ceiling");assertEquals(ceiling.body.entitlement.renders_per_month,0,"Free /me cannot promise a render the admission gate denies");assertEquals(ceiling.body.entitlement.photo_edits_per_month,0,"Free /me cannot promise an AI photo edit after the intro ends");
+ assertEquals(ceiling.body.serving_envelope,{kind:"free",ceiling_cents:0,spent_cents:12.5,held_cents:0,available_cents:0,period_start:null,period_end:null,window:"lifetime",pool:null});
  const trial=await invoke({servingEnvelope:{kind:"trial",plan:"trial",ceiling_cents:500,spent_cents:"60.5",held_cents:4,available_cents:435.5,period_start:"2026-10-08T00:00:00+00:00",period_end:"2026-10-15T00:00:00+00:00",window:"trial_window",pool:{cap_cents:29000,starts_at:"2026-10-08T00:00:00+00:00",ends_at:"2026-11-08T00:00:00+00:00",spent_cents:460}}});
  assertEquals(trial.body.serving_envelope,{kind:"trial",ceiling_cents:500,spent_cents:60.5,held_cents:4,available_cents:435.5,period_start:"2026-10-08T00:00:00+00:00",period_end:"2026-10-15T00:00:00+00:00",window:"trial_window",pool:{cap_cents:29000,spent_cents:460,starts_at:"2026-10-08T00:00:00+00:00",ends_at:"2026-11-08T00:00:00+00:00"}});
+ const appleIntro=await invoke({plan:"starter",source:"apple",intro:true,servingEnvelope:{kind:"trial",plan:"starter",ceiling_cents:500,spent_cents:0,held_cents:0,available_cents:500,period_start:"2026-10-08T00:00:00+00:00",period_end:"2026-10-15T00:00:00+00:00",window:"intro_window",pool:null}});
+ assertEquals(appleIntro.response.status,200);assertEquals(appleIntro.body.plan,"starter");assertEquals(appleIntro.body.entitlement.photo_edits_per_month,5);assertEquals(appleIntro.body.entitlement.renders_per_month,0);
+ assertEquals(appleIntro.body.trial_usage,null);assertEquals(appleIntro.body.trial_offer,null);assertEquals(appleIntro.body.trial_reservation,null);
+ assertEquals(appleIntro.body.serving_envelope.window,"intro_window");assertEquals(appleIntro.body.serving_envelope.kind,"trial");
  const funded=await invoke({servingMode:"funded"});assertEquals(funded.body.serving_mode,"funded");assertEquals(funded.body.serving_envelope,null);
 });
 Deno.test("billing context belongs to the same selected workspace as entitlement",async()=>{
@@ -124,7 +128,8 @@ Deno.test("actual me returns scoped bounded trial usage without advertising a do
  const unavailable=await invoke({trialError:true});assertEquals(unavailable.response.status,503);
  const unfunded=await invoke({plan:"starter",source:"apple",servingUnavailable:true});
  assertEquals(unfunded.response.status,200);assertEquals(unfunded.body.plan,"starter");assertEquals(unfunded.body.plan_raw,"starter");assertEquals(unfunded.body.entitlement.degraded,true);
- assertEquals(unfunded.body.entitlement.renders_per_month,0,"a degraded trial fallback cannot advertise a render");
+ assertEquals(unfunded.body.entitlement.renders_per_month,0,"a degraded fallback cannot advertise a render");
+ assertEquals(unfunded.body.entitlement.photo_edits_per_month,0,"a degraded fallback cannot advertise an unverified AI edit");
  assertEquals(unfunded.body.usage.caps,{renders:0,photo_edits:0,reels:0,aerials:0,drone:0});assertEquals(unfunded.body.serving_activation.available,false);assertEquals(unfunded.body.billing.can_manage_subscription,true);
 });
 Deno.test("actual me preserves exact twenty-photo recorded usage and held offer without granting a new allowance",async()=>{

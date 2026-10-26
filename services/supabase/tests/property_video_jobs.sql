@@ -252,7 +252,7 @@ select pg_temp.ok((select sum(total_budget_cents)=1000 from serving_funding_slic
 select pg_temp.ok(provision_serving_funding((select org from bf),'retail','bg-next-paid-receipt',null,4000,0,now()-interval'1 day',now()-interval'1 day'+interval'1 month',1,'{"storage":10,"delivery":10,"compute":10,"email":5,"support":5,"retention":10,"uncertainty":0}',repeat('a',64))->>'total_budget_cents'='2000','new attestedreceipt receives50percentnet inclusivebudget');
 -- Trial ceiling/photo policy hasno effect on sharedallocatedpool or priorgrants.
 select pg_temp.ok((select photo_edits=5 from subscription_trial_config),'futuretrialofferallowsfivephotoedits');
-select pg_temp.ok((select(value->>'trial_ceiling_cents')::integer=500 and(value->>'free_lifetime_cents')::integer=300 from app_config where key='serving_envelope'),'trial500free300bothtruthful');
+select pg_temp.ok((select(value->>'trial_ceiling_cents')::integer=500 and(value->>'free_lifetime_cents')::integer=0 from app_config where key='serving_envelope'),'trial500free0bothtruthful');
 reset role;insert into listings(id,org_id,agent_id,address)values('f1300000-0000-4000-8000-000000000002',(select other_org from bf),(select other from bf),'Synthetic trial property');set local role service_role;
 select apply_apple_entitlement_v2((select other_org from bf),(select other from bf),'bg-trial-original','bg-trial-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'7 days',true,'SUBSCRIBED',now(),now(),now(),now());
 select pg_temp.ok(plan_serving_ceiling((select other_org from bf))->>'ceiling_cents'='500','ordinaryintroductorywindowuses500cap');

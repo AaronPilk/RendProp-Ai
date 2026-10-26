@@ -11,8 +11,8 @@
 -- one row per assertion; any `pass = f` is a release blocker.
 --
 -- Paid plan quantities mirror services/edge/tour-host/public/pricing.html.
--- Signup-trial/lapsed-free quantities mirror migration 0032, not an Apple
--- introductory offer on a purchased plan. Keep the independent literal matrix
+-- Introductory-trial/lapsed-free quantities mirror the reviewed October 26
+-- policy migration, including Apple introductory offers. Keep the literal matrix
 -- here: deriving expected values from the same table would test nothing.
 
 \set ON_ERROR_STOP on
@@ -178,7 +178,7 @@ where (lat is not null and lat <> round(lat::numeric, 3))
 -- ── Plan coherence: enforced must equal published (pricing.html) ─────────────
 -- Paid sizes include the reviewed multi-photo recipe allowances: prices unchanged,
 -- 4/10/25 renders,100/200/400 edits,30/60/150 generated shots,2/4/8 aerials,
--- Team2 seats +2 Topaz; trial0 renders/5 edits/no generated video/500c, Free0 renders/300c. The
+-- Team2 seats +2 Topaz; trial0 renders/5 edits/no generated video/500c, Free0 AI/0c. The
 -- single-location trial override lives in plan_entitlement_overrides and is
 -- asserted in the 0044 section at the end of this file.
 
@@ -202,7 +202,7 @@ from (
            is not distinct from
           (x.renders, x.edits, x.reels, x.aerials, x.topaz, x.seats, x.cogs, x.price)) as ok
     from (values ('trial',   0,   5, 0,  0, 0, 1,  500,     0),
-                 ('free',    0,   5, 0,  0, 0, 1,  300,     0),
+                 ('free',    0,   0, 0,  0, 0, 1,    0,     0),
                  ('starter', 4, 100,30,  2, 0, 1, 2032,  4900),
                  ('solo',    4, 100,30,  2, 0, 1, 2032,  4900),
                  ('pro',    10, 200,60,  4, 0, 1, 4157,  9900),
@@ -601,6 +601,10 @@ begin
   -- Act as the first user.
   perform set_config('request.jwt.claims', json_build_object('sub', u, 'role', 'authenticated')::text, true);
 
+  -- This lifecycle fixture publishes a video. Make its service paid before
+  -- preparing the listing; signup Free no longer admits a new draft.
+  update orgs set plan='starter',plan_source='manual',trial_ends_at=null where id=v_org;
+
   insert into listings (org_id, agent_id, address) values (v_org, u, '1 Fixture Way') returning id into v_listing;
   insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded, duration_s)
     values (v_listing, 'video', 'renders', 'renders/_inv/a.mp4', 1000, true, 30) returning id into v_asset;
@@ -609,7 +613,6 @@ begin
 
   -- Exercise publish and quota mechanics under a paid plan; the bounded free
   -- week deliberately refuses both app and cloud video publication.
-  update orgs set plan='starter',plan_source='manual',trial_ends_at=null where id=v_org;
   perform pg_temp.inv_hosting_authority(v_org,u);
 
   -- App publishes do not consume the paid cloud-render quota.
@@ -2198,7 +2201,7 @@ begin
     values ('an expired single-location trial reads the plain free row (the override does not follow it)',
             (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
              e.topaz_per_month, e.seats, e.cogs_ceiling_cents)
-              is not distinct from ('free', 0, 5, 0, 0, 0, 1, 300),
+              is not distinct from ('free', 0, 0, 0, 0, 0, 1, 0),
             e::text);
   update orgs set plan = 'pro', plan_source = 'manual', trial_ends_at = null where id = oFit;
   e := org_entitlement(oFit);
@@ -2441,8 +2444,13 @@ begin
   -- whole point: a membership test would not exclude it, emptiness does.
   insert into orgs (name, plan, plan_source) values ('_inv cohort uploads-only', 'trial', 'trial')
     returning id into oUP;
+  -- Preserve a historical upload-only orphan shape, which intentionally has
+  -- no listing. The current guard forbids creating such a new reservation.
+  alter table public.upload_reservations disable trigger trial_intro_upload_admission;
   insert into upload_reservations (asset_id, org_id, listing_id, actor_id, day, spec, held_bytes)
     values (gen_random_uuid(), oUP, gen_random_uuid(), gen_random_uuid(), current_date, '{}'::jsonb, 0);
+  alter table public.upload_reservations enable trigger trial_intro_upload_admission;
+  update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=oB;
   insert into listings (org_id, agent_id, address) values (oB, u6, '2 Cohort Way') returning id into v_listing_b;
 
   insert into _inv(name, pass, note)
