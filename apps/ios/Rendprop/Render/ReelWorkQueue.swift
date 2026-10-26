@@ -408,6 +408,7 @@ struct NativeActivityEntry: Codable, Identifiable, Equatable {
     var lastProgressAt: Date?
     var lastCheckedAt: Date? = nil
     var milestoneCompleted: Int? = nil
+    var aerialProgressVersion: Int? = nil
     var checkFailed: Bool? = nil
     var expectsStatusChecks: Bool? = nil
     var countUnit: String? = nil
@@ -416,9 +417,9 @@ struct NativeActivityEntry: Codable, Identifiable, Equatable {
         let terminalIncomplete = state == .failed || state == .stopped
         let measuredKind = kind == .aerial ? "aerial" : progressKind
         let stepTotal = NativeGenerationProgress.stepTotal(kind: measuredKind)
-        // Old Activity receipts used a 1...6 aerial scale. The saved server
-        // phase is authoritative, so never combine it with that legacy count.
-        let retainedMilestone = kind == .aerial ? nil : milestoneCompleted
+        let retainedMilestone = kind == .aerial
+            ? NativeGenerationProgress.normalizedAerialMilestone(milestoneCompleted, version: aerialProgressVersion)
+            : milestoneCompleted
         let steps = stepTotal.flatMap { NativeGenerationProgress.retained(previous: retainedMilestone,
             incoming: NativeGenerationProgress.steps(kind: measuredKind ?? "", phase: progressToken), incomplete: terminalIncomplete, total: $0) }
         let measured = completed.flatMap { value -> Int? in
@@ -448,12 +449,20 @@ struct NativeActivityHistory: Codable {
             var value = incoming
             value.firstObservedAt = old.firstObservedAt
             value.startedAt = old.startedAt ?? incoming.startedAt
-            let previousMilestone = incoming.kind == .aerial ? NativeGenerationProgress.steps(kind: "aerial", phase: old.progressToken) : old.milestoneCompleted
-            let incomingMilestone = incoming.kind == .aerial ? NativeGenerationProgress.steps(kind: "aerial", phase: incoming.progressToken) : incoming.milestoneCompleted
+            let previousMilestone = incoming.kind == .aerial
+                ? NativeGenerationProgress.retained(
+                    previous: NativeGenerationProgress.normalizedAerialMilestone(old.milestoneCompleted, version: old.aerialProgressVersion),
+                    incoming: NativeGenerationProgress.steps(kind: "aerial", phase: old.progressToken),
+                    incomplete: old.state == .failed || old.state == .stopped, total: NativeGenerationProgress.aerialTotal)
+                : old.milestoneCompleted
+            let incomingMilestone = incoming.kind == .aerial
+                ? NativeGenerationProgress.normalizedAerialMilestone(incoming.milestoneCompleted, version: incoming.aerialProgressVersion)
+                : incoming.milestoneCompleted
             let regressed = previousMilestone.flatMap { previous in incomingMilestone.map { $0 < previous } } ?? false
             value.lastProgressAt = old.signature == incoming.signature || regressed ? (old.lastProgressAt ?? incoming.lastProgressAt) : (incoming.lastProgressAt ?? now)
-            value.milestoneCompleted = NativeGenerationProgress.retained(previous: incoming.kind == .aerial ? nil : old.milestoneCompleted,
+            value.milestoneCompleted = NativeGenerationProgress.retained(previous: previousMilestone,
                 incoming: incomingMilestone, incomplete: incoming.state == .failed || incoming.state == .stopped, total: NativeGenerationProgress.stepTotal(kind: incoming.kind == .aerial ? "aerial" : incoming.progressKind) ?? 1)
+            if incoming.kind == .aerial { value.aerialProgressVersion = NativeGenerationProgress.aerialProgressVersion }
             entries[index] = value
         } else { entries.append(incoming) }
         let active = entries.filter { $0.state.isActive }
@@ -663,7 +672,7 @@ struct NativeActivityPresentationState {
         let old = history.entries.first { $0.id == id && $0.scope == scope }
         let entry = NativeActivityEntry(id: id, scope: scope, listingID: listingID, listingTitle: listing.address.isEmpty ? "Your listing" : listing.address,
             kind: kind, state: state, stage: stage, completed: completed, total: total, startedAt: startedAt,
-            firstObservedAt: old?.firstObservedAt ?? now, progressToken: progressToken, lastProgressAt: confirmedProgressAt ?? old?.lastProgressAt, lastCheckedAt: lastCheckedAt, milestoneCompleted: confirmedMilestones ?? NativeGenerationProgress.steps(kind: kind == .aerial ? "aerial" : progressKind ?? "", phase: progressToken), expectsStatusChecks: expectsStatusChecks, countUnit: countUnit, progressKind: progressKind)
+            firstObservedAt: old?.firstObservedAt ?? now, progressToken: progressToken, lastProgressAt: confirmedProgressAt ?? old?.lastProgressAt, lastCheckedAt: lastCheckedAt, milestoneCompleted: confirmedMilestones ?? NativeGenerationProgress.steps(kind: kind == .aerial ? "aerial" : progressKind ?? "", phase: progressToken), aerialProgressVersion: kind == .aerial ? NativeGenerationProgress.aerialProgressVersion : nil, expectsStatusChecks: expectsStatusChecks, countUnit: countUnit, progressKind: progressKind)
         let previous = history
         history.observe(entry, now: now)
         guard previous.entries != history.entries else { return }
@@ -677,7 +686,7 @@ struct NativeActivityPresentationState {
         guard saved.dispatched else { return } // A prepared quote is not a generation.
         let value = Self.aerialPresentation(state: saved.status?.state, stopping: saved.stopRequested, closed: saved.notAdmittedCancelled == true)
         observe(id: "aerial:\(saved.manifest.operationID)", listingID: saved.context.localListingID, kind: .aerial, state: value.0, stage: value.1,
-                startedAt: saved.dispatchedAt, progressToken: saved.notAdmittedCancelled == true ? "not_admitted_cancelled" : saved.status?.state ?? "acceptance_unknown", lastCheckedAt: saved.lastStatusCheckedAt, confirmedProgressAt: saved.lastPhaseChangedAt, confirmedMilestones: NativeGenerationProgress.steps(kind: "aerial", phase: saved.status?.state), expectsStatusChecks: true, scope: .init(actor: saved.context.actorID, library: saved.context.orgID))
+                startedAt: saved.dispatchedAt, progressToken: saved.notAdmittedCancelled == true ? "not_admitted_cancelled" : saved.status?.state ?? "acceptance_unknown", lastCheckedAt: saved.lastStatusCheckedAt, confirmedProgressAt: saved.lastPhaseChangedAt, confirmedMilestones: saved.generationProgress().completed, expectsStatusChecks: true, scope: .init(actor: saved.context.actorID, library: saved.context.orgID))
     }
     static func aerialPresentation(state: String?, stopping: Bool, closed: Bool) -> (NativeActivityEntry.State, String) {
         if closed || state == "cancelled" { return (.stopped, "Opening stopped") }

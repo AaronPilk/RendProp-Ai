@@ -176,22 +176,26 @@ struct AerialOpeningJournal: Codable, Equatable {
     var lastStatusCheckedAt: Date? = nil
     var lastPhaseChangedAt: Date? = nil
     var completedMilestones: Int? = nil
+    var progressVersion: Int? = nil
 
     mutating func recordConfirmedStatus(_ result: AerialOpeningStatus, at now: Date) {
         let incoming = NativeGenerationProgress.steps(kind: "aerial", phase: result.state)
-        let previous = NativeGenerationProgress.steps(kind: "aerial", phase: status?.state)
+        let previous = NativeGenerationProgress.retained(
+            previous: NativeGenerationProgress.normalizedAerialMilestone(completedMilestones, version: progressVersion),
+            incoming: NativeGenerationProgress.steps(kind: "aerial", phase: status?.state),
+            incomplete: false, total: NativeGenerationProgress.aerialTotal)
         let regressed = previous.flatMap { old in incoming.map { $0 < old } } ?? false
         if status?.state != result.state && !regressed { lastPhaseChangedAt = now }
         lastStatusCheckedAt = now
-        // Recalculate from the server phase. Build 119 journals persisted a 1...6
-        // scale, so retaining that old count would misreport (or hide) progress.
-        completedMilestones = NativeGenerationProgress.retained(previous: nil, incoming: incoming,
+        completedMilestones = NativeGenerationProgress.retained(previous: previous, incoming: incoming,
             incomplete: ["failed", "ineligible", "cancelled"].contains(result.state), total: NativeGenerationProgress.aerialTotal)
+        progressVersion = NativeGenerationProgress.aerialProgressVersion
         status = result
     }
     func generationProgress(checkFailed: Bool = false) -> NativeGenerationProgress {
         let incomplete = notAdmittedCancelled == true || ["failed", "ineligible", "cancelled"].contains(status?.state ?? "")
-        return .init(completed: NativeGenerationProgress.retained(previous: nil,
+        return .init(completed: NativeGenerationProgress.retained(
+            previous: NativeGenerationProgress.normalizedAerialMilestone(completedMilestones, version: progressVersion),
             incoming: NativeGenerationProgress.steps(kind: "aerial", phase: status?.state), incomplete: incomplete, total: NativeGenerationProgress.aerialTotal), total: NativeGenerationProgress.aerialTotal,
             unit: "steps complete", phase: stopRequested && !incomplete ? "Waiting for stop confirmation" : NativeGenerationProgress.aerialPhase(status?.state),
             active: !incomplete && status?.isTerminal != true && status?.state != "ready_for_acceptance",

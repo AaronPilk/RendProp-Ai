@@ -575,6 +575,7 @@ struct ListingVideoComposition: Codable, Sendable {
 struct NativeGenerationProgress: Equatable {
     /// Five completed aerial stages; queued_input has completed none of them.
     static let aerialTotal = 5
+    static let aerialProgressVersion = 2
     let completed: Int?
     let total: Int?
     let unit: String
@@ -614,6 +615,13 @@ struct NativeGenerationProgress: Equatable {
     }
     static func stepTotal(kind: String?) -> Int? {
         switch kind { case "aerial": return aerialTotal; case "photo_motion": return 3; case "video": return 5; default: return nil }
+    }
+    /// Build 119 saved aerial counts on a 1...6 scale. Keep their high-water
+    /// mark when restoring a request, but never mistake one for a new count.
+    static func normalizedAerialMilestone(_ saved: Int?, version: Int?) -> Int? {
+        guard let saved else { return nil }
+        if version == aerialProgressVersion { return (0...aerialTotal).contains(saved) ? saved : nil }
+        return (1...(aerialTotal + 1)).contains(saved) ? saved - 1 : nil
     }
     static func retained(previous: Int?, incoming: Int?, incomplete: Bool, total: Int) -> Int? {
         let value = [previous, incoming].compactMap { $0 }.max()

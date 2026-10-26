@@ -32,6 +32,16 @@ swift = "\n\n".join(
     [
         "import Foundation",
         declaration(MODEL, "struct NativeGenerationProgress: Equatable"),
+        """
+struct PropertyVideoJobContext: Codable, Equatable {}
+struct AerialOpeningManifest: Codable, Equatable {}
+struct AerialOpeningQuote: Codable, Equatable {}
+struct AerialOpeningStatus: Codable, Equatable {
+    let state: String
+    var isTerminal: Bool { ["accepted", "failed", "ineligible", "cancelled"].contains(state) }
+}
+""",
+        declaration(SERVICE, "struct AerialOpeningJournal: Codable, Equatable"),
         declaration(QUEUE, "struct NativeActivityScope: Codable, Equatable"),
         declaration(QUEUE, "struct NativeActivityEntry: Codable, Identifiable, Equatable"),
         declaration(QUEUE, "struct NativeActivityHistory: Codable"),
@@ -84,13 +94,13 @@ swift = "\n\n".join(
             kind: .aerial, state: .working, stage: "Making opening",
             completed: nil, total: nil, startedAt: nil, firstObservedAt: Date(),
             progressToken: "queued_input", lastProgressAt: nil, lastCheckedAt: nil,
-            milestoneCompleted: 6, checkFailed: nil, expectsStatusChecks: true,
+            milestoneCompleted: nil, aerialProgressVersion: 2,
+            checkFailed: nil, expectsStatusChecks: true,
             countUnit: nil, progressKind: nil)
         for (phase, completed) in aerialPhases {
             assert(NativeGenerationProgress.steps(kind: "aerial", phase: phase) == completed)
             aerial.state = phase == "accepted" ? .ready : .working
             aerial.progressToken = phase
-            aerial.milestoneCompleted = 6 // A Build 119 Activity receipt.
             let progress = aerial.generationProgress
             assert(progress.completed == completed && progress.total == 5,
                    "Incorrect completed stages for \\(phase)")
@@ -102,12 +112,59 @@ swift = "\n\n".join(
         oldAerial.state = .attention
         oldAerial.progressToken = "ready_for_acceptance"
         oldAerial.milestoneCompleted = 6
+        oldAerial.aerialProgressVersion = nil // A Build 119 Activity receipt.
         assert(oldAerial.generationProgress.percent == 100)
         var newAerial = oldAerial
         newAerial.milestoneCompleted = 5
+        newAerial.aerialProgressVersion = 2
         var history = NativeActivityHistory(entries: [oldAerial])
         history.observe(newAerial, now: Date())
         assert(history.entries.first?.milestoneCompleted == 5)
+
+        var fourthStage = aerial
+        fourthStage.progressToken = "queued_quality"
+        fourthStage.milestoneCompleted = 4
+        fourthStage.lastProgressAt = Date(timeIntervalSince1970: 10)
+        var stale = fourthStage
+        stale.progressToken = "queued_assessment"
+        stale.milestoneCompleted = 1
+        stale.lastProgressAt = Date(timeIntervalSince1970: 20)
+        history = NativeActivityHistory(entries: [fourthStage])
+        history.observe(stale, now: Date(timeIntervalSince1970: 20))
+        assert(history.entries.first?.generationProgress.completed == 4)
+        assert(history.entries.first?.generationProgress.percent == 80)
+        assert(history.entries.first?.lastProgressAt == fourthStage.lastProgressAt)
+
+        stale.state = .failed
+        stale.progressToken = "failed"
+        stale.milestoneCompleted = nil
+        history.observe(stale, now: Date(timeIntervalSince1970: 30))
+        assert(history.entries.first?.generationProgress.completed == 4)
+        assert(history.entries.first?.generationProgress.percent == 80)
+
+        var allStages = fourthStage
+        allStages.milestoneCompleted = 5
+        allStages.progressToken = "ready_for_acceptance"
+        history = NativeActivityHistory(entries: [allStages])
+        history.observe(stale, now: Date(timeIntervalSince1970: 30))
+        assert(history.entries.first?.generationProgress.percent == nil)
+
+        let legacyJournalJSON = #"{"context":{},"physicalOrgID":"00000000-0000-0000-0000-000000000001","manifest":{},"quote":{},"disclosure":"","sourcePhotoID":"photo-1","dispatched":true,"stopRequested":false,"status":{"state":"queued_quality"},"completedMilestones":5}"#
+        var journal = try! JSONDecoder().decode(AerialOpeningJournal.self, from: Data(legacyJournalJSON.utf8))
+        assert(journal.progressVersion == nil)
+        assert(journal.generationProgress().completed == 4)
+        let previousChange = Date(timeIntervalSince1970: 10)
+        journal.lastPhaseChangedAt = previousChange
+        journal.recordConfirmedStatus(.init(state: "queued_assessment"), at: Date(timeIntervalSince1970: 20))
+        assert(journal.progressVersion == 2 && journal.completedMilestones == 4)
+        assert(journal.generationProgress().completed == 4 && journal.generationProgress().percent == 80)
+        assert(journal.lastPhaseChangedAt == previousChange)
+        journal.recordConfirmedStatus(.init(state: "failed"), at: Date(timeIntervalSince1970: 30))
+        assert(journal.generationProgress().completed == 4)
+        journal.recordConfirmedStatus(.init(state: "ready_for_acceptance"), at: Date(timeIntervalSince1970: 40))
+        assert(journal.generationProgress().completed == 5)
+        journal.recordConfirmedStatus(.init(state: "cancelled"), at: Date(timeIntervalSince1970: 50))
+        assert(journal.generationProgress().percent == nil)
         print("Activity terminal/active status model: passed")
     }
 }
