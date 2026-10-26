@@ -459,11 +459,18 @@ final class BetaPolishUITests: XCTestCase {
         app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "empty"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Detail fixture empty"].waitForExistence(timeout: 30), app.debugDescription)
-        openDetail("detail.reelStudio", title: "Make a video", videoPurpose: "listing")
-        let add = app.buttons["reel.addPhotos"]
-        scrollTo(add); XCTAssertTrue(add.isEnabled)
-        let wide = app.staticTexts["Landscape · 16:9 · 1920 × 1080"]
-        scrollTo(wide); XCTAssertTrue(wide.exists)
+        let video = app.buttons["detail.reelStudio"]
+        scrollTo(video); video.tap()
+        // The native three-step setup now starts on Photos. With no photos,
+        // format is intentionally unreachable and the next action stays off.
+        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Choose your photos"].exists)
+        XCTAssertTrue(app.staticTexts["0 photos"].exists)
+        XCTAssertTrue(app.staticTexts["Add your property photos"].exists)
+        let add = app.buttons["video.photos.empty.recovery"]
+        scrollTo(add); XCTAssertTrue(add.isEnabled && add.label == "Add photos")
+        let next = app.buttons["video.setup.next"]
+        XCTAssertTrue(next.exists && !next.isEnabled, "An empty reel cannot advance or generate")
         scrollTo(add); add.tap()
         XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photos.version.")).firstMatch.exists,
@@ -471,11 +478,12 @@ final class BetaPolishUITests: XCTestCase {
         attach("empty-reel-add-photos-library")
         let done = app.navigationBars["Photos"].buttons["Done"]
         XCTAssertTrue(done.isHittable); done.tap()
-        XCTAssertTrue(app.navigationBars["Make a video"].waitForExistence(timeout: 10), app.debugDescription)
-        scrollTo(wide); XCTAssertTrue(wide.exists, "Returning from Photos preserves the user's listing video format")
+        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Choose your photos"].exists)
+        XCTAssertTrue(app.staticTexts["0 photos"].exists, "Returning from Photos preserves the empty selection")
         scrollTo(add); XCTAssertTrue(add.isEnabled)
-        XCTAssertTrue(app.staticTexts["Add photos to this listing, then return to pick them for your reel."].exists)
-        XCTAssertFalse(app.staticTexts["Your reel is ready"].exists, "The recovery path never automatically generates a video")
+        XCTAssertTrue(next.exists && !next.isEnabled, "Returning from Photos must not advance or generate")
+        XCTAssertFalse(app.staticTexts["Your video is ready"].exists, "The recovery path never automatically generates a video")
         attach("empty-reel-same-setup-after-photos")
     }
 
@@ -920,6 +928,23 @@ final class BetaPolishUITests: XCTestCase {
         XCTAssertTrue(choices.buttons["Earlier source"].exists); XCTAssertFalse(choices.buttons["Original"].exists)
         attach("legacy-selection-reopen-source-stays-unverified")
         app.buttons["Close"].tap()
+    }
+
+    /// The fixed photo actions use native glass in iOS 26, which can report a
+    /// smaller accessibility button than an outer SwiftUI minimum-height frame.
+    /// Exercise the actual footer independently of the native navigation bar.
+    func testPhotoReviewFooterKeepsFortyFourPointActions() {
+        app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "republish", "-ui.photoFeedbackFixture"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Detail fixture republish"].waitForExistence(timeout: 30), app.debugDescription)
+        openDetail("detail.photos", title: "Photos")
+        let library = app.scrollViews["photos.savedVersions"]
+        library.buttons["Latest"].tap()
+        let photo = app.buttons["photos.version.fixture-0"]
+        revealForBoundedAcceptance(photo); photo.tap()
+        XCTAssertTrue(element("photoVersion.savedChoices").buttons["Staged"].waitForExistence(timeout: 10))
+        assertAcceptanceFooterIsVisible()
+        attach("photo-review-footer-native-glass-touch-targets")
     }
 
     /// Actual optional-feedback SwiftUI and local queue only. The existing

@@ -8499,7 +8499,7 @@ struct PhotoCompareView: View {
         if !showOriginal, viewed.savedVersion != nil {
             PrimaryButton(title: selectionWorkID != nil ? "Checking…" : isCloudListing && !cloudSelectionKnown ? "Check selection" : cloudCoverRequested ? "Use as cover" : publicationSelected ? "Unselect" : "Use on listing",
                           systemImage: publicationSelected ? "minus.circle" : "checkmark.circle",
-                          isDisabled: listingSelectionDisabled, isCompact: true, action: changeListingSelection)
+                          isDisabled: listingSelectionDisabled, action: changeListingSelection)
             .frame(minHeight: 44)
             .accessibilityIdentifier("photoVersion.useOnListing")
             .accessibilityLabel(isCloudListing && !cloudSelectionKnown ? "Refresh listing photo selection" : cloudCoverRequested ? "Use this version as the listing cover" : publicationSelected ? "Remove this photo from listing" : "Use this version on listing")
@@ -8621,7 +8621,7 @@ struct PhotoCompareView: View {
     }
 
     private var savePhotoButton: some View {
-        SecondaryButton(title: "Save photo", systemImage: "square.and.arrow.down", isDisabled: savePhotoDisabled, isCompact: true) {
+        SecondaryButton(title: "Save photo", systemImage: "square.and.arrow.down", isDisabled: savePhotoDisabled) {
             guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
             do {
                 if !showOriginal, needsCustomReview {
