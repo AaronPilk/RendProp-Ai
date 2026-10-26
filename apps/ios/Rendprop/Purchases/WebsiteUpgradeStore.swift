@@ -64,7 +64,23 @@ import StoreKit
             }
             let intent = WebsiteUpgradeIntent(context: context)
             try WebsiteUpgradeIntentStore.save(intent)
-            let result = try await product.purchase(options: [.appAccountToken(context.actorID), .quantity(1)])
+            let result: Product.PurchaseResult
+            do {
+                result = try await product.purchase(options: [.appAccountToken(context.actorID), .quantity(1)])
+            } catch {
+                // Apple can report a cancelled or disallowed purchase by
+                // throwing instead of returning .userCancelled. Those outcomes
+                // have no charge; keep the property pin only if StoreKit still
+                // has a website transaction to fulfill. Unknown errors retain
+                // the pin because their payment outcome may be uncertain.
+                if WebsitePurchasePretransactionRecovery.isKnownNoCharge(error),
+                   !(await hasUnfinishedWebsitePurchase()), context.isCurrent {
+                    try WebsiteUpgradeIntentStore.clear(intent)
+                    setMessage(WebsitePurchasePretransactionRecovery.message(error), context: context)
+                    return
+                }
+                throw error
+            }
             switch result {
             case .success(let verified):
                 try await settle(verified, intent: intent, context: context)
@@ -149,6 +165,16 @@ import StoreKit
         return found
     }
 
+    private func hasUnfinishedWebsitePurchase() async -> Bool {
+        for await result in Transaction.unfinished {
+            switch result {
+            case .verified(let transaction), .unverified(let transaction, _):
+                if transaction.productID == WebsiteUpgradeProduct.id { return true }
+            }
+        }
+        return false
+    }
+
     private func recoverSavedIntent(_ result: VerificationResult<Transaction>) async {
         guard case .verified(let transaction) = result, let actor = transaction.appAccountToken,
               let intent = try? WebsiteUpgradeIntentStore.load(actor: actor),
@@ -196,5 +222,28 @@ import StoreKit
     private func recoveryMessage(_ error: Error) -> String {
         if error is CloudSyncError { return "Your purchase is retained. Return to its original Rendprop account and property, then recover it." }
         return "The website purchase couldn't be completed or recovered. It has not been discarded. Use Recover purchase on its original property; contact support if it remains unavailable."
+    }
+}
+
+/// Only outcomes known to have produced no Apple transaction can discard an
+/// intent. Pending approvals, transport failures, and unknown StoreKit errors
+/// remain pinned to their original property for explicit recovery.
+enum WebsitePurchasePretransactionRecovery {
+    static func isKnownNoCharge(_ error: Error) -> Bool {
+        if let storeError = error as? StoreKitError, case .userCancelled = storeError { return true }
+        if let purchaseError = error as? Product.PurchaseError {
+            switch purchaseError {
+            case .purchaseNotAllowed, .productUnavailable: return true
+            default: return false
+            }
+        }
+        return false
+    }
+
+    static func message(_ error: Error) -> String {
+        if let storeError = error as? StoreKitError, case .userCancelled = storeError {
+            return "Purchase cancelled. Your included website is unchanged."
+        }
+        return "The App Store did not start a purchase. Check your Apple account and try again."
     }
 }
