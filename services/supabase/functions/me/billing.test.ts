@@ -124,6 +124,7 @@ Deno.test("actual me returns scoped bounded trial usage without advertising a do
  const unavailable=await invoke({trialError:true});assertEquals(unavailable.response.status,503);
  const unfunded=await invoke({plan:"starter",source:"apple",servingUnavailable:true});
  assertEquals(unfunded.response.status,200);assertEquals(unfunded.body.plan,"starter");assertEquals(unfunded.body.plan_raw,"starter");assertEquals(unfunded.body.entitlement.degraded,true);
+ assertEquals(unfunded.body.entitlement.renders_per_month,0,"a degraded trial fallback cannot advertise a render");
  assertEquals(unfunded.body.usage.caps,{renders:0,photo_edits:0,reels:0,aerials:0,drone:0});assertEquals(unfunded.body.serving_activation.available,false);assertEquals(unfunded.body.billing.can_manage_subscription,true);
 });
 Deno.test("actual me preserves exact twenty-photo recorded usage and held offer without granting a new allowance",async()=>{

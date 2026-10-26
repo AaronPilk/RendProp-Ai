@@ -12,6 +12,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
+import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
 SQL = ROOT / "services/supabase"
@@ -115,6 +117,70 @@ try:
             if line.startswith("{") and '"assertions"' in line]
     assert len(rows) == 1 and rows[0]["passed"], rows
     receipt["paidQuality"] = rows[0]
+
+    # The org row lock must serialize a worker's first costed claim against a
+    # plan downgrade in both orders. A queued job alone is not paid authority.
+    for name, downgrade_first in (("downgrade-first", True), ("claim-first", False)):
+        actor, org, first_listing, paid_listing, job = (str(uuid.uuid4()) for _ in range(5))
+        seed = f"""
+insert into auth.users(id,email,is_anonymous)
+  values('{actor}','race-{actor}@fixture.invalid',false);
+insert into public.orgs(id,name,plan,plan_source)
+  values('{org}','Disposable race workspace','free',null);
+insert into public.memberships(user_id,org_id,role)
+  values('{actor}','{org}','owner');
+insert into public.listings(id,org_id,agent_id,address)
+  values('{first_listing}','{org}','{actor}','First free draft');
+update public.orgs set plan='starter',plan_source='manual' where id='{org}';
+insert into public.listings(id,org_id,agent_id,address)
+  values('{paid_listing}','{org}','{actor}','Second paid draft');
+insert into public.render_jobs(id,listing_id,source,status)
+  values('{job}','{paid_listing}','worker','queued');
+"""
+        run(name + "-seed", [*psql, "-Atq"], body=seed)
+        downgrade = (f"BEGIN; UPDATE public.orgs SET plan='free',plan_source=null "
+                     f"WHERE id='{org}'; SELECT pg_sleep(2); COMMIT;")
+        claim = (f"BEGIN; SET LOCAL ROLE service_role; UPDATE public.render_jobs "
+                 f"SET status='processing',started_at=now() WHERE id='{job}'; "
+                 f"SELECT pg_sleep(2); COMMIT;")
+        first_sql, second_sql = ((downgrade, claim) if downgrade_first
+                                 else (claim, downgrade))
+        first = subprocess.Popen([*psql, "-Atq", "-c", first_sql], env=env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 text=True)
+        try:
+            time.sleep(0.4)
+            second = subprocess.Popen([*psql, "-Atq", "-c", second_sql], env=env,
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                      text=True)
+            second_out, _ = second.communicate(timeout=20)
+            first_out, _ = first.communicate(timeout=20)
+        finally:
+            if first.poll() is None:
+                first.kill()
+                first.communicate()
+        for label, proc, output in (("first", first, first_out),
+                                    ("second", second, second_out)):
+            log = out / (name + "-" + label + ".log")
+            log.write_text(output)
+            receipt["commands"].append({"name": name + "-" + label,
+                                        "exit": proc.returncode,
+                                        "logSHA256": hashlib.sha256(log.read_bytes()).hexdigest()})
+        if downgrade_first:
+            assert first.returncode == 0, first_out
+            assert second.returncode != 0 and "RP402: A queued render needs paid service" in second_out, second_out
+        else:
+            assert first.returncode == 0 and second.returncode == 0, first_out + second_out
+        state = run(name + "-state", [*psql, "-Atq", "-c", f"""
+select o.plan,j.status,coalesce(a.work_admitted_at is not null,false)
+from public.orgs o cross join public.render_jobs j
+left join public.trial_intro_render_admissions a on a.job_id=j.id
+where o.id='{org}' and j.id='{job}';"""]).strip()
+        expected = "free|queued|f" if downgrade_first else "free|processing|t"
+        assert state == expected, (name, state)
+        receipt.setdefault("workerDowngradeRaces", []).append(
+            {"order": name, "state": state, "claimRejected": downgrade_first})
+
     assert all(hashlib.sha256(path.read_bytes()).hexdigest() == digest
                for path, digest in ((ROOT / name, value) for name, value in hashes.items()))
     receipt["passed"] = True

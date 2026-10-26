@@ -139,6 +139,48 @@ end$$;
 revoke all on function public.org_entitlement(uuid) from public,anon,authenticated;
 grant execute on function public.org_entitlement(uuid) to authenticated,service_role,postgres;
 
+-- Admission and a concurrent plan downgrade must have a definite order.
+-- FOR SHARE conflicts with the org UPDATE that changes plan/source/expiry.
+-- Re-resolve after waiting: a Team parent may become unbound while locked.
+create or replace function public.trial_intro_billing_org_for_admission(p_content_org uuid)
+returns uuid language plpgsql security definer set search_path='' as $$
+declare billing uuid; confirmed uuid; attempt integer:=0;
+begin
+  loop
+    billing:=public.library_billing_org(p_content_org);
+    perform 1 from public.orgs o where o.id=billing and o.deleted_at is null for share;
+    if not found then raise exception 'RP403: A current billing workspace is required';end if;
+    confirmed:=public.library_billing_org(p_content_org);
+    if confirmed=billing then return billing;end if;
+    attempt:=attempt+1;
+    if attempt>=3 then raise exception 'RP409: Billing workspace changed during admission';end if;
+  end loop;
+end$$;
+revoke all on function public.trial_intro_billing_org_for_admission(uuid)
+  from public,anon,authenticated;
+grant execute on function public.trial_intro_billing_org_for_admission(uuid)
+  to service_role,postgres;
+
+create or replace function public.trial_intro_actor_billing_org_for_admission(
+  p_actor uuid,p_content_org uuid)
+returns uuid language plpgsql security definer set search_path='' as $$
+declare billing uuid; confirmed uuid; attempt integer:=0;
+begin
+  loop
+    billing:=public.library_actor_billing_org(p_actor,p_content_org);
+    perform 1 from public.orgs o where o.id=billing and o.deleted_at is null for share;
+    if not found then raise exception 'RP403: A current billing workspace is required';end if;
+    confirmed:=public.library_actor_billing_org(p_actor,p_content_org);
+    if confirmed=billing then return billing;end if;
+    attempt:=attempt+1;
+    if attempt>=3 then raise exception 'RP409: Billing workspace changed during admission';end if;
+  end loop;
+end$$;
+revoke all on function public.trial_intro_actor_billing_org_for_admission(uuid,uuid)
+  from public,anon,authenticated;
+grant execute on function public.trial_intro_actor_billing_org_for_admission(uuid,uuid)
+  to service_role,postgres;
+
 -- An unpaid account may prepare one lifetime listing, including its photos.
 -- Reserve the same lifetime free-listing slot at INSERT, not at render upload:
 -- neither a draft nor its gallery selection is a published video/website.
@@ -148,7 +190,7 @@ create or replace function public.trial_intro_listing_guard()
 returns trigger language plpgsql security definer set search_path='' as $$
 declare billing uuid; existing integer;
 begin
-  billing:=public.library_billing_org(new.org_id);
+  billing:=public.trial_intro_billing_org_for_admission(new.org_id);
   if public.plan_serving_ceiling(billing)->>'kind' in('trial','free') then
     -- The count also catches listings made before this migration, including
     -- deleted ones. The advisory lock serializes two first-listing inserts.
@@ -181,7 +223,7 @@ begin
   if new.spec->>'kind'='video' then
     select l.org_id into org from public.listings l where l.id=new.listing_id and l.deleted_at is null;
     if org is null then raise exception 'RP403: A current upload workspace is required';end if;
-    billing:=public.library_actor_billing_org(new.actor_id,org);
+    billing:=public.trial_intro_actor_billing_org_for_admission(new.actor_id,org);
     if public.plan_serving_ceiling(billing)->>'kind' in('trial','free') and not exists(
       select 1 from public.property_website_transactions t
       where t.assigned_listing_id=new.listing_id and t.revoked_at is null
@@ -317,10 +359,10 @@ create or replace function public.trial_intro_capture_job_admission()
 returns trigger language plpgsql security definer set search_path='' as $$
 declare billing uuid; content_org uuid; kind text; website_paid boolean;
 begin
-  select l.org_id,public.library_billing_org(l.org_id)
-    into content_org,billing from public.listings l
+  select l.org_id into content_org from public.listings l
     where l.id=new.listing_id and l.deleted_at is null;
-  if billing is null then raise exception 'RP403: A current publication workspace is required';end if;
+  if content_org is null then raise exception 'RP403: A current publication workspace is required';end if;
+  billing:=public.trial_intro_billing_org_for_admission(content_org);
   kind:=public.plan_serving_ceiling(billing)->>'kind';
   if tg_op='INSERT' then
     select exists(select 1 from public.property_website_transactions t
@@ -413,7 +455,7 @@ begin
       join public.listings l on l.id=j.listing_id
       where j.id=new.job_id and j.listing_id=new.listing_id and l.deleted_at is null;
     if org is null then raise exception 'RP403: A previously admitted video job is required';end if;
-    billing:=public.library_billing_org(org);
+    billing:=public.trial_intro_billing_org_for_admission(org);
     if public.plan_serving_ceiling(billing)->>'kind' in('trial','free')
       and not public.trial_intro_paid_job_can_finish(new.job_id,new.listing_id) then
       raise exception 'RP402: Video completion needs a paid admission';
@@ -424,7 +466,7 @@ begin
   select l.org_id into org from public.listings l
     where l.id=listing and l.deleted_at is null;
   if org is null then raise exception 'RP403: A current publication workspace is required';end if;
-  billing:=public.library_billing_org(org);
+  billing:=public.trial_intro_billing_org_for_admission(org);
   if public.plan_serving_ceiling(billing)->>'kind' in('trial','free') then
     source:=new.source;
     select exists(select 1 from public.property_website_transactions t

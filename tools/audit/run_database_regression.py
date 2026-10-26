@@ -145,7 +145,16 @@ def main():
     evidence_parent.mkdir(parents=True, exist_ok=True)
     require(shutil.disk_usage(evidence_parent).free >= 1024**3,
             "Less than 1 GiB available on the evidence filesystem")
-    out = Path(tempfile.mkdtemp(prefix="rendprop-db-audit-", dir=evidence_parent))
+    if evidence_parent.resolve() == Path("/tmp").resolve():
+        out = Path(tempfile.mkdtemp(prefix="rendprop-db-audit-", dir="/tmp"))
+    else:
+        # The negative SQL fixtures intentionally require this owned /tmp
+        # pathname. Keep it as a short symlink while all cluster bytes and
+        # evidence live on the external volume.
+        external = Path(tempfile.mkdtemp(prefix="rendprop-db-audit-", dir=evidence_parent))
+        out = Path(tempfile.mkdtemp(prefix="rendprop-db-audit-", dir="/tmp"))
+        out.rmdir()
+        out.symlink_to(external, target_is_directory=True)
     data, sockets = out / "cluster", out / "socket"
     sockets.mkdir(mode=0o700)
     receipt = {"sourceCommit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
