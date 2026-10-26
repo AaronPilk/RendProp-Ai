@@ -7,13 +7,15 @@ import Foundation
   let a=UUID(uuidString:"11000000-0000-4000-8000-000000000001")!
   let b=UUID(uuidString:"11000000-0000-4000-8000-000000000002")!
   func identity(_ owner:UUID,_ revision:UInt64){AuthStore.shared.userID=owner.uuidString;AuthStore.shared.isSignedIn=true;AuthStore.shared.isIdentified=true;AuthStore.shared.syncSessionRevision=revision;AuthStore.access=owner==a ? "synthetic-A" : "synthetic-B"}
-  func reset(){UIApplication.shared.unregisterCalls=0;PushHTTP.reset();SecureStore.values=[:];SecureStore.failSet=false;SecureStore.failRead=false;SecureStore.failRemove=false;UserDefaults.standard.values=[:];identity(a,1)}
+  func reset(){UIApplication.shared.unregisterCalls=0;UIApplication.shared.registerCalls=0;PushHTTP.reset();SecureStore.values=[:];SecureStore.failSet=false;SecureStore.failRead=false;SecureStore.failRemove=false;UserDefaults.standard.values=[:];identity(a,1)}
   reset()
-  let push=PushManager();PushHTTP.pausedOwner=a
+  let push=PushManager();push.isAllowed=true;PushHTTP.pausedOwner=a
   push.handleDeviceToken(Data([0xab,0xcd]));await tick()
   check(PushHTTP.requests.filter{$0.method=="POST"}.count==1,"Initial A registration missing")
   push.pendingRoute = .leads;push.pendingReelJobID=UUID();push.showPrePrompt=true;PushHTTP.holdDelete=true
   push.accountWillChange();identity(b,2);push.accountDidChange();await tick()
+  check(UIApplication.shared.unregisterCalls==1,"Account switch did not stop local APNs")
+  check(UIApplication.shared.registerCalls==0,"APNs re-registered before outgoing cleanup")
   check(push.pendingRoute==nil && push.pendingReelJobID==nil && !push.showPrePrompt,"Old account presentation retained")
   check(PushHTTP.requests.filter{$0.method=="POST"}.count==1,"B POST crossed unacknowledged A cleanup")
   let deletion=PushHTTP.requests.first{$0.method=="DELETE"}!
@@ -23,12 +25,29 @@ import Foundation
   check(try AuthStore.pendingPushUnregisters().count==1,"Cleanup was not retained before request")
   PushHTTP.deleteContinuation?.resume();PushHTTP.deleteContinuation=nil;await tick()
   check(push.acknowledgedOwner==b,"B binding missing after exact cleanup acknowledgment")
+  check(UIApplication.shared.registerCalls==1,"APNs was not restored after replacement server binding")
   check(try AuthStore.pendingPushUnregisters().isEmpty,"Acknowledged cleanup remained pending")
   PushHTTP.postContinuation?.resume();PushHTTP.postContinuation=nil;await tick()
   check(push.acknowledgedOwner==b,"Late A acknowledgment replaced B binding")
   push.handleDeviceToken(Data([0xab,0xcd]));await tick()
   check(PushHTTP.requests.filter{$0.method=="POST"}.count==2,"Same B token registered repeatedly")
   check(PushHTTP.requests.last{$0.method=="POST"}?.credential=="synthetic-B","B registration used A credential")
+  reset()
+  let delayedBinding=PushManager();delayedBinding.isAllowed=true
+  delayedBinding.handleDeviceToken(Data([0xab,0xcd]));await tick()
+  delayedBinding.accountWillChange();identity(b,2);PushHTTP.pausedOwner=b;delayedBinding.accountDidChange();await tick()
+  check(PushHTTP.requests.filter{$0.method=="POST"}.count==2,"Replacement binding was not attempted")
+  check(UIApplication.shared.registerCalls==0,"APNs re-registered before replacement server binding")
+  PushHTTP.postContinuation?.resume();PushHTTP.postContinuation=nil;await tick()
+  check(delayedBinding.acknowledgedOwner==b && UIApplication.shared.registerCalls==1,"APNs was not restored after delayed replacement binding")
+  reset();identity(b,2)
+  let cleanupWithoutCachedToken=PendingPushUnregister(owner:a,deviceToken:"abcd",environment:"sandbox",accessToken:"synthetic-A")
+  check(AuthStore.retainPushUnregister(cleanupWithoutCachedToken),"Could not retain cleanup without cached token")
+  PushHTTP.holdDelete=true
+  let noCachedToken=PushManager();noCachedToken.isAllowed=true;noCachedToken.accountDidChange();await tick()
+  check(UIApplication.shared.registerCalls==0,"APNs re-registered before outgoing cleanup")
+  PushHTTP.deleteContinuation?.resume();PushHTTP.deleteContinuation=nil;await tick()
+  check(UIApplication.shared.registerCalls==1,"APNs did not register after cleanup without a cached token")
   reset();UserDefaults.standard.set("abcd",forKey:"push.deviceToken.v1");PushHTTP.holdDelete=true
   let overlapping=PushManager();overlapping.accountWillChange();identity(b,2);overlapping.accountDidChange();await tick()
   SecureStore.failSet=true;overlapping.accountWillChange();identity(a,3);overlapping.accountDidChange();await tick()
@@ -103,7 +122,7 @@ import Foundation
   check(!UserDefaults.standard.bool(forKey:"push.unregisterStorageBlocked.v1"),"Acknowledged erasure cleanup retained blocked flag")
   reset();UserDefaults.standard.set("abcd",forKey:"push.deviceToken.v1");PushHTTP.deleteError=URLError(.notConnectedToInternet)
   let erased=ClearDataHarness();await erased.clearLocalDataTapped();await tick()
-  check(UIApplication.shared.unregisterCalls==1,"Clear data stops local APNs delivery during offline server cleanup")
+  check(UIApplication.shared.unregisterCalls==2,"Clear data stops local APNs delivery during offline server cleanup")
   check(PushManager.shared.localDataErasureRevision>0,"Clear data invalidates already queued local completion callbacks")
   check(erased.wipes==1 && erased.showDataCleared && !AuthStore.shared.isSignedIn,"Clear data signs out and wipes after reel cancellation")
   check(try AuthStore.pendingPushUnregisters().count==1,"Clear data retains failed outgoing DELETE until acknowledgment")

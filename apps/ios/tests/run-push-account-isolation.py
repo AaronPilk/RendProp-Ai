@@ -23,7 +23,7 @@ def block(s,anchor):
    if depth==0:return s[start:i+1]
  raise RuntimeError('Unclosed '+anchor)
 identity=block(push,'struct PushAccountIdentity');pending=block(push,'struct PendingPushUnregister')
-methods='\n'.join(block(push,x)for x in ['    static var currentIdentity','    func start','    func retryPendingCleanup','    func prepareForLocalDataErasure','    func handleDeviceToken','    private func registerDeviceToken','    func accountWillChange','    func accountDidChange','    private func finishPendingUnregisters','    static func accepts','    func handle(payload:'])
+methods='\n'.join(block(push,x)for x in ['    static var currentIdentity','    func start','    func retryPendingCleanup','    func prepareForLocalDataErasure','    func registerWithAPNs','    func handleDeviceToken','    private func registerDeviceToken','    func accountWillChange','    func accountDidChange','    private func finishPendingUnregisters','    static func accepts','    func handle(payload:'])
 authmethods='\n'.join(block(auth,x)for x in ['    @MainActor static func pendingPushUnregisters','    @MainActor static func recoverPushUnregisterStorage','    @MainActor static func retainPushUnregister','    @MainActor static func removePushUnregister','    @MainActor static func discardPendingPushUnregisters'])
 http=block(push,'    @MainActor static func send(path:')
 route=block(app,'            .onChange(of: analyticsAuth.userID)')
@@ -48,7 +48,7 @@ enum CloudSyncError:Error{case identityChanged}
 enum Config{static let enablePush=true;static let isUITesting=false;static let isSessionNetworkTesting=false;static let useLiveBackend=true}
 enum Analytics{static let appVersion="synthetic"}
 @MainActor final class UNUserNotificationCenter {static let center=UNUserNotificationCenter();var removed=0;var delegate:Any?;static func current()->UNUserNotificationCenter{center};func removeAllDeliveredNotifications(){removed+=1};func removeAllPendingNotificationRequests(){removed+=1}}
-@MainActor final class UIApplication {static let shared=UIApplication();var unregisterCalls=0;func unregisterForRemoteNotifications(){unregisterCalls+=1}}
+@MainActor final class UIApplication {static let shared=UIApplication();var unregisterCalls=0;var registerCalls=0;func unregisterForRemoteNotifications(){unregisterCalls+=1};func registerForRemoteNotifications(){registerCalls+=1}}
 @MainActor final class PushDelegate{static let shared=PushDelegate()}
 @MainActor enum SecureStore {static var values:[String:String]=[:];static var failSet=false;static var failRead=false;static var failRemove=false
  static func getChecked(_ key:String)throws->String?{if failRead{throw StorageFailure.locked};return values[key]}
@@ -85,14 +85,14 @@ enum PushRoute:Equatable {case leads,tour(DeepLink)}
  private var unregisterTask:Task<Bool,Never>?;private var unretainedCleanups:[PendingPushUnregister]=[];private var deviceRouteMissing=false
  private var lastDeviceToken:String?{get{UserDefaults.standard.string(forKey:"push.deviceToken.v1")} set{UserDefaults.standard.set(newValue as Any,forKey:"push.deviceToken.v1")}}
  private static var isSuppressed:Bool{!Config.enablePush || Config.isUITesting || Config.isSessionNetworkTesting}
- static let apnsEnvironment="sandbox";func registerWithAPNs(){};func refreshAuthorization(registerIfAllowed:Bool=false) async{}
+ static let apnsEnvironment="sandbox";func refreshAuthorization(registerIfAllowed:Bool=false) async{}
  var acknowledgedOwner:UUID?{registeredIdentity?.owner};var acknowledgedToken:String?{registeredToken}
 __METHODS__
 }
 '''
 body='import Foundation\n'+paths[5].read_text()+'\n'+identity+'\n'+pending+'\n'+stub.replace('__AUTH__',authmethods).replace('__HTTP__',http).replace('__METHODS__',methods)
 body+='\n@MainActor final class IncomingModel {func syncSpaceTypeIfNeeded(){};func refreshCloudWorkspace()async{}}\n@MainActor final class PaywallRouter {static let shared=PaywallRouter();func dismiss(){}}\n@MainActor final class RootIncomingHarness {var incomingLink:DeepLink?;var rootSheet:String?;var incomingLinkError=false;var incomingQueue=NativeIncomingQueue();var incomingAccountOwner:String?;let model=IncomingModel()\nfunc accountChanged(nextOwner:String?) {\n'+routebody+'\n}\n}\n'
-faults=[('actual',None,None,None),('retain-root-queue','incomingQueue = NativeIncomingQueue()','_ = incomingQueue','A queued account route survived owner change'),('skip-cleanup-barrier','guard await finishPendingUnregisters(), !Task.isCancelled,','guard true, !Task.isCancelled,','B POST crossed unacknowledged A cleanup'),('accept-incomplete-ack','object?["unregistered"] as? Bool == true,','true,','Incomplete cleanup acknowledgment permitted B POST'),('drop-server-category',' || type == "lead_received"','', 'Actual emitted lead notification did not open inbox'),('accept-foreign-payload','UUID(uuidString: raw) == identity.owner','!raw.isEmpty','Other account notification accepted'),('late-acknowledgment',None,None,'Late A acknowledgment replaced B binding')]
+faults=[('actual',None,None,None),('retain-root-queue','incomingQueue = NativeIncomingQueue()','_ = incomingQueue','A queued account route survived owner change'),('skip-cleanup-barrier','guard await finishPendingUnregisters(), !Task.isCancelled,','guard true, !Task.isCancelled,','B POST crossed unacknowledged A cleanup'),('apns-before-cleanup','guard await finishPendingUnregisters(), Self.currentIdentity == identity else { return }','guard Self.currentIdentity == identity else { return }','APNs re-registered before outgoing cleanup'),('apns-before-binding','                await binding?.value\n                guard Self.currentIdentity == identity,\n                      registeredToken == hex, registeredIdentity == identity else { return }','                _ = binding\n                guard Self.currentIdentity == identity else { return }','APNs re-registered before replacement server binding'),('switch-keeps-local-apns','            UIApplication.shared.unregisterForRemoteNotifications()\n            UNUserNotificationCenter.current().removeAllDeliveredNotifications()','            UNUserNotificationCenter.current().removeAllDeliveredNotifications()','Account switch did not stop local APNs'),('accept-incomplete-ack','object?["unregistered"] as? Bool == true,','true,','Incomplete cleanup acknowledgment permitted B POST'),('drop-server-category',' || type == "lead_received"','', 'Actual emitted lead notification did not open inbox'),('accept-foreign-payload','UUID(uuidString: raw) == identity.owner','!raw.isEmpty','Other account notification accepted'),('late-acknowledgment',None,None,'Late A acknowledgment replaced B binding')]
 assert 'retryPendingCleanup()' in block(push,'    func refreshAuthorization')
 settings=paths[6].read_text()
 assert 'auth.signOut(serverAccountDeleted: serverAccountsEnabled)' in block(settings,'    private func deleteAccount(')
@@ -109,8 +109,11 @@ enum Haptics {static func success(){}}
 @MainActor final class ClearDataHarness {let auth=AuthStore.shared;let uploads=ClosedUploads();var isClearingLocalData=false,isDeletingAccount=false,showDataCleared=false;var wipes=0
 func wipeLocalData(){PushManager.shared.prepareForLocalDataErasure();wipes+=1}
 '''+clear+'\n}\n'
+erase_start=body.index('    func prepareForLocalDataErasure')
+erase_end=body.index('    func registerWithAPNs',erase_start)
+erase_apns_mutant=body[:erase_start]+body[erase_start:erase_end].replace('        UIApplication.shared.unregisterForRemoteNotifications()', '        // omitted local APNs stop',1)+body[erase_end:]
 faults += [('erase-unregister-before-delete', body.replace('func wipeLocalData(){PushManager.shared.prepareForLocalDataErasure();wipes+=1}', 'func wipeLocalData(){_ = AuthStore.discardPendingPushUnregisters();PushManager.shared.prepareForLocalDataErasure();wipes+=1}'), None, 'Clear data retains failed outgoing DELETE until acknowledgment'),
-('erase-keeps-local-apns',body.replace('        UIApplication.shared.unregisterForRemoteNotifications()', '        // omitted local APNs stop'),None,'Clear data stops local APNs delivery during offline server cleanup'),
+('erase-keeps-local-apns',erase_apns_mutant,None,'Clear data stops local APNs delivery during offline server cleanup'),
 ('erase-keeps-notice-callback',body.replace('        localDataErasureRevision &+= 1', '        // omitted queued notice invalidation'),None,'Clear data invalidates already queued local completion callbacks'),
 ('erase-without-writer-wait',body.replace('        await ReelWorkQueue.shared.cancelForLocalDataErasure()', '        // omitted interrupted writer wait'),None,'Clear data waits for interrupted reel writers before erasure'),
 ('erase-replacement-account',body.replace('guard auth.userID == owner, auth.syncSessionRevision == revision,\n              WorkspaceContext.selectedOrgID == workspace else { return }','guard true else { return }'),None,'Clear data cannot erase a replacement session')]
