@@ -11,8 +11,9 @@ from run_database_regression import invariant_rows
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261001143615_subscription_confirmed_trial_start.sql'
-OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-subscription-trial-',dir='/tmp'))
-SOCK,DATA=OUT/'socket',OUT/'cluster';SOCK.mkdir(mode=0o700)
+OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-subscription-trial-',dir=os.environ.get('RENDP_AUDIT_EVIDENCE_DIR','/tmp')))
+SOCK=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-subscription-trial-socket-',dir='/tmp'))
+DATA=OUT/'cluster'
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','NO_COLOR':'1','DENO_NO_PROMPT':'1'}
 BIN={n:shutil.which(n)for n in ['initdb','pg_ctl','psql','createdb','deno']};assert all(BIN.values())
 ENV['DENO_DIR']=json.loads(subprocess.check_output([BIN['deno'],'info','--no-config','--json'],text=True))['denoDir']
@@ -54,7 +55,7 @@ try:
  for label in ['after','replayed']:
   if label=='replayed':query('policy-replay',TARGET.read_text())
   result=query('signup-'+label,(SQL/'tests/subscription_confirmed_trial.sql').read_text())
-  assert '\n26\n' in result and result.count('|t')==26
+  assert '\n27\n' in result and result.count('|t')==27
  assert query('legacy-after-replay',snapshot)==before,'Migration replay changed existing grants'
  # Require the exact complete inventory, successful SQL exit and all-green footer.
  invariant_args=[*PSQL[:-1],'-f']
@@ -83,7 +84,7 @@ try:
  result=run('apple-jws-notifications-billing',deno+[SQL/'functions/_shared/applejws.test.ts',SQL/'functions/apple-subscriptions/notify.test.ts',SQL/'functions/me/billing.test.ts',SQL/'functions/coach/knowledge_test.ts'])
  summary=re.findall(r'ok \| (\d+) passed \| 0 failed',result);assert len(summary)==1 and int(summary[0])>=50
  assert all(hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest for name,digest in hashes.items()),'Source changed during verification'
- receipt.update(passed=True,sqlAssertions=26,existingGrantSnapshotsUnchanged=True,signatureNotificationBillingTests=int(summary[0]))
+ receipt.update(passed=True,sqlAssertions=27,existingGrantSnapshotsUnchanged=True,signatureNotificationBillingTests=int(summary[0]))
 finally:
  if started and (DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')

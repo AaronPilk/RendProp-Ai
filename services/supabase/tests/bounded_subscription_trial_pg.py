@@ -13,7 +13,6 @@ import os
 import shutil
 import subprocess
 import tempfile
-import importlib.util
 import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -22,19 +21,28 @@ MIGRATION = SQL / "migrations/20261006202500_bounded_subscription_trial.sql"
 TOOLS = {name: shutil.which(name) or str(Path("/opt/homebrew/opt/postgresql@17/bin") / name)
          for name in ("initdb", "pg_ctl", "psql", "createdb")}
 assert all(Path(p).is_file() and os.access(p, os.X_OK) for p in TOOLS.values()), "Use existing PostgreSQL binaries"
-OUT = Path(tempfile.mkdtemp(prefix="rendprop-bounded-trial-pg-", dir="/tmp"))
-DATA, SOCK = OUT / "data", OUT / "socket"
-SOCK.mkdir()
+OUT_ROOT = Path(os.environ.get("RENDPROP_PG_EVIDENCE_ROOT", "/tmp"))
+OUT_ROOT.mkdir(parents=True, exist_ok=True)
+OUT = Path(tempfile.mkdtemp(prefix="rendprop-bounded-trial-pg-", dir=OUT_ROOT))
+DATA = OUT / "data"
+# PostgreSQL's Unix socket path has a short platform limit even when its data
+# and retained proof live on the external evidence volume.
+SOCK = Path(tempfile.mkdtemp(prefix="rbt-", dir="/tmp"))
 # Drop inherited PGHOST/PGDATABASE/PGPASSWORD, service credentials and startup
 # files. Every command names this fresh cluster's private Unix socket.
 ENV = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LC_ALL": "C",
-       "PGOPTIONS": "-c statement_timeout=30000 -c lock_timeout=15000"}
+       "PGOPTIONS": "-c statement_timeout=30000 -c lock_timeout=15000 -c TimeZone=UTC"}
 PORT = "55486"
-SOURCES = [*sorted((SQL / "migrations").glob("*.sql")), SQL / "tests/ci-bootstrap.sql",
-           SQL / "tests/bounded_subscription_trial.sql", SQL / "tests/invariants.sql",
-           SQL / "tests/invariant_astra_paid_gates.sql",
-           ROOT / "tools/audit/run_database_regression.py", Path(__file__).resolve()]
+HISTORICAL_LAST = "20261017200000_photo_output_feedback.sql"
+# This fixture proves the October 6 funded-trial contract as it existed then.
+# The October 26 owner policy deliberately removes its walkthrough allowance;
+# current-schema coverage lives in limited_trial_creative_spend_pg.py.
+MIGRATIONS = [m for m in sorted((SQL / "migrations").glob("*.sql"))
+              if m.name <= HISTORICAL_LAST]
+SOURCES = [*MIGRATIONS, SQL / "tests/ci-bootstrap.sql",
+           SQL / "tests/bounded_subscription_trial.sql", Path(__file__).resolve()]
 receipt = {"kind": "owned disposable local PostgreSQL; no providers or hosted calls", "output": str(OUT),
+           "schemaCutoff": HISTORICAL_LAST, "historicalContract": "funded trial before limited-intro policy",
            "commands": [], "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}}
 
 
@@ -70,13 +78,6 @@ def race(name, statements):
         return list(executor.map(invoke, enumerate(statements)))
 
 
-def require_all_invariants(output, exit_code):
-    names, failed = contracts.invariant_rows(output, exit_code)
-    if exit_code != 0 or failed:
-        raise RuntimeError("Every invariant must pass; no failures are accepted")
-    return names
-
-
 started = False
 try:
     receipt["postgresVersion"] = run("version", [TOOLS["psql"], "--version"]).strip()
@@ -88,7 +89,7 @@ try:
     run("createdb", [TOOLS["createdb"], *conn, "funded_serving_audit"])
     psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "funded_serving_audit", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap", [*psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for m in sorted((SQL / "migrations").glob("*.sql")):
+    for m in MIGRATIONS:
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     receipt["fresh"] = run("trial-fresh", [*psql, "-Atq", "-f", SQL / "tests/bounded_subscription_trial.sql"]).strip()
     # Replay the overlay at its historical schema point in a separate database.
@@ -98,7 +99,7 @@ try:
     run("createdb-historical-replay", [TOOLS["createdb"], *conn, "historical_replay"])
     replay_psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "historical_replay", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap-historical-replay", [*replay_psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for m in sorted((SQL / "migrations").glob("*.sql")):
+    for m in MIGRATIONS:
         run("replay-apply-" + m.stem, [*replay_psql, "-q", "-1", "-f", m])
         if m.name == "20261006202500_bounded_subscription_trial.sql":
             run("historical-exact-overlay-replay", [*replay_psql, "-q", "-1", "-f", m])
@@ -118,41 +119,13 @@ try:
     mutant.write_text(fixture.replace("\nbegin;\n","\nbegin;\n" + old_guard.group(0) + "\n",1))
     run("trial-helper-stage-fence-removed",[*psql,"-Atq","-f",mutant],refuses="TRIAL FAIL expected RP402: trial suggestion refused before any photo credit or cash is spent")
     receipt["helperFenceNegativeControl"] = {"positiveOracleRejected":True,"sourceCopy":str(mutant),"sha256":hashlib.sha256(mutant.read_bytes()).hexdigest(),"exit":receipt["commands"][-1]["exit"]}
-    # Existing actual lifecycle/quota fixtures also run with the new trigger.
-    # Require the exact complete inventory, successful SQL exit and all-green footer.
-    spec = importlib.util.spec_from_file_location("database_contract", ROOT / "tools/audit/run_database_regression.py")
-    contracts = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(contracts)
-    invariant_output = run("existing-invariants", [*psql, "-f", SQL / "tests/invariants.sql"])
-    names = require_all_invariants(invariant_output, receipt["commands"][-1]["exit"])
-    receipt["existingInvariants"] = {"assertions": len(names), "passed": len(names), "failures": []}
-    # Restore only the former headroom failure in an owned SQL copy and prove
-    # that the same positive acceptance gate refuses its complete red inventory.
-    original = (SQL / "tests/invariants.sql").read_text()
-    anchor = "when 'copy.agent_reel' then 500"
-    assert original.count(anchor) == 1
-    shutil.copyfile(SQL / "tests/invariant_astra_paid_gates.sql", OUT / "invariant_astra_paid_gates.sql")
-    mutant = OUT / "invariants-former-headroom-red.sql"
-    mutant.write_text(original.replace(anchor, "when 'copy.agent_reel' then 700", 1))
-    red = run("invariants-former-headroom-red", [*psql, "-f", mutant], refuses="INVARIANTS FAILED: 1 assertion")
-    red_exit = receipt["commands"][-1]["exit"]
-    red_names, red_failures = contracts.invariant_rows(red, red_exit)
-    assert red_names == names
-    assert red_failures == ["each astra ceiling clears its route's visible answer and stays under the code clamp"]
-    try:
-        require_all_invariants(red, red_exit)
-    except RuntimeError:
-        pass
-    else:
-        raise RuntimeError("Strict positive invariant gate accepted the former red assertion")
-    receipt["invariantNegativeControl"] = {"kind": "actual-owned-SQL-former-headroom-red", "exit": red_exit,
-        "count": len(red_names), "failed": red_failures, "positiveGateRejected": True,
-        "sourceCopy": str(mutant), "sha256": hashlib.sha256(mutant.read_bytes()).hexdigest()}
+    # Current-policy database invariants and their negative controls are run
+    # by run_database_regression.py on every migration, including October 26.
     actor="d1000000-0000-4000-8000-000000000001"
     org="d2000000-0000-4000-8000-000000000001"
     run("race-fixture",[*psql,"-q"],f"""
       begin;
-      -- These races exercise the funded trial's five-photo lifetime quota.
+      -- These races exercise the historical funded trial's twenty-photo lifetime quota.
       -- The transaction-scoped SQL fixtures above rolled their mode back;
       -- pin the same authority in this owned cluster before committing users.
       update public.app_config set value=value||'{{"mode":"funded"}}'::jsonb where key='serving_mode';
@@ -186,14 +159,14 @@ try:
     receipt["photoCreditRace"]={"admitted":1,"refused":1,"lifetimeCap":20}
     used=run("after-credit-race",[*psql,"-Atq"],f"select count(*)from subscription_trial_actions where org_id='{org}'and kind='photo';").strip()
     assert used=="20",used
-    # Executed negative control: remove the actual trigger, then the21st real
+    # Executed negative control: remove the actual trigger, then the sixth real
     # financial reservation succeeds. The test proves quota admission behavior,
     # not an implementation text fingerprint.
     run("negative-remove-trigger",[*psql,"-q"],"alter table serving_cost_reservations disable trigger subscription_trial_cost_admission;")
-    negative=run("negative-21st-credit",[*psql,"-Atq"],f"set role service_role;select serving_cost_reserve('{actor}','{org}','21st-photo-no-trigger','photo.sky:0','gemini','synthetic',repeat('a',64),1,'synthetic');")
+    negative=run("negative-sixth-credit",[*psql,"-Atq"],f"set role service_role;select serving_cost_reserve('{actor}','{org}','sixth-photo-no-trigger','photo.sky:0','gemini','synthetic',repeat('a',64),1,'synthetic');")
     assert '"reserved": true'in negative
     run("restore-trigger",[*psql,"-q"],"alter table serving_cost_reservations enable trigger subscription_trial_cost_admission;")
-    receipt["negativeControl"]={"removed":"actual trial admission trigger","21stProviderReservationAccepted":True}
+    receipt["negativeControl"]={"removed":"actual trial admission trigger","sixthProviderReservationAccepted":True}
     listing="d3000000-0000-4000-8000-000000000001"
     def ticket(n, idem):
         asset=str(uuid.uuid4())
@@ -223,3 +196,4 @@ finally:
     receipt["passed"] = receipt.get("passed", False) and receipt["sourceUnchanged"]
     (OUT / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(str(OUT / "receipt.json"), flush=True)
+    shutil.rmtree(SOCK)

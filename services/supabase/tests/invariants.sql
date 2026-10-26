@@ -178,15 +178,15 @@ where (lat is not null and lat <> round(lat::numeric, 3))
 -- ── Plan coherence: enforced must equal published (pricing.html) ─────────────
 -- Paid sizes include the reviewed multi-photo recipe allowances: prices unchanged,
 -- 4/10/25 renders,100/200/400 edits,30/60/150 generated shots,2/4/8 aerials,
--- Team2 seats +2 Topaz; trial5 edits/no generated video/500c, Free300c unchanged. The
+-- Team2 seats +2 Topaz; trial0 renders/5 edits/no generated video/500c, Free300c unchanged. The
 -- single-location trial override lives in plan_entitlement_overrides and is
 -- asserted in the 0044 section at the end of this file.
 
 insert into _inv(name, pass, note)
-select 'render caps match paid plans and 0032 signup trial/free (4/10/25; trial 3; free 1)',
+select 'render caps match paid plans and limited signup trial/free (4/10/25; trial 0; free 1)',
        plan_render_cap('solo') = 4 and plan_render_cap('starter') = 4
        and plan_render_cap('pro') = 10 and plan_render_cap('team') = 25
-       and plan_render_cap('trial') = 3 and plan_render_cap('free') = 1,
+       and plan_render_cap('trial') = 0 and plan_render_cap('free') = 1,
        format('solo=%s starter=%s pro=%s team=%s trial=%s free=%s',
               plan_render_cap('solo'), plan_render_cap('starter'), plan_render_cap('pro'),
               plan_render_cap('team'), plan_render_cap('trial'), plan_render_cap('free'));
@@ -201,7 +201,7 @@ from (
            e.aerials_per_month, e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
            is not distinct from
           (x.renders, x.edits, x.reels, x.aerials, x.topaz, x.seats, x.cogs, x.price)) as ok
-    from (values ('trial',   3,   5, 0,  0, 0, 1,  500,     0),
+    from (values ('trial',   0,   5, 0,  0, 0, 1,  500,     0),
                  ('free',    1,   5, 0,  0, 0, 1,  300,     0),
                  ('starter', 4, 100,30,  2, 0, 1, 2032,  4900),
                  ('solo',    4, 100,30,  2, 0, 1, 2032,  4900),
@@ -607,11 +607,12 @@ begin
   insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded)
     values (v_listing, 'photo', 'renders', 'renders/_inv/p.jpg', 100, true) returning id into v_poster;
 
-  -- Preserve the legacy allowance fixture independently of today's signup policy.
-  update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=v_org;
+  -- Exercise publish and quota mechanics under a paid plan; the bounded free
+  -- week deliberately refuses both app and cloud video publication.
+  update orgs set plan='starter',plan_source='manual',trial_ends_at=null where id=v_org;
   perform pg_temp.inv_hosting_authority(v_org,u);
 
-  -- App publishes do not consume the grandfathered trial cloud-render quota.
+  -- App publishes do not consume the paid cloud-render quota.
   v_job  := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000001', 'app');
   v_job2 := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000002', 'app');
   insert into _inv(name, pass, note)
@@ -647,30 +648,26 @@ begin
     values ('fail_render_job marks an unpublished app job failed',
             v_job2.status = 'failed' and v_job2.error->>'message' = 'publish failed in test', v_job2.status);
 
-  -- Exactly THREE cloud renders fit the 0032 trial quota. Finish each fixture
-  -- job before asking for the next: leaving three in-flight would make #4 fail
-  -- the independent RP429 guard first and would not test the monthly RP402 cap.
-  -- This org is the signup default (space_type = real_estate), so 0044's
-  -- industry-aware trial leaves it on the base row; the one-tour single-location
-  -- trial is exercised on its own fitness fixture in the 0044 section below.
-  for v_n in 1..3 loop
+  -- Exactly FOUR cloud renders fit Starter. Finish each fixture job before
+  -- asking for the next: leaving three in-flight would fail RP429 first.
+  for v_n in 1..4 loop
     v_job := create_render_job(v_listing, v_asset, 'smooth', '{}',
                               '_inv-wrk-' || lpad(v_n::text, 6, '0'), 'worker');
     insert into _inv(name, pass, note)
-      values (format('worker job #%s fits the 0032 trial cap (app jobs did not count)', v_n),
+      values (format('worker job #%s fits the paid Starter cap (app jobs did not count)', v_n),
               v_job.source = 'worker', v_job.source);
     update render_jobs set status = 'ready', progress = 1, finished_at = now()
       where id = v_job.id;
   end loop;
   begin
-    perform create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-wrk-000004', 'worker');
-    insert into _inv(name, pass, note) values ('worker job #4 exceeds the trial cap (RP402)', false, 'no error raised');
+    perform create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-wrk-000005', 'worker');
+    insert into _inv(name, pass, note) values ('worker job #5 exceeds the paid Starter cap (RP402)', false, 'no error raised');
   exception when others then
-    insert into _inv(name, pass, note) values ('worker job #4 exceeds the trial cap (RP402)', sqlerrm like 'RP402%', sqlerrm);
+    insert into _inv(name, pass, note) values ('worker job #5 exceeds the paid Starter cap (RP402)', sqlerrm like 'RP402%', sqlerrm);
   end;
   v_job2 := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000003', 'app');
   insert into _inv(name, pass, note)
-    values ('app publish still allowed at the render cap', v_job2.source = 'app', '');
+    values ('paid app publish still allowed at the render cap', v_job2.source = 'app', '');
 
   -- Idempotent replay returns the original job, not a new one.
   v_job2 := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000003', 'app');
@@ -2068,15 +2065,15 @@ end $ap$;
 --
 -- The paid matrix itself is pinned above ("plan_entitlements match paid plans").
 -- What 0044 adds is the ONE plan that reads orgs.space_type: a single-location
--- business (venue, restaurant, retail, fitness, other) gets a 1-tour trial from
--- plan_entitlement_overrides, real estate keeps the 0032 base row. Paid plans
+-- business (venue, restaurant, retail, fitness, other) gets the same zero-video
+-- introductory limit from plan_entitlement_overrides. Paid plans
 -- and free are not industry-aware. org_entitlement() is what
 -- create_render_job() and log_job_cost() now read; plan_entitlement(),
 -- plan_render_cap() and org_seats_allowed() stay plan-only. Deliberately placed
 -- after the kept-red astra ceiling assertion so that one keeps its number.
 
 insert into _inv(name, pass, note)
-select 'plan_entitlement_overrides holds exactly the five single-location trial rows (1/5/0/0/0, 500¢)',
+select 'plan_entitlement_overrides holds exactly the five single-location trial rows (0/5/0/0/0, 500¢)',
        (select count(*) from plan_entitlement_overrides) = 5 and coalesce(bool_and(ok), false),
        format('%s row(s) total; wrong or missing: %s',
               (select count(*) from plan_entitlement_overrides),
@@ -2086,7 +2083,7 @@ from (
          ((o.plan, o.renders_per_month, o.photo_edits_per_month, o.reels_per_month,
            o.aerials_per_month, o.topaz_per_month, o.seats, o.cogs_ceiling_cents)
            is not distinct from
-          ('trial', 1, 5,0, 0, 0, null::integer, 500)) as ok
+          ('trial', 0, 5,0, 0, 0, null::integer, 500)) as ok
     from unnest(array['venue','restaurant','retail','fitness','other']) as x(space_type)
     left join plan_entitlement_overrides o on o.plan = 'trial' and o.space_type = x.space_type
 ) s;
@@ -2155,9 +2152,9 @@ select 'create_render_job and log_job_cost read org_entitlement(); the plan-only
 
 -- ── MUTATING: what a single-location workspace is actually allowed to spend ──
 -- Three throwaway orgs prove the lookup; one throwaway user (through the real
--- signup trigger) proves the enforcement — the render cap in create_render_job
--- and the spend ceiling in log_job_cost — the same way the 0032 real-estate
--- fixture above does for three tours. Cleans up after itself.
+-- signup trigger) proves the enforcement — the zero-render cap in
+-- create_render_job and the spend ceiling in log_job_cost — while a paid
+-- fixture above still tests ordinary render quotas. Cleans up after itself.
 
 do $ind$
 declare
@@ -2179,18 +2176,18 @@ begin
 
   e := org_entitlement(oRE);
   insert into _inv(name, pass, note)
-    values ('org_entitlement on a real-estate trial org is the current base row (3/5/0/0/0, 1 seat, 500¢)',
+    values ('org_entitlement on a real-estate trial org is the current base row (0/5/0/0/0, 1 seat, 500¢)',
             (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
              e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
-              is not distinct from ('trial', 3, 5,0, 0, 0, 1, 500, 0),
+              is not distinct from ('trial', 0, 5,0, 0, 0, 1, 500, 0),
             e::text);
 
   e := org_entitlement(oFit);
   insert into _inv(name, pass, note)
-    values ('org_entitlement on a fitness trial org is the single-location free week (1/5/0/0/0, 1 seat, 500¢)',
+    values ('org_entitlement on a fitness trial org is the single-location free week (0/5/0/0/0, 1 seat, 500¢)',
             (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
              e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
-              is not distinct from ('trial', 1, 5,0, 0, 0, 1, 500, 0),
+              is not distinct from ('trial', 0, 5,0, 0, 0, 1, 500, 0),
             e::text);
 
   -- Only the trial is industry-aware: an expired single-location trial is
@@ -2222,14 +2219,13 @@ begin
     values ('orgs.space_type rejects a value outside the six industries (spa)',
             ok and msg like '%orgs_space_type_check%', coalesce(msg, 'NO ERROR RAISED'));
 
-  -- (c) enforcement. A fitness workspace through the real signup trigger:
-  -- exactly ONE cloud render fits, the second is the same RP402 the app already
-  -- handles, and an app publish is still free at the cap.
+  -- (c) enforcement. Seed one paid job, then change the same fixture to the
+  -- introductory trial. Its existing job may settle, but no new server or app
+  -- video job may be created. This catches the app-source meter bypass.
   insert into auth.users (id, email, raw_user_meta_data)
     values (u4, 'inv-fixture4@example.com', '{"full_name":"Gym Fixture"}');
   select m.org_id into v_org from memberships m where m.user_id = u4;
-  -- This tests a grandfathered industry trial, not a new signup grant.
-  update orgs set space_type = 'fitness', plan='trial', plan_source='trial', trial_ends_at=now()+interval '7 days' where id = v_org;
+  update orgs set space_type = 'fitness', plan='starter', plan_source='manual', trial_ends_at=null where id = v_org;
   perform pg_temp.inv_hosting_authority(v_org,u4);
   perform set_config('request.jwt.claims', json_build_object('sub', u4, 'role', 'authenticated')::text, true);
 
@@ -2239,20 +2235,25 @@ begin
 
   v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-fit-000001', 'worker');
   insert into _inv(name, pass, note)
-    values ('worker job #1 fits the single-location (fitness) trial cap', v_job.source = 'worker', v_job.source);
+    values ('paid worker job exists before a switch to the limited trial', v_job.source = 'worker', v_job.source);
   update render_jobs set status = 'ready', progress = 1, finished_at = now() where id = v_job.id;
+  update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=v_org;
   begin
     perform create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-fit-000002', 'worker');
     insert into _inv(name, pass, note)
-      values ('worker job #2 exceeds the single-location trial cap (RP402, 1 of 1)', false, 'no error raised');
+      values ('new worker job exceeds the introductory zero-render cap (RP402)', false, 'no error raised');
   exception when others then
     insert into _inv(name, pass, note)
-      values ('worker job #2 exceeds the single-location trial cap (RP402, 1 of 1)',
-              sqlerrm like 'RP402%' and sqlerrm like '%trial plan (1 of 1)%', sqlerrm);
+      values ('new worker job exceeds the introductory zero-render cap (RP402)',
+              sqlerrm like 'RP402%' and sqlerrm like '%trial plan (% of 0)%', sqlerrm);
   end;
-  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-fit-000003', 'app');
-  insert into _inv(name, pass, note)
-    values ('an app publish is still free on a single-location trial at its render cap', v_job.source = 'app', '');
+  begin
+    perform create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-fit-000003', 'app');
+    insert into _inv(name, pass, note) values ('new app video is refused by the introductory publication guard',false,'no error raised');
+  exception when others then
+    insert into _inv(name, pass, note)
+      values ('new app video is refused by the introductory publication guard',sqlerrm like 'RP402: Video and public website creation start after payment%',sqlerrm);
+  end;
 
   -- The current500c trial ceiling is shared across industry/base rows:
   -- a501c line is refused without writing, then a499c line lands.
@@ -2409,6 +2410,9 @@ begin
   select m.org_id into oB      from memberships m where m.user_id = u6;
   select m.org_id into oOrphan from memberships m where m.user_id = u7;
   perform pg_temp.inv_hosting_authority(oA,u5);
+  -- Publishing a new video now requires payment; this cohort fixture tests
+  -- activation on a manually paid workspace before its Apple chronology.
+  update orgs set plan='starter',plan_source='manual' where id=oA;
 
   -- (a) a REAL publish stamps the activation fact, and a second one cannot move it.
   perform set_config('request.jwt.claims', json_build_object('sub', u5, 'role', 'authenticated')::text, true);
@@ -2937,6 +2941,9 @@ begin
     (uNM, 'inv-notify-marketing@example.com', now(), '{"full_name":"Mo Marketing"}');
   select org_id into oNO from memberships where user_id = uNO;
   perform pg_temp.inv_hosting_authority(oNO,uNO);
+  -- The notification fixture publishes two new videos; give it paid service
+  -- authority so it tests messaging rather than unpaid-video admission.
+  update orgs set plan='starter',plan_source='manual' where id=oNO;
   insert into memberships (user_id, org_id, role) values (uNA, oNO, 'admin'), (uNM, oNO, 'marketing');
 
   -- ── (a) posture ───────────────────────────────────────────────────────────

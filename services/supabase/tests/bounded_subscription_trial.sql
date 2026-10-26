@@ -1,5 +1,8 @@
 \set ON_ERROR_STOP on
 begin;
+-- Receipt durations are absolute seven-day UTC terms. Keep the fixture stable
+-- when local calendar time crosses a daylight-saving transition.
+set local timezone='UTC';
 -- Funded-model regression: pin funded serving mode for this transaction. The
 -- live default since 2026-10-08 is ceiling mode (migration 20261008201736);
 -- ceiling-mode admission is covered by launch_blockers.sql.

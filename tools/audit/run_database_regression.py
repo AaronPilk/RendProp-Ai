@@ -38,7 +38,7 @@ KEPT_RED: set[str] = set()
 # The 0047/0048 branches totalled 266. Apple chronology and listing facts
 # registration add four assertions, bringing the current inventory to 270.
 # The kept-red exception is identified by its exact name, not its row number.
-INVARIANT_COUNT = 270
+INVARIANT_COUNT = 271
 
 # These tests are transactional and rolled back. Require their exact completion
 # markers on both freshly migrated and historically replayed schemas; merely
@@ -121,7 +121,7 @@ def invariant_rows(output, exit_code):
         "all three explicit Astra writing seats keep their 0030/0034 paid-plan gates",
         "no gpt-6-astra row is reachable on the free or trial tier",
         "plan_entitlements match current paid/trial/free catalog for every metered feature",
-        "org_entitlement on a fitness trial org is the single-location free week (1/20/20/1/1, 1 seat, 1500¢)",
+        "org_entitlement on a fitness trial org is the single-location free week (0/5/0/0/0, 1 seat, 500¢)",
     }
     require(required.issubset(names), "Required paid-plan/entitlement gates absent")
     failed = [name.strip() for _, name, passed in rows if passed != "t"]

@@ -28,7 +28,7 @@ SOCK.mkdir()
 # Drop inherited PGHOST/PGDATABASE/PGPASSWORD, service credentials and startup
 # files. Every command names this fresh cluster's private Unix socket.
 ENV = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LC_ALL": "C",
-       "PGOPTIONS": "-c statement_timeout=30000 -c lock_timeout=15000"}
+       "PGOPTIONS": "-c statement_timeout=30000 -c lock_timeout=15000 -c TimeZone=UTC"}
 PORT = "55489"
 SOURCES = [*sorted((SQL / "migrations").glob("*.sql")), SQL / "tests/ci-bootstrap.sql",
            SQL / "tests/subscription_trial_purchase_reservations.sql", SQL / "tests/invariants.sql",

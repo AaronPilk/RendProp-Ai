@@ -27,12 +27,17 @@ do $$declare f record;r jsonb;expiry timestamptz:=now()+interval '7 days'; origi
  r:=apply_apple_entitlement_v2(f.named_org,f.named_user,original,'fixture-intro','com.rendprop.app.pro.monthly','pro','Production','active',expiry,true,'SUBSCRIBED',base+interval '0 seconds',base+interval '1 seconds',null,base+interval '1 seconds');
  perform pg_temp.subscription_ok(r->>'ok'='true'and r->>'org_updated'='true','verified-transaction adapter can activate introductory entitlement');
  perform pg_temp.subscription_ok((select plan='pro'and plan_source='apple'and plan_expires_at=expiry and trial_ends_at is null from orgs where id=f.named_org),'confirmed introductory offer grants selected plan with Apple expiry');
- perform pg_temp.subscription_ok((org_entitlement(f.named_org)).photo_edits_per_month=200 and (org_entitlement(f.named_org)).renders_per_month=10,'confirmed introductory offer uses selected Pro allowances');
+ perform pg_temp.subscription_ok((org_entitlement(f.named_org)).photo_edits_per_month=5 and (org_entitlement(f.named_org)).renders_per_month=0 and (org_entitlement(f.named_org)).reels_per_month=0 and (org_entitlement(f.named_org)).aerials_per_month=0 and (org_entitlement(f.named_org)).cogs_ceiling_cents=500,'confirmed introductory Pro offer has bounded photo-only creative allowance');
  r:=apply_apple_entitlement_v2(f.named_org,f.named_user,original,'fixture-intro','com.rendprop.app.pro.monthly','pro','Production','active',expiry,false,'DID_CHANGE_RENEWAL_STATUS',base+interval '0 seconds',base+interval '2 seconds',null,base+interval '2 seconds');
  perform pg_temp.subscription_ok((select plan='pro'and plan_expires_at=expiry from orgs where id=f.named_org),'cancelling renewal retains access through existing period');
  perform pg_temp.subscription_ok((select auto_renew=false from apple_subscriptions where original_transaction_id=original),'cancellation is recorded without starting another trial');
  r:=apply_apple_entitlement_v2(f.named_org,f.named_user,original,'fixture-intro','com.rendprop.app.pro.monthly','pro','Production','refunded',expiry,false,'REFUND',base+interval '0 seconds',base+interval '3 seconds',null,base+interval '3 seconds');
  perform pg_temp.subscription_ok((select plan='free'from orgs where id=f.named_org),'refund returns workspace to free');
+ -- A verified paid renewal changes only the service term, not the original
+ -- subscription identity. It must restore the purchased Pro creative quotas.
+ r:=apply_apple_entitlement_v2(f.named_org,f.named_user,original,'fixture-paid-renewal','com.rendprop.app.pro.monthly','pro','Production','active',now()+interval '29 days',true,'SUBSCRIBED',base+interval '4 seconds',base+interval '5 seconds',null,base+interval '5 seconds');
+ perform pg_temp.subscription_ok((org_entitlement(f.named_org)).photo_edits_per_month=200 and (org_entitlement(f.named_org)).renders_per_month=10 and (org_entitlement(f.named_org)).reels_per_month=60 and (org_entitlement(f.named_org)).aerials_per_month=4,'verified paid renewal restores full Pro allowances');
+ r:=apply_apple_entitlement_v2(f.named_org,f.named_user,original,'fixture-paid-renewal','com.rendprop.app.pro.monthly','pro','Production','refunded',now()+interval '29 days',false,'REFUND',base+interval '4 seconds',base+interval '6 seconds',null,base+interval '6 seconds');
  -- Apple EXPIRED is authoritative; this calls the same service-only writer
  -- used after JWS verification, never a fake purchase or public API bypass.
  r:=apply_apple_entitlement_v2(f.guest_org,f.guest_user,second,'fixture-expiry','com.rendprop.app.starter.monthly','starter','Production','active',expiry,true,'SUBSCRIBED',base+interval '0 seconds',base+interval '4 seconds',null,base+interval '4 seconds');

@@ -28,6 +28,9 @@ create function pg_temp.reject_claim(c jsonb)returns void language plpgsql as $$
 insert into auth.users(id,email,is_anonymous)values('f1100000-0000-4000-8000-000000000001','background-owner@fixture.invalid',false),('f1100000-0000-4000-8000-000000000002','background-other@fixture.invalid',false);
 create temporary table bf as select 'f1100000-0000-4000-8000-000000000001'::uuid actor,'f1100000-0000-4000-8000-000000000002'::uuid other,(select org_id from memberships where user_id='f1100000-0000-4000-8000-000000000001'and role='owner'limit 1)org,(select org_id from memberships where user_id='f1100000-0000-4000-8000-000000000002'and role='owner'limit 1)other_org,'f1300000-0000-4000-8000-000000000001'::uuid listing;
 grant select on bf to service_role,authenticated;
+-- This fixture exercises paid background video delivery, not the unpaid
+-- free-week gate. Keep its owner on a normal paid workspace.
+update orgs set plan='starter',plan_source='manual' where id=(select org from bf);
 insert into listings(id,org_id,agent_id,address)values((select listing from bf),(select org from bf),(select actor from bf),'Synthetic background property');
 set local session_replication_role=replica;
 insert into capture_assets(id,listing_id,kind,bucket,storage_key,bytes,sha256,uploaded,transport_version,content_type)select md5('bg-photo:'||i)::uuid,(select listing from bf),'photo','renders','renders/'||(select org from bf)||'/'||(select listing from bf)||'/gallery-'||i||'.jpg',100,repeat('a',64),true,2,'image/jpeg'from generate_series(1,100)i;
@@ -248,12 +251,12 @@ select pg_temp.ok(provision_serving_funding((select other_org from bf),'retail',
 select pg_temp.ok((select sum(total_budget_cents)=1000 from serving_funding_slices where funding_id=(select(r->>'funding_id')::uuid from old_funding)),'existing slicedmoneyremains1000afterallocationconfigchange');
 select pg_temp.ok(provision_serving_funding((select org from bf),'retail','bg-next-paid-receipt',null,4000,0,now()-interval'1 day',now()-interval'1 day'+interval'1 month',1,'{"storage":10,"delivery":10,"compute":10,"email":5,"support":5,"retention":10,"uncertainty":0}',repeat('a',64))->>'total_budget_cents'='2000','new attestedreceipt receives50percentnet inclusivebudget');
 -- Trial ceiling/photo policy hasno effect on sharedallocatedpool or priorgrants.
-select pg_temp.ok((select photo_edits=20 from subscription_trial_config),'futuretrialofferallows20photoedits');
-select pg_temp.ok((select(value->>'trial_ceiling_cents')::integer=1500 and(value->>'free_lifetime_cents')::integer=300 from app_config where key='serving_envelope'),'trial1500free300bothtruthful');
+select pg_temp.ok((select photo_edits=5 from subscription_trial_config),'futuretrialofferallowsfivephotoedits');
+select pg_temp.ok((select(value->>'trial_ceiling_cents')::integer=500 and(value->>'free_lifetime_cents')::integer=300 from app_config where key='serving_envelope'),'trial500free300bothtruthful');
 reset role;insert into listings(id,org_id,agent_id,address)values('f1300000-0000-4000-8000-000000000002',(select other_org from bf),(select other from bf),'Synthetic trial property');set local role service_role;
 select apply_apple_entitlement_v2((select other_org from bf),(select other from bf),'bg-trial-original','bg-trial-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'7 days',true,'SUBSCRIBED',now(),now(),now(),now());
-select pg_temp.ok(plan_serving_ceiling((select other_org from bf))->>'ceiling_cents'='1500','ordinaryintroductorywindowuses1500cap');
-select pg_temp.ok(property_video_recipe_capacity((select other from bf),'f1300000-0000-4000-8000-000000000002',20,676.908+622.592+20)->>'admitted'='true','normaltrialcapacityfits20stagedphotos plus20defaultclips withboundedplanner');
+select pg_temp.ok(plan_serving_ceiling((select other_org from bf))->>'ceiling_cents'='500','ordinaryintroductorywindowuses500cap');
+select pg_temp.refuse($q$select property_video_recipe_capacity((select other from bf),'f1300000-0000-4000-8000-000000000002',20,676.908+622.592+20)$q$,'RP402:','introductorytrialrefuseswholevideoquotebeforeproviderdispatch');
 -- Capacity pause/retry retains alreadyaccepted sources and cannotresetcharges.
 create temporary table paused_recipe as select jsonb_set(jsonb_set(m,'{operation_id}','"f1700000-0000-4000-8000-000000000060"'),'{sources}',jsonb_build_array(m#>'{sources,0}',m#>'{sources,1}'))m from bm;
 create temporary table paused_job as select(property_video_job_enqueue((select actor from bf),(select m from paused_recipe))).id id;
@@ -272,7 +275,7 @@ create temporary table cancel_prep as select(property_video_preparation_enqueue(
 select property_video_job_cancel_all((select actor from bf),'f1800000-0000-4000-8000-000000000070','local_data_erasure');
 select pg_temp.ok((select state='failed'from property_video_preparations where id=(select id from cancel_prep)),'actor erasure also stops queuedCPUpreparation');
 select pg_temp.ok(not has_function_privilege('authenticated','public.public_property_tour_index_pages()','execute'),'publicedgeonlyproxiesnarrowindexRPCwithoutdatabaseprivilege');
-select pg_temp.ok((plan_entitlement('trial')).photo_edits_per_month=20 and(plan_entitlement('trial')).cogs_ceiling_cents=1500,'legacytrialrawmetersmatchfundedfuturetrialpolicy');
+select pg_temp.ok((plan_entitlement('trial')).photo_edits_per_month=5 and(plan_entitlement('trial')).reels_per_month=0 and(plan_entitlement('trial')).cogs_ceiling_cents=500,'trialrawmetersmatchlimitedfuturetrialpolicy');
 -- SEO index requires deliberateoptin andcurrentpublication/hosting.
 select pg_temp.ok(jsonb_array_length(public_property_tour_index()->'tours')=0,'private-by-defaultpubliclinks notdiscovered');
 reset role;update listings set details=jsonb_build_object('allow_indexing',true)where id=(select listing from bf);set local role service_role;

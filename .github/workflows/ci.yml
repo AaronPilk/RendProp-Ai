@@ -1973,6 +1973,7 @@ jobs:
           python3 services/supabase/tests/subscription_trial_video_duration_pg.py
           python3 services/supabase/tests/subscription_trial_purchase_reservations_pg.py
           python3 services/supabase/tests/bounded_subscription_trial_pg.py
+          python3 services/supabase/tests/limited_trial_creative_spend_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-limited-trial-pg"
           python3 services/supabase/tests/serving_photo_partitions_pg.py
           python3 services/supabase/tests/launch_blockers_pg.py
           python3 services/supabase/tests/property_video_websites_pg.py

@@ -13,6 +13,10 @@ do $$begin
        <> '55223b9a9c6c8076705887f974257f2e' then
     raise exception 'Review changed org_entitlement before limited-trial migration';
   end if;
+  if (select md5(prosrc) from pg_proc where oid='public.upload_new_admission(uuid,uuid,bigint)'::regprocedure)
+       <> '1279cf160371121c27281b69224f4fba' then
+    raise exception 'Review changed upload_new_admission before limited-trial migration';
+  end if;
   if not exists(select 1 from public.plan_entitlements where plan='trial'
       and renders_per_month=3 and photo_edits_per_month=20 and reels_per_month=20
       and aerials_per_month=2 and topaz_per_month=1 and cogs_ceiling_cents=1500) then
@@ -29,7 +33,7 @@ do $$begin
 end$$;
 
 update public.plan_entitlements set
-  photo_edits_per_month=5,
+  renders_per_month=0, photo_edits_per_month=5,
   reels_per_month=0, aerials_per_month=0, topaz_per_month=0,
   cogs_ceiling_cents=500
 where plan='trial';
@@ -37,7 +41,7 @@ where plan='trial';
 -- Industry-specific trial rows must not reintroduce a video quota or larger
 -- photo/cost allowance over the base trial row.
 update public.plan_entitlement_overrides set
-  photo_edits_per_month=5, reels_per_month=0,
+  renders_per_month=0, photo_edits_per_month=5, reels_per_month=0,
   aerials_per_month=0, topaz_per_month=0, cogs_ceiling_cents=500
 where plan='trial';
 
@@ -49,6 +53,26 @@ update public.subscription_trial_config set photo_edits=5 where singleton;
 update public.app_config set
   value=jsonb_set(value,'{trial_ceiling_cents}','500'::jsonb)
 where key='serving_envelope';
+
+-- A zero video-render entitlement must not collapse photo ingress to five
+-- hundred MiB: every upload reservation holds roughly twice the source bytes.
+-- Forty ordinary 8 MiB iPhone photos reserve 640 MiB. Give the one-listing
+-- intro a fixed 2 GiB monthly technical cap while its supplier spend remains
+-- separately limited to five edits and 500 cents. New video uploads are
+-- refused below unless a verified per-property website credit has been paid.
+do $$declare def text;needle text;replacement text;begin
+  def:=pg_get_functiondef('public.upload_new_admission(uuid,uuid,bigint)'::regprocedure);
+  needle:='  cap:=e.renders_per_month::bigint*12884901888::bigint+e.photo_edits_per_month::bigint*104857600::bigint;';
+  replacement:='  cap:=case when public.plan_serving_ceiling(public.library_actor_billing_org(p_actor,p_org))->>''kind''=''trial'' then 2147483648::bigint else e.renders_per_month::bigint*12884901888::bigint+e.photo_edits_per_month::bigint*104857600::bigint end;';
+  if (length(def)-length(replace(def,needle,'')))/length(needle)<>1 then
+    raise exception 'Review changed trial upload-cap anchor before limited-trial migration';
+  end if;
+  execute replace(def,needle,replacement);
+end$$;
+revoke all on function public.upload_new_admission(uuid,uuid,bigint)
+  from public,anon,authenticated;
+grant execute on function public.upload_new_admission(uuid,uuid,bigint)
+  to service_role;
 
 create or replace function public.org_entitlement(p_org uuid)
 returns public.plan_entitlements language plpgsql stable security definer
@@ -74,8 +98,9 @@ begin
   -- A full-price Apple plan is displayed from the verified transaction even
   -- while its first seven days are free. Detect the same short active term
   -- used by plan_serving_ceiling_before_team(), without calling that function
-  -- (it calls org_entitlement and would recurse). A paid renewal has a longer
-  -- signed service term and restores the purchased allowances automatically.
+  -- (it calls org_entitlement and would recurse). Match the currently stored
+  -- Apple SKU and service expiry; another active original transaction can be
+  -- left behind after an upgrade or renewal and must not clamp a paid term.
   intro_week:=e.plan in ('starter','solo','pro','team')
     and not public.library_internal_content_unlimited(p_org)
     and not public.org_has_app_review_funding(b)
@@ -83,6 +108,8 @@ begin
       and o.plan_source='apple'
       and exists(select 1 from public.apple_subscriptions s
         where s.org_id=b and s.environment='Production' and s.status='active'
+          and s.product_id=o.apple_product_id
+          and s.expires_at=o.plan_expires_at
           and s.expires_at>now() and s.transaction_purchased_at is not null
           and s.expires_at<=s.transaction_purchased_at+interval '8 days'));
 
@@ -103,22 +130,89 @@ end$$;
 revoke all on function public.org_entitlement(uuid) from public,anon,authenticated;
 grant execute on function public.org_entitlement(uuid) to authenticated,service_role,postgres;
 
--- In ceiling mode an Apple introductory transaction is intentionally a
--- purchased SKU for StoreKit restore, so the older bounded-grant publication
--- guard treats it as paid. Reserve the included single listing at the actual
--- render/publication boundary without changing upload or purchase authority.
+-- A free introductory account may prepare one listing, including its photos.
+-- Reserve the same lifetime free-listing slot at INSERT, not at render upload:
+-- neither a draft nor its gallery selection is a published video/website.
+-- The parent billing org owns the slot for Team private libraries. Existing
+-- listings remain editable and their uploads are untouched by this trigger.
+create or replace function public.trial_intro_listing_guard()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare billing uuid; existing integer;
+begin
+  billing:=public.library_billing_org(new.org_id);
+  if public.plan_serving_ceiling(billing)->>'kind'='trial' then
+    -- The count also catches listings made before this migration, including
+    -- deleted ones. The advisory lock serializes two first-listing inserts.
+    perform pg_advisory_xact_lock(hashtextextended('free_publication:'||billing,72454));
+    select count(*) into existing from public.listings l
+      where public.library_billing_org(l.org_id)=billing;
+    if existing>0 or (public.serving_mode()='ceiling' and
+       not public.free_publication_admit(billing,new.id)) then
+      raise exception 'RP402: The introductory week includes one listing';
+    end if;
+  end if;
+  return new;
+end$$;
+revoke all on function public.trial_intro_listing_guard()
+  from public,anon,authenticated;
+grant execute on function public.trial_intro_listing_guard()
+  to service_role,postgres;
+drop trigger if exists trial_intro_listing_admission on public.listings;
+create trigger trial_intro_listing_admission before insert on public.listings
+  for each row execute function public.trial_intro_listing_guard();
+
+-- An unpaid photo workspace must not admit fresh video ingress merely
+-- because its fixed photo upload cap has room. A separately paid website
+-- credit can upload the exact property's on-device presentation. An existing
+-- completed reservation is unaffected because this fires only on INSERT.
+create or replace function public.trial_intro_upload_guard()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare org uuid; billing uuid;
+begin
+  if new.spec->>'kind'='video' then
+    select l.org_id into org from public.listings l where l.id=new.listing_id and l.deleted_at is null;
+    if org is null then raise exception 'RP403: A current upload workspace is required';end if;
+    billing:=public.library_actor_billing_org(new.actor_id,org);
+    if public.plan_serving_ceiling(billing)->>'kind' in('trial','free') and not exists(
+      select 1 from public.property_website_transactions t
+      where t.assigned_listing_id=new.listing_id and t.revoked_at is null
+        and t.environment in('Production','Sandbox')) then
+      raise exception 'RP402: Video uploads start after payment';
+    end if;
+  end if;
+  return new;
+end$$;
+revoke all on function public.trial_intro_upload_guard()
+  from public,anon,authenticated;
+grant execute on function public.trial_intro_upload_guard()
+  to service_role,postgres;
+drop trigger if exists trial_intro_upload_admission on public.upload_reservations;
+create trigger trial_intro_upload_admission before insert on public.upload_reservations
+  for each row execute function public.trial_intro_upload_guard();
+
+-- Both server renders and on-device video publication create render_jobs.
+-- The monthly render meter covers only workers; source='app' bypasses it.
+-- Refuse both sources during an unpaid introductory or later free term. A verified one-time
+-- website purchase for this exact property is a payment and may still publish
+-- an on-device photo video; it never authorizes a supplier/worker render.
 create or replace function public.trial_intro_publication_guard()
 returns trigger language plpgsql security definer set search_path='' as $$
-declare org uuid; listing uuid;
+declare org uuid; billing uuid; listing uuid; source text; paid_website boolean;
 begin
   listing:=new.listing_id;
   select l.org_id into org from public.listings l
     where l.id=listing and l.deleted_at is null;
   if org is null then raise exception 'RP403: A current publication workspace is required';end if;
-  if public.serving_mode()='ceiling'
-    and public.plan_serving_ceiling(org)->>'kind'='trial'
-    and not public.free_publication_admit(org,listing) then
-    raise exception 'RP402: The included trial listing is already published';
+  billing:=public.library_billing_org(org);
+  if public.plan_serving_ceiling(billing)->>'kind' in('trial','free') then
+    if tg_table_name='render_jobs' then source:=new.source;
+    else select j.source into source from public.render_jobs j where j.id=new.job_id;end if;
+    select exists(select 1 from public.property_website_transactions t
+      where t.assigned_listing_id=listing and t.revoked_at is null
+        and t.environment in('Production','Sandbox')) into paid_website;
+    if not (paid_website and source='app') then
+      raise exception 'RP402: Video and public website creation start after payment';
+    end if;
   end if;
   return new;
 end$$;

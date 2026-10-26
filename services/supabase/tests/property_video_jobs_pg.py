@@ -9,7 +9,7 @@ import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path);args=p.parse_args()
 OUT=args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-property-jobs-pg-',dir='/tmp'));OUT.mkdir(parents=True,exist_ok=True)
-DATA=Path(tempfile.mkdtemp(prefix='rendprop-property-jobs-owned-pg-',dir='/tmp'));SOCK=Path(tempfile.mkdtemp(prefix='rendprop-property-jobs-socket-',dir='/tmp'))
+DATA=Path(tempfile.mkdtemp(prefix='rendprop-property-jobs-owned-pg-',dir=OUT));SOCK=Path(tempfile.mkdtemp(prefix='rendprop-property-jobs-socket-',dir='/tmp'))
 TOOLS={n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)for n in ['initdb','pg_ctl','psql','createdb']}
 assert all(Path(t).is_file()and os.access(t,os.X_OK)for t in TOOLS.values())
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}

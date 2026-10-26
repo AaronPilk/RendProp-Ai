@@ -34,6 +34,7 @@ tool = lambda name: shutil.which(name) or str(Path("/opt/homebrew/opt/postgresql
 migrations = sorted((SQL / "migrations").glob("*.sql"))
 inputs = [SQL / "tests/ci-bootstrap.sql", *migrations,
           SQL / "tests/limited_trial_creative_spend.sql",
+          SQL / "tests/subscription_confirmed_trial.sql",
           SQL / "tests/invariants.sql", SQL / "tests/property_video_jobs.sql",
           SQL / "tests/paid_quality_processing.sql", Path(__file__).resolve()]
 hashes = {
@@ -74,9 +75,9 @@ try:
                   "start"])
     started = True
     connection = ["-h", socket, "-p", port, "-U", "postgres"]
-    run("createdb", [tool("createdb"), *connection, "limited_trial"])
+    run("createdb", [tool("createdb"), *connection, "rendprop_audit"])
     psql = [tool("psql"), "-X", "--no-password", *connection,
-            "-d", "limited_trial", "-v", "ON_ERROR_STOP=1"]
+            "-d", "rendprop_audit", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap", [*psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
     for migration in migrations:
         run("apply-" + migration.stem, [*psql, "-q", "-1", "-f", migration])
@@ -94,6 +95,10 @@ try:
             if line.startswith("{") and '"assertions"' in line]
     assert len(rows) == 1 and rows[0]["passed"], rows
     receipt["postRefusal"] = rows[0]
+    confirmed = run("confirmed-Apple-intro-and-paid-renewal", [
+        *psql, "-Atq", "-f", SQL / "tests/subscription_confirmed_trial.sql"])
+    assert "\n27\n" in confirmed and confirmed.count("|t") == 27, confirmed[-1000:]
+    receipt["confirmedTrialAssertions"] = 27
     invariants = run("all-database-invariants", [
         *psql, "-f", SQL / "tests/invariants.sql"])
     assert "All " in invariants and " invariants passed." in invariants

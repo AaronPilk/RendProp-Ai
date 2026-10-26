@@ -17,8 +17,9 @@ CUTOVER=SQL/'migrations/20261005032635_apple_entitlement_legacy_cutover.sql'
 FACTS=SQL/'migrations/20261005024702_listing_facts_intent_cas.sql'
 STUDIO=SQL/'functions/studio'
 FLOORPLAN=SQL/'migrations/20261005034754_studio_floorplan_attachment_cas.sql'
-OUT=Path(tempfile.mkdtemp(prefix='rendprop-sub-chronology-',dir='/tmp'))
-DATA,SOCK=OUT/'data',OUT/'socket';SOCK.mkdir(mode=0o700)
+OUT=Path(tempfile.mkdtemp(prefix='rendprop-sub-chronology-',dir=os.environ.get('RENDP_AUDIT_EVIDENCE_DIR','/tmp')))
+DATA=OUT/'data'
+SOCK=Path(tempfile.mkdtemp(prefix='rendprop-sub-chronology-socket-',dir='/tmp'))
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','TZ':'UTC','NO_COLOR':'1','DENO_NO_PROMPT':'1'}
 BIN={n:shutil.which(n)for n in ['initdb','pg_ctl','psql','createdb','deno']};assert all(BIN.values())
 CONN=['-h',str(SOCK),'-p','55489','-U','postgres']
@@ -113,15 +114,15 @@ try:
  paid={'starter':(30,2032),'solo':(30,2032),'pro':(60,4157),'team':(150,10532)}
  for row in expected_matrix:
   if row['plan']in paid:row['reels_per_month'],row['cogs_ceiling_cents']=paid[row['plan']]
-  elif row['plan']=='trial':row.update(reels_per_month=20,photo_edits_per_month=20,cogs_ceiling_cents=1500)
+  elif row['plan']=='trial':row.update(renders_per_month=0,reels_per_month=0,photo_edits_per_month=5,aerials_per_month=0,topaz_per_month=0,cogs_ceiling_cents=500)
  assert json.loads(query('allowance-matrix-after',matrix))==expected_matrix
  receipt['historicalChronologyAllowancesPreserved']=True
- receipt['laterReviewedPolicyDelta']={'migration':'20261014200302_property_video_recipe_allowances.sql','paid':paid,'trial':{'reels':20,'photos':20,'ceiling_cents':1500},'everyOtherOriginalCellPreserved':True}
+ receipt['laterReviewedPolicyDelta']={'migrations':['20261014200302_property_video_recipe_allowances.sql','20261026165813_limit_intro_trial_creative_spend.sql'],'paid':paid,'trial':{'renders':0,'reels':0,'photos':5,'aerials':0,'topaz':0,'ceiling_cents':500},'everyOtherOriginalCellPreserved':True}
  for phase in ['fresh','replayed']:
   checks=query('chronology-'+phase,(SQL/'tests/subscription_chronology.sql').read_text())
   count=checks.count('|t');assert count>=25,count
   receipt['chronologyAssertions']=count
-  trial=query('confirmed-trial-'+phase,(SQL/'tests/subscription_confirmed_trial.sql').read_text());assert trial.count('|t')==26
+  trial=query('confirmed-trial-'+phase,(SQL/'tests/subscription_confirmed_trial.sql').read_text());assert trial.count('|t')==27
   assert json.loads(query('allowance-matrix-'+phase,matrix))==expected_matrix
  facts_checks=query('facts-integration',(SQL/'tests/listing_facts_cas.sql').read_text())
  receipt['factsSQLAssertions']=json.loads(facts_checks.strip())['assertions']
@@ -232,7 +233,7 @@ try:
  run('handler-compilation',deno[:2]+['--no-run']+deno[2:]+[SQL/'functions/apple-subscriptions/index.ts',SQL/'functions/me/index.ts',STUDIO/'index.ts'])
  assert hashes=={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths},'Billing source changed during verification'
  assert receipt['migrationHashes']=={p.name:hashlib.sha256(p.read_bytes()).hexdigest()for p,_ in migrations},'Migration sources changed during verification'
- receipt.update(passed=True,finishedAt=datetime.now(timezone.utc).isoformat(),confirmedTrialAssertions=26,limits=['Synthetic certificate trust root and owned database; no real App Store purchase or restore','Legacy deployed handlers and production schema remain unchanged','No new pricing, margin or Apple offer eligibility certification'])
+ receipt.update(passed=True,finishedAt=datetime.now(timezone.utc).isoformat(),confirmedTrialAssertions=27,limits=['Synthetic certificate trust root and owned database; no real App Store purchase or restore','Legacy deployed handlers and production schema remain unchanged','No new pricing, margin or Apple offer eligibility certification'])
 finally:
  if started and(DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
