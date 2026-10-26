@@ -1,0 +1,304 @@
+{
+  "lineage": {
+    "html_path": "/Volumes/Rendprop Files/Builds/Active/build89-device-acceptance-20261020/native-address-share-links-20261022T2028Z/actual-tourhost-verification/branded-address.html",
+    "html_sha256": "6d5199f6c013a857fcbbd9b514c9462886d91aec014254b411bb93a414ba0cfd",
+    "fixture": "Actual retained855 facts/photos. First4 full photo links from homeHTML; subsequent34 entries are ordered observed display URLs (may be proxy thumbnails), never asserted original master links. No invented story/features/agent; no auth keys.",
+    "gallery_observation_path": "/Volumes/Rendprop Files/Builds/Active/build89-device-acceptance-20261020/actual-native106-device-ui-20261022T200859138286Z/WEBSITE-GALLERY-SETTLED.private.json",
+    "gallery_observation_sha256": "d478840924eff9478fe1da62b7e872d23742c606f1fe9bff96865c379ab7b8fc"
+  },
+  "tour": {
+    "slug": "3482b697c5f34c26a83b5d1b2b6f429a",
+    "space_type": "real_estate",
+    "website_theme": "basic",
+    "listing": {
+      "address": "855 Central Ave #1120, Saint Petersburg, FL, United States",
+      "tagline": null,
+      "details": {
+        "show_app_cta": false,
+        "show_partners": false
+      },
+      "beds": 1,
+      "baths": 1,
+      "sqft": 750,
+      "price_cents": 50000000,
+      "price": null,
+      "lat": 27.772,
+      "lng": -82.646
+    },
+    "cover_url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-0a86681b-b1b6-40d7-a16d-057e3d9a2094-complete-afff15fa-9305-4191-bfa1-bc391cfdd520.jpg",
+    "gallery": [
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-0a86681b-b1b6-40d7-a16d-057e3d9a2094-complete-afff15fa-9305-4191-bfa1-bc391cfdd520.jpg",
+        "label": "",
+        "thumb_url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-0a86681b-b1b6-40d7-a16d-057e3d9a2094-complete-afff15fa-9305-4191-bfa1-bc391cfdd520.jpg"
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-ab55bdcd-d11b-4684-bca5-c9a53ab89696-complete-910bfb78-8381-4112-9c63-4fc3de328d34.jpg",
+        "label": "",
+        "thumb_url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-ab55bdcd-d11b-4684-bca5-c9a53ab89696-complete-910bfb78-8381-4112-9c63-4fc3de328d34.jpg"
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-9be72b73-1360-4555-a927-db7620b13d0a-complete-8670e57b-9aa9-4fad-95d9-63bf988c7897.jpg",
+        "label": "",
+        "thumb_url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-9be72b73-1360-4555-a927-db7620b13d0a-complete-8670e57b-9aa9-4fad-95d9-63bf988c7897.jpg"
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-385d7720-7acb-422b-98a9-13c40a3e2252-complete-910a90a5-30c2-4c09-9246-85893b930792.jpg",
+        "label": "",
+        "thumb_url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-385d7720-7acb-422b-98a9-13c40a3e2252-complete-910a90a5-30c2-4c09-9246-85893b930792.jpg"
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-93a68f64-4d3f-498a-b4ea-26837b643a43-complete-450208f9-1dc9-4824-9962-16411e6d1066.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-ecf4d5d4-2dd9-4989-9755-5bd73605003f-complete-a8f5f61c-b2b7-49e6-b092-ab1b62712733.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-db6cfc8c-bfab-44fd-962d-e90a2805746b-complete-042d5e89-239f-4a45-851f-e2d03e096ce7.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-6f227f53-6046-4448-815d-eae90b93bdf9-complete-bfde2971-ea5e-4b01-af48-c59ac5ad279b.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-76c29925-dbcd-42a5-9734-ebaed35b6e2f-complete-6cdaf9e9-1bea-40e5-bf0e-050652ee3ccc.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-4777107b-6ced-4f69-b16b-503adb32ac70-complete-6a08d3ca-f037-4aec-b600-8d65baeaac3f.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-2cf59ffe-9582-45ef-95ac-79e9a450b879-complete-95b8bb03-b9ad-4dd3-aa12-23879f3385ce.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-385054f0-c842-4e3b-9f49-fd4c727eacf3-complete-f49c65a6-5891-438c-bcd9-94ad802abd69.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-972ab98a-1bf8-4eb2-bf99-99898676184b-complete-d96d52e4-48fd-4765-8174-42697677a6ba.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-c901f896-bc99-409b-8f8e-67a9577d6b84-complete-5ae4f50a-2959-4569-be54-a7ffa84fe4cc.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-a9e147eb-494d-4f01-9791-6a1b057a9b00-complete-d445c112-bf9d-473e-b923-49b6905b748c.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-cf55b1cf-0496-4535-9045-d8ee727d0ec5-complete-5da25e15-f2ad-4c2b-a151-e1434483321e.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-37851efe-89c8-4924-94ae-29fbd6824017-complete-f79df48b-e515-4536-b793-9790a7cb2a8f.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-5dc44d91-1029-4c8d-99ff-4dfb3ab0ec0a-complete-cb3a08af-ff8c-4372-b490-048cc715247d.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-99450b38-ba71-4b9f-8874-223a06db6623-complete-e5a8f721-60ed-4ef2-b674-7fa7c48be5bb.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-da3cfc23-5c4a-4d4f-a63e-a66129180690-complete-71ddb2d6-0450-4e12-ade7-de0d94c7b951.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-d07438b0-0a7b-4c71-8e57-46a3a73bdd04-complete-35812eb3-3bb1-4efd-8cbb-5b313a9a9184.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-6f9954fd-acc0-4d92-93da-f70a4c40a5da-complete-c09d709b-b6e0-4d75-b7a8-46f9c83955fc.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-3a6661f0-b126-49b4-89a8-789724db5f0e-complete-1c8b444c-794c-463e-8304-0f1723b734d5.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-c9599bc7-f1b3-45ce-a3f6-8916aba9c8d8-complete-76f63bd3-4c77-4bd0-b6ec-3df44dfad5b3.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-e1b562cd-de4b-418e-bc49-a9bdfb8c9bbf-complete-9bb87df5-8629-4f92-84e5-ed47c2bcbba0.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-45592ca3-deb1-45e8-b607-d1fd15fbc91c-complete-030ee3a5-8c38-4c97-aa25-e9fe9cdc1e74.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-8d043ea0-3bac-4293-8836-18aaef376486-complete-8d5874f6-0d45-4cb5-8409-3439c1ebb38e.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-5d1cd63f-3aaf-4359-a241-6e3c6e35a227-complete-20ca6cbe-cf2e-4fdc-984f-519ecf4929c9.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-27f9b6ab-bf2b-4237-9437-a64320a91822-complete-79ef0196-04fe-4b63-b894-0c46cd2bb9f3.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-dd0ed02e-80df-42f3-985b-5e1762f36fc5-complete-6eecb859-80b2-4791-b6b2-6718d96d300c.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-7687ea1f-185b-48ba-8022-f07cce1d09b9-complete-1301cebf-3d18-481e-9d7c-091a7babeeea.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-54e63993-0e74-4458-8db3-215d0e5ac793-complete-2371b722-bab0-4cd3-9878-4c6b41cf4844.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-c307f3ff-22d9-411b-9b8a-874be16ab957-complete-ed8f46b1-1d54-42f0-82c9-7435fc13001c.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-f0c21899-e623-4d8e-8b93-f9f789584b15-complete-d5a0b655-5a5f-4f93-8a4a-09e13106b368.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-3d29f285-8227-412d-a0c6-7e81c5ca1b55-complete-05fb6402-56a7-4a75-9eb6-57493494606f.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-a5d68361-8872-45b4-a460-e355e05cc037-complete-933d087a-f81b-49d7-897b-0427d34a22f1.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-c2d89c85-b9cb-4df4-b549-2ed40189133d-complete-4d8da569-63c1-4e5f-9649-9fae04200b4c.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      },
+      {
+        "url": "https://rendprop.com/media/3482b697c5f34c26a83b5d1b2b6f429a/thumb/renders%2Fe74b79a2-12c0-413b-9990-41522cbdc31a%2F3f329de6-b9ff-8b9c-b58f-662b2a4f060f%2Fgallery-1055c98a-8131-429c-83af-85f27bb7a8cc-complete-3135ab6e-92f3-4f19-89e6-20b90b74688e.jpg",
+        "label": "",
+        "fixture_observed_display_url_only": true
+      }
+    ],
+    "poster": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-0a86681b-b1b6-40d7-a16d-057e3d9a2094-complete-afff15fa-9305-4191-bfa1-bc391cfdd520.jpg",
+    "listing_video": null,
+    "video_url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/361b2565-9ca1-4495-8d5e-42c1d31e1978.mp4",
+    "scrub_url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/361b2565-9ca1-4495-8d5e-42c1d31e1978.mp4",
+    "hls_url": null,
+    "duration_s": 42.583,
+    "speed_factor": 1,
+    "chapters": [
+      {
+        "t_ms": 0,
+        "label": "Entry",
+        "sort": 0
+      },
+      {
+        "t_ms": 4250,
+        "label": "Kitchen",
+        "sort": 1
+      },
+      {
+        "t_ms": 8400,
+        "label": "Dining",
+        "sort": 2
+      },
+      {
+        "t_ms": 17400,
+        "label": "Bedroom",
+        "sort": 3
+      },
+      {
+        "t_ms": 27550,
+        "label": "Bath",
+        "sort": 4
+      },
+      {
+        "t_ms": 39750,
+        "label": "Balcony",
+        "sort": 5
+      }
+    ],
+    "agent_card": {},
+    "cta": {
+      "mode": "lead_form",
+      "label": "Book a showing",
+      "url": null,
+      "secondary": [],
+      "lead_fields": [
+        "name",
+        "phone",
+        "email"
+      ]
+    },
+    "staged": false,
+    "staged_disclosure": null,
+    "disclosure_chip": null,
+    "altered_media": [
+      {
+        "kind": "declutter",
+        "label": "Digital declutter",
+        "model": "AI image edit",
+        "disclosure": "This photo was digitally decluttered with AI: clutter and personal items were removed. Compare with the original to check fixed features, layout and access before publication.",
+        "original_url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/original-fec73e6d-feb7-4557-b4dc-6fee7bfa0d5a.jpg",
+        "altered_url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-5d1cd63f-3aaf-4359-a241-6e3c6e35a227-complete-20ca6cbe-cf2e-4fdc-984f-519ecf4929c9.jpg"
+      },
+      {
+        "kind": "declutter",
+        "label": "Digital declutter",
+        "model": "AI image edit",
+        "disclosure": "This photo was digitally decluttered with AI: clutter and personal items were removed. Compare with the original to check fixed features, layout and access before publication.",
+        "original_url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/original-7471ec68-b392-404b-a03f-465348abbcd6.jpg",
+        "altered_url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-2cf59ffe-9582-45ef-95ac-79e9a450b879-complete-95b8bb03-b9ad-4dd3-aa12-23879f3385ce.jpg"
+      },
+      {
+        "kind": "declutter",
+        "label": "Digital declutter",
+        "model": "AI image edit",
+        "disclosure": "This photo was digitally decluttered with AI: clutter and personal items were removed. Compare with the original to check fixed features, layout and access before publication.",
+        "original_url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/original-7f8906c8-2ae2-47cf-b2b5-ef3d2af382d9.jpg",
+        "altered_url": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/renders/e74b79a2-12c0-413b-9990-41522cbdc31a/3f329de6-b9ff-8b9c-b58f-662b2a4f060f/gallery-7687ea1f-185b-48ba-8022-f07cce1d09b9-complete-1301cebf-3d18-481e-9d7c-091a7babeeea.jpg"
+      }
+    ],
+    "floorplan_url": null,
+    "published_at": "2026-10-22T00:00:00Z"
+  }
+}

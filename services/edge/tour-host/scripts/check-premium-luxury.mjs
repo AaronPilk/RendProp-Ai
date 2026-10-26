@@ -1,0 +1,47 @@
+// Actual renderer/layout checks; localhost and synthetic film only, no API.
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync,mkdirSync,readdirSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
+import {resolve,join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import ts from 'typescript';
+import {chromium} from '../node_modules/@playwright/test/index.mjs';
+import {premiumPreview} from './preview-premium-luxury.mjs';
+import {ROOT} from './build-src.mjs';
+const output=resolve(process.argv.find(a=>a.startsWith('--evidence='))?.split('=').slice(1).join('=')||'../../../luxury-proof');mkdirSync(output,{recursive:true});
+const checks=[],measurements=[];const check=(x,label)=>{assert.ok(x,label);checks.push(label)};
+const {server,origin,load,retained}=await premiumPreview();const {renderTourPage}=await load('player'),{buildDemoTour}=await load('demo'),{PROPERTY_DESIGN_CSS}=await load('property-design');
+// This is the accepted address-only Tourhost source immediately before the
+// reference-led presentation change. Classic and MLS must remain identical.
+const PRESENTATION_BASELINE='6ad50ef898dd3f69b4835f9e184fa879716bba74';
+const baseline=join(output,'baseline-esm');mkdirSync(baseline,{recursive:true});writeFileSync(join(baseline,'package.json'),'{"type":"module"}');
+for(const f of readdirSync(join(ROOT,'src')).filter(n=>n.endsWith('.ts'))){const s=execFileSync('git',['show',PRESENTATION_BASELINE+':services/edge/tour-host/src/'+f],{cwd:ROOT,encoding:'utf8',stdio:['ignore','pipe','pipe']});const js=ts.transpileModule(s,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText.replace(/(\bfrom\s*["'])(\.\.?\/[^"']+?)(["'])/g,(_,a,b,c)=>a+b+'.js'+c);writeFileSync(join(baseline,f.replace(/\.ts$/,'.js')),js)}
+const before=await import(pathToFileURL(join(baseline,'player.js'))),oldDesign=await import(pathToFileURL(join(baseline,'property-design.js')));
+for(const t of[retained.tour,buildDemoTour()])for(const page of['home','gallery','location','contact'])for(const unbranded of[false,true]){const opts={origin,page,unbranded};const after=renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(PROPERTY_DESIGN_CSS,'__PAID_CSS__');const prior=before.renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(oldDesign.PROPERTY_DESIGN_CSS,'__PAID_CSS__');check(after===prior,`Classic/MLS markup+scripts+shared CSS exact: ${t.slug}/${page}/${unbranded}`)}
+for(const file of['property-site.ts','property-video.ts','index.ts']){const old=execFileSync('git',['show',PRESENTATION_BASELINE+':services/edge/tour-host/src/'+file],{cwd:ROOT});check(old.equals(readFileSync(join(ROOT,'src',file))),file+' byte-exact baseline; routes/entitlements/viewer/video/sanitizer intact')}
+const browser=await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});
+try{
+ for(const theme of['signature-estate','coastal-luxe'])for(const width of[390,1497])for(const rich of[false,true]){
+  const context=await browser.newContext({viewport:{width,height:width===390?844:759},reducedMotion:'reduce'});const requests=[];
+  await context.route('**/*',route=>{const r=route.request(),u=new URL(r.url());requests.push({url:r.url(),type:r.resourceType()});return u.origin===origin||u.protocol==='data:'||(r.resourceType()==='image'&&['pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev','rendprop.com'].includes(u.hostname))?route.continue():route.abort()});
+  const p=await context.newPage();const errors=[];p.on('pageerror',e=>errors.push(String(e)));
+  const base=origin+'/property/'+(rich?'estate-demo':retained.tour.slug)+'?preview_theme='+theme+(rich?'&fixture=rich':'');await p.goto(base,{waitUntil:'networkidle'});
+  const tag=theme+'-'+width+'-'+(rich?'synthetic-listing-film':'actual855-recorded-only');
+  const geometry=await p.evaluate(()=>{const box=s=>{const e=document.querySelector(s);return e?e.getBoundingClientRect().toJSON():null};return{title:box('.property-hero-title'),price:box('.property-hero-price'),actions:box('.listing-cover-actions'),copy:box('.property-hero-copy'),media:box('.property-hero-media'),overflow:document.documentElement.scrollWidth>innerWidth,contact:getComputedStyle(document.querySelector('.property-hero-contact')).backgroundColor,buttons:[...document.querySelectorAll('.listing-cover-actions a,.listing-cover-actions button')].map(e=>({height:e.getBoundingClientRect().height,radius:getComputedStyle(e).borderRadius}))}});measurements.push({tag,...geometry});
+  const firstScreen=width===390?844:759;
+  check(!geometry.overflow,tag+' no horizontal overflow');check(geometry.title.y>=0&&geometry.price.bottom<firstScreen-8&&geometry.actions.bottom<firstScreen-8,tag+' actual identity/price/all hero actions visible firstscreen '+JSON.stringify({title:geometry.title,price:geometry.price,actions:geometry.actions}));check(geometry.buttons.every(b=>b.height>=44&&parseFloat(b.radius)>=44),tag+' capsule actions at least44px');check(geometry.contact!=='rgba(0, 0, 0, 0)',tag+' enquiry is discoverable filled capsule');
+  for(const summary of await p.locator('.disc-sum').all())check(await summary.evaluate(e=>e.getBoundingClientRect().height>=44&&parseFloat(getComputedStyle(e).borderRadius)>=44),tag+' disclosures keep44px capsule target and unchanged details action');
+  check(await p.locator('form').count()===0&&await p.locator('.property-preview-banner').isVisible(),tag+' preview remains labelled with no enquiry side effects');
+  if(rich){const v=p.locator('#property-video');check(await v.count()===1&&await v.getAttribute('src')===null&&await v.getAttribute('preload')==='none'&&await v.getAttribute('autoplay')===null,tag+' actual accepted Listing hero stays explicit-play/no autoplay');check(await p.locator('.property-recorded-option [data-open-flythrough]').count()===1,tag+' recorded walkthrough remains a separate action');check(await v.evaluate(e=>getComputedStyle(e).objectFit)==='contain',tag+' full Listing frame remains contain');await p.locator('#property-video-play').click();await p.waitForFunction(()=>document.getElementById('property-video').getAttribute('src'));check((await v.getAttribute('src')).includes('/local-fixture/synthetic-listing-8s.mp4'),tag+' hero play loads exact synthetic Listing master');check(await v.evaluate(e=>e.controls),tag+' real video playback exposes native controls');await p.waitForFunction(()=>{const v=document.getElementById('property-video');return v.readyState>=2&&v.currentTime>0&&!v.paused},{timeout:15000});check(await v.evaluate(e=>e.videoWidth>0&&e.videoHeight>0&&e.currentTime>0),tag+' actual local Listing film decodes and plays after deliberate click');await v.evaluate(e=>e.pause());check(await p.locator('.property-recorded-option [data-open-flythrough]').count()===1,tag+' hero play does not substitute recorded video');}
+  else{check(await p.locator('#property-video').count()===0&&await p.locator('.listing-cover [data-open-flythrough]').count()===1,tag+' recorded-only855 has no invented Listing film');check(await p.locator('#story,#features').count()===0,tag+' no invented story/features on sparse listing');}
+  await p.screenshot({path:join(output,tag+'-viewport.png')});
+  for(const img of await p.locator('#gallery img.property-thumb').all()){await img.scrollIntoViewIfNeeded();await img.evaluate(i=>i.complete&&i.naturalWidth>1?Promise.resolve():new Promise((r,j)=>{i.addEventListener('load',r,{once:true});i.addEventListener('error',()=>j(Error('fixture gallery image failed')),{once:true})}));}
+  await p.evaluate(()=>scrollTo(0,0));
+  await p.screenshot({path:join(output,tag+'-full.png'),fullPage:true});
+  await p.goto(base+'&page=gallery',{waitUntil:'networkidle'});check(await p.locator('[data-property-photo]').count()===(rich?6:38),tag+' gallery retains every fixture image');
+  if(!rich){const hrefs=await p.locator('[data-property-photo]').evaluateAll(xs=>xs.map(e=>e.getAttribute('href')));check(JSON.stringify(hrefs)===JSON.stringify(retained.tour.gallery.map(g=>g.url)),tag+'855 observed gallery order exact; first4 masterlinks retained');}
+  if(width===390){const cdp=await context.newCDPSession(p);await cdp.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-transparency',value:'reduce'},{name:'prefers-reduced-motion',value:'reduce'}]});check(await p.locator('#listing-nav').evaluate(e=>getComputedStyle(e).backdropFilter)==='none',tag+' reduced transparency uses opaque material fallback');}
+  check(!requests.some(r=>r.type==='fetch'&&!r.url.startsWith(origin)),tag+' no API/telemetry leaves localhost');check(errors.length===0,tag+' no pageJS error '+errors.join(';'));await context.close();
+ }
+ writeFileSync(join(output,'receipt.json'),JSON.stringify({passed:true,checks:checks.length,assertions:checks,measurements,sourceOnly:true,fixtureLimits:retained.lineage,liveAPI:0,publish:0},null,2)+'\n');console.log('Premium luxury: '+checks.length+' checks passed; Classic exact, both paid designs and separate Listing/recorded video through actual renderer.');
+}finally{await browser.close();await new Promise(r=>server.close(r));}

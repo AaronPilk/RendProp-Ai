@@ -55,6 +55,9 @@ SUPABASE_FUNCTIONS_URL = "https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1"
 # measured faster there than automatic east-coast execution. Empty this setting
 # to restore automatic routing during a regional outage; no payload is cached.
 SUPABASE_READ_REGION = "us-west-2"
+# Public house-address links are enabled only after the live lookup, gateway,
+# collision and legacy-link checks passed. Ambiguous/noindex pages keep tokens.
+ADDRESS_ONLY_CANONICAL = "enabled"
 
 # Supabase anon (publishable) key. This is PUBLIC by design — RLS enforces
 # access and it already ships in every Supabase client. It's the apikey/Bearer

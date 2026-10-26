@@ -145,6 +145,33 @@ link. The renderer removes agent/contact/promotional content from the unbranded
 page; this is not a guarantee that every MLS accepts all submitted property
 content. Check the applicable listing service's rules before distribution.
 
+### Staged address-only canonical
+
+`ADDRESS_ONLY_CANONICAL=enabled` is intentionally unset in the deployed
+configuration. When enabled, the Worker asks the upstream public tours function
+for `GET /tours/address-lookup/:descriptor` with the dedicated private
+`ADDRESS_LOOKUP_SECRET` in `X-Rendprop-Address-Lookup`. Configure the same
+64-character lowercase hex secret on the Worker and tours Edge Function before
+enabling the flag. Direct anonymous calls cannot enumerate noindex publication
+slugs; missing or mismatched credentials expose no lookup result. It accepts only
+`{"status":"unique","slug":"<current publication slug>"}`. The upstream must
+compute the descriptor with the same ASCII-address rules as
+`propertyAddressSlug`, examine **all** current hostable real-estate publications
+(including noindex pages), and answer `{"status":"ambiguous"}` for duplicate
+addresses or a public slug alias collision; a missing address returns 404.
+It must apply the same deletion, hosting-retention and publication fences as
+`GET /tours/:slug`. The Worker still reloads that tour and compares its current
+address before rendering; missing, malformed, ambiguous and unavailable
+resolver responses retain the existing address-plus-ID canonical. Existing
+`/f/:slug`, `/property/:slug`, `/property/:address/:slug` and MLS `/u/` links
+remain usable. Do not enable the flag until that upstream resolver and its
+collision/revocation tests are deployed. The sitemap and native-generated
+share links also need the same authority before address-only URLs can be
+claimed as the complete public contract.
+An address-route dependency failure (resolver outage or alias-check outage)
+returns a no-store 503; a verified missing or ambiguous address returns 404.
+Opaque publication routes retain their prior canonical on a lookup failure.
+
 ### How unbranded output is enforced
 
 1. **One renderer, no fork.** `renderTourPage(tour, …, { unbranded: true })`.

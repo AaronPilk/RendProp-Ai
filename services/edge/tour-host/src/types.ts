@@ -14,6 +14,8 @@ export interface Env extends Partial<Pick<TourHostBindings, "ASSETS" | "MEDIA_RE
   STREAM_PRIVATE_PLAYBACK?: string;
   /** Private Worker→API delivery credential. Never sent to viewers. */
   MEDIA_GATEWAY_SECRET?: string;
+  /** Separate private Worker→API address directory credential. Never sent to viewers. */
+  ADDRESS_LOOKUP_SECRET?: string;
   /** Base URL of the Supabase Edge Functions, e.g. https://<ref>.supabase.co/functions/v1 */
   SUPABASE_FUNCTIONS_URL: string;
   /** Explicit read-function region, colocated with this project's database.
@@ -28,6 +30,11 @@ export interface Env extends Partial<Pick<TourHostBindings, "ASSETS" | "MEDIA_RE
   SUPABASE_ANON_KEY?: string;
   /** Optional: edge cache TTL (seconds) for synthetic demo tours only. */
   TOUR_CACHE_TTL?: string;
+  /** Staged until /tours/address-lookup/:descriptor can prove a unique current
+   * publication. Only indexable pages may use a guessable address-only path;
+   * all others stay on existing token URLs. */
+  ADDRESS_ONLY_CANONICAL?: string;
+  PROPERTY_DATE_SUFFIX?: string;
   /** Optional Cloudflare Turnstile SITE key (public). When set, the tour lead
    *  form renders the Turnstile widget; the leads function verifies the token
    *  with its matching TURNSTILE_SECRET_KEY. Both must be set to activate. */

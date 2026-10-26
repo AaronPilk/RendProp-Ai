@@ -50,7 +50,7 @@ import type { NearbyPlacesResult } from "./nearby-places";
 import { spatialAnchor } from "./spatial-manifest";
 import { APP_STORE_ID, appStoreUrl, siteUrl } from "./attribution";
 import { tourJsonLd } from "./jsonld";
-import { propertyAddressPath, propertyCanonical, propertySearchMeta } from "./property-seo";
+import { propertyAddressOnlyPath, propertyAddressPath, propertyCanonical, propertySearchMeta } from "./property-seo";
 import {
   type AgentModel,
   absolutize,
@@ -2628,8 +2628,12 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
   }
   const story = paragraphs(det(tour, "story", "description", "about"));
   if (story.length) {
-    out.push(sec("story", "The story", detStr(tour, "story_title") || (isRE ? "How this home lives" : "About the space"),
-      `<div class="lp-prose">${story.map((p) => `<p>${escapeHtml(p)}</p>`).join("")}</div>`));
+    const storyCopy = `<div class="lp-prose">${story.map((p) => `<p>${escapeHtml(p)}</p>`).join("")}</div>`;
+    const storyPhoto = page && theme !== "basic" ? galleryItems(tour)[1] : null;
+    // An editorial image uses an existing published photo, never a new claim or
+    // a second viewer link. The viewer's original gallery order stays intact.
+    const storyBody = storyPhoto ? `<div class="property-story-spread"><figure class="property-story-photo"><img src="${escapeAttr(storyPhoto.thumb || storyPhoto.url)}" alt="${escapeAttr(storyPhoto.label || headingRaw)}" loading="lazy" decoding="async">${storyPhoto.label ? `<figcaption>${escapeHtml(storyPhoto.label)}</figcaption>` : ""}</figure>${storyCopy}</div>` : storyCopy;
+    out.push(sec("story", "The story", detStr(tour, "story_title") || (isRE ? "How this home lives" : "About the space"), storyBody));
   }
 
   // Floor plan, promoted ABOVE the gallery (A3) — both pages.
@@ -3085,6 +3089,10 @@ export interface RenderOpts {
   publicBase?: "/f" | "/property";
   /** Descriptive browser URLs derived only from the authoritative public address. */
   addressUrls?: boolean;
+  /** Set only after the Worker verifies the unique current address resolver. */
+  addressOnlyCanonical?: boolean;
+  /** Enabled after the dated, collision-proof public link route is ready. */
+  datedAddressCanonical?: boolean;
   /** Presentation-only preview of already-published data; grants no design. */
   previewTheme?: WebsiteTheme | null;
   /** Already-cached nearby places for the Location page, rendered as static
@@ -3106,7 +3114,10 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const theme = previewTheme || websiteTheme(tour.website_theme);
   const premiumPresentation = polished && theme !== "basic";
   const primaryVideo = !embed && isRealEstate(tour) ? listingVideo(tour.listing_video) : null;
-  const addressPath = polished && opts.addressUrls ? propertyAddressPath(tour.slug, tour.listing?.address) : undefined;
+  const addressPath = polished && opts.addressUrls
+    ? (opts.addressOnlyCanonical ? propertyAddressOnlyPath(tour.listing?.address) : null)
+      || propertyAddressPath(tour.slug, tour.listing?.address, "/property",
+        opts.datedAddressCanonical ? tour.published_at : undefined) : undefined;
   const pageHref = (target: PropertyPage) => propertyPageHref(tour.slug, target, publicBase, previewTheme, addressPath);
 
   const hideVendor = hidesVendorBranding(tour);
@@ -3256,17 +3267,21 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // Presentation reuses the same resolved media and safe listing values. The
   // included Classic markup is unchanged; neither theme changes source order.
   const coverMediaHtml = primaryVideo ? listingVideoStage(primaryVideo, coverImage, header.entityName, premiumPresentation) : coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`;
-  const premiumHeroCopy = premiumPresentation ? `<div class="property-hero-copy"><div class="lp-eyebrow">${escapeHtml(isSoldOrArchived(tour) ? "Sold property" : "Discover the residence")}</div><h1 class="property-hero-title">${escapeHtml(header.entityName)}</h1>${priceText(tour) ? `<p class="property-hero-price">${escapeHtml(priceText(tour))}</p>` : ""}
+  const heroAddress = header.entityName.split(",");
+  const heroStreet = heroAddress.shift() || header.entityName;
+  const heroLocality = heroAddress.join(",").trim();
+  const premiumTitle = `${escapeHtml(heroStreet)}${heroLocality ? `<span class="property-hero-locality">${escapeHtml(heroLocality)}</span>` : ""}`;
+  const premiumHeroCopy = premiumPresentation ? `<div class="property-hero-copy"><div class="lp-eyebrow">${escapeHtml(isSoldOrArchived(tour) ? "Sold property" : "Discover the residence")}</div><h1 class="property-hero-title" aria-label="${escapeAttr(header.entityName)}">${premiumTitle}</h1>${priceText(tour) ? `<p class="property-hero-price">${escapeHtml(priceText(tour))}</p>` : ""}
     <div class="listing-cover-actions">
       ${hasVideo && !primaryVideo ? `<button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button><p>Open the video when you want to explore.</p>` : primaryVideo ? "" : `<p>Photos and location details are available below.</p>`}
-      <a class="property-hero-link" href="${escapeAttr(pageHref("gallery"))}">View gallery</a>${!isSoldOrArchived(tour) ? `<a class="property-hero-link" href="${escapeAttr(pageHref("contact"))}">Enquire about this home</a>` : ""}
+      <a class="property-hero-link" href="${escapeAttr(pageHref("gallery"))}">View gallery</a>${!isSoldOrArchived(tour) ? `<a class="property-hero-link property-hero-contact" href="${escapeAttr(pageHref("contact"))}">Enquire about this home</a>` : ""}
     </div>
     ${primaryVideo?.disclosure ? `<span class="listing-media-label">Photo-based property video${hasDisclosureSection ? ` · <a href="#disclosure">Media details and originals</a>` : ""}</span>` : ""}
     ${staged || hasAltered ? `<span class="listing-media-label">${escapeHtml(chipLabel)}${hasDisclosureSection ? ` · <a href="#disclosure">See disclosures and originals</a>` : ""}</span>` : ""}
     ${primaryVideo && hasVideo ? `<details class="property-recorded-option"><summary>Optional recorded walkthrough</summary><p>Explore the separately recorded tour.</p><button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Open recorded walkthrough</button></details>` : ""}
   </div>` : "";
   const premiumMedia = `<div class="property-hero-media">${coverMediaHtml}</div>`;
-  const coverHtml = premiumPresentation ? `<section class="listing-cover${primaryVideo ? " property-video-hero" : ""}" aria-label="Property media">${theme === "coastal-luxe" ? premiumHeroCopy + premiumMedia : premiumMedia + premiumHeroCopy}</section>` : `<section class="listing-cover${primaryVideo ? " property-video-hero" : ""}" aria-label="Property media">
+  const coverHtml = premiumPresentation ? `<section class="listing-cover${primaryVideo ? " property-video-hero" : ""}" aria-label="Property media">${premiumHeroCopy + premiumMedia}</section>` : `<section class="listing-cover${primaryVideo ? " property-video-hero" : ""}" aria-label="Property media">
     ${coverMediaHtml}
     ${polished ? `<div class="property-hero-copy"><div class="lp-eyebrow">${escapeHtml(isSoldOrArchived(tour) ? "Sold property" : "Discover the residence")}</div><h1 class="property-hero-title">${escapeHtml(header.entityName)}</h1>${priceText(tour) ? `<p class="property-hero-price">${escapeHtml(priceText(tour))}</p>` : ""}` : ""}
     <div class="listing-cover-actions">

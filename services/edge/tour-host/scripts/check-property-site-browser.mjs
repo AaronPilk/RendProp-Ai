@@ -150,9 +150,15 @@ try {
         }
       }
       if (theme !== "basic") presentationChecks.push([composition.watchContrast.length > 0 && composition.watchContrast.every(ratio => ratio >= 4.5),tag+": film navigation text meets 4.5:1 contrast with either primary media"]);
-      if (theme === "signature-estate") presentationChecks.push([composition.media.bottom <= composition.copy.y+1,tag+": Signature leads with complete media before editorial copy"]);
-      if (theme === "coastal-luxe") {
-        presentationChecks.push([width === 390 ? composition.copy.bottom <= composition.media.y+1 : composition.copy.x < composition.media.x && composition.copy.y <= composition.media.y+1,tag+": Coastal leads with address and price before the media"]);
+      if (theme !== "basic") {
+        // Photo-led paid pages place the address on the property image. A real
+        // 16:9 Listing film stays uncropped; on phones its address follows the
+        // film in the same first screen instead of covering the play target.
+        const photoOverlay = presentation === "photo" && composition.copy.y >= composition.media.y && composition.copy.bottom <= composition.media.bottom + 1;
+        const phoneFilm = presentation === "video" && width === 390 && composition.copy.y >= composition.media.bottom - 1;
+        const desktopFilm = presentation === "video" && width !== 390 && composition.copy.y >= composition.media.y && composition.copy.bottom <= composition.media.bottom + 1 && composition.copy.x < composition.media.x + composition.media.width / 2;
+        presentationChecks.push([photoOverlay || phoneFilm || desktopFilm,tag+": paid identity follows the immersive photo or uncropped film layout"]);
+        presentationChecks.push([composition.title.y < (width === 390 ? 844 : 1000),tag+": property address is visible in the opening viewport"]);
       }
       await context.close();
     }
@@ -352,7 +358,7 @@ try {
     longAddress = true; presentation = "video";
     await page.goto(origin+"/property/synthetic-site",{waitUntil:"networkidle"});
     check(await page.locator(".property-hero-price").count() === 0,theme+": missing price is omitted without invented facts");
-    check((await page.locator(".property-hero-title").innerText()).includes("Architectural Promenade, Residence Twelve"),theme+": long actual address is complete");
+    check(await page.locator(".property-hero-title").getAttribute("aria-label") === fixture().listing.address && (await page.locator(".property-hero-title").textContent()).includes("Architectural Promenade") && (await page.locator(".property-hero-locality").textContent()) === "Residence Twelve, Example, FL 33000",theme+": long address has exact complete accessible name and complete visible street/locality without leading punctuation");
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),theme+": long address has no phone overflow");
     const menu=page.locator(".property-page-menu"),summary=menu.locator("summary");
     check(!(await menu.evaluate(el=>el.open)),theme+": compact menu starts closed without script");

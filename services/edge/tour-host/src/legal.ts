@@ -146,16 +146,16 @@ ${BUSINESS} ("we", "us") and apply whenever you use the app or any page we host 
 account; that account owns your listings, hosted pages, AI usage and team membership, and lets
 you sync across devices and recover your workspace if you delete the app. Capturing and editing
 work offline once you are signed in; cloud uploads, hosted publication and AI tools need a
-connection. Each account can host one published listing free; a subscription adds AI tools and
-more listings. Keep your account to yourself: you are responsible for
+connection. The app shows the features and included usage available with each current plan;
+Apple shows the purchase price, billing period and any introductory offer before confirmation.
+Keep your account to yourself: you are responsible for
 what happens under it. You must be at least 18 years old (and old enough to form a binding
 contract where you live) to use Rendprop. If you use Rendprop for a business or team, you
 confirm you have the authority to accept these Terms for it.</p>
 <p>Joining a Team gives you a seat while keeping your own listing library. Other
 invited agents cannot open your listings, private media or leads. The Team account
 owner can switch between its agents' listing libraries and manage their listing
-content. A Team's included usage is shared across its seats; joining does not give
-each seat a separate copy of that allowance.</p>
+content. The app identifies the current plan and usage available to a Team.</p>
 
 <h2><span class="num">3.</span>Acceptable use</h2>
 <p>The one big rule: <b>only record and upload spaces you have the right to record.</b> That
@@ -195,24 +195,15 @@ You are responsible for meeting any disclosure rules that apply to you (for exam
 local advertising rules) when you publish or share AI-enhanced media.</p>
 
 <h2><span class="num">6.</span>Plans and payment</h2>
-<p>Rendprop is free to download. A subscription unlocks monthly allowances for the things that
-cost us money to make: tour renders, AI photo edits and reel clips. New aerial creation is
-Coming soon and is not included in any plan; previously saved aerial videos remain accessible. Plans are
-sold as <b>auto-renewable subscriptions through the App Store</b> — Starter, Pro and Team, each
-billed monthly. <b>The app is the source of truth</b>: the plan names,
-allowances, billing periods, and prices you see there come from the App Store in your own currency,
-and they are what you are charged.</p>
+<p>Rendprop is free to download. Some features may require an <b>auto-renewable subscription through
+the App Store</b>. New aerial creation is Coming soon and is not included in any plan; previously saved
+aerial videos remain accessible. Launch plans and included usage are being finalized. <b>The app is the source of
+truth</b> for current plan features and included usage. Apple shows the price, billing period, and any
+introductory offer eligibility, duration, renewal price, and terms before confirmation.</p>
 <ul>
-  <li><b>Free trial.</b> Eligible new subscribers can start a <b>7-day introductory trial by confirming
-  an Apple subscription</b> in Rendprop. Apple determines eligibility and shows the offer and
-  renewal price before confirmation; no Apple purchase starts until you continue to Apple's
-  confirmation. Downloading or signing in does not activate a trial. During the trial the plan's
-  allowances apply and AI usage is additionally limited to a trial usage ceiling drawn from a
-  limited shared allocation, so AI tools can be temporarily unavailable or stop before the seven
-  days end. Using an allowance stops new work for that feature; it does not
-  move Apple's renewal date forward. You may redeem one introductory offer per subscription group;
-  changing plans, reinstalling, cancelling or changing workspaces does not create another trial.
-  Cancel at least 24 hours before the trial ends to avoid renewal charges.</li>
+  <li><b>Introductory offers.</b> If Apple presents an introductory offer, Apple shows its duration,
+  eligibility, renewal price, and billing terms before confirmation. Downloading or signing in does
+  not activate an offer. The terms shown in Apple's purchase sheet control.</li>
   <li><b>Auto-renewal.</b> Apple charges the price and billing schedule shown when you confirm,
   with the first charge after any applicable free trial. The
   subscription <b>renews automatically for the same period unless you cancel at least 24 hours
@@ -232,8 +223,7 @@ and they are what you are charged.</p>
   introduced on October 6, 2026, hosting continues for a <b>90-day grace period after the
   subscription expires</b>. We provide advance notices and a chance to download your content
   before hosting ends. Renewing extends the hosting period. After the grace period, public
-  links may stop working and stored media may be removed following notice. Expiry does not
-  grant another AI allowance. Existing testers retain their prior hosting arrangements.
+  links may stop working and stored media may be removed following notice. Existing testers retain their prior hosting arrangements.
   You can request removal earlier — see section 7.</li>
 </ul>
 <p><b>We never see or store your card details.</b> Apple sends us a signed record of the purchase
@@ -440,15 +430,11 @@ can take additional work. Account deletion (<b>Settings → Delete account</b>) 
 account and private workspaces; content in shared workspaces can remain for other members.
 Account deletion and associated cleanup are separate statuses, and the app indicates pending
 cleanup. Analytics events are scheduled for deletion after 180 days (section 4).
-Limited trial-eligibility and usage records remain after listing or account deletion to prevent
-another trial. Trial eligibility does not reset after cancellation, reinstalling or an interrupted
-purchase. Deleting content does not replenish a trial allowance. These records do not keep
-the deleted photos or videos available.
-Limited funded photo-admission records also remain to prevent deleted work, account
-changes or refunds from replenishing usage. They record account, workspace, operation
-and funding identities, task, input fingerprint and timing; they do not contain the
-photo or a downloadable media link. Workspace package allocations and operator
-startup-funding evidence are separate accounting records, and are not another
+Limited purchase-eligibility and usage-accounting records may remain after listing or account
+deletion when needed to enforce purchase terms, account for completed service, and prevent
+abuse. These records can include account, workspace, transaction, operation, task, input
+fingerprint and timing identifiers; they do not keep the deleted photos or videos available.
+Workspace package allocations and operator startup-funding evidence are separate accounting records, and are not another
 member's personal export. Anonymized provider-cost totals also remain after account deletion;
 their account, job and request references are removed. They do not contain photos or videos.
 Contact us for help with retained accounting records.

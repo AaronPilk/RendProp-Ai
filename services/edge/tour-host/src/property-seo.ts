@@ -9,10 +9,26 @@ export function propertyAddressSlug(value: unknown): string {
     .slice(0, 120).replace(/-+$/g, "");
 }
 
-export function propertyAddressPath(slug: string, address: unknown): string {
+export function propertyAddressPath(slug: string, address: unknown, base: "/property" | "/u" = "/property", publishedAt?: unknown): string {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug)) throw new Error("Invalid published property identity");
   const descriptor = propertyAddressSlug(address);
-  return `/property/${descriptor ? `${descriptor}/` : ""}${encodeURIComponent(slug)}`;
+  // The full publication slug, already unique in renders, makes same-address
+  // and same-day publications collision-proof. republish_render preserves its
+  // first published_at and slug; an older token URL remains a valid alias.
+  const day = typeof publishedAt === "string" && /^\d{4}-\d{2}-\d{2}T/.test(publishedAt)
+    && Number.isFinite(Date.parse(publishedAt)) ? publishedAt.slice(0, 10).replace(/-/g, "") : "";
+  // A dot cannot occur in a legacy publication slug, so the dated alias
+  // occupies a disjoint route namespace without extra database identity.
+  const identity = base === "/property" && day ? `${day}.${slug}` : slug;
+  return `${base}/${descriptor ? `${descriptor}/` : ""}${encodeURIComponent(identity)}`;
+}
+
+/** An address can identify a public page only after the publication authority
+ * has proved it resolves to exactly one current tour. Empty descriptors keep
+ * the existing address-plus-publication-ID path. */
+export function propertyAddressOnlyPath(address: unknown): string | null {
+  const descriptor = propertyAddressSlug(address);
+  return descriptor ? `/property/${descriptor}` : null;
 }
 
 export function propertySearchMeta(page: PropertyPage | null, title: string, description: string, address: string) {

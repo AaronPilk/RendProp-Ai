@@ -190,7 +190,12 @@ export function sitemapIndexXml(origin: string, cursors: (string | null)[]): str
 }
 
 /** Refuse a malformed upstream page as a whole. No private or opted-out
- * fallback rows, guessed addresses, preview links or unbranded URLs. */
+ * fallback rows, guessed addresses, preview links or unbranded URLs.
+ * Address+slug remains the sitemap path until /tours/index can provide a
+ * publication-scoped bulk uniqueness proof. When address-only is enabled, an
+ * indexed unique property's token path redirects to its freshly verified
+ * canonical; doing a resolver call for every row here would make one child
+ * sitemap issue up to 200 extra API requests. */
 export function propertySitemapXml(origin: string, value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const v = value as Record<string, unknown>;
@@ -204,9 +209,12 @@ export function propertySitemapXml(origin: string, value: unknown): string | nul
     if (typeof row.slug !== "string" || !SLUG_RE.test(row.slug)
         || seen.has(row.slug) || row.allow_indexing !== true
         || typeof row.published_at !== "string" || !lastmodOf(row.published_at)
+        || (row.space_type != null && typeof row.space_type !== "string")
         || (row.address != null && (typeof row.address !== "string" || row.address.length > 500))) return null;
     seen.add(row.slug);
-    entries.push({loc: propertyAddressPath(row.slug, row.address), lastmod: lastmodOf(row.published_at)});
+    entries.push({loc: row.space_type == null || row.space_type === "real_estate"
+      ? propertyAddressPath(row.slug, row.address) : `/f/${encodeURIComponent(row.slug)}`,
+      lastmod: lastmodOf(row.published_at)});
   }
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries.map(e => urlBlock(origin, e)).join("\n")}\n</urlset>\n`;
 }

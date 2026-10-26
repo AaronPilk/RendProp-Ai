@@ -616,13 +616,16 @@ async function main() {
   }
   ok("/sitemap.xml is Worker-served, lists no /u/ URL and no non-indexable tour");
 
-  // ---- the legal pages match the launch line-up ------------------------------
+  // ---- the legal pages keep purchase terms truthful while launch pricing is open
   const terms = await get(worker, "/terms");
-  expect(/Starter, Pro and Team, each\s+billed monthly\./.test(terms.body),
-    "[/terms] §6 must say every plan bills monthly (2026-10-09: no annual plans are sold)");
-  expect(!/yearly|annual/i.test(terms.body.replace(/changefreq/g, "")), "[/terms] must not offer a yearly or annual plan");
+  expect(/source of\s+truth<\/b> for current plan features and included\s+usage/.test(terms.body),
+    "[/terms] §6 must identify Rendprop as the plan-feature and included-usage authority");
+  expect(terms.body.includes("Apple shows the price, billing period"),
+    "[/terms] §6 must identify Apple as the purchase-term authority");
+  expect(!/Starter, Pro and Team, each\s+billed monthly\./.test(terms.body),
+    "[/terms] must not promise the superseded monthly-only launch line-up");
   expect(terms.body.includes("Effective October 16, 2026"), "[/terms] proposed notice revision date");
-  ok("terms reflect the launch plan line-up");
+  ok("terms separate Rendprop usage details from Apple purchase terms");
 
   // ── safeUrl scheme allowlist (audit P1 re-open) ──────────────────────────
   // Browsers strip C0 control characters from a URL BEFORE resolving its

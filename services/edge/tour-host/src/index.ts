@@ -43,7 +43,7 @@ import { spatialData, spatialModule, spatialPage } from "./spatial";
 import { handleMediaDelivery } from "./media-delivery";
 import { handleRecipientConfirmation } from "./recipient-confirmation";
 import { propertyPage } from "./property-site";
-import { propertyAddressPath } from "./property-seo";
+import { propertyAddressOnlyPath, propertyAddressPath, propertyAddressSlug } from "./property-seo";
 import { previewWebsiteTheme } from "./property-design";
 import { isPublicLocation, lookupNearbyPlaces, peekNearbyPlaces, type NearbyPlacesResult } from "./nearby-places";
 import { renderNearbyMap } from "./nearby-map";
@@ -57,6 +57,49 @@ function ttl(env: Env): number {
 
 function functionsBase(env: Env): string {
   return String(env.SUPABASE_FUNCTIONS_URL || "").replace(/\/+$/, "");
+}
+
+/** Keep absence/collision separate from an unavailable authority: a direct
+ * address route must never turn a resolver outage into a false 404. */
+type AddressLookup = { kind: "unique"; slug: string; claimed: boolean } | { kind: "missing" } | { kind: "unavailable" };
+async function uniqueAddressSlug(descriptor: string, env: Env): Promise<AddressLookup> {
+  if (env.ADDRESS_ONLY_CANONICAL !== "enabled" || !/^[a-z0-9][a-z0-9-]{0,119}$/.test(descriptor)) return { kind: "missing" };
+  const answer = await fetchUpstreamJSON(`/tours/address-lookup/${encodeURIComponent(descriptor)}`, env, false, undefined, true);
+  if (answer.kind === "not-found") return { kind: "missing" };
+  if (answer.kind !== "ok" || !answer.value || typeof answer.value !== "object" || Array.isArray(answer.value)) return { kind: "unavailable" };
+  const value = answer.value as Record<string, unknown>;
+  if (Object.keys(value).length === 1 && value.status === "ambiguous") return { kind: "missing" };
+  const keys = Object.keys(value).sort().join(",");
+  if ((keys !== "slug,status" && keys !== "claimed,slug,status") || value.status !== "unique"
+      || (keys === "claimed,slug,status" && value.claimed !== true)
+      || typeof value.slug !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(value.slug)) return { kind: "unavailable" };
+  return { kind: "unique", slug: value.slug, claimed: value.claimed === true };
+}
+
+async function hasUniqueAddress(tour: Tour, env: Env): Promise<"unique" | "not-unique" | "unavailable"> {
+  // Noindex remains private-by-address unless a previously exposed bare URL
+  // was reserved for this exact listing before the dated-link migration.
+  const descriptor = propertyAddressSlug(tour.listing?.address);
+  if (!descriptor) return "not-unique";
+  const lookup = await uniqueAddressSlug(descriptor, env);
+  if (lookup.kind === "unavailable") return "unavailable";
+  if (lookup.kind !== "unique" || lookup.slug !== tour.slug) return "not-unique";
+  // After dated URLs are enabled, only already-reserved bare addresses keep
+  // their single-segment identity. Every new publication gets a collision-
+  // proof address+date+slug link, so a later duplicate cannot break its link.
+  if (env.PROPERTY_DATE_SUFFIX === "enabled" && !lookup.claimed) return "not-unique";
+  if (!allowsIndexing(tour) && !lookup.claimed) return "not-unique";
+  // A one-segment legacy publication slug must continue to name its existing
+  // property, even if it happens to equal another listing's address spelling.
+  if (/^[A-Za-z0-9_-]{1,64}$/.test(descriptor) && descriptor !== tour.slug) {
+    const alias = await fetchUpstreamJSON(`/tours/${encodeURIComponent(descriptor)}`, env);
+    if (alias.kind === "error") return "unavailable";
+    if (alias.kind === "ok") {
+      if (!isTour(alias.value)) return "unavailable";
+      if (alias.value.slug !== tour.slug) return "not-unique";
+    }
+  }
+  return "unique";
 }
 
 function htmlResponse(
@@ -256,6 +299,8 @@ async function handleTour(
   env: Env,
   ctx: ExecutionContext,
   unbranded = false,
+  addressLookupOn404 = false,
+  expectedAddress?: string,
 ): Promise<Response> {
   const base = unbranded ? UNBRANDED_HEADERS : {};
   const notFound = () =>
@@ -267,8 +312,14 @@ async function handleTour(
       ? htmlResponse(unbrandedFallback("error"), status, { ...base, "Cache-Control": "no-store" }, { unbranded })
       : htmlResponse(errorPage(), status, { "Cache-Control": "no-store" });
 
-  // Slugs are nanoid (base64url) — reject anything else fast.
+  // Slugs are nanoid (base64url) — reject anything else fast. The dated
+  // browser alias has already been parsed to its full publication slug.
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug)) {
+    if (addressLookupOn404 && !expectedAddress) {
+      const resolved = await uniqueAddressSlug(slug, env);
+      if (resolved.kind === "unique") return handleTour(resolved.slug, req, url, env, ctx, false, false, slug);
+      if (resolved.kind === "unavailable") return upstreamError(503);
+    }
     return unbranded
       ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "no-store" }, { unbranded })
       : htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
@@ -297,20 +348,24 @@ async function handleTour(
   }
 
   const publicBase: "/f" | "/property" = url.pathname.startsWith("/property/") ? "/property" : "/f";
-  const renderOpts = { embed, unbranded, origin: url.origin, page, publicBase, previewTheme, addressUrls: !demo };
+  const renderOpts = { embed, unbranded, origin: url.origin, page, publicBase, previewTheme,
+    addressUrls: !demo, datedAddressCanonical: env.PROPERTY_DATE_SUFFIX === "enabled" };
 
   /** Render + (on `/u/`) refuse to serve anything that trips the self-check. */
-  const finish = (tour: Tour, nearby: NearbyPlacesResult | null = null): Response => {
+  const finish = (tour: Tour, nearby: NearbyPlacesResult | null = null, addressOnly = false): Response => {
     if (previewTheme && (tour.space_type || "real_estate") !== "real_estate") return notFound();
     // Resolve the address only after the normal current-publication/hosting
     // authority has admitted this tour. Old short links keep working; an old
     // address spelling redirects to today's actual property without leaking a
     // private/unpublished address or treating the descriptor as identity.
-    if (!demo && !unbranded && (tour.space_type || "real_estate") === "real_estate" && /^\/property\/[^/]+\/[^/]+$/.test(url.pathname)) {
-      const canonicalPath = propertyAddressPath(tour.slug, tour.listing?.address);
+    if (!demo && (tour.space_type || "real_estate") === "real_estate"
+        && (unbranded ? /^\/u\/[^/]+\/[^/]+$/ : /^\/property\/[^/]+\/[^/]+$/).test(url.pathname)) {
+      const canonicalPath = addressOnly ? propertyAddressOnlyPath(tour.listing?.address)!
+        : propertyAddressPath(tour.slug, tour.listing?.address, unbranded ? "/u" : "/property",
+          !unbranded && env.PROPERTY_DATE_SUFFIX === "enabled" ? tour.published_at : undefined);
       if (url.pathname !== canonicalPath) {
         const target = new URL(canonicalPath, url.origin); target.search = url.search;
-        return new Response(null, { status: 308, headers: { Location: target.href, "Cache-Control": "no-store" } });
+        return new Response(null, { status: 308, headers: { ...(unbranded ? UNBRANDED_HEADERS : {}), Location: target.href, "Cache-Control": "no-store" } });
       }
     }
     const t = demo && !previewTheme ? ttl(env) : 0;
@@ -319,7 +374,7 @@ async function handleTour(
       functionsBase(env),
       env.SUPABASE_ANON_KEY || "",
       env.TURNSTILE_SITE_KEY || "",
-      nearby ? { ...renderOpts, nearby } : renderOpts,
+      nearby ? { ...renderOpts, nearby, addressOnlyCanonical: addressOnly } : { ...renderOpts, addressOnlyCanonical: addressOnly },
     );
     if (unbranded) {
       // Fail CLOSED. An MLS unbranded field must never receive a page with
@@ -352,17 +407,41 @@ async function handleTour(
   if (demo) return finish(buildDemoTour(demoAs));
 
   const upstream = await fetchUpstreamJSON(`/tours/${encodeURIComponent(slug)}`, env);
-  if (upstream.kind === "not-found") return notFound();
+  if (upstream.kind === "not-found") {
+    if (addressLookupOn404 && !expectedAddress) {
+      const resolved = await uniqueAddressSlug(slug, env);
+      if (resolved.kind === "unique") return handleTour(resolved.slug, req, url, env, ctx, false, false, slug);
+      if (resolved.kind === "unavailable") return upstreamError(503);
+    }
+    return notFound();
+  }
   if (upstream.kind === "error") return upstreamError(upstream.status);
   if (!isTour(upstream.value)) return upstreamError();
   try {
+    const addressEligible = !unbranded && !embed && !previewTheme
+      && (upstream.value.space_type || "real_estate") === "real_estate"
+    const addressState = addressEligible ? await hasUniqueAddress(upstream.value, env) : "not-unique";
+    if (expectedAddress && addressState === "unavailable") return upstreamError(503);
+    const addressOnly = addressState === "unique";
+    // A resolver result is never publication authority by itself: re-read the
+    // actual tour and require a fresh proof for this exact requested alias.
+    // A reserved, previously shared bare address can outlive a text address
+    // correction, but may never point to another listing's publication.
+    if (expectedAddress) {
+      const expected = await uniqueAddressSlug(expectedAddress, env);
+      if (expected.kind === "unavailable") return upstreamError(503);
+      if (expected.kind !== "unique" || expected.slug !== upstream.value.slug
+          || (env.PROPERTY_DATE_SUFFIX === "enabled" && !expected.claimed)
+          || (!expected.claimed && propertyAddressSlug(upstream.value.listing?.address) !== expectedAddress)
+          || (!allowsIndexing(upstream.value) && !expected.claimed)) return notFound();
+    }
     // Already-cached neighbourhood places become static markup on the Location
     // page (map + list, no script needed). Cache-only: never a provider call,
     // lease or budget charge, and bounded so storage cannot delay the HTML.
     const nearby = page === "location" && !embed && !unbranded && (upstream.value.space_type || "real_estate") === "real_estate"
       ? await peekNearbyPlaces({ space_type: "real_estate", published_at: String(upstream.value.published_at || ""), listing: { lat: typeof upstream.value.listing?.lat === "number" ? upstream.value.listing.lat : null, lng: typeof upstream.value.listing?.lng === "number" ? upstream.value.listing.lng : null } }, env)
       : null;
-    return finish(upstream.value, nearby);
+    return finish(upstream.value, nearby, addressOnly);
   } catch {
     // A malformed nested field is an invalid upstream response, not a missing
     // published tour. Never render its raw JSON/error text into the public page.
@@ -424,6 +503,37 @@ async function handleNearbyPlaces(slug: string, req: Request, url: URL, env: Env
   // so the page never needs coordinates, tiles or a map script of its own.
   const map = renderNearbyMap(result, upstream.value.listing);
   return reply(200, { ...result, ...(map ? { map_html: map } : {}), license_url: "https://www.openstreetmap.org/copyright" });
+}
+
+/** A share control starts with an already-public publication slug. This read
+ * checks the current hosted tour and returns the same branded canonical path
+ * that the page renderer would use. It never accepts an address as input. */
+async function handleShareLink(slug: string, req: Request, url: URL, env: Env): Promise<Response> {
+  const headers = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow",
+    "X-Content-Type-Options": "nosniff", "Content-Type": "application/json; charset=utf-8" };
+  const reply = (status: number, body: unknown) => {
+    const response = new Response(JSON.stringify(body), { status, headers });
+    return req.method === "HEAD" ? new Response(null, response) : response;
+  };
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug) || isDemoSlug(slug) || url.search) {
+    return reply(404, { error: "not_found" });
+  }
+  const upstream = await fetchUpstreamJSON(`/tours/${encodeURIComponent(slug)}`, env);
+  if (upstream.kind === "not-found") return reply(404, { error: "not_found" });
+  if (upstream.kind === "error") return reply(upstream.status, { error: "unavailable" });
+  if (!isTour(upstream.value) || upstream.value.slug !== slug) return reply(502, { error: "unavailable" });
+  try {
+    const tour = upstream.value;
+    const realEstate = (tour.space_type || "real_estate") === "real_estate";
+    const unique = realEstate && await hasUniqueAddress(tour, env) === "unique";
+    const path = realEstate
+      ? unique ? propertyAddressOnlyPath(tour.listing.address)! : propertyAddressPath(slug, tour.listing.address,
+          "/property", env.PROPERTY_DATE_SUFFIX === "enabled" ? tour.published_at : undefined)
+      : `/f/${encodeURIComponent(slug)}`;
+    return reply(200, { url: new URL(path, url.origin).href, address_only: unique });
+  } catch {
+    return reply(502, { error: "unavailable" });
+  }
 }
 
 /** Static marketing and fresh, opt-in customer child sitemaps. Customer
@@ -513,20 +623,29 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     const slug = safeDecode(nearbyMatch[1]);
     return handleNearbyPlaces(slug || "", req, url, env);
   }
+  const shareLinkMatch = path.match(/^\/f\/([^/]+)\/share-link$/);
+  if (shareLinkMatch) {
+    const slug = safeDecode(shareLinkMatch[1]);
+    return handleShareLink(slug || "", req, url, env);
+  }
   // A browser-only alias avoids previously cached app-link rules. This is
   // the same validated published slug/read path, never a redirect to /f/.
+  // The dot separates dated aliases from all legacy publication slugs, whose
+  // alphabet has never included a dot. A shared old token cannot be hijacked.
+  const datedAddressMatch = path.match(/^\/property\/([a-z0-9][a-z0-9-]{0,119})\/\d{8}\.([A-Za-z0-9_-]{1,64})$/);
   const addressMatch = path.match(/^\/property\/([a-z0-9][a-z0-9-]{0,119})\/([^/]+)$/);
-  const fMatch = addressMatch || path.match(/^\/(?:f|property)\/([^/]+)$/);
+  const fMatch = datedAddressMatch || addressMatch || path.match(/^\/(?:f|property)\/([^/]+)$/);
   if (fMatch) {
-    const slug = safeDecode(fMatch[addressMatch ? 2 : 1]);
+    const slug = safeDecode(fMatch[datedAddressMatch || addressMatch ? 2 : 1]);
     if (slug === null) return htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
-    return handleTour(slug, req, url, env, ctx);
+    return handleTour(slug, req, url, env, ctx, false, !datedAddressMatch && !addressMatch && path.startsWith("/property/"));
   }
 
   // The MLS-safe twin of /f/. Same slug, same payload, same renderer.
-  const uMatch = path.match(/^\/u\/([^/]+)$/);
+  const uAddressMatch = path.match(/^\/u\/([a-z0-9][a-z0-9-]{0,119})\/([^/]+)$/);
+  const uMatch = uAddressMatch || path.match(/^\/u\/([^/]+)$/);
   if (uMatch) {
-    const slug = safeDecode(uMatch[1]);
+    const slug = safeDecode(uMatch[uAddressMatch ? 2 : 1]);
     if (slug === null) {
       return htmlResponse(
         unbrandedFallback("notfound"),

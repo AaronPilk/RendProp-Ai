@@ -19,10 +19,11 @@ const malformed: UpstreamJSON = { kind: "error", status: 502 };
 
 /** One deadline covers headers AND the decoded response stream. No retries,
  * raw upstream error messages, response bodies or credentials escape to callers. */
-export async function fetchUpstreamJSON(path: string, env: Env, gateway = false, payload?: Record<string, unknown>): Promise<UpstreamJSON> {
+export async function fetchUpstreamJSON(path: string, env: Env, gateway = false, payload?: Record<string, unknown>, addressLookup = false): Promise<UpstreamJSON> {
   // This secret is only used by the server-to-server delivery path. Never
   // attach it to ordinary tour/portfolio JSON or serialize it into HTML.
   if (gateway && !/^[a-f0-9]{64}$/.test(env.MEDIA_GATEWAY_SECRET || "")) return unavailable;
+  if (addressLookup && !/^[a-f0-9]{64}$/.test(env.ADDRESS_LOOKUP_SECRET || "")) return unavailable;
   const controller = new AbortController();
   let response: Response | undefined;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -52,6 +53,7 @@ export async function fetchUpstreamJSON(path: string, env: Env, gateway = false,
       headers: { apikey: key, ...(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(key)?{Authorization:`Bearer ${key}`}:{ }), Accept: "application/json",
         ...(region && READ_REGIONS.has(region) ? { "x-region": region } : {}),
         ...(gateway ? { "X-Rendprop-Media-Gateway": env.MEDIA_GATEWAY_SECRET! } : {}),
+        ...(addressLookup ? { "X-Rendprop-Address-Lookup": env.ADDRESS_LOOKUP_SECRET! } : {}),
         ...(payload ? { "Content-Type": "application/json" } : {}) },
       ...(payload ? {body:JSON.stringify(payload)} : {}),
       // Publication state must remain fresh; HTML also bypasses customer caches.

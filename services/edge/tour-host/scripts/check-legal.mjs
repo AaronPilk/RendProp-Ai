@@ -20,7 +20,7 @@ function provider(name, inputs) {
   expect(matches.length === 1, `${name}: exactly one provider row`);
   for (const input of inputs) expect(matches.length === 1 && matches[0].includes(input), `${name}: ${input}`);
 }
-expect(t.includes("account-based workspace") && t.includes("sign in with Apple") && t.includes("one published listing free"), "Terms state the account requirement and the free tier");
+expect(t.includes("account-based workspace") && t.includes("sign in with Apple") && t.includes("The app is the source of truth"), "Terms state the account requirement and where current plan terms appear");
 expect(p.includes("Account details") && p.includes("older guest session"), "Privacy covers the account identity and legacy guest sessions");
 expect(p.includes("scripts or transcript excerpts") && p.includes("personal information"), "AI inventory covers text and potentially identifying content");
 provider("Google Gemini", ["Selected photos or video", "text inputs"]);
@@ -65,18 +65,19 @@ expect(t.includes("at least 18 years old") && p.includes("adults aged 18 or olde
 expect(p.includes("Settings → Download account data") && p.includes("scope and omissions") && p.includes("separate download controls"), "Account JSON export and binary-media limits are stated");
 expect(p.includes("Provider copies can remain") && p.includes("paid and unpaid processing") && p.includes("video results do not expire by default"), "Provider retention is not inferred from Rendprop URL expiry");
 expect(!p.includes("They process data solely"), "No unsupported universal processor-use guarantee");
-expect(t.includes("Starter, Pro and Team, each") && t.includes("billed monthly.") && !/yearly|annual plan/i.test(t), "Payment terms state monthly-only plans (2026-10-09)");
-expect(t.includes("by confirming an Apple subscription") && t.includes("Downloading or signing in does not activate a trial"), "Trial requires eligible Apple subscription activation");
-expect(t.includes("One introductory") || t.includes("one introductory offer per subscription group"), "Trial eligibility remains Apple subscription-group scoped");
-expect(t.includes("limited to a trial usage ceiling") && t.includes("does not move Apple's renewal date forward"), "Trial usage ceiling and Apple billing date are distinct");
-expect(!t.includes("funded trial offer") && !t.includes("trial reservation"), "Terms describe the launch trial (Apple introductory offer + usage ceiling), not the inert funded-reservation flow");
+expect(t.includes("Launch plans and included usage are being finalized") && t.includes("The app is the source of truth") && t.includes("Apple shows the price, billing period"), "Terms defer current plan features and purchase terms to the app and Apple");
+expect(t.includes("If Apple presents an introductory offer") && t.includes("Downloading or signing in does not activate an offer") && t.includes("purchase sheet control"), "Introductory offers depend on Apple's purchase sheet, not download or sign-in");
+expect(t.includes("introductory offer eligibility, duration, renewal price, and terms before confirmation") && !/one introductory offer per subscription group/i.test(t), "Apple shows offer eligibility without a fixed group-level promise");
+expect(t.includes("Apple charges the price and billing schedule shown when you confirm") && t.includes("first charge after any applicable free trial") && !t.includes("limited to a trial usage ceiling"), "Terms distinguish Apple's conditional offer from unapproved usage ceilings");
+expect(!t.includes("funded trial offer") && !t.includes("trial reservation"), "Terms do not promise an operator-funded or reserved trial");
 expect(p.includes("one-way digest") && p.includes("still account-related data") && p.includes("remain after listing or account deletion"), "Retained trial eligibility metadata and its deletion limit are disclosed");
-expect(t.includes("reinstalling, cancelling or changing workspaces does not create another trial") && p.includes("AI usage holds and costs") && p.includes("does not reset after cancellation, reinstalling or an interrupted"), "One trial per subscription group and the retained account-related usage record are disclosed");
+expect(p.includes("AI usage holds and costs") && p.includes("prevents repeat trials or") && p.includes("Limited purchase-eligibility and usage-accounting records may remain"), "Privacy describes retained eligibility and usage records without promising a fixed trial policy");
 expect(p.includes("do not keep the deleted photos or videos available"), "Trial tombstones do not promise retained deleted media");
+expect(!/one published listing free|Starter, Pro and Team, each|limited to a trial usage ceiling|reinstalling, cancelling or changing workspaces does not create another trial/i.test(t), "Terms omit superseded free-listing, fixed-plan and guaranteed-trial promises");
 for (const filename of ["index.html", "pricing.html", "llms.txt"]) {
   const copy = readFileSync(new URL(`../public/${filename}`, import.meta.url), "utf8");
-  expect(!/every (?:new install|plan) (?:also gets|starts with)|free week with no card/i.test(copy), `${filename}: no automatic signup-week or universal trial promise`);
-  expect(/eligible/i.test(copy) && /confirm/i.test(copy) && /Apple/i.test(copy), `${filename}: eligibility and subscription activation disclosed`);
+  expect(!/every (?:new install|plan) (?:also gets|starts with)|free week with no card|one published listing free|first (?:published )?listing (?:is )?free|limited to a trial usage ceiling/i.test(copy), `${filename}: no automatic free-listing, signup-week or fixed trial-usage promise`);
+  expect(/(?:plan features|subscription options|current plan features)/i.test(copy) && /introductory offer/i.test(copy) && /Apple/i.test(copy) && /before confirm(?:ation|ing)/i.test(copy), `${filename}: current plan source and conditional Apple offer terms disclosed`);
   if (filename.endsWith(".html")) for (const [, json] of copy.matchAll(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)) {
     try { JSON.parse(json); expect(true, `${filename}: valid structured data`); }
     catch { expect(false, `${filename}: valid structured data`); }
