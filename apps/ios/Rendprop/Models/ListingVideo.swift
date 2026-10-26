@@ -573,6 +573,8 @@ struct ListingVideoComposition: Codable, Sendable {
 
 /// Completed work only: these fractions are not supplier percentages or an ETA.
 struct NativeGenerationProgress: Equatable {
+    /// Five completed aerial stages; queued_input has completed none of them.
+    static let aerialTotal = 5
     let completed: Int?
     let total: Int?
     let unit: String
@@ -593,12 +595,12 @@ struct NativeGenerationProgress: Equatable {
     static func steps(kind: String, phase: String?) -> Int? {
         if kind == "aerial" {
             switch phase {
-            case "queued_input", "preparing_input": return 1
-            case "queued_assessment", "checking_source": return 2
-            case "queued_generation", "dispatching", "processing": return 3
-            case "queued_qualification", "qualifying": return 4
-            case "queued_quality", "checking_quality": return 5
-            case "ready_for_acceptance", "accepted": return 6
+            case "queued_input", "preparing_input": return 0
+            case "queued_assessment", "checking_source": return 1
+            case "queued_generation", "dispatching", "processing": return 2
+            case "queued_qualification", "qualifying": return 3
+            case "queued_quality", "checking_quality": return 4
+            case "ready_for_acceptance", "accepted": return aerialTotal
             default: return nil
             }
         }
@@ -611,7 +613,7 @@ struct NativeGenerationProgress: Equatable {
         return nil
     }
     static func stepTotal(kind: String?) -> Int? {
-        switch kind { case "aerial": return 6; case "photo_motion": return 3; case "video": return 5; default: return nil }
+        switch kind { case "aerial": return aerialTotal; case "photo_motion": return 3; case "video": return 5; default: return nil }
     }
     static func retained(previous: Int?, incoming: Int?, incomplete: Bool, total: Int) -> Int? {
         let value = [previous, incoming].compactMap { $0 }.max()

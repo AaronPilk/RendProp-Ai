@@ -8,6 +8,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[3]
 MODEL = (ROOT / "apps/ios/Rendprop/Models/ListingVideo.swift").read_text()
 QUEUE = (ROOT / "apps/ios/Rendprop/Render/ReelWorkQueue.swift").read_text()
+SERVICE = (ROOT / "apps/ios/Rendprop/Networking/AerialOpeningService.swift").read_text()
 VIEW = (ROOT / "apps/ios/Rendprop/Render/ReelWorkBanner.swift").read_text()
 
 
@@ -33,6 +34,7 @@ swift = "\n\n".join(
         declaration(MODEL, "struct NativeGenerationProgress: Equatable"),
         declaration(QUEUE, "struct NativeActivityScope: Codable, Equatable"),
         declaration(QUEUE, "struct NativeActivityEntry: Codable, Identifiable, Equatable"),
+        declaration(QUEUE, "struct NativeActivityHistory: Codable"),
         """
 @main struct ActivityStatusRegression {
     static func main() {
@@ -68,6 +70,44 @@ swift = "\n\n".join(
         entry.milestoneCompleted = 5
         let failed = entry.generationProgress
         assert(!failed.checksExpected && failed.percent == nil)
+
+        let aerialPhases: [(String, Int)] = [
+            ("queued_input", 0), ("preparing_input", 0),
+            ("queued_assessment", 1), ("checking_source", 1),
+            ("queued_generation", 2), ("processing", 2),
+            ("queued_qualification", 3), ("qualifying", 3),
+            ("queued_quality", 4), ("checking_quality", 4),
+            ("ready_for_acceptance", 5), ("accepted", 5)
+        ]
+        var aerial = NativeActivityEntry(
+            id: "aerial:restored", scope: scope, listingID: UUID(), listingTitle: "QA Exterior",
+            kind: .aerial, state: .working, stage: "Making opening",
+            completed: nil, total: nil, startedAt: nil, firstObservedAt: Date(),
+            progressToken: "queued_input", lastProgressAt: nil, lastCheckedAt: nil,
+            milestoneCompleted: 6, checkFailed: nil, expectsStatusChecks: true,
+            countUnit: nil, progressKind: nil)
+        for (phase, completed) in aerialPhases {
+            assert(NativeGenerationProgress.steps(kind: "aerial", phase: phase) == completed)
+            aerial.state = phase == "accepted" ? .ready : .working
+            aerial.progressToken = phase
+            aerial.milestoneCompleted = 6 // A Build 119 Activity receipt.
+            let progress = aerial.generationProgress
+            assert(progress.completed == completed && progress.total == 5,
+                   "Incorrect completed stages for \\(phase)")
+            assert(progress.percent == completed * 20, "Incorrect percent for \\(phase)")
+        }
+        assert(NativeGenerationProgress.stepTotal(kind: "aerial") == 5)
+
+        var oldAerial = aerial
+        oldAerial.state = .attention
+        oldAerial.progressToken = "ready_for_acceptance"
+        oldAerial.milestoneCompleted = 6
+        assert(oldAerial.generationProgress.percent == 100)
+        var newAerial = oldAerial
+        newAerial.milestoneCompleted = 5
+        var history = NativeActivityHistory(entries: [oldAerial])
+        history.observe(newAerial, now: Date())
+        assert(history.entries.first?.milestoneCompleted == 5)
         print("Activity terminal/active status model: passed")
     }
 }
@@ -84,6 +124,8 @@ progress_view = declaration(VIEW, "struct NativeGenerationProgressView: View")
 assert "if progress.checksExpected {" in progress_view
 assert "if let lastProgressAt = progress.lastProgressAt {" in progress_view
 assert "else if progress.active || progress.checksExpected {" in progress_view
+assert SERVICE.count("total: NativeGenerationProgress.aerialTotal") >= 2
+assert "incoming: NativeGenerationProgress.steps(kind: \"aerial\", phase: status?.state)" in SERVICE
 
 with tempfile.TemporaryDirectory(prefix="rendprop-activity-status-") as folder:
     source = Path(folder) / "ActivityStatusRegression.swift"
