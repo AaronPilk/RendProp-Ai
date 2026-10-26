@@ -76,6 +76,9 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     # Superseded function overlay: focused drivers preserve its historical
     # replay proof and verify it refuses the later reviewed device functions.
     "20261010030225_reaudit_library_session_settlement.sql",
+    # Intro policy has compare-and-swap guards for its live function/catalog
+    # anchors; the focused policy driver proves a second application refuses.
+    "20261026165813_limit_intro_trial_creative_spend.sql",
 })
 
 
