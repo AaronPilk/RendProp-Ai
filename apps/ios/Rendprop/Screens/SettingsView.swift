@@ -866,17 +866,15 @@ struct SettingsView: View {
             // purchases must be "visible to the reviewer"). Sign in with Apple
             // is required only to PUBLISH, and the review notes say so, so a
             // reviewer who never signs in must still be able to reach the
-            // paywall — this row is the only signed-out route to it. Buying
-            // while signed out is safe: StoreKit takes the purchase, the
-            // transaction is deliberately left unfinished until the server
-            // confirms it, and PurchaseManager says "Sign in to finish turning
-            // on your plan. Your purchase is safe" (PurchaseManager.sync).
+            // paywall — this row is the only signed-out route to it. The
+            // purchase action requires sign-in and a verified workspace
+            // before opening Apple's payment sheet.
             PlanActionRows(planName: usage?.entitlements?.plan ?? usage?.planName,
                            onPlanChanged: { Task { await loadUsage() } })
         } header: {
             Text("Plan & usage")
         } footer: {
-            Text(canShowSupplierCosts && usage?.servingEnvelope != nil ? ServingEnvelopeSummary.explanation : usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo and reel allowances use their 30-day window. Pull down to refresh.")
+            Text(canShowSupplierCosts && usage?.servingEnvelope != nil ? ServingEnvelopeSummary.explanation : usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil && RecordedTrialPresentation.isCurrent(planName: usage?.entitlements?.plan ?? usage?.planName) ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo and reel allowances use their 30-day window. Pull down to refresh.")
         }
     }
 
@@ -925,6 +923,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func usageRows(_ usage: UsageSummary) -> some View {
+        let showCurrentTrial = RecordedTrialPresentation.isCurrent(planName: usage.entitlements?.plan ?? usage.planName)
         if let hosting = usage.hostingRetention {
             if let deadline = hosting.deadline {
                 LabeledContent(hosting.hostingAvailable ? "Public hosting ends" : "Public hosting ended", value: deadline.formatted(date: .abbreviated, time: .omitted))
@@ -937,7 +936,7 @@ struct SettingsView: View {
         }
         // A checked ceiling envelope describes the current serving period.
         // An older funded-trial record must not hide it or replace its copy.
-        if usage.servingEnvelope == nil, let trial = usage.trialUsage, trial.status != .active {
+        if usage.servingEnvelope == nil, showCurrentTrial, let trial = usage.trialUsage, trial.status != .active {
             trialUsageRows(trial)
             if let package = usage.servingPhotoPackage { photoPackageRows(package) }
         } else if usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true {
@@ -946,8 +945,8 @@ struct SettingsView: View {
                 LabeledContent("Recorded subscription", value: Self.planLabel(plan))
             }
             Text(ServingActivationSummary.pendingExplanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
-            if let trial = usage.trialUsage { trialUsageRows(trial) }
-        } else if usage.servingEnvelope == nil, let trial = usage.trialUsage {
+            if showCurrentTrial, let trial = usage.trialUsage { trialUsageRows(trial) }
+        } else if usage.servingEnvelope == nil, showCurrentTrial, let trial = usage.trialUsage {
             trialUsageRows(trial)
             if let package = usage.servingPhotoPackage { photoPackageRows(package) }
         } else if let package = usage.servingPhotoPackage {

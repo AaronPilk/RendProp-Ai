@@ -284,20 +284,37 @@ extension MockAPIClient: PurchasesAPI {
     func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync {
         _ = signedRenewalInfo; _ = expectedOrgID
         try? await Task.sleep(nanoseconds: 300_000_000)
-        let productID = MockAPIClient.productID(inJWS: signedTransaction)
-        let plan = productID.flatMap(RendpropProducts.planName(for:)) ?? "pro"
+        guard let productID = MockAPIClient.productID(inJWS: signedTransaction),
+              let originalTransactionID = MockAPIClient.originalTransactionID(inJWS: signedTransaction),
+              let plan = RendpropProducts.planName(for: productID) else {
+            throw CloudSyncError.invalidResponse
+        }
         return EntitlementSync(
             plan: plan,
             source: "apple",
             expiresAt: Date().addingTimeInterval(30 * 24 * 60 * 60),
             productId: productID,
-            originalTransactionId: "mock-original-transaction",
+            originalTransactionId: originalTransactionID,
             environment: "Sandbox")
     }
 
     /// Best-effort read of `productId` out of a JWS payload (middle segment,
     /// base64url, no signature check — offline only, never a trust decision).
     fileprivate static func productID(inJWS jws: String) -> String? {
+        payload(inJWS: jws)?["productId"] as? String
+    }
+
+    /// Echo Apple's actual original ID like the live endpoint. A placeholder
+    /// makes the StoreKit test fail the same receipt-binding check used in
+    /// production even when its locally signed transaction is valid.
+    fileprivate static func originalTransactionID(inJWS jws: String) -> String? {
+        let value = payload(inJWS: jws)?["originalTransactionId"]
+        if let string = value as? String { return string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func payload(inJWS jws: String) -> [String: Any]? {
         let parts = jws.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count >= 2 else { return nil }
         var b64 = String(parts[1])
@@ -306,6 +323,6 @@ extension MockAPIClient: PurchasesAPI {
         while b64.count % 4 != 0 { b64 += "=" }
         guard let data = Data(base64Encoded: b64),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return obj["productId"] as? String
+        return obj
     }
 }
