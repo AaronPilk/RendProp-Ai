@@ -14,6 +14,9 @@ struct PhotoFeedbackControl: View {
     let exportOpened: Bool
     /// Presentation only: reveal the inserted reasons for this exact version.
     var onRevealReasons: (String) -> Void = { _ in }
+    /// When this control already lives in a full feedback sheet, keep its
+    /// reasons in that sheet instead of stacking a second modal on top.
+    var presentsReasonSheet = true
 
     static func reasonPromptID(for versionID: String) -> String {
         "photoVersion.feedback.reasons." + versionID
@@ -43,7 +46,7 @@ struct PhotoFeedbackControl: View {
                 VStack(spacing: 8) { verdictButton(.useful); verdictButton(.needsWork) }
             }
             if choosingReasons {
-                if !dynamicTypeSize.isAccessibilitySize { reasonPicker }
+                if !dynamicTypeSize.isAccessibilitySize || !presentsReasonSheet { reasonPicker }
             } else if let saved, saved.verdict == .needsWork {
                 Text(saved.reasons.map(\.label).joined(separator: " · "))
                     .font(.caption).foregroundStyle(Theme.inkDim)
@@ -71,7 +74,7 @@ struct PhotoFeedbackControl: View {
         .onChange(of: listingSelected) { _ in noticeReviewOutcome() }
         .onChange(of: exportOpened) { _ in noticeReviewOutcome() }
         .sheet(isPresented: Binding(
-            get: { choosingReasons && dynamicTypeSize.isAccessibilitySize },
+            get: { choosingReasons && dynamicTypeSize.isAccessibilitySize && presentsReasonSheet },
             set: { if !$0 { choosingReasons = false } }
         )) {
             NavigationStack {
@@ -164,7 +167,7 @@ struct PhotoFeedbackControl: View {
         .task {
             await Task.yield()
             guard choosingReasons, !Task.isCancelled else { return }
-            if !dynamicTypeSize.isAccessibilitySize { onRevealReasons(version.id) }
+            if !dynamicTypeSize.isAccessibilitySize || !presentsReasonSheet { onRevealReasons(version.id) }
             reasonPromptFocused = true
         }
         .onDisappear { reasonPromptFocused = false }

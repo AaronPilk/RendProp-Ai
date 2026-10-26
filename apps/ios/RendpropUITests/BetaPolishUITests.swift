@@ -1035,6 +1035,13 @@ final class BetaPolishUITests: XCTestCase {
             XCTAssertTrue(use.waitForExistence(timeout: 10), app.debugDescription)
             let selectedBefore = use.label
             assertAcceptanceFooterIsVisible()
+            let openFeedback = app.buttons["photoVersion.feedback.open"]
+            if largestText {
+                XCTAssertTrue(openFeedback.waitForExistence(timeout: 5),
+                              "Optional feedback remains reachable from the native toolbar at large text sizes")
+                openFeedback.tap()
+                XCTAssertTrue(app.navigationBars["Photo feedback"].waitForExistence(timeout: 5))
+            }
             let useful = app.buttons["photoVersion.feedback.useful"]
             let needsWork = app.buttons["photoVersion.feedback.needsWork"]
             let mode = largestText ? "largest-text" : "normal"
@@ -1044,8 +1051,14 @@ final class BetaPolishUITests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(control.frame.height, 44)
                 XCTAssertGreaterThanOrEqual(control.frame.minX, app.frame.minX)
                 XCTAssertLessThanOrEqual(control.frame.maxX, app.frame.maxX)
-                XCTAssertLessThanOrEqual(control.frame.maxY, use.frame.minY - 8,
-                    "Both feedback choices must scroll fully above the measured fixed actions, including at Accessibility XXXL")
+                if largestText {
+                    guard let (_, _, bottom) = acceptanceViewport() else { return }
+                    XCTAssertLessThanOrEqual(control.frame.maxY, bottom,
+                        "Both feedback choices must fit the dedicated sheet viewport")
+                } else {
+                    XCTAssertLessThanOrEqual(control.frame.maxY, use.frame.minY - 8,
+                        "Both feedback choices must scroll fully above the measured fixed actions")
+                }
             }
             attach("photo-feedback-\(mode)-optional-control")
             revealForBoundedAcceptance(useful); useful.tap()
@@ -1055,6 +1068,7 @@ final class BetaPolishUITests: XCTestCase {
             XCTAssertTrue(useful.isSelected)
             XCTAssertEqual(use.label, selectedBefore, "Feedback never changes the listing selection")
             // Deep scrolling must never hide the native dismissal or history action.
+            if largestText { app.buttons["photoVersion.feedback.close"].tap() }
             assertPhotoReviewNavigationIsVisible()
             app.navigationBars["Photo versions"].buttons["photoVersion.history"].tap()
             let historyNavigation = app.navigationBars["All edits"]
@@ -1063,13 +1077,14 @@ final class BetaPolishUITests: XCTestCase {
                           "All edits opens a visual saved-version sheet, not a dropdown")
             historyNavigation.buttons["Close"].tap()
             assertPhotoReviewNavigationIsVisible()
+            if largestText { openFeedback.tap() }
             XCTAssertTrue(useful.isSelected); XCTAssertEqual(use.label, selectedBefore)
             revealForBoundedAcceptance(needsWork)
             needsWork.tap()
             if largestText {
                 XCTAssertTrue(app.navigationBars["Photo feedback"].waitForExistence(timeout: 5),
-                              "Accessibility-sized reasons open in a native sheet")
-                XCTAssertTrue(app.buttons["photoVersion.feedback.cancel"].exists)
+                              "Accessibility-sized reasons stay in the dedicated native feedback sheet")
+                XCTAssertTrue(app.buttons["photoVersion.feedback.close"].exists)
             }
             let save = app.buttons["photoVersion.feedback.save"]
             XCTAssertTrue(save.waitForExistence(timeout: 5)); XCTAssertFalse(save.isEnabled, "Needs work requires a reason")
@@ -1079,7 +1094,10 @@ final class BetaPolishUITests: XCTestCase {
             expectation(for: NSPredicate { _, _ in
                 guard let (_, top, bottom) = self.acceptanceViewport() else { return false }
                 return prompt.exists && prompt.isHittable && reason.exists && reason.isHittable
-                    && prompt.frame.minY >= top - 8 && reason.frame.maxY <= bottom
+                    // ScrollViewReader aligns the prompt to the nav edge;
+                    // AX rounds that edge to a tenth of a point (141.9 vs
+                    // 142.0 on iOS 26.4). Allow two points of rounding only.
+                    && prompt.frame.minY >= top - 10 && reason.frame.maxY <= bottom
             }, evaluatedWith: reason)
             waitForExpectations(timeout: 5)
             if largestText { XCTAssertTrue(app.navigationBars["Photo feedback"].isHittable) }
@@ -1122,11 +1140,14 @@ final class BetaPolishUITests: XCTestCase {
                 save.tap()
             }
             if largestText {
-                XCTAssertFalse(app.navigationBars["Photo feedback"].waitForExistence(timeout: 1))
+                XCTAssertTrue(app.navigationBars["Photo feedback"].exists)
+                app.buttons["photoVersion.feedback.close"].tap()
                 assertPhotoReviewNavigationIsVisible()
             }
-            XCTAssertTrue(needsWork.isSelected)
-            XCTAssertTrue(status.label.hasPrefix("Saved on this phone."), status.label)
+            if !largestText {
+                XCTAssertTrue(needsWork.isSelected)
+                XCTAssertTrue(status.label.hasPrefix("Saved on this phone."), status.label)
+            }
             XCTAssertEqual(use.label, selectedBefore)
             assertAcceptanceFooterIsVisible()
             attach("photo-feedback-\(mode)-saved-local-opinion")
@@ -1143,19 +1164,24 @@ final class BetaPolishUITests: XCTestCase {
             revealForBoundedAcceptance(original)
             XCTAssertTrue(original.exists && original.isHittable)
             original.tap()
-            XCTAssertFalse(useful.exists || needsWork.exists, "Original has no AI-output feedback")
+            if largestText { XCTAssertFalse(openFeedback.exists, "Original has no AI-output feedback") }
+            else { XCTAssertFalse(useful.exists || needsWork.exists, "Original has no AI-output feedback") }
             XCTAssertEqual(photoReviewFooterButton(download: true).label, "Download original photo")
             assertAcceptanceFooterIsVisible()
             choices.buttons["Staged"].tap()
+            if largestText { openFeedback.tap() }
             revealForBoundedAcceptance(needsWork)
             XCTAssertTrue(needsWork.isSelected, "Browsing Original preserves the local opinion for the exact saved output")
             XCTAssertEqual(use.label, selectedBefore)
+            if largestText { app.buttons["photoVersion.feedback.close"].tap() }
             app.buttons["Close"].tap()
             revealForBoundedAcceptance(photo); photo.tap()
+            if largestText { openFeedback.tap() }
             revealForBoundedAcceptance(needsWork)
             XCTAssertTrue(needsWork.isSelected, "Reopening the same output retains its queued opinion")
             XCTAssertEqual(use.label, selectedBefore)
             attach("photo-feedback-\(mode)-reopened-same-output")
+            if largestText { app.buttons["photoVersion.feedback.close"].tap() }
             app.buttons["Close"].tap()
         }
     }

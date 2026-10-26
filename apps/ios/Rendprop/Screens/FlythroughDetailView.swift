@@ -7987,6 +7987,7 @@ struct PhotoCompareView: View {
     @State private var exporting: PhotoExportSelection?
     @State private var showFullComparison = false
     @State private var showVersionHistory = false
+    @State private var showAccessibilityFeedback = false
     @State private var feedbackReasonReveal: FeedbackReasonReveal?
     @State private var imageContext: NativeMediaExportContext?
     @State private var selectionError: String?
@@ -8146,6 +8147,7 @@ struct PhotoCompareView: View {
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in clearAndDismiss() }
         .onReceive(photoJobs.$job) { receiveSinglePhotoWork($0) }
         .sheet(isPresented: $showVersionHistory) { reviewHistorySheet }
+        .sheet(isPresented: $showAccessibilityFeedback) { accessibilityFeedbackSheet }
         .sheet(isPresented: $showEditActions, onDismiss: continueSinglePhotoEdit) {
             if let editOriginal, let listing = reviewListing {
                 PhotoReviewEditSheet(original: editOriginal, space: listing.isSample ? SpaceType.current : listing.spaceType) {
@@ -8452,6 +8454,18 @@ struct PhotoCompareView: View {
             .accessibilityLabel("Close")
             .accessibilityIdentifier("photoVersion.close")
         }
+        if dynamicTypeSize.isAccessibilitySize, !showOriginal,
+           let feedbackVersion = viewed.savedVersion, PhotoFeedbackQueue.shared.canRecord(feedbackVersion) {
+            ToolbarItem(placement: .primaryAction) {
+                Button { showAccessibilityFeedback = true } label: {
+                    Label("Photo feedback", systemImage: "bubble.left.and.bubble.right")
+                        .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                }
+                .accessibilityLabel("Photo feedback")
+                .accessibilityHint("Optional feedback about this saved edit. It does not change your photo or listing.")
+                .accessibilityIdentifier("photoVersion.feedback.open")
+            }
+        }
         if viewed.history.count > 1 {
             ToolbarItem(placement: .primaryAction) {
                 Button { showVersionHistory = true } label: {
@@ -8463,6 +8477,43 @@ struct PhotoCompareView: View {
                 .accessibilityIdentifier("photoVersion.history")
             }
         }
+    }
+
+    private var accessibilityFeedbackSheet: some View {
+        NavigationStack {
+            ScrollViewReader { scroll in
+                ScrollView {
+                    if !showOriginal, let feedbackVersion = viewed.savedVersion,
+                       PhotoFeedbackQueue.shared.canRecord(feedbackVersion) {
+                        PhotoFeedbackControl(version: feedbackVersion,
+                                             directory: viewed.enhancedURL.deletingLastPathComponent(),
+                                             cloudListing: isCloudListing, listingSelected: publicationSelected,
+                                             exportOpened: exporting != nil,
+                                             onRevealReasons: { versionID in
+                                                 withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                                                     scroll.scrollTo(PhotoFeedbackControl.reasonPromptID(for: versionID), anchor: .top)
+                                                 }
+                                             }, presentsReasonSheet: false)
+                            .id(feedbackVersion.id)
+                            .padding(20)
+                            .frame(maxWidth: 760)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .accessibilityIdentifier("photoVersion.feedback.reasonSheet.scroll")
+                .background(Theme.bg.ignoresSafeArea())
+            }
+            .navigationTitle("Photo feedback")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { showAccessibilityFeedback = false }
+                        .accessibilityIdentifier("photoVersion.feedback.close")
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
     }
 
     private var reviewHistorySheet: some View {
@@ -8559,7 +8610,8 @@ struct PhotoCompareView: View {
             }
             // Optional feedback on this exact AI version. It sits after the
             // required checks and never changes them or any action above.
-            if !showOriginal, let feedbackVersion = viewed.savedVersion, PhotoFeedbackQueue.shared.canRecord(feedbackVersion) {
+            if !dynamicTypeSize.isAccessibilitySize, !showOriginal,
+               let feedbackVersion = viewed.savedVersion, PhotoFeedbackQueue.shared.canRecord(feedbackVersion) {
                 PhotoFeedbackControl(version: feedbackVersion, directory: viewed.enhancedURL.deletingLastPathComponent(),
                                      cloudListing: isCloudListing, listingSelected: publicationSelected,
                                      exportOpened: exporting != nil, onRevealReasons: { versionID in
@@ -8760,6 +8812,7 @@ struct PhotoCompareView: View {
     }
 
     private func clearAndDismiss() {
+        showAccessibilityFeedback = false
         showFullComparison = false
         exporting = nil
         clearSinglePhotoEdit()
