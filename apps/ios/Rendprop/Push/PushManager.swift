@@ -386,11 +386,23 @@ final class PushManager: ObservableObject {
 
     // MARK: APNs
 
-    /// Ask iOS for a device token. Silent — no UI, no prompt — and safe to call
-    /// more than once.
+    /// Ask iOS for a device token only after the outgoing account's server
+    /// cleanup and this account's cached-token binding have completed. APNs
+    /// can show a banner before the app gets a chance to inspect its recipient.
     func registerWithAPNs() {
-        guard !Self.isSuppressed else { return }
-        UIApplication.shared.registerForRemoteNotifications()
+        guard !Self.isSuppressed, let identity = Self.currentIdentity else { return }
+        Task { @MainActor in
+            guard await finishPendingUnregisters(), Self.currentIdentity == identity else { return }
+            if let hex = lastDeviceToken {
+                registerDeviceToken(hex)
+                let binding = registrationTask
+                await binding?.value
+                guard Self.currentIdentity == identity,
+                      registeredToken == hex, registeredIdentity == identity else { return }
+            }
+            guard Self.currentIdentity == identity else { return }
+            UIApplication.shared.registerForRemoteNotifications()
+        }
     }
 
     /// iOS handed us a device token (AppDelegate). Hex-encode it and tell the
@@ -450,6 +462,7 @@ final class PushManager: ObservableObject {
         pendingReelJobID = nil
         showPrePrompt = false
         if !Self.isSuppressed {
+            UIApplication.shared.unregisterForRemoteNotifications()
             UNUserNotificationCenter.current().removeAllDeliveredNotifications()
             UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
         }
