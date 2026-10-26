@@ -9892,7 +9892,7 @@ struct AerialIntroSheet: View {
             // attached — with none, the clip is invented scenery and the
             // headline must not claim otherwise (F-A-03).
             Text(!LaunchFeatureAvailability.canGenerateAerial
-                 ? "Coming soon. You can still review saved clips and resume a request already submitted."
+                 ? LaunchFeatureAvailability.legacyAerialHeader
                  : (hasPhoto
                     ? "A cinematic AI opening shot for this \(noun) — generated from your exterior photo."
                     : "Add an exterior photo to ground an AI opening shot on this \(noun)."))
