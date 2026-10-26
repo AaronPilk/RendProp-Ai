@@ -40,6 +40,7 @@ import{backgroundObjectLimits,GENERIC_MEDIA_BYTES,REGISTERED_BACKGROUND_BYTES}fr
 //     "very useful" vs virtual tours 38%, NAR 2025).
 
 import{propertyTourIndex}from'./property-index.ts';
+import { propertyAddressLookup } from "./address-lookup.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { assert, HttpError, json, pathSegments, respondError, readJsonLimited } from "../_shared/http.ts";
 import { adminClient } from "../_shared/supabase.ts";
@@ -392,6 +393,10 @@ Deno.serve(async (req) => {
     }
     if (req.method !== "GET") throw new HttpError(405, "Only GET is supported");
     if(seg.length===1&&seg[0]==='index')return await propertyTourIndex(req);
+    if(seg[0]==="address-lookup"&&seg.length===2&&
+        !["delivery","photo-delivery","location"].includes(seg[1])) {
+      return await propertyAddressLookup(req,seg[1],adminClient());
+    }
     const slug = seg[0];
     if(seg[0]==="business-logo"&&seg.length===2&&/^[a-f0-9-]{36}$/.test(seg[1])) {
       await requireMediaGateway(req);
