@@ -1,6 +1,7 @@
 // Presenter privacy follows derived edits, reflection outputs and published
 // renders. Quality flags alone must never authorize a fresh media capability.
 import { HttpError } from "./http.ts";
+import { publicationVisibilityRows, publicationHeadDenials } from "./photo-publication-visibility.ts";
 export type MediaSourceRefs = { assets?: readonly string[]; renders?: readonly string[]; keys?: readonly string[] };
 export type MediaVisibility = { assets: Record<string, boolean>; renders: Record<string, boolean>; keys: Record<string, boolean> };
 export type MediaAccessClient = { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> };
@@ -32,6 +33,22 @@ export async function mediaVisibility(db: MediaAccessClient, listing: string, in
       const group = (data as Record<string, unknown>)[kind];
       if (!group || typeof group !== "object" || Array.isArray(group) || !Object.hasOwn(group, value) || typeof (group as Record<string, unknown>)[value] !== "boolean") throw new HttpError(503, "Media source access returned an incomplete result.");
       out[kind][value] = (group as Record<string, boolean>)[value];
+    }
+    const publications=publicationVisibilityRows((data as Record<string,unknown>).photo_publications,listing);
+    if(publications.length){
+      const denied=await publicationHeadDenials(db,publications);
+      // Authority or source withdrawal during the physical reads cannot be
+      // released using an earlier accepted metadata snapshot.
+      const fresh=await db.rpc("studio_presenter_media_visibility",payload);
+      if(fresh.error||!fresh.data||typeof fresh.data!=="object"||Array.isArray(fresh.data))throw new HttpError(503,"Photo publication access changed during verification.");
+      const current=publicationVisibilityRows((fresh.data as Record<string,unknown>).photo_publications,listing);
+      const unchanged=JSON.stringify(current)===JSON.stringify(publications);
+      for(const {kind,value}of batch){
+        const group=(fresh.data as Record<string,unknown>)[kind];
+        if(!group||typeof group!=="object"||Array.isArray(group)||typeof(group as Record<string,unknown>)[value]!=="boolean")throw new HttpError(503,"Photo publication access returned an incomplete result.");
+        out[kind][value]=out[kind][value]&&(group as Record<string,boolean>)[value]&&unchanged;
+        if(publications.some(p=>denied.has(p.publication_id)&&(kind==="assets"?p.assets.includes(value):kind==="keys"&&p.keys.includes(value))))out[kind][value]=false;
+      }
     }
   }));
   return out;

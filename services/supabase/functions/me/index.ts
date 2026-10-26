@@ -1,4 +1,5 @@
 import { libraryAccess, listingLibraryScope } from "../_shared/library-access.ts";
+import { ensureAcceptedPhotoPublication } from "../_shared/photo-publication.ts";
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
 import { servingMode } from "../_shared/funded-serving.ts";
 
@@ -965,6 +966,21 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
 
   const prior = await db.from("media_provenance").select("id,org_id,listing_id").eq("id",id).maybeSingle();
   assert(!prior.error,503,"Disclosure identity could not be verified.");
+  assert(prior.data,404,"Disclosure record not found.");
+  if (prior.data.listing_id === null) {
+    // A recovered edit keeps its original NULL listing. Publish a separate,
+    // exact accepted association; never rewrite that paid operation's history.
+    assert(alteredAsset && !originalAsset && !label && Object.keys(body).every(key => key === "altered_asset_id"),400,"Choose the exact saved result before preparing its listing disclosure.");
+    const selected = preferredOrg(req);
+    assert(selected && UUID_RE.test(selected),409,"Choose this home's current library before preparing its photo.");
+    const publication = await ensureAcceptedPhotoPublication(adminClient(),
+      {orgId:prior.data.org_id,libraryOrgId:selected,listingId:null},userId,alteredAsset,
+      {provenanceID:id.toLowerCase(),signal:req.signal});
+    assert(publication,404,"The saved photo disclosure is unavailable.");
+    return json({ok:true,source_provenance_id:publication.sourceProvenanceID,
+      provenance:{id:publication.id,listing_id:publication.listingID,kind:publication.kind,disclosure:publication.disclosure},
+      publication:{output_asset_id:publication.outputAssetID,source_asset_id:publication.sourceAssetID}},200,{"cache-control":"private, no-store"});
+  }
   assert(prior.data && typeof prior.data.listing_id === "string" && UUID_RE.test(prior.data.listing_id),404,"Disclosure record not found.");
   const listingScope=await listingLibraryScope(adminClient(),userId,prior.data.listing_id,true);
   const selected=preferredOrg(req);

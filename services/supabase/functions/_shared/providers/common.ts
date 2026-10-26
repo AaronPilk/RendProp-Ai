@@ -48,13 +48,19 @@ export class ProviderError extends Error {
   readonly status?: number;
   /** Set only by a submit boundary that received a definitive non-allocation. */
   readonly dispatch_rejected: boolean;
-  constructor(provider: string, error_class: ErrorClass, message: string, status?: number, dispatchRejected = false) {
+  /** Set only by persistResult: the provider's COMPLETED result itself can never
+   * be retained (it is over the edge persist limit). The provider's work is
+   * finished, so polling the same receipt again cannot change this. Which
+   * callers treat it as terminal is their decision (today: a Kie routed status). */
+  readonly result_unretainable: boolean;
+  constructor(provider: string, error_class: ErrorClass, message: string, status?: number, dispatchRejected = false, resultUnretainable = false) {
     super(message);
     this.name = "ProviderError";
     this.provider = provider;
     this.error_class = error_class;
     this.status = status;
     this.dispatch_rejected = dispatchRejected;
+    this.result_unretainable = resultUnretainable;
   }
   /** The HTTP status this failure should surface as when the chain is exhausted. */
   get httpStatus(): number {
@@ -68,6 +74,14 @@ export class ProviderError extends Error {
       default:
         return 502;
     }
+  }
+}
+
+/** Internal provider evidence without adding fields to an existing public
+ * HttpError envelope. Only the funded submit boundary consumes this evidence. */
+export class ProviderHttpError extends HttpError {
+  constructor(error: HttpError, readonly providerFailure: ProviderError) {
+    super(error.status, error.message, error.code, error.details);
   }
 }
 
@@ -481,17 +495,23 @@ export async function persistResult(
     throw new ProviderError(provider, "upstream", `${provider} result download failed (HTTP ${res.status})`);
   }
   const declared = Number(res.headers.get("content-length") ?? "0");
+  // A result over the edge limit is unretainable (result_unretainable): the
+  // declared size refuses before any body byte is read; the actual size after.
   if (declared > MAX_PERSIST_BYTES) {
+    void res.body?.cancel().catch(() => {});
     throw new ProviderError(
       provider,
       "upstream",
       `${provider} result is ${Math.round(declared / 1e6)} MB, over the ${Math.round(MAX_PERSIST_BYTES / 1e6)} MB edge limit`,
+      undefined,
+      false,
+      true,
     );
   }
   const buf = await res.arrayBuffer();
   if (buf.byteLength === 0) throw new ProviderError(provider, "upstream", `${provider} returned an empty result`);
   if (buf.byteLength > MAX_PERSIST_BYTES) {
-    throw new ProviderError(provider, "upstream", `${provider} result exceeds the ${Math.round(MAX_PERSIST_BYTES / 1e6)} MB edge limit`);
+    throw new ProviderError(provider, "upstream", `${provider} result exceeds the ${Math.round(MAX_PERSIST_BYTES / 1e6)} MB edge limit`, undefined, false, true);
   }
   const upstream = res.headers.get("content-type")?.split(";")[0].trim();
   // Kie's file host can label the MP4 its adapter identified as a generic binary

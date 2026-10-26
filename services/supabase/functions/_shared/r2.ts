@@ -129,6 +129,22 @@ export async function inspectPhotoEvidence(key:string):Promise<{bytes:number;mim
   return{bytes:Number(response.headers.get("content-length")),mime:(response.headers.get("content-type")??"").split(";")[0].trim().toLowerCase(),sha256:response.headers.get("x-amz-meta-sha256")??"",etag:response.headers.get("etag")??""};
 }
 
+/** One SQL-journalled publication dispatch may copy the retained submitted
+ * source. This conditional PUT never overwrites a previous copy. The caller
+ * independently reads and hashes the destination before finalising its receipt. */
+export async function writePhotoPublicationSource(key:string,bytes:Uint8Array<ArrayBuffer>,mime:string,sha256:string,signal:AbortSignal):Promise<void>{
+  const uuid="[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}";
+  if(!new RegExp(`^renders/${uuid}/${uuid}/original-${uuid}\\.(?:jpg|png|webp)$`).test(key)||
+    bytes.byteLength<1||bytes.byteLength>9_000_000||!["image/jpeg","image/png","image/webp"].includes(mime)||!/^[a-f0-9]{64}$/.test(sha256))throw new HttpError(400,"Invalid submitted-source publication copy.");
+  const actual=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),n=>n.toString(16).padStart(2,"0")).join("");
+  if(actual!==sha256)throw new HttpError(409,"The submitted source changed before publication.");
+  signal.throwIfAborted();
+  const request=await client().sign(`${endpoint()}/${R2_BUCKET_RENDERS}/${encodeKey(key)}`,{method:"PUT",headers:{"content-type":mime,"content-length":String(bytes.byteLength),"if-none-match":"*","x-amz-meta-sha256":sha256},body:bytes,aws:{allHeaders:true}});
+  const response=await fetch(request,{signal:AbortSignal.any([signal,AbortSignal.timeout(30_000)]),redirect:"error"});
+  void response.body?.cancel().catch(()=>{});
+  if(!response.ok&&response.status!==412)throw new HttpError(503,"The submitted-source copy is unconfirmed. Check this same saved publication.");
+}
+
 export interface PresignArgs {
   bucket: string;
   key: string;
