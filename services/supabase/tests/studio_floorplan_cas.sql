@@ -19,6 +19,8 @@ do $$declare f floorplan_ids;begin select * into f from floorplan_ids;
  select org_id into f.org from public.memberships where user_id=f.actor limit 1;
  select org_id into f.foreign_org from public.memberships where user_id=f.outsider limit 1;
  update floorplan_ids set org=f.org,foreign_org=f.foreign_org;
+ -- This fixture audits floor-plan CAS/authorization, not free-week listing admission.
+ update public.orgs set plan='starter',plan_source='manual' where id in(f.org,f.foreign_org);
  insert into public.listings(id,org_id,agent_id,address,details)values
  (f.listing,f.org,f.actor,'Owned plan fixture','{"hours":"office hours","office_note":"untouched","floorMeasurementsV9":"future-private","floor_measurements_v1":"{\"version\":1,\"unit\":\"meters\",\"rooms\":[],\"updatedAt\":1}"}'),
  (f.foreign_listing,f.foreign_org,f.outsider,'Foreign plan fixture','{}');
