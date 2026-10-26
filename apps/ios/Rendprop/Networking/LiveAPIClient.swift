@@ -43,7 +43,7 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 /// via `.convertFromSnakeCase`) and map to the app's models, and we build write
 /// bodies as explicit snake_case dictionaries (mirrors the AI/ clients' style),
 /// so the app models never have to match the DB column names.
-final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI, ListingGalleryRemovalAPI, ListingPhotoCloudSelectionAPI {
+final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI, ListingGalleryRemovalAPI, ListingPhotoCloudSelectionAPI, PublishedListingVideoReading {
     private let base: URL
     private let session: URLSession
     /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
@@ -387,6 +387,21 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
         let data = try await execute(makeRequest(url: url(["listings"])))
         let dtos: [ListingDTO] = try decode(data)
         return dtos.map(mapListing)
+    }
+
+    /// The public tour resolves its selected photo-video composition from the
+    /// server on every read. This is the same authority the property's website
+    /// uses, independent of which device saved or published the MP4.
+    @MainActor func publishedListingVideo(slug: String) async throws -> PublishedListingVideoState {
+        guard slug.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil else {
+            throw CloudSyncError.invalidResponse
+        }
+        var request = makeRequest(url: url(["tours", slug]))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 25
+        let data = try await execute(request)
+        guard data.count <= 4 * 1024 * 1024 else { throw CloudSyncError.invalidResponse }
+        return try PublishedListingVideoState.checked(data, slug: slug)
     }
 
     /// A fresh actor-bound directory limits this complete snapshot to private

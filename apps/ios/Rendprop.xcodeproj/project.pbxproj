@@ -91,6 +91,7 @@
 		53DD7BF0025407C5DF434843 /* CaptureArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9F41BED2BA4F906307E2957 /* CaptureArchive.swift */; };
 		546453377C4C2E5F9F5D3509 /* CaptureOrientationGuide.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F798746926949666F14CB64 /* CaptureOrientationGuide.swift */; };
 		55096E6FAEE73BA572A12D6B /* ListingWebsiteVideo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02954448AB4C0E6C31A1EB68 /* ListingWebsiteVideo.swift */; };
+		D1E6AA0B57DE893AF14C93F3 /* PublishedListingVideoState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9BBA33F742EBAA14F5388DE /* PublishedListingVideoState.swift */; };
 		56E99A034D5240D171BFE738 /* SpatialTourView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E30624BCE846B2177F4CFD /* SpatialTourView.swift */; };
 		577129E6CE15F2F6199ACAB3 /* PhotoGalleryDerivative.swift in Sources */ = {isa = PBXBuildFile; fileRef = B61A47A8C1124EB83BAC75A5 /* PhotoGalleryDerivative.swift */; };
 		57EEBDCBBBA66274910865F9 /* PhotoFeedbackControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CDD1CE0D517A79DD7A0D320 /* PhotoFeedbackControl.swift */; };
@@ -239,6 +240,7 @@
 /* Begin PBXFileReference section */
 		018491D467DE946745CF3D0F /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		02954448AB4C0E6C31A1EB68 /* ListingWebsiteVideo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListingWebsiteVideo.swift; sourceTree = "<group>"; };
+		C9BBA33F742EBAA14F5388DE /* PublishedListingVideoState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PublishedListingVideoState.swift; sourceTree = "<group>"; };
 		02D51287A22F2AD3561389FF /* NotificationPrefs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPrefs.swift; sourceTree = "<group>"; };
 		04376021AFDE34DD8A63D8C9 /* PhotoCaptureStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCaptureStorage.swift; sourceTree = "<group>"; };
 		065A50CE2C895DBB3B281865 /* SpeechTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechTranscriber.swift; sourceTree = "<group>"; };
@@ -483,6 +485,7 @@
 				D9965D9148426EE44C81D787 /* ListingLink.swift */,
 				868A3C294F16012EE3AD2A0E /* ListingVideo.swift */,
 				02954448AB4C0E6C31A1EB68 /* ListingWebsiteVideo.swift */,
+				C9BBA33F742EBAA14F5388DE /* PublishedListingVideoState.swift */,
 				C65AFC6059E55D94283A7BEF /* Money.swift */,
 				D4BB3608E523E3E3CC783DA8 /* ProductionGuidance.swift */,
 				BF98C33A6621790D95D9D12A /* Render.swift */,
@@ -1157,6 +1160,7 @@
 				81D854130DF237275411FD18 /* ListingVideo.swift in Sources */,
 				2219322F06268DBA675CB31B /* ListingVideoPreparation.swift in Sources */,
 				55096E6FAEE73BA572A12D6B /* ListingWebsiteVideo.swift in Sources */,
+				D1E6AA0B57DE893AF14C93F3 /* PublishedListingVideoState.swift in Sources */,
 				975A5B03FE71859367E2BA8C /* LiveAPIClient.swift in Sources */,
 				1AF302A469774E89A13D3A73 /* MediaImporter.swift in Sources */,
 				2B27AEC759767C065434016B /* MockAPIClient.swift in Sources */,

@@ -695,6 +695,8 @@ struct FlythroughDetailView: View {
     @State private var chapterSyncNote: String?
     @State private var playerRefresh = UUID()
     @State private var websiteVideoPlayer: AVPlayer?
+    @State private var publishedVideoStatus: PublishedListingVideoStatus = .unpublished
+    @State private var publishedVideoTask: Task<Void, Never>?
     @State private var showAerialIntro = false
     /// The toolbox's "Make a reel" tile presents Reel Studio DIRECTLY now.
     ///
@@ -796,6 +798,8 @@ struct FlythroughDetailView: View {
     /// account/workspace completion fences continue to own background work.
     private func invalidatePresentation() {
         websiteVideoPlayer?.pause(); websiteVideoPlayer = nil
+        publishedVideoTask?.cancel(); publishedVideoTask = nil
+        publishedVideoStatus = .unpublished
         filesTask?.cancel(); filesTask = nil; filesStamp = nil
         mediaItems = []; availableRerenderSource = nil; openedFile = nil
         filePhotoExport = nil; filePhotoExportAdmission = nil; filePackageExtras = []; packageError = nil
@@ -942,6 +946,48 @@ struct FlythroughDetailView: View {
         return url
     }
 
+    /// A saved reel is a device file; the website's selected photo video comes
+    /// from the public tour projection. Keep its answer separate from the local
+    /// selection so a Studio publication cannot be mistaken for missing work.
+    private func refreshPublishedVideo() {
+        publishedVideoTask?.cancel()
+        let live = currentListing, expectedScope = presentationScope
+        guard hasCurrentPresentationContext, !live.isSample, live.serverID != nil,
+              let slug = live.shareSlug, Config.useLiveBackend else {
+            publishedVideoStatus = .unpublished
+            return
+        }
+        guard let reader = model.api as? PublishedListingVideoReading else {
+            publishedVideoStatus = .unavailable
+            return
+        }
+        publishedVideoStatus = .checking
+        publishedVideoTask = Task {
+            do {
+                let state = try await reader.publishedListingVideo(slug: slug)
+                guard !Task.isCancelled, expectedScope == presentationScope,
+                      hasCurrentPresentationContext, currentListing.serverID == live.serverID,
+                      currentListing.shareSlug == slug else { return }
+                publishedVideoStatus = state.listingVideo.map { .live($0.durationS) } ?? .noPhotoVideo
+            } catch {
+                guard !Task.isCancelled, expectedScope == presentationScope,
+                      hasCurrentPresentationContext, currentListing.serverID == live.serverID,
+                      currentListing.shareSlug == slug else { return }
+                publishedVideoStatus = .unavailable
+            }
+        }
+    }
+
+    private var visiblePublishedVideoStatus: PublishedListingVideoStatus {
+        guard !currentListing.isSample, Config.useLiveBackend,
+              currentListing.shareSlug != nil else { return .unpublished }
+        return publishedVideoStatus == .unpublished ? .checking : publishedVideoStatus
+    }
+
+    private var listingVideoCardContent: ListingVideoCardContent {
+        visiblePublishedVideoStatus.card(hasLocalSelection: currentListing.websiteVideoRelPath != nil)
+    }
+
     /// The tour's retime factor, sanitized: a 0/NaN factor would trap the
     /// integer conversions below (F-A-26), so anything degenerate reads as 1×.
     private var safeSpeedFactor: Double {
@@ -1044,7 +1090,10 @@ struct FlythroughDetailView: View {
         .task { await refreshClientContactIfCurrent() }
         .disabled(!hasCurrentPresentationContext || isDeleting || connection.isWaiting)
         .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
-        .onDisappear { connection.cancel(); filesTask?.cancel(); filesTask = nil }
+        .onDisappear {
+            connection.cancel(); filesTask?.cancel(); filesTask = nil
+            publishedVideoTask?.cancel(); publishedVideoTask = nil
+        }
         .onAppear {
             guard hasCurrentPresentationContext else { invalidatePresentation(); return }
             // Seed the Zillow field ONCE — re-seeding on every appearance wiped
@@ -1075,6 +1124,7 @@ struct FlythroughDetailView: View {
             // `loadFiles`, which checks five modification dates on a background
             // thread and does nothing at all when none of them moved.
             loadFiles()
+            refreshPublishedVideo()
         }
         .navigationDestination(isPresented: $showPhotosScreen) {
             // Keep the large photo editor out of this listing's concrete
@@ -1115,6 +1165,12 @@ struct FlythroughDetailView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
             if !hasCurrentPresentationContext { invalidatePresentation() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            if hasCurrentPresentationContext { refreshPublishedVideo() }
+        }
+        .onChange(of: currentListing.shareSlug) { _ in
+            if hasCurrentPresentationContext { refreshPublishedVideo() }
         }
         // "Make a reel" opens REEL STUDIO, with this listing's photos and its
         // aerial intro — the same two things `PhotoStudioView` used to hand it
@@ -1227,12 +1283,45 @@ struct FlythroughDetailView: View {
         return "No video yet — add a walkthrough below and this becomes your tour."
     }
 
+    private var listingVideoCaption: String {
+        if currentListing.isSample { return tourCaption }
+        switch visiblePublishedVideoStatus {
+        case .live:
+            return "Selected on this listing's live website. Your recorded walkthrough and saved phone videos stay separate."
+        case .checking:
+            return "Checking the live website's selected video. Your saved videos are listed below."
+        case .unavailable:
+            return "The live website couldn't be checked. Open its link to see the current video; your saved files are below."
+        case .noPhotoVideo, .unpublished:
+            return currentListing.websiteVideoRelPath != nil
+                ? "Saved on this phone and ready to publish on the listing website. Your recorded walkthrough stays separate."
+                : "A photo-based listing video is the main presentation. Open Drone-style walkthrough for recorded footage."
+        }
+    }
+
     private var tourSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(currentListing.isSample ? "SAMPLE TOUR" : "LISTING VIDEO")
                 .font(.rpKicker).foregroundStyle(Theme.inkDim)
             Group {
-                if currentListing.websiteVideoRelPath != nil {
+                if case .live(let duration) = listingVideoCardContent {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Listing video is live", systemImage: "checkmark.circle.fill")
+                            .font(.rpHeadline).foregroundStyle(Theme.good)
+                            .accessibilityIdentifier("listing.videoLive")
+                        Text("Your \(duration.formatted(.number.precision(.fractionLength(0...1))))-second photo video is selected on this property's website.")
+                            .font(.rpBody).foregroundStyle(Theme.ink)
+                        if let page = currentListing.serverShareURL {
+                            Link(destination: page) {
+                                Label("Watch on property website", systemImage: "play.rectangle")
+                                    .font(.rpBody.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 14)
+                                    .modifier(RendpropActionLabelSurface(primary: true))
+                            }
+                        }
+                    }.padding()
+                } else if listingVideoCardContent == .local {
                     if let selectedWebsiteVideoURL {
                         VideoPlayer(player: websiteVideoPlayer)
                             .aspectRatio(16.0 / 9.0, contentMode: .fit)
@@ -1243,9 +1332,28 @@ struct FlythroughDetailView: View {
                             }
                             .onDisappear { websiteVideoPlayer?.pause() }
                     } else {
-                        Text("Your selected listing video isn't available on this phone. The published page is unchanged; reopen Make a video to choose a saved file.")
+                        Text("This saved selection isn't available on this phone. Open Make a video to choose another saved file.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim).padding()
                     }
+                } else if listingVideoCardContent == .checking {
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text("Checking the listing website…")
+                            .font(.rpBody).foregroundStyle(Theme.inkDim)
+                            .accessibilityIdentifier("listing.videoChecking")
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if listingVideoCardContent == .unavailable {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Website video status unavailable", systemImage: "wifi.exclamationmark")
+                            .font(.rpHeadline).foregroundStyle(Theme.ink)
+                            .accessibilityIdentifier("listing.videoUnavailable")
+                        Text("Open the live website to check its selected video. Your saved videos are listed below.")
+                            .font(.rpBody).foregroundStyle(Theme.inkDim)
+                        if let page = currentListing.serverShareURL {
+                            Link("Open property website", destination: page)
+                                .font(.rpBody.weight(.semibold))
+                        }
+                    }.padding()
                 } else if !currentListing.isSample {
                     VStack(alignment: .leading, spacing: 10) {
                         Label("Your property video starts with photos", systemImage: "photo.on.rectangle")
@@ -1278,7 +1386,7 @@ struct FlythroughDetailView: View {
                     RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                         .strokeBorder(Theme.border)
                 )
-            Text(currentListing.isSample ? tourCaption : currentListing.websiteVideoRelPath != nil ? "Selected for this listing's website. Publish or Republish to update the live page. Your recorded walkthrough stays separate." : "A photo-based listing video is the main presentation. Open Drone-style walkthrough for recorded footage.")
+            Text(listingVideoCaption)
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
         }
@@ -1343,6 +1451,16 @@ struct FlythroughDetailView: View {
     /// agent who just changed something wants to SEE it go live, and a re-shot
     /// walkthrough has to be pushed on purpose. One button does all of it and
     /// keeps the link: the server moves the tour in place (republish_render).
+    private var republishExplanation: String {
+        if currentListing.websiteVideoRelPath != nil {
+            return "Republish sends this phone's selected video, details and photos. If another video is live from Studio, this may replace it. Your links stay the same."
+        }
+        if case .live = visiblePublishedVideoStatus {
+            return "Republish sends this phone's latest details, photos and optional recorded walkthrough. The selected photo video stays on your website. Your links stay the same."
+        }
+        return "Republish sends this phone's latest details, photos and walkthrough to the live page. Your links stay the same — flyers, QR codes and the MLS field keep working."
+    }
+
     private var republishCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
@@ -1354,22 +1472,24 @@ struct FlythroughDetailView: View {
                     Text("Made changes?")
                         .font(.rpHeadline)
                         .foregroundStyle(Theme.ink)
-                    Text(currentListing.websiteVideoRelPath != nil
-                         ? "Republish sends the selected listing video, details and photos to the live website. Your links stay the same; the optional recorded walkthrough stays separate."
-                         : "Republish sends this phone's latest details, photos and walkthrough to the live page. Your links stay the same — flyers, QR codes and the MLS field keep working.")
+                    Text(republishExplanation)
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }
-            if let failure = republishFailure {
+            if let failure = republishFailure,
+               tour != nil || currentListing.websiteVideoRelPath != nil {
                 AIFailureCard(failure: failure,
                               retryHint: "Tap Republish tour to try again.",
                               quotaFeature: "renders",
                               onReconnect: { republishNow() })
             }
-            if isRepublishing {
+            if tour == nil && currentListing.websiteVideoRelPath == nil {
+                Text("Your details and photos sync automatically. Make a new video or add a walkthrough here before republishing from this phone.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            } else if isRepublishing {
                 HStack(spacing: 10) {
                     ProgressView()
                     Text(tour == nil
@@ -2715,6 +2835,7 @@ struct FlythroughDetailView: View {
                         isRepublishing = false
                         republishedAt = Date()
                         playerRefresh = UUID()
+                        refreshPublishedVideo()
                         Haptics.success()
                         PhotoFeedbackQueue.shared.recordPublication(listingID: id, model: model)
                     }
@@ -2722,6 +2843,7 @@ struct FlythroughDetailView: View {
                     await MainActor.run {
                         isRepublishing = false
                         republishFailure = AIFailure(error, title: "Couldn't republish")
+                        refreshPublishedVideo()
                     }
                 }
             }
@@ -2745,6 +2867,7 @@ struct FlythroughDetailView: View {
                 await MainActor.run {
                     isPublishing = false
                     playerRefresh = UUID()
+                    refreshPublishedVideo()
                     Haptics.success()
                     ReviewPrompter.shared.tourPublished()
                     PhotoFeedbackQueue.shared.recordPublication(listingID: id, model: model)
