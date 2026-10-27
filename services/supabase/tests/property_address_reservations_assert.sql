@@ -24,7 +24,22 @@ do $$begin
     where descriptor='855-central-ave-1120-saint-petersburg-fl-33701') then
     raise exception 'ambiguous address was incorrectly assigned during backfill';
   end if;
+  if exists(select 1 from public.property_address_reservations
+    where descriptor='777-new-st-saint-petersburg-fl-33701') then
+    raise exception 'new/noindex address acquired a legacy bare reservation';
+  end if;
 end$$;
+
+set role service_role;
+do $$
+declare result jsonb;
+begin
+  result:=public.public_property_address_lookup('777-new-st-saint-petersburg-fl-33701');
+  if result<>'{"status":"ambiguous"}'::jsonb then
+    raise exception 'new unique address acquired a temporary bare link: %',result;
+  end if;
+end$$;
+reset role;
 
 insert into public.property_address_reservations(descriptor,listing_id) values
   ('855-central-ave-1120-saint-petersburg-fl-33701','55739bcb-e589-853b-ad28-92a3a5521823');

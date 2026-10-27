@@ -44,7 +44,10 @@ globalThis.fetch = async (url, init) => {
   if (url === base + '/tours/address-lookup/855-central-avenue-unit-1120-saint-petersburg-fl-33701')
     return new Response('', {status: 404});
   if (url === base + '/tours/address-lookup/' + futureDescriptor)
-    return Response.json({status: 'unique', slug: futureSlug});
+    return Response.json({status: 'ambiguous'});
+  if (url === base + '/tours/index?limit=200')
+    return Response.json({tours:[{slug:futureSlug,address:futureAddress,
+      allow_indexing:true,published_at:publishedAt}],next_cursor:null});
   if (url.startsWith(base + '/tours/')) {
     assert.equal(new Headers(init.headers).get('X-Rendprop-Address-Lookup'), null);
     const tour = tours.get(url.slice((base + '/tours/').length));
@@ -66,10 +69,26 @@ let result = await get(longPath);
 check(result.status === 200 && (await result.text()).includes('Agent D'),
   'Maximum-length legacy slug survives its longer dated browser suffix');
 result = await get('/f/' + futureSlug + '/share-link');
+check(result.headers.get('Access-Control-Allow-Origin') === 'https://studio.rendprop.com'
+  && result.headers.get('Access-Control-Allow-Credentials') === null
+  && result.headers.get('Cache-Control') === 'no-store',
+  'Studio can read the public share-link contract without credentials or a cached response');
 check((await result.json()).url === 'https://rendprop.com' + futurePath,
   'New first-at-address publication receives a dated identity, not a new bare alias');
+result = await worker.fetch(new Request('https://rendprop.com/f/' + futureSlug + '/share-link',
+  {method:'HEAD',headers:{Origin:'https://studio.rendprop.com'}}),env,ctx);
+check(result.status === 200 && result.headers.get('Access-Control-Allow-Origin') === 'https://studio.rendprop.com'
+  && (await result.text()) === '', 'Studio HEAD probe stays bodyless and readable');
+result = await get('/f/invalid!/share-link');
+check(result.status === 404 && result.headers.get('Access-Control-Allow-Origin') === 'https://studio.rendprop.com',
+  'Studio can distinguish a revoked or invalid share-link response');
 result = await get('/property/' + futureDescriptor);
 check(result.status === 404, 'New bare address is not issued, preventing future reassignment');
+result = await get('/sitemap-properties.xml');
+let sitemap = await result.text();
+check(result.status === 200 && sitemap.includes(`<loc>https://rendprop.com${futurePath}</loc>`)
+  && !sitemap.includes(`<loc>https://rendprop.com${propertyAddressPath(futureSlug,futureAddress)}</loc>`),
+  'Dated rollout indexes the same new publication identity as its canonical page');
 result = await get(futurePath);
 check(result.status === 200 && (await result.text()).includes(`rel="canonical" href="https://rendprop.com${futurePath}"`),
   'Future indexable site uses its stable dated canonical');
@@ -129,6 +148,16 @@ result = await get(newA);
 check(result.status === 404 && !result.headers.has('Location'),
   'Unpublishing revokes dated alias rather than leaking corrected address');
 const disabled = {...env, PROPERTY_DATE_SUFFIX: undefined};
+result = await get('/f/' + futureSlug + '/share-link', disabled);
+check((await result.json()).url === 'https://rendprop.com'
+  + propertyAddressPath(futureSlug, futureAddress),
+  'Before the Worker date flag, the database fence gives new homes only an address-plus-ID link');
+result = await get('/property/' + futureDescriptor, disabled);
+check(result.status === 404, 'Before the Worker date flag, a new home cannot issue a temporary bare address');
+result = await get('/sitemap-properties.xml', disabled);
+sitemap = await result.text();
+check(result.status === 200 && sitemap.includes(`<loc>https://rendprop.com${propertyAddressPath(futureSlug,futureAddress)}</loc>`),
+  'Without the date flag, the sitemap retains the legacy address-plus-ID path');
 result = await get(newB, disabled);
 check(result.status === 308 && result.headers.get('Location') === 'https://rendprop.com'
   + propertyAddressPath(bSlug, address), 'Feature rollback still resolves dated shares via old token');

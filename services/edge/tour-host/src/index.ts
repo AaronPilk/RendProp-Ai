@@ -510,7 +510,10 @@ async function handleNearbyPlaces(slug: string, req: Request, url: URL, env: Env
  * that the page renderer would use. It never accepts an address as input. */
 async function handleShareLink(slug: string, req: Request, url: URL, env: Env): Promise<Response> {
   const headers = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow",
-    "X-Content-Type-Options": "nosniff", "Content-Type": "application/json; charset=utf-8" };
+    "X-Content-Type-Options": "nosniff", "Content-Type": "application/json; charset=utf-8",
+    // Studio reads this already-public publication link across subdomains.
+    // Keep the fixed origin on this endpoint only; no credentials or wildcard.
+    "Access-Control-Allow-Origin": "https://studio.rendprop.com" };
   const reply = (status: number, body: unknown) => {
     const response = new Response(JSON.stringify(body), { status, headers });
     return req.method === "HEAD" ? new Response(null, response) : response;
@@ -554,7 +557,7 @@ async function sitemapResponse(url: URL, env: Env): Promise<Response> {
   const upstream = await fetchUpstreamJSON("/tours/index" + query, env);
   let body: string | null = null;
   if (upstream.kind === "ok") {
-    if (page) body = propertySitemapXml(url.origin, upstream.value);
+    if (page) body = propertySitemapXml(url.origin, upstream.value, env.PROPERTY_DATE_SUFFIX === "enabled");
     else {
       const cursors = propertySitemapCursors(upstream.value);
       if (cursors) body = sitemapIndexXml(url.origin, cursors);

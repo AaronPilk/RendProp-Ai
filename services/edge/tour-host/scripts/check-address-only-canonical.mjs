@@ -15,7 +15,7 @@ const base = 'https://authority.fixture.invalid/functions/v1';
 const seed = buildDemoTour();
 let tour = {...seed, slug, share_url:'https://rendprop.com/f/' + slug,
   listing:{...seed.listing, address}};
-let unique = true, claimed = false, withdrawn = false, aliasTour = null, resolverCalls = 0;
+let unique = true, claimed = true, withdrawn = false, aliasTour = null, resolverCalls = 0;
 let resolverFailure = false, resolverMissing = false, malformedResolver = false;
 let descriptorReads = 0, aliasFailureOnRead = null, aliasMalformedOnRead = null;
 const addressSecret = 'b'.repeat(64);
@@ -31,9 +31,8 @@ globalThis.fetch = async (url,init) => {
     if (resolverFailure) return new Response('',{status:503});
     if (resolverMissing) return new Response('',{status:404});
     if (malformedResolver) return Response.json({status:'unique',slug,extra:'untrusted'});
-    return Response.json(unique && url.endsWith(descriptor)
-      ? claimed ? {status:'unique',slug,claimed:true} : {status:'unique',slug}
-      : {status:'ambiguous'});
+    return Response.json(unique && claimed && url.endsWith(descriptor)
+      ? {status:'unique',slug,claimed:true} : {status:'ambiguous'});
   }
   assert.equal(new Headers(init.headers).get('X-Rendprop-Address-Lookup'),null,'private lookup credential is never sent to ordinary tours');
   if (url === base + '/tours/' + slug) return withdrawn ? new Response('',{status:404}) : Response.json(tour);
@@ -104,6 +103,15 @@ check(response.status === 404,'Address-only collision cannot select one of two p
 response = await get(oldPath);
 check(response.status === 200,'Address-plus-ID remains available during collision');
 
+unique = true; claimed = false;
+response = await get('/f/' + slug + '/share-link');
+link = await response.json();
+check(response.status === 200 && link.url === 'https://rendprop.com' + oldPath && link.address_only === false,
+  'A new unique publication stays on its suffix link before the dated Worker flag is enabled');
+response = await get(path);
+check(response.status === 404,'A new unique publication never acquires a temporary bare address');
+claimed = true;
+
 unique = true; withdrawn = true;
 response = await get(path);
 check(response.status === 404 && !response.headers.has('location'),'Withdrawn publication is not disclosed by a stale resolver');
@@ -112,7 +120,8 @@ check(response.status === 404,'Withdrawn publication yields no verified share UR
 withdrawn = false;
 tour = {...tour, listing:{...tour.listing, address:'123 Other St'}};
 response = await get(path);
-check(response.status === 404,'Changed address cannot keep a stale address-only alias');
+check(response.status === 200 && (await response.text()).includes(`rel="canonical" href="https://rendprop.com${propertyAddressPath(slug,'123 Other St')}"`),
+  'A reserved old bare link keeps its original publication after an address correction');
 tour = {...tour, listing:{...tour.listing, address}};
 
 aliasTour = {...tour, slug:descriptor, listing:{...tour.listing,address:'123 Other St'}};
@@ -192,6 +201,7 @@ check(response.status === 200 && link.url === 'https://rendprop.com/f/' + slug &
 tour = {...tour, space_type:'real_estate'};
 
 tour = {...tour, listing:{...tour.listing, details:{...tour.listing.details,allow_indexing:false}}};
+claimed = false;
 response = await get('/f/' + slug,env);
 check(response.status === 200 && response.headers.get('X-Robots-Tag') === 'noindex, nofollow'
   && (await response.text()).includes(`rel="canonical" href="https://rendprop.com${oldPath}"`),

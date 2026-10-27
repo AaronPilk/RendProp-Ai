@@ -145,32 +145,32 @@ link. The renderer removes agent/contact/promotional content from the unbranded
 page; this is not a guarantee that every MLS accepts all submitted property
 content. Check the applicable listing service's rules before distribution.
 
-### Staged address-only canonical
+### Address-link cutover
 
-`ADDRESS_ONLY_CANONICAL=enabled` is intentionally unset in the deployed
-configuration. When enabled, the Worker asks the upstream public tours function
-for `GET /tours/address-lookup/:descriptor` with the dedicated private
-`ADDRESS_LOOKUP_SECRET` in `X-Rendprop-Address-Lookup`. Configure the same
-64-character lowercase hex secret on the Worker and tours Edge Function before
-enabling the flag. Direct anonymous calls cannot enumerate noindex publication
-slugs; missing or mismatched credentials expose no lookup result. It accepts only
-`{"status":"unique","slug":"<current publication slug>"}`. The upstream must
-compute the descriptor with the same ASCII-address rules as
-`propertyAddressSlug`, examine **all** current hostable real-estate publications
-(including noindex pages), and answer `{"status":"ambiguous"}` for duplicate
-addresses or a public slug alias collision; a missing address returns 404.
-It must apply the same deletion, hosting-retention and publication fences as
-`GET /tours/:slug`. The Worker still reloads that tour and compares its current
-address before rendering; missing, malformed, ambiguous and unavailable
-resolver responses retain the existing address-plus-ID canonical. Existing
-`/f/:slug`, `/property/:slug`, `/property/:address/:slug` and MLS `/u/` links
-remain usable. Do not enable the flag until that upstream resolver and its
-collision/revocation tests are deployed. The sitemap and native-generated
-share links also need the same authority before address-only URLs can be
-claimed as the complete public contract.
-An address-route dependency failure (resolver outage or alias-check outage)
-returns a no-store 503; a verified missing or ambiguous address returns 404.
-Opaque publication routes retain their prior canonical on a lookup failure.
+`ADDRESS_ONLY_CANONICAL=enabled` is set in the Worker configuration. The Worker
+asks the private upstream `GET /tours/address-lookup/:descriptor` with the same
+64-character lowercase-hex `ADDRESS_LOOKUP_SECRET` configured on both sides.
+Only a `unique` response with `claimed:true` reserves a legacy bare
+`/property/<address>` URL for its original publication. The resolver checks all
+hostable publications, including noindex and other agents' listings; a new
+unclaimed address returns `ambiguous`, even if only one listing exists. Direct
+anonymous calls cannot enumerate slugs. The Worker reloads the publication and
+checks its current address before rendering. A verified missing/ambiguous bare
+address returns 404; a resolver outage returns no-store 503.
+
+`PROPERTY_DATE_SUFFIX` is intentionally absent until the reservations migration
+and its readback have succeeded. First apply forward migration
+`20261027040000_property_address_reservations.sql`, which atomically pins existing
+shareable bare links and fences new bare claims. Check the old bare link and a
+new unclaimed address before enabling the Worker flag. With
+`PROPERTY_DATE_SUFFIX=enabled`, a new indexable property uses
+`/property/<full-address>/<YYYYMMDD>.<publication-slug>`; same-day duplicate
+listings remain distinct. Noindex properties retain address-plus-slug links.
+The sitemap follows the flag. Existing `/f/:slug`, `/u/:slug`, and old
+address-plus-slug links remain usable. If the date flag must be disabled, keep
+the dated-route parser deployed so already shared dated URLs can redirect to
+their undated address-plus-slug counterpart. Never delete the reservation
+table or reassign a claimed bare descriptor during rollback.
 
 ### How unbranded output is enforced
 

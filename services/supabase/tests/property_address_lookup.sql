@@ -78,8 +78,8 @@ set local role service_role;
 select pg_temp.ok(not exists(select 1 from public.public_property_tour_rows()),
   'all synthetic publications are noindex and absent from sitemap authority');
 select pg_temp.ok(public.public_property_address_lookup('123-main-st')=
-  '{"status":"unique","slug":"published-main-1"}'::jsonb,
-  'unique current published noindex address resolves');
+  '{"status":"ambiguous"}'::jsonb,
+  'new unique noindex address cannot acquire a temporary bare link');
 select pg_temp.ok(public.public_property_address_lookup('77-future-lane') is null,
   'future publication cannot claim an address');
 select pg_temp.ok(public.public_property_address_lookup('demo')='{"status":"ambiguous"}'::jsonb
@@ -87,12 +87,33 @@ select pg_temp.ok(public.public_property_address_lookup('demo')='{"status":"ambi
   'synthetic demo aliases remain reserved');
 reset role;
 
+-- Simulate one genuinely previously shared bare link. It must be the only
+-- address that can resolve without a publication suffix after cutover.
+savepoint address_claim_probe;
+insert into public.property_address_reservations(descriptor,listing_id) values
+  ('123-main-st','ad200000-0000-4000-8000-000000000001');
+set local role service_role;
+select pg_temp.ok(public.public_property_address_lookup('123-main-st')=
+  '{"status":"unique","slug":"published-main-1","claimed":true}'::jsonb,
+  'reserved legacy bare address keeps its exact publication');
+reset role;
+rollback to savepoint address_claim_probe;
+
 -- An identical address in a second, still noindex workspace is ambiguous.
 update public.listings set address='123 Main St'where id='ad200000-0000-4000-8000-000000000002';
 set local role service_role;
 select pg_temp.ok(public.public_property_address_lookup('123-main-st')='{"status":"ambiguous"}'::jsonb,
   'cross-workspace duplicate includes noindex page');
 reset role;
+savepoint address_duplicate_claim_probe;
+insert into public.property_address_reservations(descriptor,listing_id) values
+  ('123-main-st','ad200000-0000-4000-8000-000000000001');
+set local role service_role;
+select pg_temp.ok(public.public_property_address_lookup('123-main-st')=
+  '{"status":"unique","slug":"published-main-1","claimed":true}'::jsonb,
+  'later cross-workspace duplicate cannot steal the old bare address');
+reset role;
+rollback to savepoint address_duplicate_claim_probe;
 -- Listing B has an older approved publication and a newer revoked one. The
 -- newest *hostable* render is B's older publication, so A is still ambiguous.
 -- Moving the presenter check outside the lateral LIMIT incorrectly returns A.
@@ -121,16 +142,16 @@ update public.renders set published_at=null where id='ad400000-0000-4000-8000-00
 update public.listings set status='archived'where id='ad200000-0000-4000-8000-000000000002';
 set local session_replication_role=origin;
 set local role service_role;
-select pg_temp.ok(public.public_property_address_lookup('123-main-st')->>'slug'='published-main-1',
-  'withdrawn duplicate no longer blocks current address');
+select pg_temp.ok(public.public_property_address_lookup('123-main-st')='{"status":"ambiguous"}'::jsonb,
+  'withdrawn duplicate cannot create a new bare address claim');
 reset role;
 set local session_replication_role=replica;
 update public.listings set status='ready',address='55 Renamed Road'where id='ad200000-0000-4000-8000-000000000002';
 set local session_replication_role=origin;
 set local role service_role;
 select pg_temp.ok(public.public_property_address_lookup('55-other-road') is null
-  and public.public_property_address_lookup('55-renamed-road')->>'slug'='published-other-2',
-  'renamed address loses old lookup and gains only new current descriptor');
+  and public.public_property_address_lookup('55-renamed-road')='{"status":"ambiguous"}'::jsonb,
+  'renamed address loses old lookup and cannot claim a new bare descriptor');
 reset role;
 
 -- A one-segment legacy slug is still owned by its prior publication, even
@@ -144,8 +165,8 @@ select pg_temp.ok(public.public_property_address_lookup('123-main-st')='{"status
 reset role;
 update public.renders set published_at=null where id='ad400000-0000-4000-8000-000000000002';
 set local role service_role;
-select pg_temp.ok(public.public_property_address_lookup('123-main-st')->>'slug'='published-main-1',
-  'unpublished alias no longer claims the route');
+select pg_temp.ok(public.public_property_address_lookup('123-main-st')='{"status":"ambiguous"}'::jsonb,
+  'unpublished alias cannot create a new bare address claim');
 reset role;
 
 -- Even if a render publication marker has not yet been cleared, the resolver

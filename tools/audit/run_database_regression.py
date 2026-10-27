@@ -50,6 +50,7 @@ REFLECTION_FIXTURES = (
     ("member_portfolios.sql", "PASS: member portfolio SQL assertions; all fixtures rolled back.", 23),
     # Build 58: Recently deleted (30-day restore window) and republish in place.
     ("build58_db_controls.sql", '{"suite": "build58_db_controls", "assertions": 52}', 52),
+    ("property_address_lookup.sql", '"assertions": 25', 25),
 )
 
 # These already-shipped transactional Studio migrations intentionally create
@@ -107,7 +108,7 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     # anchors; the focused policy driver proves a second application refuses.
     "20261026165813_limit_intro_trial_creative_spend.sql",
     "20261026175227_public_property_address_lookup.sql",
-    "20261026225116_property_address_reservations.sql",
+    "20261027040000_property_address_reservations.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -154,7 +155,7 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261023202520_photo_publication_internal_scope_validation_20261023.sql": ("696d0e233ca1a4e2398f6c5d1c408b3f2c1161b754feeef773a9648546a6498b", "Review changed photo publication internal authority: photo_publication_source"),
     "20261024000646_aerial_original_legacy_byte_verification_20261024.sql": ("86b4afcee317adbc088498a85f5297c9be25acc41afe44df4f1a1ed9cdf106a6", "Original verification predecessor changed: property_video_aerial_original"),
     "20261026175227_public_property_address_lookup.sql": ("aa1eedd3dbfc5452f7a461eea7f4c56292d34ab796caa1bc79069bb2fe3aa0da", "function \"property_address_descriptor\" already exists with same argument types"),
-    "20261026225116_property_address_reservations.sql": ("1581f6dc6b189ee4416d0fe4e0ffcb8655689c0dd6c5a8ac903270afdcc44ce3", "relation \"property_address_reservations\" already exists"),
+    "20261027040000_property_address_reservations.sql": ("4c2d1c76272d821831c2a2e61d1ef3948a7e636b51c542e1930ed72565eda3f6", "relation \"property_address_reservations\" already exists"),
 }
 
 
@@ -317,6 +318,29 @@ def main():
         require(identity.strip() == f"{data}||rendprop_audit", "Cluster identity/network mismatch")
         environment["PGOPTIONS"] = "-c statement_timeout=30000 -c lock_timeout=5000"
         run("bootstrap", psql + ["-q", "-f", str(sqlroot / "tests/ci-bootstrap.sql")])
+        # Recreate the live ledger order in a separate database: the index
+        # writer grant shipped before this forward-dated reservation migration.
+        # The focused fixture proves old bare links, duplicate publication,
+        # new unclaimed links, and deletion tombstones without production data.
+        run("createdb-address-cutover", [bins["createdb"], "--no-password", *connection,
+                                      "rendprop_address_cutover"])
+        address_psql = [bins["psql"], "-X", "--no-password", *connection,
+                        "-d", "rendprop_address_cutover", "-v", "ON_ERROR_STOP=1"]
+        run("address-cutover-setup", address_psql + ["-q", "-f",
+            str(sqlroot / "tests/property_address_reservations_setup.sql")])
+        for filename in ("20261026175227_public_property_address_lookup.sql",
+                         "20261027032646_property_address_index_writer_execute.sql",
+                         "20261027040000_property_address_reservations.sql"):
+            run("address-cutover-apply-" + filename.removesuffix(".sql"),
+                address_psql + ["-q", "-f", str(sqlroot / "migrations" / filename)])
+        address_assert = run("address-cutover-assert", address_psql + ["-f",
+            str(sqlroot / "tests/property_address_reservations_assert.sql")])
+        require("address reservation database checks passed" in address_assert,
+                "Address cutover fixture did not complete")
+        receipt["addressCutoverFixture"] = {"passed": True, "database": "rendprop_address_cutover",
+            "liveLedgerOrder": True, "syntheticOnly": True,
+            "checks": ["claimed bare", "new unique fenced", "duplicate address",
+                       "address correction", "withdrawal", "deletion tombstone", "ACL"]}
         for migration in schema_migrations:
             run("apply-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
         counts = []

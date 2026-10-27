@@ -1,7 +1,12 @@
 -- A public bare address which has already been shared keeps its first listing
 -- identity when another agent publishes the same normalized address. This
 -- reservation never blocks another publication or grants it the bare alias.
--- A deleted listing leaves a tombstone, so the URL cannot silently change owner.
+-- New/unclaimed addresses are refused at this authority even before the dated
+-- Worker flag is deployed, so no temporary bare link can be issued during the
+-- database-to-Worker cutover. A deleted listing leaves a tombstone, so the URL
+-- cannot silently change owner.
+begin;
+
 create table public.property_address_reservations (
   descriptor text primary key
     check (pg_catalog.length(descriptor) between 1 and 120
@@ -92,8 +97,14 @@ begin
   if reservation_exists then
     return jsonb_build_object('status','unique','slug',current_slug,'claimed',true);
   end if;
-  return jsonb_build_object('status','unique','slug',current_slug);
+  -- The current Worker already treats "ambiguous" as no bare-address claim
+  -- and keeps /property/<address>/<publication-id> available. Return it even
+  -- for a single *new* publication: the later dated Worker deployment cannot
+  -- revoke a bare URL that was never issued.
+  return jsonb_build_object('status','ambiguous');
 end$$;
 
 revoke all on function public.public_property_address_lookup(text) from public,anon,authenticated;
 grant execute on function public.public_property_address_lookup(text) to service_role;
+
+commit;
