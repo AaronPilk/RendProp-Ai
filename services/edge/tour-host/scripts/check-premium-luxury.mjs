@@ -55,7 +55,7 @@ try{
  // reachable. The film stays unattached; no lead or provider request is made.
  const layoutTour=buildDemoTour();
  layoutTour.listing_video={url:'/local-fixture/synthetic-listing-8s.mp4',poster_url:'/assets/demo-poster.webp',duration_s:8,width:1920,height:1080,disclosure:'Synthetic photo-based film.',branding_policy:'unbranded'};
- for(const [theme,width,height] of [['signature-estate',320,568],['coastal-luxe',320,568],['signature-estate',360,640],['coastal-luxe',360,640],['coastal-luxe',768,600],['signature-estate',601,600],['signature-estate',768,600],['signature-estate',900,600],['signature-estate',844,390],['coastal-luxe',601,600]]){
+ for(const [theme,width,height] of [['signature-estate',320,568],['coastal-luxe',320,568],['signature-estate',360,640],['coastal-luxe',360,640],['coastal-luxe',768,600],['coastal-luxe',768,844],['signature-estate',601,600],['signature-estate',768,600],['signature-estate',900,600],['signature-estate',844,390],['coastal-luxe',601,600]]){
   const context=await browser.newContext({viewport:{width,height},isMobile:true,hasTouch:true,reducedMotion:'reduce'});
   await context.route('**/*',route=>{const u=new URL(route.request().url());return u.origin===origin||u.protocol==='data:'?route.continue():route.abort()});
   await context.route(origin+'/property/layout-probe',route=>route.fulfill({status:200,contentType:'text/html',body:renderTourPage({...layoutTour,website_theme:theme},'/closed-api','','',{origin,publicBase:'/property'})}));
