@@ -108,6 +108,10 @@ d46f3dfedb6e5f86b9234e275a50395fddf967ab:docs/releases/TESTFLIGHT-55-FINAL-AUDIT
 # Historical false positive: offline photo-quality RPC/fetch fixture identifier; current fixture uses a readable counter ID.
 83fd11e4e4924595a4a2ee0c46ee2453f95e68fb:services/supabase/functions/ai-photo/photo-quality.test.ts:generic-api-key:38
 
+# Exact historical false positive: a synthetic SQL assessment fixture marker.
+# The current fixture uses a short readable counter; keep all other scans active.
+c650ef7b88a2f72541cdc66c27ea47118cae3a03:services/supabase/tests/credit_combined_budget.sql:generic-api-key:126
+
 # Two reviewed historical false positives in a3b3f49, not credentials.
 # tours505 is the public object-key property adjacent to the Cache-Control header.
 # planner33 is a literal synthetic idempotency identifier; current fixture uses low entropy.

@@ -123,7 +123,7 @@ do $$declare actor uuid:='91111111-1111-4111-8111-111111111111';
    'settled credit supplier cost is counted once, outside noncredit early spend');
  insert into public.cost_ledger(org_id,feature,provider,model,total_cents,meta)
  values(org,'photo_helper','gemini','gemini-2.5-flash',20,
-   jsonb_build_object('request_key','combined-assessment-0001','stage','photo.suggest'));
+   jsonb_build_object('request_key','assessment1','stage','photo.suggest'));
  perform pg_temp.combined_ok(public.org_month_spend_cents(org)=20 and
    public.serving_ceiling_spent_cents(org,
      (result->>'period_start')::timestamptz,

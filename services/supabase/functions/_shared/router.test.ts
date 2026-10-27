@@ -314,10 +314,10 @@ Deno.test("a step above the caller's plan is dropped; an unknown plan reads as f
 });
 
 Deno.test("four retail tiers and preserved manual Pro keep their route ordering", () => {
-  const oldStarterOnly = step({ min_plan: "starter" });
-  const proOnly = step({ min_plan: "pro" });
-  const maxOnly = step({ min_plan: "max" });
-  const ultraOnly = step({ min_plan: "ultra" });
+  const oldStarterOnly = step({ provider: "fixture", model: "starter", min_plan: "starter" });
+  const proOnly = step({ provider: "fixture", model: "pro", min_plan: "pro" });
+  const maxOnly = step({ provider: "fixture", model: "max", min_plan: "max" });
+  const ultraOnly = step({ provider: "fixture", model: "ultra", min_plan: "ultra" });
   assertEquals(orderSteps([oldStarterOnly], { plan: "pro" }, NO_HEALTH, NOW).length, 0);
   assertEquals(orderSteps([oldStarterOnly], { plan: "starter" }, NO_HEALTH, NOW).length, 1);
   assertEquals(orderSteps([oldStarterOnly], { plan: "solo" }, NO_HEALTH, NOW).length, 1);

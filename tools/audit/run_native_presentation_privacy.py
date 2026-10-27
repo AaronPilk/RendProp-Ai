@@ -90,6 +90,7 @@ INDEXING
     var websiteVideoPlayer: FixturePlayer?
     var publishedVideoTask: Task<Void, Never>?
     var publishedVideoStatus: FixturePublishedVideoStatus = .unpublished
+    var selectedVideoDownloadNote: String?; var selectedVideoShare: Int?; var selectedVideoShareFile: URL?
     var availableRerenderSource: URL?; var openedFile: Int?; var filePhotoExport: Int?; var filePhotoExportAdmission: (() -> Bool)?
     var filePackageExtras: [Int] = []; var packageError: String?
     var provenance: [Int] = []; var provenanceCanExport: (() -> Bool)?; var auditExport: Int?
@@ -133,6 +134,9 @@ CONTACT
         ("keeps-video-reference", "websiteVideoPlayer?.pause(); websiteVideoPlayer = nil", "websiteVideoPlayer?.pause()", "Account invalidation drops the old property video reference"),
         ("keeps-video-status-fetch", "publishedVideoTask?.cancel(); publishedVideoTask = nil", "publishedVideoTask = nil", "Invalidation cancels old published-video status fetch"),
         ("keeps-video-status", "publishedVideoStatus = .unpublished", "// omitted published-video status reset", "Invalidation clears old published-video status"),
+        ("keeps-selected-video-note", "selectedVideoDownloadNote = nil", "// omitted selected-video note reset", "Invalidation clears old selected-video download note"),
+        ("keeps-selected-video-file", "if let selectedVideoShareFile { try? FileManager.default.removeItem(at: selectedVideoShareFile) }", "// omitted selected-video temporary file removal", "Invalidation removes old selected-video temporary file"),
+        ("keeps-selected-video-share", "selectedVideoShareFile = nil; selectedVideoShare = nil", "selectedVideoShareFile = nil", "Invalidation closes old selected-video share sheet"),
         ("keeps-link-share", "linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "Invalidation closes the old buyer-link share sheet"),
         ("keeps-verified-link", "linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "linkShareTarget = nil; resolvingBuyerLinkKey = nil", "Invalidation clears the old verified buyer link"),
         ("keeps-link-lookup", "linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "linkShareTarget = nil; verifiedBuyerLink = nil", "Invalidation clears the old buyer-link lookup identity"),

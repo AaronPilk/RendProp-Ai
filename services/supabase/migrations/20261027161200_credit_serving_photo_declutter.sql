@@ -40,6 +40,8 @@ alter table public.serving_cost_reservations
     or(not sponsored_unlimited and budget_source='funding' and funding_id is not null and slice_index is not null and credit_hold_id is null)
     or(not sponsored_unlimited and budget_source='credits' and funding_id is null and slice_index is null and credit_hold_id is not null));
 alter table public.serving_cost_reservations
+  drop constraint if exists serving_cost_reservations_credit_environment_check;
+alter table public.serving_cost_reservations
   add constraint serving_cost_reservations_credit_environment_check
   check((budget_source='credits' and credit_environment in('Production','Sandbox'))
     or (budget_source<>'credits' and credit_environment is null));

@@ -123,6 +123,12 @@ import Foundation
         cleared.verifiedBuyerLink = ("old-link", URL(string: "https://old-buyer-link.invalid/")!)
         cleared.resolvingBuyerLinkKey = "old-link"
         cleared.withdrawnBuyerLinkKey = "old-link"
+        cleared.selectedVideoDownloadNote = "Old account download note"
+        cleared.selectedVideoShare = 1
+        let selectedVideoTemp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rendprop-presentation-\(UUID().uuidString).mov")
+        try! Data("synthetic".utf8).write(to: selectedVideoTemp)
+        cleared.selectedVideoShareFile = selectedVideoTemp
         cleared.loadFiles(); await waitFor { ScanFixture.pending.count == 1 }
         let cancelledScan = cleared.filesTask
         cleared.invalidatePresentation()
@@ -144,6 +150,13 @@ import Foundation
         check(cleared.verifiedBuyerLink == nil, "Invalidation clears the old verified buyer link")
         check(cleared.resolvingBuyerLinkKey == nil, "Invalidation clears the old buyer-link lookup identity")
         check(cleared.withdrawnBuyerLinkKey == nil, "Invalidation clears the old withdrawn buyer link identity")
+        let selectedVideoFileRemoved = !FileManager.default.fileExists(atPath: selectedVideoTemp.path)
+        try? FileManager.default.removeItem(at: selectedVideoTemp)
+        check(selectedVideoFileRemoved, "Invalidation removes old selected-video temporary file")
+        check(cleared.selectedVideoShareFile == nil && cleared.selectedVideoShare == nil,
+              "Invalidation closes old selected-video share sheet")
+        check(cleared.selectedVideoDownloadNote == nil,
+              "Invalidation clears old selected-video download note")
         check(cleared.sharedAdmittedJobs == 7, "Presentation invalidation leaves admitted shared jobs untouched")
         ScanFixture.pending.removeFirst().resume(returning: .init(stamp: 4, items: [55]))
         await cancelledScan?.value

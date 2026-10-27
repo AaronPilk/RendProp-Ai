@@ -109,6 +109,14 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20261026165813_limit_intro_trial_creative_spend.sql",
     "20261026175227_public_property_address_lookup.sql",
     "20261027040000_property_address_reservations.sql",
+    # The new credit tables/columns and the Team seat table are intentionally
+    # installed once. Their exact bytes and second-application refusals are
+    # pinned below, while every other credit migration must replay.
+    "20261027161201_verified_monthly_credit_period.sql",
+    "20261027161203_declutter_assessment_budget.sql",
+    "20261027171200_credit_intent_immutable_amount.sql",
+    "20261027173000_dormant_combined_credit_budget.sql",
+    "20261027180000_team_paid_seat_variants.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -156,6 +164,11 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261024000646_aerial_original_legacy_byte_verification_20261024.sql": ("86b4afcee317adbc088498a85f5297c9be25acc41afe44df4f1a1ed9cdf106a6", "Original verification predecessor changed: property_video_aerial_original"),
     "20261026175227_public_property_address_lookup.sql": ("aa1eedd3dbfc5452f7a461eea7f4c56292d34ab796caa1bc79069bb2fe3aa0da", "function \"property_address_descriptor\" already exists with same argument types"),
     "20261027040000_property_address_reservations.sql": ("4c2d1c76272d821831c2a2e61d1ef3948a7e636b51c542e1930ed72565eda3f6", "relation \"property_address_reservations\" already exists"),
+    "20261027161201_verified_monthly_credit_period.sql": ("49e7a2fc222969143aa5c38a1752dfd1499bd0fcf832b594c2638796e87bd822", "relation \"credit_monthly_events\" already exists"),
+    "20261027161203_declutter_assessment_budget.sql": ("38bc1202b111f6ea7b4fd7368ebd476b835abb5c67a6cf18c3ada64522589f5e", "relation \"photo_declutter_assessment_admissions\" already exists"),
+    "20261027171200_credit_intent_immutable_amount.sql": ("b8d0ad6a132af98d45e3b9d90034c41ae5b70608b2e2a05e06a1bd197bd47a8e", "column \"credits\" of relation \"credit_purchase_intents\" already exists"),
+    "20261027173000_dormant_combined_credit_budget.sql": ("b9846c5a5544344915709fda8cf541dd08531dbf8a0633d00500daa55e34d843", "column \"price_milliunits\" of relation \"credit_monthly_events\" already exists"),
+    "20261027180000_team_paid_seat_variants.sql": ("9a54cb1f857e81064e513d517c2e75d9a136e346d0b849cda58e7c25f7f27550", "relation \"team_paid_seat_variants\" already exists"),
 }
 
 
