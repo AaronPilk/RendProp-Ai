@@ -94,6 +94,15 @@ test("published status requires a timestamp and a valid slug, not listing.status
   value.state.renders = [published, { ...published, id: "later", slug: "oak-later", published_at: "2026-09-23T12:00:00Z" }];
   assert.equal(listingFinish(value).publishedLinks?.branded, "https://rendprop.com/f/oak-later");
 });
+test("published readiness uses the verified address link without changing the MLS destination", () => {
+  const value = input(); value.state.renders = [published];
+  const branded = "https://rendprop.com/property/10-oak-street/20260922.oak-street";
+  const unbranded = "https://rendprop.com/u/oak-street";
+  const resolvedLinks = { "oak-street": { links: { branded, unbranded }, verified: true, addressOnly: false } };
+  assert.deepEqual(listingFinish({ ...value, resolvedLinks }).publishedLinks, { branded, unbranded });
+  resolvedLinks["oak-street"].links.branded = "https://rendprop.com/property/10-oak-street/20260922.other-listing";
+  assert.equal(listingFinish({ ...value, resolvedLinks }).publishedLinks?.branded, "https://rendprop.com/f/oak-street");
+});
 test("archived and sold properties retain truthful existing-public-link state", () => {
   const value = input(); value.listing = { ...listing, status: "archived" }; value.state.renders = [published];
   assert.equal(listingFinish(value).title, "This property is archived");

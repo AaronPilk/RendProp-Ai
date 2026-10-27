@@ -12,6 +12,7 @@ import GalleryPhotoCard from "./GalleryPhotoCard";
 import { changeListingSelection, confirmsGallerySelection, UnconfirmedGallerySelection, readGallerySelection, sameSelection, selectionExpected, type GallerySelection } from "./gallery-selection";
 import { prepareGalleryCopy } from "./gallery-copy";
 import { downloadTourQR } from "./qr";
+import { resolveTourLinks, safeTourLinks, type ResolvedTourLinks } from "./share-link";
 import "./listings.css";
 import { FeatureCards } from "../home/Dashboard";
 import { FEATURES, homeWords, type FeatureId } from "../home/features";
@@ -324,6 +325,41 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
   const videoAssets = state.assets.filter((asset) => asset.uploaded && asset.kind === "video");
   const chosenAsset = videoAssets.find((asset) => asset.id === assetId);
   const published = state.renders.filter((render) => render.published_at);
+  const [shareProofs, setShareProofs] = useState<{ scope: string; links: Record<string, ResolvedTourLinks> }>({ scope: "", links: {} });
+  const shareGuard = useRef<(() => void) | null>(null);
+  const shareVersion = services.getSnapshot().identityVersion;
+  const shareScope = JSON.stringify([workspace.user.id, workspace.org.id, workspace.libraryOrgId ?? workspace.org.id, listing.id,
+    shareVersion, published.map(row => [row.id, row.slug, row.published_at])]);
+  useEffect(() => {
+    const controller = new AbortController(); shareGuard.current = null;
+    setShareProofs({ scope: shareScope, links: {} });
+    void (async () => {
+      const guard = await services.listingReadScope(workspace.org.id, listing.id, workspace.libraryOrgId ?? workspace.org.id, controller.signal);
+      if (controller.signal.aborted) return;
+      guard(); shareGuard.current = guard;
+      const rows = published.filter(row => row.published_at && tourLinks(row.slug));
+      let next = 0;
+      const worker = async () => {
+        while (next < rows.length && !controller.signal.aborted) {
+          const row = rows[next++], resolved = await resolveTourLinks(row.slug, { signal: controller.signal });
+          if (!resolved || controller.signal.aborted) continue;
+          guard();
+          setShareProofs(current => current.scope === shareScope
+            ? { scope: shareScope, links: { ...current.links, [row.slug]: resolved } } : current);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, rows.length) }, worker));
+    })().catch(() => { /* A stale or unavailable read keeps only the safe published token link. */ });
+    return () => { controller.abort(); shareGuard.current = null; };
+  }, [services, workspace.user.id, workspace.org.id, workspace.libraryOrgId, listing.id, shareScope]);
+  const canUseShare = () => {
+    const current = services.getSnapshot();
+    if (current.status !== "signed-in" || current.identity?.userId !== workspace.user.id ||
+        current.identity.isAnonymous || current.identityVersion !== shareVersion || !shareGuard.current) return false;
+    try { shareGuard.current(); return true; } catch { return false; }
+  };
+  const proofFor = (slug: string) => shareProofs.scope === shareScope && canUseShare() ? shareProofs.links[slug] : undefined;
+  const linksFor = (slug: string) => safeTourLinks(slug, proofFor(slug));
   const activeJobs = state.jobs.filter((job) => !terminal.has(job.status));
   const floorplanPhoto = photos.find((photo) => photo.id === listing.details.floorplan_asset_id);
   const floorplanURL = floorplanPhoto?.url ?? safeHTTPS(listing.details.floorplan_url);
@@ -375,7 +411,8 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
     const next = [...order]; [next[index], next[target]] = [next[target], next[index]];
     void selectPhoto({ action: "reorder_selected", expected_order: order, photo_ids: next }, "Photo order saved. Selected photos follow this order on the website and in new default video selections; other selected photos are retained.");
   };
-  const finish = listingFinish({ listing, state, media, loading, loadFailed, pendingUploads: journals.length, canWrite, hasCreativeTools: Boolean(onOpenFeature) });
+  const finish = listingFinish({ listing, state, media, loading, loadFailed, pendingUploads: journals.length, canWrite, hasCreativeTools: Boolean(onOpenFeature),
+    resolvedLinks: shareProofs.scope === shareScope && canUseShare() ? shareProofs.links : undefined });
   const navigateFinish = (destination: ListingDestination) => {
     if ("refresh" in destination) { void refresh(true); return; }
     if ("feature" in destination) { if (canWrite) onOpenFeature?.(destination.feature, listing.id); return; }
@@ -384,7 +421,8 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
   };
   return <div className="lw-property">
     <header className="lw-property-heading"><div><h2>{listing.address || "Untitled property"}</h2><p>{listing.tagline || "Everything you need to bring this property to market."}</p></div><button onClick={() => { onChanged(); void refresh(true); }} disabled={loading}>↻ {loading ? "Refreshing…" : "Refresh"}</button></header>
-    <FinishListing finish={finish} canWrite={canWrite} busy={!!busy} onNavigate={navigateFinish} onPhotos={onOpenFeature ? () => onOpenFeature("studio", listing.id) : undefined} />
+    <FinishListing finish={finish} canWrite={canWrite} busy={!!busy} onNavigate={navigateFinish} onPhotos={onOpenFeature ? () => onOpenFeature("studio", listing.id) : undefined}
+      onPublicLinkClick={event => { if (!canUseShare()) { event.preventDefault(); setActionError("Your property selection changed. Reopen this property before sharing."); } }} />
     <ListingKit services={services} workspace={workspace} listingId={listing.id} />
     {onOpenFeature && <fieldset className="lw-creation-tools" disabled={!canWrite}><section className="app-property-tools" aria-label="Create with this home"><h2>Make something with this {homeWords(workspace.org.spaceType).noun}</h2><FeatureCards features={FEATURES.filter(f=>["studio","reel","tour","aerial"].includes(f.id))} onOpen={id=>onOpenFeature(id,listing.id)}/></section></fieldset>}
     <div className="lw-tabs" role="tablist" aria-label="Property tasks">{([["media", "1", "Media"], ["tour", "2", "Create & publish"], ["floorplan", "3", "Floor plan & 3D"], ["details", "", "Details"]] as const).map(([value, number, title]) => <button key={value} role="tab" aria-selected={tab === value} aria-controls={`lw-${value}`} id={`lw-tab-${value}`} onClick={() => setTab(value)}><span>{number}</span>{title}</button>)}</div>
@@ -433,7 +471,37 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
 
         </div><aside className="lw-card lw-guide"><h3>A smooth phone-to-office workflow</h3>{listing.spaceType === "real_estate" ? <><ol><li><strong>Add your home.</strong> Enter the address and property details.</li><li><strong>Add landscape photos.</strong> Use 0.5× only when needed to fit a room.</li><li><strong>Review your photos.</strong> AI edits are optional. Compare saved edits with Original before choosing them.</li><li><strong>Make a video.</strong> Choose Listing for a landscape 16:9 video, then review the finished video privately.</li><li><strong>Publish and share.</strong> Choose your gallery and cover, check contact details, then publish your website. Share its link and follow up in Leads. Check your MLS rules before using the unbranded link in an MLS field.</li></ol><p>A recorded walkthrough and room tags are optional and separate.</p></> : <ol><li><strong>Capture on site.</strong> Film your walkthrough and room tags in the iPhone app.</li><li><strong>Complete the upload.</strong> Original videos and photos appear in this property’s media.</li><li><strong>Finish at your desk.</strong> Edit your video, refine photos, and review the property details.</li><li><strong>Publish and share.</strong> Use the branded link for marketing. {listing.spaceType === "real_estate" ? "Check your MLS rules before using the unbranded link in an MLS field." : "The unbranded link hides contact details and marketing."}</li></ol>}</aside></div>
         {state.jobs.length > 0 && <div className="lw-card"><h3>Renders across your devices</h3>{state.jobs.map((job) => <div className="lw-job" key={job.id}><div><strong>{job.tier === "premium4k" ? "4K Premium" : job.tier === "cinematic" ? "Cinematic AI" : "Smooth tour"}</strong><span>{job.current_step?.replaceAll("_", " ") || job.status.replaceAll("_", " ")}</span></div>{!terminal.has(job.status) && <progress max={1} value={Math.max(0, Math.min(1, job.progress > 1 ? job.progress / 100 : job.progress))} />}{job.error && <p className="lw-error">{job.error}</p>}{job.status === "ready" && !state.renders.some((render) => render.job_id === job.id && render.published_at) && <button disabled={!!busy || !canWrite || contactBlocked || state.assets.some(a => a.id === job.capture_asset_id && !canPublishAsset(a))} onClick={() => void run("publish", async (signal) => { if (contactBlocked) throw new Error("Save the listing contact before publishing."); await api(`renders/${job.id}/publish`, { chapters: state.chapters.filter(c => c.asset_id === job.capture_asset_id).sort((a, b) => a.t_ms - b.t_ms).map((c, sort) => ({ label: c.label, t_ms: c.t_ms, sort })), speed_factor: 1 }, signal); if (!signal.aborted) { setNotice("Your tour is live."); onChanged(); await refresh(); } })}>Publish finished tour</button>}</div>)}{activeJobs.length > 0 && <p className="lw-help">Progress refreshes automatically. Rendering continues after you close Studio.</p>}</div>}
-        <div className="lw-card"><h3>Published tours</h3>{published.length === 0 ? <p>Your branded and {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} links will appear here when you publish.</p> : published.map((tour) => { const links = tourLinks(tour.slug); return links ? <div className="lw-published" key={tour.id}><div><strong>Live tour · {new Date(tour.published_at!).toLocaleDateString()}</strong>{tour.staged && <span>Altered media disclosure included</span>}</div><div className="lw-share-links"><a href={links.branded} target="_blank" rel="noreferrer">Open branded tour ↗</a><button onClick={() => void navigator.clipboard.writeText(links.branded).then(() => setNotice("Branded tour link copied."), () => setActionError("Copy was unavailable. Open the tour and copy the address from your browser."))}>Copy marketing link</button><a href={links.unbranded} target="_blank" rel="noreferrer">Open {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} tour ↗</a><button onClick={() => void navigator.clipboard.writeText(links.unbranded).then(() => setNotice("Unbranded link copied."), () => setActionError("Copy was unavailable. Open the tour and copy its address."))}>Copy {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} link</button></div><button onClick={() => void downloadTourQR(tour.slug).then(() => setNotice("Marketing QR code downloaded."), (reason) => setActionError(message(reason)))}>Download marketing QR</button><button onClick={() => void downloadTourQR(tour.slug, "unbranded").then(() => setNotice("Unbranded MLS QR code downloaded."), (reason) => setActionError(message(reason)))}>Download {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} QR</button><button disabled={!canWrite} onClick={() => { const job = state.jobs.find((j) => j.id === tour.job_id); setEditTour(tour); setChapters(formatChapters(state.chapters.filter((c) => c.asset_id === job?.capture_asset_id))); }}>Edit room chapters</button></div> : null; })}</div>
+        <div className="lw-card">
+          <h3>Published tours</h3>
+          {published.length === 0 ? <p>Your branded and {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} links will appear here when you publish.</p> : published.map(tour => {
+            const links = linksFor(tour.slug), proof = proofFor(tour.slug);
+            if (!links) return null;
+            const requireCurrent = () => {
+              if (canUseShare()) return true;
+              setActionError("Your property selection changed. Reopen this property before sharing.");
+              return false;
+            };
+            const copy = (url: string, label: string) => {
+              if (!requireCurrent()) return;
+              void navigator.clipboard.writeText(url).then(
+                () => { if (canUseShare()) setNotice(`${label} copied.`); },
+                () => { if (canUseShare()) setActionError("Copy was unavailable. Open the tour and copy its address from your browser."); });
+            };
+            return <div className="lw-published" key={tour.id}>
+              <div><strong>Live tour · {new Date(tour.published_at!).toLocaleDateString()}</strong>{tour.staged && <span>Altered media disclosure included</span>}</div>
+              <div className="lw-share-links">
+                <a href={links.branded} target="_blank" rel="noreferrer" onClick={event => { if (!requireCurrent()) event.preventDefault(); }}>Open branded tour ↗</a>
+                <button onClick={() => copy(links.branded, "Marketing link")}>Copy marketing link</button>
+                <a href={links.unbranded} target="_blank" rel="noreferrer" onClick={event => { if (!requireCurrent()) event.preventDefault(); }}>Open {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} tour ↗</a>
+                <button onClick={() => copy(links.unbranded, "Unbranded link")}>Copy {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} link</button>
+              </div>
+              {listing.spaceType === "real_estate" && proof && !proof.verified && <p className="lw-help">Address link is temporarily unavailable. This published tour link still works.</p>}
+              <button onClick={() => { if (requireCurrent()) void downloadTourQR(tour.slug, "branded", proof, canUseShare).then(() => { if (canUseShare()) setNotice("Marketing QR code downloaded."); }, reason => { if (canUseShare()) setActionError(message(reason)); }); }}>Download marketing QR</button>
+              <button onClick={() => { if (requireCurrent()) void downloadTourQR(tour.slug, "unbranded", proof, canUseShare).then(() => { if (canUseShare()) setNotice("Unbranded MLS QR code downloaded."); }, reason => { if (canUseShare()) setActionError(message(reason)); }); }}>Download {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} QR</button>
+              <button disabled={!canWrite} onClick={() => { const job = state.jobs.find(j => j.id === tour.job_id); setEditTour(tour); setChapters(formatChapters(state.chapters.filter(c => c.asset_id === job?.capture_asset_id))); }}>Edit room chapters</button>
+            </div>;
+          })}
+        </div>
         {editTour && <form className="lw-card" onSubmit={(e) => { e.preventDefault(); void run("chapters", async (signal) => { await api(`renders/${editTour.id}/chapters`, { chapters: parseChapterText(chapters, editTour.duration_s) }, signal, "PATCH"); if (!signal.aborted) { setEditTour(null); setNotice("Room chapters updated on the live tour."); await refresh(); } }); }}><h3>Edit live room chapters</h3><label>Time and room name<textarea aria-label="Time and room name" value={chapters} rows={7} onChange={(e) => setChapters(e.target.value)} /></label><div className="lw-actions"><button className="primary" disabled={!!busy}>Save chapters</button><button type="button" onClick={() => setEditTour(null)}>Cancel</button></div></form>}
       </>}
       {tab === "floorplan" && <><div className="lw-two-column"><div className="lw-card"><h3>Floor plan</h3><p>Add a plan to the property so it is available with the tour. Export PDFs as a JPG or PNG first.</p>{floorplanURL ? <><a href={floorplanURL} target="_blank" rel="noreferrer"><img className="lw-floorplan" src={floorplanURL} alt="Property floor plan" /></a><a href={floorplanURL} target="_blank" rel="noreferrer">Open full floor plan ↗</a></> : <div className="lw-empty"><span className="lw-plan-icon">⌑</span><p>No floor plan attached yet.</p></div>}<button className="primary" disabled={!!busy || !canWrite} onClick={() => floorInput.current?.click()}>{floorplanURL ? "Replace floor plan" : "Upload floor plan"}</button></div><aside className="lw-card lw-guide">{listing.spaceType === "real_estate" ? <><h3>Saved floor plans</h3><p>New floor-plan and measurement tools are Coming soon. Existing saved scan plans remain available; upload a saved plan image here.</p><p>Check dimensions and advertised living area against a professional plan or appraisal.</p></> : <><h3>Measure on iPhone</h3><p>Open this listing in Rendprop, then choose <strong>Measurements</strong>. Enter room dimensions, draw a straight-edge outline, and review your area worksheet. Your measurements do not replace advertised living area or a professional appraisal.</p><p>Export a plan image and upload it here. Existing saved scan plans remain available; new 3D room scans are Coming soon and experiments stay in the TestFlight Lab.</p></>}<a href="https://apps.apple.com/us/app/id6808982413" target="_blank" rel="noreferrer">Get Rendprop for iPhone ↗</a></aside></div><SpatialWorkflow services={services} workspace={workspace} listing={listing} canWrite={canWrite} /></>}

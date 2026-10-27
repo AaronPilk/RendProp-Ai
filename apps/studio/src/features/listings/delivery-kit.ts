@@ -7,6 +7,7 @@ import { decodeDraft, decodeResult } from "../creative/model";
 import { decodeListingState, EMPTY_STATE, orderedGallery, tourLinks } from "./model";
 import type { ListingState, Published } from "./model";
 import { createTourQR } from "./qr";
+import { resolveTourLinks, safeTourLinks } from "./share-link";
 import { createStoredZip, filenamePart, KIT_MAX_BYTES, KIT_MAX_FILE_BYTES } from "./kit-archive";
 import type { ZipEntry } from "./kit-archive";
 
@@ -118,7 +119,7 @@ function mediaExtension(bytes: Uint8Array, type: string, kind: "photo" | "video"
   } else if (["video/mp4", "video/quicktime", "video/x-m4v"].includes(type) && ascii(4, 8) === "ftyp") return type === "video/quicktime" ? "mov" : "mp4";
   throw new Error("A saved file has an unsupported or mismatched format. No incomplete kit was downloaded.");
 }
-export async function buildKit(snapshot: KitSnapshot, selectedIds: string[], options: { services: StudioServices; workspace: Workspace; signal: AbortSignal; progress: (value: KitProgress) => void; fetcher?: typeof fetch }) {
+export async function buildKit(snapshot: KitSnapshot, selectedIds: string[], options: { services: StudioServices; workspace: Workspace; signal: AbortSignal; progress: (value: KitProgress) => void; fetcher?: typeof fetch; shareFetcher?: typeof fetch }) {
   const { signal, services, workspace } = options;
   const check = async () => {
     assertKitIdentity(services, workspace, snapshot.identityVersion, signal);
@@ -156,7 +157,15 @@ export async function buildKit(snapshot: KitSnapshot, selectedIds: string[], opt
     if (item.originalUrl) { const original = await read(item.originalUrl, item.expiresAt, `${item.label} — ${item.originalLabel}`, "photo"); originalPath = `originals/${stem}-${item.originalLabel === "Source photo" ? "source" : "original"}.${original.extension}`; entries.push({ path: originalPath, bytes: original.bytes }); }
     files.push({ path, caption: kitText(item.caption), disclosure: kitText(item.disclosure), originalPath, originalRelationship: item.originalLabel, ...(item.kind === "video" && !originalPath ? { sourceNote: "This edit may combine multiple inputs. No single unaltered original is claimed or included." } : {}) });
   }
-  const listing = snapshot.listing, links = snapshot.published ? tourLinks(snapshot.published.slug) : null;
+  // A media test transport must never be sent to the public share endpoint.
+  // Production uses the public credential-free fetch; tests inject shareFetcher
+  // when proving the exact link, QR and manifest all carry the same identity.
+  const published = snapshot.published;
+  (await check())();
+  const resolved = published && (options.shareFetcher || !options.fetcher)
+    ? await resolveTourLinks(published.slug, { signal, fetcher: options.shareFetcher }) : null;
+  (await check())();
+  const listing = snapshot.listing, links = published ? safeTourLinks(published.slug, resolved) : null;
   const facts = { address: kitText(listing.address ?? "Untitled property"), headline: kitText(listing.tagline ?? ""), beds: listing.beds, baths: listing.baths, squareFeet: listing.sqft, askingPriceUSD: listing.priceCents === null ? null : listing.priceCents / 100, status: listing.soldAt ? "Sold" : listing.status };
   const text = (path: string, value: string) => entries.push({ path, bytes: encoder.encode(value) });
   const factsText = [`${facts.address}`, facts.headline, `Bedrooms: ${facts.beds ?? "Not saved"}`, `Bathrooms: ${facts.baths ?? "Not saved"}`, `Square feet: ${facts.squareFeet ?? "Not saved"}`, `Asking price (USD): ${facts.askingPriceUSD ?? "Not saved"}`, `Status: ${facts.status}`].join("\n");
@@ -164,7 +173,7 @@ export async function buildKit(snapshot: KitSnapshot, selectedIds: string[], opt
   if (snapshot.script.trim()) text("saved-script.txt", `${kitText(snapshot.script)}\n\nSaved script only. Review claims, pricing and wording before use.\n`);
   if (links && snapshot.published) {
     text("sharing-links.txt", `Published marketing tour: ${links.branded}\nPublished unbranded tour: ${links.unbranded}\nPublished at: ${snapshot.published.published_at}\nThese links open the existing published tour. Downloading a kit does not publish new work. Check your destination's rules before sharing.\n`);
-    text("sharing/marketing-qr.svg", await createTourQR(snapshot.published.slug)); (await check())();
+    text("sharing/marketing-qr.svg", await createTourQR(snapshot.published.slug, "branded", resolved ?? undefined)); (await check())();
     text("sharing/unbranded-qr.svg", await createTourQR(snapshot.published.slug, "unbranded")); (await check())();
   }
   const manifest = { format: "rendprop-listing-kit", version: 1, savedSnapshotAt: snapshot.checkedAt, facts, files, publishedLinks: links, selectedMediaCount: selected.length, availableMediaCount: snapshot.items.length, excluded: snapshot.excluded.map(kitText), review: "The person downloading confirmed they reviewed the selected materials. This is not an approval record, a new publication or an MLS compliance certification." };

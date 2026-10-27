@@ -12,6 +12,9 @@ import { chromium, expect } from "@playwright/test";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-listing-kit-browser-")), dist = join(artifacts, "dist");
 const receipt = { proof: "Actual ListingWorkflow and listing-kit UI, generated media, system-unzipped browser downloads; isolated fixture only, no production or paid calls.", checks: [], externalRequests: [], errors: [] };
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64");
+const publicationSlug = "fixture-live-property";
+const addressLink = `https://rendprop.com/property/10-oak-street/20260922.${publicationSlug}`;
+let addressLookups = 0;
 const KIT_MAX_FILE_BYTES = 128 * 1024 * 1024, OVERSIZE_COPY = "This kit exceeds its download size. Choose fewer files, or download a large video separately.";
 /** Independent ZIP reader (no archive dependency): walks the end-of-central-directory record and every central-directory header of a saved download. */
 function readZipDirectory(buffer) {
@@ -48,6 +51,10 @@ try {
   await context.route("**/*", async route => {
     const req = route.request(), url = new URL(req.url());
     if (url.origin === origin && req.method() === "GET") return route.continue();
+    if (url.origin === "https://rendprop.com" && url.pathname === `/f/${publicationSlug}/share-link` && req.method() === "GET") {
+      addressLookups++;
+      return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": origin, "Cache-Control": "no-store" }, body: JSON.stringify({ url: addressLink, address_only: false }) });
+    }
     if (url.hostname === `${"a".repeat(32)}.r2.cloudflarestorage.com` && req.method() === "GET") {
       if (req.resourceType() === "fetch" && mode === "hold") { held.push(route); return; }
       if (req.resourceType() === "fetch" && mode === "fail") return route.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" } });
@@ -60,6 +67,11 @@ try {
   const openKit = async () => { await page.getByRole("button", { name: "Choose kit materials" }).click(); await expect(page.getByText("2 of 3 media items selected", { exact: true })).toBeVisible(); };
   const review = () => page.getByLabel("I reviewed the selected materials", { exact: false });
   await page.goto(`${origin}/tests/listing-kit-fixture.html`);
+  await expect(page.getByRole("link", { name: "Open live property" })).toHaveAttribute("href", addressLink);
+  await page.getByRole("tab", { name: "Create & publish", exact: false }).click();
+  await expect(page.getByRole("link", { name: "Open branded tour" })).toHaveAttribute("href", addressLink);
+  await expect(page.getByRole("link", { name: "Open MLS tour" })).toHaveAttribute("href", `https://rendprop.com/u/${publicationSlug}`);
+  receipt.checks.push("Actual published-tour and finish-listing UI show the same verified dated address link while MLS stays unbranded");
   await page.getByRole("tab", { name: "Details", exact: true }).click(); await page.getByLabel("Headline", { exact: true }).fill("Unsaved office headline must stay");
   await openKit(); await expect(page.getByLabel("Headline", { exact: true })).toHaveValue("Unsaved office headline must stay");
   await expect(page.getByRole("button", { name: "Download ZIP", exact: true })).toBeDisabled();
@@ -85,6 +97,8 @@ try {
   assert.match(execFileSync("unzip", ["-t", zip], { encoding: "utf8" }), /No errors detected/); execFileSync("unzip", ["-q", zip, "-d", join(artifacts, "opened")]);
   receipt.zip = { path: zip, bytes: zipStat.size, entries: entryNames };
   const manifest = JSON.parse(await readFile(join(artifacts, "opened/manifest.json"), "utf8")); assert.equal(manifest.files.length, 3); assert.equal(manifest.files[1].originalRelationship, "Paired original");
+  assert.equal(manifest.publishedLinks.branded, addressLink);
+  assert.ok((await readFile(join(artifacts, "opened/sharing-links.txt"), "utf8")).includes(addressLink));
   assert.deepEqual(await readFile(join(artifacts, "opened", manifest.files[1].originalPath)), png); assert.deepEqual(await readFile(join(artifacts, "opened", manifest.files[2].path)), movie);
   assert.equal(manifest.files[2].originalPath, null); assert.match(manifest.files[2].sourceNote, /No single unaltered original/);
   assert.match(await readFile(join(artifacts, "opened/disclosures.txt"), "utf8"), /Virtually staged/); assert.match(await readFile(join(artifacts, "opened/sharing/marketing-qr.svg"), "utf8"), /<svg/);
@@ -93,7 +107,7 @@ try {
   receipt.checks.push("Actual property UI preserves dirty details; selected gallery+original+reviewed MP4 download as a valid ZIP with exact bytes, saved facts/copy, disclosure and real published-link QR");
   const opened = await context.newPage(); await opened.goto(`${origin}/opened/START-HERE.html`); await expect(opened.getByRole("heading", { name: "10 Oak Street", exact: true })).toBeVisible();
   await expect(opened.getByText('A bright home <script>alert("unsafe")</script>', { exact: false })).toBeVisible();
-  await expect(opened.getByRole("link", { name: "Open marketing tour", exact: true })).toHaveAttribute("href", "https://rendprop.com/f/fixture-live-property");
+  await expect(opened.getByRole("link", { name: "Open marketing tour", exact: true })).toHaveAttribute("href", addressLink);
   await opened.screenshot({ path: join(artifacts, "opened-kit.png"), fullPage: true }); await opened.close(); receipt.checks.push("Unzipped START-HERE page opens, escapes saved HTML and links the actual selected files and existing published tour");
   await page.getByLabel("Include Photo 1", { exact: true }).uncheck(); await expect(review()).not.toBeChecked(); await expect(page.getByRole("button", { name: "Download ZIP", exact: true })).toBeDisabled();
   await review().check(); mode = "fail"; const count = downloads.length; await page.getByRole("button", { name: "Download ZIP", exact: true }).click();
@@ -122,6 +136,6 @@ try {
   await page.reload(); await openKit(); await page.setViewportSize({ width: 390, height: 844 }); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await page.screenshot({ path: join(artifacts, "kit-mobile.png"), fullPage: true }); await page.setViewportSize({ width: 1440, height: 1080 }); await page.screenshot({ path: join(artifacts, "kit-desktop.png"), fullPage: true });
   receipt.checks.push("Branded selection UI fits a 390px viewport with readable progress, original pairing and disclosure controls");
-  const calls = await page.evaluate(() => window.kitFixture.calls); assert(calls.every(call => call.method === "GET")); assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
+  const calls = await page.evaluate(() => window.kitFixture.calls); assert(calls.every(call => call.method === "GET")); assert(addressLookups >= 1); assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); process.exitCode = 1; if (page) await page.screenshot({ path: join(artifacts, "failure.png"), fullPage: true }).catch(() => {}); }
 finally { await browser?.close(); if (server) await new Promise(done => server.close(done)); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }

@@ -2,6 +2,7 @@ import type { Listing, ListingMedia, Workspace } from "../../data/contracts";
 import type { FeatureId } from "../home/features";
 import { canPublishAsset, tourLinks, websiteDesignPreviews } from "./model";
 import type { ListingState } from "./model";
+import { safeTourLinks, type ResolvedTourLinks } from "./share-link";
 
 export type ListingDestination = { tab: "media" | "tour" | "details" } | { feature: FeatureId } | { refresh: true };
 type Action = { label: string; destination: ListingDestination; requiresWrite?: boolean };
@@ -31,6 +32,7 @@ export function listingFinish(input: {
   listing: Listing; state: ListingState; media: ListingMedia | null;
   loading: boolean; loadFailed: boolean; pendingUploads: number;
   canWrite: boolean; hasCreativeTools: boolean;
+  resolvedLinks?: Record<string, ResolvedTourLinks>;
 }): ListingFinish {
   const { listing, state, media, canWrite } = input;
   const tab = (label: string, value: "media" | "tour" | "details"): Action => ({ label, destination: { tab: value } });
@@ -53,7 +55,7 @@ export function listingFinish(input: {
   const failures = state.jobs.filter(job => job.status === "failed");
   const latestPublished = state.renders.filter(render => Boolean(render.published_at) && tourLinks(render.slug))
     .sort((a, b) => String(b.published_at).localeCompare(String(a.published_at)))[0];
-  const links = latestPublished ? tourLinks(latestPublished.slug) : null;
+  const links = latestPublished ? safeTourLinks(latestPublished.slug, input.resolvedLinks?.[latestPublished.slug]) : null;
   const finishedVideo = assets.some(asset => asset.kind === "video" && asset.bucket === "renders" && canPublishAsset(asset));
   const readyJob = state.jobs.some(job => job.status === "ready" && !state.renders.some(render => render.job_id === job.id && render.published_at) && assets.some(asset => asset.id === job.capture_asset_id && canPublishAsset(asset)));
   const mediaDetail = [hasPhotos ? "Photos saved" : "", hasVideos ? "Video saved" : ""].filter(Boolean).join(" · ");
