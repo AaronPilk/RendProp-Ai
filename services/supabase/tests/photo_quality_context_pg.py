@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Isolated actual Postgres context proof; no inherited credentials/network."""
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse,hashlib,json,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path);a=p.parse_args();out=a.evidence_dir or Path(tempfile.mkdtemp(prefix='photo-context-proof-'));out.mkdir(parents=True,exist_ok=True)
@@ -14,7 +15,7 @@ try:
  run('init',[tool('initdb'),'-D',data,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8']);run('start',[tool('pg_ctl'),'-D',data,'-l',out/'postgres.log','-w','-o',f"-k {sock} -p 55553 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  conn=['-h',sock,'-p','55553','-U','postgres'];run('db',[tool('createdb'),*conn,'photo_context']);psql=[tool('psql'),'-X','--no-password',*conn,'-d','photo_context','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*psql,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+m.stem,[*psql,'-q','-1','-f',m])
+ for m in partition_fresh_migrations(sorted((SQL/'migrations').glob('*.sql')))[0]:run('apply-'+m.stem,[*psql,'-q','-1','-f',m])
  migration=SQL/'migrations/20261015041036_photo_quality_judge_context.sql';run('exact-replay',[*psql,'-q','-1','-f',migration])
  fixture=(SQL/'tests/photo_quality_context.sql').read_text();receipt['fixture']=run('context-rpc-proof',[*psql,'-Atq'],fixture).strip();print(receipt['fixture'],flush=True)
  # Existing complete evidence/payment/quarantine corpus, now supplying the new

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Closed address resolver regression on disposable socket-only PostgreSQL."""
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse
 import hashlib
 import json
@@ -52,7 +53,7 @@ try:
     psql = [tools["psql"], "-X", "--no-password", *connection, "-d", "address_lookup",
             "-v", "ON_ERROR_STOP=1"]
     run("bootstrap", [*psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for migration in sorted((SQL / "migrations").glob("*.sql")):
+    for migration in partition_fresh_migrations(sorted((SQL / "migrations").glob("*.sql")))[0]:
         run("apply-" + migration.stem, [*psql, "-q", "-1", "-f", migration])
     output = run("address-contract", [*psql, "-Atq", "-f", SQL / "tests/property_address_lookup.sql"])
     proofs = [json.loads(line) for line in output.splitlines() if line.startswith("{") and '"assertions"' in line]

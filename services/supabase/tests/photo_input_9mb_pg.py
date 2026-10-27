@@ -3,6 +3,7 @@
 No hosted databases, providers, Apple calls or inherited credentials.
 """
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile
@@ -29,7 +30,7 @@ try:
  conn=['-h',SOCK,'-p','55555','-U','postgres'];run('createdb',[TOOLS['createdb'],*conn,'photo_quality'])
  PSQL=[TOOLS['psql'],'-X','--no-password',*conn,'-d','photo_quality','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ for m in partition_fresh_migrations(sorted((SQL/'migrations').glob('*.sql')))[0]:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
  print('Fresh migration chain compiled.',flush=True)
  run('exact-forward-replay',[*PSQL,'-q','-1','-f',MIG]);print('Forward migration replayed without changing applied migrations.',flush=True)
  fixture=FIX.read_text();anchor="'bytes',60000,'mime','image/jpeg','width',1024";assert fixture.count(anchor)==1
@@ -55,7 +56,7 @@ try:
   run('restore-'+label,[*PSQL,'-Atq'],original);r['controls'].append({'name':label,'compiledActualSQL':True,'sameFixtureRefused':True,'oracle':oracle})
  # Independent concurrent sessions exercise actual operation and CPU row locks.
  actor='f8200000-0000-4000-8000-000000000101';listing='f8200000-0000-4000-8000-000000000111'
- run('race-fixture',[*PSQL,'-Atq'],f"insert into auth.users(id,email,is_anonymous)values('{actor}','photo-race@fixture.invalid',false);insert into listings(id,org_id,agent_id,address)select '{listing}',org_id,'{actor}','Synthetic concurrency property'from memberships where user_id='{actor}'and role='owner'limit 1;update app_config set value=jsonb_set(value,'{{enabled}}','true')where key='photo_quality';set role service_role;select serving_operation_begin('{actor}',(select org_id from listings where id='{listing}'),'photo-quality:race','photo_edit',repeat('d',64));")
+ run('race-fixture',[*PSQL,'-Atq'],f"insert into auth.users(id,email,is_anonymous)values('{actor}','photo-race@fixture.invalid',false);update orgs set plan='starter',plan_source='manual' where id in(select org_id from memberships where user_id='{actor}'and role='owner');insert into listings(id,org_id,agent_id,address)select '{listing}',org_id,'{actor}','Synthetic concurrency property'from memberships where user_id='{actor}'and role='owner'limit 1;update app_config set value=jsonb_set(value,'{{enabled}}','true')where key='photo_quality';set role service_role;select serving_operation_begin('{actor}',(select org_id from listings where id='{listing}'),'photo-quality:race','photo_edit',repeat('d',64));")
  org=run('race-org',[*PSQL,'-Atq','-c',f"select org_id from listings where id='{listing}'"]).strip()
  body=json.dumps({'sha256':'a'*64,'bytes':9000000,'mime':'image/jpeg','width':1024,'height':768})
  def race(label,statement):
