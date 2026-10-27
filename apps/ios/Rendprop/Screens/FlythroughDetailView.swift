@@ -4826,6 +4826,8 @@ private struct ListingFilePreview: View {
     let canExport: @MainActor () -> Bool
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
+    @State private var displayAspect: CGFloat?
+    @State private var aspectLoadFailed = false
     @State private var saved = false
     @State private var isSaving = false
     @State private var saveError: String?
@@ -4839,11 +4841,24 @@ private struct ListingFilePreview: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
-                    if let player {
+                    if let player, let displayAspect {
                         VideoPlayer(player: player)
-                            .frame(height: 420)
+                            // Match the encoded display frame, including any rotation.
+                            // A fixed-height player across the sheet's full width
+                            // letterboxes tall videos with black side bars.
+                            .aspectRatio(displayAspect, contentMode: .fit)
+                            .frame(maxWidth: 460 * displayAspect)
                             .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                             .onAppear { player.play() }
+                    } else if aspectLoadFailed {
+                        Text("This video couldn't be previewed. You can still save or share it.")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity, minHeight: 120)
+                    } else {
+                        ProgressView("Preparing video…")
+                            .frame(maxWidth: .infinity, minHeight: 120)
                     }
                     Text("\(item.blurb) · \(item.dateLabel)")
                         .font(.rpCaption)
@@ -4911,6 +4926,29 @@ private struct ListingFilePreview: View {
         }
         .onAppear { if player == nil { player = AVPlayer(url: item.url) } }
         .onDisappear { player?.pause() }
+        .task(id: item.url) {
+            displayAspect = nil
+            aspectLoadFailed = false
+            if let aspect = await Self.videoDisplayAspect(item.url), !Task.isCancelled {
+                displayAspect = aspect
+            } else if !Task.isCancelled {
+                aspectLoadFailed = true
+            }
+        }
+    }
+
+    /// Use the track's preferred transform: a portrait movie may be stored as
+    /// 1920×1080 pixels plus a 90° rotation. Reading only naturalSize would
+    /// choose the wrong player shape even though the movie plays upright.
+    nonisolated private static func videoDisplayAspect(_ url: URL) async -> CGFloat? {
+        let asset = AVURLAsset(url: url)
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let size = try? await track.load(.naturalSize),
+              let transform = try? await track.load(.preferredTransform) else { return nil }
+        let rect = CGRect(origin: .zero, size: size).applying(transform)
+        let width = abs(rect.width), height = abs(rect.height)
+        guard width > 0, height > 0, width.isFinite, height.isFinite else { return nil }
+        return width / height
     }
 
     private func save() {
