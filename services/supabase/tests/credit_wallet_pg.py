@@ -61,6 +61,11 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         trial_results = [json.loads(line) for line in trial_output.splitlines()
                          if line.startswith("{") and '"assertions"' in line]
         assert len(trial_results) == 1 and trial_results[0]["passed"] is True, trial_output
+        window_output = run("seven-day trial admission fixture",
+                            [*psql, "-Atq", "-f", SQL / "tests/trial_full_window_admission.sql"])
+        window_results = [json.loads(line) for line in window_output.splitlines()
+                          if line.startswith("{") and '"assertions"' in line]
+        assert len(window_results) == 1 and window_results[0] == {"passed": True, "assertions": 13}, window_output
         combined_output = run("combined credit budget fixture", [*psql, "-Atq", "-f", SQL / "tests/credit_combined_budget.sql"])
         combined_results = [json.loads(line) for line in combined_output.splitlines()
                             if line.startswith("{") and '"assertions"' in line]
@@ -200,7 +205,8 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         assert len(fair_results) == 1 and fair_results[0]["passed"] is True, fair_output
         print(json.dumps({"passed": True,
                           "assertions": results[0]["assertions"] + photo_results[0]["assertions"]
-                          + trial_results[0]["assertions"] + combined_results[0]["assertions"]
+                          + trial_results[0]["assertions"] + window_results[0]["assertions"]
+                          + combined_results[0]["assertions"]
                           + sandbox_results[0]["assertions"] + stage_results[0]["assertions"]
                           + recovery_results[0]["assertions"]
                           + aerial_results[0]["assertions"]

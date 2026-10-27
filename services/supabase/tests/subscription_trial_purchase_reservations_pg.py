@@ -96,9 +96,9 @@ try:
       insert into orgs(id,name,plan,plan_source)values('{org1}','Synthetic cash race1','free','apple'),('{org2}','Synthetic cash race2','free','apple');
       insert into memberships(user_id,org_id,role)values('{actor1}','{org1}','owner'),('{actor2}','{org2}','owner');
       update subscription_trial_config set enabled=true;
-      insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256,admissions_enabled)values('synthetic-cash-race','trial',500,now()-interval '1 day',now()+interval '1 day',repeat('e',64),true);
+      insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256,admissions_enabled)values('synthetic-cash-race','trial',500,now()-interval '1 day',now()+interval '20 days',repeat('e',64),true);
       insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
-        select '{product}','USA','USD',49000,4165,1,now()-interval '1 day',now()+interval '1 day',
+        select '{product}','USA','USD',49000,4165,1,now()-interval '1 day',now()+interval '20 days',
         '{{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}}',500,
         '{{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}}',7,id,repeat('e',64)from serving_sponsor_pools where collection_ref='synthetic-cash-race';
     """)
@@ -142,9 +142,9 @@ try:
       insert into auth.users(id,email,is_anonymous,email_confirmed_at)values('{actor3}','cash-owner-loss@example.invalid',false,now());
       insert into orgs(id,name,plan,plan_source)values('{org3}','Synthetic final owner loss','free','apple');
       insert into memberships(user_id,org_id,role)values('{actor3}','{org3}','owner');
-      insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256,admissions_enabled)values('synthetic-owner-loss','trial',500,now()-interval '1 day',now()+interval '1 day',repeat('e',64),true);
+      insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256,admissions_enabled)values('synthetic-owner-loss','trial',500,now()-interval '1 day',now()+interval '20 days',repeat('e',64),true);
       insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
-       select 'com.rendprop.app.pro.monthly','USA','USD',99000,8415,1,now()-interval '1 day',now()+interval '1 day','{{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}}',500,'{{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}}',7,id,repeat('e',64)from serving_sponsor_pools where collection_ref='synthetic-owner-loss';
+       select 'com.rendprop.app.pro.monthly','USA','USD',99000,8415,1,now()-interval '1 day',now()+interval '20 days','{{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}}',500,'{{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}}',7,id,repeat('e',64)from serving_sponsor_pools where collection_ref='synthetic-owner-loss';
     """)
     before=" perform 1 from public.orgs where id=p_org and deleted_at is null for update;"
     assert definition.count(before)==1

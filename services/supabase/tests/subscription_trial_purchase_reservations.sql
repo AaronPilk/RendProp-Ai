@@ -31,10 +31,10 @@ do $$declare b record;begin select * into b from buy;
 end$$;
 reset role;
 update subscription_trial_config set enabled=true;
-insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256)values('synthetic-held-pool','trial',1000,now()-interval '3 days',now()+interval '1 day',repeat('b',64));
+insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256)values('synthetic-held-pool','trial',1000,now()-interval '3 days',now()+interval '20 days',repeat('b',64));
 update buy set pool=(select id from serving_sponsor_pools where collection_ref='synthetic-held-pool');
 insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
- select product,'USA','USD',49000,4165,1,now()-interval '3 days',now()+interval '1 day','{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',500,'{"storage":2,"delivery":3,"compute":4,"email":5,"support":6,"retention":7,"uncertainty":8}',7,pool,repeat('a',64)from buy;
+ select product,'USA','USD',49000,4165,1,now()-interval '3 days',now()+interval '20 days','{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',500,'{"storage":2,"delivery":3,"compute":4,"email":5,"support":6,"retention":7,"uncertainty":8}',7,pool,repeat('a',64)from buy;
 set local role service_role;
 do $$declare b record;h jsonb;begin select * into b from buy;
  perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),'RP402','disabled pool cannot acquire despite enabled config');

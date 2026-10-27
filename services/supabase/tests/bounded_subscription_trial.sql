@@ -61,9 +61,9 @@ delete from apple_subscriptions where original_transaction_id='synthetic-bounded
 update orgs set plan='free',plan_expires_at=null where id=(select o from fixture);
 -- Local synthetic funding only. No owner dollars or schedules are launch seeds.
 update subscription_trial_config set enabled=true;
-insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256)values('synthetic-bounded-local-pool','trial',5000,now()-interval '1 day',now()+interval '1 day',repeat('b',64));
+insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256)values('synthetic-bounded-local-pool','trial',5000,now()-interval '1 day',now()+interval '20 days',repeat('b',64));
 insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
- select 'com.rendprop.app.starter.monthly','USA','USD',49000,4165,1,now()-interval '1 day',now()+interval '1 day',
+ select 'com.rendprop.app.starter.monthly','USA','USD',49000,4165,1,now()-interval '1 day',now()+interval '20 days',
  '{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',500,
  '{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',7,id,repeat('b',64)from serving_sponsor_pools where collection_ref='synthetic-bounded-local-pool';
 update serving_sponsor_pools set admissions_enabled=true where collection_ref='synthetic-bounded-local-pool';
