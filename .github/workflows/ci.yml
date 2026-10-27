@@ -1444,55 +1444,14 @@ jobs:
                      for event in receipt['failureSnapshot']['events'])
           print('Omitted readiness reaches the intended pre-content timing assertion')
           PY
-      - name: Studio MP4 resume, AAC narration and timing controls
+      - name: Studio original audio and timing controls
         working-directory: apps/studio
         timeout-minutes: 10
         shell: bash
         env:
           TMPDIR: ${{ runner.temp }}
         run: |
-          node tests/export-resume-browser.mjs
-          control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-resume-control.XXXXXX")
-          set +e
-          TMPDIR="$control_root" node tests/export-resume-browser.mjs --fault=omit-old-await > "$control_root/run.log" 2>&1
-          control_status=$?
-          set -e
-          test "$control_status" -eq 1
-          python3 - "$control_root" <<'PY'
-          import hashlib, json, sys
-          from pathlib import Path
-          receipts = list(Path(sys.argv[1]).glob('rendprop-export-resume-*/receipt.json'))
-          assert len(receipts) == 1, receipts
-          receipt = json.loads(receipts[0].read_text())
-          assert receipt['status'] == 'failed' and receipt['fault'] == 'omit-old-await'
-          assert receipt['audioOutput']['testOnly'] is True
-          assert receipt['audioOutput'] == {
-              'mode': 'default-device', 'testOnly': True,
-              'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
-          }
-          assert receipt['variants'] == ['baseline']
-          assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Negative control must reproduce drift with the old await:')
-          assert receipt['errors'] == [] and receipt['externalRequests'] == []
-          assert len(receipt['attempts']) == len(receipt['runs']) == 1
-          attempt, run = receipt['attempts'][0], receipt['runs'][0]
-          assert attempt['error'] is None and attempt['tracks'] and all(track == 'ended' for track in attempt['tracks'])
-          assert run['variant'] == 'baseline' and run['narrated'] is True
-          assert 0 < run['duration'] <= 3.4
-          assert not any(event.get('event') == 'resume.delivered' for event in run['trace'])
-          fixture_input = receipts[0].parent / 'opening-tone-video.mp4'
-          assert fixture_input.is_file()
-          outputs = [path for path in receipts[0].parent.glob('*.mp4') if path != fixture_input]
-          assert len(outputs) == 1 and outputs[0].name == 'baseline-narrated.mp4'
-          assert Path(run['output']).resolve() == outputs[0].resolve()
-          expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs',
-                              'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs'}
-          expected_sources.update(f'src/editor/{name}.ts' for name in
-                                  ('export', 'recording-clock', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
-          assert set(receipt['sourceHashes']) == expected_sources
-          for path, digest in receipt['sourceHashes'].items():
-              assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
-          print('Omitted historical await reaches the intended bad-duration assertion')
-          PY
+          set -euo pipefail
           node tests/export-audio-browser.mjs
           if node tests/export-audio-browser.mjs --fault=live-original-audio > "$RUNNER_TEMP/export-original-audio-defect.log" 2>&1; then
             echo "::error::Original-audio regression control unexpectedly passed"
@@ -1557,8 +1516,6 @@ jobs:
           groups = (
               ('startup healthy', 'rendprop-export-startup-*/receipt.json', 1),
               ('startup omission', 'rendprop-export-startup-control.*/rendprop-export-startup-*/receipt.json', 1),
-              ('resume healthy', 'rendprop-export-resume-*/receipt.json', 1),
-              ('resume omission', 'rendprop-export-resume-control.*/rendprop-export-resume-*/receipt.json', 1),
               ('original audio healthy and faults', 'rendprop-export-original-audio-*/receipt.json', 4),
               ('optional schedule omission', 'rendprop-export-optional-control.*/rendprop-export-original-audio-*/receipt.json', 1),
               ('cloud editor', 'rendprop-cloud-editor-*/receipt.json', 1),
@@ -1580,10 +1537,10 @@ jobs:
                   assert receipt['audioOutput'] == expected_audio, (name, path)
                   bindings.append({'suite': name, 'receipt': str(path.relative_to(base)),
                                    'receiptSha256': hashlib.sha256(raw).hexdigest()})
-          assert len(bindings) == len({row['receipt'] for row in bindings}) == 12
+          assert len(bindings) == len({row['receipt'] for row in bindings}) == 10
           with (base / 'studio-audio-output-bindings.json').open('x') as output:
-              json.dump({'audioOutput': expected_audio, 'invocationCount': 12, 'receipts': bindings}, output, indent=2)
-          print('All12 media export invocation receipts use the production default-device transport')
+              json.dump({'audioOutput': expected_audio, 'invocationCount': 10, 'receipts': bindings}, output, indent=2)
+          print('All10 media export invocation receipts use the production default-device transport')
           PYAUDIOOUTPUT
       - name: Retain media export receipts and browser evidence
         if: always()
@@ -1601,11 +1558,6 @@ jobs:
             ${{ runner.temp }}/rendprop-conversation-*/receipt.json
             ${{ runner.temp }}/rendprop-conversation-*/*.png
             ${{ runner.temp }}/rendprop-conversation-*/*.mp4
-            ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
-            ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
-            ${{ runner.temp }}/rendprop-export-resume-control.*/run.log
-            ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/receipt.json
-            ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/*.mp4
             ${{ runner.temp }}/rendprop-export-startup-*/receipt.json
             ${{ runner.temp }}/rendprop-export-startup-*/*.mp4
             ${{ runner.temp }}/rendprop-export-startup-*/*.webm
@@ -1621,6 +1573,184 @@ jobs:
             ${{ runner.temp }}/rendprop-finishing-*/*.mp4
             ${{ runner.temp }}/studio-media-export-runner-facts.json
             ${{ runner.temp }}/studio-media-export-readiness.json
+            .ci-media-cache/manifest.json
+          retention-days: 7
+          if-no-files-found: warn
+
+  studio-media-resume:
+    # Give the default-device MP4 clock gate a fresh hosted Mac and its own
+    # bounded admission. A previous run saw the native audio clock stop while
+    # page callbacks continued after several other browser export suites.
+    name: Studio MP4 resume and AAC native timing
+    runs-on: macos-26
+    needs: studio-media-tools
+    env:
+      MEDIA_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      MEDIA_WORKFLOW_SHA: ${{ github.workflow_sha }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+
+      - name: Install locked Studio dependencies for the media export gate
+        working-directory: apps/studio
+        run: npm ci --ignore-scripts
+      - name: Validate bounded media runner readiness controls
+        timeout-minutes: 1
+        run: node --test tools/ci/media-runner-ready.test.mjs
+      - name: Restore exact same-run native media cache
+        id: native-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 3
+        with:
+          path: ${{ needs.studio-media-tools.outputs.cache-paths }}
+          key: ${{ needs.studio-media-tools.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Require exact hit and verify every restored native file before execution
+        id: verified-native
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.native-cache.outputs.cache-hit }}
+          CACHE_MATCH: ${{ steps.native-cache.outputs.cache-matched-key }}
+          EXPECTED_CACHE_KEY: ${{ needs.studio-media-tools.outputs.cache-key }}
+          EXPECTED_MANIFEST_SHA: ${{ needs.studio-media-tools.outputs.manifest-sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$MEDIA_SOURCE_SHA"
+          test "$CACHE_HIT" = true
+          test "$CACHE_MATCH" = "$EXPECTED_CACHE_KEY"
+          node tools/ci/native-media-cache.mjs verify --expected-sha256 "$EXPECTED_MANIFEST_SHA"
+      - name: Verify restored full Chromium and synthetic media tools
+        timeout-minutes: 2
+        shell: bash
+        env:
+          VERIFIED_BROWSER: ${{ steps.verified-native.outputs.browser-executable }}
+        run: |
+          set -euo pipefail
+          test -x "$VERIFIED_BROWSER"
+          # Require the exact upstream unsealed variant before code-only validation.
+          # The preceding full-cache audit verifies every resource, link and byte.
+          browser_app="${VERIFIED_BROWSER%/Contents/MacOS/*}"
+          browser_signature="$(/usr/bin/codesign --display --verbose=4 "$browser_app" 2>&1)"
+          printf '%s\n' "$browser_signature" | node tools/ci/browser-signature-policy.mjs --executable "$VERIFIED_BROWSER"
+          /usr/bin/codesign --verify --deep --strict --ignore-resources "$browser_app"
+          test "$("$VERIFIED_BROWSER" --version | sed 's/[[:space:]]*$//')" = "Google Chrome for Testing 153.0.8010.12"
+          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$VERIFIED_BROWSER" >> "$GITHUB_ENV"
+          printf '/opt/homebrew/bin\n' >> "$GITHUB_PATH"
+          /usr/bin/codesign --verify --strict /opt/homebrew/bin/ffmpeg
+          /usr/bin/codesign --verify --strict /opt/homebrew/bin/ffprobe
+          /opt/homebrew/bin/ffmpeg -version
+          /opt/homebrew/bin/ffprobe -version
+          test "$(/opt/homebrew/bin/ffmpeg -version | sed -n '1p')" = "ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers"
+          test "$(/opt/homebrew/bin/ffprobe -version | sed -n '1p')" = "ffprobe version 9.0.2 Copyright (c) 2007-2026 the FFmpeg developers"
+      - name: Require bounded recorded media runner readiness for MP4 timing
+        timeout-minutes: 4
+        run: node tools/ci/media-runner-ready.mjs --output "$RUNNER_TEMP/studio-media-resume-readiness.json"
+      - name: Studio MP4 resume, AAC narration and timing controls
+        working-directory: apps/studio
+        timeout-minutes: 10
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          node tests/export-resume-browser.mjs
+          control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-resume-control.XXXXXX")
+          set +e
+          TMPDIR="$control_root" node tests/export-resume-browser.mjs --fault=omit-old-await > "$control_root/run.log" 2>&1
+          control_status=$?
+          set -e
+          test "$control_status" -eq 1
+          python3 - "$control_root" <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          receipts = list(Path(sys.argv[1]).glob('rendprop-export-resume-*/receipt.json'))
+          assert len(receipts) == 1, receipts
+          receipt = json.loads(receipts[0].read_text())
+          assert receipt['status'] == 'failed' and receipt['fault'] == 'omit-old-await'
+          assert receipt['audioOutput']['testOnly'] is True
+          assert receipt['audioOutput'] == {
+              'mode': 'default-device', 'testOnly': True,
+              'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
+          }
+          assert receipt['variants'] == ['baseline']
+          assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Negative control must reproduce drift with the old await:')
+          assert receipt['errors'] == [] and receipt['externalRequests'] == []
+          assert len(receipt['attempts']) == len(receipt['runs']) == 1
+          attempt, run = receipt['attempts'][0], receipt['runs'][0]
+          assert attempt['error'] is None and attempt['tracks'] and all(track == 'ended' for track in attempt['tracks'])
+          assert run['variant'] == 'baseline' and run['narrated'] is True
+          assert 0 < run['duration'] <= 3.4
+          assert not any(event.get('event') == 'resume.delivered' for event in run['trace'])
+          fixture_input = receipts[0].parent / 'opening-tone-video.mp4'
+          assert fixture_input.is_file()
+          outputs = [path for path in receipts[0].parent.glob('*.mp4') if path != fixture_input]
+          assert len(outputs) == 1 and outputs[0].name == 'baseline-narrated.mp4'
+          assert Path(run['output']).resolve() == outputs[0].resolve()
+          expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs',
+                              'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs'}
+          expected_sources.update(f'src/editor/{name}.ts' for name in
+                                  ('export', 'recording-clock', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
+          assert set(receipt['sourceHashes']) == expected_sources
+          for path, digest in receipt['sourceHashes'].items():
+              assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
+          print('Omitted historical await reaches the intended bad-duration assertion')
+          PY
+      - name: Bind MP4 resume receipts to the production output transport
+        working-directory: apps/studio
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP" <<'PYAUDIOOUTPUT'
+          import hashlib, json, sys
+          from pathlib import Path
+          base = Path(sys.argv[1])
+          expected_audio = {
+              'mode': 'default-device', 'testOnly': True,
+              'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
+          }
+          groups = (
+              ('resume healthy', 'rendprop-export-resume-*/receipt.json'),
+              ('resume omission', 'rendprop-export-resume-control.*/rendprop-export-resume-*/receipt.json'),
+          )
+          bindings = []
+          for name, pattern in groups:
+              paths = sorted(base.glob(pattern))
+              assert len(paths) == 1, (name, paths)
+              path = paths[0]
+              raw = path.read_bytes()
+              receipt = json.loads(raw)
+              assert receipt['audioOutput'] == expected_audio, (name, path)
+              bindings.append({'suite': name, 'receipt': str(path.relative_to(base)),
+                               'receiptSha256': hashlib.sha256(raw).hexdigest()})
+          with (base / 'studio-media-resume-audio-output-bindings.json').open('x') as output:
+              json.dump({'audioOutput': expected_audio, 'invocationCount': 2,
+                         'receipts': bindings}, output, indent=2)
+          print('Both MP4 resume receipts use the production default-device transport')
+          PYAUDIOOUTPUT
+      - name: Retain isolated MP4 resume receipts and browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: studio-isolated-mp4-resume-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/studio-media-resume-audio-output-bindings.json
+            ${{ runner.temp }}/studio-media-resume-readiness.json
+            ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-resume-control.*/run.log
+            ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/*.mp4
             .ci-media-cache/manifest.json
           retention-days: 7
           if-no-files-found: warn
