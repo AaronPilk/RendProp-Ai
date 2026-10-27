@@ -23,9 +23,15 @@ insert into f select 'e9010001-0000-4000-8000-000000000001','e9010001-0000-4000-
  (select org_id from public.memberships where user_id='e9010001-0000-4000-8000-000000000003'),
  (select org_id from public.memberships where user_id='e9010001-0000-4000-8000-000000000004'),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),null,null;
 update public.orgs set plan='team',plan_source='manual',name='Owner Team'where id=(select team from f);
+-- The original private listings were created while each workspace could
+-- admit them; after the trial, Free retains those saved listings for review.
+update public.orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days'
+ where id in(select sally_org from f union select tom_org from f);
 insert into public.listings(id,org_id,agent_id,address)select owner_listing,team,owner_id,'Owner original'from f;
 insert into public.listings(id,org_id,agent_id,address)select sally_listing,sally_org,sally,'Sally original'from f;
 insert into public.listings(id,org_id,agent_id,address)select tom_listing,tom_org,tom,'Tom original'from f;
+update public.orgs set plan='free',plan_source=null,trial_ends_at=null
+ where id in(select sally_org from f union select tom_org from f);
 insert into public.leads(id,org_id,listing_id,name)select 'e9010002-0000-4000-8000-000000000001',sally_org,sally_listing,'Own inquiry'from f;
 grant all on checks,f to service_role,authenticated;
 set local role service_role;
