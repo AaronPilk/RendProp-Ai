@@ -217,6 +217,10 @@ do $$declare x record;old_role text;begin select *into x from f;
  perform pg_temp.denied(format('select public.listing_library_scope(%L,%L)',x.owner_id,x.legacy_sally),'RP403:','former Team owner cannot read removed agent legacy content');
  perform pg_temp.ok(jsonb_array_length(public.list_library_leads(x.sally,x.sally_org))=2,'removed agent retains legacy inquiry inbox');
  perform pg_temp.denied(format('select public.lead_library_scope(%L,%L)',x.owner_id,'e9010002-0000-4000-8000-000000000002'),'RP403:','former owner cannot read removed agent inquiry');
+ perform pg_temp.denied(format('select public.serving_cost_reserve(%L,%L,%L,%L,%L,%L,%L,%s,%L)',x.sally,x.team,'retained-free-refused','copy.caption:0','gemini','fixture',repeat('e',64),(public.plan_serving_ceiling(x.sally_org)->>'ceiling_cents')::numeric+1,'fixture-v1'),'RP402:','removed agent cannot borrow former Team allowance beyond own ceiling');
+ -- Give the removed agent its own finite allowance for the separate positive
+ -- billing test. The fixture transaction restores the original Free state.
+ update public.orgs set plan='starter',plan_source='manual' where id=x.sally_org;
  perform public.serving_cost_reserve(x.sally,x.team,'retained-legacy-001','copy.caption:0','gemini','fixture',repeat('e',64),10,'fixture-v1');
  perform pg_temp.ok((select billing_org_id=x.sally_org and org_id=x.team from public.serving_cost_reservations where request_key='retained-legacy-001'),'new legacy processing uses own allowance after removal');
  perform pg_temp.ok(public.serving_ceiling_spent_cents(x.team,null,null)=pg_temp.team_shared_hold(),'retained legacy processing does not debit former Team');
