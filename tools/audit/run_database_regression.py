@@ -124,6 +124,12 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20261027183000_credit_aerial_opening.sql",
     "20261027184000_aerial_fair_charge.sql",
     "20261027190441_pricing_margin_repair.sql",
+    # The Photo Motion credit path installs its activation trigger, quote/job
+    # tables and terminal failure ledger once. Each exact second application
+    # must refuse before later migrations can replace its functions.
+    "20261027202224_photo_motion_credit_quote_gate.sql",
+    "20261027202537_photo_motion_credit_admission.sql",
+    "20261027203921_photo_motion_credit_terminal.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -179,6 +185,9 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261027183000_credit_aerial_opening.sql": ("dbb0adb83dd45bf937fd194399e00f595f39b3778eaf48abddc96a557a8e4110", "column \"credit_hold_id\" of relation \"app_video_cost_reservations\" already exists"),
     "20261027184000_aerial_fair_charge.sql": ("f2499878ec4609dccc526128e6814d3909d041e0d8024d190909e665be9be273", "relation \"credit_aerial_failure_budget\" already exists"),
     "20261027190441_pricing_margin_repair.sql": ("90ef6a6612f4190814d2dcaed50839b2122a79e09719f39ca806af8c6c082350", "already exists with same argument types"),
+    "20261027202224_photo_motion_credit_quote_gate.sql": ("085d4bc56de19ae64f09dd0df5fd211b782e4b05a78727ac1cdf4b76038a5cfd", "trigger \"credit_photo_motion_activation_guard\" for relation \"app_config\" already exists"),
+    "20261027202537_photo_motion_credit_admission.sql": ("fc2a37ab0789c778017827a174876427196cc96f0295f886fe0fe5cc0b771e1d", "relation \"credit_photo_motion_quotes\" already exists"),
+    "20261027203921_photo_motion_credit_terminal.sql": ("6530b0ee7aec2c53f02ae4b72a7f288ef8d15cdb3a431ea9b01f999ca69955bb", "relation \"credit_photo_motion_failure_budget\" already exists"),
 }
 
 

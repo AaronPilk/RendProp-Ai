@@ -55,7 +55,7 @@ class LiveStateMigrationPolicyTests(unittest.TestCase):
     def test_exact_guarded_one_shot_inventory_still_applies_once(self):
         schema, live_state = partition_fresh_migrations(self.paths)
         names = {path.name for path in schema}
-        self.assertEqual(len(GUARDED_ONE_SHOT_MIGRATIONS), 30)
+        self.assertEqual(len(GUARDED_ONE_SHOT_MIGRATIONS), 33)
         self.assertLessEqual(set(GUARDED_ONE_SHOT_MIGRATIONS), names)
         self.assertFalse(set(GUARDED_ONE_SHOT_MIGRATIONS) & {path.name for path in live_state})
         self.assertTrue(all(not replayable_migration(name) for name in GUARDED_ONE_SHOT_MIGRATIONS))
