@@ -177,7 +177,10 @@ rollback;
             run(case + '-setup', psql + ['-qc', f"insert into auth.users(id,email,raw_user_meta_data,is_anonymous) values ('{source}','{source}@fixture.invalid','{{}}',true),('{dest}','{dest}@fixture.invalid','{{}}',false);"])
             org = run(case + '-org', psql + ['-Atc', f"select org_id from public.memberships where user_id='{source}';"]).strip()
             assert len(org) == 36
-            run(case + '-listing', psql + ['-qc', f"insert into public.listings(org_id,agent_id,status) values('{org}','{source}','draft');"])
+            # This case probes adoption/deletion locks, not intro admission.
+            # Give its synthetic source the paid authority required by the
+            # current listing guard before creating the race's draft.
+            run(case + '-listing', psql + ['-qc', f"update public.orgs set plan='pro',plan_source='manual' where id='{org}';insert into public.listings(org_id,agent_id,status) values('{org}','{source}','draft');"])
             actions = {
                 'adopt': f"select public.adopt_anonymous_org('{dest}','{source}','{org}','{operation}');",
                 'delete': f"select public.prepare_account_deletion('{source}','fixture-uploads','fixture-renders');",
@@ -227,6 +230,8 @@ rollback;
             source,listing,job,worker=[f'b039e00{number}-0000-4000-8000-{i:012d}' for i in (1,2,3,4)]
             run(case+'-setup',psql+['-qc',f"""insert into auth.users(id,email,raw_user_meta_data)
 values('{source}','{source}@fixture.invalid','{{}}');
+update public.orgs set plan='pro',plan_source='manual'
+where id in(select org_id from public.memberships where user_id='{source}');
 insert into public.listings(id,org_id,agent_id) select '{listing}',org_id,'{source}' from public.memberships where user_id='{source}';
 insert into public.spatial_jobs(id,org_id,listing_id,actor_id,capture_id,idem_key,room_label,capture_manifest,status,
 max_cost_cents,max_seconds,max_training_seconds,max_iterations,max_gaussians)
