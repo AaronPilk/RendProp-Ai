@@ -102,12 +102,15 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
   const approved=config.data?.value?.approved_judge;
   if(config.error||(config.data?.value?.enabled!==true&&e.purpose!=="calibration")||approved?.provider!=="anthropic"||approved?.model!=="claude-sonnet-5")return row;
   let credit:{org_id:string;environment:"Production"|"Sandbox";request_key:string}|undefined;
-  if(e.edit==="declutter"){
+  // A saved Stage check belongs to the same immutable customer credit hold as
+  // its image generation. Without this lookup, its judge silently falls back
+  // to the legacy serving budget even when the Stage edit used credits.
+  if(e.edit==="declutter"||e.edit==="stage"){
     const creditOrg=await libraryBillingOrg(admin,e.org_id,args.actor);
     const creditLookup=await admin.from("credit_holds")
       .select("org_id,environment,request_key,state")
       .eq("org_id",creditOrg).eq("actor_id",args.actor)
-      .eq("request_key",e.request_key).eq("operation","photo.declutter")
+      .eq("request_key",e.request_key).eq("operation",`photo.${e.edit}`)
       .in("state",["reserved","settled"]).limit(2);
     assert(!creditLookup.error,503,"The saved photo credit authority could not be checked.");
     assert((creditLookup.data?.length??0)<=1,503,"The saved photo credit authority is ambiguous.");

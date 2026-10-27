@@ -16,10 +16,10 @@ const step={route_id:"existing-approved-sonnet",task:"judge.qc_drift",provider:"
 async function fixture(){
  const input=jpeg(),output=jpeg(3584,4780),inputSHA=await photoBytesHash(input),outputSHA=await photoBytesHash(output);
  const identity={actorId:actor,orgId:org,requestKey:"photo-qc-runtime-fixture",listingId:listing};
- const state={row:null as PhotoQualityEnvelope|null,enabled:true,current:true,library:org,readWithdraw:false,wrongPutHash:false,corruptGet:false,headChanged:false,beginArgs:null as any,rpcs:[] as string[],puts:0,reads:0,claims:0,binds:0,calls:0,holds:0,ledger:[] as any[],attempt:null as any,operation:false,operationInputSHA:"",verdict:JSON.stringify(pass),lostReply:false,missingLedger:false,calledTimeout:0,stopReason:"end_turn" as import("../_shared/providers/anthropic.ts").AnthropicStopReason,objects:new Map<string,{bytes:Uint8Array<ArrayBuffer>;mime:string;sha256:string;etag:string}>()};
+ const state={row:null as PhotoQualityEnvelope|null,enabled:true,current:true,library:org,creditHold:null as null|{org_id:string;actor_id:string;environment:"Production"|"Sandbox";request_key:string;operation:string;state:"reserved"|"settled"},readWithdraw:false,wrongPutHash:false,corruptGet:false,headChanged:false,beginArgs:null as any,rpcs:[] as string[],puts:0,reads:0,claims:0,binds:0,calls:0,holds:0,ledger:[] as any[],attempt:null as any,operation:false,operationInputSHA:"",verdict:JSON.stringify(pass),lostReply:false,missingLedger:false,calledTimeout:0,stopReason:"end_turn" as import("../_shared/providers/anthropic.ts").AnthropicStopReason,objects:new Map<string,{bytes:Uint8Array<ArrayBuffer>;mime:string;sha256:string;etag:string}>()};
  const view=()=>{const row=structuredClone(state.row!);row.can_continue=!!row.evidence.output_etag&&["pending","derivative_ready"].includes(row.check.state)&&row.check.judge_started_at===null&&(!state.attempt||state.attempt.state==="rejected");return row;};
  const unavailable=()=>({data:null,error:{message:"RP404: Current selected library is unavailable"}});
- const admin:any={from:(table:string)=>{const query:any={select:()=>query,eq:()=>query,in:()=>query,limit:async()=>({data:[],error:null}),maybeSingle:async()=>{
+ const admin:any={from:(table:string)=>{const filters:Record<string,unknown>={};const query:any={select:()=>query,eq:(field:string,value:unknown)=>{filters[field]=value;return query;},in:(field:string,values:unknown[])=>{filters[field]=values;return query;},limit:async()=>({data:table==="credit_holds"&&state.creditHold&&Object.entries(filters).every(([field,value])=>Array.isArray(value)?value.includes((state.creditHold as Record<string,unknown>)[field]):(state.creditHold as Record<string,unknown>)[field]===value)?[state.creditHold]:[],error:null}),maybeSingle:async()=>{
   if(table==="app_config")return{data:{value:{enabled:state.enabled,approved_judge:{provider:"anthropic",model:"claude-sonnet-5"}}},error:null};
   if(table==="private_ai_outputs"){const e=state.row!.evidence,file=e.output!;return{data:state.row!.check.state==="accept"?{org_id:org,user_id:actor,listing_id:listing,bucket:"renders",storage_key:file.key,bytes:file.bytes}:null,error:null};}
   throw Error("Unexpected table "+table);
@@ -56,7 +56,14 @@ async function fixture(){
    state.row!.check.lease_token=lease;state.row!.check.lease_until=new Date(Date.now()+600000).toISOString();return{data:{action:"judge",...view()},error:null};
   }
   if(name==="serving_operation_begin"){if(state.operation)return{data:null,error:{message:"RP409: This operation already started"}};state.operation=true;state.operationInputSHA=args.p_input_sha256;return{data:{begun:true},error:null};}
-  if(name==="serving_cost_reserve"){
+  if(name==="serving_cost_reserve"||name==="credit_serving_cost_reserve"){
+   if(name==="serving_cost_reserve"&&state.creditHold?.operation===`photo.${state.row?.evidence.edit}`)
+    return{data:null,error:{message:"RP403: Credit-funded judge must not use the legacy budget"}};
+   if(name==="credit_serving_cost_reserve"){
+    assertEquals(args.p_credit_org,state.creditHold?.org_id);
+    assertEquals(args.p_credit_key,state.creditHold?.request_key);
+    assertEquals(args.p_environment,state.creditHold?.environment);
+   }
    if(state.attempt)return{data:null,error:{message:"RP409: This provider attempt is already journaled"}};
    state.holds++;state.attempt={...args,id:reservation,state:"reserved"};return{data:{reserved:true,id:reservation},error:null};
   }
@@ -124,6 +131,20 @@ Deno.test("fresh accepted reply reuses only its exact already-validated inline c
 Deno.test("missing saved custom/staging context holds before normal funding and cannot be replaced by caller text",async()=>{
  const f=await fixture(),row=await f.prepare();row.evidence.judge_context=null;f.state.row!.evidence.judge_context=null;
  const result=await f.run(row);assertEquals(result.check.state,"hold");assertEquals(f.state.holds,0);assertEquals(f.state.calls,0);
+});
+Deno.test("credit-funded Stage judge binds its exact saved Stage hold and cannot fall back to the legacy budget",async()=>{
+ const f=await fixture(),ready=await f.prepare(),before=globalThis.fetch;
+ f.state.creditHold={org_id:org,actor_id:actor,environment:"Production",request_key:f.identity.requestKey,operation:"photo.stage",state:"settled"};
+ resetServingModeCache();globalThis.fetch=(()=>{throw Error("No external transport in Stage credit QC fixture");})as any;
+ try{
+  const result=await f.run(ready);
+  assertEquals(result.check.state,"accept");
+  assertEquals(f.state.calls,1);
+  assertEquals(f.state.rpcs.filter((name:string)=>name==="credit_serving_cost_reserve").length,1);
+  assertEquals(f.state.rpcs.includes("serving_cost_reserve"),false,"A credit-funded Stage judge cannot charge the legacy serving budget");
+  assertEquals(f.state.attempt?.p_credit_key,f.identity.requestKey);
+  assertEquals(f.state.attempt?.p_stage,"photo.qc:0");
+ }finally{globalThis.fetch=before;resetServingModeCache();}
 });
 Deno.test("oversize paid failure remains explicit and cannot advertise a saved result",async()=>{
  const f=await fixture();await f.begin();const row=await failPhotoQuality(f.admin,f.view(),"photo_output_size",{provider_cost_incurred:true,retained_output:false});
