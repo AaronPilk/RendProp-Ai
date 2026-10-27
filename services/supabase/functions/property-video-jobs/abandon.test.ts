@@ -3,7 +3,17 @@
 import{assert,assertEquals}from'https://deno.land/std@0.224.0/assert/mod.ts';
 const id=(i:number)=>`f6000000-0000-4000-8000-${String(i).padStart(12,'0')}`;const actor=id(1),org=id(2),listing=id(3),operation=id(4),job=id(5),otherOrg=id(6);
 for(const[k,v]of Object.entries({SUPABASE_URL:'https://jobs-db.fixture.invalid',SUPABASE_ANON_KEY:'public-fixture',SUPABASE_SERVICE_ROLE_KEY:'service-fixture',CLOUDFLARE_ACCOUNT_ID:'a'.repeat(32),R2_ACCESS_KEY_ID:'inert-fixture',R2_SECRET_ACCESS_KEY:'inert-fixture'}))Deno.env.set(k,v);
-const{handler}=await import('./index.ts');
+// This historical race fixture exercises the SQL admission fence. Its FAL
+// quote is deliberately isolated from the newer funding gate, whose current
+// production refusal is covered in handler.test.ts.
+const handlerURL=new URL('./index.ts',import.meta.url);
+const admissionRaceOriginal=await Deno.readTextFile(handlerURL);
+const fundingImport="import{admitFundedReelRecipe}from'../ai-video/reel-provider-admission.ts';";
+assertEquals(admissionRaceOriginal.split(fundingImport).length,2,'historical admission race isolates exactly one funding gate');
+const admissionRaceSource=admissionRaceOriginal
+ .replace(fundingImport,"const admitFundedReelRecipe=async()=>{};")
+ .replace(/from'([^']+)'/g,(_all,path:string)=>`from'${new URL(path,handlerURL).href}'`);
+const{handler}=await import('data:application/typescript,'+encodeURIComponent(admissionRaceSource));
 const sources=Array.from({length:3},(_,i)=>({photo_id:'selected-'+i,photo_asset_id:id(100+i),photo_version_id:'exact-'+i,photo_provenance_id:null,motion:'push_in'}));
 const body={operation_id:operation,listing_id:listing,expected_org_id:org,purpose:'listing',aspect:'16:9',sources,allow_original_photo_fallback:false};
 const DISCARDED='You discarded this saved request before the server accepted it. No video was started from it.';

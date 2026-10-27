@@ -97,6 +97,10 @@ globalThis.fetch=(async(input:RequestInfo|URL,init?:RequestInit)=>{
   if(u.pathname==="/rest/v1/app_config")return Response.json({value:{enabled:true}});
   if(u.pathname==="/rest/v1/provider_health")return Response.json([]);
  }
+ if(u.hostname==="api.kie.ai"&&u.pathname==="/api/v1/chat/credit"&&req.method==="GET"){
+  assertEquals(req.headers.get("authorization"),`Bearer ${FIXTURE_KIE_KEY}`);
+  return Response.json({code:200,data:1000});
+ }
  if(u.hostname==="r2-fixture.invalid"&&req.method==="GET"&&u.searchParams.get("X-Amz-Expires")==="300")return new Response(BYTES,{status:200,headers:{etag:ETAG}});
  throw new Error("Closed fixture refused "+u.hostname+u.pathname);
 }) as typeof fetch;
@@ -218,10 +222,11 @@ Deno.test("an ended, used-up or out-of-scope owner test files terminal refusal a
  terminalRefusal(await dispatchOnce(engine,actual,KIE_P,refusal(NOT_EXACT)),409,NOT_EXACT);
 });
 
-Deno.test("FAL dispatch never asks for Kie supplier authority",async()=>{
+Deno.test("unfunded FAL worker route never asks for Kie authority or sends a supplier request",async()=>{
  for(const profile of["fal-kling3-4k-steady-v2","fal-kling3-4k-v1"]){
   const r=await dispatchOnce(engine,actual,profile,refusal(GRANT_ENDED));
-  assertEquals([r.filed,r.http,r.hold,r.posts,r.authority],[[],[202],"held",1,[]],profile);assert(!r.events.includes("authority"),profile);
+  assertEquals([r.filed,r.http,r.hold,r.posts,r.charges,r.refunds,r.authority],[[REFUSED],[503],"none",0,1,1,[]],profile);
+  assert(!r.events.includes("authority")&&!r.events.includes("POST")&&!r.rpcs.includes("app_video_cost_reserve_v2"),profile);
  }
 });
 

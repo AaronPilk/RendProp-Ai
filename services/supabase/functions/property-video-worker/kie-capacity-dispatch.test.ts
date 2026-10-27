@@ -87,6 +87,10 @@ globalThis.fetch=(async(input:RequestInfo|URL,init?:RequestInit)=>{
   if(u.pathname==="/rest/v1/app_config")return Response.json({value:{enabled:true}});
   if(u.pathname==="/rest/v1/provider_health")return Response.json([]);
  }
+ if(u.hostname==="api.kie.ai"&&u.pathname==="/api/v1/chat/credit"&&req.method==="GET"){
+  assertEquals(req.headers.get("authorization"),`Bearer ${FIXTURE_KIE_KEY}`);
+  return Response.json({code:200,data:1000});
+ }
  if(u.hostname==="r2-fixture.invalid"&&req.method==="GET"&&u.searchParams.get("X-Amz-Expires")==="300")return new Response(BYTES,{status:200,headers:{etag:ETAG}});
  const answer=state.kie;
  if(u.hostname==="api.kie.ai"&&u.pathname==="/api/v1/jobs/createTask"&&req.method==="POST"&&answer){
@@ -186,18 +190,19 @@ const SCENARIOS:{s:Scenario;http:number;filed:Filed;before:Filed;beforeHttp:numb
  {s:{label:"Kie createTask 500 (ambiguous)",profile:KIE_P,kie:envelope(500,"Internal error")},http:502,filed:UNCONFIRMED,before:UNCONFIRMED,beforeHttp:502,hold:"held",posts:1},
  {s:{label:"Kie code 200 without a taskId (ambiguous)",profile:KIE_P,kie:{body:{code:200,msg:"success",data:{}}}},http:502,filed:UNCONFIRMED,before:UNCONFIRMED,beforeHttp:502,hold:"held",posts:1},
  {s:{label:"Kie 402 whose release is unconfirmed",profile:KIE_P,kie:envelope(402,"Credits insufficient"),releaseUnconfirmed:true},http:502,filed:UNCONFIRMED,before:UNCONFIRMED,beforeHttp:502,hold:"held",posts:1},
- {s:{label:"FAL steady-v2 402",profile:"fal-kling3-4k-steady-v2",fal:402},http:502,filed:REFUSED,before:REFUSED,beforeHttp:502,hold:"released",posts:0},
- {s:{label:"FAL v1 403",profile:"fal-kling3-4k-v1",fal:403},http:502,filed:REFUSED,before:REFUSED,beforeHttp:502,hold:"released",posts:0},
+ {s:{label:"FAL steady-v2 is unfunded",profile:"fal-kling3-4k-steady-v2",fal:402},http:503,filed:REFUSED,before:REFUSED,beforeHttp:503,hold:"none",posts:0},
+ {s:{label:"FAL v1 is unfunded",profile:"fal-kling3-4k-v1",fal:403},http:503,filed:REFUSED,before:REFUSED,beforeHttp:503,hold:"none",posts:0},
 ];
 /** Every scenario files exactly `pick` (one failure, the decisive HTTP status, the money facts). */
-async function workerFiles(route:Route,pick:"filed"|"before"){
- for(const c of SCENARIOS){
+async function workerFiles(route:Route,pick:"filed"|"before",scenarios=SCENARIOS){
+ for(const c of scenarios){
   const r=await dispatchOnce(route,c.s),label=c.s.label;
   assertEquals(r.filed,[c[pick]],label);assertEquals(r.http,[pick==="filed"?c.http:c.beforeHttp],label);
-  assertEquals([r.hold,r.posts,r.falSubmits],[c.hold,c.posts,c.s.fal?1:0],label);
-  // An unset key refuses before any read, allowance or hold; every later refusal refunds the
-  // allowance only when its hold was released (an unconfirmed outcome keeps both).
-  if(c.hold==="none")assertEquals([r.charges,r.refunds,r.rpcs],[0,0,[]],label);
+  assertEquals([r.hold,r.posts,r.falSubmits],[c.hold,c.posts,c.s.fal&&c.hold!=="none"?1:0],label);
+  // An unset key refuses before any read, allowance or hold. The new FAL gate
+  // refunds the allowance before a hold; later refusals refund on release.
+  if(c.hold==="none"&&c.s.missingKey)assertEquals([r.charges,r.refunds,r.rpcs],[0,0,[]],label);
+  else if(c.hold==="none")assertEquals([r.charges,r.refunds],[1,1],label);
   else assertEquals([r.charges,r.refunds],[1,c.hold==="released"?1:0],label);
  }
 }
@@ -205,26 +210,29 @@ async function workerFiles(route:Route,pick:"filed"|"before"){
 const MAPPING='if(savedQualityProfile==="kie-kling3-4k-steady-v1"&&e instanceof HttpError&&e.details?.provider==="kie"&&e.details?.dispatch_rejected===true&&[401,402,403].includes(e.details?.provider_status as number))throw new HttpError(402,KIE_VENDOR_NOT_READY,"upstream",e.details);';
 const PREFLIGHT='if(!Deno.env.get("KIE_API_KEY")?.trim()){console.error("ai-video reel submit refused before dispatch",{provider:"kie",reason:"provider_not_configured"});throw new HttpError(402,KIE_VENDOR_NOT_READY,"upstream");}';
 const PRE_FIX_PREFLIGHT='assert(!!Deno.env.get("KIE_API_KEY")?.trim(),503,"The native-4K video provider is not configured.");';
+// The older G2 mapping controls must reach the provider. The current production
+// route separately refuses FAL-only recipes before any supplier hold or POST.
+const HISTORICAL_ROUTE=once(INDEX_SOURCE,"steps = await admitFundedReelSteps(reelFramingSteps(candidateSteps, framing), secs);","steps = reelFramingSteps(candidateSteps, framing);");
 const actual=await compileRoute();
 
-Deno.test("actual worker dispatch: a Kie 401/402/403 refusal or an unset key files a resumable capacity pause; every other outcome files what it did before",async()=>{
+Deno.test("actual worker dispatch: Kie account refusals pause; unfunded FAL is refused before a supplier hold",async()=>{
  await workerFiles(actual,"filed");
 });
 
 Deno.test("compiled defect controls: each new ai-video guard is what turns the terminal refusal into a resumable pause",async()=>{
- // 1. Both guards reverted (the pre-G2 route): every scenario files exactly its previous code.
- const preFix=await compileRoute(once(once(INDEX_SOURCE,MAPPING,""),PREFLIGHT,PRE_FIX_PREFLIGHT));
- await workerFiles(preFix,"before");
+ // 1. Both guards reverted (the pre-G2 route): every Kie scenario files its previous code.
+ const preFix=await compileRoute(once(once(HISTORICAL_ROUTE,MAPPING,""),PREFLIGHT,PRE_FIX_PREFLIGHT));
+ await workerFiles(preFix,"before",SCENARIOS.filter(c=>!c.s.fal));
  // 2. Mapping removed alone: the vendor-account refusals become terminal again.
  const unmapped=await compileRoute(once(INDEX_SOURCE,MAPPING,""));
  for(const c of SCENARIOS.slice(0,4)){const r=await dispatchOnce(unmapped,c.s);assertEquals([r.filed,r.http],[[REFUSED],[502]],"control: "+c.s.label);}
  let caught=false;try{await workerFiles(unmapped,"filed");}catch{caught=true;}assert(caught,"control: the oracle detects the missing mapping");
  // 3. Preflight back to its pre-G2 503 alone: an unset key fails the source terminally.
- const terminal=await compileRoute(once(INDEX_SOURCE,PREFLIGHT,PRE_FIX_PREFLIGHT));
+ const terminal=await compileRoute(once(HISTORICAL_ROUTE,PREFLIGHT,PRE_FIX_PREFLIGHT));
  const unset=await dispatchOnce(terminal,SCENARIOS[4].s);assertEquals([unset.filed,unset.http,unset.charges],[[REFUSED],[503],0],"control: 503 preflight");
  caught=false;try{await workerFiles(terminal,"filed");}catch{caught=true;}assert(caught,"control: the oracle detects the terminal preflight");
- // 4. Mapping widened to every profile and provider: FAL account refusals would pause too.
- const widened=await compileRoute(once(INDEX_SOURCE,MAPPING,MAPPING.replace('savedQualityProfile==="kie-kling3-4k-steady-v1"&&e instanceof HttpError&&e.details?.provider==="kie"&&','e instanceof HttpError&&')));
+ // 4. In the historical route, widening the mapping would pause FAL account refusals too.
+ const widened=await compileRoute(once(HISTORICAL_ROUTE,MAPPING,MAPPING.replace('savedQualityProfile==="kie-kling3-4k-steady-v1"&&e instanceof HttpError&&e.details?.provider==="kie"&&','e instanceof HttpError&&')));
  for(const c of SCENARIOS.filter(x=>x.s.fal)){const r=await dispatchOnce(widened,c.s);assertNotEquals(r.filed,[REFUSED],"control: "+c.s.label);}
  caught=false;try{await workerFiles(widened,"filed");}catch{caught=true;}assert(caught,"control: the FAL rows detect a widened mapping");
 });
