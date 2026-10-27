@@ -55,7 +55,7 @@ struct AerialOpeningPresentation: Equatable {
     var dispatchAvailable = false
     var hasSavedOpenings = false
     var canStopSavedRequest = false
-    var quotedCost: String?
+    var quoteReady = false
     var quotedDisclosure: String?
     var processorAllowed = false
     var quotedPhotoID: String?
@@ -83,7 +83,7 @@ struct AerialOpeningPresentation: Equatable {
     var canMakeOpening: Bool {
         processorAllowed && dispatchAvailable && phase == .costReview && selectedPhoto?.eligibility == .eligible &&
         hasReviewedCrop && quotedPhotoID == selectedPhotoID && quotedCrop == reviewedCrop && quotedAspect == aspect &&
-        quotedCost?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        quoteReady
     }
 }
 
@@ -752,7 +752,7 @@ private struct AerialOpeningFramingPreview: View {
     }
     private func resetQuote() {
         state.generationProgress = nil
-        state.phase = .choosing; state.processorAllowed = false; state.quotedCost = nil; state.quotedDisclosure = nil
+        state.phase = .choosing; state.processorAllowed = false; state.quoteReady = false; state.quotedDisclosure = nil
         state.quotedPhotoID = nil; state.quotedCrop = nil; state.quotedAspect = nil
     }
     func prepare() {
@@ -778,7 +778,9 @@ private struct AerialOpeningFramingPreview: View {
                 if let index = state.photos.firstIndex(where: { $0.id == original.photoID }) { state.photos[index].eligibility = .eligible }
                 state.quotedPhotoID = original.photoID; state.quotedCrop = crop; state.quotedAspect = aspect
                 state.quotedDisclosure = reply.disclosure
-                state.quotedCost = String(format: "Up to $%.2f processing estimate", ceil(reply.quote.maximumTotalCents) / 100)
+                // The quote bounds supplier spend; customer credit pricing is
+                // separate and must never be inferred from this dollar amount.
+                state.quoteReady = true
                 preparationID = nil; state.processorAllowed = false; state.phase = .costReview
             } catch is CancellationError {
                 if preparationID == operation { preparationID = nil; state.phase = .stopped }
