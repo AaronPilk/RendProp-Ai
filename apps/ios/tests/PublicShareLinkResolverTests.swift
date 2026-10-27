@@ -74,12 +74,14 @@ import FoundationNetworking
         let duplicate = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { _ in
             response(200, "{\"url\":\"https://rendprop.com/property/a-new-address/published_123-abc\",\"address_only\":false}")
         }
-        verify(duplicate == stable, "An undated token response cannot replace the existing link")
+        verify(duplicate == URL(string: "https://rendprop.com/property/a-new-address/published_123-abc")!,
+               "A server-authoritative undated link keeps the same publication token")
 
         let noindex = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { _ in
             response(200, "{\"url\":\"https://rendprop.com/property/current-server-address/published_123-abc\",\"address_only\":false}")
         }
-        verify(noindex == stable, "An unverified undated response keeps the exact existing token URL")
+        verify(noindex == URL(string: "https://rendprop.com/property/current-server-address/published_123-abc")!,
+               "A noindex listing can use the server's undated address-and-token link")
 
         for (status, body, name) in [
             (404, "{\"error\":\"not_found\"}", "Withdrawn publication"),
@@ -91,6 +93,10 @@ import FoundationNetworking
             (200, "{\"url\":\"https://rendprop.com/property/855-central-ave\",\"address_only\":false}", "Unproved address-only response"),
             (200, "{\"url\":\"https://rendprop.com/property/855-central-ave\",\"address_only\":1}", "Numeric proof"),
             (200, "{\"url\":\"https://rendprop.com/property/855-central-ave/20261022.other-slug\",\"address_only\":false}", "Different publication slug"),
+            (200, "{\"url\":\"https://rendprop.com/property/855-central-ave/other-slug\",\"address_only\":false}", "Different undated publication slug"),
+            (200, "{\"url\":\"https://rendprop.com/property/855-central-ave/published_123-abc/extra\",\"address_only\":false}", "Extra undated path"),
+            (200, "{\"url\":\"https://rendprop.com/property/855-central-ave-/published_123-abc\",\"address_only\":false}", "Malformed undated descriptor"),
+            (200, "{\"url\":\"https://rendprop.com/property/855-central-ave/published_123-abc?preview=1\",\"address_only\":false}", "Undated query"),
             (200, "{\"url\":\"https://rendprop.com/property/855-central-ave/2026102.published_123-abc\",\"address_only\":false}", "Malformed publication date"),
             (200, "{\"url\":\"https://rendprop.com/f/published_123-abc\",\"address_only\":false}", "Token route posing as dated address"),
             (200, "{\"url\":\"https://evil.example/property/855-central-ave/20261022.published_123-abc\",\"address_only\":false}", "Foreign dated host"),

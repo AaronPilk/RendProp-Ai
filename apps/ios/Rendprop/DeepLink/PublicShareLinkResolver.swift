@@ -48,7 +48,8 @@ enum PublicShareLinkResolver {
                   CFGetTypeID(proof) == CFBooleanGetTypeID(),
                   let raw = object["url"] as? String,
                   let verified = URL(string: raw),
-                  proof.boolValue ? validAddressOnlyURL(verified) : validDatedAddressURL(verified, slug: slug)
+                  proof.boolValue ? validAddressOnlyURL(verified) :
+                    (validDatedAddressURL(verified, slug: slug) || validUndatedAddressTokenURL(verified, slug: slug))
             else { return fallbackURL }
             return verified
         } catch {
@@ -92,6 +93,16 @@ enum PublicShareLinkResolver {
         guard parts.count == 4, parts[0] == "", parts[1] == "property", validAddressPart(parts[2]) else { return false }
         let dated = parts[3].split(separator: ".", omittingEmptySubsequences: false).map(String.init)
         return dated.count == 2 && validDatePart(dated[0]) && dated[1] == slug
+    }
+
+    /// Non-indexed and historical publications may still have an undated
+    /// address + token link. The final segment must be this source publication,
+    /// never an arbitrary /f route or another listing's token.
+    private static func validUndatedAddressTokenURL(_ url: URL, slug: String) -> Bool {
+        guard validBrandedResponseURL(url) else { return false }
+        let parts = url.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        return parts.count == 4 && parts[0] == "" && parts[1] == "property" &&
+            validAddressPart(parts[2]) && parts[3] == slug
     }
 
     private static func validBrandedResponseURL(_ url: URL) -> Bool {
