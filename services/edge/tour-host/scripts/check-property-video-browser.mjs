@@ -172,6 +172,14 @@ try{
   check(identity.opacity===(shouldShow?'1':'0')&&identity.visibility==='visible'&&identity.display!=='none'&&identity.width>0&&identity.height>0,`Reduced Motion playing ${theme} at ${width}px ${shouldShow?'keeps the identity visible':'clears the desktop overlay'}`);
  }
  await page.emulateMedia({reducedMotion:'no-preference'});
+ await page.setViewportSize({width:1440,height:1000});
+ await page.goto(origin+'/property/synthetic-video?published_theme=signature-estate',{waitUntil:'networkidle'});
+ await page.locator('#property-video-play').click();
+ await page.waitForFunction(()=>document.querySelector('.property-film.is-playing'));
+ const hiddenActions=await page.locator('.property-hero-copy a,.property-hero-copy button,.property-hero-copy summary').evaluateAll(elements=>elements.map(el=>getComputedStyle(el).visibility));
+ check(hiddenActions.length>=3&&hiddenActions.every(value=>value==='hidden'),'Signature desktop removes faded film hero actions from the keyboard order');
+ const invisibleActionFocused=await page.locator('.property-hero-copy a').first().evaluate(el=>{el.focus();return document.activeElement===el;});
+ check(!invisibleActionFocused,'Signature desktop cannot focus an invisible hero action after Play');
  await page.goto(origin+'/u/synthetic-video',{waitUntil:'networkidle'});
  check(await page.locator('#property-video-play').isVisible()&&await page.locator('form').count()===0,'MLS retains normal property video without contact');
  check(errors.length===0,'No actual browser script errors');check(external.length===0,'No external template assets, fonts, trackers or provider requests');

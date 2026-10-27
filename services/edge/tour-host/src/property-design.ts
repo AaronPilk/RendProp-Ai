@@ -104,6 +104,12 @@ const DESIGN_CSS = `
   /* Once the film plays the identity steps aside; the navigation keeps every page one tap away. */
   $P .listing-cover:has(.property-film.is-playing)::after { opacity:0; }
   $P .listing-cover:has(.property-film.is-playing) .property-hero-copy { opacity:0; pointer-events:none; transform:translateY(12px); }
+  /* Signature desktop fades this copy out while the film plays. Hidden
+     controls must also leave the keyboard order; the title remains readable
+     to assistive technology. The phone layout keeps its copy visible. */
+  @media(min-width:601px) {
+    $S .listing-cover:has(.property-film.is-playing) .property-hero-copy :is(a,button,summary) { visibility:hidden; }
+  }
 
   $P .listing-cover .property-hero-copy { position:absolute; z-index:2; inset:auto 0 clamp(36px,6vh,80px) 0; width:min(920px,calc(100% - 48px)); max-width:none; margin:0 auto; padding:0; color:#fff; background:transparent; text-align:center; text-shadow:0 1px 2px rgba(0,0,0,.25),0 12px 40px rgba(0,0,0,.35); transition:opacity .45s ease,transform .45s var(--lux-ease); }
   $P .listing-cover .property-hero-copy .lp-eyebrow { justify-content:center; margin-bottom:18px; color:var(--hero-accent); }
