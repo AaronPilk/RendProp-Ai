@@ -29,7 +29,8 @@ import Vision
 /// still ship the retimed/encoded tour — never worse than v1.
 ///
 /// OUTPUT SAFETY: the encode writes to a unique temp file next to the final
-/// path and is moved into place only after the writer reports `.completed`.
+/// path and is moved into place only after the writer reports `.completed`
+/// and the saved video track covers the requested duration.
 /// The existing tour (if any) is never deleted first, so a failed or cancelled
 /// re-render can't take the live tour with it (audit F-D-01).
 ///
@@ -46,7 +47,7 @@ enum RenderEngine {
     }
 
     enum RenderError: LocalizedError {
-        case noVideoTrack, cannotBuild, cancelled
+        case noVideoTrack, cannotBuild, incompleteOutput, cancelled
         case badDimensions
         case tooShort
         case tooLong(Double)
@@ -54,6 +55,7 @@ enum RenderEngine {
             switch self {
             case .noVideoTrack:  return "The video has no usable video track."
             case .cannotBuild:   return "Could not prepare the render."
+            case .incompleteOutput: return "The render stopped before the full video was saved. Please try again."
             case .cancelled:     return "Render cancelled."
             case .badDimensions: return "The video reports no picture size, so it can't be rendered. Try re-exporting it."
             case .tooShort:      return "The video is too short to render — record at least a second."
@@ -274,6 +276,9 @@ enum RenderEngine {
                                  geo: encode, corrections: corrections, cropZoom: cropZoom,
                                  outURL: tempURL, queue: queue, cancelFlag: cancelFlag,
                                  progress: { p in encodeProgress.send(p) })
+            if cancelFlag.isCancelled { throw RenderError.cancelled }
+            try await verifyCompletedOutput(at: tempURL, expectedDuration: outDuration.seconds)
+            if cancelFlag.isCancelled { throw RenderError.cancelled }
         } catch {
             // Never leave a partial mp4 in Documents on failure/cancel — it
             // would linger (and get backed up) forever. The previous tour, if
@@ -282,7 +287,9 @@ enum RenderEngine {
             throw error
         }
 
-        // Move into place only now that the writer reported .completed.
+        // Move into place only after the writer completed and the temporary
+        // movie was independently checked. A completed writer can still leave
+        // a one-frame MP4 after an unexpectedly short reader run.
         do {
             try replaceItem(at: outURL, with: tempURL)
         } catch {
@@ -296,6 +303,32 @@ enum RenderEngine {
     }
 
     // MARK: - File plumbing
+
+    /// A writer may report `.completed` for a playable but truncated movie.
+    /// Inspect the finished file before replacing a previously saved tour.
+    /// The tolerance covers frame quantization and normal AVFoundation retime
+    /// rounding (two 60-fps frames minimum), capped at 500 ms for long tours.
+    /// This checks completeness, not visual taste or motion smoothness.
+    private static func verifyCompletedOutput(at url: URL, expectedDuration: Double) async throws {
+        guard expectedDuration.isFinite, expectedDuration > 0 else { throw RenderError.incompleteOutput }
+        do {
+            let movie = AVURLAsset(url: url)
+            let tracks = try await movie.loadTracks(withMediaType: .video)
+            guard let track = tracks.first else { throw RenderError.incompleteOutput }
+            let movieSeconds = try await movie.load(.duration).seconds
+            let trackSeconds = try await track.load(.timeRange).duration.seconds
+            let observedDuration = min(movieSeconds, trackSeconds)
+            let allowedShortfall = min(0.5, max(2.0 / Double(outputFPS), expectedDuration * 0.10))
+            guard observedDuration.isFinite,
+                  observedDuration + allowedShortfall >= expectedDuration else {
+                throw RenderError.incompleteOutput
+            }
+        } catch is CancellationError {
+            throw RenderError.cancelled
+        } catch {
+            throw RenderError.incompleteOutput
+        }
+    }
 
     /// Atomic-as-possible swap: `replaceItemAt` when a previous tour exists
     /// (an APFS rename), a plain move otherwise.

@@ -1194,6 +1194,7 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
         run: |
+          python3 tools/audit/run_render_output_duration.py
           python3 tools/audit/run_render_quality.py
           python3 tools/audit/run_render_review_fences.py
       - name: Retain media export receipts and browser evidence
@@ -1217,6 +1218,8 @@ jobs:
             ${{ runner.temp }}/rendprop-render-concurrency-hd-*/*.log
             ${{ runner.temp }}/rendprop-render-concurrency-hd-*/**/*.json
             ${{ runner.temp }}/rendprop-render-concurrency-hd-*/failure-evidence/*.mp4
+            ${{ runner.temp }}/rendprop-render-concurrency-duration-*/receipt.json
+            ${{ runner.temp }}/rendprop-render-concurrency-duration-*/*.log
             ${{ runner.temp }}/rendprop-render-review-fences-*/receipt.json
             ${{ runner.temp }}/rendprop-render-review-fences-*/*.log
           retention-days: 7
