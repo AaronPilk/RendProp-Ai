@@ -1,6 +1,7 @@
 import { libraryAccess, listingLibraryScope } from "../_shared/library-access.ts";
 import { ensureAcceptedPhotoPublication } from "../_shared/photo-publication.ts";
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
+import { applyVerifiedMonthlyCredits } from "../_shared/apple-monthly-credits.ts";
 import { servingMode } from "../_shared/funded-serving.ts";
 
 /** Best effort: the envelope is informational on /me; the gate itself lives in
@@ -116,6 +117,7 @@ import { heldTrialPurchase, prepareTrialPurchase } from "../_shared/trial-purcha
 import { brandLogo } from "./brand-logo.ts";
 import { requestedWorkspace, selectWorkspace, workspaceDirectory, workspaceID } from "../_shared/workspaces.ts";
 import { assertExpectedSubscriptionWorkspace, assertVerifiedPurchaseOwner } from "./billing.ts";
+import { creditsRoute } from "./credits.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import {
   HttpError,
@@ -247,6 +249,9 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg.length === 2 && seg[0] === "trial" && seg[1] === "prepare") {
       const directory = await workspaceDirectory(adminClient(), user.id, requestedWorkspace(req));
       return json(await prepareTrialPurchase(adminClient(), user.id, directory.active_org_id, await readJsonLimited(req, 2048)));
+    }
+    if (seg[0] === "credits" && seg.length <= 3) {
+      return await creditsRoute(req, adminClient(), user.id, seg[1], seg[2]);
     }
     if (req.method === "GET") return await handleGet(req, user.id, user.email ?? null);
     if (req.method === "PATCH") {
@@ -1352,6 +1357,7 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
   }
 
   await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,tx);
+  await applyVerifiedMonthlyCredits((name,args)=>admin.rpc(name,args),orgId,tx);
   const replayed = await replayPendingNotifications(tx.originalTransactionId, orgId);
 
   // Signed subscription state and financial serving admission are separate.
@@ -1445,7 +1451,12 @@ async function replayPendingNotifications(
       console.error("pending notification replay failed:", rpcErr.message);
       continue; // stays pending; the next sync retries it
     }
-    if (payload?.transaction) await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,payload.transaction);
+    if (payload?.transaction) {
+      await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,payload.transaction);
+      await applyVerifiedMonthlyCredits((name,args)=>admin.rpc(name,args),orgId,
+        payload.transaction,(e.notification_type as string | null) ?? null,
+        (e.event_signed_at as string | null) ?? null);
+    }
     await admin.from("apple_notifications")
       .update({ pending: false, org_id: orgId }).eq("notification_uuid", uuid);
     applied++;

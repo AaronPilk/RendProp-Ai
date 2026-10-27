@@ -4,7 +4,7 @@ import {handleAIPhoto} from "../ai-photo/index.ts";
 import {HttpError,respondError} from "../_shared/http.ts";
 import {corsHeaders} from "../_shared/cors.ts";
 import {PHOTO_QUALITY_PROTOCOL_HEADER} from "../ai-photo/protocol.ts";
-const cors={...corsHeaders,"Access-Control-Allow-Headers":corsHeaders["Access-Control-Allow-Headers"]+", "+PHOTO_QUALITY_PROTOCOL_HEADER,"Access-Control-Allow-Methods":"GET, POST, OPTIONS"};
+const cors={...corsHeaders,"Access-Control-Allow-Headers":corsHeaders["Access-Control-Allow-Headers"]+", "+PHOTO_QUALITY_PROTOCOL_HEADER+", x-rendprop-credit-tariff, x-rendprop-credit-environment","Access-Control-Allow-Methods":"GET, POST, OPTIONS"};
 function reply(response:Response):Response{
  const headers=new Headers(response.headers);for(const[k,v]of Object.entries(cors))headers.set(k,v);
  headers.set("cache-control","no-store");

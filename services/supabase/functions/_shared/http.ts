@@ -23,6 +23,7 @@ export type ErrorCode =
   | "plan_required"
   | "sandbox_testing_required"
   | "quota_exceeded"
+  | "credit_quote_required"
   | "trial_capacity_unavailable"
   | "rate_limited"
   | "payload_too_large"

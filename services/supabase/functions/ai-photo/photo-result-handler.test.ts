@@ -78,7 +78,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  assert(reStart>reflectionStart&&reflectionStart>0&&reEnd>reStart);
  const imported=await import(encode(`// @ts-nocheck
  // Fresh synthetic boundary state ${crypto.randomUUID()}
- import {assert,HttpError,json,readJson,readJsonLimited,respondError} from ${url("../_shared/http.ts")};
+ import {assert,HttpError,json,readJson,readJsonLimited,respondError,throwRpc} from ${url("../_shared/http.ts")};
  import {requiredIdempotencyKey} from ${url("../_shared/idempotency.ts")};
  import {assertPhotoRecoveryProtocol,hasPhotoRecoveryProtocol} from ${url("./protocol.ts")};
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
@@ -115,7 +115,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {recordPhotoRecipe} from ${url("./photo-recipe.ts")};
  import {runChain} from ${url("../_shared/providers/chain.ts")};
  const actualEvidence=${actualEvidence};
- export const state={objects:new Map(),actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,quality:null,qualityEnabled:true,qualityPending:false,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0,recipes:[],events:[],recipeFail:false,noDispatch:0};
+ export const state={objects:new Map(),actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,quality:null,qualityEnabled:true,qualityPending:false,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,assessmentAdmissions:0,assessmentQuota:false,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0,recipes:[],events:[],recipeFail:false,noDispatch:0};
  const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{photo:"property photo",audience:"owner",greenery:"lawn: grass",clutter:"papers,loose items,personal items",stageShort:"furnish an empty room"}};
  ${source.slice(source.indexOf("interface Suggestion {"),source.indexOf('/**\n * edit:"improve_prompt"'))}
  ${source.slice(source.indexOf("async function geminiText("))}
@@ -131,6 +131,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const step={route_id:"fixture-route",provider:"gemini",model:MODEL,task:"photo.twilight",unit:"output_image",unit_cents:1,capabilities:[],max_latency_s:60,min_plan:"free",privacy_tier:"retained_30d",enabled:true};
  const routerEnabled=async()=>state.router,resolveChain=async(task)=>state.routes??[{...step,task}],legacyPhotoStep=(task)=>({...step,task}),needsForPhotoEdit=()=>[];
  const guardEdit=async()=>{state.charges++;return{orgId:state.org,plan:state.plan??"pro",monthlyKey:"monthly",burstKey:"burst"};},refundEditCharge=async()=>{state.refunds++;};
+ const finishEditCredit=async()=>{};
  const adapterFor=()=>({submit:async(_step,input)=>{state.events.push("submit");state.submits++;state.prompts.push(input.prompt);state.inputs.push(structuredClone(input));state.afterSubmit?.();if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/jpeg",result_url:"data:image/jpeg;base64,"+state.output};};
  const submitPreparedGeminiPhoto4K=(step,input,budget)=>{state.providerDeadline=budget.deadline;state.providerSignal=budget.signal;return adapterFor().submit(step,input);};
  const recordRoutedAiCost=async(_db,args)=>{state.costs.push(structuredClone(args));},recordProvenance=async()=>({id:"synthetic-provenance",recorded:true,disclosure:"Synthetic disclosure"});
@@ -169,6 +170,10 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  if(name==="serving_cost_reserve"){state.holds++;state.holdArguments.push(structuredClone(args));return{data:{reserved:true},error:null};}
  if(name.startsWith("org_has_"))return{data:state.qa,error:null};
  if(name==="subscription_trial_context")return{data:{trial_usage:null},error:null};
+ if(name==="photo_declutter_assessment_admit"){
+  if(state.assessmentQuota)return{data:null,error:{message:"RP429: Photo review limit reached for this workspace"}};
+  state.assessmentAdmissions++;return{data:{admitted:true,replay:false},error:null};
+ }
  if(name==="hosting_retention_state")return{data:{org_id:state.org,policy:"preserved",protected:true,retention_ends_at:null,hosting_available:true},error:null};
  if(name==="media_delivery_admit")return{data:{admitted:true,legacy_unbudgeted:true},error:null};
  if(name==="serving_cost_finish"){state.finishStates?.push(args.p_state);return{data:{finished:true},error:null};}
@@ -913,8 +918,19 @@ Deno.test("declutter assessment actual handler binds source and funding replay w
   assertEquals(payload.contents[0].parts[1].inline_data.data,OUTPUT);assert(payload.contents[0].parts[0].text.includes("Doors"));
   assertEquals(f.state.costs.length,1);assertEquals(f.state.costs[0].feature,"photo_helper");assertEquals(result.analysis_cost_bound_cents,f.state.costs[0].unitCentsOverride);
   const replay=await f.run(request());assertEquals(replay.status,200);assertEquals(await replay.json(),result);
-  assertEquals([f.state.helperDispatch,f.state.submits,f.state.polls,f.state.puts,f.state.holds],[1,0,0,0,1]);
+  assertEquals([f.state.assessmentAdmissions,f.state.helperDispatch,f.state.submits,f.state.polls,f.state.puts,f.state.holds],[1,1,0,0,0,1]);
  }finally{f.close();}}
+});
+Deno.test("Declutter assessment quota fails before paid Gemini dispatch",async()=>{
+ const bytes=Uint8Array.from(atob(OUTPUT),c=>c.charCodeAt(0));
+ const sha=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),b=>b.toString(16).padStart(2,"0")).join("");
+ const f=await fixture();try{
+  f.state.assessmentQuota=true;
+  const response=await f.run(f.request({edit:"suggest",image_b64:OUTPUT,source_sha256:sha,declutter_assessment_protocol:"declutter-assessment-v1"}));
+  assertEquals(response.status,429);assertEquals((await response.json()).code,"rate_limited");
+  assertEquals([f.state.assessmentAdmissions,f.state.helperDispatch,f.state.holds,f.state.submits],[0,0,0,0]);
+  assertEquals(f.state.noDispatch,1);
+ }finally{f.close();}
 });
 Deno.test("declutter assessment invalid protocol or changed prepared bytes refuse before analysis or generation",async()=>{
  for(const extra of[{declutter_assessment_protocol:"unknown",source_sha256:"a".repeat(64)},{declutter_assessment_protocol:"declutter-assessment-v1"},{declutter_assessment_protocol:"declutter-assessment-v1",source_sha256:"a".repeat(64)}]){

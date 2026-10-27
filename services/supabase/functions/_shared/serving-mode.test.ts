@@ -94,8 +94,8 @@ Deno.test("ceiling mode: an attempt reserves its DOCUMENTED bound (never below t
   const pricey = context();
   await serving.fundedAttempt(pricey.context, "photo.stage:0", routeStep({ unit_cents: 9.5 }), { prompt: "x" }, null, async () => "image");
   assertEquals(pricey.calls[0].args.p_hold_cents, 9.5);
-  // The route's own chain is kept and helpers are not fenced: each step pays its way.
-  assertEquals(await serving.boundedPhotoChain(f.context, [step, step], { task: "photo.stage", prompt: "x" } as never), [step, step]);
+  // Paid, bounded routes are retained, but depleted FAL routes are excluded.
+  assertEquals(await serving.boundedPhotoChain(f.context, [step, routeStep({provider:"fal",model:"flux-pro/kontext"})], { task: "photo.stage", prompt: "x" } as never), [step]);
   await serving.assertPhotoHelperSponsorship(f.context);
   // A bare transport Response is still not a validated receipt; the hold stays uncertain.
   const h = context();

@@ -984,6 +984,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     assert(match, `actual ${name} source is required`); return match[0];
   }
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const monthlyCalls: Array<Record<string, unknown>> = [];
   let pending = false, unlinked = false, sandboxGranted = false;
   let sandboxGrant: Record<string, unknown> | null = { plan: "trial", source: "trial", expires_at: new Date(now + 7 * 24 * HOUR).toISOString(), granted: true, replay: false, reason: "granted" };
   let subscriptionStatus = "refunded";
@@ -993,6 +994,10 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
   const storedExpiry = new Date(now - 60_000).toISOString();
   const admin = {
     rpc: (name: string, args: Record<string, unknown>) => {
+      if (name === "credit_verified_monthly_apply") {
+        monthlyCalls.push(args);
+        return Promise.resolve({ data: { granted: false, reason: "not_configured" }, error: null });
+      }
       calls.push({ name, args });
       if (name === "property_website_transaction") return Promise.resolve({data:{recorded:true},error:null});
       if (name === "grant_sandbox_trial") return Promise.resolve(sandboxGrant
@@ -1056,6 +1061,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     import {PROPERTY_WEBSITE_PRODUCT,websitePurchaseArgs} from ${JSON.stringify(new URL("./property-website-purchase.ts",import.meta.url).href)};
     import {reservedTrialWorkspace} from ${JSON.stringify(new URL("./trial-purchase.ts",import.meta.url).href)};
     import {fundVerifiedAppleTransaction} from ${JSON.stringify(new URL("./apple-funding.ts",import.meta.url).href)};
+    import {applyVerifiedMonthlyCredits} from ${JSON.stringify(new URL("./apple-monthly-credits.ts",import.meta.url).href)};
     import {inputHash} from ${JSON.stringify(new URL("./funded-serving.ts",import.meta.url).href)};
     import {subscriptionServingActivation,trialServingActivationForSync} from ${JSON.stringify(new URL("./bounded-trial.ts",import.meta.url).href)};
     import {decodeTransaction,decodeRenewalInfo,deriveEntitlement,productToPlan,type AppleTransaction,type AppleRenewalInfo} from ${JSON.stringify(new URL("./applejws.ts", import.meta.url).href)};
@@ -1096,6 +1102,8 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     assertEquals(restore.args.p_transaction_purchased_at, new Date(purchase).toISOString());
     assertEquals(restore.args.p_transaction_signed_at, new Date(signed).toISOString());
     assertEquals(restore.args.p_event_signed_at, null);
+    assertEquals(monthlyCalls[0].p_event, "paid");
+    assertEquals(monthlyCalls[0].p_environment, "Production");
     subscriptionStatus = "active";
     const freeTrial = await signJws(chain,transactionPayload({environment:"Production",purchaseDate:purchase,signedDate:signed,expiresDate:now+86400_000,appAccountToken:user,price:0,currency:"USD",storefront:"USA",offerType:1,offerDiscountType:"FREE_TRIAL"}));
     const unfundedTrial = await assertRejects(()=>methods.handleEntitlement(new Request("https://fixture.invalid/me/entitlement",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({signed_transaction:freeTrial})}),user),HttpError);

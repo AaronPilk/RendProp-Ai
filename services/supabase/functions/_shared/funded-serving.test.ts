@@ -18,32 +18,33 @@ function fixture(options:{reserveError?:string;reserveShape?:unknown;finishError
  }};
  return {calls,context};
 }
-Deno.test("finite photo route retains one eligible primary and one priced task-correct fallback",async()=>{
+Deno.test("retail photo route keeps approved Gemini primary and excludes unfunded FAL fallback",async()=>{
  const primary={...step,task:"photo.stage",provider:"gemini",model:"gemini-3.1-flash-image"};
  const fallback={...primary,provider:"fal",model:"fal-ai/flux-pro/kontext"};
  const unpriced={...primary,provider:"openai",model:"gpt-image-2"};
  const input={task:primary.task,prompt:"synthetic"};
- assertEquals(await boundedPhotoChain(fixture().context,[unpriced,fallback,primary],input),[primary,fallback]);
- for(const chain of [[unpriced],[fallback],[primary,primary],[primary,fallback,fallback],[{...primary,task:"photo.custom"}]])
+ assertEquals(await boundedPhotoChain(fixture().context,[unpriced,fallback,primary],input),[primary]);
+ assertEquals(await boundedPhotoChain(fixture().context,[primary,fallback,fallback],input),[primary]);
+ for(const chain of [[unpriced],[fallback],[primary,primary],[{...primary,task:"photo.custom"}]])
   await assertRejects(()=>boundedPhotoChain(fixture().context,chain,input),HttpError,"bounded serving route");
  await assertRejects(()=>boundedPhotoChain(fixture().context,[primary,fallback],{...input,mask_url:"data:image/png;base64,AAA="}),HttpError);
  const qa=fixture({qa:true});assertEquals(await boundedPhotoChain(qa.context,[unpriced,fallback,primary],input),[unpriced,fallback,primary]);
  await assertRejects(()=>boundedPhotoChain(fixture({qaError:true}).context,[primary],input),HttpError);
 });
-Deno.test("bounded photo fallback holds at most35.1296c and uncertain primary is never treated as free",async()=>{
+Deno.test("failed Gemini photo request never dispatches unfunded FAL fallback",async()=>{
  const primary={...step,task:"photo.custom",provider:"gemini",model:"gemini-3.1-flash-image"};
  const fallback={...primary,provider:"fal",model:"flux-pro/kontext"};
  const input={task:primary.task,prompt:"synthetic"},f=fixture(),calls:string[]=[];
  const old=globalThis.fetch;globalThis.fetch=async()=>Response.json(null);
  try {
   const chain=await boundedPhotoChain(f.context,[primary,fallback,{...primary,provider:"openai",model:"gpt-image-2"}],input);
-  const result=await runChain(input.task,chain,async(s)=>fundedAttempt(f.context,`photo:${chain.indexOf(s)}`,s,input,mediaAttemptQuote(s,input),async()=>{
-   calls.push(s.provider);if(s.provider==="gemini")throw new ProviderError("gemini","timeout","synthetic uncertain acceptance");return "fallback output";
-  }));
-  assertEquals(result.value,"fallback output");assertEquals(calls,["gemini","fal"]);
-  const reserves=f.calls.filter(c=>c.name==="serving_cost_reserve");assertEquals(reserves.map(c=>c.args.p_hold_cents),[31.1296,4]);
-  assertEquals(reserves.reduce((n,c)=>n+Math.round(Number(c.args.p_hold_cents)*10000),0),351296);
-  assertEquals(f.calls.filter(c=>c.name==="serving_cost_finish").map(c=>c.args.p_state),["uncertain","succeeded"]);
+  assertEquals(chain,[primary]);
+  await assertRejects(()=>runChain(input.task,chain,async(s)=>fundedAttempt(f.context,`photo:${chain.indexOf(s)}`,s,input,mediaAttemptQuote(s,input),async()=>{
+   calls.push(s.provider);throw new ProviderError("gemini","timeout","synthetic uncertain acceptance");
+  })),HttpError);
+  assertEquals(calls,["gemini"]);
+  const reserves=f.calls.filter(c=>c.name==="serving_cost_reserve");assertEquals(reserves.map(c=>c.args.p_hold_cents),[31.1296]);
+  assertEquals(f.calls.filter(c=>c.name==="serving_cost_finish").map(c=>c.args.p_state),["uncertain"]);
  }finally{globalThis.fetch=old;}
 });
 Deno.test("trial helper denial fences dispatch; paid metered helpers and private QA remain available",async()=>{
@@ -55,6 +56,10 @@ Deno.test("trial helper denial fences dispatch; paid metered helpers and private
   paid++;return{data:{reserved:true},error:null};
  }};
  await assertRejects(()=>assertPhotoHelperSponsorship(context),HttpError,"not included");assertEquals(paid,0);assertEquals(noDispatch,1);
+ await assertPhotoHelperSponsorship(context,true);
+ assertEquals(paid,0);
+ usage={org_id:"org",status:"expired"};
+ await assertRejects(()=>assertPhotoHelperSponsorship(context,true),HttpError,"not included");
  for(const bad of [{org_id:"foreign",status:"active"},[],false,{},undefined]){usage=bad;await assertRejects(()=>assertPhotoHelperSponsorship(context),HttpError,"could not be checked");}
  usage=null;error=true;await assertRejects(()=>assertPhotoHelperSponsorship(context),HttpError,"could not be checked");
  error=false;await assertPhotoHelperSponsorship(context);assertEquals(paid,0);

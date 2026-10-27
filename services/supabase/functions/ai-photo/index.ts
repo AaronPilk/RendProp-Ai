@@ -16,8 +16,9 @@ import { libraryBillingOrg } from "../_shared/library-access.ts";
 //                a sofa and coffee table (audit F-A-07 / F-supabase-10).
 //
 // Text/vision helper modes use separately priced shared-wallet holds on paid
-// accounts and preserve private QA sponsorship. They do not use a photo credit,
-// are excluded from the bounded trial, and have their own burst limiter:
+// accounts and preserve private QA sponsorship. They do not use a photo credit;
+// only the separately budgeted Declutter assessment is available in a bounded
+// trial. General suggestions retain their trial fence and burst limiter:
 //
 //   edit:"suggest"         { image_b64, mime?, space_type? }  ->  { suggestions: [{ edit, reason, confidence }] }
 //       Looks at the photo and recommends up to 3 edits (from the 5 canned ones)
@@ -77,7 +78,7 @@ import { libraryBillingOrg } from "../_shared/library-access.ts";
 // — the access-to-the-original half of AB 723.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, readJson, readJsonLimited, respondError } from "../_shared/http.ts";
+import { HttpError, assert, json, readJson, readJsonLimited, respondError, throwRpc } from "../_shared/http.ts";
 import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, contentOrgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
@@ -133,7 +134,8 @@ const EDIT_MAX_PER_WINDOW = 40;
 const EDIT_WINDOW_SECONDS = 300; // 40 photo edits / 5 min / org
 const MONTH_SECONDS = 30 * 86400;
 // Paid helpers spend the shared funded wallet separately from photo credits.
-// Trial helper stages are fenced so their five image admissions retain cash.
+// Trial Declutter assessment has its own hard SQL budget; general suggestions
+// remain fenced so the five image admissions retain cash.
 const HELP_MAX_PER_WINDOW = 120;
 const HELP_WINDOW_SECONDS = 300; // 120 suggest/improve calls / 5 min / org
 
@@ -156,8 +158,21 @@ interface EditCharge {
   plan: string;
   monthlyKey: string;
   burstKey: string;
-  monthlyReceipt: RateChargeReceipt;
+  monthlyReceipt?: RateChargeReceipt;
   burstReceipt: RateChargeReceipt;
+  credit?: {actorId:string;orgId:string;requestKey:string;environment:"Production"|"Sandbox"};
+}
+
+const DECLUTTER_CREDIT_TARIFF="photo-declutter-v1";
+
+async function finishEditCredit(charge:EditCharge,state:"settled"|"released"):Promise<void>{
+  if(!charge.credit)return;
+  const {data,error}=await adminClient().rpc("credit_wallet_finish",{
+    p_actor:charge.credit.actorId,p_org:charge.credit.orgId,p_environment:charge.credit.environment,
+    p_key:charge.credit.requestKey,p_state:state,
+  });
+  if(error)throw new HttpError(503,"The saved credit balance could not be reconciled. Please retry.","upstream");
+  assert(data?.state===state,503,"The saved credit outcome could not be verified.","upstream");
 }
 
 /**
@@ -166,22 +181,51 @@ interface EditCharge {
  * an org's burst + monthly quota with `{}` bodies that never reached Gemini
  * (audit round 4).
  */
-async function guardEdit(user: PaidAiCaller, req: Request, listingId?: string): Promise<EditCharge> {
+async function guardEdit(user: PaidAiCaller, req: Request, listingId?: string, edit?:string): Promise<EditCharge> {
   const orgId = await requireEditorRole(user, req, "AI photo edits", listingId);
   // A degraded plan lookup is a 503 here, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
   const monthlyCap = ent.photo_edits_per_month;
-  if (monthlyCap <= 0) throw quotaError("AI photo edit", 0, 0, ent.plan);
-
   // Permanent serving-operation admission now owns replay. A time-window
   // counter must not prevent recovery or renew an admitted paid operation.
-  requiredIdempotencyKey(req);
+  const requestKey=requiredIdempotencyKey(req);
   const billingOrgId = await libraryBillingOrg(adminClient(), orgId, user.id);
+  const quote=req.headers.get("x-rendprop-credit-tariff");
+  const environment=req.headers.get("x-rendprop-credit-environment")??"Production";
+  if(environment!=="Production"&&environment!=="Sandbox")
+    throw new HttpError(400,"Choose a valid App Store credit environment.");
+  if(quote!==null && (edit!=="declutter" || quote!==DECLUTTER_CREDIT_TARIFF))
+    throw new HttpError(400,"Choose the current Declutter credit quote before using credits.");
+  const primaryResult=edit==="declutter"
+    ?await adminClient().rpc("credit_primary_subscription",{p_org:billingOrgId,p_environment:environment})
+    :{data:false,error:null};
+  if(primaryResult.error||typeof primaryResult.data!=="boolean")
+    throw new HttpError(503,"The current credit plan could not be verified. Please retry.","upstream");
+  if(primaryResult.data && quote===null)
+    throw new HttpError(402,"Review the Declutter credit quote before starting this edit.","credit_quote_required",
+      {operation:"photo.declutter",tariff_version:DECLUTTER_CREDIT_TARIFF});
+  const creditMode=quote!==null;
+  if(!creditMode && monthlyCap<=0)throw quotaError("AI photo edit",0,0,ent.plan);
   const burstKey = `aiphoto:${billingOrgId}`;
   const monthlyKey = `aiphotomo:${billingOrgId}`;
   const burst = await chargeRateReceipt(burstKey, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS);
   if (!burst.accepted) {
     throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.", "rate_limited");
+  }
+  if(creditMode){
+    let held;
+    try{held=await adminClient().rpc("credit_wallet_reserve",{
+      p_actor:user.id,p_org:billingOrgId,p_environment:environment,p_key:requestKey,
+      p_operation:"photo.declutter",p_version:DECLUTTER_CREDIT_TARIFF,
+    });}
+    catch{await refundRateReceipt(burst.receipt);throw new HttpError(503,"Credits could not be reserved safely. Please retry.","upstream");}
+    if(held.error){await refundRateReceipt(burst.receipt);throwRpc(held.error.message);}
+    if(held.data?.reserved!==true||!Number.isInteger(held.data?.credits)||held.data.credits<=0){
+      await refundRateReceipt(burst.receipt);
+      throw new HttpError(503,"The Declutter credit reservation could not be verified.","upstream");
+    }
+    return {orgId,plan:ent.plan,monthlyKey,burstKey,burstReceipt:burst.receipt,
+      credit:{actorId:user.id,orgId:billingOrgId,requestKey,environment}};
   }
   const monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
   if (!monthly.accepted) {
@@ -203,7 +247,11 @@ async function guardEdit(user: PaidAiCaller, req: Request, listingId?: string): 
  * point is ever refunded. Each receipt names the original SQL charge window.
  */
 async function refundEditCharge(charge: EditCharge): Promise<void> {
-  await refundRateReceipt(charge.monthlyReceipt);
+  if(charge.credit){
+    try{await finishEditCredit(charge,"released");}
+    catch{console.error("Credit hold retained for saved provider outcome recovery");}
+  }
+  if(charge.monthlyReceipt)await refundRateReceipt(charge.monthlyReceipt);
   await refundRateReceipt(charge.burstReceipt);
 }
 
@@ -703,12 +751,21 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
         const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
         try { assertPhotoRecoveryProtocol(req); }
         catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
-        await assertPhotoHelperSponsorship(funding);
+        await assertPhotoHelperSponsorship(funding,assessmentRequested);
         try { validatePhotoInputs(body.image_b64,mime); }
         catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
         if(assessmentRequested){
           const bytes=decodeBase64Bytes(body.image_b64),digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),b=>b.toString(16).padStart(2,"0")).join("");
           if(digest!==body.source_sha256){await abortFundingOperationBeforeDispatch(funding);throw new HttpError(400,"The assessment photo changed. No analysis or image edit was started.");}
+          const admission=await adminClient().rpc("photo_declutter_assessment_admit",{
+            p_actor:user.id,p_org:helperCharge.orgId,p_key:funding.requestKey,
+            p_source_sha256:body.source_sha256,
+          });
+          if(admission.error || admission.data?.admitted!==true){
+            await abortFundingOperationBeforeDispatch(funding);
+            if(admission.error && /RP\d{3}:/.test(admission.error.message??""))throwRpc(admission.error.message);
+            throw new HttpError(503,"Photo review availability could not be verified. No analysis was sent.","upstream");
+          }
         }
         const step = legacyPhotoStep("photo.suggest");
         step.provider = "gemini"; step.model = TEXT_MODEL;
@@ -861,9 +918,13 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       validatePhotoPrompt(prompt);
     }catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
     let charge: EditCharge;
-    try { charge = await guardEdit(user, req, body.listing_id); }
+    try { charge = await guardEdit(user, req, body.listing_id, edit); }
     catch (error) { await abortFundingOperationBeforeDispatch(funding); throw error; }
-    const { plan } = charge;
+    if(charge.credit)funding.credit={orgId:charge.credit.orgId,
+      requestKey:charge.credit.requestKey,environment:charge.credit.environment};
+    // A lapsed member can use already-purchased credits; route eligibility is
+    // paid for this single edit, while the actual entitlement remains Free.
+    const plan=charge.credit&&charge.plan==="free"?"pro":charge.plan;
     if (charge.orgId !== orgId) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw new HttpError(409,"The generation workspace changed. Please retry.","conflict"); }
 
     // ── ROUTER (flag-gated, additive) ────────────────────────────────────────
@@ -1056,6 +1117,9 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
         ...(referenceB64 ? { input_images: 2, staging_furniture_reference: true,
           ...(timedPhoto4K ? {} : {cost_basis: "route_output_image_estimate_input_tokens_unmodeled"}) } : {}) },
     });
+    // A confirmed generated image consumes this one quoted customer charge.
+    // The same hold continues to fund the saved fixed-feature judge below.
+    await finishEditCredit(charge,"settled");
 
     // Ledger liability above survives every later quality/storage refusal.
     // Decode once within the measured output envelope, retain exact quarantine

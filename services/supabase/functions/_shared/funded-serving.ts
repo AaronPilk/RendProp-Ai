@@ -53,6 +53,8 @@ export interface FundingContext {
  orgId: string;
  requestKey: string;
  operationBegun?: boolean;
+ /** A customer wallet hold is distinct from the provider liability journal. */
+ credit?: { orgId: string; requestKey: string; environment: "Production" | "Sandbox" };
  rpc(name: string, args: Record<string, unknown>): PromiseLike<{data: unknown; error: {message?: string} | null}>;
 }
 export interface AttemptQuote { cents: number; version: string }
@@ -137,10 +139,15 @@ export async function unlimitedSponsored(context: Pick<FundingContext, "orgId" |
  * package permits one pinned primary and at most one priced fallback, while
  * private unlimited QA retains its existing operator chain. */
 export async function boundedPhotoChain(context: FundingContext, steps: RouteStep[], input: GenerateInput): Promise<RouteStep[]> {
- // Ceiling mode keeps the operator chain: each step is priced from the
- // catalog and admitted against the workspace envelope in fundedAttempt.
- if(await servingMode()==="ceiling")return steps;
  if(await unlimitedSponsored(context))return steps;
+ // FAL has no funded balance. Keep the first approved Gemini route, and let
+ // its real failure surface with the existing recovery controls. Never send a
+ // doomed fallback request or silently switch to another provider.
+ if(await servingMode()==="ceiling"){
+  const available=steps.filter(step=>step.provider!=="fal");
+  if(available.length===0)throw new FundingAdmissionError(503,"This photo edit has no funded provider route. No edit was sent.","upstream");
+  return available;
+ }
  if(input.extra?.photo_quality_4k===true){
   if(steps.length!==1||steps[0].task!==input.task||steps[0].provider!=="gemini"||!(steps[0].model==="gemini-3.1-flash-image"||(steps[0].model==="gemini-3-pro-image"&&photoPro4KInputAllowance(input)!==null))||input.mask_url||!photo4KInputAllowance(input)||!mediaAttemptQuote(steps[0],input))
    throw new FundingAdmissionError(503,"This photo tool has no complete bounded 4K serving route. No edit was sent.","upstream");
@@ -155,19 +162,19 @@ export async function boundedPhotoChain(context: FundingContext, steps: RouteSte
   (step.provider==="gemini" && step.model==="gemini-3.1-flash-image" && !input.mask_url) ||
   (step.provider==="fal" && step.model.replace(/^fal-ai\//,"")==="flux-pro/kontext" && !input.mask_url)
  ));
- const primary=priced.filter(step=>step.provider==="gemini"),fallback=priced.filter(step=>step.provider==="fal");
- if(primary.length!==1 || fallback.length>1 || priced.some(step=>{
+ const primary=priced.filter(step=>step.provider==="gemini");
+ if(primary.length!==1 || primary.some(step=>{
   const quote=mediaAttemptQuote(step,input);
-  return !quote || Math.ceil(quote.cents*10000)!==(step.provider==="gemini"?311296:40000);
+  return !quote || Math.ceil(quote.cents*10000)!==311296;
  }))
   throw new FundingAdmissionError(503,"This photo tool has no complete bounded serving route. No edit was sent.","upstream");
- return [...primary,...fallback];
+ return primary;
 }
 
 /** The bounded trial's cash belongs to its five image admissions. Paid
  * accounts retain separately metered helpers through the shared funded wallet;
  * private unlimited QA retains its existing sponsorship. */
-export async function assertPhotoHelperSponsorship(context: FundingContext): Promise<void> {
+export async function assertPhotoHelperSponsorship(context: FundingContext,assessmentOnly=false): Promise<void> {
  // Ceiling mode: helpers are ordinary priced attempts against the envelope.
  if(await servingMode()==="ceiling")return;
  if(await unlimitedSponsored(context))return;
@@ -181,9 +188,14 @@ export async function assertPhotoHelperSponsorship(context: FundingContext): Pro
  }
  if(data.trial_usage===null)return;
  const usage=data.trial_usage as Record<string,unknown>|null;
- await abortFundingOperationBeforeDispatch(context);
  if(!usage || typeof usage!=="object" || Array.isArray(usage) || usage.org_id!==context.orgId || !["active","expired","exhausted"].includes(String(usage.status)))
+  {await abortFundingOperationBeforeDispatch(context);
   throw new FundingAdmissionError(503,"Trial helper availability could not be checked. No generation was submitted.","upstream");
+  }
+ // A separately budgeted, single-photo Declutter assessment lets the limited
+ // trial reach its included edits. General suggestions remain excluded.
+ if(assessmentOnly&&usage.status==="active")return;
+ await abortFundingOperationBeforeDispatch(context);
  throw new FundingAdmissionError(503,"Photo suggestions and prompt rewriting are not included in this subscription trial. Choose an edit or write your own instructions; no generation was submitted.","upstream");
 }
 
@@ -302,13 +314,13 @@ export function ceilingVerifiedQuote(step:Pick<RouteStep,"provider"|"model">,inp
 export async function fundedAttempt<T>(context: FundingContext,stage: string,step: Pick<RouteStep,"provider"|"model">,
  input: unknown,quote: AttemptQuote|null,attempt:()=>Promise<T>): Promise<T> {
  let admittedQuote=quote;
- if(await servingMode()==="ceiling"){
+ if(context.credit || await servingMode()==="ceiling"){
   // Ceiling mode (2026-10-08): every paid attempt — primaries, fallbacks,
   // helpers, judges — reserves money against the workspace's serving envelope
   // before dispatch (serving_cost_reserve → serving_envelope_admit). The hold
   // is the documented complete bound, never below the catalog price the ledger
   // bills; a step with no documented bound is refused unless privately sponsored.
-  if(freeCatalogRoute(step)){
+  if(!context.credit && freeCatalogRoute(step)){
    const result=await attempt();
    if(result instanceof Response)throw new HttpError(502,"The generation service did not return a validated receipt.","upstream");
    return result;
@@ -327,8 +339,9 @@ export async function fundedAttempt<T>(context: FundingContext,stage: string,ste
   throw new FundingAdmissionError(503,"This operation could not be priced safely.","upstream");
  const hold=Math.ceil(admitted.cents*10000)/10000;
  let reserved;
- try { reserved=await context.rpc("serving_cost_reserve",{p_actor:context.actorId,p_org:context.orgId,p_key:context.requestKey,
-  p_stage:stage,p_provider:step.provider,p_model:step.model,p_input_sha256:await inputHash(input),p_hold_cents:hold,p_tariff_version:admitted.version}); }
+ try { reserved=await context.rpc(context.credit?"credit_serving_cost_reserve":"serving_cost_reserve",{p_actor:context.actorId,p_org:context.orgId,p_key:context.requestKey,
+  p_stage:stage,p_provider:step.provider,p_model:step.model,p_input_sha256:await inputHash(input),p_hold_cents:hold,p_tariff_version:admitted.version,
+  ...(context.credit?{p_credit_org:context.credit.orgId,p_credit_key:context.credit.requestKey,p_environment:context.credit.environment}:{})}); }
  catch {throw new FundingAdmissionError(503,"The shared serving budget could not be reserved. Please retry.","upstream");}
  if(reserved.error){
   if(/RP(?:400|402|403|409):/.test(reserved.error.message??""))fundingRpcError(reserved.error.message!);

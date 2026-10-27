@@ -1,5 +1,6 @@
 import { inputHash } from "../_shared/funded-serving.ts";
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
+import { applyVerifiedMonthlyCredits } from "../_shared/apple-monthly-credits.ts";
 import { reservedTrialWorkspace } from "../_shared/trial-purchase.ts";
 import { PROPERTY_WEBSITE_PRODUCT,websitePurchaseArgs } from '../_shared/property-website-purchase.ts';
 // apple-subscriptions — App Store Server Notifications V2, verified and applied.
@@ -217,13 +218,19 @@ async function handleNotify(req: Request): Promise<Response> {
 
   const admin = adminClient();
   const originalTransactionId = facts.transaction?.originalTransactionId ?? null;
+  const creditProduct = facts.transaction?.type === "Consumable" &&
+    typeof facts.transaction.productId === "string" ?
+      await admin.from("credit_products").select("product_id").eq("product_id", facts.transaction.productId)
+        .eq("active", true).maybeSingle() : null;
+  if (creditProduct?.error) throw new HttpError(503, "Credit product lookup failed — retry", "upstream");
+  const isCreditPurchase = creditProduct?.data?.product_id === facts.transaction?.productId;
 
   // Existing signed chain binding takes precedence. Before the first device
   // receipt, only the exact signed Production trial buyer/SKU may recover an
   // already admitted purchase hold; no loose owner membership is inferred.
   let orgId: string | null = null;
   let storedEnvironment: string | null = null;
-  if (originalTransactionId) {
+  if (originalTransactionId && !isCreditPurchase) {
     const { data, error } = await admin
       .from(facts.environment === "Sandbox" ? "apple_sandbox_receipts" : "apple_subscriptions")
       .select(facts.environment === "Sandbox" ? "org_id" : "org_id, environment")
@@ -236,7 +243,7 @@ async function handleNotify(req: Request): Promise<Response> {
   }
 
   // Header note 4: sandbox must never move a production subscription.
-  if (orgId === null) orgId = await reservedTrialWorkspace(admin, facts.transaction);
+  if (orgId === null && !isCreditPurchase) orgId = await reservedTrialWorkspace(admin, facts.transaction);
   const environmentMismatch = storedEnvironment !== null &&
     storedEnvironment !== facts.environment;
 
@@ -244,13 +251,13 @@ async function handleNotify(req: Request): Promise<Response> {
   // build has never heard of. Store it and say so — do NOT guess a plan, and do
   // NOT downgrade an org because an unrecognised subscription lapsed.
   const unknownProduct = facts.transaction !== null &&
-    productToPlan(facts.transaction.productId) === null && facts.transaction.productId!==PROPERTY_WEBSITE_PRODUCT;
+    productToPlan(facts.transaction.productId) === null && facts.transaction.productId!==PROPERTY_WEBSITE_PRODUCT && !isCreditPurchase;
   if (unknownProduct) {
     console.log(`apple notification for an unmapped product: ${facts.transaction!.productId}`);
   }
 
   const entitlementRelevant = verdictKind !== "ignore" && facts.transaction !== null &&
-    !environmentMismatch && !unknownProduct && facts.transaction!.productId!==PROPERTY_WEBSITE_PRODUCT;
+    !environmentMismatch && !unknownProduct && facts.transaction!.productId!==PROPERTY_WEBSITE_PRODUCT && !isCreditPurchase;
   const pending = entitlementRelevant && orgId === null && facts.environment === "Production";
   const entitlement = entitlementRelevant ? computeEntitlement(facts, verdictKind) : null;
 
@@ -303,6 +310,46 @@ async function handleNotify(req: Request): Promise<Response> {
   if (environmentMismatch) {
     return acknowledge("ignored", { ok: true, applied: false, ignored: "environment_mismatch" });
   }
+  if (isCreditPurchase && facts.transaction) {
+    const tx = facts.transaction;
+    if (facts.type === "REFUND" || facts.type === "REVOKE" || tx.revocationDate !== null) {
+      const { data, error } = await admin.rpc("credit_purchase_refund", {
+        p_environment: tx.environment, p_transaction: tx.transactionId,
+        p_evidence_sha256: receiptHash, p_revoked_at: tx.revocationDate,
+      });
+      if (error || data?.refunded !== true) {
+        throw new HttpError(503, "Credit refund could not be recorded — retry", "upstream");
+      }
+      return acknowledge("applied", { ok: true, applied: true, credit_refund: true });
+    }
+    if (facts.type === "ONE_TIME_CHARGE") {
+      const token = tx.appAccountToken;
+      if (!token || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token) ||
+          tx.purchaseDate === null || (tx.quantity !== undefined && tx.quantity !== 1)) {
+        return acknowledge("pending", { ok: true, applied: false, pending: true, reason: "purchase_owner_required" });
+      }
+      const intent = await admin.from("credit_purchase_intents")
+        .select("actor_id").eq("app_account_token", token).maybeSingle();
+      if (intent.error) throw new HttpError(503, "Credit intent lookup failed — retry", "upstream");
+      if (!intent.data?.actor_id) {
+        return acknowledge("pending", { ok: true, applied: false, pending: true, reason: "purchase_intent_required" });
+      }
+      const { data, error } = await admin.rpc("credit_purchase_grant", {
+        p_actor: intent.data.actor_id, p_expected_org: null, p_intent: null, p_product: tx.productId,
+        p_environment: tx.environment, p_transaction: tx.transactionId,
+        p_purchased_at: tx.purchaseDate, p_signed_at: tx.signedDate,
+        p_account_token: token,
+      });
+      if (error && /RP(?:400|403|409):/.test(error.message)) {
+        return acknowledge("pending", { ok: true, applied: false, pending: true, reason: "purchase_intent_required" });
+      }
+      if (error || data?.transaction_id !== tx.transactionId) {
+        throw new HttpError(503, "Credit purchase could not be recorded — retry", "upstream");
+      }
+      return acknowledge("applied", { ok: true, applied: true, credit_purchase: true });
+    }
+    return acknowledge("ignored", { ok: true, applied: false, ignored: "no_credit_change" });
+  }
   if(facts.transaction?.productId===PROPERTY_WEBSITE_PRODUCT){
     const event=facts.type==='REFUND'?'refund':facts.type==='REVOKE'?'revoke':facts.type==='REFUND_REVERSED'?'refund_reversed':facts.type==='ONE_TIME_CHARGE'?'purchase':null;
     if(!event)return acknowledge('ignored',{ok:true,applied:false,ignored:'no_property_upgrade_change'});
@@ -326,7 +373,11 @@ async function handleNotify(req: Request): Promise<Response> {
   // Concurrent identical deliveries may both run these idempotent RPCs; their
   // chain locks and unique collection refs permit only one financial grant.
   const applied = await applyEntitlement(entitlement!, orgId);
-  if (applied && orgId && facts.transaction) await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,facts.transaction);
+  if (applied && orgId && facts.transaction) {
+    await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,facts.transaction);
+    await applyVerifiedMonthlyCredits((name,args)=>admin.rpc(name,args),orgId,
+      facts.transaction,facts.type,facts.signedDate);
+  }
   if (pending) return acknowledge("pending", { ok: true, applied: false, pending: true });
   return applied
     ? acknowledge("applied", { ok: true, applied: true })

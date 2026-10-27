@@ -19,12 +19,13 @@ async function fixture(){
  const state={row:null as PhotoQualityEnvelope|null,enabled:true,current:true,library:org,readWithdraw:false,wrongPutHash:false,corruptGet:false,headChanged:false,beginArgs:null as any,rpcs:[] as string[],puts:0,reads:0,claims:0,binds:0,calls:0,holds:0,ledger:[] as any[],attempt:null as any,operation:false,operationInputSHA:"",verdict:JSON.stringify(pass),lostReply:false,missingLedger:false,calledTimeout:0,stopReason:"end_turn" as import("../_shared/providers/anthropic.ts").AnthropicStopReason,objects:new Map<string,{bytes:Uint8Array<ArrayBuffer>;mime:string;sha256:string;etag:string}>()};
  const view=()=>{const row=structuredClone(state.row!);row.can_continue=!!row.evidence.output_etag&&["pending","derivative_ready"].includes(row.check.state)&&row.check.judge_started_at===null&&(!state.attempt||state.attempt.state==="rejected");return row;};
  const unavailable=()=>({data:null,error:{message:"RP404: Current selected library is unavailable"}});
- const admin:any={from:(table:string)=>{const query:any={select:()=>query,eq:()=>query,maybeSingle:async()=>{
+ const admin:any={from:(table:string)=>{const query:any={select:()=>query,eq:()=>query,in:()=>query,limit:async()=>({data:[],error:null}),maybeSingle:async()=>{
   if(table==="app_config")return{data:{value:{enabled:state.enabled,approved_judge:{provider:"anthropic",model:"claude-sonnet-5"}}},error:null};
   if(table==="private_ai_outputs"){const e=state.row!.evidence,file=e.output!;return{data:state.row!.check.state==="accept"?{org_id:org,user_id:actor,listing_id:listing,bucket:"renders",storage_key:file.key,bytes:file.bytes}:null,error:null};}
   throw Error("Unexpected table "+table);
  }};return query;},rpc:async(name:string,args:any)=>{
   state.rpcs.push(name);
+  if(name==="library_actor_billing_org")return{data:org,error:null};
   if(name==="listing_library_scope")return state.current?{data:{actor_id:actor,listing_id:listing,org_id:org,library_org_id:state.library,billing_org_id:org,team_org_id:null,library_owner_user_id:actor,listing_owner_user_id:actor,role:"owner",access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true},error:null}:unavailable();
   if(name==="photo_quality_begin"){
    if(!state.enabled)return{data:null,error:{message:"RP503: Photo quality review is not active yet"}};

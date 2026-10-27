@@ -8,6 +8,7 @@ import {ProviderError,bytesToB64,presignGet} from "../_shared/providers/common.t
 import {R2_BUCKET_RENDERS,headObject} from "../_shared/r2.ts";
 import {recordAppAiCost} from "../_shared/ledger.ts";
 import {entitlementForCharge} from "../_shared/entitlements.ts";
+import {libraryBillingOrg} from "../_shared/library-access.ts";
 import {boundedPhotoResultBytes} from "./photo-result.ts";
 import {validatePhotoInput} from "./input-policy.ts";
 import {PHOTO_QC_POLICY,PHOTO_QC_REGIONS,PHOTO_QC_JSON_SCHEMA,photoQualityRubric,parsePhotoQualityWithDiagnostic,unavailablePhotoQuality,MAX_PHOTO_QC_VERDICT_BYTES} from "./photo-qc-verdict.ts";
@@ -100,7 +101,20 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
   const config=await admin.from("app_config").select("value").eq("key","photo_quality").maybeSingle();
   const approved=config.data?.value?.approved_judge;
   if(config.error||(config.data?.value?.enabled!==true&&e.purpose!=="calibration")||approved?.provider!=="anthropic"||approved?.model!=="claude-sonnet-5")return row;
-  const plan=await deps.plan(e.org_id);
+  let credit:{org_id:string;environment:"Production"|"Sandbox";request_key:string}|undefined;
+  if(e.edit==="declutter"){
+    const creditOrg=await libraryBillingOrg(admin,e.org_id,args.actor);
+    const creditLookup=await admin.from("credit_holds")
+      .select("org_id,environment,request_key,state")
+      .eq("org_id",creditOrg).eq("actor_id",args.actor)
+      .eq("request_key",e.request_key).eq("operation","photo.declutter")
+      .in("state",["reserved","settled"]).limit(2);
+    assert(!creditLookup.error,503,"The saved photo credit authority could not be checked.");
+    assert((creditLookup.data?.length??0)<=1,503,"The saved photo credit authority is ambiguous.");
+    credit=creditLookup.data?.[0] as typeof credit;
+  }
+  const actualPlan=await deps.plan(e.org_id);
+  const plan=credit&&actualPlan==="free"?"pro":actualPlan;
   const steps=await deps.routes(plan),step=steps.find(s=>s.provider===approved.provider&&s.model===approved.model);
   if(!step)return row; // no invented fallback or second judge
   const files=photoDerivatives(row),rubric=photoJudgeRubric({edit:context.edit,...(context.style?{style:context.style}:{}),instruction:context.instruction});
@@ -123,9 +137,10 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
   assert(claimed.check.id===row.check.id&&claimed.evidence.id===e.id&&claimed.evidence.org_id===e.org_id&&claimed.evidence.input.sha256===e.input.sha256&&claimed.evidence.output?.sha256===e.output?.sha256&&claimed.check.state==="derivative_ready"&&claimed.check.lease_token&&claimed.check.judge_started_at===null&&claimed.check.derivative_manifest_sha256===row.check.derivative_manifest_sha256,409,"The photo comparison lease changed.","conflict");
   const binding={policy:PHOTO_QC_POLICY,judge_contract:PHOTO_QC_JUDGE_CONTRACT,check_id:row.check.id,evidence_id:e.id,prepared_sha256:e.input.sha256,output_sha256:e.output?.sha256,derivative_manifest_sha256:row.check.derivative_manifest_sha256,rubric,output_format:PHOTO_QC_OUTPUT_FORMAT,images:files.map(f=>({role:f.role,region:f.region,sha256:f.sha256,bytes:f.bytes,width:f.width,height:f.height})),input_token_bound:quote.inputBound,max_output_tokens:MAX_OUTPUT_TOKENS};
   let reservation:string|undefined;
-  const rpc:FundingContext["rpc"]=async(name,parameters)=>{const admission=name==="serving_cost_reserve"||name==="serving_operation_begin";if(admission)signal.throwIfAborted();let query=admin.rpc(name,parameters);if(admission&&typeof query?.abortSignal==="function")query=query.abortSignal(signal);const result=await query;if(name==="serving_cost_reserve"&&!result.error&&result.data?.reserved===true){reservation=result.data.id;reservedBeforeDispatch=true;}return result;};
+  const rpc:FundingContext["rpc"]=async(name,parameters)=>{const admission=name==="serving_cost_reserve"||name==="credit_serving_cost_reserve"||name==="serving_operation_begin";if(admission)signal.throwIfAborted();let query=admin.rpc(name,parameters);if(admission&&typeof query?.abortSignal==="function")query=query.abortSignal(signal);const result=await query;if((name==="serving_cost_reserve"||name==="credit_serving_cost_reserve")&&!result.error&&result.data?.reserved===true){reservation=result.data.id;reservedBeforeDispatch=true;}return result;};
   const headers=new Headers(args.request.headers);headers.set("Idempotency-Key",`photo-qc:${row.check.id}`);
   const funding=await fundingContext(args.actor,e.org_id,new Request(args.request.url,{method:"POST",headers}),binding,rpc);
+  if(credit)funding.credit={orgId:credit.org_id,requestKey:credit.request_key,environment:credit.environment};
   let usage:Usage|undefined;const completion:{reason:AnthropicStopReason}={reason:"unknown"};started=Date.now();paidStep=step;
   const raw=await fundedAttempt(funding,"photo.qc:0",step,binding,quote,async()=>{
    // The wrapper captures the ID returned by this exact fresh reserve. A

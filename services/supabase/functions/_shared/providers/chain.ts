@@ -95,7 +95,7 @@ export async function runChain<T>(
 ): Promise<ChainResult<T>> {
   let lastError: unknown = null;
 
-  for (const step of steps) {
+  for (const [index, step] of steps.entries()) {
     const startedAt = Date.now();
     try {
       const value = await attempt(step);
@@ -112,9 +112,8 @@ export async function runChain<T>(
       if(err instanceof ProviderResponseLimitError)throw asHttpError(err);
       // The caller's problem, or a refusal about this exact image: stop here.
       if (error_class === "validation" || error_class === "nsfw") throw asHttpError(err);
-      console.error(
-        `router: ${task} step ${step.provider}/${step.model} failed (${error_class}); trying the next provider`,
-      );
+      console.error(`router: ${task} step ${step.provider}/${step.model} failed (${error_class})` +
+        (index + 1 < steps.length ? "; trying the next provider" : "; no further provider route"));
       lastError = err;
     }
   }
