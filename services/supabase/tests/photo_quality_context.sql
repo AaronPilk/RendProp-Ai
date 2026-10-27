@@ -5,7 +5,10 @@ create function pg_temp.ok(v boolean,label text)returns void language plpgsql as
 create function pg_temp.no(command text,needle text,label text)returns void language plpgsql as $$begin begin execute command;exception when others then if position(needle in sqlerrm)>0 then perform pg_temp.ok(true,label);return;end if;raise;end;raise exception'CONTEXT FAIL allowed: %',label;end$$;
 insert into auth.users(id,email,is_anonymous)values('f8300000-0000-4000-8000-000000000001','photo-context-owner@fixture.invalid',false),('f8300000-0000-4000-8000-000000000002','photo-context-other@fixture.invalid',false);
 create temporary table f as select 'f8300000-0000-4000-8000-000000000001'::uuid actor,'f8300000-0000-4000-8000-000000000002'::uuid other,(select org_id from memberships where user_id='f8300000-0000-4000-8000-000000000001'and role='owner'limit 1)org,'f8300000-0000-4000-8000-000000000011'::uuid listing;
-grant select on f to service_role;insert into listings(id,org_id,agent_id,address)select listing,org,actor,'Synthetic context property'from f;
+grant select on f to service_role;
+-- Context authority is tested on a synthetic paid workspace.
+update orgs set plan='starter',plan_source='manual' where id=(select org from f);
+insert into listings(id,org_id,agent_id,address)select listing,org,actor,'Synthetic context property'from f;
 update app_config set value=jsonb_set(value,'{enabled}','true')where key='photo_quality';
 create function pg_temp.seed(label text)returns jsonb language plpgsql as $$begin
  perform serving_operation_begin((select actor from f),(select org from f),'photo-context:'||label,'/ai-photo',repeat('d',64));

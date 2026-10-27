@@ -9,6 +9,8 @@ create temporary table f as select 'd1800000-0000-4000-8000-000000000001'::uuid 
  (select org_id from memberships where user_id='d1800000-0000-4000-8000-000000000001'limit 1)org,
  'd1800000-0000-4000-8000-000000000002'::uuid listing;
 alter table f add column prefix text;update f set prefix='renders/'||org||'/'||listing||'/';grant select on f to service_role,authenticated,anon;
+-- Retained photo delivery is exercised on a synthetic paid workspace.
+update orgs set plan='starter',plan_source='manual' where id=(select org from f);
 insert into listings(id,org_id,agent_id,address)select listing,org,actor,'Synthetic photo authority'from f;
 insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,bytes,sha256,content_type)
  select('d1800000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,listing,'photo',case when n=21 then'uploads'else'renders'end,

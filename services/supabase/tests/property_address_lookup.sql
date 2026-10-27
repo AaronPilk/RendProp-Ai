@@ -35,10 +35,17 @@ create temporary table af as select
 grant select on af to service_role;
 select pg_temp.ok((select org_one is not null and org_two is not null and org_one<>org_two from af),
   'synthetic owners have distinct workspaces');
+-- Seed the homes lawfully, then restore the original Free state so the
+-- retention-expiry assertion still exercises unpaid hosting.
+create temporary table address_org_before as select id,plan,plan_source,plan_expires_at,trial_ends_at
+  from public.orgs where id in(select org_one from af union select org_two from af);
+update public.orgs set plan='starter',plan_source='manual' where id in(select org_one from af union select org_two from af);
 insert into public.listings(id,org_id,agent_id,space_type,address,status)values
  ('ad200000-0000-4000-8000-000000000001',(select org_one from af),'ad100000-0000-4000-8000-000000000001','real_estate','123 Main St','ready'),
  ('ad200000-0000-4000-8000-000000000002',(select org_two from af),'ad100000-0000-4000-8000-000000000002','real_estate','55 Other Road','ready'),
  ('ad200000-0000-4000-8000-000000000003',(select org_two from af),'ad100000-0000-4000-8000-000000000002','real_estate','77 Future Lane','ready');
+update public.orgs o set plan=b.plan,plan_source=b.plan_source,plan_expires_at=b.plan_expires_at,trial_ends_at=b.trial_ends_at
+  from address_org_before b where o.id=b.id;
 -- Direct publication seed only; no render/provider execution. The test runs
 -- the real lookup after restoring all triggers and role authority.
 set local session_replication_role=replica;

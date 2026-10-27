@@ -21,6 +21,8 @@ create temp table vf as select 'f8510000-0000-4000-8000-000000000001'::uuid acto
  (select org_id from memberships where user_id='f8510000-0000-4000-8000-000000000002'and role='owner')other_org,
  'f8530000-0000-4000-8000-000000000001'::uuid listing,
  'f8530000-0000-4000-8000-000000000002'::uuid other_listing;
+-- These provenance cases use paid synthetic homes; foreign access is checked separately.
+update orgs set plan='starter',plan_source='manual' where id in(select org from vf union select other_org from vf);
 insert into listings(id,org_id,agent_id,address)select listing,org,actor,'Synthetic held video home'from vf
  union all select other_listing,other_org,other,'Synthetic foreign video home'from vf;
 grant select on vf to service_role,authenticated,anon;

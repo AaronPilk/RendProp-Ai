@@ -5,10 +5,14 @@ create temporary table checks(n integer);insert into checks values(0);grant all 
 create function pg_temp.ok(v boolean,label text)returns void language plpgsql as $$begin if v is distinct from true then raise exception 'PRODUCT_MEDIA FAIL: %',label;end if;update checks set n=n+1;end$$;
 create function pg_temp.refuse(command text,needle text,label text)returns void language plpgsql as $$begin begin execute command;exception when others then if position(needle in sqlerrm)>0 then perform pg_temp.ok(true,label);return;end if;raise;end;raise exception 'PRODUCT_MEDIA FAIL: allowed %',label;end$$;
 create temporary table fixture(kind text,actor uuid,org uuid,listing uuid);grant select on fixture to service_role,authenticated,anon;
-do $$declare k text;a uuid;o uuid;l uuid;begin foreach k in array array['free','trial','paid','owner']loop
+do $$declare k text;a uuid;o uuid;l uuid;prior_plan text;prior_source text;prior_expires timestamptz;prior_trial_ends timestamptz;begin foreach k in array array['free','trial','paid','owner']loop
  a:=gen_random_uuid();l:=gen_random_uuid();insert into auth.users(id,email,email_confirmed_at,is_anonymous)values(a,k||'-product-media@fixture.invalid',now(),false);
  select org_id into o from memberships where user_id=a;
+ select plan,plan_source,plan_expires_at,trial_ends_at into prior_plan,prior_source,prior_expires,prior_trial_ends from orgs where id=o;
+ -- Seed a lawful listing, then restore the exact free baseline for each case.
+ update orgs set plan='starter',plan_source='manual' where id=o;
  insert into listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic media fixture');
+ update orgs set plan=prior_plan,plan_source=prior_source,plan_expires_at=prior_expires,trial_ends_at=prior_trial_ends where id=o;
  if k='paid'then
   perform public.apply_apple_entitlement_v2(o,a,'product-media-paid-original','product-media-paid-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()+interval'1 second',now()+interval'1 second',now()+interval'1 second');
  elsif k='trial'then

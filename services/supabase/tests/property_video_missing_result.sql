@@ -21,6 +21,8 @@ create function pg_temp.paid_clip(c jsonb)returns jsonb language plpgsql as $$de
 insert into auth.users(id,email,is_anonymous)values('f1100000-0000-4000-8000-000000000001','background-owner@fixture.invalid',false),('f1100000-0000-4000-8000-000000000002','background-other@fixture.invalid',false);
 create temporary table bf as select 'f1100000-0000-4000-8000-000000000001'::uuid actor,'f1100000-0000-4000-8000-000000000002'::uuid other,(select org_id from memberships where user_id='f1100000-0000-4000-8000-000000000001'and role='owner'limit 1)org,(select org_id from memberships where user_id='f1100000-0000-4000-8000-000000000002'and role='owner'limit 1)other_org,'f1300000-0000-4000-8000-000000000001'::uuid listing;
 grant select on bf to service_role,authenticated;
+-- Seed the synthetic home under the paid authority used by this video proof.
+update public.orgs set plan='team',plan_source='manual',plan_expires_at=null where id=(select org from bf);
 insert into listings(id,org_id,agent_id,address)values((select listing from bf),(select org from bf),(select actor from bf),'Synthetic background property');
 set local session_replication_role=replica;
 insert into capture_assets(id,listing_id,kind,bucket,storage_key,bytes,sha256,uploaded,transport_version,content_type)select md5('bg-photo:'||i)::uuid,(select listing from bf),'photo','renders','renders/'||(select org from bf)||'/'||(select listing from bf)||'/gallery-'||i||'.jpg',100,repeat('a',64),true,2,'image/jpeg'from generate_series(1,100)i;
@@ -63,7 +65,7 @@ create function pg_temp.target_poll(j uuid,pos integer)returns jsonb language pl
  for i in 1..6 loop c:=property_video_job_claim(j,'slot-0');if c->>'action'='poll'and(c#>>'{source,position}')::integer=pos then return c;end if;
  if c->>'action'='poll'then perform property_video_job_poll_release(j,(c#>>'{source,lease_token}')::uuid,(c#>>'{source,attempt_id}')::uuid);else raise exception'Expected same accepted receipt poll, got %',c->>'action';end if;end loop;raise exception'No saved receipt poll';end$$;
 
-reset role;update public.orgs set plan='team',plan_source='manual',plan_expires_at=null where id=(select org from bf);
+reset role;
 set local role service_role;
 create temporary table missing_job as select property_video_job_enqueue((select actor from bf),jsonb_set(jsonb_set((select m from bm),'{operation_id}','"f3700000-0000-4000-8000-000000009001"'),'{sources}',(select jsonb_agg(x)from jsonb_array_elements((select m->'sources'from bm))with ordinality e(x,n)where n<=4)))j;
 create temporary table ready_case as select pg_temp.paid_clip(property_video_job_claim((select(j).id from missing_job),'slot-0'))c;select pg_temp.accept_qc((select c from ready_case));

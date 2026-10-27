@@ -9,6 +9,8 @@ create temp table cf(actor uuid,other_actor uuid,org uuid,other_org uuid,listing
 do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();o uuid;oo uuid;l uuid:=gen_random_uuid();ol uuid:=gen_random_uuid();src uuid:=gen_random_uuid();ed uuid:=gen_random_uuid();held uuid:=gen_random_uuid();unknown_src uuid:=gen_random_uuid();mp uuid:=gen_random_uuid();badmp uuid:=gen_random_uuid();begin
  insert into auth.users(id,email,is_anonymous)values(a,'gallery-copy-owner@fixture.invalid',false),(b,'gallery-copy-other@fixture.invalid',false);
  select org_id into o from memberships where user_id=a;select org_id into oo from memberships where user_id=b;
+ -- Both synthetic homes need listing authority before copy provenance checks.
+ update orgs set plan='starter',plan_source='manual' where id in(o,oo);
  insert into listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic copy home'),(ol,oo,b,'Other synthetic copy home');
  insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,bytes,sha256,content_type,transport_version)values
  (src,l,'photo','renders','renders/'||o||'/'||l||'/original-'||src||'.jpg',true,100,repeat('a',64),'image/jpeg',2),
