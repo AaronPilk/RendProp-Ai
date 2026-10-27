@@ -114,7 +114,7 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
             where request_key='aerial-opening:{concurrent_op}';
           select count(*)=1 from public.property_video_aerial_openings where operation_id='{concurrent_op}';
           set role service_role;
-          select (public.credit_wallet_state('a0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Production')->>'total_available')::integer=60;
+          select (public.credit_wallet_state('a0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Production')->>'total_available')::integer=80;
         """])
         assert [line.strip() for line in race_check.splitlines() if line.strip()] == ["t", "t", "t"], race_check
         downgrade_output = run("paid-to-Free aerial credit recovery", [*psql, "-Atq", "-f", SQL / "tests/credit_aerial_downgrade.sql"])
@@ -125,6 +125,10 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         uncertain_results = [json.loads(line) for line in uncertain_output.splitlines()
                              if line.startswith("{") and '"assertions"' in line]
         assert len(uncertain_results) == 1 and uncertain_results[0]["passed"] is True, uncertain_output
+        fair_output = run("aerial fair-charge negative controls", [*psql, "-Atq", "-f", SQL / "tests/credit_aerial_fair_charge.sql"])
+        fair_results = [json.loads(line) for line in fair_output.splitlines()
+                        if line.startswith("{") and '"assertions"' in line]
+        assert len(fair_results) == 1 and fair_results[0]["passed"] is True, fair_output
         print(json.dumps({"passed": True,
                           "assertions": results[0]["assertions"] + photo_results[0]["assertions"]
                           + trial_results[0]["assertions"] + combined_results[0]["assertions"]
@@ -132,7 +136,8 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
                           + recovery_results[0]["assertions"]
                           + aerial_results[0]["assertions"]
                           + team_results[0]["assertions"] + downgrade_results[0]["assertions"]
-                          + uncertain_results[0]["assertions"] + 4,
+                          + uncertain_results[0]["assertions"]
+                          + fair_results[0]["assertions"] + 4,
                           "migrations": len(migrations), "scope": "disposable PostgreSQL"}))
     finally:
         if started:

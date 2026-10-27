@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertThrows } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import {
   AERIAL_PROFILE, aerialGenerationModel, exteriorAssessment, mayGenerate,
-  submitAerialOnce, type AerialProvider, type AerialStageStore,
+  pollSavedAerial, submitAerialOnce, type AerialProvider, type AerialStageStore,
 } from './aerial-admission.ts';
 import { aerialReply } from './aerial-public.ts';
 
@@ -78,4 +78,31 @@ Deno.test('ineligible exterior replies explain the new-photo recovery without ch
   assert(reply.message.includes('front entrance'));
   assert(reply.message.includes('No video was generated'));
   assertEquals(Object.hasOwn(reply, 'eligibility'), false);
+});
+
+Deno.test('lost KIE acceptance acknowledgement never sends a second paid POST', async () => {
+  let claims = 0, posts = 0, receiptWrites = 0, unknowns = 0, polls = 0;
+  const store: AerialStageStore = {
+    claimGeneration: () => Promise.resolve({ claimed: ++claims === 1,
+      token: id(6), manifest, eligibility: qualified, prepared, inputURL }),
+    receipt: () => { receiptWrites++; return Promise.reject(Error('saved receipt ack lost')); },
+    ambiguous: () => { unknowns++; return Promise.resolve(); },
+    rejected: () => { throw Error('uncertain acceptance must not be marked rejected'); },
+    pollAuthority: () => Promise.resolve(null),
+  };
+  const provider: AerialProvider = {
+    submit: () => { posts++; return Promise.resolve({ provider: 'kie',
+      model: aerialGenerationModel(manifest.profile), id: 'paid-once',
+      submitted_at: '2026-10-27T00:00:00Z',
+      poll_url: 'https://api.kie.ai/api/v1/jobs/recordInfo?taskId=paid-once' }); },
+    poll: () => { polls++; return Promise.resolve({ status: 'done' }); },
+    rejection: () => null,
+  };
+  assertEquals(await submitAerialOnce(id(7), store, provider),
+    { dispatched: true, acceptance_unknown: true });
+  assertEquals(await submitAerialOnce(id(7), store, provider), { dispatched: false });
+  assertEquals(await pollSavedAerial(id(7), store, provider),
+    { status: 'acceptance_unconfirmed' });
+  assertEquals({ posts, receiptWrites, unknowns, polls },
+    { posts: 1, receiptWrites: 1, unknowns: 1, polls: 0 });
 });

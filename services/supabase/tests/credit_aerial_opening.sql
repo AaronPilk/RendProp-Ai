@@ -236,13 +236,15 @@ begin
    'id','aerial-credit-accepted-1','submitted_at',now(),
    'poll_url','https://api.kie.ai/api/v1/jobs/recordInfo?taskId=aerial-credit-accepted-1');
  perform public.property_video_aerial_receipt(job.id,lease,receipt);
- perform pg_temp.aerial_ok((select state='settled' from public.credit_holds
+ perform pg_temp.aerial_ok((select state='reserved' from public.credit_holds
      where request_key='aerial-opening:'||op2) and
    (select cost_ledger_id is not null and provider_request_id='aerial-credit-accepted-1'
      from public.app_video_cost_reservations where idempotency_key='aerial-opening:'||op2) and
    (select state='succeeded' from public.serving_cost_reservations
-     where request_key='aerial-opening:'||op2 and stage='aerial'),
-  'accepted KIE receipt atomically settles customer and supplier');
+     where request_key='aerial-opening:'||op2 and stage='aerial') and
+   (select state='reserved' from public.credit_aerial_failure_budget
+     where job_id=job.id),
+  'accepted KIE receipt records supplier cost without charging customer');
  perform public.property_video_aerial_receipt(job.id,lease,receipt);
  perform pg_temp.aerial_refuses(format(
   'select public.property_video_aerial_receipt(%L,%L,%L::jsonb)',
@@ -250,10 +252,19 @@ begin
   'RP409:','accepted KIE receipt is immutable');
  perform public.property_video_aerial_cancel(actor,job.id);
  perform public.property_video_aerial_release_future(job.id);
- perform pg_temp.aerial_ok((public.credit_wallet_state(org,'Production')->>'total_available')::integer=80
-   and (select state='settled' from public.credit_holds
-      where request_key='aerial-opening:'||op2),
-  'cancellation after accepted supplier receipt cannot refund spent credits');
+ perform pg_temp.aerial_ok((public.credit_wallet_state(org,'Production')->>'total_available')::integer=100
+   and (select state='released' from public.credit_holds
+      where request_key='aerial-opening:'||op2)
+   and (select state='spent' and spent_cents>=45 and spent_cents<=maximum_cents
+      from public.credit_aerial_failure_budget where job_id=job.id)
+   and (select count(*)=4 from public.serving_cost_reservations
+      where request_key='aerial-opening:'||op2 and budget_source='aerial_failure')
+   and (select cost_ledger_id is not null from public.app_video_cost_reservations
+      where idempotency_key='aerial-opening:'||op2),
+  'stopped billable KIE opening refunds credits and retains bounded supplier loss');
+ perform public.property_video_aerial_release_future(job.id);
+ perform pg_temp.aerial_ok((public.credit_wallet_state(org,'Production')->>'total_available')::integer=100,
+  'terminal supplier-loss replay never double refunds credits');
 end$$;
 reset role;
 select jsonb_build_object('passed',true,'assertions',(select n from aerial_credit_checks));

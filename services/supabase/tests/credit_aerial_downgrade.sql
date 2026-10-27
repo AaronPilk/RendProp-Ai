@@ -134,10 +134,18 @@ begin
    'poll_url','https://api.kie.ai/api/v1/jobs/recordInfo?taskId=aerial-downgrade-accepted');
  perform public.property_video_aerial_receipt(j.id,j.lease,r);
  perform pg_temp.downgrade_ok(
-   (select state='settled' from public.credit_holds
+   (select state='reserved' from public.credit_holds
     where request_key='aerial-opening:a0888888-8888-4888-8888-888888888888')
-   and (public.credit_wallet_state(org,'Production')->>'total_available')::integer=60,
-  'accepted supplier receipt settles only the admitted hold after downgrade');
+   and (public.credit_wallet_state(org,'Production')->>'total_available')::integer=80,
+  'accepted supplier receipt leaves only admitted credits reserved after downgrade');
+ perform public.property_video_aerial_cancel('a0111111-1111-4111-8111-111111111111',j.id);
+ perform public.property_video_aerial_release_future(j.id);
+ perform pg_temp.downgrade_ok(
+   (select state='released' from public.credit_holds
+    where request_key='aerial-opening:a0888888-8888-4888-8888-888888888888')
+   and (public.credit_wallet_state(org,'Production')->>'monthly_available')::integer=0
+   and (select state='spent' from public.credit_aerial_failure_budget where job_id=j.id),
+  'failed post-downgrade job refunds hold without restoring revoked monthly usage');
 end$$;
 reset role;
 select jsonb_build_object('passed',true,'assertions',(select n from downgrade_checks));
