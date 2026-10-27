@@ -98,7 +98,7 @@ INDEXING
     var availableRoomTagAsset: Int?
     var showComplianceDetails = false
     var qrTarget: Int?; var linkShareTarget: Int?
-    var verifiedBuyerLink: (key: String, url: URL)?; var resolvingBuyerLinkKey: String?
+    var verifiedBuyerLink: (key: String, url: URL)?; var resolvingBuyerLinkKey: String?; var withdrawnBuyerLinkKey: String?
     let connection = FixtureConnection(); var dismissals = 0; var sharedAdmittedJobs = 7
     init(scope: NativePresentationScope, auth: FixtureAuth) { presentationScope = scope; self.auth = auth }
     func dismiss() { dismissals += 1 }
@@ -136,6 +136,7 @@ CONTACT
         ("keeps-link-share", "linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "Invalidation closes the old buyer-link share sheet"),
         ("keeps-verified-link", "linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "linkShareTarget = nil; resolvingBuyerLinkKey = nil", "Invalidation clears the old verified buyer link"),
         ("keeps-link-lookup", "linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "linkShareTarget = nil; verifiedBuyerLink = nil", "Invalidation clears the old buyer-link lookup identity"),
+        ("keeps-withdrawn-link", "withdrawnBuyerLinkKey = nil", "// omitted withdrawn buyer-link reset", "Invalidation clears the old withdrawn buyer link identity"),
         ("ignores-scan-cancellation", "!Task.isCancelled, expectedScope == presentationScope,\n                  hasCurrentPresentationContext else { return }", "true, expectedScope == presentationScope,\n                  hasCurrentPresentationContext else { return }", "Cancelled scan cannot restore files after invalidation"),
         ("stale-contact-dispatch", "!Task.isCancelled, hasCurrentPresentationContext, !currentListing.isSample", "!Task.isCancelled, !currentListing.isSample", "Stale account cannot dispatch listing contact request"),
         ("actor-global-indexing", 'return "\\(actor.lowercased()):\\(org.uuidString.lowercased())"', 'return actor.lowercased()', "Indexing opt-in cannot carry into another workspace"),

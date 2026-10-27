@@ -122,6 +122,7 @@ import Foundation
         cleared.linkShareTarget = 777
         cleared.verifiedBuyerLink = ("old-link", URL(string: "https://old-buyer-link.invalid/")!)
         cleared.resolvingBuyerLinkKey = "old-link"
+        cleared.withdrawnBuyerLinkKey = "old-link"
         cleared.loadFiles(); await waitFor { ScanFixture.pending.count == 1 }
         let cancelledScan = cleared.filesTask
         cleared.invalidatePresentation()
@@ -142,6 +143,7 @@ import Foundation
         check(cleared.linkShareTarget == nil, "Invalidation closes the old buyer-link share sheet")
         check(cleared.verifiedBuyerLink == nil, "Invalidation clears the old verified buyer link")
         check(cleared.resolvingBuyerLinkKey == nil, "Invalidation clears the old buyer-link lookup identity")
+        check(cleared.withdrawnBuyerLinkKey == nil, "Invalidation clears the old withdrawn buyer link identity")
         check(cleared.sharedAdmittedJobs == 7, "Presentation invalidation leaves admitted shared jobs untouched")
         ScanFixture.pending.removeFirst().resume(returning: .init(stamp: 4, items: [55]))
         await cancelledScan?.value
