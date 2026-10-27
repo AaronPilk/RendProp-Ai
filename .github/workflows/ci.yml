@@ -396,7 +396,7 @@ jobs:
           sync_failed=0
           sync_pids=()
           sync_faults=()
-          sync_log_dir="$(mktemp -d /tmp/rendprop-floor-measurement-sync-launch-XXXXXX)"
+          sync_log_dir="$(mktemp -d "$RUNNER_TEMP/rendprop-floor-measurement-sync-launch-XXXXXX")"
           wait_sync_batch() {
             for i in "${!sync_pids[@]}"; do
               if wait "${sync_pids[$i]}"; then

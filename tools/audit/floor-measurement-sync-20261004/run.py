@@ -161,7 +161,7 @@ def main():
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--inject-fault", choices=["drop-wire", "drop-fingerprint", "ignore-dirty", "drop-replay-adopt", "rewrite-raw-keys", "legacy-ignore-edit", "discard-outline-only", "outline-fingerprint", "legacy-v2-accept", "drop-local-raw-mirror", "omit-cas-base", "ignore-pending-measurements", "wrong-cas-workspace", "ignore-cas-conflict", "omit-facts-fingerprint", "ignore-facts-review", "skip-legacy-recovery", "ignore-cas-lineage", "overwrite-shared-backup", "compare-backup-wire-only", "retain-backup-after-new-edit"])
     args = parser.parse_args()
-    out = args.output_dir or Path(tempfile.mkdtemp(prefix="rendprop-floor-measurement-sync-", dir="/tmp"))
+    out = args.output_dir or Path(tempfile.mkdtemp(prefix="rendprop-floor-measurement-sync-", dir=os.environ.get("RUNNER_TEMP")))
     out.mkdir(parents=True, exist_ok=True)
     fixture_template = Path(__file__).with_name("Fixture.swift.template")
     legacy_template = Path(__file__).with_name("LegacyModels.swift.template")
@@ -261,6 +261,7 @@ def main():
         "__MODIFY__": block(app, "    func modify(_ id: UUID,"),
         "__MARK_DIRTY__": block(app, "    func markDirty(_ id: UUID)"),
         "__IS_IN_WORKSPACE__": block(app, "    func isInSelectedWorkspace(_ listing: Listing)"),
+        "__NOTE_DRAFT_FAILURE__": block(app, "    private func noteDraftCreationFailure("),
         "__SYNC_LISTING__": block(app, "    func syncListing(_ id: UUID)"),
         "__EDITOR_PERSIST__": block(source_bytes[EDITOR].decode(), "    private func persist(_ candidate: FloorMeasurementPlan)"),
     }
