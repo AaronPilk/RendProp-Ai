@@ -157,6 +157,21 @@ try{
  await page.goto(origin+'/property/synthetic-video?published_theme=coastal-luxe',{waitUntil:'networkidle'});
  const coastal=await page.evaluate(()=>{const stage=document.querySelector('.property-video-stage').getBoundingClientRect(),hero=document.querySelector('.property-video-hero');return {display:getComputedStyle(hero).display,width:stage.width,height:stage.height,overflow:document.documentElement.scrollWidth>innerWidth};});
  check(coastal.display==='grid'&&!coastal.overflow&&Math.abs(coastal.width/coastal.height-16/9)<.01,'Coastal desktop layout stays distinct while retaining the full landscape canvas');
+ // Reduced Motion must leave the identity visible wherever the playing
+ // layout places it beside or below the film. Signature desktop intentionally
+ // clears the overlay to leave the full frame unobstructed.
+ await page.emulateMedia({reducedMotion:'reduce'});
+ for(const theme of ['signature-estate','coastal-luxe'])for(const width of [390,1440]){
+  await page.setViewportSize({width,height:width===390?844:1000});
+  await page.goto(origin+'/property/synthetic-video?published_theme='+theme,{waitUntil:'networkidle'});
+  await page.locator('#property-video-play').click();
+  await page.waitForFunction(()=>document.querySelector('.property-film.is-playing')&&document.getElementById('property-video').currentTime>0);
+  const identity=await page.locator('.property-hero-copy').evaluate(el=>{const style=getComputedStyle(el),rect=el.getBoundingClientRect();return {opacity:style.opacity,visibility:style.visibility,display:style.display,width:rect.width,height:rect.height};});
+  measurements.push({theme,width,reducedMotion:true,playingIdentity:identity});
+  const shouldShow=theme==='coastal-luxe'||width===390;
+  check(identity.opacity===(shouldShow?'1':'0')&&identity.visibility==='visible'&&identity.display!=='none'&&identity.width>0&&identity.height>0,`Reduced Motion playing ${theme} at ${width}px ${shouldShow?'keeps the identity visible':'clears the desktop overlay'}`);
+ }
+ await page.emulateMedia({reducedMotion:'no-preference'});
  await page.goto(origin+'/u/synthetic-video',{waitUntil:'networkidle'});
  check(await page.locator('#property-video-play').isVisible()&&await page.locator('form').count()===0,'MLS retains normal property video without contact');
  check(errors.length===0,'No actual browser script errors');check(external.length===0,'No external template assets, fonts, trackers or provider requests');
