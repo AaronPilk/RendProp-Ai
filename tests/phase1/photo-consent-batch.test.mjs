@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
@@ -53,7 +54,7 @@ test('actual photo batch fences revoked grants before dispatch and retains alrea
   const execute = (name, serviceFile) => {
     const binary = join(directory, name);
     const compile = spawnSync('/usr/bin/swiftc', ['-parse-as-library', join(directory, 'AIConsent.swift'),
-      join(directory, 'APIError.swift'), join(directory, 'PhotoSavedEditAPI.swift'), new URL('../../apps/ios/Rendprop/Photos/DeclutterAssessment.swift', import.meta.url).pathname,
+      join(directory, 'APIError.swift'), join(directory, 'PhotoSavedEditAPI.swift'), fileURLToPath(new URL('../../apps/ios/Rendprop/Photos/DeclutterAssessment.swift', import.meta.url)),
       join(directory, 'PhotoWorkQueue.swift'), serviceFile, join(directory, 'Fixture.swift'), '-o', binary],
     { encoding: 'utf8', timeout: 60000 });
     assert.equal(compile.status, 0, `${name} compile: ${compile.error ?? ''}\n${compile.stdout}\n${compile.stderr}`);

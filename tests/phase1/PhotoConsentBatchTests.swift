@@ -34,7 +34,18 @@ struct Listing {
     var isSample = false
 }
 enum SpaceType: String { case realEstate = "real_estate" }
-enum CloudSyncError: Error { case identityChanged }
+enum CloudSyncError: Error { case identityChanged, invalidResponse }
+// Credit authorization construction is covered by the wallet fixtures. This
+// consent test passes nil, but the real photo service still needs its typed
+// request boundary to compile unchanged.
+struct DeclutterCreditAuthorization: Hashable, Sendable {
+    let tariffVersion: String
+    let environment: String
+}
+struct StageCreditAuthorization: Hashable, Sendable {
+    let tariffVersion: String
+    let environment: String
+}
 struct AIPhotoEditRequest: Hashable {
     let imageBase64: String
     let mime: String
@@ -42,6 +53,8 @@ struct AIPhotoEditRequest: Hashable {
     var style: String?; var prompt: String?; var spaceType: String?
     var stagingReferenceBase64: String?; var stagingReferenceMime: String?
     var listingServerID: UUID?; var label: String?; var originalAssetID: String?; var idempotencyKey: String?
+    var declutterCreditTariffVersion: String?; var declutterCreditEnvironment: String?
+    var stageCreditTariffVersion: String?; var stageCreditEnvironment: String?
 }
 struct AIPhotoEditResult {
     var imageBase64: String
