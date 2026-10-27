@@ -26,6 +26,18 @@ returns void language sql security definer set search_path='' as $$
    generation_claimed_at=now(),state='dispatching' where id=p_job
 $$;
 grant execute on function pg_temp.synthetic_generation_claim(uuid,uuid) to service_role;
+create function pg_temp.synthetic_cpu_claim(p_job uuid,p_phase text,p_lease uuid)
+returns void language plpgsql security definer set search_path='' as $$
+begin
+ if p_phase='input' then
+  update public.property_video_aerial_openings set input_lease=p_lease,
+   input_claimed_at=now(),state='preparing_input' where id=p_job;
+ elsif p_phase='qualification' then
+  update public.property_video_aerial_openings set qualification_lease=p_lease,
+   qualification_claimed_at=now(),state='qualifying' where id=p_job;
+ else raise exception 'Unsupported synthetic CPU phase';end if;
+end$$;
+grant execute on function pg_temp.synthetic_cpu_claim(uuid,text,uuid) to service_role;
 insert into auth.users(id,email,is_anonymous) values
  ('a0111111-1111-4111-8111-111111111111','credit-aerial@example.invalid',false);
 insert into public.orgs(id,name,plan,plan_source) values
@@ -179,6 +191,44 @@ begin
    'Production','aerial-opening-v1');
  perform pg_temp.aerial_ok((public.credit_wallet_state(org,'Production')->>'total_available')::integer=80,
   'second independent operation reserves a new bounded hold');
+ -- The real CPU receipt writes its ledger row before serving_cost_finish.
+ -- Its reserved credit stage must bind that row in the same transaction.
+ perform pg_temp.synthetic_cpu_claim(job.id,'input',lease);
+ perform public.property_video_aerial_observe(job.id,'input',lease,'completed',1000,
+   policy->'producer_identity',jsonb_build_object('manifest_sha256',job.manifest_sha256));
+ perform pg_temp.aerial_ok((select state='succeeded' and ledger_id is not null
+   from public.serving_cost_reservations where request_key='aerial-opening:'||op2
+      and stage='aerial_input'),
+   'actual CPU receipt binds credit ledger before finishing its stage');
+ -- The two judge receipts use the same ledger-first ordering. A wrong-model
+ -- receipt must roll back, while exact receipts bind while still reserved.
+ perform pg_temp.aerial_refuses(format(
+  'insert into public.cost_ledger(org_id,billing_org_id,feature,provider,model,units,unit_cost_cents,total_cents,idempotency_key,meta) values(%L,%L,''qc'',%L,''wrong-model'',1,3,3,%L,%L::jsonb)',
+  org,org,quote#>>'{assessment,provider}','aerial-credit-bad-model:'||op2,
+  jsonb_build_object('request_key','aerial-opening:'||op2,'stage','aerial_assessment','aerial_job_id',job.id)),
+  'RP409:','wrong-model credit judge ledger cannot silently double-count');
+ insert into public.cost_ledger(org_id,billing_org_id,feature,provider,model,
+   units,unit_cost_cents,total_cents,idempotency_key,meta)
+ values(org,org,'qc',quote#>>'{assessment,provider}',
+   quote#>>'{assessment,model}',1,3,3,'aerial-credit-assessment:'||op2,
+   jsonb_build_object('request_key','aerial-opening:'||op2,
+     'stage','aerial_assessment','aerial_job_id',job.id));
+ perform pg_temp.aerial_ok((select state='reserved' and ledger_id is not null
+   from public.serving_cost_reservations where request_key='aerial-opening:'||op2
+      and stage='aerial_assessment'),
+   'assessment ledger binds before serving stage finishes');
+ perform public.serving_cost_finish(actor,org,'aerial-opening:'||op2,'aerial_assessment','succeeded',null);
+ insert into public.cost_ledger(org_id,billing_org_id,feature,provider,model,
+   units,unit_cost_cents,total_cents,idempotency_key,meta)
+ values(org,org,'qc',quote#>>'{quality,provider}',
+   quote#>>'{quality,model}',1,3,3,'aerial-credit-quality:'||op2,
+   jsonb_build_object('request_key','aerial-opening:'||op2,
+     'stage','aerial_quality','aerial_job_id',job.id));
+ perform pg_temp.aerial_ok((select state='reserved' and ledger_id is not null
+   from public.serving_cost_reservations where request_key='aerial-opening:'||op2
+      and stage='aerial_quality'),
+   'quality ledger binds before serving stage finishes');
+ perform public.serving_cost_finish(actor,org,'aerial-opening:'||op2,'aerial_quality','succeeded',null);
  perform pg_temp.synthetic_generation_claim(job.id,lease);
  receipt:=jsonb_build_object('provider','kie','model',
    case when manifest->>'profile'='kie-kling3-omni-reference-aerial-opening-v1'

@@ -67,6 +67,7 @@ grant all on downgrade_job to service_role;
 set local role service_role;
 do $$
 declare m jsonb;q jsonb;c jsonb;j public.property_video_aerial_openings;
+ budget_before jsonb;budget_after jsonb;spend_before numeric;
  org uuid:='a0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 begin
  perform pg_temp.downgrade_ok(public.credit_primary_subscription(org,'Production'),
@@ -79,6 +80,29 @@ begin
  j:=public.property_video_aerial_admit_credit(
   'a0111111-1111-4111-8111-111111111111',m,q,c,
   'Production','aerial-opening-v1');
+ budget_before:=public.credit_combined_budget_state(org);
+ spend_before:=public.org_month_spend_cents(org);
+ -- A real judge writes its ledger row while the stage is reserved, before
+ -- serving_cost_finish. It must remain inside the credit ring-fence.
+ insert into public.cost_ledger(org_id,billing_org_id,feature,provider,model,
+   units,unit_cost_cents,total_cents,idempotency_key,meta)
+ values(org,org,'qc',q#>>'{assessment,provider}',
+   q#>>'{assessment,model}',1,3,3,'aerial-paid-assessment-'||j.id,
+   jsonb_build_object('request_key','aerial-opening:'||j.operation_id,
+     'stage','aerial_assessment','aerial_job_id',j.id));
+ budget_after:=public.credit_combined_budget_state(org);
+ perform pg_temp.downgrade_ok(
+   (budget_after->>'linked_credit_ledger_cents')::numeric=
+     (budget_before->>'linked_credit_ledger_cents')::numeric+3
+   and public.org_month_spend_cents(org)=spend_before
+   and (select state='reserved' and ledger_id is not null
+     from public.serving_cost_reservations
+     where request_key='aerial-opening:'||j.operation_id
+       and stage='aerial_assessment'),
+   'paid-period aerial judge receipt debits credits without double budgeting');
+ perform public.serving_cost_finish(
+   'a0111111-1111-4111-8111-111111111111',org,
+   'aerial-opening:'||j.operation_id,'aerial_assessment','succeeded',null);
  insert into downgrade_job values(j.id,'a0999999-9999-4999-8999-999999999999');
  perform pg_temp.downgrade_ok((select remaining_credits=60 from public.credit_grants
    where reference='apple:aerial-paid-tx') and

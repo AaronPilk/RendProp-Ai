@@ -40,18 +40,23 @@ begin
   and (select released_at is null and cost_ledger_id is null
     from public.app_video_cost_reservations
     where idempotency_key='aerial-opening:a0777777-7777-4777-8777-777777777777')
+  and (select future_reconciled_at is null and message like 'Confirming the supplier outcome%'
+    from public.property_video_aerial_worker_read(j.id))
   and (public.credit_wallet_state(j.org,'Production')->>'total_available')::integer=60,
-  'Stop cannot refund an uncertain KIE submission');
+  'Stop cannot refund or hide an uncertain KIE submission from recovery');
  r:=jsonb_build_object('provider','kie','model','kling-3.0/video',
    'id','aerial-late-accepted','submitted_at',now(),
    'poll_url','https://api.kie.ai/api/v1/jobs/recordInfo?taskId=aerial-late-accepted');
  perform public.property_video_aerial_receipt(j.id,j.lease,r);
+ perform public.property_video_aerial_release_future(j.id);
  perform pg_temp.uncertain_ok(
   (select state='settled' from public.credit_holds
     where request_key='aerial-opening:a0777777-7777-4777-8777-777777777777')
   and (select cost_ledger_id is not null and provider_request_id='aerial-late-accepted'
     from public.app_video_cost_reservations
     where idempotency_key='aerial-opening:a0777777-7777-4777-8777-777777777777')
+  and (select future_reconciled_at is not null
+    from public.property_video_aerial_worker_read(j.id))
   and (public.credit_wallet_state(j.org,'Production')->>'total_available')::integer=60,
   'late exact KIE receipt settles same hold after Stop without new credits');
 end$$;

@@ -1,6 +1,9 @@
 -- Dormant 1080p aerial-opening credit path. Never activates an Apple catalog,
 -- monthly grant, or live quote. A production operation needs a separate
 -- explicit tariff activation after the full receipt/settlement audit.
+-- ACTIVATION BLOCKER: the draft still settles all 20 credits at KIE acceptance,
+-- before a usable clip is ready. Supplier-failure costs need a bounded
+-- noncredit risk budget and customer refunds before enabling this tariff.
 begin;
 insert into public.credit_tariffs(operation,version,credits,active)
 values('aerial.opening','aerial-opening-v1',20,false)
@@ -27,6 +30,49 @@ create table public.credit_aerial_openings(
 alter table public.credit_aerial_openings enable row level security;
 revoke all on public.credit_aerial_openings from public,anon,authenticated,service_role;
 grant select on public.credit_aerial_openings to service_role;
+
+-- Aerial CPU and judge receipts are written while their serving stage is
+-- still reserved, then that stage is finished in the SAME transaction. The
+-- original credit trigger only links a pre-finished stage; retain that rule
+-- for every other tool, but recognize this exact persisted aerial job/hold
+-- while the stage is reserved. Otherwise its real cost would incorrectly
+-- consume the paid plan's noncredit budget as well as the customer credits.
+do $patch$ declare definition text;anchor text;replacement text;begin
+  definition:=pg_get_functiondef('public.cost_ledger_settle_credit_hold()'::regprocedure);
+  anchor:='and r.model=new.model and r.budget_source=''credits'' and r.state=''succeeded''';
+  replacement:=E'and r.model=new.model and r.budget_source=''credits''\n     and (r.state=''succeeded'' or (r.state=''reserved''\n       and r.stage in(''aerial_input'',''aerial_qualification'',''aerial_assessment'',''aerial_quality'')\n       and r.billing_org_id=new.billing_org_id\n       and exists(select 1 from public.credit_aerial_openings ca\n         join public.property_video_aerial_openings j on j.id=ca.job_id\n         where ca.hold_id=r.credit_hold_id and ca.environment=r.credit_environment\n           and j.org_id=r.org_id and j.billing_org_id=r.billing_org_id\n           and j.actor_id=r.actor_id and r.request_key=''aerial-opening:''||j.operation_id\n           and new.meta->>''aerial_job_id''=j.id::text)))';
+  if (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 then
+    raise exception 'Review changed credit ledger matching before aerial binding';end if;
+  execute replace(definition,anchor,replacement);
+end $patch$;
+
+-- If a future producer drifts from the exact provider/model or drops the
+-- journal identity, roll back its cost write rather than silently charging
+-- both funding budgets. Alphabetical trigger order runs the binder first.
+create function public.credit_aerial_ledger_required() returns trigger
+language plpgsql security definer set search_path='' as $$
+declare linked uuid;begin
+  if new.meta->>'stage' not in
+    ('aerial_input','aerial_qualification','aerial_assessment','aerial_quality')
+    or coalesce(new.meta->>'request_key','') not like 'aerial-opening:%' then
+    return new;end if;
+  select ca.hold_id into linked
+  from public.credit_aerial_openings ca
+  join public.property_video_aerial_openings j on j.id=ca.job_id
+  where 'aerial-opening:'||j.operation_id=new.meta->>'request_key'
+    and j.org_id=new.org_id and j.billing_org_id=new.billing_org_id;
+  if linked is not null and not exists(
+    select 1 from public.serving_cost_reservations r
+    where r.credit_hold_id=linked and r.ledger_id=new.id
+      and r.stage=new.meta->>'stage' and r.provider=new.provider
+      and r.model=new.model and r.state in('reserved','succeeded')) then
+    raise exception 'RP409: Credit aerial stage cost lacks its exact funding reservation';end if;
+  return new;
+end$$;
+revoke all on function public.credit_aerial_ledger_required()
+  from public,anon,authenticated;
+create trigger zz_credit_aerial_ledger_required after insert on public.cost_ledger
+  for each row execute function public.credit_aerial_ledger_required();
 
 -- A service role may settle a receipt, never retarget its funding identity.
 do $patch$ declare definition text; anchor text; replacement text; begin
@@ -204,7 +250,7 @@ do $patch$ declare definition text; anchor text; replacement text; begin
     raise exception 'Review changed aerial terminal lock order';end if;
   definition:=replace(definition,anchor,replacement);
   anchor:='update public.property_video_aerial_openings set future_reconciled_at=coalesce(future_reconciled_at,now())where id=p_id;return true;';
-  replacement:=E'if ca.job_id is not null then\n  if r.credit_hold_id is distinct from ca.hold_id or r.credit_environment is distinct from ca.environment then raise exception ''RP409: Aerial liability lost its credit funding'';end if;\n  if j.provider_receipt is not null then\n   perform public.credit_wallet_finish(j.actor_id,j.billing_org_id,ca.environment,''aerial-opening:''||j.operation_id,''settled'');\n  elsif r.released_at is not null and r.provider_request_id is null then\n   select exists(select 1 from public.serving_cost_reservations sr where sr.credit_hold_id=ca.hold_id and sr.budget_source=''credits'' and sr.state<>''rejected'') into liability;\n   perform public.credit_wallet_finish(j.actor_id,j.billing_org_id,ca.environment,''aerial-opening:''||j.operation_id,case when liability then ''settled'' else ''released'' end);\n  end if;\n end if;\n update public.property_video_aerial_openings set future_reconciled_at=coalesce(future_reconciled_at,now())where id=p_id;return true;';
+  replacement:=E'if ca.job_id is not null then\n  if r.credit_hold_id is distinct from ca.hold_id or r.credit_environment is distinct from ca.environment then raise exception ''RP409: Aerial liability lost its credit funding'';end if;\n  if j.provider_receipt is not null then\n   perform public.credit_wallet_finish(j.actor_id,j.billing_org_id,ca.environment,''aerial-opening:''||j.operation_id,''settled'');\n  elsif r.released_at is not null and r.provider_request_id is null then\n   select exists(select 1 from public.serving_cost_reservations sr where sr.credit_hold_id=ca.hold_id and sr.budget_source=''credits'' and sr.state<>''rejected'') into liability;\n   perform public.credit_wallet_finish(j.actor_id,j.billing_org_id,ca.environment,''aerial-opening:''||j.operation_id,case when liability then ''settled'' else ''released'' end);\n  end if;\n  if exists(select 1 from public.credit_holds where id=ca.hold_id and state=''reserved'') then\n   update public.property_video_aerial_openings set message=''Confirming the supplier outcome. Your saved credits remain reserved for review.'',updated_at=now(),future_reconciled_at=null where id=p_id;\n   return false;\n  end if;\n end if;\n update public.property_video_aerial_openings set future_reconciled_at=coalesce(future_reconciled_at,now())where id=p_id;return true;';
   if (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 then
     raise exception 'Review changed aerial terminal reconciliation';end if;
   execute replace(definition,anchor,replacement);
