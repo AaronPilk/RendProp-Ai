@@ -9,7 +9,7 @@
 // (#7C3AED light / #9B6DFF dark — the app's Theme.accent), automatic
 // light/dark via prefers-color-scheme.
 
-const EFFECTIVE_DATE = "October 16, 2026";
+const EFFECTIVE_DATE = "October 27, 2026";
 // Prospective 90-day hosting grace was approved by the owner on October 6.
 // Deploy only with matching retention/read/export contracts; the legal draft
 // and handoff separate tested behavior from account-specific provider evidence.
@@ -183,7 +183,9 @@ models without your written consent.</b> Delete your content and Rendprop's perm
 provider-held copies and limited retained records are explained in our Privacy Policy.</p>
 <p><b>Optional Kie photo-to-video processing requires separate permission.</b> Before selected
 photos and camera-motion instructions can be sent to Kie (kie.ai), Rendprop shows its processing
-terms and asks you to allow it. Kie's terms permit submitted content to be used to operate and
+terms and asks you to allow it. An Aerial opening also asks you to allow the listed processors for
+source assessment, generation and finished-clip checks before the selected media is sent.
+Kie's terms permit submitted content to be used to operate and
 improve its services and do not expressly rule out AI model training. You can decline, or turn off
 future AI processing in Settings. Withdrawal cannot recall work a provider already accepted.</p>
 
@@ -193,11 +195,17 @@ sky and twilight edits, and synthetic aerial shots. We label these features in t
 and virtually staged or AI-generated media should always be disclosed as such to buyers.
 You are responsible for meeting any disclosure rules that apply to you (for example MLS or
 local advertising rules) when you publish or share AI-enhanced media.</p>
+<p>The optional AI Aerial opening uses a reviewed original front exterior photo to generate
+aerial-style footage. It is not captured drone footage or a 3D representation. Generated
+results can differ from the source photo; quality is not guaranteed. Review the clip against
+your original photo before using or publishing it.</p>
 
 <h2><span class="num">6.</span>Plans and payment</h2>
 <p>Rendprop is free to download. Some features may require an <b>auto-renewable subscription through
-the App Store</b>. New aerial creation is Coming soon and is not included in any plan; previously saved
-aerial videos remain accessible. Launch plans and included usage are being finalized. <b>The app is the source of
+the App Store</b>. The optional paid AI Aerial opening is available only with eligible paid access,
+a remaining Aerial allowance, available processing capacity and separate permission for the listed
+processors. The older free-form Aerial generator remains private and closed; previously saved
+aerial clips remain accessible. Launch plans and included usage are being finalized. <b>The app is the source of
 truth</b> for current plan features and included usage. Apple shows the price, billing period, and any
 introductory offer eligibility, duration, renewal price, and terms before confirmation.</p>
 <ul>
@@ -356,8 +364,8 @@ also depend on the provider's applicable terms and the account settings for that
   <tr role="row"><td role="cell">Bria</td><td role="cell">Requested video masking and object removal</td><td role="cell">Selected video clips, masks and instructions when that feature is enabled and requested</td></tr>
   <tr role="row"><td role="cell">cdnjs and jsDelivr</td><td role="cell">Player software delivery on public tour pages</td><td role="cell">Network request information, including the viewer's IP address, when the browser loads player software from these services</td></tr>
   <tr role="row"><td role="cell">Google&nbsp;Gemini</td><td role="cell">Photo editing, video analysis, and writing assistance</td><td role="cell">Selected photos or video, sampled frames, and text inputs for those features</td></tr>
-  <tr role="row" id="kie-video-processing"><td role="cell">Kie (kie.ai)</td><td role="cell">Optional photo-to-video clips after separate explicit permission</td><td role="cell">The selected property photos through a temporary download link, and camera-motion instructions</td></tr>
-  <tr role="row"><td role="cell">fal.ai</td><td role="cell">AI image and video editing, generation, and upscaling, using the selected model</td><td role="cell">Photos, video, and prompts for those features, including exterior photos used for aerial intros</td></tr>
+  <tr role="row" id="kie-video-processing"><td role="cell">Kie (kie.ai)</td><td role="cell">Optional photo-to-video clips and AI Aerial openings after separate explicit permission</td><td role="cell">The selected property photos, including a reviewed front exterior crop for an Aerial opening, through a temporary download link, and camera-motion instructions</td></tr>
+  <tr role="row"><td role="cell">fal.ai</td><td role="cell">AI image and video editing, generation, and upscaling, using the selected model</td><td role="cell">Photos, video, and prompts for those features, including exterior photos used for earlier aerial intros</td></tr>
   <tr role="row"><td role="cell">Anthropic</td><td role="cell">Chat and writing assistance, planning, and quality checks on AI output</td><td role="cell">User text, chat history and project context; source photos and frames from generated clips for quality checks</td></tr>
   <tr role="row"><td role="cell">OpenAI</td><td role="cell">Chat and writing assistance, planning, quality checks on AI output, and photo editing</td><td role="cell">User text, chat history and project context; source photos and generated-clip frames for quality checks; photos and edit inputs for photo editing</td></tr>
   <tr role="row"><td role="cell">ElevenLabs</td><td role="cell">Voiceover generation</td><td role="cell">Your voiceover script, including any address or personal details in it, and your selected voice</td></tr>
@@ -366,6 +374,11 @@ also depend on the provider's applicable terms and the account settings for that
 provider, including for fallback or quality checks. The primary Rendprop database is hosted
 in the United States. Cloud delivery and processing providers may operate in other locations.
 Rendprop does not send your media or buyer inquiries for advertising.</p>
+<p>For an optional Aerial opening, the app identifies the current processors for source assessment,
+generation and finished-clip checks before asking for separate permission. This can include Kie,
+OpenAI and Anthropic. The reviewed original front exterior photo or its prepared crop, plus frames
+from the generated clip, may be sent to the listed processors for the requested checks. The older
+free-form Aerial generator remains closed; previously saved clips remain accessible.</p>
 <p>Provider copies can remain after a result is saved in Rendprop. Google's Gemini terms
 distinguish paid and unpaid processing; unpaid inputs may be used to improve Google's
 products, while paid-service terms provide different protections. Bria's video results do

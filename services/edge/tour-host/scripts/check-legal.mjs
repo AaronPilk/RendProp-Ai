@@ -24,8 +24,8 @@ expect(t.includes("account-based workspace") && t.includes("sign in with Apple")
 expect(p.includes("Account details") && p.includes("older guest session"), "Privacy covers the account identity and legacy guest sessions");
 expect(p.includes("scripts or transcript excerpts") && p.includes("personal information"), "AI inventory covers text and potentially identifying content");
 provider("Google Gemini", ["Selected photos or video", "text inputs"]);
-provider("fal.ai", ["prompts", "video"]);
-provider("Kie (kie.ai)", ["separate explicit permission", "selected property photos", "temporary download link", "camera-motion instructions"]);
+provider("fal.ai", ["prompts", "video", "earlier aerial intros"]);
+provider("Kie (kie.ai)", ["separate explicit permission", "AI Aerial openings", "selected property photos", "reviewed front exterior crop", "temporary download link", "camera-motion instructions"]);
 provider("Anthropic", ["chat history", "source photos", "generated clips"]);
 provider("OpenAI", ["chat history", "photo editing", "generated-clip frames"]);
 provider("ElevenLabs", ["voiceover script", "address", "selected voice"]);
@@ -49,12 +49,22 @@ for (const [label, html] of [["Privacy", privacy], ["Terms", terms]]) {
   expect(html.includes("#7c3aed") && html.includes("#9b6dff"), `${label}: existing light/dark brand accents`);
   expect(html.includes('<html lang="en">') && html.includes('name="viewport"'), `${label}: language and mobile viewport`);
   expect(html.includes('href="/support"') && html.includes('mailto:aaron@pilk.ai'), `${label}: support and contact preserved`);
-  expect(html.includes("Effective October 16, 2026"), `${label}: proposed notice revision date`);
+  expect(html.includes("Effective October 27, 2026"), `${label}: proposed notice revision date`);
   expect(html.includes("RendProp LLC") && html.includes("855 Central Avenue, Saint Petersburg, FL 33701"), `${label}: owner-supplied legal entity and mailing address`);
   expect(!/<script\b/i.test(html), `${label}: no third-party scripts or telemetry added`);
 }
 expect(t.includes("without your written consent") && p.includes("without your written consent"), "Written-consent commitment retained");
 expect(t.includes("requires separate permission") && p.includes("not covered by an earlier AI permission"), "Kie never inherits earlier processor permission");
+expect(t.includes("optional paid AI Aerial opening") && t.includes("eligible paid access") && t.includes("remaining Aerial allowance")
+  && t.includes("available processing capacity") && t.includes("separate permission for the listed")
+  && t.includes("older free-form Aerial generator remains private and closed"),
+  "Terms distinguish eligible paid scoped opening from closed legacy generation");
+expect(t.includes("not captured drone footage or a 3D representation") && t.includes("quality is not guaranteed")
+  && t.includes("previously saved aerial clips remain accessible") && !/New aerial creation is Coming soon/i.test(t),
+  "Terms disclose generated footage limits and retained saved clips without stale availability claims");
+expect(p.includes("source assessment, generation and finished-clip checks") && p.includes("reviewed original front exterior photo or its prepared crop")
+  && p.includes("OpenAI and Anthropic") && p.includes("older free-form Aerial generator remains closed"),
+  "Privacy explains the separate Aerial processor scope and source/clip checks");
 expect(p.includes("14 days") && p.includes("two months") && p.includes("does not state how long fetched input photos"), "Kie retention separates documented output/log lifetimes from unknown input retention");
 expect(t.includes("do not expressly rule out AI model training") && p.includes("do not expressly rule out AI model training"), "Kie improvement license disclosed without claiming training or a no-training guarantee");
 expect(p.includes("withdraw permission for future requests") && p.includes("already accepted work may finish"), "Withdrawal stops future authority without promising recall");
@@ -83,11 +93,53 @@ for (const filename of ["index.html", "pricing.html", "llms.txt"]) {
     catch { expect(false, `${filename}: valid structured data`); }
   }
 }
+const llms = readFileSync(new URL("../public/llms.txt", import.meta.url), "utf8");
+expect(llms.includes("optional paid AI Aerial opening") && llms.includes("reviewed original front exterior photo")
+  && llms.includes("remaining Aerial allowance") && llms.includes("available processing capacity")
+  && llms.includes("separate processor permission") && llms.includes("older free-form generator remains closed"),
+  "llms.txt qualifies the scoped paid Aerial opening and closed legacy generator");
 for (const filename of ["index.html", "support.html"]) {
   const copy=readFileSync(new URL(`../public/${filename}`, import.meta.url),"utf8");
   expect(copy.includes("separate permission before") && copy.includes("Kie"), `${filename}: optional Kie processing asks separately`);
   expect(!copy.includes("delete your account and everything in it"), `${filename}: no universal deletion promise`);
 }
+const publicAerial = Object.fromEntries(["features", "pricing", "support"].map((name) => [
+  name, readFileSync(new URL(`../public/${name}.html`, import.meta.url), "utf8")
+]));
+for (const [name, html] of Object.entries(publicAerial)) {
+  expect(!/Aerial (?:intros?|creation)[^<.\n]{0,100}(?:Coming soon|not included in any plan)/i.test(html),
+    `${name}: no obsolete Aerial availability claim`);
+  const json = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
+  try { JSON.parse(json); expect(true, `${name}: parseable structured data`); }
+  catch { expect(false, `${name}: parseable structured data`); }
+}
+const aerialSection = publicAerial.features.match(/<section id="aerials"[\s\S]*?<\/section>/)?.[0] || "";
+expect(/reviewed original front exterior photo/.test(aerialSection) && /eligible paid access/.test(aerialSection)
+  && /remaining Aerial allowance/.test(aerialSection) && /available processing capacity/.test(aerialSection)
+  && /separate permission/.test(aerialSection) && /older free-form Aerial generator remains private and closed/.test(aerialSection)
+  && /Previously saved or published/.test(aerialSection) && /Results vary; review/.test(aerialSection),
+  "Features section describes scoped paid Aerial gate, variable results, and saved legacy clips");
+const featuresGraph = JSON.parse(publicAerial.features.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1] || "null");
+expect(featuresGraph?.["@graph"]?.some((node) => node["@type"] === "ItemList" && node.itemListElement?.some((item) =>
+  /paid AI Aerial opening.*reviewed original front exterior photo.*allowance.*capacity.*processor permission/i.test(item.name))),
+  "Features structured list qualifies the new opening");
+expect(/<p class="wrap center price-note">[\s\S]*?eligible paid access[\s\S]*?remaining Aerial allowance[\s\S]*?available processing capacity[\s\S]*?separate permission[\s\S]*?older free-form generator remains closed[\s\S]*?<\/p>/.test(publicAerial.pricing),
+  "Pricing note shows paid Aerial admission conditions and closed legacy generator");
+expect(/<span>Optional AI Aerial opening<\/span><b>Eligible paid access<\/b>/.test(publicAerial.pricing),
+  "Pricing comparison does not sell Aerial creation as a general plan benefit");
+const pricingGraph = JSON.parse(publicAerial.pricing.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1] || "null");
+expect(pricingGraph?.["@graph"]?.some((node) => node["@type"] === "SoftwareApplication"
+  && /paid AI Aerial opening.*eligible allowance.*available capacity.*separate processor permission/i.test(node.description)),
+  "Pricing structured application description includes the same Aerial gates");
+const disclosureAnswer = publicAerial.support.match(/<summary>How is AI-generated content disclosed\?<\/summary>([\s\S]*?)<\/details>/)?.[1] || "";
+expect(/paid AI Aerial opening/.test(disclosureAnswer) && /not captured drone footage or 3D/.test(disclosureAnswer)
+  && /quality is not\s+guaranteed/.test(disclosureAnswer) && /Previously saved or published/.test(disclosureAnswer)
+  && /older free-form Aerial generator remains closed/.test(disclosureAnswer),
+  "Support visible disclosure distinguishes the scoped opening and saved legacy clips");
+const supportGraph = JSON.parse(publicAerial.support.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1] || "null");
+expect(supportGraph?.["@graph"]?.some((node) => node["@type"] === "FAQPage" && node.mainEntity?.some((item) =>
+  /paid AI Aerial opening.*quality is not guaranteed.*older free-form Aerial generator remains closed/i.test(item.acceptedAnswer?.text || ""))),
+  "Support structured FAQ carries the generated-footage review and closed-legacy limits");
 expect(p.includes("180 days") && p.includes("applicable retention settings") && !p.includes("short, fixed schedule"), "No invented universal backup/log retention period");
 // E7 (O07): the routine MetricKit payload callback sends nothing, so the notice
 // may not describe launch-time figures. The native source is the oracle: if the
