@@ -6,6 +6,7 @@ type Handler = (req: Request) => Promise<Response>;
 const user = "d0100101-0000-4000-8000-000000000001";
 const org = "d0100101-0000-4000-8000-000000000002";
 const invite = "d0100101-0000-4000-8000-000000000003";
+const personal = "d0100101-0000-4000-8000-000000000005";
 let handler: Handler;
 class Fixture {
   role = "owner";
@@ -15,6 +16,7 @@ class Fixture {
   failedRPC: string | null = null;
   accepted: unknown = { org_id: org, org_name: "Fixture Team", role: "agent" };
   anonymous = false;
+  pausedSeat = false;
   failureTable: string | null = null;
   queueResults: unknown[] = [{ ok: true, queued: true, id: invite }];
   queueCalls = 0;
@@ -31,16 +33,20 @@ class Fixture {
     if (url.pathname.startsWith("/rest/v1/rpc/")) {
       if (table === "bump_rate") return json(true);
       if (table === "active_org_for_user") return json(org);
-      if (table === "org_seats_used") return json(1);
-      if (table === "org_seats_allowed") return json(2);
+      if (table === "org_seats_used") return json(this.pausedSeat ? 5 : 1);
+      if (table === "org_seats_allowed") return json(this.pausedSeat ? 3 : 2);
       const body = await req.json();
       if (this.failedRPC === table) return json({message:"fixture unavailable"},503);
-      if (table === "workspace_directory") return json({actor_id:user,own_org_id:org,billing_org_id:org,can_switch_agent_libraries:false,active_org_id:org,workspaces:[{id:org,name:"Fixture Team",role:"owner",access_mode:"own",library_owner_user_id:user,billing_org_id:org,can_read:true,can_write:true}]});
-      if (table === "library_access") return json({actor_id:user,org_id:org,library_owner_user_id:user,role:this.role,access_mode:"own",can_read:true,can_write:this.role!=="marketing",can_manage_subscription:!this.testingContext,billing_org_id:org,team_org_id:null});
+      if (table === "workspace_directory") return json({actor_id:user,own_org_id:this.pausedSeat ? personal : org,billing_org_id:this.pausedSeat ? personal : org,can_switch_agent_libraries:false,active_org_id:this.pausedSeat ? personal : org,workspaces:[{id:this.pausedSeat ? personal : org,name:"Fixture Team",role:"owner",access_mode:"own",library_owner_user_id:user,billing_org_id:this.pausedSeat ? personal : org,can_read:true,can_write:true}]});
+      if (table === "library_access") return json({actor_id:user,org_id:this.pausedSeat ? personal : org,library_owner_user_id:user,role:this.role,access_mode:"own",can_read:true,can_write:this.role!=="marketing",can_manage_subscription:!this.testingContext,billing_org_id:this.pausedSeat ? personal : org,team_org_id:null});
+      if (table === "paused_team_org") { assertEquals(body,{p_actor:user}); return json(this.pausedSeat ? org : null); }
+      if (table === "team_seat_status") { assertEquals(body,{p_org:org}); return json([{user_id:user,seat_active:!this.pausedSeat}]); }
       if (table === "org_has_internal_testing_grant") return json(this.masterTesting);
       if (table === "private_internal_testing_host_mode") return json(this.masterTesting ? {configured:true,active:true,access_mode:"private_testing"} : null);
       if (table === "private_internal_testing_context") {
-        assertEquals(body,{p_user:user,p_private_org:org}); return json(this.testingContext);
+        assertEquals(body.p_user,user);
+        assert([org,personal].includes(body.p_private_org));
+        return json(this.testingContext);
       }
       if (table === "private_internal_testing_members") {
         assertEquals(body,{p_actor:user,p_sponsor_org:org}); return json(this.privateRoster);
@@ -119,6 +125,18 @@ for (const failed of [{ok:false,reason:'42703: column "full_name" does not exist
 Deno.test("single invite confirms queued, not delivered, and keeps deduplication acknowledgement",async()=>fixture(async f=>{
   f.queueResults = [{ok:true,queued:true},{ok:true,queued:false,reason:"already_queued"}];
   for (let i=0;i<2;i++) { const response=await f.request(); const result=await response.json(); assertEquals(response.status,201);assertEquals(result.email_queued,true);assertEquals(result.emailed,true); }
+}));
+Deno.test("downgraded member can read paused Team seat without regaining manager access",async()=>fixture(async f=>{
+  f.pausedSeat=true; f.role="agent";
+  const response=await f.request("",{},"GET"); const body=await response.json();
+  assertEquals(response.status,200);
+  assertEquals(body.content_org_id,personal);
+  assertEquals(body.org_id,org);
+  assertEquals(body.can_manage,false);
+  assertEquals(body.seats,{used:5,allowed:3,paused:1});
+  assertEquals(body.members.length,1);
+  assertEquals(body.members[0].seat_active,false);
+  assertEquals(body.invites,[]);
 }));
 Deno.test("code-only invitation does not claim or enqueue email",async()=>fixture(async f=>{
   const response=await f.request("invites",{}); const result=await response.json();

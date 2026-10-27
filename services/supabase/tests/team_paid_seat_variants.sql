@@ -143,9 +143,78 @@ begin
 end$$;
 reset role;
 
+-- Five real accepted people survive the paid tier change as memberships, but
+-- only the earliest two plus the owner retain Team-funded access at three.
+insert into auth.users(id,email,is_anonymous) values
+  ('41111111-1111-4111-8111-111111111112','seat-two@example.invalid',false),
+  ('41111111-1111-4111-8111-111111111113','seat-three@example.invalid',false),
+  ('41111111-1111-4111-8111-111111111114','seat-four@example.invalid',false),
+  ('41111111-1111-4111-8111-111111111115','seat-five@example.invalid',false);
+create temporary table seat_people(user_id uuid primary key,invite_hash text,private_org uuid,accepted_order integer);
+insert into seat_people(user_id,invite_hash,accepted_order) values
+  ('41111111-1111-4111-8111-111111111115',repeat('5',64),1),
+  ('41111111-1111-4111-8111-111111111112',repeat('2',64),2),
+  ('41111111-1111-4111-8111-111111111114',repeat('4',64),3),
+  ('41111111-1111-4111-8111-111111111113',repeat('3',64),4);
+grant all on seat_people to service_role;
+set local role service_role;
+do $$declare p record;r jsonb;owner_id uuid:='41111111-1111-4111-8111-111111111111';
+  team_id uuid:='4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';begin
+  for p in select * from seat_people order by accepted_order loop
+    perform public.create_org_invite(owner_id,team_id,null,'agent',p.invite_hash);
+    r:=public.accept_org_invite(p.user_id,p.invite_hash);
+    update seat_people set private_org=(r->>'org_id')::uuid where user_id=p.user_id;
+    update public.org_invites set accepted_at=now()-interval '5 days'+p.accepted_order*interval '1 hour'
+      where token_hash=p.invite_hash;
+  end loop;
+  perform pg_temp.monthly_ok(public.org_seats_used(team_id)=5
+    and (select count(*)=5 from public.team_seat_status(team_id) where seat_active),
+    'five accepted seats are active on signed five-seat term');
+end$$;
+reset role;
+
+-- The signed current subscription, not a renewal preference, now has the
+-- three-seat SKU. Saved memberships and private originals remain intact.
+update public.apple_subscriptions set product_id='com.rendprop.app.team.monthly',
+  last_transaction_id='team-three',transaction_purchased_at=now(),
+  transaction_signed_at=now()
+  where original_transaction_id='team-chain';
 update public.orgs set apple_product_id='com.rendprop.app.team.monthly'
   where id='4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 select pg_temp.monthly_ok(public.org_seats_allowed('4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')=3,
-  'current signed SKU mismatch falls back to base three-seat allowance');
+  'current signed base SKU immediately grants only three seats');
+do $$declare team_id uuid:='4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';begin
+  perform pg_temp.monthly_ok((select count(*)=5 from public.memberships where org_id=team_id)
+    and (select count(*)=2 from public.team_seat_status(team_id) where not seat_active),
+    'downgrade keeps five memberships but pauses exactly two');
+  perform pg_temp.monthly_ok(public.team_member_seat_active('41111111-1111-4111-8111-111111111111',team_id)
+    and public.team_member_seat_active('41111111-1111-4111-8111-111111111115',team_id)
+    and public.team_member_seat_active('41111111-1111-4111-8111-111111111112',team_id)
+    and not public.team_member_seat_active('41111111-1111-4111-8111-111111111114',team_id)
+    and not public.team_member_seat_active('41111111-1111-4111-8111-111111111113',team_id),
+    'owner is pinned and earliest accepted members win over user-ID order');
+  perform pg_temp.monthly_ok((select bool_and(public.library_billing_org(private_org)=team_id
+    and public.library_team_owner(private_org)='41111111-1111-4111-8111-111111111111'::uuid)
+    from seat_people where accepted_order<=2)
+    and (select bool_and(public.library_billing_org(private_org)=private_org
+      and public.library_team_owner(private_org)is null
+      and public.library_team_org(private_org)is null
+      and public.paused_team_org(user_id)=team_id
+      and public.library_content_access(user_id,private_org,true))
+      from seat_people where accepted_order>2),
+    'only active seats borrow Team funding; paused people keep their own saved libraries');
+end$$;
+set local role service_role;
+do $$declare team_id uuid:='4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  owner_id uuid:='41111111-1111-4111-8111-111111111111';refused boolean:=false;begin
+  begin perform public.create_org_invite(owner_id,team_id,null,'agent',repeat('e',64));
+  exception when others then refused:=sqlerrm like 'RP402:%';end;
+  perform pg_temp.monthly_ok(refused,'over-capacity Team cannot issue a new invitation');
+  perform public.remove_org_member(team_id,owner_id,'41111111-1111-4111-8111-111111111115');
+  perform pg_temp.monthly_ok(public.team_member_seat_active('41111111-1111-4111-8111-111111111114',team_id)
+    and not public.team_member_seat_active('41111111-1111-4111-8111-111111111113',team_id),
+    'removing the earliest seat automatically resumes the next accepted person');
+end$$;
+reset role;
 select json_build_object('passed',true,'assertions',(select n from monthly_checks));
 rollback;

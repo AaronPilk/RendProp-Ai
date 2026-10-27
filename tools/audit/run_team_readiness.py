@@ -16,7 +16,7 @@ TARGET = SQL / 'migrations/20261001142823_team_invite_delivery_confirmation.sql'
 # Audited handler inventory: 12 invite/read/role cases, 8 private-sponsorship
 # cases, and 1 ordinary anonymous-owner read case. Keep the entire suite;
 # registering fewer tests or reporting any ignored/filtered case is a failure.
-HANDLER_TESTS = 21
+HANDLER_TESTS = 22
 OUT = pathlib.Path(tempfile.mkdtemp(prefix='rendprop-team-readiness-', dir='/tmp'))
 SOCK, DATA = OUT/'socket', OUT/'cluster'
 SOCK.mkdir(mode=0o700)

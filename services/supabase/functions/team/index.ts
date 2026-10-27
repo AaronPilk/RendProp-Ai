@@ -282,7 +282,15 @@ Deno.serve(async (req) => {
     const directory = await workspaceDirectory(admin, user.id, preferredOrg(req));
     const selectedOrg = directory.active_org_id;
     await libraryAccess(admin, user.id, selectedOrg);
-    const orgId = directory.billing_org_id;
+    let orgId = directory.billing_org_id;
+    // A downgraded member keeps their private library, so the normal billing
+    // resolver correctly falls back to it. Let that member open GET /team to
+    // see their paused seat without reopening Team-funded creation routes.
+    if (req.method === "GET" && seg.length === 0 && orgId === directory.own_org_id) {
+      const { data: pausedOrg, error: pausedError } = await admin.rpc("paused_team_org", { p_actor: user.id });
+      if (pausedError) throw new HttpError(503, "Team status could not be loaded. Please retry.");
+      if (typeof pausedOrg === "string") orgId = pausedOrg;
+    }
     const selectedPrivateTesting = await privateTestingContext(admin, user.id, selectedOrg);
     const myRole = await roleInOrg(admin, user.id, orgId);
     if (!myRole && !selectedPrivateTesting) throw new HttpError(403, "Not a member of this team", "forbidden");
@@ -298,6 +306,10 @@ Deno.serve(async (req) => {
     // ── GET /team ────────────────────────────────────────────────────────────
     if (req.method === "GET" && seg.length === 0) {
       const seats = await seatCounts(admin, orgId);
+      const { data: seatRows, error: seatError } = await admin.rpc("team_seat_status", { p_org: orgId });
+      if (seatError || !Array.isArray(seatRows)) throw new HttpError(503, "Team seat status could not be loaded. Please retry.");
+      const activeById = new Map((seatRows as { user_id: string; seat_active: boolean }[])
+        .map((row) => [row.user_id, row.seat_active === true]));
       const [privateMembers, privateTeam] = canManage && !(user as { is_anonymous?: boolean }).is_anonymous
         ? await Promise.all([privateTestingMembers(admin, user.id, orgId), privateTestingHostMode(admin, user.id, orgId)])
         : [[], null] as const;
@@ -338,15 +350,17 @@ Deno.serve(async (req) => {
         access_mode: privateTeam || privateAccess ? "private_testing" : "private_libraries",
         ...(privateAccess ? { team_name: privateAccess.sponsor_org_name } : {}),
         can_manage: canManage && !privateAccess,
-        seats,
+        seats: { ...seats, paused: [...activeById.values()].filter((active) => !active).length },
         members: [...(rows ?? []).map((r) => {
           const p = byId.get(r.user_id as string);
+          if (!activeById.has(r.user_id as string)) throw new HttpError(503, "Team seat status could not be loaded. Please retry.");
           return {
             user_id: r.user_id,
             role: r.role,
             name: p?.name ?? null,
             email: p?.email ?? null,
             is_you: r.user_id === user.id,
+            seat_active: activeById.get(r.user_id as string),
           };
         }), ...privateMembers.filter((p) => !ids.includes(p.user_id)).map((p) => ({
           user_id: p.user_id, role: p.role, name: p.name, email: p.email, is_you: p.user_id === user.id,
