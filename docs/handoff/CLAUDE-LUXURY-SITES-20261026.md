@@ -56,7 +56,8 @@ Native-pixel note: the film's own frame is never cropped; only the poster
   and the synthetic Listing film; identity/price/actions in the first screen;
   capsule targets; explicit Play loads the exact local master and plays with
   native controls; recorded walkthrough separate; reduced transparency opaque;
-  no request leaves localhost.
+  no external API or telemetry fetch. Published R2/rendprop.com images may
+  still load remotely; this check does not assert an entirely offline page.
 - `npm test` (tour-host): all suites pass.
 - `check-property-site-browser.mjs`, `check-property-video-browser.mjs`,
   `check-property-video-controls.mjs`: pass (the two layout contracts updated
@@ -73,3 +74,16 @@ preview server (`scripts/preview-premium-luxury.mjs`) at 390×844 and
 1440×900 for both designs, the 855 photo opening and the synthetic film, and
 are attached to the PR. Regenerate with
 `node scripts/check-premium-luxury.mjs --evidence=<dir>`.
+
+## Integration QA update (2026-10-27, source only)
+
+The integrated release branch adds a one-line listing-player navigation offset
+correction and paid-site responsive fixes. The premium check still compares
+Classic and MLS against `6fc7485a` after allowing only that exact offset line.
+It now covers compact phone and intermediate tablet geometry that the original
+390px check missed. Local Chromium results: 150 premium checks, 792 property-site
+browser assertions, 83 property-video browser assertions, five injected video
+controls, Tour Host tests, and TypeScript all passed. This is not Safari or
+physical-iPhone acceptance. No Tour Host deployment or App Store release
+occurred as part of this update. The retained 855 Central Ave cover/poster is
+a bathroom; choose a suitable cover before showing the paid site to clients.
