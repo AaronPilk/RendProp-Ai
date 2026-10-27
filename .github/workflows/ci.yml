@@ -1303,10 +1303,14 @@ jobs:
           if-no-files-found: warn
 
   studio-media-export:
-    # Recorded readiness is a prerequisite, not proof of a timing cause.
+    # Let the other Mac audit, photo, reel and Worker jobs finish before a
+    # real-time browser capture starts. These jobs use distinct hosted VMs, so
+    # shared host contention is unproven; their overlap is avoidable. Keep the
+    # media gate independent of their results so its coverage survives a failure.
     name: Studio media exports and native audio timing
     runs-on: macos-26
-    needs: studio-media-tools
+    needs: [studio-media-tools, native-audit-required, worker-edge]
+    if: ${{ always() && !cancelled() && needs.studio-media-tools.result == 'success' }}
     env:
       MEDIA_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       MEDIA_WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -1579,11 +1583,13 @@ jobs:
 
   studio-media-resume:
     # Give the default-device MP4 clock gate a fresh hosted Mac and its own
-    # bounded admission. A previous run saw the native audio clock stop while
-    # page callbacks continued after several other browser export suites.
+    # bounded admission. Start after the other Mac jobs and the cloud export
+    # job finish, even if one of those independent gates fails, so both media
+    # suites still report their own result without competing for capture time.
     name: Studio MP4 resume and AAC native timing
     runs-on: macos-26
-    needs: studio-media-tools
+    needs: [studio-media-tools, native-audit-required, worker-edge, studio-media-export]
+    if: ${{ always() && !cancelled() && needs.studio-media-tools.result == 'success' }}
     env:
       MEDIA_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       MEDIA_WORKFLOW_SHA: ${{ github.workflow_sha }}
