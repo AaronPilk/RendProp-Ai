@@ -27,9 +27,10 @@ for required in ['SecondaryButton(title: "Edit"', '.accessibilityLabel("Edit ori
                  '.sheet(isPresented: $showEditActions, onDismiss: continueSinglePhotoEdit)',
                  '.sheet(item: $singleDeclutterReview, onDismiss: finishSinglePhotoSetup)',
                  'guard review.isCurrent, !photos.isEmpty else { clearSinglePhotoEdit(); return }',
-                 'startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvals)',
+                 'startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvals, declutterCredit: credit)',
                  '.aiConsentGate()', 'job.phase?.title', 'photoVersion.edit.progress',
                  'startSinglePhotoWork(.stage(setup.pending.style ?? "modern")',
+                 'stagingReferenceID: referenceID, stageCredit: credit)',
                  'startSinglePhotoWork(.custom, prompt: prompt)', 'clearSinglePhotoEdit()']:
     assert required in review, required
 for required in ['PrimaryButton(title: "Declutter this photo"', 'SecondaryButton(title: space == .realEstate ? "Stage this photo"',
@@ -58,6 +59,8 @@ variants = [
     ('declutter-review-bypassed', methods.replace('if action == .declutter, declutterApprovals == nil {', 'if false {'), history, 'declutter opens an exact Original assessment before any paid image edit'),
     ('wrong-job', methods.replace('job.id == singleEditJobID,', 'true,'), history, 'another job cannot replace this photo review'),
     ('drop-review-cancel', methods.replace('singleDeclutterReview?.cancel(); singleDeclutterReview = nil', 'singleDeclutterReview = nil'), history, 'dismissing declutter review cancels unsent assessment without a paid edit'),
+    ('drop-declutter-credit', methods.replace('declutterCredit: declutterCredit,', 'declutterCredit: nil,'), history, 'single-photo declutter forwards exact credit authorization'),
+    ('drop-stage-credit', methods.replace('stageCredit: stageCredit)', 'stageCredit: nil)'), history, 'single-photo staging forwards exact credit authorization'),
     ('drop-edit-cleanup', methods.replace('        editContext = nil', '        // retained stale edit context'), history, 'dismissing choices releases family navigation fence'),
 ]
 results = []

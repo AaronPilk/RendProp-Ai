@@ -23,6 +23,8 @@ struct EnhancedPhoto {
     let id: String; let originalURL: URL; let enhancedURL: URL
 }
 struct DeclutterGenerationApproval { let sourceVersionID: String }
+struct DeclutterCreditAuthorization { let tariffVersion: String; let environment: String }
+struct StageCreditAuthorization { let tariffVersion: String; let environment: String }
 @MainActor final class PhotoDeclutterReviewModel {
     let photos: [EnhancedPhoto]
     var cancelled = false
@@ -38,17 +40,28 @@ struct PhotoStagingSetup { let pending: PendingBatchEdit; let targets: [Enhanced
     var visibleJob: Job?
 }
 @MainActor final class PhotoEditService {
-    struct Call { let listing: UUID; let photos: [EnhancedPhoto]; let edit: String; let style: String?; let prompt: String?; let reference: String?; let approvalIDs: Set<String> }
+    struct Call {
+        let listing: UUID; let photos: [EnhancedPhoto]; let edit: String; let style: String?
+        let prompt: String?; let reference: String?; let approvalIDs: Set<String>
+        let declutterCredit: DeclutterCreditAuthorization?; let stageCredit: StageCreditAuthorization?
+    }
     static var calls: [Call] = []
     let listing: Listing
     init(model: AppModel, listing: Listing, space: SpaceType) { self.listing = listing }
-    func start(title: String, photos: [EnhancedPhoto], edit: String, style: String?, prompt: String?, stagingReferenceID: String?, declutterApprovals: [String: DeclutterGenerationApproval]?) -> Bool {
+    func start(title: String, photos: [EnhancedPhoto], edit: String, style: String?, prompt: String?, stagingReferenceID: String?,
+               declutterApprovals: [String: DeclutterGenerationApproval]?,
+               declutterCredit: DeclutterCreditAuthorization?, stageCredit: StageCreditAuthorization?) -> Bool {
         guard PhotoWorkQueue.shared.visibleJob?.running != true else { return false }
+        guard declutterCredit == nil || (edit == "declutter" && declutterApprovals != nil) else { return false }
+        guard stageCredit == nil || edit == "stage" else { return false }
         if edit == "declutter" {
             guard let declutterApprovals, Set(declutterApprovals.keys) == Set(photos.map(\.id)),
                   declutterApprovals.allSatisfy({ $0.key == $0.value.sourceVersionID }) else { return false }
         }
-        Self.calls.append(.init(listing: listing.id, photos: photos, edit: edit, style: style, prompt: prompt, reference: stagingReferenceID, approvalIDs: Set(declutterApprovals?.keys.map { $0 } ?? [])))
+        Self.calls.append(.init(listing: listing.id, photos: photos, edit: edit, style: style,
+                                prompt: prompt, reference: stagingReferenceID,
+                                approvalIDs: Set(declutterApprovals?.keys.map { $0 } ?? []),
+                                declutterCredit: declutterCredit, stageCredit: stageCredit))
         PhotoWorkQueue.shared.visibleJob = .init(); return true
     }
 }
@@ -122,6 +135,25 @@ __METHODS__
             h.startSinglePhotoWork(.stage(style), prompt: "oak furnishing brief")
             check(PhotoEditService.calls.count == 1 && PhotoEditService.calls[0].style == style && PhotoEditService.calls[0].prompt == "oak furnishing brief", "stage preserves chosen style and optional brief")
         }
+        reset(); let creditedDeclutter = Harness(photo, model); creditedDeclutter.openSinglePhotoEdit()
+        creditedDeclutter.editConsentRevision = AIConsent.shared.revocationRevision
+        let declutterCredit = DeclutterCreditAuthorization(tariffVersion: "photo-declutter-v1", environment: "Sandbox")
+        creditedDeclutter.startSinglePhotoWork(.declutter, prompt: nil,
+                                               declutterApprovals: approvedDeclutter, declutterCredit: declutterCredit)
+        check(PhotoEditService.calls.count == 1 &&
+              PhotoEditService.calls[0].declutterCredit?.tariffVersion == "photo-declutter-v1" &&
+              PhotoEditService.calls[0].declutterCredit?.environment == "Sandbox" &&
+              PhotoEditService.calls[0].stageCredit == nil,
+              "single-photo declutter forwards exact credit authorization")
+        reset(); let creditedStage = Harness(photo, model); creditedStage.openSinglePhotoEdit()
+        creditedStage.editConsentRevision = AIConsent.shared.revocationRevision
+        let stageCredit = StageCreditAuthorization(tariffVersion: "photo-stage-v1", environment: "Production")
+        creditedStage.startSinglePhotoWork(.stage("modern"), prompt: "oak furnishing brief", stageCredit: stageCredit)
+        check(PhotoEditService.calls.count == 1 &&
+              PhotoEditService.calls[0].stageCredit?.tariffVersion == "photo-stage-v1" &&
+              PhotoEditService.calls[0].stageCredit?.environment == "Production" &&
+              PhotoEditService.calls[0].declutterCredit == nil,
+              "single-photo staging forwards exact credit authorization")
         reset(); let custom = Harness(photo, model); custom.openSinglePhotoEdit(); custom.pendingEdit = .custom; custom.continueSinglePhotoEdit(); await settle()
         check(custom.singleCustomPhoto?.id == "room-original" && PhotoEditService.calls.isEmpty, "custom prompt opens for exact Original without dispatch")
         custom.startSinglePhotoWork(.custom, prompt: "remove loose bags only")
