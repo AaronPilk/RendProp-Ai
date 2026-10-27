@@ -1,5 +1,18 @@
 # Creative credit coverage audit — 27 October 2026
 
+> **Historical snapshot, superseded later on 27 October.** The aerial and
+> Photo Motion rows and launch gates below describe an earlier source state.
+> The current candidate has a **dormant 20-credit, 1080p Aerial opening** path
+> with a bounded supplier quote and fair customer-credit settlement
+> (`20261027183000_credit_aerial_opening.sql`,
+> `20261027184000_aerial_fair_charge.sql`), plus a quoted Photo Motion credit
+> path (`20261027202224_photo_motion_credit_quote_gate.sql` and subsequent
+> admission/terminal migrations). These migrations and their matching app and
+> Edge code remain **source-only until the guarded backend rollout and device
+> tests pass**. Use [the current trial/credit activation plan](release/TRIAL_AND_CREDIT_ACTIVATION_20261027.md)
+> and live readbacks for release decisions; do not treat this audit's old
+> "no wallet credits" statements as the current behavior.
+
 This is a code audit of the candidate build, not a production deployment or an
 App Store Connect price check. Customer credits and supplier spending are
 separate ledgers. The quoted supplier amounts below are admission ceilings in
