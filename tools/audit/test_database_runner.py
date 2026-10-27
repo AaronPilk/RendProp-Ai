@@ -122,8 +122,9 @@ class RunnerCase(unittest.TestCase):
                     states = ['t'] * COUNT
                     states[2] = 'f'
                     output, rc = table(states=states), 3
-            elif sqlfile in ('video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql'):
-                marker = ('PASS video erase SQL: 51 assertions' if sqlfile == 'video_erase.sql' else
+            elif sqlfile in ('credit_paid_ceiling_funding_gate.sql', 'video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql'):
+                marker = ('PASS credit paid ceiling funding gate: 6 assertions' if sqlfile == 'credit_paid_ceiling_funding_gate.sql' else
+                          'PASS video erase SQL: 51 assertions' if sqlfile == 'video_erase.sql' else
                           'PASS direct Bria SQL: 40 assertions' if sqlfile == 'video_erase_direct_bria.sql' else
                           'PASS: member portfolio SQL assertions; all fixtures rolled back.')
                 output, rc = scenario.get('reflection', {}).get(sqlfile, (marker + '\n', 0))
@@ -290,15 +291,15 @@ class InventoryTests(RunnerCase):
             {'phase': phase, 'fixture': filename, 'assertions': count,
              'rolledBack': True, 'database': database}
             for phase, database in [('initial', 'rendprop_audit'), ('replayed', 'rendprop_replay')]
-            for filename, count in [('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25)]])
+            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25)]])
         commands = {row['name']: row for row in result.receipt['commands']}
         self.assertIn('replay-20261002225458_video_erase_direct_bria', commands)
         for phase in ('initial', 'replayed'):
-            for stem in ('video_erase', 'video_erase_direct_bria', 'member_portfolios'):
+            for stem in ('credit_paid_ceiling_funding_gate', 'video_erase', 'video_erase_direct_bria', 'member_portfolios'):
                 self.assertIn('reflection-' + phase + '-' + stem, commands)
 
     def test_reflection_missing_completion_marker_rejects(self):
-        for filename in ('video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql', 'property_address_lookup.sql'):
+        for filename in ('credit_paid_ceiling_funding_gate.sql', 'video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql', 'property_address_lookup.sql'):
             with self.subTest(fixture=filename):
                 self.rejected(reflection={filename: ('ROLLBACK without acceptance marker\n', 0)})
 
