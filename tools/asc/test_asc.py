@@ -2746,6 +2746,16 @@ class WhatsNewTests(unittest.TestCase):
         out = io.StringIO()
         self.assertTrue(asc.app_has_previous_release(self.client(fake, out), fake.app_id))
 
+    def test_live_1_0_4_counts_when_apple_version_state_is_distribution(self):
+        """Live Apple state: appVersionState differs from appStoreState."""
+        fake = FakeAsc()
+        previous_id = fake.add_version("1.0.4", "READY_FOR_DISTRIBUTION")
+        fake.store["appStoreVersions"][previous_id]["attributes"]["appStoreState"] = "READY_FOR_SALE"
+        target_id = fake.add_version("1.0.5", "PREPARE_FOR_SUBMISSION")
+        out = io.StringIO()
+        self.assertTrue(asc.app_has_previous_release(
+            self.client(fake, out), fake.app_id, exclude_version_id=target_id))
+
     def test_an_approved_but_unreleased_version_does_not_count(self):
         """ACCEPTED means App Review passed, not that customers ever saw it."""
         fake = FakeAsc()
@@ -3541,6 +3551,23 @@ class MetadataCommandTests(unittest.TestCase):
         listing = [v["attributes"] for v in
                    fake.store["appStoreVersionLocalizations"].values()][0]
         self.assertTrue(listing.get("whatsNew"))
+
+    def test_live_1_0_4_requires_whats_new_on_1_0_5(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        fake.whats_new_editable = True
+        previous_id = fake.add_version("1.0.4", "READY_FOR_DISTRIBUTION")
+        fake.store["appStoreVersions"][previous_id]["attributes"]["appStoreState"] = "READY_FOR_SALE"
+        fake.add_version("1.0.5", "PREPARE_FOR_SUBMISSION")
+        code, output = self.run_metadata(fake)
+        self.assertEqual(code, 0)
+        target = [v["attributes"] for v in
+                  fake.store["appStoreVersionLocalizations"].values()
+                  if v["attributes"].get("whatsNew")]
+        self.assertEqual(len(target), 1)
+        self.assertEqual(target[0]["whatsNew"],
+                         (asc.METADATA_DIR / "release_notes.txt").read_text().strip())
+        self.assertNotIn("What's New is not used for a first release", output)
 
     def test_the_support_url_is_the_support_page(self):
         fake = FakeAsc()

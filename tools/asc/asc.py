@@ -2572,7 +2572,9 @@ def ensure_app_store_version(client, app_id, plan, copyright_text=None):
 # the AppStoreVersionState and AppVersionState enums in spec v4.4.1. Approval
 # states that never shipped (ACCEPTED, READY_FOR_DISTRIBUTION, IN_REVIEW...) are
 # deliberately NOT here: an app approved but never released still has no previous
-# release to write a "What's New" against.
+# release to write a "What's New" against. Apple can return
+# appVersionState=READY_FOR_DISTRIBUTION and appStoreState=READY_FOR_SALE for the
+# same already-live version; check both fields instead of preferring the former.
 RELEASED_VERSION_STATES = frozenset([
     "READY_FOR_SALE",
     "PREORDER_READY_FOR_SALE",
@@ -2600,8 +2602,8 @@ def app_has_previous_release(client, app_id, exclude_version_id=None):
         if exclude_version_id and version.get("id") == exclude_version_id:
             continue
         attrs = attributes_of(version)
-        state = attrs.get("appVersionState") or attrs.get("appStoreState")
-        if state in RELEASED_VERSION_STATES:
+        states = (attrs.get("appVersionState"), attrs.get("appStoreState"))
+        if any(state in RELEASED_VERSION_STATES for state in states):
             return True
     return False
 
