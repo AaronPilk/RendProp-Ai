@@ -70,6 +70,11 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         motion_results = [json.loads(line) for line in motion_output.splitlines()
                           if line.startswith("{") and '"assertions"' in line]
         assert len(motion_results) == 1 and motion_results[0]["passed"] is True, motion_output
+        motion_admit_output = run("prospective Photo Motion credit admission fixture",
+                                  [*psql, "-Atq", "-f", SQL / "tests/credit_photo_motion_admission.sql"])
+        motion_admit_results = [json.loads(line) for line in motion_admit_output.splitlines()
+                                if line.startswith("{") and '"assertions"' in line]
+        assert len(motion_admit_results) == 1 and motion_admit_results[0]["passed"] is True, motion_admit_output
         sandbox_output = run("signed Sandbox intro fixture", [*psql, "-Atq", "-f", SQL / "tests/sandbox_intro_trial.sql"])
         sandbox_results = [json.loads(line) for line in sandbox_output.splitlines()
                           if line.startswith("{") and '"assertions"' in line]
@@ -201,7 +206,9 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
                           + aerial_results[0]["assertions"]
                           + team_results[0]["assertions"] + downgrade_results[0]["assertions"]
                           + uncertain_results[0]["assertions"]
-                          + fair_results[0]["assertions"] + 9,
+                          + fair_results[0]["assertions"]
+                          + motion_results[0]["assertions"]
+                          + motion_admit_results[0]["assertions"],
                           "migrations": len(migrations), "scope": "disposable PostgreSQL"}))
     finally:
         if started:

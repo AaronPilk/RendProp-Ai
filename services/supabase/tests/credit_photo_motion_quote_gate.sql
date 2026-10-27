@@ -46,6 +46,6 @@ select pg_temp.pm_credit_refuses(
 select pg_temp.pm_credit_refuses(
   'update public.app_config set value=jsonb_set(value,''{enabled}'',''true''::jsonb)
     where key=''credit_photo_motion''',
-  'terminal accounting is not installed','a config toggle cannot activate unfinished metering');
+  'credit release is not approved','a config toggle cannot activate unapproved metering');
 select jsonb_build_object('assertions',(select n from pm_credit_checks),'passed',true);
 rollback;

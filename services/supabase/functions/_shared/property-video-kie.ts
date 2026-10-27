@@ -1,8 +1,10 @@
 // Kie Kling 3.0 native-4K property-video quality profile: ONE immutable identity.
 //
 // Official sources, read 2026-10-16 (no authenticated or paid call):
-//  - https://kie.ai/kling-3-0: 4K 67 credits ($0.335) per second with or without
-//    audio; Pro silent 18 credits ($0.09); credit = $0.005; top-up bonus excluded.
+//  - https://kie.ai/kling-3-0: KIE supplier credits: 4K 67 credits ($0.335)
+//    per second with or without audio; Pro silent 18 KIE credits ($0.09) per
+//    second; one KIE credit = $0.005; KIE top-up bonus excluded. These are
+//    provider cost units, unrelated to Rendprop's customer wallet credits.
 //  - https://docs.kie.ai/market/kling/kling-3-0: modes std|pro|4K; image_urls
 //    auto-adapt the aspect ratio, so aspect_ratio is omitted (source-auto).
 //  - https://docs.kie.ai/market/common/get-task-detail: waiting|queuing|
@@ -52,7 +54,7 @@ export const KIE_PROPERTY_CONTENT_LICENSE_ACK = KIE_PROPERTY_IDENTITY.content_li
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /**
- * The identity's own arithmetic and shapes: profile name, 67 credits/s x $0.005
+ * The identity's own arithmetic and shapes: profile name, 67 KIE credits/s x $0.005
  * = unit_cents, unit_cents x seconds = attempt_cents, a CFR frame budget that
  * contains fps x seconds, positive pixel floors, and a well-formed prompt pin
  * (non-empty token, distinct non-empty nouns without the token, one SHA-256 hex

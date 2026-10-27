@@ -40,7 +40,8 @@ begin
      policy->>'max_quote_cents' is distinct from '100' then
     raise exception 'RP503: Photo Motion credit tariff needs review';end if;
   q:=public.property_video_photo_motion_quote(p_actor,p_manifest);
-  if q->>'quality_profile' is distinct from 'photo-motion-v2-cfr24' or
+  if not coalesce(q->>'quality_profile' in
+      ('photo-motion-v2-cfr24','photo-motion-v2-opening-cfr24'),false) or
      q->>'tariff_version' is distinct from 'container-standard3-20261021' or
      q->>'rate_evidence_sha256' is distinct from
        '8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a' or
