@@ -8,6 +8,8 @@ create function pg_temp.no(command text,needle text,label text)returns void lang
 insert into auth.users(id,email,is_anonymous)values('f8200000-0000-4000-8000-000000000001','photo-quality-owner@fixture.invalid',false),('f8200000-0000-4000-8000-000000000002','photo-quality-other@fixture.invalid',false);
 create temporary table f as select 'f8200000-0000-4000-8000-000000000001'::uuid actor,'f8200000-0000-4000-8000-000000000002'::uuid other,(select org_id from memberships where user_id='f8200000-0000-4000-8000-000000000001'and role='owner'limit 1)org,'f8200000-0000-4000-8000-000000000011'::uuid listing;
 grant select on f to service_role,authenticated;
+-- Photo quality, not unpaid listing admission, is the subject of this fixture.
+update orgs set plan='starter',plan_source='manual' where id=(select org from f);
 insert into listings(id,org_id,agent_id,address)select listing,org,actor,'Synthetic photo quality property'from f;
 create function pg_temp.input()returns jsonb language sql as $$select jsonb_build_object('sha256',repeat('a',64),'bytes',60000,'mime','image/jpeg','width',1024,'height',768)$$;
 create function pg_temp.seed(label text)returns jsonb language plpgsql as $$declare x jsonb;begin

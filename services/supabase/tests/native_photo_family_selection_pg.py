@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Actual disposable PostgreSQL proof; never connects to a hosted service."""
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse,datetime,hashlib,json,os,shutil,subprocess,sys,tempfile,time,uuid
 from concurrent.futures import ThreadPoolExecutor
 os.umask(0o077)
@@ -23,9 +24,10 @@ ENV={'PATH':'/opt/homebrew/bin:/opt/homebrew/opt/postgresql@17/bin:'+os.environ.
 tool=lambda x:shutil.which(x,path=ENV['PATH'])
 assert all(tool(x)for x in ['initdb','pg_ctl','createdb','psql'])
 MIG=SQL/'migrations/20261016163911_native_photo_family_selection.sql';FIX=SQL/'tests/native_photo_family_selection.sql';FOLLOW=SQL/'tests/native_photo_family_followup.sql';NEW=SQL/'migrations/20261016171912_native_photo_family_abandon_cover.sql';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
+SCHEMA_MIGRATIONS,LIVE_STATE_MIGRATIONS=partition_fresh_migrations(MIGRATIONS)
 SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',FIX,FOLLOW,Path(__file__).resolve()]
 hashes=lambda:{str(x.relative_to(ROOT)):hashlib.sha256(x.read_bytes()).hexdigest()for x in SOURCES}
-receipt={'passed':False,'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_hashes':hashes(),'commands':[],'live_calls':0,'provider_calls':0};started=False
+receipt={'passed':False,'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_hashes':hashes(),'liveStateOnlyMigrations':[m.name for m in LIVE_STATE_MIGRATIONS],'commands':[],'live_calls':0,'provider_calls':0};started=False
 CATALOG="select coalesce(jsonb_agg(jsonb_build_object('signature',oid::regprocedure::text,'definition',pg_get_functiondef(oid),'owner',pg_get_userbyid(proowner),'acl',proacl,'security',prosecdef,'config',proconfig)order by oid::regprocedure::text),'[]')from pg_proc where pronamespace='public'::regnamespace and prokind='f';"
 def run(name,cmd,body=None,refuses=None):
  guard();child=subprocess.Popen([str(x)for x in cmd],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,env=ENV,cwd=ROOT)
@@ -53,7 +55,7 @@ try:
   added=set(new)-set(old);assert {x.split('(')[0]for x in added}==set(names)and len(added)==len(names),(label,added)
   receipt[label]={'unchanged_existing':len(old),'exact_added':sorted(added)};return sorted(added)
  OWNED=[]
- for i,m in enumerate(MIGRATIONS):
+ for i,m in enumerate(SCHEMA_MIGRATIONS):
   if m==MIG:before=catalog('before-own')
   if m==NEW:before_v2=catalog('before-v2')
   run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
@@ -61,7 +63,7 @@ try:
    own_after=catalog('immediate-after-own');OWNED+=preserves(before,own_after,['native_gallery_selection_ids','native_gallery_selection_target','native_gallery_selection_snapshot','native_gallery_selection_change'],'legacy_migration_catalog')
   if m==NEW:
    v2_after=catalog('immediate-after-v2');OWNED+=preserves(before_v2,v2_after,['native_gallery_selection_request_v2','native_gallery_selection_reject_abandoned','native_gallery_selection_snapshot_v2','native_gallery_selection_change_v2','native_gallery_selection_abandon'],'additive_migration_catalog')
-  if i%40==0:print('Applied',i+1,'of',len(MIGRATIONS),flush=True)
+  if i%40==0:print('Applied',i+1,'of',len(SCHEMA_MIGRATIONS),flush=True)
  # Later migrations may legitimately rewrite unrelated public functions (each carries its own
  # replay guard); only the nine introduced native helpers must survive byte-exact, with the
  # same owner, ACL, security and config, from their introducing migration to the final catalog.
@@ -70,7 +72,7 @@ try:
  for signature in OWNED:
   assert signature in final_map,'Later migration dropped an owned helper: '+signature
   assert final_map[signature]==v2_map[signature],'Later migration changed an owned helper: '+signature
- later=[m.name for m in MIGRATIONS[MIGRATIONS.index(NEW)+1:]]
+ later=[m.name for m in SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.index(NEW)+1:]]
  receipt['owned_helper_authority']={'signatures':OWNED,'later_migrations':later,'later_rewrites_outside_owned':sorted(k for k,v in v2_map.items()if final_map.get(k)!=v),'later_added_outside_owned':sorted(set(final_map)-set(v2_map)),'owned_unchanged':True}
  assert not set(receipt['owned_helper_authority']['later_rewrites_outside_owned'])&set(OWNED)
  run('own-replay',[*PSQL,'-q','-1','-f',MIG]);assert catalog('after-replay')==after

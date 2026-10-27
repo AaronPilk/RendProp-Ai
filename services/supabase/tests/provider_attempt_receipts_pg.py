@@ -2,6 +2,7 @@
 """Disposable real-PG receipt authority/replay/race/erasure proofs. No network."""
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse, datetime, hashlib, json, os, shutil, subprocess, sys, tempfile, time, signal
 
@@ -47,9 +48,10 @@ MIG = SQL / "migrations/20261016192846_provider_attempt_receipts.sql"
 REF = SQL / "migrations/20261017190000_provider_attempt_supplier_reference.sql"
 FIX = SQL / "tests/provider_attempt_receipts.sql"
 MIGRATIONS = sorted((SQL / "migrations").glob("*.sql"))
+SCHEMA_MIGRATIONS, LIVE_STATE_MIGRATIONS = partition_fresh_migrations(MIGRATIONS)
 SOURCES = [*MIGRATIONS, SQL / "tests/ci-bootstrap.sql", FIX, Path(__file__).resolve()]
 hashes = lambda: {str(f.relative_to(ROOT)): hashlib.sha256(f.read_bytes()).hexdigest() for f in SOURCES}
-r = {"passed": False, "startedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(), "sourceHashes": hashes(), "commands": [], "controls": [], "races": [], "networkCalls": 0, "providerCalls": 0, "runtime": {"platform": sys.platform, "python": sys.version, "postgresTools": {name: tool(name) for name in ["initdb", "pg_ctl", "createdb", "psql"]}, "proofDeadlineSeconds": 600}}
+r = {"passed": False, "startedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(), "sourceHashes": hashes(), "liveStateOnlyMigrations": [m.name for m in LIVE_STATE_MIGRATIONS], "commands": [], "controls": [], "races": [], "networkCalls": 0, "providerCalls": 0, "runtime": {"platform": sys.platform, "python": sys.version, "postgresTools": {name: tool(name) for name in ["initdb", "pg_ctl", "createdb", "psql"]}, "proofDeadlineSeconds": 600}}
 started = False
 def terminate(_signal, _frame):
     raise SystemExit("Stopped by outer resource/wall guard")
@@ -102,7 +104,7 @@ try:
     assert run("owned-cluster-identity", [*PSQL, "-Atq", "-c", "select current_setting('data_directory'),current_setting('listen_addresses')"]).strip() == str(DATA) + "|"
     run("bootstrap", [*PSQL, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
     catalog = """select jsonb_build_object('functions',(select md5(string_agg(jsonb_build_array(p.oid::regprocedure::text,md5(p.prosrc),pg_get_userbyid(p.proowner),p.prosecdef,p.provolatile,p.proconfig,p.proacl::text)::text,E'\n'order by p.oid::regprocedure::text))from pg_proc p where p.pronamespace='public'::regnamespace and p.prokind in('f','p')and p.proname not in('provider_attempt_begin','provider_attempt_finish')),'constraints',(select md5(string_agg(conrelid::regclass||':'||conname||':'||pg_get_constraintdef(c.oid),E'\n'order by conrelid::regclass::text,conname))from pg_constraint c join pg_class t on t.oid=c.conrelid where c.connamespace='public'::regnamespace and t.relname<>'provider_attempt_receipts'),'config',(select md5(string_agg(to_jsonb(t)::text,E'\n'order by key))from app_config t),'routes',(select md5(string_agg(to_jsonb(t)::text,E'\n'order by id))from ai_routes t));"""
-    for migration in MIGRATIONS:
+    for migration in SCHEMA_MIGRATIONS:
         if migration == MIG:
             assert run("owned-objects-absent", [*PSQL, "-Atq", "-c", "select to_regclass('public.provider_attempt_receipts')is null and not exists(select 1 from pg_proc where pronamespace='public'::regnamespace and proname in('provider_attempt_begin','provider_attempt_finish'))"]).strip() == "t"
             boundary = json.loads(run("before-own-boundary", [*PSQL, "-Atq", "-c", catalog]))

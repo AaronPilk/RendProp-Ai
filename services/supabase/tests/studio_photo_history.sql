@@ -5,6 +5,8 @@ create function pg_temp.ok(v boolean,label text)returns void language plpgsql as
 insert into auth.users(id,email,is_anonymous)values('e1100000-0000-4000-8000-000000000001','studio-history-owner@fixture.invalid',false),('e1100000-0000-4000-8000-000000000002','studio-history-other@fixture.invalid',false);
 create temporary table f as select 'e1100000-0000-4000-8000-000000000001'::uuid actor,'e1100000-0000-4000-8000-000000000002'::uuid other,(select org_id from memberships where user_id='e1100000-0000-4000-8000-000000000001'and role='owner'limit 1)org,(select org_id from memberships where user_id='e1100000-0000-4000-8000-000000000002'and role='owner'limit 1)other_org,'e1300000-0000-4000-8000-000000000001'::uuid listing,'e1300000-0000-4000-8000-000000000002'::uuid other_listing;
 grant select on f to authenticated;
+-- This is a private-history/RLS fixture, not an unpaid listing-admission test.
+update orgs set plan='starter',plan_source='manual' where id in((select org from f),(select other_org from f));
 insert into listings(id,org_id,agent_id,address)values((select listing from f),(select org from f),(select actor from f),'Private history fixture'),((select other_listing from f),(select other_org from f),(select other from f),'Other private fixture');
 insert into media_provenance(org_id,listing_id,kind,edit,original_key,altered_key,disclosure,qc)
 select org,listing,'virtual_stage','stage','uploads/'||org||'/'||listing||'/original.jpg','renders/'||org||'/'||listing||'/staged.jpg','Exact stage proof','{"publishable":true}'::jsonb from f

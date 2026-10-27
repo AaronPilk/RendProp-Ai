@@ -12,6 +12,8 @@ do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();m uuid:=gen_ran
  f uuid:=gen_random_uuid();u uuid:=gen_random_uuid();v uuid:=gen_random_uuid();h uuid:=gen_random_uuid();z uuid:=gen_random_uuid();begin
  insert into auth.users(id,email,is_anonymous)values(a,'remove-owner@fixture.invalid',false),(b,'remove-outsider@fixture.invalid',false),(m,'remove-marketing@fixture.invalid',false);
  select org_id into o from public.memberships where user_id=a;select org_id into oo from public.memberships where user_id=b;
+ -- This fixture tests selection authority, not free-week listing admission.
+ update public.orgs set plan='starter',plan_source='manual' where id in(o,oo);
  insert into public.memberships(user_id,org_id,role)values(m,o,'marketing');
  insert into public.listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic selected home'),(ol,oo,b,'Synthetic other home');
  insert into public.capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,created_at,bytes,sha256)values

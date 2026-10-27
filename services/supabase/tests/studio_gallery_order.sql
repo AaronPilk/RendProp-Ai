@@ -13,6 +13,8 @@ create table order_bf as select'fc100000-0000-4000-8000-000000000001'::uuid acto
  (select org_id from memberships where user_id='fc100000-0000-4000-8000-000000000001'and role='owner'limit 1)org,
  'fc200000-0000-4000-8000-000000000001'::uuid listing,'fc200000-0000-4000-8000-000000000002'::uuid legacy_listing,'fc200000-0000-4000-8000-000000000003'::uuid race_listing;
 grant select on order_bf to service_role,authenticated;
+-- Upload-order tests use an entitled synthetic workspace for three listings.
+update orgs set plan='starter',plan_source='manual' where id=(select org from order_bf);
 -- A teammate with write access: two people can upload to one property at once.
 insert into memberships(org_id,user_id,role)select org,'fc100000-0000-4000-8000-000000000003','agent'from order_bf;
 insert into listings(id,org_id,agent_id,address)select listing,org,actor,'Upload order property'from order_bf union all select legacy_listing,org,actor,'Legacy order property'from order_bf union all select race_listing,org,actor,'Race order property'from order_bf;

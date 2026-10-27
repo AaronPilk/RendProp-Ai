@@ -7,6 +7,7 @@ No inherited credentials, TCP listener, network, provider, Apple or production.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile,time
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -17,9 +18,11 @@ DATA=Path(tempfile.mkdtemp(prefix='rendprop-video-abandon-owned-pg-',dir=os.envi
 TOOLS={n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)for n in ['initdb','pg_ctl','psql','createdb']}
 assert all(Path(t).is_file()and os.access(t,os.X_OK)for t in TOOLS.values())
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
-SOURCES=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',TEST,Path(__file__).resolve()]
+MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
+SCHEMA_MIGRATIONS,LIVE_STATE_MIGRATIONS=partition_fresh_migrations(MIGRATIONS)
+SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',TEST,Path(__file__).resolve()]
 hashes=lambda:{str(x.relative_to(ROOT)):hashlib.sha256(x.read_bytes()).hexdigest()for x in SOURCES}
-receipt={'passed':False,'scope':'owned disposable PostgreSQL; actual schema/RPC/trigger/roles and concurrent sessions; no transport','networkCalls':0,'providerCalls':0,'AppleCalls':0,'sourceHashes':hashes(),'commands':[],'races':[],'negativeControls':[]}
+receipt={'passed':False,'scope':'owned disposable PostgreSQL; actual schema/RPC/trigger/roles and concurrent sessions; no transport','networkCalls':0,'providerCalls':0,'AppleCalls':0,'sourceHashes':hashes(),'liveStateOnlyMigrations':[m.name for m in LIVE_STATE_MIGRATIONS],'commands':[],'races':[],'negativeControls':[]}
 DISCARDED='RP409: This saved video request was discarded'
 def run(name,argv,sql=None,expect=0):
  r=subprocess.run([str(a)for a in argv],input=sql,env=ENV,cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=180)
@@ -41,7 +44,7 @@ try:
  PSQL=[TOOLS['psql'],'-X','--no-password',*conn,'-d','property_video_abandon','-v','ON_ERROR_STOP=1']
  def psql(name,sql,expect=0):return run(name,[*PSQL,'-Atq'],sql,expect)
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for migration in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
+ for migration in SCHEMA_MIGRATIONS:run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
  run('replay-'+MIGRATION.stem,[*PSQL,'-q','-1','-f',MIGRATION])  # reviewed migrations must replay cleanly
  def unit(name):
   out=run(name,[*PSQL,'-Atq','-f',TEST]);rows=[json.loads(s)for s in out.splitlines()if s.startswith('{')and'assertions'in s];assert len(rows)==1 and rows[0]['passed'];return rows[0]

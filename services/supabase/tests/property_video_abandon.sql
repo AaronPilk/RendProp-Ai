@@ -12,7 +12,11 @@ create table abandon_bf as select'f1900000-0000-4000-8000-000000000001'::uuid ac
  (select org_id from memberships where user_id='f1900000-0000-4000-8000-000000000001'and role='owner'limit 1)org,(select org_id from memberships where user_id='f1900000-0000-4000-8000-000000000002'and role='owner'limit 1)other_org,
  'f1930000-0000-4000-8000-000000000001'::uuid listing,'f1930000-0000-4000-8000-000000000002'::uuid second_listing,'f1930000-0000-4000-8000-000000000003'::uuid other_listing;
 grant select on abandon_bf to service_role,authenticated;
+-- Permit synthetic listing setup under the current one-listing intro policy;
+-- restore Free before the Apple entitlement under test is applied below.
+update orgs set plan='starter',plan_source='manual' where id in((select org from abandon_bf),(select other_org from abandon_bf));
 insert into listings(id,org_id,agent_id,address)select listing,org,actor,'Synthetic abandon property'from abandon_bf union all select second_listing,org,actor,'Second synthetic abandon property'from abandon_bf union all select other_listing,other_org,other,'Other agent property'from abandon_bf;
+update orgs set plan='free',plan_source=null where id in((select org from abandon_bf),(select other_org from abandon_bf));
 set session_replication_role=replica;
 insert into capture_assets(id,listing_id,kind,bucket,storage_key,bytes,sha256,uploaded,transport_version,content_type)select md5('abandon-photo:'||i)::uuid,(select listing from abandon_bf),'photo','renders','renders/'||(select org from abandon_bf)||'/'||(select listing from abandon_bf)||'/gallery-'||i||'.jpg',100,repeat('a',64),true,2,'image/jpeg'from generate_series(1,3)i;
 insert into upload_reservations(asset_id,org_id,listing_id,actor_id,day,spec,held_bytes,spent_bytes,state,settled_at)select id,(select org from abandon_bf),listing_id,(select actor from abandon_bf),current_date,'{}',0,bytes,'completed',now()from capture_assets where listing_id=(select listing from abandon_bf);
