@@ -745,10 +745,10 @@ const DESIGN_CSS = `
      One bar height, one control height (44px inside a 7px frame), one type
      size, one gap. Left: pages. Centre: the street. Right: the film as the
      single filled control, every other action an outlined capsule of the same
-     size. Translucent paper over the opening; opaque under Reduce Transparency,
-     high contrast and forced colours. */
+     size. Opaque paper keeps text readable over any listing photograph while
+     the hairline, inset highlight and shadow retain the floating material. */
   $P { --lux-nav-h:58px; --lux-ctl:44px; --lux-gap:6px; }
-  $P #listing-nav { top:12px; width:calc(100% - 32px); max-width:1280px; margin:12px auto 0; border:1px solid var(--premium-line); border-radius:999px; background:var(--premium-glass); box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 10px 30px -18px rgba(20,24,20,.35); backdrop-filter:blur(22px) saturate(1.4); -webkit-backdrop-filter:blur(22px) saturate(1.4); }
+  $P #listing-nav { top:12px; width:calc(100% - 32px); max-width:1280px; margin:12px auto 0; border:1px solid var(--premium-line); border-radius:999px; background:var(--premium-paper); box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 10px 30px -18px rgba(20,24,20,.35); backdrop-filter:none; -webkit-backdrop-filter:none; }
   $P .listing-nav-inner { display:flex; align-items:center; justify-content:space-between; gap:var(--lux-gap); min-height:var(--lux-nav-h); padding:7px; }
   $P .listing-nav-links,$P .listing-nav-actions { display:flex; align-items:center; gap:var(--lux-gap); }
   $P #listing-nav :is(a,button,summary) { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:var(--lux-ctl); min-width:var(--lux-ctl); margin:0; padding:0 15px; border:1px solid transparent; border-radius:999px; color:var(--ink); background:transparent; font:500 13px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; letter-spacing:.01em; white-space:nowrap; text-decoration:none; cursor:pointer; transition:background-color .16s ease,color .16s ease,border-color .16s ease,transform .16s var(--lux-ease); }
@@ -794,6 +794,10 @@ const DESIGN_CSS = `
     $P #listing-nav .listing-nav-actions > :is(a,button) { padding:0 12px; }
     $P #listing-nav #share .share-lbl { display:none; }
     $P #listing-nav #share { width:var(--lux-ctl); padding:0; }
+  }
+  @media(max-width:374px) {
+    /* Keep Pages and the two 44px actions separate at 320px. */
+    $P #listing-nav .property-page-menu summary { padding-inline:8px; }
   }
 
   /* Hero controls: identical capsules, one height, balanced widths. */
