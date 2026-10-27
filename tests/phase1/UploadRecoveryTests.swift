@@ -224,6 +224,36 @@ import Foundation
               "Sign-out retires the queued upload and its presentation")
         check(try Data(contentsOf: file) == bytes, "Account cleanup preserves the owner's original file")
 
+        // A Keychain read can be temporarily unavailable before first unlock.
+        // That must pause recovery without treating the saved owner as foreign.
+        let tokenBeforeLock = AuthStore.currentAccessToken
+        var retainedWhenLocked: UploadManager.State? = owned
+        let lockedManager = UploadManager(api: RecoveryAPI(), session: URLSession(configuration: .ephemeral),
+                                          recovering: owned, persistState: { retainedWhenLocked = $0; return true })
+        AuthStore.currentAccessToken = nil
+        lockedManager.resume()
+        check(lockedManager.state?.id == owned.id && retainedWhenLocked?.id == owned.id,
+              "Unreadable token leaves the saved upload and its ticket intact")
+        AuthStore.currentAccessToken = tokenBeforeLock
+
+        // The child photo request returns after sign-out. Its old error must
+        // not reappear in the replacement account's presentation.
+        let gatedPhotoAPI = RecoveryAPI(); gatedPhotoAPI.holdTicket = true
+        let photoManager = UploadManager(api: gatedPhotoAPI, session: URLSession(configuration: .ephemeral),
+                                         recovering: owned, persistState: { _ in true })
+        photoManager.beginPhotoBatch(listingID: listing, fileURLs: [file])
+        for _ in 0..<300 {
+            if gatedPhotoAPI.ticketGate != nil { break }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        check(gatedPhotoAPI.ticketGate != nil, "Synthetic photo request reached the held admission")
+        photoManager.accountWillChange()
+        check(photoManager.lastFailureMessage == nil, "Account change cleared the old photo message")
+        gatedPhotoAPI.ticketGate?.resume()
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        check(photoManager.lastFailureMessage == nil && photoManager.photoProgress == nil,
+              "Canceled old photo batch cannot write into a new account presentation")
+
         // Two members can write the same org's listing. A queued abort from A
         // must not inherit B's bearer after A signs out; A→B→A must not revive it.
         let originalActor = AuthStore.shared.userID!

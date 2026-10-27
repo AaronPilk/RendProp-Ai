@@ -205,6 +205,7 @@ final class UploadManager: NSObject, ObservableObject {
     private var pathIsSatisfied = true
     private var simulateTimer: Timer?
     private var photoBatchTask: Task<Void, Never>?
+    private var photoBatchGeneration: UInt64 = 0
     private let maxConcurrent = 3
 
     // Transient (never persisted): live per-part sent bytes + per-part retry gates.
@@ -280,7 +281,7 @@ final class UploadManager: NSObject, ObservableObject {
             state = saved
             lastFailureMessage = saved.failureMessage
             if !saved.belongsToCurrentAccount() {
-                accountWillChange()
+                retireIfProvenForeignAccount()
             } else {
                 switch saved.status {
                 case .uploading:
@@ -310,6 +311,16 @@ final class UploadManager: NSObject, ObservableObject {
         self.state = state
         super.init()
         self.backgroundSession = session
+    }
+
+    /// A locked or temporarily unreadable Keychain is not evidence that the
+    /// saved upload belongs to another account. Keep its ticket dormant until
+    /// an owner can be compared. Explicit sign-out still calls accountWillChange.
+    private func retireIfProvenForeignAccount() {
+        guard let state,
+              let currentOwner = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject),
+              state.ownerID != currentOwner else { return }
+        accountWillChange()
     }
 
     // MARK: - Public API
@@ -397,7 +408,7 @@ final class UploadManager: NSObject, ObservableObject {
     @MainActor
     func upload(fileURL: URL, listingID: UUID, listingLocalID: UUID? = nil, role: String,
                 metadata: UploadMetadata, cellularApproved: Bool = false) async throws -> String {
-        if let state, !state.belongsToCurrentAccount() { accountWillChange() }
+        if let state, !state.belongsToCurrentAccount() { retireIfProvenForeignAccount() }
         if Config.useLiveBackend && Config.enableAuth,
            AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == nil { throw CancellationError() }
         let relPath = FileStore.relativePath(for: fileURL)
@@ -571,12 +582,16 @@ final class UploadManager: NSObject, ObservableObject {
         let urls = fileURLs.filter { FileStore.fileSize($0) > 0 }
         guard !urls.isEmpty else { return }
         photoBatchTask?.cancel()
+        photoBatchGeneration &+= 1
+        let generation = photoBatchGeneration
         photoProgress = PhotoProgress(total: urls.count, completed: 0, failed: 0)
-        photoBatchTask = Task { [weak self] in await self?.runPhotoBatch(listingID: listingID, fileURLs: urls) }
+        photoBatchTask = Task { [weak self] in
+            await self?.runPhotoBatch(listingID: listingID, fileURLs: urls, generation: generation)
+        }
     }
 
     func confirmCellularAndStart() {
-        guard state?.belongsToCurrentAccount() == true else { accountWillChange(); return }
+        guard state?.belongsToCurrentAccount() == true else { retireIfProvenForeignAccount(); return }
         pendingCellularConfirmation = false
         guard var s = state else { return }
         s.status = .uploading
@@ -591,7 +606,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// existing parts (or one single PUT) may settle while paused; their receipts
     /// are retained, and no new parts or completion requests start until Resume.
     func pause() {
-        guard state?.belongsToCurrentAccount() == true else { accountWillChange(); return }
+        guard state?.belongsToCurrentAccount() == true else { retireIfProvenForeignAccount(); return }
         simulateTimer?.invalidate()
         mutate { $0.status = .paused }
         partNextTry.removeAll()
@@ -602,7 +617,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// names it retired and acknowledges that exact ticket's cancellation.
     func resume() {
         guard var s = state, s.status != .done else { return }
-        guard s.belongsToCurrentAccount() else { accountWillChange(); return }
+        guard s.belongsToCurrentAccount() else { retireIfProvenForeignAccount(); return }
         // A Resume on a ticket the engine already gave up on is the user asking
         // for one more full try at it (Start over sits right next to it), so
         // it gets a fresh round budget. A Resume on an ordinary failure just
@@ -635,7 +650,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// Nothing on this phone is deleted.
     func startOver() {
         guard let s = state, s.canStartOver, let retiredID = s.assetID else { return }
-        guard s.belongsToCurrentAccount() else { accountWillChange(); return }
+        guard s.belongsToCurrentAccount() else { retireIfProvenForeignAccount(); return }
         guard FileStore.fileSize(s.fileURL) > 0 else {
             // Nothing left to send. Leave `.failed` for a moment so the
             // failure below is a real transition — that is what resolves an
@@ -726,6 +741,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// replacement login. Cancelling never deletes the source video or photos.
     func accountWillChange() {
         accountBoundaryRevision &+= 1
+        photoBatchGeneration &+= 1
         photoBatchTask?.cancel()
         photoBatchTask = nil
         cancel()
@@ -775,7 +791,7 @@ final class UploadManager: NSObject, ObservableObject {
     // MARK: - Dispatch
 
     private func startOrResume() {
-        guard state?.belongsToCurrentAccount() == true else { accountWillChange(); return }
+        guard state?.belongsToCurrentAccount() == true else { retireIfProvenForeignAccount(); return }
         guard Config.useLiveBackend else { runSimulate(); return }
         reconcileAndResume()
     }
@@ -826,7 +842,7 @@ final class UploadManager: NSObject, ObservableObject {
 
     private func onNetworkRegained() {
         guard let s = state else { return }
-        guard s.belongsToCurrentAccount() else { accountWillChange(); return }
+        guard s.belongsToCurrentAccount() else { retireIfProvenForeignAccount(); return }
         switch s.status {
         case .uploading:
             startOrResume()
@@ -1495,9 +1511,10 @@ final class UploadManager: NSObject, ObservableObject {
 
     // MARK: - Photo batch
 
-    private func runPhotoBatch(listingID: UUID, fileURLs: [URL]) async {
+    private func runPhotoBatch(listingID: UUID, fileURLs: [URL], generation: UInt64) async {
         guard fileURLs.count <= 200 else {
             await MainActor.run {
+                guard self.photoBatchGeneration == generation else { return }
                 self.photoProgress?.failed = fileURLs.count
                 self.lastFailureMessage = "Choose at most 200 photos per upload. No files were sent."
             }
@@ -1520,7 +1537,10 @@ final class UploadManager: NSObject, ObservableObject {
                             keyPrefix: "photo", api: self.api)
                         return (id, true)
                     } catch {
-                        await MainActor.run { self.lastFailureMessage = error.localizedDescription }
+                        await MainActor.run {
+                            guard self.photoBatchGeneration == generation else { return }
+                            self.lastFailureMessage = error.localizedDescription
+                        }
                         return (nil, false)
                     }
                 }
@@ -1530,7 +1550,7 @@ final class UploadManager: NSObject, ObservableObject {
                 guard !Task.isCancelled else { group.cancelAll(); break }
                 if let assetID { completedIDs.append(assetID) }
                 await MainActor.run {
-                    guard !Task.isCancelled else { return }
+                    guard !Task.isCancelled, self.photoBatchGeneration == generation else { return }
                     if ok { self.photoProgress?.completed += 1 }
                     else  { self.photoProgress?.failed += 1 }
                 }
@@ -1541,7 +1561,7 @@ final class UploadManager: NSObject, ObservableObject {
         let ids = completedIDs
         guard !Task.isCancelled else { return }
         await MainActor.run {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.photoBatchGeneration == generation else { return }
             NotificationCenter.default.post(name: Self.photosDidCompleteNotification, object: self,
                                             userInfo: ["assetIDs": ids, "listingID": listingID])
         }
