@@ -19,6 +19,8 @@ do $$declare s uuid;d uuid;o uuid;l uuid;op uuid;begin
   op:=('ca100512-0000-4000-8000-'||lpad((n*10+4)::text,12,'0'))::uuid;
   insert into auth.users(id,email,is_anonymous)values(s,'private-guest-'||n||'@fixture.invalid',true),(d,'private-destination-'||n||'@fixture.invalid',false);
   select org_id into strict o from memberships where user_id=s;
+  -- The source listing was created during the guest's active free week.
+  update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=o;
   insert into listings(id,org_id,agent_id,address)values(l,o,s,'Synthetic guest property');
   insert into card_adoption_fixture values(n,s,d,o,l,op,null);
  end loop;

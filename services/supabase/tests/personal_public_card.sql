@@ -16,7 +16,13 @@ create temporary table card_fixture as select user_id actor,org_id org from memb
 grant select on card_fixture to service_role,authenticated;
 update profiles set name=case id when 'ca100501-0000-4000-8000-000000000001' then 'Owner Person' when 'ca100501-0000-4000-8000-000000000002' then 'Member Person' else 'Other Person'end where id::text like 'ca100501-%';
 update orgs set brand_kit='{"name":"Inviter Agency","email":"inviter-public@fixture.invalid","phone":"5551110001","brokerage":"Office Brand","accent":"#123456"}' where id in(select org from card_fixture);
+-- Keep the current Free card behavior under test; its original listing was
+-- created during a synthetic active introductory week.
+update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days'
+ where id=(select org from card_fixture where actor='ca100501-0000-4000-8000-000000000001');
 insert into listings(id,org_id,agent_id,address)select 'ca100502-0000-4000-8000-000000000001',org,actor,'Synthetic listing'from card_fixture where actor='ca100501-0000-4000-8000-000000000001';
+update orgs set plan='free',plan_source=null,trial_ends_at=null
+ where id=(select org from card_fixture where actor='ca100501-0000-4000-8000-000000000001');
 select pg_temp.card_ok('personal card column cannot be directly updated',not has_column_privilege('authenticated','profiles','public_card','UPDATE') and not has_column_privilege('anon','profiles','public_card','UPDATE'));
 select pg_temp.card_ok('personal card helpers are service only',not has_function_privilege('authenticated','read_personal_public_card(uuid)','EXECUTE') and not has_function_privilege('anon','merge_personal_public_card(uuid,jsonb,jsonb)','EXECUTE') and not has_function_privilege('authenticated','public_listing_agent_identity(uuid)','EXECUTE'));
 set local role service_role;
@@ -71,7 +77,11 @@ select pg_temp.card_denied('deleted listing cannot resolve identity','select pub
 select merge_personal_public_card('ca100501-0000-4000-8000-000000000003','{"name":null}','{"name":{"present":false}}');
 select pg_temp.card_ok('explicit empty card differs from never-saved null',read_personal_public_card('ca100501-0000-4000-8000-000000000003')->'public_card'='{}'::jsonb);
 reset role;
+update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days'
+ where id=(select org from card_fixture where actor='ca100501-0000-4000-8000-000000000003');
 insert into listings(id,org_id,agent_id,address)select 'ca100502-0000-4000-8000-000000000003',org,actor,'Synthetic solo listing'from card_fixture where actor='ca100501-0000-4000-8000-000000000003';
+update orgs set plan='free',plan_source=null,trial_ends_at=null
+ where id=(select org from card_fixture where actor='ca100501-0000-4000-8000-000000000003');
 insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded)select 'ca100503-0000-4000-8000-000000000003','ca100502-0000-4000-8000-000000000003','photo','renders','renders/'||org||'/ca100502-0000-4000-8000-000000000003/owned-portrait.jpg',true from card_fixture where actor='ca100501-0000-4000-8000-000000000003';
 update orgs set brand_kit=brand_kit||jsonb_build_object('headshot_url','https://cdn.fixture.invalid/renders/'||id||'/ca100502-0000-4000-8000-000000000003/owned-portrait.jpg')where id=(select org from card_fixture where actor='ca100501-0000-4000-8000-000000000003');
 set local role service_role;
