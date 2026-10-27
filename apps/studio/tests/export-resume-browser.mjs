@@ -31,7 +31,7 @@ const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["fixed", "baseline
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
 const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", ...["export", "recording-clock", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = { sourceHashes, audioOutput, diagnostics, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
+const receipt = { sourceHashes, audioOutput, diagnostics, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
@@ -232,7 +232,6 @@ document.querySelector("#run").onclick=async()=>{
   // then 440 Hz. At 2x playback the opening still has .15 timeline seconds.
   execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=640x360:r=30:d=4", "-f", "lavfi", "-i", "aevalsrc=if(lt(t\\,0.3)\\,0.2*sin(2*PI*990*t)\\,0.2*sin(2*PI*440*t)):s=48000:d=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", source]);
   execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=660:duration=4", "-c:a", "pcm_s16le", narration]);
-  browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
   const sample = (path, start, duration) => {
     const pcm = execFileSync("ffmpeg", ["-v", "error", "-i", path, "-ss", String(start), "-t", String(duration), "-vn", "-ac", "1", "-ar", "48000", "-f", "s16le", "pipe:1"]);
     let power = 0, crossings = 0; const count = pcm.length / 2;
@@ -266,7 +265,13 @@ document.querySelector("#run").onclick=async()=>{
   const isOpeningTone = value => value.rms > .04 && value.dominantHz > 900 && value.dominantHz < 1100;
   const isWhip = ({ left, right }) => left[2] > 200 && left[0] < 30 && right[0] > 200 && right[2] < 30;
   const whipPixels = (path, time) => ({ time, left: pixel(path, time, 100), right: pixel(path, time, 650) });
-  for (const variant of variants) {
+  const openFixture = async (variant, session) => {
+    // A closed context leaves Chromium's media and encoder processes alive.
+    // Give each timed MP4 attempt its own process, including both narration
+    // choices within one variant.
+    assert.equal(browser, undefined, "The previous Chromium process must close before another export");
+    browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
+    receipt.browserIsolation.opened.push(session);
     const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: true });
     await installTestAudioOutput(context, audioOutput);
     await context.route("**/*", route => { const url = new URL(route.request().url()); if (url.origin === origin || ["blob:", "data:"].includes(url.protocol)) return route.continue(); receipt.externalRequests.push(url.href); return route.abort(); });
@@ -275,17 +280,27 @@ document.querySelector("#run").onclick=async()=>{
     const png = await page.evaluate(() => ["#77509c", "red"].map(color => { const canvas = document.createElement("canvas"); canvas.width = 800; canvas.height = 450; const ctx = canvas.getContext("2d"); ctx.fillStyle = color; ctx.fillRect(0, 0, 800, 450); return canvas.toDataURL().split(",")[1]; }));
     await page.locator("#sources").setInputFiles([{ name: "opening.png", mimeType: "image/png", buffer: Buffer.from(png[0], "base64") }, { name: "original.mp4", mimeType: "video/mp4", buffer: await readFile(source) }, { name: "closing.png", mimeType: "image/png", buffer: Buffer.from(png[1], "base64") }]);
     await page.locator("#voice").setInputFiles(narration); await expect.poll(() => page.evaluate(() => window.fixture.ready)).toBe(true);
+    return {context, page};
+  };
+  const closeFixture = async (context, session) => {
+    await context.close();
+    await browser.close();
+    browser = undefined;
+    receipt.browserIsolation.closed.push(session);
+  };
+  for (const variant of variants) {
     // Isolate the historical photo-clock control from live 2x audio decoding:
     // its first two source seconds play at 1x through the real buffered-original
     // path, retaining the same two-second video span and three-second timeline.
     // Every other variant keeps the complete four-second source at 2x, including
     // the fixed/cadence/late-frame audio, timing, transition and cleanup oracles.
     for (const narrated of variant === "fixed" ? [false, true] : [true, false]) {
+      const attemptName = `${variant}-${narrated ? "narrated" : "original"}`;
+      const {context, page} = await openFixture(variant, attemptName);
       await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated, variant === "clock-baseline"); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant });
       // Optional evidence only: expensive native tracing and scheduling
       // observers require --diagnostics. Product clock traces and all export
       // acceptance assertions remain active in both modes.
-      const attemptName = `${variant}-${narrated ? "narrated" : "original"}`;
       const observers = await startExportDiagnostics({diagnostics, context, page, scheduling: true, readLoad: quickLoad,
         native: ["cadence-baseline", "late-frames"].includes(variant) ? {artifacts, syncId: `${attemptName}-before-click`,
           rawFileName: `native-trace-${attemptName}.raw.private.json`, sourceHashes, limits: NATIVE_TRACE_EXPORT_LIMITS} : undefined});
@@ -312,12 +327,15 @@ document.querySelector("#run").onclick=async()=>{
       if (variant === "baseline" && attempt.error) {
         assertBaselineStall(attempt, resumeNotificationDelayMs);
         receipt.checks.push(`Old resume-await negative control (${narrated ? "narrated" : "original"}) is detected by an evidenced original-audio stall refusal, with no download and all tracks stopped`);
+        await closeFixture(context, attemptName);
         await persist();
         continue;
       }
       const download = page.waitForEvent("download"); await page.locator("#download").click(); const output = join(artifacts, `${variant}-${narrated ? "narrated" : "original"}.mp4`); await (await download).saveAs(output);
+      const trace = await page.evaluate(() => window.fixture.trace);
+      await closeFixture(context, attemptName);
       const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", output], { encoding: "utf8" }));
-      const trace = await page.evaluate(() => window.fixture.trace), duration = Number(probe.format.duration);
+      const duration = Number(probe.format.duration);
       // AAC startup can shift the .15s opening tone by a few encoded frames.
       // Require it in two adjacent 90ms samples between .53s and .74s, well
       // before the injected old-await delay. Amplitude, pitch, total duration,
@@ -411,6 +429,8 @@ document.querySelector("#run").onclick=async()=>{
       }
     }
     if (variant === "fixed") {
+      const cleanupSession = "fixed-interruption-and-preparation";
+      const {context, page} = await openFixture(variant, cleanupSession);
       await page.evaluate(() => {window.fixture.configure(true);window.fixture.decodeDelays=[];window.fixture.interruptAudio=true;});
       await page.locator("#run").click();
       await expect.poll(() => page.evaluate(() => window.fixture.exporting), {timeout:10000}).toBe(false);
@@ -470,9 +490,14 @@ document.querySelector("#run").onclick=async()=>{
           assert(!evidence.trace.some(event => event.event === "start.call"), "Known initial preparation failure must precede recording");
         } else assert(evidence.trace.some(event => event.event === "decode.aborted"), "Pending preparation must be aborted and settled before returning");
       }
+      await closeFixture(context, cleanupSession);
     }
-    await context.close();
   }
+  const expectedSessions = variants.flatMap(variant => [
+    ...(variant === "fixed" ? ["fixed-original", "fixed-narrated", "fixed-interruption-and-preparation"] : [`${variant}-narrated`, `${variant}-original`]),
+  ]);
+  assert.deepEqual(receipt.browserIsolation.opened, expectedSessions);
+  assert.deepEqual(receipt.browserIsolation.closed, expectedSessions);
   if(!onlyFixed){
   receipt.checks.push("Held export animation callbacks retain the same MP4 timing, held-frame transitions and opening speech; the animation-only clock misses whip timing and the deadline-only control misses progressing dissolve frames");
   receipt.checks.push("Late decoder readiness, cancellation during initial preparation, stale revision during lookahead and decoder failure reject without a blob, source handles or live tracks");
