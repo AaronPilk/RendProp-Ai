@@ -256,6 +256,7 @@ struct CaptureView: View {
             // Banners
             VStack(spacing: 8) {
                 if let message = camera.thermalMessage { banner(message, color: Theme.warn) }
+                if let message = camera.lensMessage { banner(message, color: Theme.warn) }
                 if let message = camera.personDetectionUnavailableMessage { banner(message, color: Theme.warn) }
                 if let message = camera.interruptionMessage { banner(message, color: Theme.bad) }
                 if let message = camera.storageMessage { banner(message, color: Theme.bad) }
@@ -279,16 +280,16 @@ struct CaptureView: View {
                     Button {
                         camera.toggleLens()   // haptic fires inside (once)
                     } label: {
-                        Text(camera.isUltraWide ? "0.5×" : "1×")
+                        Text(camera.framing.buttonLabel)
                             .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            .foregroundStyle(camera.isUltraWide ? Theme.accent : .white)
+                            .foregroundStyle(camera.framing == .halfX ? Theme.accent : .white)
                             .frame(width: 44, height: 44)
                             .background(.ultraThinMaterial, in: Circle())
-                            .overlay(Circle().strokeBorder(camera.isUltraWide ? Theme.accent : .white.opacity(0.25),
+                            .overlay(Circle().strokeBorder(camera.framing == .halfX ? Theme.accent : .white.opacity(0.25),
                                                            lineWidth: 1))
                     }
-                    .disabled(takeInProgress || isFinalizing)
-                    .accessibilityLabel(Text(camera.isUltraWide ? "Ultra-wide lens on" : "Standard lens"))
+                    .disabled(camera.state != .ready || camera.isSwitchingLens)
+                    .accessibilityLabel(Text(camera.isSwitchingLens ? "Switching camera lens" : camera.framing.accessibilityLabel))
             Spacer()
                 }
                 PaceRing(pace: motion.pace, isRecording: isRecording)
