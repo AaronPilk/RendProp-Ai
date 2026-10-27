@@ -58,3 +58,21 @@ application is deliberately refused and covered by a disposable negative test.
 This schema replay does not certify the historical live jobs, producer
 configuration transitions, or their resulting live-only function versions.
 No live SQL was changed.
+
+The complete historical replay subsequently identified 21 more migrations
+whose own second application refuses at its historical schema point. The
+exact 22-file one-shot inventory, including accepted-photo publication, now
+pins each filename, SHA-256, and first refusal text in
+`tools/audit/run_database_regression.py`. All 22 apply once in both fresh
+databases and are required to refuse a second application for the recorded
+reason. Mutating or removing a classified source file fails the policy test.
+The six live-state-only exclusions remain a separate classification.
+
+The complete disposable PostgreSQL 17 audit at source commit `2daa15bc`
+accepted all 211 schema migrations on each fresh database, verified all 22
+guarded second-application refusals, replayed the other 164 migrations twice
+at their historical points, and passed all 271 invariants on both databases.
+Its publication and entitlement mutation controls behaved as expected, and
+the owned cluster stopped. Evidence is in
+`/tmp/rendprop-db-audit-lvh40s5l/receipt.json`. This validates the local
+schema replay, not the six historical live-data adoptions or hosted runtime.

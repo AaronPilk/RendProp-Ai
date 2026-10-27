@@ -75,6 +75,7 @@ class RunnerCase(unittest.TestCase):
         calls = []
         invariant_count = 0
         publication_counts = {}
+        guarded_counts = {}
         prior = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
         disk_paths = []
 
@@ -126,6 +127,11 @@ class RunnerCase(unittest.TestCase):
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"suite": "build58_db_controls", "assertions": 52}\n', 0))
             elif sqlfile == 'negative_astra_paid_gates.sql':
                 output, rc = scenario.get('paid', (PAID_MARKER + '\n', 0))
+            elif sqlfile in subject.GUARDED_ONE_SHOT_MIGRATIONS:
+                guarded_counts[sqlfile] = guarded_counts.get(sqlfile, 0) + 1
+                if guarded_counts[sqlfile] == 3:
+                    output, rc = scenario.get('guarded_refusal',
+                                              (subject.GUARDED_ONE_SHOT_MIGRATIONS[sqlfile][1], 3))
             elif sqlfile in ('worker_publish_transaction.sql', 'negative_upload_publication.sql'):
                 count = publication_counts.get(sqlfile, 0) + 1
                 publication_counts[sqlfile] = count
@@ -218,6 +224,24 @@ class CoreRegressionTests(RunnerCase):
 
 
 class InventoryTests(RunnerCase):
+    def test_exact_guarded_migrations_apply_on_both_fresh_paths_then_refuse(self):
+        result = self.invoke()
+        self.assertIsNone(result.failure)
+        guarded = subject_module().GUARDED_ONE_SHOT_MIGRATIONS
+        self.assertEqual(len(guarded), 22)
+        self.assertEqual(set(result.receipt['guardedOneShotRefusals']), set(guarded))
+        commands = {row['name']: row for row in result.receipt['commands']}
+        for filename in guarded:
+            stem = Path(filename).stem
+            self.assertEqual(commands['apply-' + stem]['exit'], 0)
+            self.assertEqual(commands['historical-' + stem]['exit'], 0)
+            self.assertEqual(commands['reject-' + stem]['exit'], 3)
+            self.assertNotIn('replay-' + stem, commands)
+
+    def test_guarded_migration_wrong_refusal_reason_rejects(self):
+        result = self.rejected(guarded_refusal=('ERROR: unrelated syntax failure', 3))
+        self.assertIn('pinned first refusal', result.receipt['failure'])
+
     def test_studio_creates_run_on_each_fresh_path_without_duplicate_replay(self):
         result = self.invoke()
         self.assertIsNone(result.failure)
