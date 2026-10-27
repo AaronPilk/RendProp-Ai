@@ -9,7 +9,7 @@ if not (PG/'initdb').is_file():
  if not config:raise RuntimeError('Install PostgreSQL or set RENDPROP_TEST_PG_BIN')
  PG=pathlib.Path(subprocess.check_output([config,'--bindir'],text=True).strip())
 ENV={'PATH':'/usr/bin:/bin','LC_ALL':'C'};(ROOT/'build').mkdir(exist_ok=True)
-OUT=pathlib.Path(tempfile.mkdtemp(prefix='prm-',dir=ROOT/'build'));SOCK=OUT/'s';SOCK.mkdir()
+OUT=pathlib.Path(tempfile.mkdtemp(prefix='prm-',dir=ROOT/'build'));SOCK=pathlib.Path(tempfile.mkdtemp(prefix='rp-prm-s-',dir='/tmp'))
 if len(str(SOCK).encode())>85:raise RuntimeError('Use a shorter checkout path for the owned Unix socket')
 PSQL=[str(PG/'psql'),'-X','--no-password','-h',str(SOCK),'-p','55474','-U','postgres','-d','postgres','-v','ON_ERROR_STOP=1','-Atq']
 def run(args,sql=None):
@@ -46,7 +46,7 @@ try:
  query((SQL/'tests/ci-bootstrap.sql').read_text())
  for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:query(p.read_text())
  query((SQL/'migrations/20260924184052_studio_prompt_library.sql').read_text());ok('all migrations apply and prompt schema replays')
- query(f"insert into auth.users(id,email) values('{A}','prompts-a@fixture.invalid'),('{B}','prompts-b@fixture.invalid');insert into orgs(id,name) values('{ORG}','Prompt fixture'),('{OTHER}','Other workspace');insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','agent'),('{A}','{OTHER}','agent');insert into listings(id,org_id,agent_id) values('{LIST}','{ORG}','{A}');")
+ query(f"insert into auth.users(id,email) values('{A}','prompts-a@fixture.invalid'),('{B}','prompts-b@fixture.invalid');insert into orgs(id,name,plan,plan_source) values('{ORG}','Prompt fixture','pro','manual'),('{OTHER}','Other workspace','pro','manual');insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','agent'),('{A}','{OTHER}','agent');insert into listings(id,org_id,agent_id) values('{LIST}','{ORG}','{A}');")
  payload={'schema':1,'entries':[{'title':'My private notes'}]}
  query(f"set role service_role;insert into studio_documents(user_id,org_id,key,kind,payload) values('{A}','{ORG}','prompts','prompts',{lit(payload)}),('{B}','{ORG}','prompts','prompts',{lit({'schema':1,'entries':[]})});")
  def read(actor):return query(f"set role authenticated;set request.jwt.claim.sub='{actor}';select user_id||':'||org_id from studio_documents where key='prompts';")

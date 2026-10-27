@@ -20,7 +20,7 @@ if not (PG/'initdb').is_file(): raise RuntimeError('Configured PostgreSQL binari
 ENV = {'PATH': '/usr/bin:/bin:/opt/homebrew/bin', 'LC_ALL': 'C'}
 (ROOT / 'build').mkdir(exist_ok=True)
 OUT = pathlib.Path(tempfile.mkdtemp(prefix='pres-', dir=ROOT / 'build'))
-SOCK = OUT / 's'; SOCK.mkdir()
+SOCK = pathlib.Path(tempfile.mkdtemp(prefix='rp-pres-s-', dir='/tmp'))
 if len(str(SOCK).encode())>85: raise RuntimeError('Checkout path is too long for a Unix socket; use a shorter isolated checkout')
 CONN = ['-h', str(SOCK), '-p', '55473', '-U', 'postgres', '-d', 'postgres']
 PSQL = [str(PG/'psql'), '-X', '--no-password', *CONN, '-v', 'ON_ERROR_STOP=1', '-Atq']
@@ -93,7 +93,7 @@ try:
  ok('all real migrations apply from an empty database')
  query(MIGRATION.read_text());ok('presenter migration replays safely')
  query('\n'.join(f"insert into auth.users(id,email) values('{u}','presenter-{i}@fixture.invalid');" for i,u in enumerate([A,B,C,M,X])))
- query(f"insert into orgs(id,name) values('{ORG}','Presenter fixture'),('{OTHER}','Other fixture');insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','admin'),('{C}','{ORG}','agent'),('{M}','{ORG}','marketing'),('{X}','{OTHER}','owner');insert into listings(id,org_id,agent_id) values('{LIST}','{ORG}','{A}'),('{L2}','{ORG}','{A}'),('{XL}','{OTHER}','{X}');")
+ query(f"insert into orgs(id,name,plan,plan_source) values('{ORG}','Presenter fixture','pro','manual'),('{OTHER}','Other fixture','pro','manual');insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','admin'),('{C}','{ORG}','agent'),('{M}','{ORG}','marketing'),('{X}','{OTHER}','owner');insert into listings(id,org_id,agent_id) values('{LIST}','{ORG}','{A}'),('{L2}','{ORG}','{A}'),('{XL}','{OTHER}','{X}');")
  for asset,listing,org,kind,duration in [(PHOTO,LIST,ORG,'photo',None),(PHOTO2,LIST,ORG,'photo',None),(VIDEO,LIST,ORG,'video',12),(VIDEO2,L2,ORG,'video',9),(XPHOTO,XL,OTHER,'photo',None)]:
   query(f"insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,sha256,bytes,duration_s) values('{asset}','{listing}','{kind}','uploads','uploads/{org}/{listing}/{asset}.{'jpg' if kind=='photo' else 'mp4'}',true,'{'a'*64}',1000,{duration or 'null'});")
  query(f"insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,bytes) values('{uid(306)}','{LIST}','photo','uploads','uploads/{ORG}/{LIST}/legacy.jpg',true,1000);")

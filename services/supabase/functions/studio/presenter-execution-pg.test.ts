@@ -6,12 +6,15 @@ import { syntheticPresenterMP4 } from "./presenter-test-fixtures.ts";
 import { sha256 } from "./presenter-media.ts";
 
 const fixturePath = Deno.env.get("PRESENTER_PG_FIXTURE");
-const fixture = fixturePath ? JSON.parse(await Deno.readTextFile(fixturePath)) as { psql: string[] } : null;
+const fixture = fixturePath ? JSON.parse(await Deno.readTextFile(fixturePath)) as { psql: string[]; socket: string; ownedOutput: string } : null;
 function eq(a: unknown, b: unknown, label = "value") { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${label}: ${JSON.stringify(a)} != ${JSON.stringify(b)}`); }
 function sqlString(value: unknown) { return value === null ? "null" : "'" + String(value).replaceAll("'", "''") + "'"; }
 function sqlJson(value: unknown) { return sqlString(JSON.stringify(value)) + "::jsonb"; }
 async function sql(query: string): Promise<string> {
-  if (!fixture || !fixture.psql[0].endsWith("/psql") || !fixture.psql.includes("--no-password") || !fixture.psql[fixture.psql.indexOf("-h") + 1].includes("/build/pex-")) throw new Error("Owned local PostgreSQL fixture is required");
+  const socket = fixture ? fixture.psql[fixture.psql.indexOf("-h") + 1] : null;
+  if (!fixture || !fixturePath || !fixture.psql[0].endsWith("/psql") || !fixture.psql.includes("--no-password") ||
+      !fixture.ownedOutput.includes("/build/pex-") || fixturePath !== `${fixture.ownedOutput}/controller-fixture.json` ||
+      !socket?.startsWith("/tmp/rp-pex-s-") || socket !== fixture.socket) throw new Error("Owned local PostgreSQL fixture is required");
   const process = new Deno.Command(fixture.psql[0], { args: fixture.psql.slice(1), stdin: "piped", stdout: "piped", stderr: "piped", clearEnv: true, env: { PATH: "/usr/bin:/bin", LC_ALL: "C" } }).spawn();
   const writer = process.stdin.getWriter(); await writer.write(new TextEncoder().encode(query)); await writer.close();
   const result = await process.output();
@@ -30,7 +33,7 @@ Deno.test({ name: "real local SQL controller lifecycle: quote, hold, one submit,
   const files = new Map<string, Uint8Array<ArrayBuffer>>([[sourceKey, video], [photoKey, photo]]), operations = new Map<string, O>();
   const calls: string[] = [];
   await sql(`insert into auth.users(id,email) values('${subject}','subject@controller.fixture.invalid'),('${author}','author@controller.fixture.invalid');
-    insert into public.orgs(id,name) values('${org}','Controller offline fixture');
+    insert into public.orgs(id,name,plan,plan_source) values('${org}','Controller offline fixture','pro','manual');
     insert into public.memberships(user_id,org_id,role) values('${subject}','${org}','agent'),('${author}','${org}','admin');
     insert into public.listings(id,org_id,agent_id) values('${listing}','${org}','${subject}');
     insert into public.capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,sha256,bytes,duration_s) values

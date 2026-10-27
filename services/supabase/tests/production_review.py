@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Owned, disposable Unix-socket Postgres tests. Never uses a configured database.
-All cluster files/logs stay under this checkout's ignored build/ directory.
+Cluster files/logs stay under this checkout's ignored build/ directory.
 """
 import hashlib, json, os, pathlib, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
@@ -20,7 +20,7 @@ if not (PG/'initdb').is_file(): raise RuntimeError('Configured PostgreSQL binari
 ENV = {'PATH': '/usr/bin:/bin:/opt/homebrew/bin', 'LC_ALL': 'C'}
 (ROOT / 'build').mkdir(exist_ok=True)
 OUT = pathlib.Path(tempfile.mkdtemp(prefix='pr-', dir=ROOT / 'build'))
-SOCK = OUT / 's'; SOCK.mkdir()
+SOCK = pathlib.Path(tempfile.mkdtemp(prefix='rp-pr-s-', dir='/tmp'))
 if len(str(SOCK).encode())>85: raise RuntimeError('Checkout path is too long for a Unix socket; use a shorter isolated checkout')
 CONN = ['-h', str(SOCK), '-p', '55473', '-U', 'postgres', '-d', 'postgres']
 PSQL = [str(PG/'psql'), '-X', '--no-password', *CONN, '-v', 'ON_ERROR_STOP=1', '-Atq']
@@ -86,7 +86,7 @@ try:
     migration=SQL/'migrations/20260924153826_studio_production_reviews.sql'
     query(migration.read_text());ok('new migration replays safely')
     query('\n'.join(f"insert into auth.users(id,email) values('{u}','review-{i}@fixture.invalid');" for i,u in enumerate([A,B,C,M,X])))
-    query(f"insert into orgs(id,name) values('{ORG}','Review fixture'),('{OTHER}','Other fixture'); insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','admin'),('{C}','{ORG}','agent'),('{M}','{ORG}','marketing'),('{X}','{OTHER}','owner'); insert into listings(id,org_id,agent_id,address) values('{LIST}','{ORG}','{A}','Synthetic review property'); insert into studio_documents(user_id,org_id,key,kind,listing_id,revision,payload) values('{A}','{ORG}','{KEY}','edit','{LIST}',1,jsonb_build_object('listingId','{LIST}','approved',true));")
+    query(f"insert into orgs(id,name,plan,plan_source) values('{ORG}','Review fixture','pro','manual'),('{OTHER}','Other fixture','pro','manual'); insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','admin'),('{C}','{ORG}','agent'),('{M}','{ORG}','marketing'),('{X}','{OTHER}','owner'); insert into listings(id,org_id,agent_id,address) values('{LIST}','{ORG}','{A}','Synthetic review property'); insert into studio_documents(user_id,org_id,key,kind,listing_id,revision,payload) values('{A}','{ORG}','{KEY}','edit','{LIST}',1,jsonb_build_object('listingId','{LIST}','approved',true));")
     result=review();ok('virtual private draft has no forged approval', result['review']['status']=='draft' and result['review']['revision']==0)
     error(rpc(actor=B),'RP404');ok('admin cannot see never-submitted draft')
     error(rpc(actor=X),'RP403');ok('cross-org reviewer rejected')
