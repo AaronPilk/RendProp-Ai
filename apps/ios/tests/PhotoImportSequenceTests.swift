@@ -123,8 +123,8 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
         require(try! EnhancedPhoto.loadForListing(listingID: listingID).map(\.id) == expectedCurrent,
                 "reviewed publication choices inherit source-family order rather than edit dates")
         require(NewVideoPhotoSelection.selectionPreservingOrder([repeatedIDs[1],savedIDs[0]],
-                photos: try! EnhancedPhoto.loadForListing(listingID: listingID), index: editedIndex) == [repeatedIDs[1],edited.id],
-                "new video selection retains the chosen source family after an approved version changes")
+                photos: try! EnhancedPhoto.loadForListing(listingID: listingID), index: editedIndex) == [repeatedIDs[1]],
+                "new video selection drops a changed version without silently substituting another family choice")
         try PhotoVersionHistory.selectForPublication(id: savedIDs[0] + "-original", directory: saved, reviewed: true)
         require(try! EnhancedPhoto.loadForListing(listingID: listingID).first?.id == savedIDs[0] + "-original",
                 "selecting an Original changes only the exact version in its family slot")
@@ -145,8 +145,8 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
         require(stagedIndex.libraryVersions(.staged).map(\.familyID) == [savedIDs[1],savedIDs[2]],
                 "Saved staged variants stay grouped in source upload order rather than edit completion order")
         require(NewVideoPhotoSelection.selectionPreservingOrder(["stage-third","stage-second"],
-                photos: try! EnhancedPhoto.loadForListing(listingID: listingID), index: stagedIndex) == [savedIDs[2],savedIDs[1]],
-                "new video binds the exact approved listing versions while newer staging previews remain unselected")
+                photos: try! EnhancedPhoto.loadForListing(listingID: listingID), index: stagedIndex).isEmpty,
+                "unavailable staging previews cannot silently become different approved versions")
         let legacyListing = UUID(), legacyDirectory = EnhancedPhoto.directory(for: legacyListing)
         try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
         for (offset, id) in ["older-first", "older-second"].enumerated() {

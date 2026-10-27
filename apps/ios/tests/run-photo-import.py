@@ -71,12 +71,18 @@ modified=out/'local-order-lost.swift';modified.write_text(lostOrder);cmd=list(co
 c=subprocess.run(cmd,capture_output=True,text=True);(out/'local-order-lost-compile.log').write_text(c.stdout+c.stderr);assert c.returncode==0,c.stderr
 e=subprocess.run([str(out/'local-order-lost')],capture_output=True,text=True,timeout=60);(out/'local-order-lost.log').write_text(e.stdout+e.stderr);assert e.returncode==1 and 'actual local gallery displays selected order' in e.stderr,(e.stdout,e.stderr)
 controls.append({'name':'local-order-lost','compiled':True,'rejected':True,'expectedFailure':'actual local gallery displays selected order'})
-lostFamily=gallerySource.replace('let approved = exact ?? index?.versions[id].flatMap { previous in','let approved = exact ?? Optional<PhotoVersionHistory.Version>.none.flatMap { previous in')
-assert lostFamily!=gallerySource
-modified=out/'selection-family-lost.swift';modified.write_text(lostFamily);cmd=list(compile);cmd[cmd.index(str(gallery))]=str(modified);cmd[-1]=str(out/'selection-family-lost')
-c=subprocess.run(cmd,capture_output=True,text=True);(out/'selection-family-lost-compile.log').write_text(c.stdout+c.stderr);assert c.returncode==0,c.stderr
-e=subprocess.run([str(out/'selection-family-lost')],capture_output=True,text=True,timeout=60);(out/'selection-family-lost.log').write_text(e.stdout+e.stderr);assert e.returncode==1 and 'new video selection retains the chosen source family after an approved version changes' in e.stderr,(e.stdout,e.stderr)
-controls.append({'name':'selection-family-lost','compiled':True,'rejected':True,'expectedFailure':'new video selection retains the chosen source family after an approved version changes'})
+exactSelection='return selected.filter { available.contains($0) && seen.insert($0).inserted }'
+silentSubstitution='''return selected.compactMap { id -> String? in
+            let candidate = available.contains(id) ? id : index?.publicationChoice(for: id)?.id
+            guard let candidate, available.contains(candidate), seen.insert(candidate).inserted else { return nil }
+            return candidate
+        }'''
+assert exactSelection in gallerySource
+substituted=gallerySource.replace(exactSelection,silentSubstitution,1)
+modified=out/'silent-family-substitution.swift';modified.write_text(substituted);cmd=list(compile);cmd[cmd.index(str(gallery))]=str(modified);cmd[-1]=str(out/'silent-family-substitution')
+c=subprocess.run(cmd,capture_output=True,text=True);(out/'silent-family-substitution-compile.log').write_text(c.stdout+c.stderr);assert c.returncode==0,c.stderr
+e=subprocess.run([str(out/'silent-family-substitution')],capture_output=True,text=True,timeout=60);(out/'silent-family-substitution.log').write_text(e.stdout+e.stderr);assert e.returncode==1 and 'new video selection drops a changed version without silently substituting another family choice' in e.stderr,(e.stdout,e.stderr)
+controls.append({'name':'silent-family-substitution','compiled':True,'rejected':True,'expectedFailure':'new video selection drops a changed version without silently substituting another family choice'})
 for name,old,new,needle in [
  ('tap-order-sorted', 'selected.append(p.id)', 'selected.append(p.id); selected.sort { a, b in reelPhotos.firstIndex(where: { $0.id == a })! < reelPhotos.firstIndex(where: { $0.id == b })! }', 'manual taps B2 then A1 keep the displayed video positions B2 then A1'),
  ('generation-order-sorted', chosen.replace('let chosen =','return',1), 'return reelPhotos.filter { selected.contains($0.id) }', 'generation freezes the manual B2 A1 sequence rather than grid order'),
