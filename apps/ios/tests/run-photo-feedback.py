@@ -57,9 +57,19 @@ for anchor in ['private func changeListingSelection()', 'private var savePhotoBu
 details = block(review, 'private var reviewDetails: some View {')
 gate(details.index('stagingReviewChecklist') < details.index('customReviewChecklist') < details.index('PhotoFeedbackControl('),
      'the optional control sits after the required review checks')
-gate('if !showOriginal, let feedbackVersion = viewed.savedVersion, PhotoFeedbackQueue.shared.canRecord(feedbackVersion) {' in details
+gate('if !dynamicTypeSize.isAccessibilitySize, !showOriginal,' in details
+     and 'let feedbackVersion = viewed.savedVersion, PhotoFeedbackQueue.shared.canRecord(feedbackVersion) {' in details
      and '.id(feedbackVersion.id)' in details, 'the control is bound to the exact displayed version and hidden without it')
-gate(src['detail'].count('PhotoFeedbackControl(') == 1, 'the control appears only in the result review')
+largeText = block(review, 'private var accessibilityFeedbackSheet: some View {')
+gate('if !showOriginal, let feedbackVersion = viewed.savedVersion,' in largeText
+     and 'PhotoFeedbackQueue.shared.canRecord(feedbackVersion) {' in largeText
+     and '.id(feedbackVersion.id)' in largeText, 'the accessibility-size sheet stays bound to the exact displayed version')
+gate('if dynamicTypeSize.isAccessibilitySize, !showOriginal,' in block(review, '@ToolbarContentBuilder private var reviewNavigation: some ToolbarContent {')
+     and '.sheet(isPresented: $showAccessibilityFeedback) { accessibilityFeedbackSheet }' in review
+     and 'showAccessibilityFeedback = false' in block(review, 'private func clearAndDismiss()'),
+     'large text exposes an optional reachable sheet that closes on review dismissal')
+gate(review.count('PhotoFeedbackControl(') == 2 and src['detail'].count('PhotoFeedbackControl(') == 2,
+     'feedback appears only in the standard review and its accessibility-size sheet')
 for anchor in ['private func beginCloudSelection(', 'private func setMain(']:
     body = src['detail'][src['detail'].index(anchor):]
     body = block(body, anchor)
