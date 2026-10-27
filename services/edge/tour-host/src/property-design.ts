@@ -85,6 +85,9 @@ const DESIGN_CSS = `
   $P .listing-cover { position:relative; display:block; isolation:isolate; width:100%; max-width:none; min-height:clamp(620px,100svh,1040px); margin:calc(-1 * (var(--lux-nav-h) + 28px)) 0 0; border:0; border-radius:0; overflow:hidden; box-shadow:none; color:#fff; background:var(--hero-bg); transform:none; }
   $P .listing-cover.property-video-hero { min-height:clamp(620px,100svh,1040px); color:#fff; background:var(--hero-bg); }
   $P .listing-cover::after { display:block; position:absolute; inset:0; z-index:1; content:""; pointer-events:none; background:linear-gradient(180deg,rgba(6,10,9,.42) 0%,rgba(6,10,9,0) 26%,rgba(6,10,9,0) 48%,rgba(6,10,9,.62) 78%,rgba(6,10,9,.86) 100%); transition:opacity .6s ease; }
+  /* Shared video CSS is appended after this sheet and hides its generic hero
+     overlay. Keep the film poster readable behind Signature's white identity. */
+  $S .listing-cover.property-video-hero::after { display:block; }
   $P .property-hero-media { position:absolute; inset:0; z-index:0; width:100%; height:100%; overflow:hidden; background:var(--hero-bg); border-radius:0; box-shadow:none; }
   $P .property-hero-media > img { display:block; width:100%; height:100%; max-height:none; min-height:0; object-fit:cover; object-position:center; }
   $P .listing-cover-empty { position:absolute; inset:0; display:grid; place-items:center; color:#fff; }
@@ -420,7 +423,7 @@ const DESIGN_CSS = `
     $P .listing-cover .listing-media-label { margin-top:10px; font-size:11px; line-height:1.45; }
     $P .listing-cover .listing-media-label + .listing-media-label { margin-top:2px; }
     $P .listing-cover .property-recorded-option { margin-top:4px; font-size:11px; }
-    $P .listing-cover .property-recorded-option summary { min-height:40px; padding-block:4px; }
+    $P .listing-cover .property-recorded-option summary { min-height:44px; padding-block:4px; }
     $P .property-video-hero .property-video-stage.property-film .property-video-play { top:34%; gap:12px; font-size:10px; }
     $P .property-video-hero .property-video-stage.property-film .property-film-play-mark { width:68px; height:68px; }
     $P .property-video-hero .property-video-stage.property-film .property-film-label { right:16px; bottom:auto; top:calc(var(--lux-nav-h) + 36px); font-size:9.5px; }

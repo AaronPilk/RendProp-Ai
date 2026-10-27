@@ -109,7 +109,8 @@ try {
         const watchContrast = [...document.querySelectorAll("#listing-nav .watch-button")].map(button => { const style = getComputedStyle(button); const [hi,lo] = [lum(style.color),lum(style.backgroundColor)].sort((a,b) => b-a); return (hi+.05)/(lo+.05); });
         const stage = document.querySelector(".property-video-stage"), status = document.getElementById("property-video-status"), play = document.getElementById("property-video-play");
         const hero = stage ? { film:stage.classList.contains("property-film"),text:stage.textContent.replace(/\s+/g," ").trim(),status:status.textContent,statusLive:status.getAttribute("aria-live"),statusRole:status.getAttribute("role"),label:stage.querySelector(".property-film-label")?.textContent ?? null,play:play.textContent.replace(/\s+/g," ").trim(),playHidden:play.hidden,videoLabel:document.getElementById("property-video").getAttribute("aria-label"),preload:document.getElementById("property-video").getAttribute("preload"),src:document.getElementById("property-video").getAttribute("src"),backdrop:stage.querySelectorAll(".property-film-backdrop").length } : null;
-        return { media:box(media),video:document.getElementById("property-video") ? box(document.getElementById("property-video")) : null,play:document.getElementById("property-video-play") ? box(document.getElementById("property-video-play")) : null,copy:box(document.querySelector(".property-hero-copy")),title:box(document.querySelector(".property-hero-title")),nav:box(document.querySelector("#listing-nav")),overflow:document.documentElement.scrollWidth > innerWidth,bodyText:document.body.innerText,watchContrast,contain:document.querySelector("#property-video") ? getComputedStyle(document.querySelector("#property-video")).objectFit : null,hero };
+        const overlay = getComputedStyle(document.querySelector(".listing-cover"), "::after");
+        return { media:box(media),video:document.getElementById("property-video") ? box(document.getElementById("property-video")) : null,play:document.getElementById("property-video-play") ? box(document.getElementById("property-video-play")) : null,copy:box(document.querySelector(".property-hero-copy")),title:box(document.querySelector(".property-hero-title")),nav:box(document.querySelector("#listing-nav")),overflow:document.documentElement.scrollWidth > innerWidth,bodyText:document.body.innerText,watchContrast,contain:document.querySelector("#property-video") ? getComputedStyle(document.querySelector("#property-video")).objectFit : null,overlay:{display:overlay.display,opacity:overlay.opacity,background:overlay.backgroundImage},hero };
       });
       measurements.push({ theme,width,presentation,composition });
       const tag = `${theme}-${width}-${presentation}`;
@@ -143,6 +144,9 @@ try {
           check(hero.status === "1920 × 1080 · Select Play to load the video." && hero.play === "Play property video ▶" && hero.videoLabel === "Property video for 123 Synthetic Lane, Example, FL 33000", tag+": Classic hero keeps its exact dimension/status copy and play label");
         } else {
           check(hero.film && hero.backdrop === 1, tag+": premium hero is the film presentation with a full-bleed poster backdrop");
+          if (theme === "signature-estate") check(composition.overlay.display !== "none" && composition.overlay.opacity === "1" && composition.overlay.background.includes("linear-gradient"), tag+": Signature film poster keeps its dark contrast overlay behind the white address and actions");
+          else check(composition.overlay.display === "none", tag+": Coastal film frame has no contrast overlay over its separate dark identity");
+          check(await page.locator(".property-recorded-option summary").evaluate(el => el.getBoundingClientRect().height >= 44), tag+": optional recorded walkthrough keeps a 44px touch target");
           check(!/\d\s*×\s*\d/.test(hero.text) && !hero.text.includes("Select Play") && !hero.text.includes("1920"), tag+": premium hero shows no pixel-dimension string");
           check(hero.label === "Property film · 0:30" && hero.status === "" && hero.play === "Play the film" && hero.videoLabel === "Property film for 123 Synthetic Lane, Example, FL 33000", tag+": premium hero reads as a film with its running time, one play control and a silent status until loading");
           const settled = await page.evaluate(async () => {
@@ -153,6 +157,13 @@ try {
           measurements.push({ theme, width, presentation, settled });
           const identity = value => value === "none" || value === "matrix(1, 0, 0, 1, 0, 0)";
           check(settled.stage === "1" && identity(settled.stageTransform) && identity(settled.video) && settled.play === "1" && settled.label === "1", tag+": film arrive motion settles to fully visible, untransformed media");
+          await page.emulateMedia({ reducedMotion:"reduce" });
+          const playingOverlay = await page.evaluate(() => {
+            document.querySelector(".property-film").classList.add("is-playing");
+            const style = getComputedStyle(document.querySelector(".listing-cover"), "::after");
+            return { display:style.display, opacity:style.opacity };
+          });
+          check(theme === "signature-estate" ? (width === 390 ? playingOverlay.display === "none" : playingOverlay.opacity === "0") : playingOverlay.display === "none", tag+": playing film exposes the complete frame without a contrast overlay");
         }
       }
       if (theme !== "basic") presentationChecks.push([composition.watchContrast.length > 0 && composition.watchContrast.every(ratio => ratio >= 4.5),tag+": film navigation text meets 4.5:1 contrast with either primary media"]);
