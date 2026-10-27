@@ -864,6 +864,7 @@ private struct AerialOpeningFramingPreview: View {
         state.generationProgress = nil
         state.phase = .choosing; state.processorAllowed = false; state.quoteReady = false; state.quotedDisclosure = nil
         state.quotedPhotoID = nil; state.quotedCrop = nil; state.quotedAspect = nil
+        state.availabilityMessage = nil
     }
     func prepare() {
         guard state.canCheckPhoto, let original = originals.first(where: { $0.photoID == state.selectedPhotoID }),
