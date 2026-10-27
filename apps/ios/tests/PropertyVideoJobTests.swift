@@ -222,6 +222,13 @@ enum FileStore {static let documents=FileManager.default.temporaryDirectory.appe
         let quote = try JSONDecoder().decode(PropertyVideoPhotoMotionQuote.self, from: quoteWire).checked(for: motionRequest)
         check(quote.credits == 3 && quote.affordable == false && !quote.canMake,
             "unaffordable quote retains the exact visible credit price without admitting")
+        let exhaustedPlan = try JSONDecoder().decode(PropertyVideoPhotoMotionQuote.self,
+            from: Data(#"{"mode":"plan","active":false,"affordable":false}"#.utf8)).checked(for: motionRequest)
+        check(!exhaustedPlan.canMake && exhaustedPlan.mode == .plan,
+            "an exhausted legacy plan cannot show an included Make action")
+        let includedPlan = try JSONDecoder().decode(PropertyVideoPhotoMotionQuote.self,
+            from: Data(#"{"mode":"plan","active":false}"#.utf8)).checked(for: motionRequest)
+        check(includedPlan.canMake, "a capacity-checked legacy plan remains usable")
         let falseAffordability = Data(String(decoding: quoteWire, as: UTF8.self)
             .replacingOccurrences(of: "\"affordable\":false", with: "\"affordable\":true").utf8)
         rejects("server affordability cannot contradict returned balance") {

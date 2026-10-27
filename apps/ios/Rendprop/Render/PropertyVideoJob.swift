@@ -101,12 +101,14 @@ struct PropertyVideoPhotoMotionQuote: Decodable, Equatable, Sendable {
         case manifestSHA256 = "manifest_sha256", quoteSHA256 = "quote_sha256"
     }
 
-    var canMake: Bool { mode == .plan || affordable == true }
+    var canMake: Bool { mode == .plan ? affordable != false : affordable == true }
 
     func checked(for request: PropertyVideoJobRequest) throws -> Self {
         guard request.isPhotoMotion, request.isValid else { throw PropertyVideoJobStore.Failure.invalidReceipt }
         if mode == .plan {
-            guard !active, credits == nil, affordable == nil else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+            guard !active, credits == nil, availableCredits == nil,
+                  affordable != true, manifestSHA256 == nil, quoteSHA256 == nil,
+                  environment == nil else { throw PropertyVideoJobStore.Failure.invalidReceipt }
             return self
         }
         func sha(_ value: String?) -> Bool {

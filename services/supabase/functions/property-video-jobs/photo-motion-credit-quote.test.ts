@@ -17,7 +17,7 @@ const manifest={source_mode:'photo_motion_v1',composition_profile:'photo-motion-
   operation_id:operation,listing_id:listing,expected_org_id:org,purpose:'listing',
   aspect:'16:9',sources,allow_original_photo_fallback:false};
 const manifestHash='a'.repeat(64),quoteHash='b'.repeat(64);
-type Case={balance?:number;mode?:'credits'|'plan';header?:string|null;oldJob?:boolean;
+type Case={balance?:number;mode?:'credits'|'plan';planBlocked?:boolean;header?:string|null;oldJob?:boolean;
   changedSource?:boolean;admissionLowBalance?:boolean;admissionQuoteChanged?:boolean};
 async function call(path:string,options:Case={}){
   const seen:string[]=[];const oldFetch=globalThis.fetch;let quoteCalls=0;
@@ -54,7 +54,7 @@ async function call(path:string,options:Case={}){
           mode:'credits',active:true,credits:8,available_credits:balance,
           affordable:balance>=8,environment:'Production',
           manifest_sha256:manifestHash,quote_sha256:quoteHash,
-        }:{mode:'plan',active:false});}
+        }:{mode:'plan',active:false,...(options.planBlocked?{affordable:false}:{})});}
         if(name==='property_video_job_admit_photo_motion_quoted')
           assertEquals(args.p_quote_sha256,options.header??null);
         if(name==='property_video_job_admit_photo_motion_quoted'&&options.admissionQuoteChanged)
@@ -123,6 +123,16 @@ Deno.test('final Make needs the displayed exact SHA and preserves plan path',asy
   const plan=await call('',{mode:'plan'});assertEquals(plan.status,202);
   const changedRoute=await call('',{mode:'plan',header:quoteHash});
   assertEquals(changedRoute.status,409);
+});
+Deno.test('exhausted legacy plan refuses before admission without closing the saved operation',async()=>{
+  const review=await call('/credit-quote',{mode:'plan',planBlocked:true});
+  assertEquals(review.status,200);
+  assertEquals(review.body,{mode:'plan',active:false,affordable:false});
+  const final=await call('',{mode:'plan',planBlocked:true});
+  assertEquals(final.status,402);assertEquals(final.body.code,'plan_capacity');
+  assertEquals(final.body.operation_closed,false);
+  assertEquals(final.body.admission_attempted,false);
+  assert(!final.seen.includes('property_video_job_admit_photo_motion_quoted'));
 });
 Deno.test('accepted lost-reply replay cannot be blocked by spent balance',async()=>{
   const replay=await call('',{oldJob:true,balance:0,header:quoteHash});

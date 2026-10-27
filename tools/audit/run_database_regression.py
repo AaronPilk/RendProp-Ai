@@ -131,6 +131,7 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20261027202537_photo_motion_credit_admission.sql",
     "20261027203921_photo_motion_credit_terminal.sql",
     "20261027210541_photo_motion_credit_route_bound_quote.sql",
+    "20261027211803_photo_motion_plan_review_capacity.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -190,6 +191,7 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261027202537_photo_motion_credit_admission.sql": ("fc2a37ab0789c778017827a174876427196cc96f0295f886fe0fe5cc0b771e1d", "relation \"credit_photo_motion_quotes\" already exists"),
     "20261027203921_photo_motion_credit_terminal.sql": ("6530b0ee7aec2c53f02ae4b72a7f288ef8d15cdb3a431ea9b01f999ca69955bb", "relation \"credit_photo_motion_failure_budget\" already exists"),
     "20261027210541_photo_motion_credit_route_bound_quote.sql": ("5fec99768b869f4dd6fa967b3da4eaf56d12e28f6e968370b14dd23669f98dd1", "Review changed Photo Motion credit quote identity"),
+    "20261027211803_photo_motion_plan_review_capacity.sql": ("543ca0e330c2b09374b6d9f6200233c33c291b0227fc9af1d981a118a84e22f1", "Review changed Photo Motion plan quote predecessor"),
 }
 
 

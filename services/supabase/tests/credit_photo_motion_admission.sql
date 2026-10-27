@@ -391,5 +391,50 @@ select pg_temp.pm_admit_ok((select
       @> '{"mode":"credits","environment":"Sandbox","affordable":false,"available_credits":0}'::jsonb
   from pm_admission_manifest),
   'Review shows Sandbox zero balance instead of a Production debit');
+reset role;
+-- No purchased pack and no QA grant: a manual Pro workspace uses its plan.
+-- The exact quote must stop claiming "included" when the monthly clip meter
+-- cannot fit even this one-photo recipe. Review itself never closes the job.
+update public.credit_grants set revoked_at=now()
+  where reference='synthetic-pm-credit-topup';
+update public.org_internal_testing_grants set revoked_at=now()
+  where org_id='b0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+update public.profiles set is_admin=false
+  where id='b0111111-1111-4111-8111-111111111111';
+update public.orgs set plan='pro',plan_source='manual'
+  where id='b0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+update pm_admission_manifest set manifest=jsonb_set(manifest,
+  '{operation_id}','"b0c00000-0000-4000-8000-000000000000"'::jsonb);
+set local role service_role;
+select pg_temp.pm_admit_ok((select
+  public.credit_photo_motion_environment(
+    'b0111111-1111-4111-8111-111111111111',
+    'b0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',manifest,39.3668) is null
+  from pm_admission_manifest),
+  'legacy plan without a credit pack keeps the original plan route');
+select pg_temp.pm_admit_ok((select
+  public.credit_photo_motion_review_quote(
+    'b0111111-1111-4111-8111-111111111111',manifest)
+      @> '{"mode":"plan","active":false}'::jsonb
+  from pm_admission_manifest),
+  'available plan recipe remains included at Review');
+reset role;
+insert into public.rate_limits(key,window_start,window_seconds,count)
+  values('reelmo:b0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',now(),2592000,
+    (select reels_per_month from public.plan_entitlements where plan='pro'))
+  on conflict(key) do update set window_start=excluded.window_start,
+    window_seconds=excluded.window_seconds,count=excluded.count;
+set local role service_role;
+select pg_temp.pm_admit_ok((select
+  public.credit_photo_motion_review_quote(
+    'b0111111-1111-4111-8111-111111111111',manifest)
+      @> '{"mode":"plan","active":false,"affordable":false}'::jsonb
+  from pm_admission_manifest),
+  'exhausted plan Review no longer says included');
+select pg_temp.pm_admit_ok(not exists(select 1 from public.property_video_jobs
+  where operation_id='b0c00000-0000-4000-8000-000000000000')
+  and not exists(select 1 from public.property_video_refused_operations
+  where operation_id='b0c00000-0000-4000-8000-000000000000'),
+  'read-only exhausted-plan Review leaves the operation retryable');
 select jsonb_build_object('assertions',(select n from pm_admission_checks),'passed',true);
 rollback;

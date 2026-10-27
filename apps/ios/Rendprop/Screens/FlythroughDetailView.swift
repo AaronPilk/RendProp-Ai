@@ -12912,8 +12912,23 @@ struct ReelStudioView: View {
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 }
             } else if let quote = currentPhotoMotionQuote, quote.mode == .plan {
-                Label("Included with your current plan.", systemImage: "checkmark.circle.fill")
-                    .font(.rpBody).foregroundStyle(Theme.ink)
+                if quote.canMake {
+                    Label("Included with your current plan.", systemImage: "checkmark.circle.fill")
+                        .font(.rpBody).foregroundStyle(Theme.ink)
+                } else {
+                    Label("Your current plan cannot cover this video right now.", systemImage: "exclamationmark.circle")
+                        .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Choose fewer photos or review your plan and credit options.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button { showPhotoMotionWallet = true } label: {
+                        Label("Review credits", systemImage: "creditcard")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(RendpropPillButtonStyle())
+                    .accessibilityIdentifier("video.review.planCapacityCredits")
+                }
             } else {
                 Text("Check the exact credit price for these photos before making your video.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -13268,9 +13283,11 @@ struct ReelStudioView: View {
         Button {
             if photoMotion, currentPhotoMotionQuote?.mode == .credits,
                currentPhotoMotionQuote?.affordable == false { showPhotoMotionWallet = true }
+            else if photoMotion, currentPhotoMotionQuote?.mode == .plan,
+                    currentPhotoMotionQuote?.canMake == false { showPhotoMotionWallet = true }
             else { generate() }
         } label: {
-            Label(generateTitle, systemImage: photoMotion && currentPhotoMotionQuote?.affordable == false ? "plus.circle.fill" : "sparkles")
+            Label(generateTitle, systemImage: photoMotion && currentPhotoMotionQuote?.canMake == false ? "creditcard" : "sparkles")
                 .font(.rpBody.weight(.semibold))
                 .frame(maxWidth: .infinity).frame(minHeight: 24)
         }
@@ -13390,6 +13407,8 @@ struct ReelStudioView: View {
                 if quote.affordable == false { return "Add credits" }
                 if let credits = quote.credits { return "Make for \(credits) credit\(credits == 1 ? "" : "s")" }
             }
+            if currentPhotoMotionQuote?.mode == .plan,
+               currentPhotoMotionQuote?.canMake == false { return "Review credits" }
             if currentPhotoMotionQuote == nil { return "Check exact credit price" }
         }
         if canGenerate { return "Make my video" }
@@ -15547,9 +15566,11 @@ struct ReelStudioView: View {
                 preparedPhotoMotionQuote = latest
                 guard samePrice, latest.canMake else {
                     phase = savedReview ? .failed : .setup
-                    photoMotionQuoteNotice = latest.canMake
+                    photoMotionQuoteNotice = !samePrice
                         ? "The price changed. Review the new quote, then tap Make again."
-                        : "Your balance is below this price. Add credits, then check again."
+                        : latest.mode == .plan
+                            ? "Your current plan cannot cover this video right now. Choose fewer photos or review credits."
+                            : "Your balance is below this price. Add credits, then check again."
                     return
                 }
                 var admitted = saved
