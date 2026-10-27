@@ -203,6 +203,45 @@ enum FileStore {static let documents=FileManager.default.temporaryDirectory.appe
         check(json["track_id"] as? String == "calm" && json["duck_gain"] as? Double == 0.07, "music wire freezes actual server track and duck gain fields")
         let changedTrack = VideoMusicSelection(trackID: track.id, assetSHA256: String(repeating: "d", count: 64), licenseID: track.licenseID, licenseEvidenceSHA256: track.licenseEvidenceSHA256)
         check(changedTrack.checked(catalog: VideoMusicCatalog.tracks) == nil, "stale music bytes are never replaced silently")
+        let motionAsset = UUID()
+        let motionSource = PropertyVideoJobSource(photoID: "motion-photo", photoAssetID: motionAsset,
+            photoVersionID: "asset:" + motionAsset.uuidString.lowercased(), photoProvenanceID: nil,
+            motion: "push_in", visibleFrames: 48, sourceSHA256: String(repeating: "a", count: 64), sourceBytes: 500_000)
+        let motionRequest = PropertyVideoJobRequest(operationID: UUID(), listingID: context.listingID,
+            expectedOrgID: context.orgID, purpose: "listing", aspect: "16:9", sources: [motionSource],
+            narrationResultID: nil, music: nil, allowOriginalPhotoFallback: false,
+            presentation: .init(transition: "cut", shotCaptionStyle: "off", spokenCaptions: false,
+                titleCard: nil, shotLabels: [nil]), sourceMode: PhotoMotionContract.mode,
+            compositionProfile: PhotoMotionContract.Profile.current.rawValue)
+        check(motionRequest.isValid, "frozen Photo motion source is valid before quote")
+        let quoteWire = Data("""
+        {"mode":"credits","active":true,"credits":3,"available_credits":2,"affordable":false,
+         "manifest_sha256":"\(String(repeating: "a", count: 64))",
+         "quote_sha256":"\(String(repeating: "b", count: 64))","environment":"Sandbox"}
+        """.utf8)
+        let quote = try JSONDecoder().decode(PropertyVideoPhotoMotionQuote.self, from: quoteWire).checked(for: motionRequest)
+        check(quote.credits == 3 && quote.affordable == false && !quote.canMake,
+            "unaffordable quote retains the exact visible credit price without admitting")
+        let falseAffordability = Data(String(decoding: quoteWire, as: UTF8.self)
+            .replacingOccurrences(of: "\"affordable\":false", with: "\"affordable\":true").utf8)
+        rejects("server affordability cannot contradict returned balance") {
+            _ = try JSONDecoder().decode(PropertyVideoPhotoMotionQuote.self, from: falseAffordability).checked(for: motionRequest)
+        }
+        let motionContext = PropertyVideoJobContext(localListingID: UUID(), listingID: context.listingID,
+            actorID: context.actorID, orgID: context.orgID)
+        var motionSaved = PropertyVideoSavedJob(context: motionContext, request: motionRequest, createdAt: Date())
+        motionSaved.photoMotionQuoteSHA256 = quote.quoteSHA256
+        motionSaved.photoMotionQuoteManifestSHA256 = quote.manifestSHA256
+        try PropertyVideoJobStore.start(motionSaved, documents: documents)
+        motionSaved.photoMotionQuoteReviewNeeded = true
+        try PropertyVideoJobStore.save(motionSaved, documents: documents)
+        let recoveredMotion = try PropertyVideoJobStore.load(context: motionContext, documents: documents)
+        check(recoveredMotion?.photoMotionQuoteReviewNeeded == true,
+            "a changed quote pauses the same durable operation across relaunch")
+        var invalidReview = motionSaved; invalidReview.photoMotionQuoteSHA256 = nil
+        rejects("quote review cannot discard its durable header identity") {
+            try PropertyVideoJobStore.save(invalidReview, documents: documents)
+        }
         print("property-video jobs: \(assertions) assertions passed")
     }
 }

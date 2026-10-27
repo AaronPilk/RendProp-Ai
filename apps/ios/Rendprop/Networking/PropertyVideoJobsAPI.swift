@@ -3,6 +3,7 @@ import CryptoKit
 import Darwin
 
 @MainActor protocol PropertyVideoJobsAPI {
+    func quotePhotoMotion(_ request: PropertyVideoJobRequest, context: PropertyVideoJobContext) async throws -> PropertyVideoPhotoMotionQuote
     func photoMotionCatalogue(context: PropertyVideoJobContext, physicalOrgID: UUID, requireCurrent: @escaping @MainActor () throws -> Void) async throws -> [PropertyVideoPhotoCatalogue.Source]
     func prepareChosenVideoSource(_ request: PropertyVideoPrivateSourceRequest, context: PropertyVideoJobContext, requireCurrent: @escaping @MainActor () throws -> Void) async throws -> PropertyVideoPrivateSourceReply
     func chosenVideoSource(_ request: PropertyVideoPrivateSourceRequest, context: PropertyVideoJobContext) async throws -> PropertyVideoPrivateSourceReply
@@ -16,6 +17,7 @@ import Darwin
 }
 
 extension PropertyVideoJobsAPI {
+    func quotePhotoMotion(_ request: PropertyVideoJobRequest, context: PropertyVideoJobContext) async throws -> PropertyVideoPhotoMotionQuote { throw PropertyVideoJobStore.Failure.invalidReceipt }
     func photoMotionCatalogue(context: PropertyVideoJobContext, physicalOrgID: UUID, requireCurrent: @escaping @MainActor () throws -> Void) async throws -> [PropertyVideoPhotoCatalogue.Source] { throw PropertyVideoJobStore.Failure.invalidReceipt }
     func prepareChosenVideoSource(_ request: PropertyVideoPrivateSourceRequest, context: PropertyVideoJobContext, requireCurrent: @escaping @MainActor () throws -> Void) async throws -> PropertyVideoPrivateSourceReply { throw PropertyVideoJobStore.Failure.invalidReceipt }
     func chosenVideoSource(_ request: PropertyVideoPrivateSourceRequest, context: PropertyVideoJobContext) async throws -> PropertyVideoPrivateSourceReply { throw PropertyVideoJobStore.Failure.invalidReceipt }
@@ -131,6 +133,14 @@ enum PropertyVideoOriginalMaster {
 }
 
 extension LiveAPIClient: PropertyVideoJobsAPI {
+    @MainActor func quotePhotoMotion(_ request: PropertyVideoJobRequest, context: PropertyVideoJobContext) async throws -> PropertyVideoPhotoMotionQuote {
+        guard request.isPhotoMotion, request.isValid, request.listingID == context.listingID,
+              request.expectedOrgID == context.orgID else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+        let body = try JSONEncoder().encode(request)
+        let data = try await PropertyVideoJobHTTP.data("POST", context: context,
+            segments: ["credit-quote"], body: body)
+        return try JSONDecoder().decode(PropertyVideoPhotoMotionQuote.self, from: data).checked(for: request)
+    }
     @MainActor func photoMotionCatalogue(context: PropertyVideoJobContext, physicalOrgID: UUID, requireCurrent: @escaping @MainActor () throws -> Void) async throws -> [PropertyVideoPhotoCatalogue.Source] {
         var sources: [PropertyVideoPhotoCatalogue.Source] = [], offset = 0, count: Int?
         repeat {
@@ -206,8 +216,17 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
         let data = try JSONEncoder().encode(request)
         do {
             return try await PropertyVideoJobHTTP.perform("POST", context: context, body: data,
-                idempotencyKey: "property-video:" + request.operationID.uuidString.lowercased(), paid: request.isPhotoMotion ? nil : (saved.processorPermission.map(PropertyVideoPaidAuthorization.processor) ?? .legacy)).checked(request: request)
+                idempotencyKey: "property-video:" + request.operationID.uuidString.lowercased(),
+                paid: request.isPhotoMotion ? nil : (saved.processorPermission.map(PropertyVideoPaidAuthorization.processor) ?? .legacy),
+                photoMotionQuoteSHA256: saved.photoMotionQuoteSHA256).checked(request: request)
         } catch let error as APIError {
+            if case let .server(status, code, _) = error,
+               status == 409, code == "credit_quote_changed", request.isPhotoMotion {
+                let lookup = try await propertyVideoOperation(saved, abandon: false)
+                if let job = lookup.job { return try job.checked(request: request) }
+                guard !lookup.operationClosed else { throw error }
+                throw PropertyVideoCreditQuoteChanged(operationID: request.operationID)
+            }
             guard case let .server(status, code, message) = error, status == 402, code == "capacity_refused" else { throw error }
             let current = try await PropertyVideoJobHTTP.data("GET", context: context, segments: [], query: [
                 .init(name: "listing_id", value: request.listingID.uuidString.lowercased()),
@@ -289,15 +308,17 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
               let count = body["cancelled_count"] as? Int, count >= 0 else { throw PropertyVideoJobStore.Failure.invalidReceipt }
     }
     static func perform(_ method: String, context: PropertyVideoJobContext, jobID: UUID? = nil, action: String? = nil,
-                        body: Data? = nil, idempotencyKey: String? = nil, paid: PropertyVideoPaidAuthorization? = nil) async throws -> PropertyVideoJobReply {
+                        body: Data? = nil, idempotencyKey: String? = nil, paid: PropertyVideoPaidAuthorization? = nil,
+                        photoMotionQuoteSHA256: String? = nil) async throws -> PropertyVideoJobReply {
         var segments: [String] = []
         if let jobID { segments.append(jobID.uuidString.lowercased()) }
         if let action { segments.append(action) }
         return try JSONDecoder().decode(PropertyVideoJobReply.self,
-            from: await data(method, context: context, segments: segments, body: body, idempotencyKey: idempotencyKey, paid: paid))
+            from: await data(method, context: context, segments: segments, body: body, idempotencyKey: idempotencyKey,
+                paid: paid, photoMotionQuoteSHA256: photoMotionQuoteSHA256))
     }
     static func data(_ method: String, context: PropertyVideoJobContext, segments: [String],
-                     body: Data? = nil, idempotencyKey: String? = nil, query: [URLQueryItem] = [], paid: PropertyVideoPaidAuthorization? = nil, aerialCredit: AerialCreditAuthorization? = nil, preparationPermission: (@MainActor () throws -> Void)? = nil) async throws -> Data {
+                     body: Data? = nil, idempotencyKey: String? = nil, query: [URLQueryItem] = [], paid: PropertyVideoPaidAuthorization? = nil, aerialCredit: AerialCreditAuthorization? = nil, photoMotionQuoteSHA256: String? = nil, preparationPermission: (@MainActor () throws -> Void)? = nil) async throws -> Data {
         guard context.hasCurrentIdentity, var url = Config.apiBaseURL else { throw PropertyVideoJobStore.Failure.identityChanged }
         let revision = AuthStore.shared.syncSessionRevision, consent = AIConsent.shared.revocationRevision
         let processorEpoch = PropertyVideoProcessorConsent.shared.revision
@@ -311,6 +332,13 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
             }
             if let aerialCredit {
                 guard aerialCredit.isValid, segments == ["aerial-openings"], method == "POST" else {
+                    throw PropertyVideoJobStore.Failure.invalidReceipt
+                }
+            }
+            if let photoMotionQuoteSHA256 {
+                guard segments.isEmpty, method == "POST", paid == nil, aerialCredit == nil,
+                      photoMotionQuoteSHA256.count == 64,
+                      photoMotionQuoteSHA256.allSatisfy({ "0123456789abcdef".contains($0) }) else {
                     throw PropertyVideoJobStore.Failure.invalidReceipt
                 }
             }
@@ -335,6 +363,9 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
         if let aerialCredit {
             request.setValue(aerialCredit.tariffVersion, forHTTPHeaderField: "X-Rendprop-Credit-Tariff")
             request.setValue(aerialCredit.environment, forHTTPHeaderField: "X-Rendprop-Credit-Environment")
+        }
+        if let photoMotionQuoteSHA256 {
+            request.setValue(photoMotionQuoteSHA256, forHTTPHeaderField: "X-Rendprop-Photo-Motion-Quote")
         }
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/json", forHTTPHeaderField: "Accept")

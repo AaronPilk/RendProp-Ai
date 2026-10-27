@@ -82,6 +82,48 @@ struct PropertyVideoJobRequest: Codable, Equatable, Sendable {
     }
 }
 
+/// The server prices the exact frozen Photo Motion recipe before admission.
+/// The public response contains only the customer credit amount and proof.
+struct PropertyVideoPhotoMotionQuote: Decodable, Equatable, Sendable {
+    enum Mode: String, Decodable, Sendable { case credits, plan }
+    let mode: Mode
+    let active: Bool
+    let credits: Int?
+    let availableCredits: Int?
+    let affordable: Bool?
+    let manifestSHA256: String?
+    let quoteSHA256: String?
+    let environment: String?
+
+    enum CodingKeys: String, CodingKey {
+        case mode, active, credits, affordable, environment
+        case availableCredits = "available_credits"
+        case manifestSHA256 = "manifest_sha256", quoteSHA256 = "quote_sha256"
+    }
+
+    var canMake: Bool { mode == .plan || affordable == true }
+
+    func checked(for request: PropertyVideoJobRequest) throws -> Self {
+        guard request.isPhotoMotion, request.isValid else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+        if mode == .plan {
+            guard !active, credits == nil, affordable == nil else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+            return self
+        }
+        func sha(_ value: String?) -> Bool {
+            guard let value else { return false }
+            return value.count == 64 && value.allSatisfy { "0123456789abcdef".contains($0) }
+        }
+        guard active, let credits, (1...20).contains(credits),
+              let availableCredits, availableCredits >= 0,
+              affordable == (availableCredits >= credits),
+              sha(manifestSHA256), sha(quoteSHA256),
+              environment == "Production" || environment == "Sandbox" else {
+            throw PropertyVideoJobStore.Failure.invalidReceipt
+        }
+        return self
+    }
+}
+
 enum PhotoMotionContract {
     enum Direction: String, CaseIterable, Sendable {
         case pushIn = "push_in", pullBack = "pull_back", slideLeft = "slide_left", slideRight = "slide_right"
@@ -459,6 +501,13 @@ struct PropertyVideoSavedJob: Codable, Equatable, Sendable {
     var localOutputRelativePath: String? = nil
     var capacityRefusal: PropertyVideoCapacityRefusal? = nil
     var processorPermission: PropertyVideoProcessorSnapshot? = nil
+    /// Frozen with a credit-backed admission so a lost POST can replay the
+    /// exact quote header and accepted manifest identity after relaunch.
+    var photoMotionQuoteSHA256: String? = nil
+    var photoMotionQuoteManifestSHA256: String? = nil
+    /// A 409 proven to have no admission pauses replay until the agent sees a
+    /// fresh quote for this same operation and explicitly taps Make again.
+    var photoMotionQuoteReviewNeeded: Bool? = nil
     var stopRequested: Bool? = nil
     var abandoned: PropertyVideoOperationClosure? = nil
     var wasRefusedBeforeAdmission: Bool { reply == nil && capacityRefusal?.provesNoAdmission(for: request) == true }
@@ -487,6 +536,7 @@ enum PropertyVideoJobStore {
         guard saved.context == context, saved.request.isValid,
               saved.request.listingID == context.listingID, saved.request.expectedOrgID == context.orgID else { throw Failure.invalidReceipt }
         if saved.request.isPhotoMotion, saved.processorPermission != nil { throw Failure.invalidReceipt }
+        try validatePhotoMotionQuote(saved)
         if let permission = saved.processorPermission { guard permission.matches(saved.context) else { throw Failure.invalidReceipt } }
         if let closure = saved.abandoned { guard saved.reply == nil, closure.matches(saved.request) else { throw Failure.invalidReceipt } }
         if let refusal = saved.capacityRefusal {
@@ -501,6 +551,7 @@ enum PropertyVideoJobStore {
     static func save(_ saved: PropertyVideoSavedJob, documents: URL) throws {
         guard saved.request.isValid, saved.request.listingID == saved.context.listingID, saved.request.expectedOrgID == saved.context.orgID else { throw Failure.invalidReceipt }
         if saved.request.isPhotoMotion, saved.processorPermission != nil { throw Failure.invalidReceipt }
+        try validatePhotoMotionQuote(saved)
         if let permission = saved.processorPermission { guard permission.matches(saved.context) else { throw Failure.invalidReceipt } }
         if let closure = saved.abandoned { guard saved.reply == nil, closure.matches(saved.request) else { throw Failure.invalidReceipt } }
         if let refusal = saved.capacityRefusal {
@@ -513,7 +564,11 @@ enum PropertyVideoJobStore {
             // erase an accepted job or reopen a definitively closed operation.
             if existing.stopRequested == true { guard saved.stopRequested == true else { throw Failure.invalidReceipt } }
             if let closed = existing.abandoned { guard saved.reply == nil, saved.abandoned == closed else { throw Failure.invalidReceipt } }
-            if existing.reply != nil { guard saved.reply != nil, saved.capacityRefusal == nil else { throw Failure.invalidReceipt } }
+            if existing.reply != nil {
+                guard saved.reply != nil, saved.capacityRefusal == nil,
+                      saved.photoMotionQuoteSHA256 == existing.photoMotionQuoteSHA256,
+                      saved.photoMotionQuoteManifestSHA256 == existing.photoMotionQuoteManifestSHA256 else { throw Failure.invalidReceipt }
+            }
             if existing.wasRefusedBeforeAdmission { guard saved.reply == nil, saved.capacityRefusal == existing.capacityRefusal else { throw Failure.invalidReceipt } }
             if let old = existing.reply, let new = saved.reply { _ = try new.checked(request: saved.request, previous: old, requireDownload: false) }
         }
@@ -527,6 +582,23 @@ enum PropertyVideoJobStore {
         try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         try bytes.write(to: target, options: .atomic)
         guard try Data(contentsOf: target) == bytes else { throw Failure.invalidReceipt }
+    }
+    private static func validatePhotoMotionQuote(_ saved: PropertyVideoSavedJob) throws {
+        let quote = saved.photoMotionQuoteSHA256, manifest = saved.photoMotionQuoteManifestSHA256
+        guard (quote == nil && manifest == nil) ||
+              (saved.request.isPhotoMotion && quote?.count == 64 && manifest?.count == 64 &&
+               quote!.allSatisfy({ "0123456789abcdef".contains($0) }) &&
+               manifest!.allSatisfy({ "0123456789abcdef".contains($0) })) else {
+            throw Failure.invalidReceipt
+        }
+        if saved.photoMotionQuoteReviewNeeded == true {
+            guard saved.request.isPhotoMotion, quote != nil, manifest != nil,
+                  saved.reply == nil, saved.capacityRefusal == nil,
+                  saved.abandoned == nil else { throw Failure.invalidReceipt }
+        }
+        if let reply = saved.reply, let manifest {
+            guard reply.manifestSHA256 == manifest else { throw Failure.invalidReceipt }
+        }
     }
     /// Synchronous local stop journal; never deletes originals/history or
     /// assumes an unknown operation has been accepted or abandoned.

@@ -1,5 +1,13 @@
 import Foundation
 
+/// The server rejected a displayed credit quote before admission, and a
+/// current-authority operation lookup found no saved job. The frozen operation
+/// can be re-quoted for explicit Review without creating a second operation.
+struct PropertyVideoCreditQuoteChanged: Error, LocalizedError, Sendable {
+    let operationID: UUID
+    var errorDescription: String? { "The Photo motion price changed before your video started. Review the updated price and try again." }
+}
+
 /// Current-authority lookup. A plain missing job is not proof of refusal:
 /// only the server's durable, operation-locked closure permits a new recipe.
 struct PropertyVideoOperationLookup: Decodable, Sendable {

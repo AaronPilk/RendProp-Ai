@@ -79,7 +79,7 @@ controls = [
     ('lost-capacity-status-fence', production.replace('guard status == 402 && code == "capacity_refused" else', 'guard true else'), '403/409/unknown replies never unlock new paid work'),
     ('lost-capacity-operation-fence', production.replace('lookup.operationID == request.operationID', 'true'), "a different operation's refusal cannot unlock this recipe"),
     ('initial-enqueue-overlap', production.replace('watch.work.running && watch.work.serverJob?.reply == nil', 'false'), 'reopen cannot race the still-running first enqueue with another POST'),
-    ('lost-admission-monotonicity', production.replace('if existing.reply != nil { guard saved.reply != nil, saved.capacityRefusal == nil else { throw Failure.invalidReceipt } }', ''), 'an accepted job cannot be erased by a late pre-acknowledgment writer'),
+    ('lost-admission-monotonicity', production.replace('guard saved.reply != nil, saved.capacityRefusal == nil,', 'guard saved.capacityRefusal == nil,'), 'an accepted job cannot be erased by a late pre-acknowledgment writer'),
     ('lost-refusal-monotonicity', production.replace('if existing.wasRefusedBeforeAdmission { guard saved.reply == nil, saved.capacityRefusal == existing.capacityRefusal else { throw Failure.invalidReceipt } }', ''), 'a closed refusal cannot be reopened by a late accepted writer'),
     ('lost-resume-state-boundary', production.replace('resumeAvailable != true || state == "failed",', 'true,'), 'only a failed saved job may advertise capacity resume'),
     ('lost-resume-explicit-proof', production.replace('var mayResume: Bool { state == "failed" && resumeAvailable == true }', 'var mayResume: Bool { state == "failed" }'), 'an ordinary or uncertain failure never enables paid resume'),

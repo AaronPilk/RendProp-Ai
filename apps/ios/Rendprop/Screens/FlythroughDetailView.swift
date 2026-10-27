@@ -11806,6 +11806,12 @@ struct ReelStudioView: View {
     @State private var photoMotionDigests: [PhotoGeometryInput: String] = [:]
     @State private var photoMotionTimingRestoreGeneration = UUID()
     @State private var photoMotionTimingRestorePending = false
+    @State private var preparedPhotoMotion: PropertyVideoSavedJob?
+    @State private var preparedPhotoMotionQuote: PropertyVideoPhotoMotionQuote?
+    @State private var preparedPhotoMotionReviewKey: String?
+    @State private var showPhotoMotionWallet = false
+    @State private var refreshingPhotoMotionQuote = false
+    @State private var photoMotionQuoteNotice: String?
     private func photoMotionKey(_ id: String) -> String? {
         guard let photo = reelPhotos.first(where: { $0.id == id }), let version = photo.savedVersion,
               let digest = photoMotionDigests[PhotoGeometryInput(id: id, url: photo.enhancedURL)] else { return nil }
@@ -11858,6 +11864,39 @@ struct ReelStudioView: View {
     private func photoMotionFrameCount(_ id: String) -> Int { photoMotionKey(id).flatMap { photoMotionFrames[$0] } ?? 48 }
     private var selectedPhotoFrames: Int { selected.reduce(0) { $0 + photoMotionFrameCount($1) } }
     private var selectedPhotoMotionInputs: [PhotoGeometryInput] { selected.compactMap { id in reelPhotos.first(where: { $0.id == id }).map { PhotoGeometryInput(id: id, url: $0.enhancedURL) } } }
+    /// A quote belongs to one exact local Review. The final POST still uses the
+    /// frozen server-quoted request; this key prevents a changed UI from
+    /// presenting that old request as the agent's current choice.
+    private var photoMotionReviewKey: String {
+        let sourceKeys = selected.map { id -> String in
+            guard let photo = reelPhotos.first(where: { $0.id == id }) else { return "missing:\(id)" }
+            let input = PhotoGeometryInput(id: id, url: photo.enhancedURL)
+            return String(reflecting: (id, photo.enhancedURL.path, photo.savedVersion,
+                photoMotionDigests[input], photoMotionFrameCount(id)))
+        }
+        return String(reflecting: (sourceKeys, sourceChoice.rawValue, photoMotion, portrait,
+            photoMotionProfile.rawValue, photoMotionDirection.rawValue, chosenOpening,
+            captionsOn, bigCaptionsOn, bigCaptionStyle.rawValue, reelTransition.rawValue,
+            voiceMode, voiceMode == .off ? nil : voiceover, wordCaptionsOn, musicSelection,
+            auth.userID, auth.syncSessionRevision, WorkspaceContext.selectedOrgID,
+            model.listings.first(where: { $0.id == listing.id })?.serverID))
+    }
+    private var currentPhotoMotionQuote: PropertyVideoPhotoMotionQuote? {
+        if work.serverJob?.photoMotionQuoteReviewNeeded == true,
+           work.serverJob?.request == preparedPhotoMotion?.request,
+           preparedPhotoMotion?.context.hasCurrentIdentity == true {
+            return preparedPhotoMotionQuote
+        }
+        guard preparedPhotoMotionReviewKey == photoMotionReviewKey,
+              preparedPhotoMotion?.context.hasCurrentIdentity == true else { return nil }
+        return preparedPhotoMotionQuote
+    }
+    private func clearPreparedPhotoMotionQuote() {
+        preparedPhotoMotion = nil
+        preparedPhotoMotionQuote = nil
+        preparedPhotoMotionReviewKey = nil
+        photoMotionQuoteNotice = nil
+    }
     @State private var automaticOrder = false
     @State private var showVideoAdvanced = false
     @State private var scenePlanningNotice: String?
@@ -12054,6 +12093,10 @@ struct ReelStudioView: View {
                 }
             }
         }
+        .sheet(isPresented: $showPhotoMotionWallet, onDismiss: { refreshPreparedPhotoMotionQuote() }) {
+            NavigationStack { CreditWalletView() }
+        }
+        .onChange(of: photoMotionReviewKey) { _ in clearPreparedPhotoMotionQuote() }
         .onReceive(photoWork.$job) { job in
             if let job, job.listingID == listing.id, !job.running, phase == .setup { refreshVideoPhotos() }
         }
@@ -12822,6 +12865,7 @@ struct ReelStudioView: View {
             .accessibilityIdentifier("video.review.changePhotos")
             videoAdvancedControls
             if let scenePlanningNotice { Text(scenePlanningNotice).font(.rpCaption).foregroundStyle(Theme.inkDim) }
+            if photoMotion { photoMotionQuoteCard }
             aiDisclosureLine
             if photoMotion {
                 Label("Photo motion setup transfer is not supported yet. Its accepted video job remains available from this listing.", systemImage: "icloud")
@@ -12833,6 +12877,58 @@ struct ReelStudioView: View {
                 }.frame(minHeight: 44)
             }
         }.padding(18).frame(maxWidth: .infinity, alignment: .leading).modifier(RendpropContentSurface())
+    }
+
+    @ViewBuilder private var photoMotionQuoteCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Photo motion price", systemImage: "creditcard")
+                .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+            if let quote = currentPhotoMotionQuote, quote.mode == .credits, let credits = quote.credits,
+               let available = quote.availableCredits {
+                Text("\(credits) credit\(credits == 1 ? "" : "s")")
+                    .font(.rpTitle.weight(.bold)).foregroundStyle(Theme.ink)
+                    .accessibilityIdentifier("video.review.quotedCredits")
+                Text("Available balance: \(available) credit\(available == 1 ? "" : "s")")
+                    .font(.rpBody).foregroundStyle(Theme.inkDim)
+                if quote.affordable == false {
+                    Label("Add credits to make this video. Your selected photos and quoted setup will stay here.", systemImage: "info.circle")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button { showPhotoMotionWallet = true } label: {
+                        Label("Add credits", systemImage: "plus.circle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(RendpropPillButtonStyle())
+                    .accessibilityIdentifier("video.review.addCredits")
+                    Button { refreshPreparedPhotoMotionQuote() } label: {
+                        Label("Check balance again", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(RendpropPillButtonStyle())
+                    .disabled(refreshingPhotoMotionQuote)
+                    .accessibilityIdentifier("video.review.refreshQuote")
+                } else {
+                    Text("Tap Make to use exactly this quoted amount.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+            } else if let quote = currentPhotoMotionQuote, quote.mode == .plan {
+                Label("Included with your current plan.", systemImage: "checkmark.circle.fill")
+                    .font(.rpBody).foregroundStyle(Theme.ink)
+            } else {
+                Text("Check the exact credit price for these photos before making your video.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let photoMotionQuoteNotice {
+                Text(photoMotionQuoteNotice).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("video.review.creditQuote")
     }
 
 
@@ -13169,13 +13265,17 @@ struct ReelStudioView: View {
     }
 
     private var makeButton: some View {
-        Button { generate() } label: {
-            Label(generateTitle, systemImage: "sparkles")
+        Button {
+            if photoMotion, currentPhotoMotionQuote?.mode == .credits,
+               currentPhotoMotionQuote?.affordable == false { showPhotoMotionWallet = true }
+            else { generate() }
+        } label: {
+            Label(generateTitle, systemImage: photoMotion && currentPhotoMotionQuote?.affordable == false ? "plus.circle.fill" : "sparkles")
                 .font(.rpBody.weight(.semibold))
                 .frame(maxWidth: .infinity).frame(minHeight: 24)
         }
         .modifier(RendpropActionAppearance())
-        .disabled(!canGenerate || checkingFraming)
+        .disabled(!canGenerate || checkingFraming || refreshingPhotoMotionQuote)
         .accessibilityIdentifier("phase1.reelGenerate")
     }
 
@@ -13285,6 +13385,13 @@ struct ReelStudioView: View {
     private var generateTitle: String {
         if let narrationPreparationMessage { return narrationPreparationMessage }
         if !photoMotion && !aiCameraAvailable { return "AI camera temporarily unavailable" }
+        if photoMotion, canGenerate {
+            if let quote = currentPhotoMotionQuote, quote.mode == .credits {
+                if quote.affordable == false { return "Add credits" }
+                if let credits = quote.credits { return "Make for \(credits) credit\(credits == 1 ? "" : "s")" }
+            }
+            if currentPhotoMotionQuote == nil { return "Check exact credit price" }
+        }
         if canGenerate { return "Make my video" }
         if !selectedExtras.isEmpty { return "Use the saved opening above" }
         if includeAcceptedOpening, acceptedOpening != nil, !photoMotion { return "Choose Photo motion or turn opening off" }
@@ -13544,12 +13651,34 @@ struct ReelStudioView: View {
         VStack(spacing: 14) {
             Label("Your video request is saved", systemImage: "icloud").font(.rpHeadline)
             if let failure { Text(failure.message).font(.rpCaption).foregroundStyle(Theme.inkDim) }
-            Text(work.serverJob?.wasRefusedBeforeAdmission == true ? "This video was not admitted. Choose fewer photos or check your plan; your saved photos and rejected recipe are kept." : "Check this same request before starting again. Leaving Rendprop does not cancel an accepted server job.")
+            Text(work.serverJob?.photoMotionQuoteReviewNeeded == true
+                ? "The server found no admitted job for this saved Photo motion operation. Review its updated price before trying the same request again."
+                : work.serverJob?.wasRefusedBeforeAdmission == true
+                    ? "This video was not admitted. Choose fewer photos or check your plan; your saved photos and rejected recipe are kept."
+                    : "Check this same request before starting again. Leaving Rendprop does not cancel an accepted server job.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
             if work.serverJob?.reply != nil {
                 serverStatusControls
             }
-            if work.serverJob?.mayReplaceAfterResolution == true, work.serverJob?.reply == nil {
+            if let saved = work.serverJob, saved.photoMotionQuoteReviewNeeded == true {
+                Text("Saved recipe · \(saved.request.sources.count) photo\(saved.request.sources.count == 1 ? "" : "s") · \(saved.request.sources.reduce(0) { $0 + ($1.visibleFrames ?? 0) } / 24) seconds")
+                    .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.ink)
+                photoMotionQuoteCard
+                if let quote = currentPhotoMotionQuote, quote.canMake,
+                   let reviewKey = preparedPhotoMotionReviewKey {
+                    PrimaryButton(title: quote.mode == .credits
+                        ? "Make for \(quote.credits ?? 0) credits" : "Make my video", systemImage: "sparkles") {
+                        submitPreparedPhotoMotion(saved, displayedQuote: quote, reviewKey: reviewKey)
+                    }
+                    .accessibilityIdentifier("video.server.makeWithUpdatedQuote")
+                } else if currentPhotoMotionQuote == nil {
+                    PrimaryButton(title: "Review updated price", systemImage: "creditcard") {
+                        reviewSavedPhotoMotionQuote()
+                    }
+                    .disabled(refreshingPhotoMotionQuote)
+                    .accessibilityIdentifier("video.server.reviewUpdatedQuote")
+                }
+            } else if work.serverJob?.mayReplaceAfterResolution == true, work.serverJob?.reply == nil {
                 PrimaryButton(title: "Edit photos and setup", systemImage: "photo.on.rectangle") {
                     resetToSetup()
                 }
@@ -15308,6 +15437,139 @@ struct ReelStudioView: View {
         VideoFramingReviewPolicy.selectionKey(aspect: portrait ? "9:16" : "16:9", photoIDs: selected) + (photoMotion ? ":" + photoMotionProfile.rawValue + ":" + photoMotionDirection.rawValue : "")
     }
 
+    private func reviewSavedPhotoMotionQuote() {
+        guard !refreshingPhotoMotionQuote, !work.running, phase == .failed,
+              let saved = work.serverJob, saved.photoMotionQuoteReviewNeeded == true,
+              saved.context.hasCurrentIdentity,
+              let jobsAPI = model.api as? any PropertyVideoJobsAPI else { return }
+        refreshingPhotoMotionQuote = true
+        let revision = auth.syncSessionRevision
+        Task { @MainActor in
+            defer { refreshingPhotoMotionQuote = false }
+            do {
+                let lookup = try await jobsAPI.propertyVideoOperation(saved, abandon: false)
+                guard saved.context.hasCurrentIdentity, auth.syncSessionRevision == revision,
+                      work.serverJob?.request == saved.request else { return }
+                if let job = lookup.job {
+                    var accepted = saved
+                    accepted.reply = try job.checked(request: saved.request)
+                    accepted.photoMotionQuoteReviewNeeded = false
+                    try PropertyVideoJobStore.save(accepted, documents: FileStore.documents)
+                    work.serverJob = accepted
+                    clearPreparedPhotoMotionQuote()
+                    phase = .generating
+                    PropertyVideoJobRunner.shared.restore(work: work, model: model, api: jobsAPI, context: saved.context)
+                    return
+                }
+                if lookup.operationClosed, lookup.closedReason == "capacity_refused" {
+                    var rejected = saved
+                    rejected.photoMotionQuoteReviewNeeded = false
+                    rejected.capacityRefusal = .init(operationID: saved.request.operationID,
+                        listingID: saved.request.listingID, selectedLibraryOrgID: saved.request.expectedOrgID,
+                        status: 402, code: "capacity_refused", operationClosed: true,
+                        message: "This video was not admitted. Add credits and review a new request.", observedAt: Date())
+                    try PropertyVideoJobStore.save(rejected, documents: FileStore.documents)
+                    work.serverJob = rejected
+                    clearPreparedPhotoMotionQuote()
+                    failure = AIFailure(rejected.capacityRefusal!, title: "Add credits to continue")
+                    return
+                }
+                guard !lookup.operationClosed else { throw PropertyVideoProcessorFailure.operationPending }
+                let quote = try await jobsAPI.quotePhotoMotion(saved.request, context: saved.context)
+                guard saved.context.hasCurrentIdentity, auth.syncSessionRevision == revision,
+                      work.serverJob?.request == saved.request else { return }
+                preparedPhotoMotion = saved
+                preparedPhotoMotionQuote = quote
+                preparedPhotoMotionReviewKey = "saved:" + saved.request.operationID.uuidString
+                photoMotionQuoteNotice = nil
+            } catch {
+                guard saved.context.hasCurrentIdentity else { return }
+                photoMotionQuoteNotice = "Couldn't confirm the saved operation or price. Check it again before making a video."
+            }
+        }
+    }
+
+    private func refreshPreparedPhotoMotionQuote() {
+        if work.serverJob?.photoMotionQuoteReviewNeeded == true {
+            reviewSavedPhotoMotionQuote()
+            return
+        }
+        guard !refreshingPhotoMotionQuote, phase == .setup,
+              let saved = preparedPhotoMotion, preparedPhotoMotionReviewKey == photoMotionReviewKey,
+              saved.context.hasCurrentIdentity, let jobsAPI = model.api as? any PropertyVideoJobsAPI else { return }
+        refreshingPhotoMotionQuote = true
+        let reviewKey = photoMotionReviewKey, revision = auth.syncSessionRevision
+        Task { @MainActor in
+            defer { refreshingPhotoMotionQuote = false }
+            do {
+                let quote = try await jobsAPI.quotePhotoMotion(saved.request, context: saved.context)
+                guard reviewKey == photoMotionReviewKey, auth.syncSessionRevision == revision,
+                      saved.context.hasCurrentIdentity, preparedPhotoMotion?.request == saved.request else { return }
+                preparedPhotoMotionQuote = quote
+                photoMotionQuoteNotice = quote.mode == .credits && quote.affordable == false
+                    ? "Your balance is still below this price. Add credits, then check again." : nil
+            } catch {
+                guard reviewKey == photoMotionReviewKey else { return }
+                photoMotionQuoteNotice = "Couldn’t check your balance. Try again before making this video."
+            }
+        }
+    }
+
+    private func submitPreparedPhotoMotion(_ saved: PropertyVideoSavedJob,
+                                           displayedQuote: PropertyVideoPhotoMotionQuote,
+                                           reviewKey: String) {
+        let savedReview = saved.photoMotionQuoteReviewNeeded == true &&
+            work.serverJob?.request == saved.request && phase == .failed
+        guard (phase == .setup || savedReview), !work.running,
+              currentPhotoMotionQuote == displayedQuote,
+              preparedPhotoMotion?.request == saved.request, saved.context.hasCurrentIdentity,
+              let jobsAPI = model.api as? any PropertyVideoJobsAPI else { return }
+        let model = self.model
+        phase = .generating
+        statusText = "Checking your exact Photo motion price…"
+        failure = nil
+        work.start(identityIsCurrent: { [model, id = listing.id] in
+            model.listings.contains { $0.id == id && $0.cloudUnavailable != true }
+        }, resume: { resumePausedWork() }) {
+            do {
+                let latest = try await jobsAPI.quotePhotoMotion(saved.request, context: saved.context)
+                guard (savedReview || reviewKey == photoMotionReviewKey), saved.context.hasCurrentIdentity,
+                      preparedPhotoMotion?.request == saved.request else {
+                    phase = savedReview ? .failed : .setup
+                    photoMotionQuoteNotice = "Your setup changed. Check the updated price before making this video."
+                    return
+                }
+                let samePrice = latest.mode == displayedQuote.mode &&
+                    latest.credits == displayedQuote.credits &&
+                    latest.manifestSHA256 == displayedQuote.manifestSHA256 &&
+                    latest.quoteSHA256 == displayedQuote.quoteSHA256 &&
+                    latest.environment == displayedQuote.environment
+                preparedPhotoMotionQuote = latest
+                guard samePrice, latest.canMake else {
+                    phase = savedReview ? .failed : .setup
+                    photoMotionQuoteNotice = latest.canMake
+                        ? "The price changed. Review the new quote, then tap Make again."
+                        : "Your balance is below this price. Add credits, then check again."
+                    return
+                }
+                var admitted = saved
+                admitted.photoMotionQuoteSHA256 = latest.mode == .credits ? latest.quoteSHA256 : nil
+                admitted.photoMotionQuoteManifestSHA256 = latest.mode == .credits ? latest.manifestSHA256 : nil
+                admitted.photoMotionQuoteReviewNeeded = savedReview && latest.mode == .credits
+                if savedReview { try PropertyVideoJobStore.save(admitted, documents: FileStore.documents) }
+                else { try PropertyVideoJobStore.start(admitted, documents: FileStore.documents) }
+                work.serverJob = admitted
+                clearPreparedPhotoMotionQuote()
+                statusText = "Sending your saved Photo motion recipe…"
+                try await PropertyVideoJobRunner.shared.enqueue(admitted, work: work, model: model, api: jobsAPI)
+            } catch {
+                guard saved.context.hasCurrentIdentity else { return }
+                phase = .failed
+                failure = ReelClipIssue.failure(for: error, title: "Couldn't make the video")
+            }
+        }
+    }
+
     private func generate() {
         guard phase == .setup, canGenerate, !checkingFraming else { return }
         checkingFraming = true
@@ -15346,8 +15608,14 @@ struct ReelStudioView: View {
     private func generateWithSession() {
         let model = self.model, auth = self.auth
         guard phase == .setup, canGenerate, selectedExtras.isEmpty else { return }
+        if photoMotion, let saved = preparedPhotoMotion, let quote = currentPhotoMotionQuote,
+           let reviewKey = preparedPhotoMotionReviewKey {
+            submitPreparedPhotoMotion(saved, displayedQuote: quote, reviewKey: reviewKey)
+            return
+        }
         if !photoMotion { do { try requirePreparedProcessor() } catch { savedPhotoError = error.localizedDescription; return } }
         let frozenPhotoMotion = photoMotion
+        let frozenPhotoReviewKey = photoMotionReviewKey
         let frozenPhotoProfile = photoMotionProfile
         let frozenOpening = chosenOpening
 
@@ -15523,6 +15791,21 @@ struct ReelStudioView: View {
                         guard live.accepted.contains(where: { $0.opening == frozenOpening }) else { throw PropertyVideoJobStore.Failure.invalidReceipt }
                     }
                     let saved = PropertyVideoSavedJob(context: context, request: request, createdAt: Date(), processorPermission: frozenProcessorPermission)
+                    if frozenPhotoMotion {
+                        statusText = "Checking exact Photo motion credits…"
+                        let quote = try await jobsAPI.quotePhotoMotion(request, context: context)
+                        try requireCurrent()
+                        guard frozenPhotoReviewKey == photoMotionReviewKey, context.hasCurrentIdentity else {
+                            throw PropertyVideoJobStore.Failure.identityChanged
+                        }
+                        preparedPhotoMotion = saved
+                        preparedPhotoMotionQuote = quote
+                        preparedPhotoMotionReviewKey = frozenPhotoReviewKey
+                        photoMotionQuoteNotice = nil
+                        phase = .setup
+                        try? FileManager.default.removeItem(at: tmpDir)
+                        return
+                    }
                     try PropertyVideoJobStore.start(saved, documents: FileStore.documents)
                     work.serverJob = saved; statusText = "Sending your saved video recipe…"
                     try await PropertyVideoJobRunner.shared.enqueue(saved, work: work, model: model, api: jobsAPI)
@@ -15766,6 +16049,11 @@ struct ReelStudioView: View {
                     Analytics.trackAIFailure("reel", step: "clips", error: error)
                     parkedClips = PendingReelClips.load(for: listingID)
                     reloadPendingRequest()
+                    if frozenPhotoMotion, work.serverJob == nil {
+                        phase = .setup
+                        photoMotionQuoteNotice = "Couldn’t check the exact price. Try again; no video was started."
+                        return
+                    }
                     phase = .failed
                     failure = ReelClipIssue.failure(for: error, title: "Couldn't make the reel")
                 }

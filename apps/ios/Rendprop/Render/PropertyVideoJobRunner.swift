@@ -119,17 +119,30 @@ import AVFoundation
         // transport result remains saved; recovery reads this exact operation.
         let reply: PropertyVideoJobReply
         do { reply = try await api.enqueuePropertyVideo(saved) }
+        catch let changed as PropertyVideoCreditQuoteChanged {
+            try requireCurrent(watch)
+            guard saved.request.isPhotoMotion, saved.reply == nil,
+                  changed.operationID == saved.request.operationID else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+            var review = saved; review.photoMotionQuoteReviewNeeded = true
+            try PropertyVideoJobStore.save(review, documents: FileStore.documents)
+            work.serverJob = review
+            work.statusText = changed.localizedDescription
+            throw changed
+        }
         catch let refusal as PropertyVideoCapacityRefusal {
             try requireCurrent(watch)
             guard saved.reply == nil, refusal.provesNoAdmission(for: saved.request) else { throw PropertyVideoJobStore.Failure.invalidReceipt }
-            var rejected = saved; rejected.capacityRefusal = refusal
+            var rejected = saved; rejected.capacityRefusal = refusal; rejected.photoMotionQuoteReviewNeeded = false
             try PropertyVideoJobStore.save(rejected, documents: FileStore.documents)
             work.serverJob = rejected
             work.statusText = "This video couldn't start. Edit your photos or check your plan."
             throw refusal
         }
         try requireCurrent(watch)
-        var accepted = saved; accepted.reply = try reply.checked(request: saved.request)
+        let verified = try reply.checked(request: saved.request)
+        if let quotedManifest = saved.photoMotionQuoteManifestSHA256,
+           verified.manifestSHA256 != quotedManifest { throw PropertyVideoJobStore.Failure.invalidReceipt }
+        var accepted = saved; accepted.reply = verified; accepted.photoMotionQuoteReviewNeeded = false
         try PropertyVideoJobStore.save(accepted, documents: FileStore.documents)
         work.adoptServerJob(accepted)
         watches[work.id] = watch
@@ -272,9 +285,16 @@ import AVFoundation
             lookup = try await watch.api.propertyVideoOperation(current, abandon: true).checked(request: current.request)
             try requireCurrent(watch)
         }
-        if let job = lookup.job { current.reply = try job.checked(request: current.request, previous: current.reply) }
-        else if let closure = lookup.abandonment { current.abandoned = closure }
+        if let job = lookup.job {
+            current.reply = try job.checked(request: current.request, previous: current.reply)
+            current.photoMotionQuoteReviewNeeded = false
+        }
+        else if let closure = lookup.abandonment {
+            current.abandoned = closure
+            current.photoMotionQuoteReviewNeeded = false
+        }
         else if lookup.operationClosed, lookup.closedReason == "capacity_refused" {
+            current.photoMotionQuoteReviewNeeded = false
             current.capacityRefusal = .init(operationID: current.request.operationID, listingID: current.request.listingID,
                 selectedLibraryOrgID: current.request.expectedOrgID, status: 402, code: "capacity_refused", operationClosed: true,
                 message: "This saved video was not admitted. Edit the setup or check your plan.", observedAt: Date())
@@ -309,6 +329,21 @@ import AVFoundation
                 guard var saved = try PropertyVideoJobStore.load(context: watch.context, documents: FileStore.documents),
                       saved.request.operationID == watch.operationID else { return }
                 if saved.stopRequested == true { await cancel(watch.work); return }
+                if saved.photoMotionQuoteReviewNeeded == true, saved.reply == nil {
+                    let lookup = try await watch.api.propertyVideoOperation(saved, abandon: false).checked(request: saved.request)
+                    try requireCurrent(watch)
+                    if let job = lookup.job {
+                        saved.reply = try job.checked(request: saved.request)
+                        saved.photoMotionQuoteReviewNeeded = false
+                        try PropertyVideoJobStore.save(saved, documents: FileStore.documents)
+                        watch.work.serverJob = saved
+                    } else if !lookup.operationClosed {
+                        watch.work.phase = .failed
+                        watch.work.failure = AIFailure(PropertyVideoCreditQuoteChanged(operationID: saved.request.operationID),
+                            title: "Review updated Photo motion price")
+                        return
+                    }
+                }
                 if saved.reply == nil { saved = try await reconcile(saved, watch: watch, abandon: false) }
                 if try presentClosedOperation(saved, watch: watch) { return }
                 guard saved.reply != nil else { throw PropertyVideoProcessorFailure.operationPending }
