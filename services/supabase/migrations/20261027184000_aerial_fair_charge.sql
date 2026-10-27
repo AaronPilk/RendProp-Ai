@@ -334,7 +334,7 @@ grant execute on function public.credit_aerial_hold_reconcile(integer) to servic
 do $schedule$ begin
  if exists(select 1 from pg_extension where extname='pg_cron') then
   perform cron.schedule('credit-aerial-hold-reconcile','*/15 * * * *',
-   'select public.credit_aerial_hold_reconcile(100)');
+   'set role service_role;select public.credit_aerial_hold_reconcile(100)');
  else raise notice 'credit_aerial_hold_reconcile requires an external 15-minute scheduler';end if;
 exception when others then
  raise notice 'credit_aerial_hold_reconcile scheduling failed (% — %); activation stays blocked',SQLSTATE,SQLERRM;
