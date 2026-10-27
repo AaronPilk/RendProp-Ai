@@ -104,6 +104,11 @@ const DESIGN_CSS = `
   $P .property-video-hero .property-video-stage.property-film #property-video-status { top:calc(31% + 70px); }
   $P .property-video-hero .property-video-stage.property-film.is-playing #property-video-status { top:18px; }
   $P .property-video-hero .property-video-stage.property-film,$P .property-video-hero .property-video-stage.property-film > video,$P .property-video-hero .property-video-stage.property-film .property-video-play,$P .property-video-hero .property-video-stage.property-film .property-film-label { animation:none; }
+  /* With scripts disabled, the fallback link replaces the inert Play button.
+     Keep the same discoverable film action without stacking two controls. */
+  $P .property-video-stage.property-film:has(.property-video-download) .property-video-play { display:none; }
+  $P .property-video-stage.property-film .property-video-download { z-index:3; display:inline-flex; align-items:center; justify-content:center; width:max-content; min-height:48px; max-width:calc(100% - 40px); padding:12px 20px; border:1px solid rgba(255,255,255,.8); border-radius:999px; color:#fff; background:rgba(12,18,16,.82); font:600 13px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; text-align:center; text-decoration:none; white-space:nowrap; }
+  $S .property-video-stage.property-film .property-video-download { top:31%; }
   /* Once the film plays the identity steps aside; the navigation keeps every page one tap away. */
   $P .listing-cover:has(.property-film.is-playing)::after { opacity:0; }
   $P .listing-cover:has(.property-film.is-playing) .property-hero-copy { opacity:0; pointer-events:none; transform:translateY(12px); }
@@ -320,6 +325,7 @@ const DESIGN_CSS = `
     $P .listing-cover :is(.property-hero-link,.listing-cover-actions button,.property-recorded-option button) { background:#161d1b; backdrop-filter:none; -webkit-backdrop-filter:none; }
     $P .listing-cover .listing-cover-actions .property-hero-contact { background:var(--hero-cta); }
     $P .property-video-stage.property-film .property-film-play-mark,$P .property-video-stage.property-film #property-video-status { background:#161d1b; backdrop-filter:none; -webkit-backdrop-filter:none; }
+    $P .property-video-stage.property-film .property-video-download { background:#161d1b; }
   }
   @media(prefers-contrast:more) {
     $P #listing-nav { background:var(--premium-paper); border-color:var(--ink); }
@@ -446,6 +452,9 @@ const DESIGN_CSS = `
     $P #overview { padding-top:0; }
     .property-site .property-preview-banner { padding:10px 16px; font-size:12px; }
     .property-site .property-preview-watermark { padding:6px 9px; font-size:10px; }
+    /* The sticky preview banner already names the design on phones. The fixed
+       badge can cover media disclosures and other content near the fold. */
+    $P.site-preview .property-preview-watermark { display:none; }
   }
   @media(max-width:374px) {
     /* A full film + walkthrough + share row otherwise runs under Pages at

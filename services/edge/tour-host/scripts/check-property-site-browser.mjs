@@ -397,6 +397,16 @@ try {
     check(await page.locator(".property-photo noscript img").count()===PHOTOS.length && await page.locator(".property-photo noscript img").first().isVisible(),theme+": existing noscript master images remain available");
     await page.goto(origin+"/property/synthetic-site",{waitUntil:"networkidle"});
     const session=await context.newCDPSession(page);await session.send("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"reduce"},{name:"prefers-reduced-transparency",value:"reduce"}]});
+    const noScriptFilm=await page.evaluate(()=>{
+      const stage=document.querySelector(".property-video-stage.property-film"),link=stage?.querySelector(".property-video-download"),play=stage?.querySelector("#property-video-play"),copy=document.querySelector(".property-hero-copy");
+      if(!stage||!link||!play||!copy)return null;
+      const media=stage.getBoundingClientRect(),action=link.getBoundingClientRect(),identity=copy.getBoundingClientRect();
+      return{href:new URL(link.href).pathname,playHidden:getComputedStyle(play).display==="none",height:action.height,radius:parseFloat(getComputedStyle(link).borderRadius),fill:getComputedStyle(link).backgroundColor,insideMedia:action.top>=media.top&&action.bottom<=media.bottom,clearOfIdentity:action.bottom<=identity.top,centerHit:link.contains(document.elementFromPoint(action.left+action.width/2,action.top+action.height/2))};
+    });
+    measurements.push({theme,presentation:"no-script-film-action",...noScriptFilm});
+    check(noScriptFilm?.href==="/media/master.mp4"&&noScriptFilm.playHidden,theme+": no-script film link replaces the inert Play mark");
+    check(noScriptFilm.height>=44&&noScriptFilm.radius>=24&&noScriptFilm.insideMedia&&noScriptFilm.clearOfIdentity&&noScriptFilm.centerHit,theme+": no-script film link is a separate reachable capsule clear of the identity");
+    check(noScriptFilm.fill==="rgb(22, 29, 27)",theme+": no-script film link uses an opaque fill under Reduce Transparency");
     const fallback=await page.locator("#listing-nav").evaluate(el=>({background:getComputedStyle(el).backgroundColor,blur:getComputedStyle(el).backdropFilter,animation:getComputedStyle(document.querySelector(".property-hero-copy")).animationName,opacity:getComputedStyle(document.querySelector(".property-hero-copy")).opacity,film:[".property-video-stage.property-film",".property-film-backdrop","#property-video-play",".property-film-label"].map(selector=>{const node=document.querySelector(selector);return node?getComputedStyle(node).animationName+"/"+getComputedStyle(node).opacity+"/"+getComputedStyle(node).transitionDuration:"missing";}),video:(()=>{const v=document.querySelector(".property-video-stage.property-film > video");return v?getComputedStyle(v).animationName+"/"+getComputedStyle(v).transitionDuration:"missing";})()}));
     check(fallback.blur==="none"&&!fallback.background.startsWith("rgba")&&fallback.animation==="none"&&fallback.opacity==="1",theme+": actual reduced-transparency/motion preferences keep opaque visible content");
     // The paid opening shows its poster through the full-bleed backdrop; the film element itself is revealed by Play, so it is checked for stillness, not opacity.
@@ -405,6 +415,9 @@ try {
     await page.goto(origin+"/property/synthetic-site?preview_theme="+theme,{waitUntil:"networkidle"});
     check(await page.locator(".property-preview-banner").isVisible() && await page.locator("form").count()===0,theme+": actual design preview retains its label and omits enquiry");
     check(await page.locator("#listing-nav").evaluate(el=>getComputedStyle(el).position)==="relative",theme+": preview navigation preserves its non-sticky placement beneath the sticky preview banner");
+    const previewChrome=await page.evaluate(()=>({bannerSticky:getComputedStyle(document.querySelector(".property-preview-banner")).position==="sticky",bannerText:document.querySelector(".property-preview-banner").textContent,watermarkHidden:getComputedStyle(document.querySelector(".property-preview-watermark")).display==="none",mediaDetailsVisible:!!document.querySelector(".listing-media-label a")?.getBoundingClientRect().height}));
+    measurements.push({theme,presentation:"mobile-preview-chrome",...previewChrome});
+    check(previewChrome.bannerSticky&&previewChrome.bannerText.includes("Design preview")&&previewChrome.watermarkHidden&&previewChrome.mediaDetailsVisible,theme+": sticky mobile preview label remains while fixed badge cannot cover media details");
     check(await page.locator(".property-page-menu-links a[href*='preview_theme="+theme+"']").count()===4,theme+": native preview menu preserves all four preview URLs");
     await page.screenshot({path:join(evidence,theme+"-390-preview-native-menu.png"),fullPage:true});
     await context.close();longAddress=false;
