@@ -1,5 +1,18 @@
 # App Store listing and review assets
 
+**27 October 2026 candidate:** The current 1.0.5 release source has a new
+Aerial intro route available to eligible paid accounts with aerial allowance.
+The older generic aerial endpoint remains private beta. Physical aerial
+quality acceptance is still open. It also has photo-based Listing videos,
+optional recorded walkthroughs, and
+one draft listing with limited photo edits during an eligible 7-day Apple
+trial. New video/aerial generation and website publication require paid
+access. Floor plans, measurements and 3D tours remain outside the standard
+release. The local metadata and [review notes](review-notes.md) distinguish
+the two aerial routes; they are not proof of TestFlight delivery,
+device acceptance or App Store submission. The dated material below is
+historical and must not be used as the current release checklist.
+
 **October 16 working state:** the last verified public version is 1.0.4 (74),
 and internal TestFlight 1.0.5 (87) is available. The next photo-first candidate
 and Kie permission integration are unfinished; no new App Store submission or
@@ -51,7 +64,7 @@ evidence that every feature is ready for public release.
 
 ## Metadata measurements
 
-Measured from the committed files on 10 October 2026 (build 57 copy pass)
+Measured from the local 27 October 2026 candidate files
 after trimming outer whitespace, matching the tool's inputs:
 
 | Field | Characters | UTF-8 bytes | Tool limit |
@@ -60,15 +73,14 @@ after trimming outer whitespace, matching the tool's inputs:
 | `subtitle.txt` | 29 | 29 | 30 characters |
 | `promotional_text.txt` | 153 | 153 | 170 characters |
 | `keywords.txt` | 96 | 96 | 100 bytes |
-| `description.txt` | 3863 | 3915 | 4000 characters |
-| `release_notes.txt` | 1157 | 1157 | 4000 characters |
-| `review_notes.txt` | 3939 | 3939 | 4000 characters |
+| `description.txt` | 2497 | 2497 | 4000 characters |
+| `release_notes.txt` | 630 | 630 | 4000 characters |
+| `review_notes.txt` | 3614 | 3614 | 4000 characters |
 
-The review notes have only 61 characters of headroom. Re-measure after editing;
-old counts are not a validation result for new text. The tool checks limits
-before sending fields.
+Re-measure after editing; old counts are not a validation result for new
+text. The tool checks limits before sending fields.
 
-Build 57 copy truth: Measurements, 3D floor plan and 3D walkthrough are
+Current source truth: Measurements, floor plans and 3D tours are
 Coming soon cards on Home and in each listing's toolbox. They open nothing and
 no plan includes them, so the description, review notes and keywords no longer
 describe measurement entry, plan import or RoomPlan/LiDAR scanning. Do not
@@ -78,17 +90,17 @@ reintroduce those claims until a signed build re-enables the tool.
 
 - The repository's Starter/Pro/Team allowances in
   [Products.swift](../../apps/ios/Rendprop/Purchases/Products.swift) are respectively
-  **4/100/6/2**, **10/200/12/4** and **25/400/25/8** for monthly tour renders,
+  **4/100/30/2**, **10/200/60/4** and **25/400/150/8** for monthly tour renders,
   AI photo edits, reel clips and aerial intros. Team has two seats. These match
-  the current description; verify live `plan_entitlements` when changing plans.
+  current native plan copy; verify live `plan_entitlements` when changing plans.
   The advertised photo counts exceed the conservative serving budgets for the
   owner's 75%-after-Apple margin target. Agreement between files does not certify
   profitability or that all advertised actions can be funded. See
   [the pricing audit](../PRICING-AUDIT-20261003.md).
-- The five displayed subscription prices in the description and local StoreKit
-  fixture are Starter $49/month or $490/year, Pro $99/month or $990/year and
-  Team $249/month. The app excludes Team Yearly via `notSoldAtLaunch`.
-  A local fixture is not a fresh read of store availability or regional prices.
+- The app requests only the three monthly Starter, Pro and Team products.
+  `notSoldAtLaunch` excludes all annual products. The app presents Apple's
+  localized `Product.displayPrice`; a local fixture is not a fresh read of
+  store availability or regional prices.
 - Named-account continuity requires the same account and workspace and completed
   uploads. Do not turn offline capture or anonymous-session support into a claim
   that unsynced local files automatically appear on another device.

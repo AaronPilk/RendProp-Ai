@@ -1,5 +1,13 @@
 # App Store Review readiness — Rendprop v1.0 (build 1)
 
+> **Historical audit only.** Its pass verdicts and line references are not a
+> readiness decision for the current 1.0.5 candidate. In particular, current
+> source requires Sign in with Apple, enables a new paid Aerial intro, excludes
+> spatial tools, limits the Apple trial to one draft listing and photo edits,
+> and gates new video and website publication on paid access. Recheck the exact
+> signed build and use [current candidate review notes](review-notes.md) before
+> preparing an App Store submission. The owner has not authorized submission.
+>
 > **Superseded claims (10 October 2026, build 57).** This is the dated 2026-09-05 audit
 > and is kept as a record. Three things it treats as shipped no longer describe the
 > current build: (1) the floor plan / RoomPlan rows (§1 "2.5.1", "4.0 / 4.2", §3 "Floor plan —
