@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 shipping_boundary_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-shipping_boundary_dir="$(mktemp -d /tmp/rendprop-app-store-boundaries-XXXXXX)"
+shipping_boundary_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/rendprop-app-store-boundaries-XXXXXX")"
 python3 - "$shipping_boundary_root" "$shipping_boundary_dir" <<'PY'
 import hashlib, json, pathlib, sys, xml.etree.ElementTree as ET
 root, output = map(pathlib.Path, sys.argv[1:])

@@ -7,6 +7,7 @@ provider, filesystem scan or Apple request occurs.
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -52,8 +53,6 @@ assert 'GuidedPanoramaEntryCard()' not in block(app, 'struct HomeDashboardView:'
 assert 'detail.floorPlanComingSoon' not in toolbox
 assert 'isSpatialWalkthroughAvailable' not in grid and 'isSpatialWalkthroughAvailable' not in route_spatial
 assert 'SpatialTourView(' not in app and 'SpatialTourView(' not in toolbox
-assert 'comingSoonTile("Aerial intro"' in grid
-assert 'detail.aerialComingSoon' in toolbox
 assert 'detail.spatialComingSoon' in toolbox
 assert all(part.count('#if SPATIAL_CAPTURE_LAB') == 1 and '#else' in part for part in [route_plan, route_spatial, home, listing])
 floor_view = block(detail, 'struct FloorPlanView:')
@@ -69,6 +68,15 @@ for anchor in ['private func existingUpload()', 'private func refreshState()', '
                'struct RoomScanView:', 'final class RoomScanController:', 'struct FloorPlan2DView:']:
     expected = block(baseline_floor if anchor in baseline_floor else baseline, anchor)
     actual = block(floor_view if anchor in floor_view else detail, anchor)
+    # Three button surfaces adopted the shared pill treatment. The surrounding
+    # scan, import and measurement bodies must still match the frozen baseline.
+    if anchor in {'@ViewBuilder private var uploadSection:', 'private var measurementsSection:', 'struct FloorPlan2DView:'}:
+        primary = anchor == 'private var measurementsSection:'
+        background = r'\.background\(Theme\.accent\)\.foregroundStyle\(Color\.white\)' if primary else r'\.background\(Theme\.accentSoft\)\.foregroundStyle\(Theme\.accent\)'
+        pattern = r'(?m)^([ \t]*)' + background + r'\n\1\.clipShape\(RoundedRectangle\(cornerRadius: 12, style: \.continuous\)\)'
+        surface = f'.modifier(RendpropActionLabelSurface(primary: {str(primary).lower()}))'
+        expected, replaced = re.subn(pattern, lambda match: match.group(1) + surface, expected)
+        assert replaced == 1 and actual.count(surface) == 1, 'Expected exact native button surface: ' + anchor
     assert actual == expected, 'Existing scan/measurement function changed: ' + anchor
     preserved[anchor] = hashlib.sha256(actual.encode()).hexdigest()
 baseline_body = block(baseline_floor, '    var body: some View {')
@@ -95,7 +103,7 @@ enum ProjectFeature: String { case tour, spatial, photos, photoStudio, reel, flo
 struct Listing { let id: UUID; var isSample = false }
 struct ProjectRoute { let listing: Listing; let feature: ProjectFeature }
 enum ProjectGateSheet { case start(ProjectFeature), pick(ProjectFeature), aerial(Listing), reel(Listing) }
-enum LaunchFeatureAvailability { static let canGenerateAerial = false }
+enum LaunchFeatureAvailability { static let canCreateOpening = false }
 enum Config { static var useLiveBackend = false }
 enum WorkspaceContext { static var selectedOrgID: UUID? }
 enum ChildBehavior { case combine }
