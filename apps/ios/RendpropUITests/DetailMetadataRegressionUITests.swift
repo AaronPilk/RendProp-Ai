@@ -280,6 +280,24 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         attach("build58-zip-and-separate-photo-delivery")
     }
 
+    func testPhotoMotionReviewShowsPriceCheckBeforeMake() {
+        launch("rich")
+        openVideo(purpose: "listing")
+        let next = app.buttons["video.setup.next"]
+        XCTAssertTrue(next.waitForExistence(timeout: 10) && next.isEnabled && next.isHittable,
+            app.debugDescription)
+        next.tap()
+        XCTAssertTrue(app.navigationBars["Review"].waitForExistence(timeout: 10), app.debugDescription)
+        let quote = element("video.review.creditQuote")
+        scrollTo(quote)
+        XCTAssertTrue(quote.exists, app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Photo motion price"].exists)
+        XCTAssertTrue(app.staticTexts["Check the exact credit price for these photos before making your video."].exists)
+        XCTAssertFalse(element("video.review.quotedCredits").exists,
+            "The native Review must not invent a credit amount before a server quote")
+        attach("photo-motion-review-before-quote")
+    }
+
     func testShareEverythingIncludesTourAndListingDetailsAsDefaultZIP() {
         launch("rich")
         let share = app.buttons["detail.sharePackage"]
