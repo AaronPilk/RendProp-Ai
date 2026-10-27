@@ -103,6 +103,15 @@ test("published readiness uses the verified address link without changing the ML
   resolvedLinks["oak-street"].links.branded = "https://rendprop.com/property/10-oak-street/20260922.other-listing";
   assert.equal(listingFinish({ ...value, resolvedLinks }).publishedLinks?.branded, "https://rendprop.com/f/oak-street");
 });
+test("a revoked publication is not live or previewable in readiness", () => {
+  const value = input(); value.state.renders = [published];
+  const missing = { "oak-street": false as const };
+  const finish = listingFinish({ ...value, resolvedLinks: missing });
+  assert.equal(finish.publishedLinks, null);
+  assert.equal(finish.designPreviews, null);
+  assert.notEqual(finish.title, "Your tour is live");
+  assert.equal(finish.steps.find(step => step.id === "share")?.status, "waiting");
+});
 test("archived and sold properties retain truthful existing-public-link state", () => {
   const value = input(); value.listing = { ...listing, status: "archived" }; value.state.renders = [published];
   assert.equal(listingFinish(value).title, "This property is archived");

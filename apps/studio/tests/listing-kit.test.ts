@@ -69,6 +69,21 @@ test("published kit exports one verified address URL consistently across links, 
   assert.ok(readZip("START-HERE.html").includes(`href="${branded}"`));
   assert.equal(readZip("sharing/marketing-qr.svg"), await createTourQR(slug, "branded", { links: { branded, unbranded: `https://rendprop.com/u/${slug}` }, verified: true, addressOnly: false }));
 });
+test("authoritative not_found omits revoked tour links and QR from the listing kit", async () => {
+  const f = kitFixture(), signal = new AbortController().signal;
+  const snapshot = await loadKit(f.services, workspace, listingA, signal);
+  const endpoint = "https://rendprop.com/f/fixture-live-property/share-link";
+  const missing = new Response(JSON.stringify({ error: "not_found" }), { status: 404, headers: { "content-type": "application/json" } });
+  Object.defineProperty(missing, "url", { value: endpoint });
+  const kit = await buildKit(snapshot, [], { services: f.services, workspace, signal, progress: () => {}, shareFetcher: async () => missing });
+  const dir = await mkdtemp(join(tmpdir(), "rendprop-revoked-kit-")), zip = join(dir, kit.filename);
+  await writeFile(zip, Buffer.from(await kit.blob.arrayBuffer()));
+  const names = execFileSync("unzip", ["-Z1", zip], { encoding: "utf8" });
+  assert(!names.includes("sharing/")); assert(!names.includes("sharing-links.txt"));
+  const manifest = JSON.parse(execFileSync("unzip", ["-p", zip, "manifest.json"], { encoding: "utf8" }));
+  assert.equal(manifest.publishedLinks, null);
+  assert.match(execFileSync("unzip", ["-p", zip, "START-HERE.html"], { encoding: "utf8" }), /No published tour was available/);
+});
 test("a late address response cannot finish an export after the account changes", async () => {
   const f = kitFixture(), signal = new AbortController().signal;
   const snapshot = await loadKit(f.services, workspace, listingA, signal);

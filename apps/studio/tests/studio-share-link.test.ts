@@ -76,12 +76,31 @@ test("bare legacy and undated noindex responses remain usable but unproven links
     response({ url: dated, address_only: false, filler: "x".repeat(2100) }),
   ]) {
     const result = await resolveTourLinks(slug, { fetcher: async () => returned });
-    assert.deepEqual(result, { links: fallback, verified: false, addressOnly: null });
+    assert.equal(result, null);
   }
   assert.deepEqual(safeTourLinks(slug, { links: { branded: `https://evil.invalid/property/a/${slug}`, unbranded: fallback.unbranded }, verified: true, addressOnly: false }), fallback);
   assert.deepEqual(safeTourLinks(slug, { links: { branded: dated, unbranded: "https://evil.invalid" }, verified: true, addressOnly: false }), fallback);
   assert.deepEqual(safeTourLinks(slug, { links: { branded: bare, unbranded: fallback.unbranded }, verified: true, addressOnly: false }), fallback);
   assert.deepEqual(safeTourLinks(slug, { links: { branded: bare, unbranded: fallback.unbranded }, verified: true, addressOnly: true }), { branded: bare, unbranded: fallback.unbranded });
+});
+
+test("an exact public not_found withholds stale marketing and MLS links; outages retain token fallback", async () => {
+  const missing = await resolveTourLinks(slug, { fetcher: async () => response({ error: "not_found" }, 404) });
+  assert.equal(missing, false);
+  assert.equal(safeTourLinks(slug, missing), null);
+  await assert.rejects(() => createTourQR(slug, "branded", missing ?? undefined), /could not be verified/);
+  await assert.rejects(() => createTourQR(slug, "unbranded", missing ?? undefined), /could not be verified/);
+  for (const invalid of [
+    response({ error: "temporary" }, 404),
+    response({ error: "not_found" }, 404, "https://other.invalid/not-found"),
+    response("<html>not found</html>", 404),
+    response({ error: "unavailable" }, 503),
+  ]) {
+    const proof = await resolveTourLinks(slug, { fetcher: async () => invalid });
+    assert.deepEqual(safeTourLinks(slug, proof), fallback);
+  }
+  const failedFetch = await resolveTourLinks(slug, { fetcher: async () => { throw new Error("network offline"); } });
+  assert.deepEqual(safeTourLinks(slug, failedFetch), fallback);
 });
 
 test("a caller-aborted lookup cannot publish a late response", async () => {

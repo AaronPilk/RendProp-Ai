@@ -12,7 +12,7 @@ import GalleryPhotoCard from "./GalleryPhotoCard";
 import { changeListingSelection, confirmsGallerySelection, UnconfirmedGallerySelection, readGallerySelection, sameSelection, selectionExpected, type GallerySelection } from "./gallery-selection";
 import { prepareGalleryCopy } from "./gallery-copy";
 import { downloadTourQR } from "./qr";
-import { resolveTourLinks, safeTourLinks, type ResolvedTourLinks } from "./share-link";
+import { resolveTourLinks, safeTourLinks, type TourShareProof } from "./share-link";
 import "./listings.css";
 import { FeatureCards } from "../home/Dashboard";
 import { FEATURES, homeWords, type FeatureId } from "../home/features";
@@ -330,7 +330,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
   const videoAssets = state.assets.filter((asset) => asset.uploaded && asset.kind === "video");
   const chosenAsset = videoAssets.find((asset) => asset.id === assetId);
   const published = state.renders.filter((render) => render.published_at);
-  const [shareProofs, setShareProofs] = useState<{ scope: string; links: Record<string, ResolvedTourLinks> }>({ scope: "", links: {} });
+  const [shareProofs, setShareProofs] = useState<{ scope: string; links: Record<string, TourShareProof> }>({ scope: "", links: {} });
   const shareGuard = useRef<(() => void) | null>(null);
   const shareVersion = services.getSnapshot().identityVersion;
   const shareScope = JSON.stringify([workspace.user.id, workspace.org.id, workspace.libraryOrgId ?? workspace.org.id, listing.id,
@@ -347,7 +347,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
       const worker = async () => {
         while (next < rows.length && !controller.signal.aborted) {
           const row = rows[next++], resolved = await resolveTourLinks(row.slug, { signal: controller.signal });
-          if (!resolved || controller.signal.aborted) continue;
+          if (resolved === null || controller.signal.aborted) continue;
           guard();
           setShareProofs(current => current.scope === shareScope
             ? { scope: shareScope, links: { ...current.links, [row.slug]: resolved } } : current);
@@ -480,7 +480,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
           <h3>Published tours</h3>
           {published.length === 0 ? <p>Your branded and {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} links will appear here when you publish.</p> : published.map(tour => {
             const links = linksFor(tour.slug), proof = proofFor(tour.slug);
-            if (!links) return null;
+            if (!links) return <p key={tour.id}>Tour unavailable.</p>;
             const requireCurrent = () => {
               if (canUseShare()) return true;
               setActionError("Your property selection changed. Reopen this property before sharing.");
@@ -500,7 +500,6 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
                 <a href={links.unbranded} target="_blank" rel="noreferrer" onClick={event => { if (!requireCurrent()) event.preventDefault(); }}>Open {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} tour ↗</a>
                 <button onClick={() => copy(links.unbranded, "Unbranded link")}>Copy {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} link</button>
               </div>
-              {listing.spaceType === "real_estate" && proof && !proof.verified && <p className="lw-help">Address link is temporarily unavailable. This published tour link still works.</p>}
               <button onClick={() => { if (requireCurrent()) void downloadTourQR(tour.slug, "branded", proof, canUseShare).then(() => { if (canUseShare()) setNotice("Marketing QR code downloaded."); }, reason => { if (canUseShare()) setActionError(message(reason)); }); }}>Download marketing QR</button>
               <button onClick={() => { if (requireCurrent()) void downloadTourQR(tour.slug, "unbranded", proof, canUseShare).then(() => { if (canUseShare()) setNotice("Unbranded MLS QR code downloaded."); }, reason => { if (canUseShare()) setActionError(message(reason)); }); }}>Download {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} QR</button>
               <button disabled={!canWrite} onClick={() => { const job = state.jobs.find(j => j.id === tour.job_id); setEditTour(tour); setChapters(formatChapters(state.chapters.filter(c => c.asset_id === job?.capture_asset_id))); }}>Edit room chapters</button>

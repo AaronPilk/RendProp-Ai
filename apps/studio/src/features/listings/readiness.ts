@@ -2,7 +2,7 @@ import type { Listing, ListingMedia, Workspace } from "../../data/contracts";
 import type { FeatureId } from "../home/features";
 import { canPublishAsset, tourLinks, websiteDesignPreviews } from "./model";
 import type { ListingState } from "./model";
-import { safeTourLinks, type ResolvedTourLinks } from "./share-link";
+import { safeTourLinks, type TourShareProof } from "./share-link";
 
 export type ListingDestination = { tab: "media" | "tour" | "details" } | { feature: FeatureId } | { refresh: true };
 type Action = { label: string; destination: ListingDestination; requiresWrite?: boolean };
@@ -32,7 +32,7 @@ export function listingFinish(input: {
   listing: Listing; state: ListingState; media: ListingMedia | null;
   loading: boolean; loadFailed: boolean; pendingUploads: number;
   canWrite: boolean; hasCreativeTools: boolean;
-  resolvedLinks?: Record<string, ResolvedTourLinks>;
+  resolvedLinks?: Record<string, TourShareProof>;
 }): ListingFinish {
   const { listing, state, media, canWrite } = input;
   const tab = (label: string, value: "media" | "tour" | "details"): Action => ({ label, destination: { tab: value } });
@@ -88,5 +88,5 @@ export function listingFinish(input: {
     detail = links ? "Its existing tour is still published. Review its sharing options or update the property status in Details." : "Your saved work remains available. Review the property status before creating new marketing.";
     next = links ? steps[4].action : tab("View property status", "details");
   }
-  return { title, detail, next, steps, publishedLinks: links, designPreviews: latestPublished ? websiteDesignPreviews(latestPublished.slug) : null, progress, checking: false };
+  return { title, detail, next, steps, publishedLinks: links, designPreviews: links && latestPublished ? websiteDesignPreviews(latestPublished.slug) : null, progress, checking: false };
 }

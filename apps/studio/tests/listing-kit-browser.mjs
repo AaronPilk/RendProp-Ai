@@ -33,7 +33,7 @@ function readZipDirectory(buffer) {
   }
   assert.equal(offset - start, size); return entries;
 }
-let browser, server, page, mode = "normal", held = [], downloads = [];
+let browser, server, page, mode = "normal", shareMode = "normal", held = [], downloads = [];
 try {
   receipt.cache = await verifyPrivateKitCache({ root, artifacts: join(artifacts, "cache-regression"), executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
   receipt.checks.push("Actual Kit bypasses non-CORS image cache for public and heuristic freshness, emits Origin-bearing GETs and preserves exact ZIP photo bytes");
@@ -53,6 +53,7 @@ try {
     if (url.origin === origin && req.method() === "GET") return route.continue();
     if (url.origin === "https://rendprop.com" && url.pathname === `/f/${publicationSlug}/share-link` && req.method() === "GET") {
       addressLookups++;
+      if (shareMode === "missing") return route.fulfill({ status: 404, contentType: "application/json", headers: { "Access-Control-Allow-Origin": origin, "Cache-Control": "no-store" }, body: JSON.stringify({ error: "not_found" }) });
       return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": origin, "Cache-Control": "no-store" }, body: JSON.stringify({ url: addressLink, address_only: false }) });
     }
     if (url.hostname === `${"a".repeat(32)}.r2.cloudflarestorage.com` && req.method() === "GET") {
@@ -136,7 +137,7 @@ try {
   receipt.checks.push("Cancel during a held media response leaves saved data and dirty details intact and emits no late download");
   mode = "hold"; await page.getByRole("button", { name: "Download ZIP", exact: true }).click(); await expect.poll(() => held.length).toBeGreaterThan(0);
   await page.getByLabel("Working on", { exact: true }).selectOption("20000000-0000-4000-8000-000000000003"); mode = "normal"; await releaseHeld(); await page.waitForTimeout(100); assert.equal(downloads.length, count);
-  await page.getByRole("button", { name: "Choose kit materials" }).click(); await expect(page.getByText("No tour has been published", { exact: false })).toBeVisible(); await review().check();
+  await page.getByRole("button", { name: "Choose kit materials" }).click(); await expect(page.getByText("No public tour is saved", { exact: false })).toBeVisible(); await review().check();
   const detailsPromise = page.waitForEvent("download"); await page.getByRole("button", { name: "Download ZIP", exact: true }).click(); const details = await detailsPromise; const detailsZip = join(artifacts, "details-only.zip"); await details.saveAs(detailsZip);
   const names = execFileSync("unzip", ["-Z1", detailsZip], { encoding: "utf8" }); assert(!names.includes("sharing")); assert(!names.includes("photos/"));
   const detailsManifest = JSON.parse(execFileSync("unzip", ["-p", detailsZip, "manifest.json"], { encoding: "utf8" })); assert.equal(detailsManifest.facts.address, "20 Maple Avenue"); assert.equal(detailsManifest.publishedLinks, null);
@@ -148,6 +149,16 @@ try {
   await page.reload(); await openKit(); await page.setViewportSize({ width: 390, height: 844 }); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await page.screenshot({ path: join(artifacts, "kit-mobile.png"), fullPage: true }); await page.setViewportSize({ width: 1440, height: 1080 }); await page.screenshot({ path: join(artifacts, "kit-desktop.png"), fullPage: true });
   receipt.checks.push("Branded selection UI fits a 390px viewport with readable progress, original pairing and disclosure controls");
+  shareMode = "missing";
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Your tour is live" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Open live property" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Preview design/ })).toHaveCount(0);
+  await page.getByRole("tab", { name: "Create & publish", exact: false }).click();
+  await expect(page.getByText("Tour unavailable.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy marketing link" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Download marketing QR" })).toHaveCount(0);
+  receipt.checks.push("Authoritative public not_found removes stale Open, Copy, preview and QR actions while keeping the saved property visible");
   const calls = await page.evaluate(() => window.kitFixture.calls); assert(calls.every(call => call.method === "GET")); assert(addressLookups >= 1); assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); process.exitCode = 1; if (page) await page.screenshot({ path: join(artifacts, "failure.png"), fullPage: true }).catch(() => {}); }
 finally { await browser?.close(); if (server) await new Promise(done => server.close(done)); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }

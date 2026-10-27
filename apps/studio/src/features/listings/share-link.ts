@@ -1,7 +1,9 @@
 import { tourLinks } from "./model";
 
 export type TourLinks = NonNullable<ReturnType<typeof tourLinks>>;
-export type ResolvedTourLinks = { links: TourLinks; verified: boolean; addressOnly: boolean | null };
+export type ResolvedTourLinks = { links: TourLinks; verified: true; addressOnly: boolean };
+/** False means Tour Host confirmed this publication is no longer public. */
+export type TourShareProof = ResolvedTourLinks | false;
 const origin = "https://rendprop.com";
 const descriptor = "[a-z0-9](?:[a-z0-9-]{0,118}[a-z0-9])?";
 const slugPattern = /^[A-Za-z0-9_-]{1,64}$/;
@@ -22,17 +24,19 @@ export function verifiedTourShareURL(raw: unknown, addressOnly: unknown, slug: s
   return tail === slug || new RegExp(`^[0-9]{8}\\.${slug}$`).test(tail) ? raw : null;
 }
 
-export function safeTourLinks(slug: string, resolved?: ResolvedTourLinks | null): TourLinks | null {
+export function safeTourLinks(slug: string, resolved?: TourShareProof | null): TourLinks | null {
   const fallback = tourLinks(slug);
-  if (!fallback || !resolved || resolved.links.unbranded !== fallback.unbranded || !resolved.verified) return fallback;
+  if (resolved === false) return null;
+  if (!fallback || !resolved || resolved.links.unbranded !== fallback.unbranded) return fallback;
   const branded = resolved.links.branded;
   return verifiedTourShareURL(branded, resolved.addressOnly, slug)
     ? { branded, unbranded: fallback.unbranded } : fallback;
 }
 
-/** Public, credential-free, no-referrer lookup. Failure keeps an already
- * published token URL usable; the MLS /u link is never changed by this read. */
-export async function resolveTourLinks(slug: string, options: { signal?: AbortSignal; fetcher?: typeof fetch } = {}): Promise<ResolvedTourLinks | null> {
+/** Public, credential-free, no-referrer lookup. A bounded, exact not_found
+ * response withholds stale links; null means transient/unknown and keeps the
+ * published token fallback usable. The MLS /u link is unchanged by this read. */
+export async function resolveTourLinks(slug: string, options: { signal?: AbortSignal; fetcher?: typeof fetch } = {}): Promise<TourShareProof | null> {
   const fallback = tourLinks(slug);
   if (!fallback || !slugPattern.test(slug)) return null;
   const endpoint = `${origin}/f/${slug}/share-link`;
@@ -43,17 +47,19 @@ export async function resolveTourLinks(slug: string, options: { signal?: AbortSi
       headers: { Accept: "application/json" },
     });
     if (options.signal?.aborted) options.signal.throwIfAborted();
-    if (response.status !== 200 || response.url !== endpoint || Number(response.headers.get("content-length") ?? 0) > 2048) return { links: fallback, verified: false, addressOnly: null };
+    if (response.status !== 200 && response.status !== 404 || response.url !== endpoint ||
+        Number(response.headers.get("content-length") ?? 0) > 2048) return null;
     const body = await response.text();
     if (options.signal?.aborted) options.signal.throwIfAborted();
-    if (new TextEncoder().encode(body).length > 2048) return { links: fallback, verified: false, addressOnly: null };
+    if (new TextEncoder().encode(body).length > 2048) return null;
+    if (response.status === 404) return body === '{"error":"not_found"}' ? false : null;
     const value: unknown = JSON.parse(body);
-    if (!value || typeof value !== "object" || Array.isArray(value)) return { links: fallback, verified: false, addressOnly: null };
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const row = value as Record<string, unknown>;
     const branded = verifiedTourShareURL(row.url, row.address_only, slug);
-    return branded ? { links: { branded, unbranded: fallback.unbranded }, verified: true, addressOnly: row.address_only as boolean } : { links: fallback, verified: false, addressOnly: null };
+    return branded ? { links: { branded, unbranded: fallback.unbranded }, verified: true, addressOnly: row.address_only as boolean } : null;
   } catch (error) {
     if (options.signal?.aborted) throw error;
-    return { links: fallback, verified: false, addressOnly: null };
+    return null;
   }
 }
