@@ -39,4 +39,18 @@ where the original aerial guard refused a tampered predecessor. A separate
 full fresh replay then reached `20261023044520_photo_motion_bfb1_fixed_recovery_controller.sql`
 and stopped at its predicate requiring a specific quarantined live aerial job;
 that source-only producer adoption cannot run on an empty database without a
-dedicated fixture or CI exclusion. No live SQL was changed.
+dedicated fixture or CI classification.
+
+The fresh-schema replay now classifies six exact, SHA-pinned live-state
+adoptions: the bfb1, c74, a1bb, and cf7 Photo Motion controller changes; the
+Omni aerial route; and the reviewed Studio kit compare-and-swap. Each stored
+live migration has byte-identical SQL to its repository file. The CI and
+disposable runners still retain and hash their sources, but apply the other
+211 schema migrations in order. Changing or removing any classified file
+fails before replay. A disposable negative check verifies that the bfb1 file
+still refuses an empty database at its exact historical job predicate. With
+the six classified files omitted, all 211 remaining migrations applied and
+the invariant suite reached a separate failing `media_provenance` assertion.
+This schema replay does not certify the historical live jobs, producer
+configuration transitions, or their resulting live-only function versions.
+No live SQL was changed.

@@ -82,9 +82,42 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20261026165813_limit_intro_trial_creative_spend.sql",
 })
 
+# These six applied files are compare-and-swap adoptions of an exact live job,
+# producer configuration, or reviewed function metadata. Their guards must
+# reject an empty database. A fresh-schema replay includes their source hashes
+# but cannot honestly manufacture the historical live rows they required.
+# Pin names AND bytes: any edit or newly missing file requires an explicit
+# review of this classification before the disposable/CI replay can proceed.
+LIVE_STATE_ONLY_MIGRATIONS = {
+    "20261023044520_photo_motion_bfb1_fixed_recovery_controller.sql": "127ff57bfac508e47d32bda54719bbb69e261136d6d8f96a85c83da020622b25",
+    "20261023141755_photo_motion_c74_terminal_reconciliation_controller.sql": "aa95bcc947c7aa60367f0e15bf7b883c2b101676d415808529237b944c132ef4",
+    "20261023144319_photo_motion_a1bb_empty_queue_terminal_cleanup_controller.sql": "a58465b97a5f36f82ff951591f1af4563be40008c5d39a396fa861e2a2458bd0",
+    "20261023173823_aerial_omni_reference_prospective_route_20261023.sql": "9f63c1faeae5cbf8bc81a19dfcba7336132e634f9afd99fcfa889db8bf5c1fef",
+    "20261023185845_photo_motion_cf7_concurrent_scheduler_history_20261023.sql": "13456ba634895717892380a556f51b734e394df1381d43cbd51c0dd065494c9a",
+    "20261023215829_studio_current_reviewed_photo_motion_kit_20261023.sql": "f93481224aa3a93331a20e028097507e263650064c514380a414a65d7801d0e0",
+}
+
+
+def partition_fresh_migrations(paths):
+    paths = tuple(paths)
+    names = [path.name for path in paths]
+    require(len(names) == len(set(names)), "Duplicate migration filenames in fresh replay")
+    missing = set(LIVE_STATE_ONLY_MIGRATIONS) - set(names)
+    require(not missing, f"Classified live-state migrations missing: {sorted(missing)}")
+    schema, live_state = [], []
+    for path in paths:
+        expected = LIVE_STATE_ONLY_MIGRATIONS.get(path.name)
+        if expected is None:
+            schema.append(path)
+        else:
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            require(actual == expected, f"Classified live-state migration changed: {path.name}")
+            live_state.append(path)
+    return schema, live_state
+
 
 def replayable_migration(name):
-    return name not in SINGLE_APPLICATION_MIGRATIONS and (
+    return name not in SINGLE_APPLICATION_MIGRATIONS and name not in LIVE_STATE_ONLY_MIGRATIONS and (
         name.startswith(("0005b_", "0008b_")) or name >= "0009")
 
 
@@ -165,8 +198,10 @@ def main():
                           "No actual JWT verification or HTTP Data API", "No deployed cron verification"]}
     sqlroot = root / "services/supabase"
     migrations = sorted((sqlroot / "migrations").glob("*.sql"))
+    schema_migrations, live_state_migrations = partition_fresh_migrations(migrations)
     sources = migrations + list(sorted((sqlroot / "tests").glob("*.sql"))) + [Path(__file__).resolve()]
     receipt["sourceHashes"] = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
+    receipt["liveStateOnlyMigrations"] = [str(p.relative_to(root)) for p in live_state_migrations]
     print("EVIDENCE:", out, flush=True)
 
     def run(name, command, expected=0, input_text=None):
@@ -212,7 +247,7 @@ def main():
         require(identity.strip() == f"{data}||rendprop_audit", "Cluster identity/network mismatch")
         environment["PGOPTIONS"] = "-c statement_timeout=30000 -c lock_timeout=5000"
         run("bootstrap", psql + ["-q", "-f", str(sqlroot / "tests/ci-bootstrap.sql")])
-        for migration in migrations:
+        for migration in schema_migrations:
             run("apply-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
         counts = []
         receipt["invariantRuns"] = []
@@ -228,7 +263,7 @@ def main():
                         "-v", "ON_ERROR_STOP=1"]
                 run("bootstrap-replay", psql + ["-q", "-f", str(sqlroot / "tests/ci-bootstrap.sql")])
                 replay = []
-                for migration in migrations:
+                for migration in schema_migrations:
                     run("historical-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
                     if replayable_migration(migration.name):
                         run("replay-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
@@ -348,7 +383,8 @@ def main():
                         "keptRed": sorted(KEPT_RED),
                         "keptRedFailures": sorted({name for phase in receipt["invariantRuns"] for name in phase["keptRedFailures"]}),
                         "staleKeptRed": stale_kept_red,
-                        "appliedMigrations": len(migrations), "invariantsEachRun": counts[0],
+                        "appliedMigrations": len(schema_migrations),
+                        "reviewedMigrations": len(migrations), "invariantsEachRun": counts[0],
                         "negativeControl": "Actual team entitlement corrupted; real invariant gate exited 3"})
     except BaseException as error:
         receipt.update({"accepted": False, "failure": f"{type(error).__name__}: {error}"})

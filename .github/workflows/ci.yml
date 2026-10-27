@@ -1749,12 +1749,26 @@ jobs:
       - name: Bootstrap the Supabase baseline (roles, auth schema, default privileges)
         run: psql -v ON_ERROR_STOP=1 -q -f services/supabase/tests/ci-bootstrap.sql
 
-      # Every migration, in the order production received them (LC_ALL=C so the
-      # 0005b / 0008b interleaves sort where they belong), each in ONE transaction
-      # so a failing file leaves no half-applied state behind.
-      - name: Apply every migration on a fresh database
+      - name: Verify exact live-state migration classification
+        run: python3 tools/audit/test_live_state_migration_policy.py
+
+      # Replay every schema migration in production order. The six exact-name,
+      # SHA-pinned live-state adoptions require historical jobs/config/function
+      # metadata and are classified by the same policy as the local audit.
+      - name: Apply schema migrations on a fresh database
         run: |
+          python3 - <<'PY' > /tmp/rendprop-fresh-schema-migrations.txt
+          from pathlib import Path
+          from tools.audit.run_database_regression import partition_fresh_migrations
+          schema, live_state = partition_fresh_migrations(sorted(Path('services/supabase/migrations').glob('*.sql')))
+          for path in schema:
+              print(path)
+          PY
           for f in $(ls services/supabase/migrations/*.sql | LC_ALL=C sort); do
+            if ! grep -Fxq "$f" /tmp/rendprop-fresh-schema-migrations.txt; then
+              echo "== classified live-state adoption (source hash verified): $f"
+              continue
+            fi
             echo "== $f"
             psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
           done
@@ -1826,6 +1840,10 @@ jobs:
                   print(path)
           PY
           for f in $(ls services/supabase/migrations/*.sql | LC_ALL=C sort); do
+            if ! grep -Fxq "$f" /tmp/rendprop-fresh-schema-migrations.txt; then
+              echo "== classified live-state adoption (source hash verified): $f"
+              continue
+            fi
             psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
             if grep -Fxq "$f" /tmp/rendprop-replayable-migrations.txt; then
               psql -v ON_ERROR_STOP=1 -q -1 -f "$f"

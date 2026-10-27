@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "services/supabase/migrations"
 AERIAL = "20261022223138_aerial_opening_photo_motion_composition_20261022.sql"
 HISTORY = "20261022223142_photo_motion_preserve_exact_producer_history_20261022.sql"
+LIVE_ADOPTION = "20261023044520_photo_motion_bfb1_fixed_recovery_controller.sql"
 PREDECESSOR_MD5 = "28867ce20c2e3d208c78083f4a232376"
 HISTORY_MD5 = "c29019ad250ba607244137d0e2140719"
 ADMISSION_MD5 = "208841bb1ad938ce350f523db1287e3b"
@@ -108,10 +109,16 @@ end$verify$;
                     break
             else:
                 raise AssertionError("Photo motion historical handoff migrations were not found")
+            # The next controller adoption is intentionally bound to a
+            # quarantined historical job. It must refuse this empty database.
+            apply(env, MIGRATIONS / "20261023013450_aerial_opening_pro_1080_prospective.sql")
+            rejected = apply(env, MIGRATIONS / LIVE_ADOPTION, ok=False)
+            if "Producer adoption: quarantined aerial job is not exact terminal pre-generation failure" not in rejected.stderr:
+                raise AssertionError(f"Live-state adoption did not fail closed: {rejected.stderr[-1500:]}")
         finally:
             if started:
                 run(["pg_ctl", "-D", str(data), "-m", "immediate", "-w", "stop"], env)
-    print("PASS: fresh Photo motion/aerial handoff, historical identity and changed-predecessor refusal")
+    print("PASS: fresh Photo motion/aerial handoff; changed predecessors and live-state adoption refused")
 
 
 if __name__ == "__main__":
