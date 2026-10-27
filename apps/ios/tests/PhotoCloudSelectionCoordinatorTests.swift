@@ -8,7 +8,8 @@ struct APIError: Error { let status: Int; let code: String? }
     var ids: [UUID]? = [], cover: String?, receipts: [UUID: PhotoCloudSelectionSnapshot.Receipt] = [:]
     var abandoned: [UUID:PhotoCloudSelectionRequest] = [:]
     var abandonCount = 0
-    var patchCount = 0, getCount = 0, prepareCount = 0
+    var patchCount = 0, getCount = 0, prepareCount = 0, validateCount = 0
+    var rejectTargetValidation = false
     var loseReply = false, failGET = false, refusal: APIError?, wrongReceipt = false, wrongRequest = false
     var beforeGET: (() -> Void)?
     var beforePATCH: (() -> Void)?
@@ -18,7 +19,7 @@ struct APIError: Error { let status: Int; let code: String? }
     func key(_ id: UUID) -> String { "renders/\(physical.uuidString.lowercased())/\(identity.serverListingID.uuidString.lowercased())/gallery-\(id.uuidString.lowercased()).jpg" }
     func digest(_ n: Int) -> String { String(repeating: String(n), count: 64) }
     func reset() {
-        ids = [a,b]; cover = key(b); receipts = [:]; abandoned = [:]; abandonCount = 0; patchCount = 0; getCount = 0; prepareCount = 0
+        ids = [a,b]; cover = key(b); receipts = [:]; abandoned = [:]; abandonCount = 0; patchCount = 0; getCount = 0; prepareCount = 0; validateCount = 0; rejectTargetValidation = false
         loseReply = false; failGET = false; refusal = nil; wrongReceipt = false; wrongRequest = false; beforeGET = nil; beforePATCH = nil; afterPATCH = nil; lastOperation = nil
         catalog = [local("a", "A", a, 1),local("a2", "A", a2, 2),local("b", "B", b, 3),local("b2", "B", b2, 4)]
     }
@@ -119,7 +120,14 @@ struct APIError: Error { let status: Int; let code: String? }
         func change(_ c: PhotoCloudSelectionCoordinator, _ id:String = "a2", selecting:Bool = true,
                     follow:Bool = false, promote:Bool = false, identityCheck: @escaping @MainActor () throws -> Void = {}) async throws -> PhotoCloudSelectionProjection {
             try await c.change(identity:fixture.identity,physicalOrgID:fixture.physical,versionID:id,selecting:selecting,
-                followFamilyCover:follow,reviewed:false,promoteCover:promote,api:fixture,catalog:{ fixture.catalog },prepare:{ _,_ in fixture.prepareCount += 1 },requireIdentity:identityCheck)
+                followFamilyCover:follow,reviewed:false,promoteCover:promote,api:fixture,catalog:{ fixture.catalog },prepare:{ _,_ in fixture.prepareCount += 1 },
+                validateTarget: { version, asset, storageKey in
+                    fixture.validateCount += 1
+                    guard version.id == id, version.knownAssetID == asset,
+                          storageKey == nil || storageKey == fixture.key(asset), !fixture.rejectTargetValidation else {
+                        throw PhotoCloudSelectionFailure.changed
+                    }
+                }, requireIdentity:identityCheck)
         }
         func refuses(_ name:String,_ work: () async throws -> Void) async {
             do { try await work(); check(false,name) } catch { check(true,name) }
@@ -136,6 +144,13 @@ struct APIError: Error { let status: Int; let code: String? }
         check(projection.selectedVersionIDs == ["a2","b"],"Acknowledged current snapshot drives publication")
         check(try store.load(fixture.identity) == nil,"Exact receipt retires only its saved operation")
         check(fixture.lastOperation?.request.familyAssetIDs == [fixture.a,fixture.a2].sorted { $0.uuidString < $1.uuidString },"Complete family footprint is captured")
+        check(fixture.validateCount == 1, "selected target is validated before the cloud mutation")
+
+        fixture.reset(); (c,store) = make(); fixture.rejectTargetValidation = true
+        await refuses("Invalid target is refused before mutation") { _ = try await change(c) }
+        let pendingAfterTargetRefusal = try store.load(fixture.identity)
+        check(fixture.validateCount == 1 && fixture.patchCount == 0 && pendingAfterTargetRefusal == nil,
+              "target validation refusal never opens a mutation journal or PATCHes")
 
         fixture.reset(); (c,store) = make(); fixture.loseReply = true
         await refuses("Lost reply remains an error") { _ = try await change(c) }
