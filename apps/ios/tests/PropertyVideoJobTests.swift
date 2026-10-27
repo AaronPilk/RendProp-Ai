@@ -55,6 +55,11 @@ enum FileStore {static let documents=FileManager.default.temporaryDirectory.appe
         model.listings=[ClosedListing(id:context.localListingID,serverID:context.listingID,cloudUnavailable:true)]
         rejects("a revoked cloud listing must stop the actual job status/download guard"){try scope()}
         model.listings=[ClosedListing(id:context.localListingID,serverID:context.listingID)]
+        let replacement=ActualRunnerScopeGuard()
+        let oldOperation=replacement.frozen(context:context,work:work,model:model)
+        let newOperation=replacement.frozen(context:context,work:work,model:model)
+        rejects("a replaced operation must stop the old status/download guard"){try oldOperation()}
+        try newOperation()
         let suite="property-video-cancellation-tests-"+UUID().uuidString
         let defaults=UserDefaults(suiteName:suite)!;defer{defaults.removePersistentDomain(forName:suite)}
         let firstStop=try PropertyVideoJobCancellation.record(actorID:context.actorID,reason:"ai_consent_revoked",defaults:defaults)
@@ -133,13 +138,13 @@ enum FileStore {static let documents=FileManager.default.temporaryDirectory.appe
         let malformed=Data("{\"operation_id\":\"\(request.operationID.uuidString)\",\"listing_id\":\"\(request.listingID.uuidString)\",\"selected_library_org_id\":\"\(request.expectedOrgID.uuidString)\",\"operation_closed\":true}".utf8)
         rejects("missing job field is not explicit job null"){_ = try JSONDecoder().decode(PropertyVideoOperationLookup.self,from:malformed)}
         let pendingWork=ReelWorkJob();pendingWork.serverJob=saved;pendingWork.running=true
-        let serial=ActualFirstEnqueueSerialization();serial.schedule(work:pendingWork)
-        serial.schedule(work:pendingWork)
+        let serial=ActualFirstEnqueueSerialization();serial.schedule(work:pendingWork,model:model)
+        serial.schedule(work:pendingWork,model:model)
         check(serial.requests==0,"reopen cannot race the still-running first enqueue with another POST")
         pendingWork.finishFirstEnqueue()
         check(serial.requests==1,"recovery waits for the first writer before checking that same operation")
         let refusedWork=ReelWorkJob();refusedWork.serverJob=rejected
-        serial.schedule(work:refusedWork)
+        serial.schedule(work:refusedWork,model:model)
         check(serial.requests==1,"a proven closed refusal is never re-enqueued by status recovery")
         var accepted = saved; accepted.reply = reply
         try PropertyVideoJobStore.save(accepted, documents: documents)

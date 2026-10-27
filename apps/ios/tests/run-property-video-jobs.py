@@ -20,19 +20,39 @@ def block(text, anchor):
     start=text.index(anchor);opening=text.index('{',start);depth=1;end=opening+1
     while depth:depth+=(text[end]=='{')-(text[end]=='}');end+=1
     return text[start:end]
+def declaration(text, anchor):
+    return next(line for line in text.splitlines() if line.strip().startswith(anchor))
 network_source=(ROOT/'apps/ios/Rendprop/Networking/PropertyVideoJobsAPI.swift').read_text()
 runner_source=(ROOT/'apps/ios/Rendprop/Render/PropertyVideoJobRunner.swift').read_text()
 production += '\n'+block(network_source,'extension PropertyVideoJobContext {')
-production += '\n@MainActor final class ActualRunnerScopeGuard {\n'+block(runner_source,'private struct Watch {')+'\n'+block(runner_source,'private func requireCurrent(')+r"""
+watch = block(runner_source, 'private struct Watch {')
+scope = '\n'.join([watch, declaration(runner_source, 'private var watches:'),
+    declaration(runner_source, 'private var retiredPresentations:'),
+    block(runner_source, 'private func requireIdentity('), block(runner_source, 'private func requireCurrent(')])
+production += '\n@MainActor final class ActualRunnerScopeGuard {\n'+scope+r"""
     func frozen(context:PropertyVideoJobContext,work:ReelWorkJob,model:AppModel)->()throws->Void{
-        let watch=Watch(work:work,model:model,api:ClosedJobsAPI(),context:context,revision:AuthStore.shared.syncSessionRevision,consentRevision:AIConsent.shared.revocationRevision)
+        let watch=Watch(work:work,model:model,api:ClosedJobsAPI(),context:context,operationID:UUID(),revision:AuthStore.shared.syncSessionRevision,consentRevision:AIConsent.shared.revocationRevision)
+        watches[work.id]=watch
         return {try self.requireCurrent(watch)}
     }
 }
 """
 schedule=block(runner_source,'private func schedule(')
 preface=schedule[:schedule.index('        tasks[watch.work.id] = Task')]
-production += '\n@MainActor final class ActualFirstEnqueueSerialization {\nprivate struct Watch {let work:ReelWorkJob}; var requests=0;var tasks:[UUID:Int]=[:]\n'+preface+'\n requests+=1;tasks[watch.work.id]=1\n}\nfunc schedule(work:ReelWorkJob){schedule(Watch(work:work))}\n}\n'
+production += '\n@MainActor final class ActualFirstEnqueueSerialization {\n'+scope+'\n'+declaration(runner_source, 'private var taskIDs:')+r"""
+var requests=0;var tasks:[UUID:Int]=[:]
+"""+preface+r"""
+ requests+=1;tasks[watch.work.id]=1
+}
+func schedule(work:ReelWorkJob,model:AppModel){
+    guard let saved=work.serverJob else { return }
+    let watch=Watch(work:work,model:model,api:ClosedJobsAPI(),context:saved.context,operationID:saved.request.operationID,
+        revision:AuthStore.shared.syncSessionRevision,consentRevision:AIConsent.shared.revocationRevision)
+    watches[work.id]=watch
+    schedule(watch)
+}
+}
+"""
 view = (ROOT / 'apps/ios/Rendprop/Screens/FlythroughDetailView.swift').read_text()
 intercept = view[view.index('if !isSample, extras.isEmpty, let prepared = batch'):view.index('                for (i, photo) in ordered.enumerated()', view.index('if !isSample, extras.isEmpty, let prepared = batch'))]
 assert intercept.index('PropertyVideoJobStore.start(') < intercept.index('PropertyVideoJobRunner.shared.enqueue(') < intercept.index('return // No native provider polling')
@@ -65,6 +85,7 @@ controls = [
     ('lost-resume-explicit-proof', production.replace('var mayResume: Bool { state == "failed" && resumeAvailable == true }', 'var mayResume: Bool { state == "failed" }'), 'an ordinary or uncertain failure never enables paid resume'),
     ('lost-session-revision', production.replace('AuthStore.shared.syncSessionRevision == watch.revision','true'), 'an old session revision must stop the actual job status/download guard'),
     ('lost-consent-revision', production.replace('AIConsent.shared.revocationRevision == watch.consentRevision','true'), 'revoked AI consent revision must stop the actual job status/download guard'),
+    ('lost-watch-operation-fence', production.replace('watches[watch.work.id]?.operationID == watch.operationID', 'true'), 'a replaced operation must stop the old status/download guard'),
     ('lost-library-fence', production.replace('selectedLibraryOrgID == request.expectedOrgID, sourceCount == request.sources.count', 'true, sourceCount == request.sources.count'), 'foreign logical library must refuse'),
     ('lost-manifest-identity', production.replace('previous!.manifestSHA256 == manifestSHA256', 'true'), 'same operation cannot switch its normalized manifest'),
     ('lost-ordered-source-identity', production.replace('source.photoVersionID == frozen.photoVersionID', 'true').replace('source.photoAssetID.flatMap(UUID.init(uuidString:)) == frozen.photoAssetID', 'true').replace('source.photoProvenanceID.flatMap(UUID.init(uuidString:)) == frozen.photoProvenanceID', 'true'), 'ready output cannot silently substitute or reorder'),
