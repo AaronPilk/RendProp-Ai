@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 reel_clip_test_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-reel_clip_test_dir="$(mktemp -d)"
+reel_clip_test_dir="$(mktemp -d "${TMPDIR:-/tmp}/rendprop-reel-clip.XXXXXX")"
 trap 'rm -rf "$reel_clip_test_dir"' EXIT
 python3 - "$reel_clip_test_root" "$reel_clip_test_dir/Production.swift" "${1:-}" <<'PY'
 import pathlib,sys
@@ -21,7 +21,9 @@ shot=block(api,'struct AIShot: Sendable, Hashable, Identifiable')
 drift=block((root/'apps/ios/Rendprop/Render/DriftCheck.swift').read_text(),'struct DriftVerdict: Sendable, Equatable')
 quality=block(source,'private struct ReelQualityRefusal: Error, LocalizedError').replace('private struct','struct',1)
 failure=source[source.index('struct AIFailure: Identifiable'):source.index('/// Loud, unmissable failure card')]
-issue=source[source.index('struct ReelClipIssue: Identifiable'):source.index('struct ReelStudioView: View')]
+issue_start=source.index('struct ReelClipIssue: Identifiable')
+issue_end=source.index('\n}\n\nprivate enum VideoPhotoSourceChoice:',issue_start)+2
+issue=source[issue_start:issue_end]
 renderer=(root/'apps/ios/Rendprop/Render/ReelComposer.swift').read_text()
 photo_motion='enum OriginalPhotoMotion {\n'+block(renderer,'    static func isClip(')+'\n}\n'
 # Extract only the batch's actual recovery types. The intervening standalone
