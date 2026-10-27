@@ -27,13 +27,15 @@ subscription, not a separate product or an automatic signup entitlement. It star
 only after Apple's subscription confirmation and server verification of the signed
 transaction. StoreKit must report a free, seven-day offer and eligibility before the
 app promises one; prices and renewal disclosures use the returned product.
-`free` is the new-account and lapsed floor, with no paid product.
-The database's historical `trial` plan is a separate legacy grant, not evidence of
-an Apple subscription. `solo` is a legacy alias of `starter` — never sell it.
+`free` is the new-account and lapsed floor, with no paid product. The database's
+`trial` allowance row caps the introductory week even while the account retains
+its selected Apple SKU; a raw legacy trial grant is not evidence of an Apple
+subscription. `solo` is a legacy alias of `starter` — never sell it.
 Subscription group id (ASC): `rendprop_plans`. All three products in ONE group so
 upgrades/downgrades are Apple-managed.
 
-**2026-09-12 rework (owner-approved; prices above unchanged).** Monthly allowances are now:
+**2026-09-12 rework (historical snapshot; prices above unchanged).** Monthly
+allowances at that revision were:
 
 | plan | tour renders | AI photo edits | reel clips | AI aerial intros | drone-glide upscales | seats |
 |---|---|---|---|---|---|---|
@@ -41,14 +43,27 @@ upgrades/downgrades are Apple-managed.
 | pro | 10 | 200 | 12 | 4 | 0 | 1 |
 | team | 25 | 400 | 25 | 8 | 2 | 2 (was 3) |
 
-**2026-10-01 trial policy (owner-requested).** New guest and identified accounts start
-on `free`, without a trial expiry or an automatic seven-day grant. Existing legacy
-free-week grants, manual grants, Apple subscriptions and brokerage contracts retain
-their existing access. Apple introductory offers remain subject to the actual product,
-storefront and subscription-group eligibility; a local StoreKit fixture does not prove
-live App Store availability. Canceling the purchase sheet grants no trial. Canceling
-renewal keeps verified access until expiry; refund/revocation and expiry follow Apple's
-verified status. The free floor remains 1 tour render a month.
+**2026-10-26 introductory-week policy (supersedes the October 1 Free allowance).**
+New guest and identified accounts start on `free`, with no automatic seven-day
+grant. An eligible, confirmed and server-verified Apple introductory offer opens
+one seven-day window for one listing and up to five AI photo edits, subject to the
+server's trial spending and photo-upload limits. It includes no tour render, AI
+video/reel clip, aerial intro or video upscale. New video or public website
+publication requires payment. After the week expires, or when an unpaid account
+returns to `free`, the Free floor admits no new listing or photo upload and has
+zero new tour renders, AI photo edits, video/reel clips, aerial intros and upscales.
+Separately verified paid authority applies only to its own scope; saved listings
+and photos remain accessible under their normal access and retention rules.
+Existing legacy grants, manual grants, verified paid subscriptions and brokerage
+contracts retain their separately verified authority.
+
+Apple introductory offers remain subject to the actual product, storefront and
+subscription-group eligibility; a local StoreKit fixture does not prove live App
+Store availability. Canceling the purchase sheet grants no trial. Canceling renewal
+keeps verified access until expiry; refund/revocation and expiry follow Apple's
+verified status. A scheduled downgrade applies the lower allowance when effective;
+work already admitted while paid may finish, but a queued job alone cannot start
+paid work after the downgrade.
 
 Home and Settings must expose plans without exhausting an allowance first. Settings
 must always expose compare/change plans, restore purchases and Apple's subscription
@@ -72,7 +87,9 @@ POST /me/entitlement            (owner JWT)
 Server verifies the JWS chain against Apple's root CA (x5c), checks `bundleId ==
 com.rendprop.app`, maps `productId` → plan, upserts `apple_subscriptions`, and sets
 `orgs.plan` via a SECURITY DEFINER RPC `apply_apple_entitlement(...)` that only the
-service role may call. A downgrade or expiry sets `orgs.plan = 'free'`.
+service role may call. A scheduled downgrade retains the current verified term;
+when the change takes effect, new work uses the lower plan. Expiry without another
+verified grant returns the workspace to `free`.
 
 ```
 POST /apple-subscriptions/notify   (NO JWT — Apple calls it; verify_jwt false)
