@@ -3,17 +3,17 @@
 Owned synthetic transport; no network, camera, credentials, or Photos writes.
 """
 from pathlib import Path
-import argparse,hashlib,importlib.util,json,re,subprocess,tempfile
+import argparse,hashlib,importlib.util,json,re,subprocess,tempfile,os
 parser=argparse.ArgumentParser();parser.add_argument('--inject-fault',choices=['broad-wire','wrong-workspace','late-conflict','drop-receipt-scope','drop-archive-restore','sold-strings-only','sold-wide-tolerance','sold-canonical-baseline','sold-clear-newer']);opts=parser.parse_args()
 ROOT=Path(__file__).resolve().parents[3]
 COMPILE_SECONDS=180
 RUNTIME_SECONDS=90
-OUT=Path(tempfile.mkdtemp(prefix='rendprop-listing-facts-sync-',dir='/tmp'))
+OUT=Path(tempfile.mkdtemp(prefix='rendprop-listing-facts-sync-',dir=os.environ.get('RUNNER_TEMP')))
 spec=importlib.util.spec_from_file_location('extract',ROOT/'tools/audit/floor-measurement-sync-20261004/run.py');mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
 client=ROOT/'apps/ios/Rendprop/Networking/LiveAPIClient.swift';app=ROOT/'apps/ios/Rendprop/RendpropApp.swift'
 a,b=client.read_text(),app.read_text();source=(Path(__file__).parent/'Fixture.swift.template').read_text()
 cm={'CREATE':'    func createListing(_ listing: Listing)','UPDATE':'    func updateListing(_ listing: Listing)','UPDATE_MEASUREMENTS':'    func updateMeasurements(_ listing: Listing)','LISTING_BODY':'    private func listingBody(_ l: Listing,','MAP_LISTING':'    private func mapListing(_ dto: ListingDTO)','LISTING_DTO':'    private struct ListingDTO: Decodable','TOLERANT_MAP':'    struct TolerantStringMap: Decodable','DECODE':'    private func decode<T: Decodable>','PARSE_DATE':'    private static func parseDate(','ISO_STRING':'    private static func isoString(','WIRE_STATUS':'    private static func wireStatus(','LOCAL_STATUS':'    private static func localStatus('}
-am={'IS_IN_WORKSPACE':'    func isInSelectedWorkspace(_ listing: Listing)', 'MODIFY':'    func modify(_ id: UUID,','SAVE_MEASUREMENTS':'    func saveMeasurements(_ plan: FloorMeasurementPlan,','RELOAD_SHARED':'    func reloadSharedMeasurements(_ id: UUID,','CONFIRM_LOCAL':'    func confirmLocalListingDetails(_ id: UUID)','FACTS_REVIEW_LOAD':'    func loadListingFactsReview(_ id: UUID)','FACTS_REVIEW_RESOLVE':'    func resolveListingFacts(_ review: ListingFactsReview,','SET_SOLD':'    func setSold(_ sold: Bool,','SET_PHOTO':'    func setMainPhoto(_ relPath:','SET_COORDINATE':'    func setCoordinate(lat:','MARK_DIRTY':'    func markDirty(_ id: UUID)','SYNC_LISTING':'    func syncListing(_ id: UUID)'}
+am={'IS_IN_WORKSPACE':'    func isInSelectedWorkspace(_ listing: Listing)', 'MODIFY':'    func modify(_ id: UUID,','SAVE_MEASUREMENTS':'    func saveMeasurements(_ plan: FloorMeasurementPlan,','RELOAD_SHARED':'    func reloadSharedMeasurements(_ id: UUID,','CONFIRM_LOCAL':'    func confirmLocalListingDetails(_ id: UUID)','FACTS_REVIEW_LOAD':'    func loadListingFactsReview(_ id: UUID)','FACTS_REVIEW_RESOLVE':'    func resolveListingFacts(_ review: ListingFactsReview,','SET_SOLD':'    func setSold(_ sold: Bool,','SET_PHOTO':'    func setMainPhoto(_ relPath:','SET_COORDINATE':'    func setCoordinate(lat:','MARK_DIRTY':'    func markDirty(_ id: UUID)','NOTE_DRAFT_FAILURE':'    private func noteDraftCreationFailure(', 'SYNC_LISTING':'    func syncListing(_ id: UUID)'}
 extracted={**{k:mod.block(a,m) for k,m in cm.items()},**{k:mod.block(b,m) for k,m in am.items()}}
 originalHashes={k:hashlib.sha256(v.encode()).hexdigest() for k,v in extracted.items()}
 if opts.inject_fault=='broad-wire':

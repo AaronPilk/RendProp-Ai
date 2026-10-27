@@ -82,6 +82,7 @@ enum Config { static let useLiveBackend = true; static let enableAuth = true }
     var galleryWrites = 0
     func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async { galleryWrites += 1 }
     func setLastError(_ message: String?, for id: UUID) { if let i = index(of:id) { listings[i].lastError = message } }
+    static func userMessage(for error: Error) -> String { error.localizedDescription }
     func pendingAdoptionBlocksServerListing(_ id: UUID) -> Bool { false }
     func ensureServerListing(_ draft: Listing) async throws -> UUID { throw FixtureError.failed }
 __MODIFY__
@@ -95,6 +96,7 @@ __SET_PHOTO__
 __SET_COORDINATE__
 __MARK_DIRTY__
 __IS_IN_WORKSPACE__
+__NOTE_DRAFT_FAILURE__
 __SYNC_LISTING__
 }
 
