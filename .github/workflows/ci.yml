@@ -1800,7 +1800,9 @@ jobs:
           # historical schema point in bounded_subscription_trial_pg.py below.
           # limited_trial_creative_spend_pg.py covers current intro policy.
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_purchase_reservations.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_video_duration.sql
+          # Trial-video duration allowed under the Oct 6 historical policy is
+          # proven by subscription_trial_video_duration_pg.py below. The
+          # current intro policy forbids trial video before payment.
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/modern_service_transport.sql
           # Launch ceiling mode (2026-10-08): money admission, SKU envelopes,
           # fail-closed configuration, Sandbox trials, free slots, retention.
@@ -1871,7 +1873,7 @@ jobs:
           # The bounded funded-trial fixture runs in its disposable historical
           # schema runner below; the final schema has a stricter intro policy.
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_purchase_reservations.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_video_duration.sql
+          # Keep trial-video duration in its historical-schema runner below.
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/modern_service_transport.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/launch_blockers.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_grace.sql
