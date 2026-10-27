@@ -6,7 +6,7 @@ from run_database_regression import partition_fresh_migrations
 ROOT=Path(__file__).resolve().parents[2]
 parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path);args=parser.parse_args()
 OUT=args.output or Path(tempfile.mkdtemp(prefix='rendprop-photo-authority-',dir='/tmp'));OUT.mkdir(parents=True,exist_ok=True)
-TMP=Path(tempfile.mkdtemp(prefix='rendprop-photo-pg-',dir='/tmp'));DATA=TMP/'cluster';SOCK=TMP/'socket';SOCK.mkdir()
+TMP=Path(tempfile.mkdtemp(prefix='rendprop-photo-pg-',dir=OUT));DATA=TMP/'cluster';SOCK=Path(tempfile.mkdtemp(prefix='rpa-',dir='/tmp'))
 ENV={'PATH':os.environ['PATH'],'LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=5000'}
 B={n:shutil.which(n)for n in('initdb','pg_ctl','createdb','psql')};assert all(B.values()),'Local PostgreSQL required'
 CONN=['-h',str(SOCK),'-p','55469','-U','postgres'];DB='rendprop_photo_authority'

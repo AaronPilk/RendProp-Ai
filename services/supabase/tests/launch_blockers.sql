@@ -9,6 +9,8 @@
 -- Everything here is synthetic and rolled back. The two-connection races live
 -- in launch_blockers_pg.py.
 begin;
+-- Seven-day Sandbox terms are absolute UTC windows across DST changes.
+set local timezone='UTC';
 create temporary table lb_assertions(n integer not null default 0);insert into lb_assertions default values;
 grant all on lb_assertions to service_role,authenticated;
 create function pg_temp.ok(v boolean,label text)returns void language plpgsql as $$begin

@@ -10,7 +10,7 @@ import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path);args=p.parse_args()
 OUT=args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-property-sites-pg-',dir='/tmp'));OUT.mkdir(parents=True,exist_ok=True)
-DATA=Path(tempfile.mkdtemp(prefix='rendprop-property-sites-owned-pg-',dir='/tmp'));SOCK=Path(tempfile.mkdtemp(prefix='rendprop-property-sites-socket-',dir='/tmp'))
+DATA=Path(tempfile.mkdtemp(prefix='rendprop-property-sites-owned-pg-',dir=OUT));SOCK=Path(tempfile.mkdtemp(prefix='rps-',dir='/tmp'))
 TOOLS={n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)for n in ['initdb','pg_ctl','psql','createdb']}
 assert all(Path(t).is_file()and os.access(t,os.X_OK)for t in TOOLS.values())
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
@@ -43,6 +43,7 @@ try:
  actor='eb100000-0000-4000-8000-000000000001';listings=[f'eb300000-0000-4000-8000-00000000000{i}'for i in range(1,5)]
  run('race-fixtures',[*PSQL,'-Atq'],f"""insert into auth.users(id,email,is_anonymous)values('{actor}','race-upgrade@fixture.invalid',false);
  update property_website_products set production_enabled=true;
+ update orgs set plan='team',plan_source='manual' where id=(select org_id from memberships where user_id='{actor}'and role='owner'limit 1);
  insert into listings(id,org_id,agent_id,address)select x::uuid,(select org_id from memberships where user_id='{actor}'and role='owner'limit 1),'{actor}','Synthetic race property'from unnest(array{listings!r}::text[])x;""")
  org=run('race-org',[*PSQL,'-Atq','-c',f"select org_id from memberships where user_id='{actor}'and role='owner'limit 1"]).strip()
  def claim(tx,listing):return f"select property_website_transaction('{actor}','{listing}','{org}','Production','{tx}','com.rendprop.app.website.premium.property','2026-10-14 10:00Z','2026-10-14 10:01Z',null,'purchase');"

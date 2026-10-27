@@ -20,18 +20,27 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 SQL = ROOT / "services/supabase"
+HISTORICAL_LAST = "20261024000646_aerial_original_legacy_byte_verification_20261024.sql"
+# The October 26 introductory policy removes Free's 300-cent sample and
+# hosted-video slot. Preserve this October 8 contract at its schema point;
+# limited_trial_creative_spend_pg.py proves the current policy separately.
+MIGRATIONS = [m for m in sorted((SQL / "migrations").glob("*.sql"))
+              if m.name <= HISTORICAL_LAST]
 TOOLS = {name: shutil.which(name) or str(Path("/opt/homebrew/opt/postgresql@17/bin") / name)
          for name in ("initdb", "pg_ctl", "psql", "createdb")}
 assert all(Path(p).is_file() and os.access(p, os.X_OK) for p in TOOLS.values()), "Use existing PostgreSQL binaries"
-OUT = Path(tempfile.mkdtemp(prefix="rendprop-launch-blockers-pg-", dir="/tmp"))
-DATA, SOCK = OUT / "data", OUT / "socket"
-SOCK.mkdir()
+OUT_ROOT = Path(os.environ.get("RENDPROP_PG_EVIDENCE_ROOT", "/tmp"))
+OUT_ROOT.mkdir(parents=True, exist_ok=True)
+OUT = Path(tempfile.mkdtemp(prefix="rendprop-launch-blockers-pg-", dir=OUT_ROOT))
+DATA = OUT / "data"
+SOCK = Path(tempfile.mkdtemp(prefix="rlb-", dir="/tmp"))
 ENV = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LC_ALL": "C",
        "PGOPTIONS": "-c statement_timeout=30000 -c lock_timeout=15000"}
 PORT = "55481"
-SOURCES = [*sorted((SQL / "migrations").glob("*.sql")), SQL / "tests/ci-bootstrap.sql",
+SOURCES = [*MIGRATIONS, SQL / "tests/ci-bootstrap.sql",
            SQL / "tests/launch_blockers.sql", SQL / "tests/serving_settlement_identity.sql", SQL / "tests/serving_grace.sql", Path(__file__).resolve()]
 receipt = {"kind": "owned disposable local PostgreSQL; no providers or hosted calls", "output": str(OUT),
+           "schemaCutoff": HISTORICAL_LAST,
            "commands": [], "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}}
 
 
@@ -83,7 +92,11 @@ try:
     run("createdb", [TOOLS["createdb"], *conn, "launch_blockers_audit"])
     psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "launch_blockers_audit", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap", [*psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
+    # Validate the repository's full pinned migration classification, then
+    # apply only the historical contract's fresh-schema prefix.
     for m in partition_fresh_migrations(sorted((SQL / "migrations").glob("*.sql")))[0]:
+        if m.name > HISTORICAL_LAST:
+            continue
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     receipt["fresh"] = run("launch-blockers-fresh", [*psql, "-Atq", "-f", SQL / "tests/launch_blockers.sql"]).strip()
     receipt["settlementIdentity"] = json.loads(run("settlement-identity", [*psql, "-Atq", "-f", SQL / "tests/serving_settlement_identity.sql"]).strip())

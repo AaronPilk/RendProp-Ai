@@ -10,6 +10,8 @@ insert into auth.users(id,email,is_anonymous)values
 create temporary table photo_fixture as select org_id org,user_id actor from memberships where user_id::text like 'fa200505-%';
 grant select on photo_fixture to service_role,authenticated,anon;
 insert into memberships(org_id,user_id,role)select org,'fa200505-0000-4000-8000-000000000002','agent'from photo_fixture where actor='fa200505-0000-4000-8000-000000000001';
+-- Exercise photo authority for a workspace with current listing permission.
+update orgs set plan='starter',plan_source='manual' where id=(select org from photo_fixture where actor='fa200505-0000-4000-8000-000000000001');
 insert into listings(id,org_id,agent_id,address)select 'fa200505-0000-4000-8000-000000000011',org,actor,'Synthetic photo property'from photo_fixture where actor='fa200505-0000-4000-8000-000000000001';
 insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded)
  select ('fa200505-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'fa200505-0000-4000-8000-000000000011','photo','renders','renders/'||org||'/fa200505-0000-4000-8000-000000000011/gallery-photo-'||n||'.jpg',n<>15

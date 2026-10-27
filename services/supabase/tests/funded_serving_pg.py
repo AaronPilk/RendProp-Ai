@@ -22,9 +22,11 @@ MIGRATION = SQL / "migrations/20261006164721_funded_serving_and_app_review_autho
 TOOLS = {name: shutil.which(name) or str(Path("/opt/homebrew/opt/postgresql@17/bin") / name)
          for name in ("initdb", "pg_ctl", "psql", "createdb")}
 assert all(Path(p).is_file() and os.access(p, os.X_OK) for p in TOOLS.values()), "Use existing PostgreSQL binaries"
-OUT = Path(tempfile.mkdtemp(prefix="rendprop-funded-serving-pg-", dir="/tmp"))
-DATA, SOCK = OUT / "data", OUT / "socket"
-SOCK.mkdir()
+OUT_ROOT = Path(os.environ.get("RENDPROP_PG_EVIDENCE_ROOT", "/tmp"))
+OUT_ROOT.mkdir(parents=True, exist_ok=True)
+OUT = Path(tempfile.mkdtemp(prefix="rendprop-funded-serving-pg-", dir=OUT_ROOT))
+DATA = OUT / "data"
+SOCK = Path(tempfile.mkdtemp(prefix="rfs-", dir="/tmp"))
 # Drop inherited PGHOST/PGDATABASE/PGPASSWORD, service credentials and startup
 # files. Every command names this fresh cluster's private Unix socket.
 ENV = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LC_ALL": "C",

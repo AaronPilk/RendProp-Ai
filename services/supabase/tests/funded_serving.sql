@@ -1,5 +1,7 @@
 \set ON_ERROR_STOP on
 begin;
+-- Seven-day receipts are absolute UTC terms, including across DST changes.
+set local timezone='UTC';
 -- This legacy25-percent fixture deliberately pins its tariff. New allocation
 -- and old-slice replay are tested in property_video_jobs.sql.
 update public.app_config set value=jsonb_set(value,'{net_margin_bps}','7500'::jsonb)where key='serving_envelope';

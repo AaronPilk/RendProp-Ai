@@ -9,6 +9,9 @@ create temporary table wf as select 'ea100000-0000-4000-8000-000000000001'::uuid
  (select org_id from public.memberships where user_id='ea100000-0000-4000-8000-000000000001'and role='owner'limit 1)org,
  (select org_id from public.memberships where user_id='ea100000-0000-4000-8000-000000000002'and role='owner'limit 1)other_org;
 grant select on wf to service_role,authenticated;
+-- Existing property video publication is a paid-workspace flow. The premium
+-- website transaction is still a separate receipt tested below.
+update public.orgs set plan='team',plan_source='manual' where id in((select org from wf),(select other_org from wf));
 insert into public.listings(id,org_id,agent_id,address)values('ea300000-0000-4000-8000-000000000001',(select org from wf),(select actor from wf),'Synthetic property'),
  ('ea300000-0000-4000-8000-000000000002',(select org from wf),(select actor from wf),'Second synthetic property'),
  ('ea300000-0000-4000-8000-000000000003',(select other_org from wf),(select other from wf),'Foreign property');
