@@ -103,6 +103,9 @@ final class ClipAPI:APIClient {
 struct PropertyVideoProcessorSnapshot:Sendable {}
 struct PropertyVideoJobContext:Sendable {}
 enum PropertyVideoProcessorFailure:Error {case permissionRequired}
+// The extracted guard's opening-change refusal uses this production error
+// name; no PropertyVideoJobStore persistence is involved in this harness.
+enum PropertyVideoJobStore { enum Failure: Error { case identityChanged } }
 @MainActor final class PropertyVideoProcessorConsent {
  static let shared=PropertyVideoProcessorConsent();var revision:UInt64=0;var permissionIsCurrent=true
  func permits(_ snapshot:PropertyVideoProcessorSnapshot,context:PropertyVideoJobContext)->Bool{permissionIsCurrent}
@@ -230,6 +233,17 @@ final class ClosedVideoProtocol:URLProtocol {
   let auth=AuthStore.shared;WorkspaceContext.selectedOrgID=ctx.workspace
   let model=GuardModel(.init(id:ctx.listingID,serverID:ctx.serverListingID))
   let dispatchGuard=ReelReceiptHarness.generationGuard(auth:auth,model:model,listingID:ctx.listingID,targetServerID:ctx.serverListingID)
+  ReelReceiptHarness.chosenOpening="saved-opening-a"
+  let openingGuard=ReelReceiptHarness.generationGuard(auth:auth,model:model,listingID:ctx.listingID,targetServerID:ctx.serverListingID)
+  try openingGuard()
+  ReelReceiptHarness.chosenOpening="saved-opening-b"
+  do{try openingGuard();preconditionFailure("changed opening must reject the captured job")}
+  catch PropertyVideoJobStore.Failure.identityChanged {checks+=1}
+  ReelReceiptHarness.chosenOpening=nil
+  AIConsent.shared.isGranted=false
+  let photoModeGuard=ReelReceiptHarness.generationGuard(auth:auth,model:model,listingID:ctx.listingID,targetServerID:ctx.serverListingID,frozenPhotoMotion:true)
+  try photoModeGuard()
+  AIConsent.shared.isGranted=true
   VideoPreparedSourcePolicy.rejectsPreparedJPEG=true
   do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx,requireCurrent:dispatchGuard);preconditionFailure("prepared JPEG refusal must reject paid dispatch")}catch{check(error.localizedDescription=="synthetic video photo rejected","prepared JPEG refusal propagates before paid dispatch")}
   VideoPreparedSourcePolicy.rejectsPreparedJPEG=false

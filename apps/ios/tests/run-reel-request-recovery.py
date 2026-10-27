@@ -118,6 +118,10 @@ try:
     drift = drift_path.read_text()
     drift_types = block(drift, 'struct DriftVerdict: Sendable, Equatable') + '\n' + block(drift, 'struct DriftCheckRequest: Sendable') + '\n' + block(source, 'private struct ReelQualityRefusal: Error, LocalizedError').replace('private struct', 'struct', 1) + '\n'
     actual = 'import Foundation\nimport CryptoKit\n' + capacity_path.read_text() + '\n' + music_contract_path.read_text() + '\n' + video_metadata_path.read_text() + '\n' + drift_types + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n' + block(api, 'struct AIShot: Sendable, Hashable, Identifiable') + '\n' + block(source, 'struct PendingReelBatch: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private enum ReelRecoveryChoice').replace('private enum', 'enum', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
+    # The extracted generation guard now captures the Photo Motion source mode
+    # and opening selection. Model only those two enclosing values; the guard
+    # body below still comes verbatim from the production screen.
+    actual += '    static var chosenOpening: String? = nil\n'
     for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func isDefinitiveRefusal(', '    nonisolated static func clipPath(', '    nonisolated static func isDroppedPoll(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(', '    nonisolated private static func preparedReelJPEG(', '    nonisolated private static func requireSavedReelReview(', '    nonisolated private static func acknowledgeRecoveredClip(', '    nonisolated private static func resolveSavedQualityRetry(', '    nonisolated private static func completeSavedBatch(']:
         extracted = block(source, anchor).replace('private static', 'static', 1)
         if 'retrieveClip(' in anchor:
@@ -125,12 +129,13 @@ try:
             extracted = extracted.replace('Date()', 'ReelPollClock.now()').replace('try await Task.sleep(nanoseconds: 5_000_000_000)', 'try await ReelPollClock.pause(nanoseconds: 5_000_000_000)')
             receipt['poll_clock_boundary'] = {'production_sleep_nanoseconds': 5_000_000_000, 'date_reads': 4, 'fixture': 'ReelPollClock'}
         actual += extracted + '\n'
-    actual += '''    static func generationGuard(auth: AuthStore, model: GuardModel, listingID: UUID, targetServerID: UUID?, processorPermission: PropertyVideoProcessorSnapshot? = nil, processorContext: PropertyVideoJobContext? = nil) -> (@MainActor @Sendable () throws -> Void) {
+    actual += '''    static func generationGuard(auth: AuthStore, model: GuardModel, listingID: UUID, targetServerID: UUID?, frozenPhotoMotion: Bool = false, processorPermission: PropertyVideoProcessorSnapshot? = nil, processorContext: PropertyVideoJobContext? = nil) -> (@MainActor @Sendable () throws -> Void) {
         let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
         let reelWorkspace = WorkspaceContext.selectedOrgID
         let reelConsentRevision = AIConsent.shared.revocationRevision
         let frozenProcessorRevision = PropertyVideoProcessorConsent.shared.revision
         let frozenProcessorPermission = processorPermission, frozenProcessorContext = processorContext
+        let frozenOpening = chosenOpening
 ''' + block(source, '                let requireCurrent: @MainActor @Sendable () throws -> Void = {') + '\nreturn requireCurrent\n}\n}\n'
     actual = actual.replace('import CryptoKit\n', 'import CryptoKit\n' + review_helpers, 1)
     actual += '''@MainActor final class VideoDispatchHarness {

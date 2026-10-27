@@ -14,6 +14,16 @@ async function invoke(options:{consent?:boolean;guest?:boolean;scope?:boolean;so
  if(u.hostname==='plan-db.fixture.invalid'){
  if(u.pathname==='/auth/v1/user')return response({id:actor,is_anonymous:options.guest===true});
  if(u.pathname.endsWith('/deletion_requests'))return response(null);
+ // Synthetic photos are original uploads. The real source-custody fence now
+ // checks each asset for a prepared alias before it can treat it as raw.
+ if(u.pathname.endsWith('/property_video_preparations')){
+  assertEquals(req.method,'GET');
+  assertEquals(u.searchParams.get('select'),'id');
+  assertEquals(u.searchParams.get('limit'),'2');
+  const queried=u.searchParams.get('asset_id');
+  assert(queried?.startsWith('eq.') && selected.some(p=>p.asset_id===queried.slice(3)));
+  return response([]);
+ }
  if(u.pathname.endsWith('/cost_ledger')){ledgers.push(await req.json());return new Response(null,{status:201});}
  if(u.pathname.includes('/rpc/')){const name=u.pathname.split('/').at(-1)!,args=await req.json();rpcs.push({name,args});events.push(name);
  if(name==='listing_library_scope')return response({actor_id:actor,org_id:org,listing_id:listing,library_org_id:org,listing_owner_user_id:actor,library_owner_user_id:actor,billing_org_id:org,team_org_id:null,role:'owner',access_mode:'own',can_read:!options.scope,can_write:!options.scope,can_manage_subscription:true});
