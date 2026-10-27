@@ -23,6 +23,14 @@ import Foundation
         func transaction(_ result: VerificationResult<Transaction>) -> Transaction {
             guard case .verified(let value) = result else { fatalError("fixture verification") }; return value
         }
+        precondition(WebsitePurchasePretransactionRecovery.isKnownNoCharge(StoreKitError.userCancelled),
+                     "A known Apple cancellation cannot retain a pretransaction blocker")
+        precondition(WebsitePurchasePretransactionRecovery.isKnownNoCharge(Product.PurchaseError.purchaseNotAllowed)
+                     && WebsitePurchasePretransactionRecovery.isKnownNoCharge(Product.PurchaseError.productUnavailable),
+                     "Known no-charge purchase refusals can release the pretransaction intent")
+        precondition(!WebsitePurchasePretransactionRecovery.isKnownNoCharge(StoreKitError.unknown)
+                     && !WebsitePurchasePretransactionRecovery.isKnownNoCharge(Product.PurchaseError.unknown),
+                     "Unknown StoreKit outcomes keep the original property intent")
         // Happy path exercises the actual purchase, durable intent, network
         // admission, receipt acknowledgment and Apple finish order.
         do {
@@ -69,7 +77,7 @@ import Foundation
             await store.loadProduct(); await store.purchase(context: c)
             precondition(tx.finishes == 0, "Late replacement-library response finished Apple")
         }
-        for failure in [receipt(other), receipt(quantity: 2), .unverified] {
+        for failure in [receipt(other), receipt(quantity: 2), .unverified(Transaction(id: 72, owner: actor, quantity: 1), StoreKitError.unknown)] {
             let (c, api, store, product) = try reset()
             product.nextResult = .success(failure)
             await store.loadProduct(); await store.purchase(context: c)

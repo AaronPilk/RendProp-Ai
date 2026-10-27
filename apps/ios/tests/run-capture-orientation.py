@@ -25,15 +25,22 @@ view = (ROOT/'apps/ios/Rendprop/Screens/FlythroughDetailView.swift').read_text()
 assert 'captureIntent: portrait ? .socialPhotos : .listingPhotos' in view and '@State private var musicSelection: VideoMusicSelection? = nil' in view
 reelview=view[view.index('struct ReelStudioView:'):]
 generation=reelview[reelview.index('    private func generate() {'):reelview.index('    private func generateWithSession()')]
-assert generation.index('VideoPhotoFramingReader.read(') < generation.index('connection.run { authorizeVideoPreparation { generateWithSession() } }')
+assert generation.index('VideoPhotoFramingReader.read(') < generation.index('connection.run {')
+assert 'if photoMotion { generateWithSession() }' in generation
+assert 'else { authorizeVideoPreparation { generateWithSession() } }' in generation
 assert 'framingSelectionKey == key' in generation and 'work.isPresented' in generation and 'AIConsent.shared.revocationRevision == consent' in generation
 assert 'assessments.count == inputs.count' in generation and 'VideoFramingReviewPolicy.needsAcknowledgment(' in generation
 session=reelview[reelview.index('    private func generateWithSession()'):reelview.index('    nonisolated private static func preparedReelJPEG(')]
-assert session.index('let stagedInputs = try await VideoPreparedSourcePolicy.stage(chosen,') < session.index('DirectUploader.uploadPhoto(') < session.index('PropertyVideoPlanner.plan(')
-assert 'for (index, photo) in chosen.enumerated()' in session and 'let input = stagedInputs[index]' in session and 'let jpeg = try Data(contentsOf: input)' in session
+local_session=session[session.index('guard !frozenPhotoMotion else { throw PropertyVideoJobStore.Failure.invalidReceipt }'):]
+assert local_session.index('let stagedInputs = try await VideoPreparedSourcePolicy.stage(chosen,') < local_session.index('DirectUploader.uploadPhoto(') < local_session.index('PropertyVideoPlanner.plan(')
+assert 'for (index, photo) in chosen.enumerated()' in local_session and 'let input = stagedInputs[index]' in local_session and 'let jpeg = try Data(contentsOf: input)' in local_session
 assert 'try VideoPreparedSourcePolicy.requireUsableJPEG(jpeg, aspect: aspect)' in reelview
-make=view[view.index('    private var stepMakeCard:'):view.index('    private var videoHelpControls:')]
-assert make.index('makeButton') < make.index('videoAdvancedControls') and '1080p' not in make and 'unconnected' not in make
+make=view[view.index('    private var stepMakeCard:'):view.index('    private func videoReviewActionLabel(')]
+stage=view[view.index('    private func reelStageScreen('):view.index('    private var videoBackButton:')]
+action=view[view.index('    private func setupPrimaryAction('):view.index('    private var videoHelpSheet:')]
+assert 'videoAdvancedControls' in make and '1080p' not in make and 'unconnected' not in make
+assert '.safeAreaInset(edge: .bottom' in stage and 'setupPrimaryAction(step)' in stage
+assert 'if step == .review {\n                makeButton' in action
 assert 'your reel' not in view[view.index('    private var stepPhotosCard:'):view.index('    private func restoreServerVideoJob()')]
 
 variants = [('actual',source,None),

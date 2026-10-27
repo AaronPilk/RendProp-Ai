@@ -72,8 +72,8 @@ reviewed_baseline_sha256 = {
     'audio_snapshot': '1641727a466bcddc5b41d75a3919faa9a132172e7cd9be67a5035e2d8cd25607',
 }
 reviewed_fragments = {
-    'mode_switch_cleanup': mode_change.replace('            if mode != .myVoice { voicePermissionID = nil; requestingVoicePermission = false }\n', ''),
-    'disappear_cleanup': disappear.replace('            voicePermissionID = nil; requestingVoicePermission = false\n', ''),
+    'mode_switch_cleanup': mode_change.replace('            if mode != .myVoice { voicePermissionID = nil; requestingVoicePermission = false }\n', '').replace('            musicPreview.stop()\n', ''),
+    'disappear_cleanup': disappear.replace('            voicePermissionID = nil; requestingVoicePermission = false\n', '').replace('musicPreview.stop()', 'musicPreviewPlayer?.pause()'),
     'voice_off_ready_row': block(view, '@ViewBuilder private var voiceoverReadyRow:'),
     'audio_snapshot': json.dumps(snapshot_lines, separators=(',', ':')),
 }
@@ -116,6 +116,8 @@ extension View {
  func font(_ font: Font) -> Self { self }
  func foregroundStyle(_ color: Color) -> Self { self }
  func frame(maxWidth: Double) -> Self { self }
+ func frame(minHeight: Double) -> Self { self }
+ func modifier(_ appearance: RendpropActionAppearance) -> Self { self }
  func padding(_ edge: Edge, _ value: Double) -> Self { self }
  func background(_ color: Color) -> Self { self }
  func clipShape(_ shape: RoundedRectangle) -> Self { self }
@@ -128,11 +130,12 @@ extension View {
  func accessibilityIdentifier(_ value: String) -> Self { identifier = value; return self }
  func tap() { if !isDisabled { action() } }
 }
-struct Voiceover: Equatable { let id: String; var transcript = "" }
+struct Voiceover: Equatable { let id: String; var transcript = ""; var duration = 0.0 }
 struct ClosedProcessorSnapshot {}
 struct ClosedProcessorContext {}
 enum CaptionStyle { case standard, off }
-@MainActor final class ClosedPlayer { var pauses = 0; func pause() { pauses += 1 } }
+@MainActor final class ClosedPlayer { var pauses = 0; func pause() { pauses += 1 }; func stop() { pauses += 1 } }
+struct RendpropActionAppearance {}
 @MainActor final class ClosedRecorder {
  var isRecording = false; var hasMicrophonePermission = false; var requests = 0; var returns = 0; var starts = 0; var cancels = 0
  var replies: [CheckedContinuation<Bool, Never>] = []
@@ -159,6 +162,12 @@ struct ClosedServerJob { var reply: ClosedReply? }
  func capture(_ voice: Voiceover?, captionStyle: CaptionStyle) { count += 1; self.voice = voice; captions = captionStyle }
 }
 struct ClosedPhoto: Sendable { let id: String; let enhancedURL: URL }
+struct ClosedListing { let isSample = false }
+struct ClosedOpening { struct Reference { let visibleFrames = 0 }; let reference = Reference() }
+struct PhotoGeometryInput: Hashable { let id: String; let url: URL }
+enum ClosedTransition { case cut, fade }
+enum ClosedPhotoMotionProfile: String { case current; var endScale: Double { 1 } }
+enum ClosedPhotoMotionDirection: String { case pushIn = "push_in" }
 struct VideoPhotoFramingAssessment: Sendable { let isMajorCrop = false }
 final class FramingControl: @unchecked Sendable {
  private let lock = NSLock(); private var count = 0; private var blocked = false; private var gate = DispatchSemaphore(value: 0)
@@ -169,7 +178,8 @@ final class FramingControl: @unchecked Sendable {
 }
 enum VideoPhotoFramingReader {
  static let control = FramingControl()
- static func read(photoID: String, url: URL, aspect: Double) -> VideoPhotoFramingAssessment? { control.read(); return .init() }
+ static func read(photoID: String, url: URL, aspect: Double, photoMotion: Bool = false,
+                  photoMotionScale: Double = 1, photoMotionDirection: String = "push_in") -> VideoPhotoFramingAssessment? { control.read(); return .init() }
 }
 @MainActor struct NarrationFixture {
  enum Phase { case setup, generating }
@@ -183,6 +193,16 @@ enum VideoPhotoFramingReader {
  @FixtureState var scriptInFlight = false
  @FixtureState var ttsInFlight = false
  @FixtureState var voiceMode = VoiceMode.off
+ @FixtureState var photoMotion = false
+ @FixtureState var photoMotionTimingRestorePending = false
+ @FixtureState var includeAcceptedOpening = false
+ @FixtureState var acceptedOpening: ClosedOpening?
+ @FixtureState var chosenOpening: ClosedOpening?
+ @FixtureState var reelTransition = ClosedTransition.cut
+ @FixtureState var bigCaptionsOn = false
+ @FixtureState var photoMotionProfile = ClosedPhotoMotionProfile.current
+ @FixtureState var photoMotionDirection = ClosedPhotoMotionDirection.pushIn
+ @FixtureState var photoMotionDigests: [PhotoGeometryInput: String] = [:]
  @FixtureState var voiceover: Voiceover?
  @FixtureState var voiceError: String?
  @FixtureState var voiceNote: String?
@@ -204,9 +224,9 @@ enum VideoPhotoFramingReader {
  @FixtureState var scriptReadSeconds = 0.0
  @FixtureState var reelSeconds = 10
  @FixtureState var catalogueLoads = 0
- let model = "closed-model"; let auth = ClosedAuth(); let work = ClosedWork(); let recorder = ClosedRecorder()
+ let model = "closed-model"; let auth = ClosedAuth(); let work = ClosedWork(); let recorder = ClosedRecorder(); let listing = ClosedListing()
  let connection = ClosedConnection(); let snapshotSpy = SnapshotSpy()
- let musicPreviewPlayer: ClosedPlayer? = ClosedPlayer()
+ let musicPreview = ClosedPlayer()
  @FixtureState var player: ClosedPlayer?
  @FixtureState var voPlayer: ClosedPlayer? = ClosedPlayer()
  let reelPhotos = [ClosedPhoto(id: "first", enhancedURL: URL(fileURLWithPath: "/closed/first.jpg")), ClosedPhoto(id: "second", enhancedURL: URL(fileURLWithPath: "/closed/second.jpg"))]
@@ -221,6 +241,9 @@ enum VideoPhotoFramingReader {
  func authorizeVideoPreparation(_ action: () -> Void) { action() }
  func stopAndTranscribe() { recorder.isRecording = false; isTranscribing = true }
  func loadVoices() { catalogueLoads += 1 }
+ var openingSelectionIsResolved: Bool { true }
+ func photoMotionKey(_ id: String) -> String? { "closed-photo-version" }
+ func photoMotionFrameCount(_ id: String) -> Int { 120 }
 '''
 tail = r'''
  var button: Button<Text> { makeButton as! Button<Text> }

@@ -45,12 +45,17 @@ before = hashes()
 screen = source.read_text()
 # Remove imports and expose private stored grant identifiers/methods to the
 # fixture. This changes no production task, identity, expiry or resume decision.
-body = '\n'.join(line for line in queue.read_text().splitlines() if not line.startswith('import '))
+# Activity-tab presentation has separate gates; this fixture executes the
+# complete app-owned queue and job lifecycle declarations above that boundary.
+queue_source = queue.read_text()
+assert queue_source.count('// MARK: - Scoped activity presentation') == 1
+queue_lifecycle = queue_source.split('// MARK: - Scoped activity presentation', 1)[0]
+body = '\n'.join(line for line in queue_lifecycle.splitlines() if not line.startswith('import '))
 body = 'import Foundation\n' + body.replace('private(set)', '').replace('private var backgroundHold', 'var backgroundHold').replace('private func beginBackgroundHold()', 'func beginBackgroundHold()').replace('private func endBackgroundHold()', 'func endBackgroundHold()')
 body += '\n' + block(push.read_text(), 'enum ReelCompletionNotice {')
 reel_view = screen[screen.index('struct ReelStudioView:'):screen.index('// MARK: Sections', screen.index('struct ReelStudioView:'))]
 cleanup = main_view_disappearance(reel_view)
-body += '\n@MainActor final class ReelPresentationHarness {\nlet job: ReelWorkJob; let work: ReelWorkJob; let connection = ClosedConnection(); var voicePermissionID: UUID?; var requestingVoicePermission: Bool = false; var player: ClosedPlayer? { get { work.player } set { work.setPlaybackPlayer(newValue) } }; var voPlayer: ClosedPlayer? = ClosedPlayer(); var musicPreviewPlayer:ClosedPlayer?; let recorder = ClosedRecorder()\ninit(job: ReelWorkJob) { self.job = job; self.work = job; job.isPresented = true; job.setPlaybackPlayer(ClosedPlayer()) }\nfunc onDisappearCleanup() ' + cleanup[cleanup.index('{'):] + '\n}\n'
+body += '\n@MainActor final class ReelPresentationHarness {\nlet job: ReelWorkJob; let work: ReelWorkJob; let connection = ClosedConnection(); var voicePermissionID: UUID?; var requestingVoicePermission: Bool = false; var player: ClosedPlayer? { get { work.player } set { work.setPlaybackPlayer(newValue) } }; var voPlayer: ClosedPlayer? = ClosedPlayer(); let musicPreview = ClosedMusicPreview(); let recorder = ClosedRecorder()\ninit(job: ReelWorkJob) { self.job = job; self.work = job; job.isPresented = true; job.setPlaybackPlayer(ClosedPlayer()) }\nfunc onDisappearCleanup() ' + cleanup[cleanup.index('{'):] + '\n}\n'
 assert '@ObservedObject private var work: ReelWorkJob' in reel_view
 assert '@State private var workTask' not in reel_view
 assert 'workTask?.cancel()' not in cleanup and 'endBackgroundHold()' not in cleanup

@@ -84,8 +84,8 @@ enum FileStore {
             for index in 0..<12 {
                 let encodedFrame=try await frame(url,Double(index)*0.25+0.1)
                 let actual=center(encodedFrame)
-                if choice == .listing {check(cleanFrame(encodedFrame,expected:pixels[index]),"listing master retains full clean source pixels without baked branding or panels")}
                 check(zip(actual,pixels[index]).allSatisfy{abs($0-$1)<20},"all twelve source shots retain exact order in encoded video")
+                if choice == .listing {check(cleanFrame(encodedFrame,expected:pixels[index]),"listing master retains full clean source pixels without baked branding or panels")}
             }
             let record=try await ListingVideoPreparation.retain(output:url,listingID:listingID,ownerID:owner,
                 workspaceID:workspace,serverListingID:serverListing,purpose:choice,sources:sources,includesOpeningClip:false,brandingPolicy:choice == .listing ? "unbranded" : nil)

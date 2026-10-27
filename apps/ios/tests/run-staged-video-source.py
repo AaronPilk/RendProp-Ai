@@ -21,7 +21,8 @@ assert 'photos: (try? EnhancedPhoto.loadForListing(listingID: listing.id)) ?? []
 assert 'photos: (try? EnhancedPhoto.loadForListing(listingID: currentListing.id)) ?? []' in view
 generate=block(reel,'private func generateWithSession()')
 assert 'prepare: { try Self.preparedReelJPEG(photo: $0' in generate
-assert generate.index('VideoPreparedSourcePolicy.stage(chosen,') < generate.index('DirectUploader.uploadPhoto(fileURL: input') < generate.index('PropertyVideoPlanner.plan(')
+local_generate=generate[generate.index('guard !frozenPhotoMotion else { throw PropertyVideoJobStore.Failure.invalidReceipt }'):]
+assert local_generate.index('VideoPreparedSourcePolicy.stage(chosen,') < local_generate.index('DirectUploader.uploadPhoto(fileURL: input') < local_generate.index('PropertyVideoPlanner.plan(')
 assert 'let input = stagedInputs[index]' in generate and 'let jpeg = try Data(contentsOf: input)' in generate
 assert 'photoProvenanceID: photo.savedVersion?.provenanceID' in generate
 assert 'sourceAssetID: photo.sourceAssetID, photoProvenanceID: photo.photoProvenanceID' in block(reel,'nonisolated private static func completeSavedBatch(')

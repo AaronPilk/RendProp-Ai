@@ -3,7 +3,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
-ARTIFACT_DIR="${COACH_PRIVACY_ARTIFACT_DIR:-$(mktemp -d /tmp/rendprop-coach-privacy.XXXXXX)}"
+ARTIFACT_DIR="${COACH_PRIVACY_ARTIFACT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/rendprop-coach-privacy.XXXXXX")}"
 mkdir -p "$ARTIFACT_DIR"
 COACH_SOURCE="$REPO_DIR/apps/ios/Rendprop/Coach/CoachModel.swift"
 COACH_API="$REPO_DIR/apps/ios/Rendprop/Coach/CoachAPI.swift"
@@ -30,7 +30,7 @@ mutations = {
     'misroute-photo-only-share': ('return .listingDetails(listingID: listingID)', 'return .project(listingID: listingID, feature: .tour)'),
     'trust-unaccepted-server-job': ('stillPhotoShots: 0, execution: .awaitingAcceptance)', 'stillPhotoShots: 0, execution: .serverAccepted)'),
     'drop-saved-server-actor-fence': ('saved.context.actorID == actor, saved.context.orgID == orgID,', 'saved.context.orgID == orgID,'),
-    'drop-aerial-launch-fence': ('guard kind != .openAerial || LaunchFeatureAvailability.canGenerateAerial else { return nil }', ''),
+    'wrong-opening-availability': ('guard kind != .openAerial || LaunchFeatureAvailability.canCreateOpening else { return nil }', 'guard kind != .openAerial || LaunchFeatureAvailability.canGenerateAerial else { return nil }'),
 }
 for name, (before, after) in mutations.items():
     count = source.count(before)
@@ -39,7 +39,7 @@ for name, (before, after) in mutations.items():
         assert count == 1, f'{name}: ambiguous anchor'
     (out / f'{name}.swift').write_text(source.replace(before, after))
 PY
-for control in drop-history-redaction upload-local-bubbles include-foreign-cache drop-context-fences wrong-reel-project drop-reel-pause-state inflate-ai-edit-count drop-aerial-launch-fence misroute-photo-only-share trust-unaccepted-server-job drop-saved-server-actor-fence drop-selected-inactive include-unselected-inactive drop-selected-visibility include-selected-sample include-selected-type drop-active-logical-library; do
+for control in drop-history-redaction upload-local-bubbles include-foreign-cache drop-context-fences wrong-reel-project drop-reel-pause-state inflate-ai-edit-count wrong-opening-availability misroute-photo-only-share trust-unaccepted-server-job drop-saved-server-actor-fence drop-selected-inactive include-unselected-inactive drop-selected-visibility include-selected-sample include-selected-type drop-active-logical-library; do
     xcrun swiftc -parse-as-library "$REPO_DIR/apps/ios/Rendprop/Support/LaunchFeatureAvailability.swift" "$COACH_API" "$ARTIFACT_DIR/$control.swift" "$SCRIPT_DIR/CoachPrivacyTests.swift" -o "$ARTIFACT_DIR/$control"
     status=0
     "$ARTIFACT_DIR/$control" > "$ARTIFACT_DIR/$control.log" 2>&1 || status=$?
@@ -61,7 +61,7 @@ for control in drop-history-redaction upload-local-bubbles include-foreign-cache
         misroute-photo-only-share) reason='photo-only published website opens listing details instead of capture' ;;
         trust-unaccepted-server-job) reason='saved request without reply cannot prove server acceptance' ;;
         drop-saved-server-actor-fence) reason='other actor saved job is private' ;;
-        drop-aerial-launch-fence) reason='stale online aerial action is rejected by shipping availability' ;;
+        wrong-opening-availability) reason='available opening action retains the selected listing and workspace' ;;
     esac
     rg -q "$reason" "$ARTIFACT_DIR/$control.log"
     echo "PASS: compiled $control negative control failed its intended runtime assertion"

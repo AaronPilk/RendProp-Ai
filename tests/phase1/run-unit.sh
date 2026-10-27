@@ -4,7 +4,7 @@ set -u -o pipefail
 FAIL=0
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)" || exit 1
-TEST_DIR="$(mktemp -d /tmp/rendprop-phase1-unit.XXXXXX)" || exit 1
+TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rendprop-phase1-unit.XXXXXX")" || exit 1
 if ! rg -q 'struct CoachOfflineTests' "$SCRIPT_DIR/CoachOfflineTests.swift"; then FAIL=1; fi
 if ! rg -q 'Publishing and online' "$REPO_DIR/apps/ios/Rendprop/Coach/CoachModel.swift"; then FAIL=1; fi
 if [ "$FAIL" -ne 0 ]; then echo 'FAIL: required production copy/test symbols missing' >&2; exit "$FAIL"; fi

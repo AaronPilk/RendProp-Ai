@@ -30,11 +30,12 @@ assert 'PhotoWorkBanner()\n            ReelWorkBanner()\n            tabs.id' in
 assert 'ReelWorkQueue.shared.resumeForeground()' in block(app,'.onChange(of: scenePhase)')
 for anchor in ['.onChange(of: analyticsAuth.syncSessionRevision)','.onChange(of: reelConsent.isGranted)']:
  assert 'ReelWorkQueue.shared.reconcileIdentity()'in block(app,anchor)
-assert 'ReelWorkQueue.shared.reconcileIdentity()'in block(app,'.onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged))')
+app_reel_lifecycle=app[:app.index('            // Universal Links.')]
+assert 'ReelWorkQueue.shared.reconcileIdentity()'in block(app_reel_lifecycle,'.onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged))')
 assert '.sheet(item: Binding(get: { currentReviewListing }'in banner
-assert 'visibleJobs: jobs.visibleJobs' in block(banner,'private var currentReviewListing:')
+assert 'ReelWorkReviewAdmission.presentedJob(jobID: id, jobs: jobs.jobs' in block(banner,'private var currentReviewListing:')
 assert 'NativePresentationAvailability.hasPresentedController'in block(banner,'private func open(')
-assert 'visibleJobs: jobs.visibleJobs'in block(banner,'private func open(')
+assert 'visibleJobs: jobs.reviewableJobs'in block(banner,'private func open(')
 assert 'Task.sleep(nanoseconds: 500_000_000)'in block(banner,'private func reviewPendingNotification()')
 assert '.task(id: pendingReviewJobID) { await reviewPendingBanner() }' in banner
 assert 'var body: some View {\n        VStack(spacing: 0) {' in banner
@@ -55,7 +56,7 @@ body+='''@MainActor final class PushManager {
 for anchor in ['    static func accepts(payload:','    func handle(payload:','    func clearPendingReelJob()']:
  body+=block(push,anchor)+'\n'
 body+='}\n'
-body+='''@MainActor final class ReviewJobs {var visibleJobs:[ReelWorkJob]=[]}
+body+='''@MainActor final class ReviewJobs {var visibleJobs:[ReelWorkJob]=[];var reviewableJobs:[ReelWorkJob]{visibleJobs};var jobs:[ReelWorkJob]{visibleJobs}}
 @MainActor final class ReviewModel {var listings:[Listing]=[]}
 @MainActor enum NativePresentationAvailability {static var hasPresentedController=false}
 @MainActor final class BannerReviewHarness {
@@ -68,6 +69,7 @@ last=block(reel,'if !reviewingExistingJob { lastReel = Self.newestReel(for: list
 parked=block(reel,'if !reviewingExistingJob, !listing.isSample { parkedClips = PendingReelClips.load(for: listing.id) }')
 restore=block(reel,'if !reviewingExistingJob {\n                reloadPendingRequest()')
 body+='''struct EnhancedPhoto {}
+@propertyWrapper struct State<Value> {var wrappedValue:Value;init(initialValue:Value){wrappedValue=initialValue}}
 enum PendingReelClips {static func load(for id:UUID)->String?{"other-run-clips"}}
 @MainActor final class ReelWorkQueue {
 static let shared=ReelWorkQueue();var requested=0
@@ -76,6 +78,7 @@ func job(for listing:Listing)->ReelWorkJob{requested+=1;return ReelWorkJob(UUID(
 @MainActor final class ReviewStudioHarness {
 let listing:Listing;let photos:[EnhancedPhoto];let extraClipURLs:[URL]
 let work:ReelWorkJob;let reviewingExistingJob:Bool
+@State var photoMotion=false;@State var photoMotionProfile=PhotoMotionContract.Profile.current;@State var photoMotionDirection=PhotoMotionContract.Direction.pushIn
 var lastReel:URL?;var parkedClips:String?;var reloads=0;var purposeRestores=0;var serverRestores=0
 '''+initializer+'''
 static func newestReel(for id:UUID)->URL?{URL(fileURLWithPath:"/unrelated-newest-file.mp4")}
@@ -100,7 +103,7 @@ controls=[
  ('late-foreground', 'UIApplication.shared.applicationState != .active else { return }\n                let content', 'true else { return }\n                let content', 'foreground return during settings suppresses completion notification'),
  ('lost-modal-review-intent', 'pendingReviewJobID = id', '// dropped manual review intent', 'a modal retains the exact manual Review job instead of dropping the tap'),
  ('wrong-pending-review-job', '                open(id)\n                return', '                open(jobs.visibleJobs.last!.id)\n                return', 'deferred Review opens its originally requested job, not another ready job'),
- ('wrong-review-studio-job', 'self.work = reviewingJob ?? ReelWorkQueue.shared.job(for: listing)', 'self.work = ReelWorkQueue.shared.job(for: listing)', 'explicit Review binds the exact retained work object'),
+ ('wrong-review-studio-job', 'let restored = reviewingJob ?? ReelWorkQueue.shared.job(for: listing)', 'let restored = ReelWorkQueue.shared.job(for: listing)', 'explicit Review binds the exact retained work object'),
  ('review-newest-substitution', 'if !reviewingExistingJob { lastReel = Self.newestReel(for: listing.id) }', 'if true { lastReel = Self.newestReel(for: listing.id) }', 'explicit Review cannot replace its retained result with the newest file'),
  ('review-rebinds-server-job', 'if !reviewingExistingJob {\n                reloadPendingRequest()', 'if true {\n                reloadPendingRequest()', 'explicit Review cannot rebind a different saved request on appearance'),
  ('ghost-review-banner', 'visibleJobs.filter { listing(jobID: $0.id, visibleJobs: visibleJobs, listings: listings) != nil }', 'visibleJobs', "a removed or unavailable home's job cannot expose a dead Review banner"),

@@ -14,7 +14,8 @@ def block(text,anchor):
  return text[start:end]
 reel=block(view,'struct ReelStudioView:')
 generate=block(reel,'private func generateWithSession()')
-assert generate.index('DirectUploader.uploadPhoto(')<generate.index('PropertyVideoPlanner.plan(')<generate.index('try batch?.save()')<generate.index('Self.makeClip(')
+local_generate=generate[generate.index('guard !frozenPhotoMotion else { throw PropertyVideoJobStore.Failure.invalidReceipt }'):]
+assert local_generate.index('DirectUploader.uploadPhoto(')<local_generate.index('PropertyVideoPlanner.plan(')<local_generate.index('try batch?.save()')<local_generate.index('Self.makeClip(')
 assert 'motion: shot?.motion ?? selectedMove' in generate
 assert 'plan = prepared.compactMap { $0.shot?.value }' in generate and 'ordered = Self.reordered(chosen, by: plan)' in generate
 assert 'api as? PropertyVideoPlanningAPI' in generate and 'requireCurrent: requireCurrent' in generate
@@ -29,7 +30,7 @@ assert 'voiceMode = .aiVoice' not in reel[reel.index('.onAppear {'):reel.index('
 assert 'voiceMode != .off && wordCaptionsOn' in block(reel,'private func snapshotReelConfiguration()')
 assert 'voiceMode != .off && wordCaptionsOn' in generate
 assert 'use motion from your original photo' not in view and 'we use motion from your selected photo' not in view
-assert 'stepVoiceCard' not in block(view,'@ViewBuilder private var configuredSetupSection:')
+assert 'stepVoiceCard' not in block(view,'@ViewBuilder private func configuredSetupSection(')
 assert 'stepVoiceCard' in block(view,'private var videoAdvancedControls:')
 assert 'automaticOrder: automaticOrder' in view and 'let planning = draft.planningSetup' in view and 'automaticOrder = planning.automaticOrder' in view and 'var automaticOrder: Bool?' in draft
 wire=block(live,'@MainActor func propertyVideoPlan(')

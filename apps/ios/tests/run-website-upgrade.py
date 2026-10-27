@@ -24,7 +24,7 @@ import Combine
 enum WebsiteUpgradeFixture { static let directory = URL(fileURLWithPath:CommandLine.arguments[1], isDirectory:true) }
 enum CloudSyncError: Error { case invalidResponse, identityChanged }
 enum APIError: Error { case notConfigured }
-enum DeepLink { static func buyerWebsiteURL(from url:URL)->URL?{url} }
+enum DeepLink { static func buyerWebsiteURL(from url:URL,address:String?=nil)->URL?{url} }
 enum WorkspaceContext { static var selectedOrgID:UUID? }
 @MainActor final class AuthStore { static let shared=AuthStore(); var userID:String?; var isSignedIn=true; var syncSessionRevision:UInt64=1 }
 enum Config { static func makeAPIClient()->Any?{nil} }
@@ -32,7 +32,8 @@ protocol WebsiteDesignAPI {
  func websiteDesignState(context:WebsiteDesignContext)async throws->WebsiteDesignState
  func assignWebsiteUpgrade(signedTransaction:String,context:WebsiteDesignContext)async throws->WebsiteDesignState
 }
-enum VerificationResult<T> { case verified(T), unverified
+enum StoreKitError: Error { case userCancelled, unknown }
+enum VerificationResult<T> { case verified(T), unverified(T,Error)
  var jwsRepresentation:String{if case .verified(let t)=self, let tx=t as? Transaction{return "signed-"+String(tx.id)};return "unverified"}
 }
 enum AppStore { enum Environment {case production,sandbox,xcode} }
@@ -53,6 +54,7 @@ struct AppTransaction {let environment:AppStore.Environment
 }
 @MainActor final class Product {
  enum ProductType {case consumable,autoRenewable}
+ enum PurchaseError: Error {case purchaseNotAllowed,productUnavailable,unknown}
  enum PurchaseOption:Hashable {case appAccountToken(UUID),quantity(Int)}
  enum PurchaseResult {case success(VerificationResult<Transaction>),userCancelled,pending}
  var id=WebsiteUpgradeProduct.id;var type=ProductType.consumable;var nextResult=PurchaseResult.userCancelled

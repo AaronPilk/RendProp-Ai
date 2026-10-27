@@ -337,13 +337,13 @@ enum FileStore {
             try check(allowance.action?.kind == .openPlanUsage && allowance.text.contains("can't verify"), "budget refusal has local account help without any paid request")
 
             let aerialHelp = CoachOffline.nextStep(model: reelApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA, intent: "Make an aerial")
-            try check(aerialHelp.action?.kind == .openHome && aerialHelp.text.contains("Coming soon"), "selected-project aerial intent cannot open new generation")
+            try check(aerialHelp.action?.kind == .openAerial && aerialHelp.action?.listingID == listingA.uuidString && aerialHelp.text.contains("AI aerial intro"), "selected-project opening help keeps the exact listing")
             reelApp.coachRoute = nil
             reelCoach.perform(.init(type: "open_photos", label: "Photos remain available", listingID: listingA.uuidString))
             try check(reelApp.coachRoute == .project(listingID: listingA, feature: .photos), "same current Coach context can still open photos")
             reelApp.coachRoute = nil
-            reelCoach.perform(.init(type: "open_aerial", label: "Legacy aerial action", listingID: listingA.uuidString))
-            try check(reelApp.coachRoute == nil, "stale online aerial action is rejected by shipping availability")
+            reelCoach.perform(.init(type: "open_aerial", label: "Open the accepted opening flow", listingID: listingA.uuidString))
+            try check(reelApp.coachRoute == .project(listingID: listingA, feature: .aerial), "available opening action retains the selected listing and workspace")
             // An acknowledged actor/listing-bound server row permits different
             // support guidance; a local phase or missing reply never proves it.
             reset()

@@ -170,10 +170,10 @@ struct CoachOfflineTests {
             }
             try check(!measurements.text.contains("LiDAR phones can also scan"), "ordinary offline help must not promise automatic generation")
             let aerial = CoachOffline.answer(to: "Make an aerial intro", model: model, space: .realEstate)
-            try check(aerial.text.contains("Coming soon") && aerial.text.contains("no launch plan includes"), "offline aerial help must not offer paid launch generation")
-            try check(aerial.action?.kind != .openAerial, "offline aerial help cannot dispatch generation")
+            try check(aerial.text.contains(LaunchFeatureAvailability.openingMessage) && aerial.text.contains("Resume earlier aerial"), "offline aerial help distinguishes the available opening from saved legacy work")
+            try check(aerial.action?.kind == .openSupport, "offline aerial help does not dispatch generation without a selected listing")
             let aerialNext = CoachOffline.nextStep(model: model, space: .realEstate, intent: "Make an aerial")
-            try check(aerialNext.action?.kind == .openHome && aerialNext.text.contains("Coming soon"), "no-project aerial intent must not create a new aerial project")
+            try check(aerialNext.action?.kind == .startProject && aerialNext.text.contains("address and details"), "no-project aerial intent starts a listing before an opening")
             print("PASS: \(assertions) actual offline Coach response assertions; 0 skipped; no API/app-state access")
         } catch {
             fputs("FAIL: \(error)\n", stderr)

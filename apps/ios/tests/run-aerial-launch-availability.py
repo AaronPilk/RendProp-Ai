@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Actual shipping policy, Home gates, Aerial tap admission and plan consumer.
+"""Actual opening policy, Home gates, legacy Aerial tap and plan consumer.
 Closed navigation/session interfaces only; no UI, provider, account or Apple work.
 Saved/pending operations are bound byte-for-byte to the pre-change native source.
 """
@@ -30,9 +30,11 @@ for needle in preserved:
  assert digest==expected_preserved[needle],f'accepted/saved aerial operation changed: {needle}'
  preserved_hashes[needle]=digest
 toolbox=block(fly,'private struct ListingToolboxGrid:')
-assert 'ListingToolCard(title: "Aerial intro", sub: "Coming soon"' in toolbox
-assert 'detail.aerialComingSoon' in toolbox and 'detail.aerialIntro' not in toolbox and 'action: openAerial' not in toolbox
-assert 'comingSoonTile("Aerial intro"' in block(app,'private var featureGrid:') and 'featureButton(.aerial)' not in block(app,'private var featureGrid:')
+assert 'ListingToolCard(title: "Aerial intro", sub: sample ? createFirst : "Front of home · opening only"' in toolbox
+assert 'detail.aerialOpening' in toolbox and 'AerialOpeningScreen(listing: destinationListing())' in toolbox
+assert 'featureButton(.aerial)' in block(app,'private var featureGrid:')
+assert 'LaunchFeatureAvailability.canCreateOpening' in block(app,'private func open(_ feature:')
+assert 'LaunchFeatureAvailability.canCreateOpening' in block(app,'private func go(_ listing:')
 assert 'PendingAerialJob.load(for: currentListing.id) != nil' in block(fly,'private var toolboxSection:')
 assert 'detail.resumeAerial' in block(fly,'private struct ListingToolboxSection:')
 assert 'LaunchFeatureAvailability.canGenerateAerial' in block(fly,'private func generateWithSession()').split('let job = try await api.aiVideoAerial')[0]
@@ -41,7 +43,7 @@ assert 'if LaunchFeatureAvailability.canGenerateAerial' in block(fly,'private va
 assert 'usageRow("Aerial intros"' not in block(src['Screens/SettingsView.swift'],'private func usageRows(')
 for n in ['Purchases/PaywallHost.swift','Purchases/PaywallView.swift','Plan/PlanBanner.swift']:
  assert 'AI photo edits, reels, aerial intros and more listings' not in src[n]
-assert 'no launch plan includes it' in src['Screens/HomeListingsView.swift']
+assert 'Choose an original exterior photo showing the front' in src['Screens/HomeListingsView.swift']
 assert 'case .tour, .reel, .aerial, .motionClip: return true' in block(fly,'struct ListingMediaItem:')
 assert 'extraClipURLs: currentListing.aerialURL.map { [$0] } ?? []' in fly
 interfaces = r"""
@@ -71,10 +73,10 @@ source=src['Support/LaunchFeatureAvailability.swift']+interfaces+block(app,'priv
 }
 """+block(src['Purchases/Products.swift'],'struct PlanAllowances:')+'\n'+(ROOT/'apps/ios/tests/AerialLaunchAvailabilityTests.swift').read_text()
 controls=[
- ('enabled-launch','static let canGenerateAerial = false','static let canGenerateAerial = true','aerial is unavailable in shipping policy'),
- ('home-open-unfenced','guard feature != .aerial || LaunchFeatureAvailability.canGenerateAerial else { return }','// removed home admission','Home aerial cannot open a picker or create a project'),
- ('home-route-unfenced','guard feature != .aerial || LaunchFeatureAvailability.canGenerateAerial else { return }','// removed route admission','stale Home route cannot open aerial sheet'),
- ('aerial-tap-unfenced','guard LaunchFeatureAvailability.canGenerateAerial,\n              phase != .generating','guard phase != .generating','new aerial tap cannot ask for session or reach dispatch'),
+ ('enabled-legacy-launch','static let canGenerateAerial = false','static let canGenerateAerial = true','legacy aerial generator remains unavailable'),
+ ('home-open-uses-legacy-flag','guard feature != .aerial || LaunchFeatureAvailability.canCreateOpening else { return }','guard feature != .aerial || LaunchFeatureAvailability.canGenerateAerial else { return }','Home opening starts a listing when none exists'),
+ ('home-route-uses-legacy-flag','guard feature != .aerial || LaunchFeatureAvailability.canCreateOpening else { return }','guard feature != .aerial || LaunchFeatureAvailability.canGenerateAerial else { return }','direct opening route keeps its exact listing'),
+ ('aerial-tap-unfenced','guard LaunchFeatureAvailability.canGenerateAerial,\n              phase != .generating','guard phase != .generating','legacy aerial tap cannot ask for session or reach dispatch'),
  ('paid-benefit-aerial','"High-resolution AI photo edits",','"High-resolution AI photo edits", "2 aerial intros",','paid plan benefits cannot include aerial generation'),
 ]
 runs=[]
@@ -82,8 +84,8 @@ for label in ['positive']+[c[0] for c in controls]:
  text=source;expected=None
  if label!='positive':
   _,before,after,expected=next(c for c in controls if c[0]==label)
-  if label=='home-open-unfenced': text=text.replace(before,after,1)
-  elif label=='home-route-unfenced':
+  if label=='home-open-uses-legacy-flag': text=text.replace(before,after,1)
+  elif label=='home-route-uses-legacy-flag':
    first=text.index(before); second=text.index(before,first+len(before));text=text[:second]+text[second:].replace(before,after,1)
   else: assert text.count(before)==1,(label,text.count(before));text=text.replace(before,after)
  swift=out/(label+'.swift');swift.write_text(text);binary=out/label
@@ -94,5 +96,5 @@ for label in ['positive']+[c[0] for c in controls]:
  if expected:assert 'FAIL: '+expected in run.stderr,(label,run.stderr)
  runs.append({'name':label,'exit':run.returncode,'expected_fault':expected})
 end=hashes();assert start==end,'source changed during gate'
-receipt={'passed':True,'source_binding_matches':True,'source_sha256':start,'end_source_sha256':end,'runs':runs,'compiled_negative_controls':len(controls),'preserved_accepted_and_saved_operation_sha256':preserved_hashes,'scope':'Actual fixed shipping policy + actual Home open/go + Aerial generate tap body + actual PlanAllowances. Session/dispatch/navigation closed boundaries; second POST guard/UI/read/export are source assertions and preserved body hashes, not live provider tests.'}
+receipt={'passed':True,'source_binding_matches':True,'source_sha256':start,'end_source_sha256':end,'runs':runs,'compiled_negative_controls':len(controls),'preserved_accepted_and_saved_operation_sha256':preserved_hashes,'scope':'Actual opening/legacy policy + actual Home open/go + legacy Aerial generate tap body + actual PlanAllowances. Session/dispatch/navigation closed boundaries; new opening UI and legacy second POST guard/read/export are source assertions and preserved body hashes, not live provider tests.'}
 (out/'receipt.json').write_text(json.dumps(receipt,indent=2));print(json.dumps({'passed':True,'compiled_negative_controls':len(controls),'receipt':str(out/'receipt.json')}))

@@ -14,7 +14,11 @@ def block(s,anchor):
     return s[start:e]
 rels=['apps/ios/Rendprop/Render/VideoAspectChoice.swift','apps/ios/Rendprop/Render/VideoMusicContract.swift','apps/ios/Rendprop/Render/VideoMusicCatalog.swift','apps/ios/Rendprop/Models/ListingVideo.swift','apps/ios/Rendprop/Render/PropertyVideoProcessorConsent.swift','apps/ios/Rendprop/Render/PropertyVideoJob.swift','apps/ios/Rendprop/Render/PropertyVideoAdmission.swift','apps/ios/Rendprop/Networking/PropertyVideoJobsAPI.swift','apps/ios/Rendprop/Networking/PropertyVideoJobCancellation.swift','apps/ios/Rendprop/Render/PropertyVideoJobRunner.swift','apps/ios/tests/PropertyVideoProcessorTests.swift','packages/client-contracts/property-video-processor-disclosure.json',str(Path(__file__).relative_to(ROOT)), 'apps/ios/Rendprop/Screens/FlythroughDetailView.swift','apps/ios/Rendprop/RendpropApp.swift']
 hashes={r:sha(ROOT/r) for r in rels};floor();(out/'tmp').mkdir()
-source='\n'.join((ROOT/r).read_text() for r in rels[:9])
+# Original-master upload belongs to the photo-motion source gate. Keep this
+# processor proof's compiled API surface focused on job admission and recovery.
+network=(ROOT/rels[7]).read_text()
+network=network.replace(block(network,'enum PropertyVideoOriginalMaster {'),'')
+source='\n'.join(network if i==7 else (ROOT/r).read_text() for i,r in enumerate(rels[:9]))
 runner=(ROOT/rels[9]).read_text().replace('import UIKit','').replace('import AVFoundation','')
 ready=block(runner,'    private func retainReady(')
 runner=runner.replace(ready,'    private func retainReady(_ saved: PropertyVideoSavedJob, watch: Watch) async throws { throw PropertyVideoJobStore.Failure.invalidReceipt }')

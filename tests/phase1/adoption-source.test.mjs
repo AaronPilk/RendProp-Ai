@@ -8,7 +8,8 @@ test('AuthStore durably prepares source before identified session replacement', 
   assert.ok(exchange.indexOf('recovery.prepare(') >= 0);
   assert.ok(exchange.indexOf('recovery.prepare(') < exchange.indexOf('applySession('));
   assert.ok(exchange.includes('sourceRefresh: priorRefresh'));
-  assert.ok(exchange.includes('try SecureStore.getChecked(Keys.accessToken)'));
+  assert.ok(exchange.includes('try Self.priorAccessTokenForAdoption()'));
+  assert.ok(auth.includes('guard !sessionStorageSuppressed else { return nil }\n        return try SecureStore.getChecked(Keys.accessToken) ?? storedAccessToken()'));
   assert.ok(exchange.includes('try SecureStore.getChecked(Keys.refreshToken)'));
   assert.ok(exchange.includes('throw APIError.server'));
 });

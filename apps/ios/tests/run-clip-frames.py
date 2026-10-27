@@ -59,7 +59,8 @@ try:
     receipt['fixture_provenance'] = provenance
     sdk = command('sdk', ['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], 30).stdout.strip()
     inventory = json.loads(command('simulators', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 120).stdout)['devices']
-    devices = [d for runtime, rows in inventory.items() if 'iOS' in runtime for d in rows if d['isAvailable'] and 'iPhone' in d['name']]
+    devices = [d for runtime, rows in inventory.items() if 'iOS' in runtime for d in rows
+               if d['isAvailable'] and d.get('deviceTypeIdentifier', '').startswith('com.apple.CoreSimulator.SimDeviceType.iPhone-')]
     device = next(d for d in devices if d['udid'] == args.simulator) if args.simulator else next((d for d in devices if d['state'] == 'Booted'), devices[0])
     receipt['simulator'] = device
     if device['state'] != 'Booted':

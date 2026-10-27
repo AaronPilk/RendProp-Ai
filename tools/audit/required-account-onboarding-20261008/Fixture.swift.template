@@ -7,8 +7,10 @@ final class UserDefaults {
     var values: [String: Any] = [:]
     func string(forKey key: String) -> String? { values[key] as? String }
     func double(forKey key: String) -> Double { values[key] as? Double ?? 0 }
+    func object(forKey key: String) -> Any? { values[key] }
     func set(_ value: Any?, forKey key: String) { values[key] = value }
     func removeObject(forKey key: String) { values[key] = nil }
+    func synchronize() -> Bool { true }
 }
 enum UIApplication { static let didBecomeActiveNotification = Notification.Name("synthetic-foreground") }
 enum Config {
@@ -33,10 +35,31 @@ enum APIError: Error { case badResponse }
 }
 // The push cleanup and purchase presentation side effects are checked separately.
 @MainActor final class PushManager { static let shared = PushManager(); func accountWillChange(retainCleanup: Bool = true) {}; func accountDidChange() {} }
+@MainActor final class UploadManager { static let shared = UploadManager(); func accountWillChange() {} }
 @MainActor final class PurchaseManager { static let shared = PurchaseManager(); func clearAccountPresentation() {} }
 @MainActor enum AccountLocalPreferences { static func activate(previous: UUID?, next: UUID) {} }
+@MainActor enum SecureStore {
+    static func set(_ key: String, _ value: String) -> Bool {
+        AuthStore.credentialWrites += 1
+        if key == "access" { AuthStore.access = value }
+        else if key == "refresh" { AuthStore.refresh = value }
+        return true
+    }
+    static func remove(_ key: String) -> Bool {
+        if key == "access" { AuthStore.access = nil }
+        else if key == "refresh" { AuthStore.refresh = nil }
+        return true
+    }
+    static func getChecked(_ key: String) throws -> String? {
+        if key == "access" { return AuthStore.access }
+        if key == "refresh" { return AuthStore.refresh }
+        return nil
+    }
+}
+struct FixtureLog { func error(_ message: String) {} }
 @MainActor final class AuthStore {
     static var shared: AuthStore!
+    static let log = FixtureLog()
     static var access: String?, refresh: String?
     static var tokenExpiresAt: Date? {
         let value = UserDefaults.standard.double(forKey: Keys.expiresAt)
@@ -45,12 +68,8 @@ enum APIError: Error { case badResponse }
     static var storageReads = 0, credentialWrites = 0
     static func storedAccessToken() -> String? { storageReads += 1; return access }
     static func storedRefreshToken() -> String? { storageReads += 1; return refresh }
-    static func persistTokens(access: String, refresh: String?, expiresAt: Date?) {
-        credentialWrites += 1; Self.access = access; Self.refresh = refresh
-        if let expiresAt { UserDefaults.standard.set(expiresAt.timeIntervalSince1970, forKey: Keys.expiresAt) }
-    }
     static func clearTokens() { access = nil; refresh = nil; UserDefaults.standard.removeObject(forKey: Keys.expiresAt) }
-    enum Keys { static let accessToken="access", refreshToken="refresh", userID="owner", userName="name", orgName="org", expiresAt="expiry", sessionIdentified="sessionIdentified" }
+    enum Keys { static let accessToken="access", refreshToken="refresh", userID="owner", userName="name", orgName="org", expiresAt="expiry", sessionIdentified="sessionIdentified", sessionSuppressed="suppressed", sessionWritePending="writePending" }
     var isSignedIn: Bool, isIdentified = false, userID: String?
     var displayName: String, userName: String, orgName: String
     var foregroundObserver: NSObjectProtocol?
@@ -87,6 +106,10 @@ __REAL_CONFIG__
 @MainActor final class RefreshProbe {
     var isSignedIn = true, refreshes = 0
     static var tokenExpiresAt: Date? { AuthStore.tokenExpiresAt }
+    static var sessionStorageSuppressed: Bool {
+        UserDefaults.standard.object(forKey: AuthStore.Keys.sessionSuppressed) != nil
+            || UserDefaults.standard.object(forKey: AuthStore.Keys.sessionWritePending) != nil
+    }
     static func storedRefreshToken() -> String? { AuthStore.refresh }
     func signOut(preservingAdoption: Bool = false) { isSignedIn = false }
     func runRefresh() async -> Bool { refreshes += 1; return false }

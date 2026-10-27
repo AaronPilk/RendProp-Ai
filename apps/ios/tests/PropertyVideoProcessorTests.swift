@@ -27,6 +27,7 @@ enum FileStore {
     static func relativePath(for url: URL) -> String { "reels/" + url.lastPathComponent }
     static func fileSize(_ url: URL) -> Int64 { Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
 }
+enum AdoptionOwnedIdentity { static func pathIsOccupied(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) } }
 struct AIFailure { let message: String; init(_ error: Error, title: String = "") { message = title + ": " + error.localizedDescription } }
 @MainActor final class UIApplication { enum State { case active, inactive }; static let shared = UIApplication(); var applicationState: State = .inactive }
 struct ClosedListing { let id: UUID; let serverID: UUID?; var cloudUnavailable: Bool? = nil; var isSample = false }
@@ -34,14 +35,16 @@ struct ClosedListing { let id: UUID; let serverID: UUID?; var cloudUnavailable: 
 @MainActor final class ReelWorkJob {
     struct Scope { let owner: String?; let workspace: UUID? }
     enum Phase { case setup, generating, failed, done }
-    let id = UUID(); let scope: Scope
+    let id = UUID(); let scope: Scope; let listingID: UUID
     var running = false; var phase = Phase.setup; var failure: AIFailure?; var statusText = ""
     var serverJob: PropertyVideoSavedJob?; var reelURL: URL?; var lastReel: URL?; var originalPhotoMotionShots = 0
     var isCheckingServerStatus = false; var serverStatusCheckNote: String?; var lastServerStatusCheck: Date?
     var totalClips = 0; var completedClips = 0
-    init(_ context: PropertyVideoJobContext) { scope = Scope(owner: context.actorID.uuidString, workspace: context.orgID) }
+    init(_ context: PropertyVideoJobContext) { scope = Scope(owner: context.actorID.uuidString, workspace: context.orgID); listingID = context.localListingID }
+    var isContextCurrent: Bool { scope.owner == AuthStore.shared.userID && scope.workspace == WorkspaceContext.selectedOrgID }
     func adoptServerJob(_ saved: PropertyVideoSavedJob) { serverJob = saved; phase = .generating }
     func afterCurrentOperation(_ action: @escaping () -> Void) {}
+    func restoreRetainedResult(at url: URL, originalPhotoCount: Int) { reelURL = url; originalPhotoMotionShots = originalPhotoCount }
 }
 
 /// Every URL is intercepted. No provider, credential or external host can be reached.

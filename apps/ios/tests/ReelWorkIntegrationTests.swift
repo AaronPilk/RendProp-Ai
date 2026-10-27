@@ -1,7 +1,18 @@
 import Foundation
 
-struct ClosedServerJob { struct Reply { let jobID:UUID };var reply:Reply? }
-@MainActor final class ReelWorkJob { var serverJob:ClosedServerJob?;var running=false;var isServerRendering=false;var paused=false; let id:UUID; let listingID:UUID; init(_ id:UUID,_ listingID:UUID){self.id=id;self.listingID=listingID} }
+struct ClosedServerJob {
+ struct Reply { let jobID:UUID }
+ struct Source { var motion:String }
+ struct Request { var isPhotoMotion=false;var photoMotionProfile:PhotoMotionContract.Profile = .current;var sources:[Source]=[] }
+ var reply:Reply?;var request=Request()
+}
+enum PhotoMotionContract {enum Profile {case current,opening};enum Direction:String {case pushIn="push_in"}}
+@MainActor final class ReelWorkJob {
+ enum Phase {case setup,done}
+ var serverJob:ClosedServerJob?;var running=false;var isServerRendering=false;var paused=false;var isContextCurrent=true
+ var configuration:String?;var phase=Phase.setup
+ let id:UUID; let listingID:UUID; init(_ id:UUID,_ listingID:UUID){self.id=id;self.listingID=listingID}
+}
 struct Listing { let id:UUID; var isSample=false; var cloudUnavailable:Bool? }
 struct PushAccountIdentity:Equatable {let owner:UUID;let revision:UInt64}
 @MainActor final class UIApplication {enum State {case active,inactive,background};static let shared=UIApplication();var applicationState=State.background}

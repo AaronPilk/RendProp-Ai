@@ -21,9 +21,11 @@ helper += '\n' + block(paths[5].read_text(),'struct NativeReelPlanningSetup:')
 assert 'let planning = draft.planningSetup' in source and 'bigCaptionsOn = planning.pictureLabels' in source
 assert 'cameraMove = planning.motionPreset.flatMap' in source and 'planning.notice.map' in source
 view=block(source,'struct ReelStudioView:')
-assert 'if videoPurpose == nil' in block(view,'@ViewBuilder private var setupSection:')
-assert 'videoPurposeChooser' in block(view,'@ViewBuilder private var setupSection:')
-assert 'videoPurpose = choice' in block(view,'private var videoPurposeChooser:')
+assert 'case .format: stepFormatMotionCard' in block(view,'@ViewBuilder private func configuredSetupSection(')
+assert 'videoPurposeChooser' in block(view,'private var stepFormatMotionCard:')
+assert '.disabled(step == .photos ? selected.isEmpty : videoPurpose == nil)' in block(view,'private func setupPrimaryAction(')
+assert 'formatChoices' in block(view,'private var videoPurposeChooser:')
+assert 'videoPurpose = choice' in block(view,'private var formatChoices:')
 assert 'Picker("Shape"' not in view
 assert 'portrait = draft.portrait' in block(view,'@MainActor private func syncNativeSetup(')
 assert 'portrait: portrait' in block(view,'@MainActor private func syncNativeSetup(')
@@ -51,11 +53,13 @@ enum ReelComposer {enum ShotCaptionStyle {case lowerThird,off};enum Transition {
 enum ReelWorkJob {
 '''+config+r'''
 }
-final class ClosedWork {var configuration:ReelWorkJob.Configuration?}
+final class ClosedWork {var configuration:ReelWorkJob.Configuration?;var serverJob:ClosedServerJob?}
 struct ClosedBatch {var aspect:String}
-struct ClosedRequest {var outputAspect:String?}
+struct ClosedRequest {var outputAspect:String?;var isPhotoMotion=false}
+struct ClosedServerJob {var request:ClosedRequest}
 struct VideoFixture {
  @FixtureState var videoPurpose:VideoAspectChoice?=nil
+ @FixtureState var photoMotion=false
  var selectedExtras:[URL]=[];var captionsOn=false;var listing="fixture";var voiceMode=VoiceMode.off;var voiceover:Voiceover?;var wordCaptionsOn=false;var bigCaptionsOn=false;var bigCaptionStyle=ReelComposer.ShotCaptionStyle.lowerThird;var reelTransition=ReelComposer.Transition.cut
  enum VoiceMode {case off,on}
  var pendingBatch:ClosedBatch?;var pendingRequest:ClosedRequest?;var parkedClips:Bool?;var isWorking=false

@@ -25,6 +25,7 @@ struct PushAccountIdentity: Equatable { let owner: UUID; let revision: UInt64 }
 @MainActor final class PushManager { static let shared=PushManager();static var currentIdentity: PushAccountIdentity?;var localDataErasureRevision:UInt64=0 }
 @MainActor final class ClosedConnection { var cancelled = false; func cancel() { cancelled = true } }
 @MainActor final class ClosedPlayer { var paused = false; func pause() { paused = true } }
+@MainActor final class ClosedMusicPreview { var stopped = false; func stop() { stopped = true } }
 @MainActor final class ClosedRecorder { var isRecording = true; var cancellations = 0; func cancel() { isRecording = false; cancellations += 1 } }
 @MainActor enum IdleTimer {
     static var holds = 0, releases = 0
@@ -71,7 +72,9 @@ struct Listing { let id: UUID; let address: String; var isSample=false;var cloud
 protocol PropertyVideoJobsAPI {}
 @MainActor final class AppModel {var listings:[Listing]=[];var api:Any?=nil}
 struct PropertyVideoJobContext {let localListingID:UUID;let listingID:UUID;let actorID:UUID;let orgID:UUID}
-struct PropertyVideoSavedJob {struct Request {var sources:[Int]=[]};struct Reply {var isTerminal=false};var request=Request();var reply:Reply?=nil}
+struct PropertyVideoSavedJob {struct Request {var sources:[Int]=[];var isPhotoMotion=false};struct Reply {var isTerminal=false};var request=Request();var reply:Reply?=nil}
+enum PhotoMotionContract {static let mode = "photo_motion"}
+enum ListingVideoStore {static func digest(_ url:URL)throws->String {"closed-file-digest"}}
 enum FileStore {static let documents=URL(fileURLWithPath:"/closed-no-server-jobs")}
 enum PropertyVideoJobStore {static func url(context:PropertyVideoJobContext,documents:URL)->URL{documents.appendingPathComponent("closed")}}
 @MainActor final class PropertyVideoJobRunner {
@@ -143,6 +146,7 @@ final class ClosedLifetime { let id = UUID() }
         check(job.task?.isCancelled == false && job.running && starts == 1, "dismissing the sheet leaves the paid app-owned job running")
         check(presentation.connection.cancelled, "dismissal cancels only the unsent connection waiter")
         check(presentedPlayer?.paused == true && presentation.voPlayer?.paused == true, "dismissing the reel pauses both players")
+        check(presentation.musicPreview.stopped, "dismissing the reel stops music preview playback")
         check(job.player == nil && !job.isPresented, "a dismissed studio releases its decoded playback session")
         job.setPlaybackPlayer(ClosedPlayer())
         check(job.player == nil, "completion while the studio is closed cannot retain a decoded player")

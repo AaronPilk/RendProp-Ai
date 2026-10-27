@@ -21,6 +21,8 @@ const apiBegin = api.indexOf('enum APIError:');
 const apiEnd = api.indexOf('// MARK: - Admin console models', apiBegin);
 assert.ok(apiBegin >= 0 && apiEnd > apiBegin, 'require exact production API error boundaries');
 const errors = `import Foundation\n${api.slice(apiBegin, apiEnd)}\n`;
+const savedEditProtocol = api.slice(api.indexOf('protocol PhotoSavedEditAPI:'), api.indexOf('\n}', api.indexOf('protocol PhotoSavedEditAPI:')) + 2);
+assert.ok(savedEditProtocol.includes('func savedPhotoEdit('), 'require actual saved-edit protocol');
 const history = readFileSync(new URL('../../apps/ios/Rendprop/Photos/PhotoVersionHistory.swift', import.meta.url), 'utf8');
 function actualDeclaration(marker) {
   assert.equal(history.split(marker).length - 1, 1, 'require unique production history policy');
@@ -44,14 +46,15 @@ assert.ok(!fixture.includes('__ACTUAL_EDIT_CONTEXT__'), 'actual original/source/
 
 test('actual photo batch fences revoked grants before dispatch and retains already-dispatched outputs', () => {
   const directory = mkdtempSync(join(tmpdir(), 'rendprop-photo-consent.'));
-  for (const [name, contents] of [['AIConsent.swift', consent], ['APIError.swift', errors], ['PhotoWorkQueue.swift', queue],
+  for (const [name, contents] of [['AIConsent.swift', consent], ['APIError.swift', errors], ['PhotoSavedEditAPI.swift', `import Foundation\n${savedEditProtocol}\n`], ['PhotoWorkQueue.swift', queue],
     ['PhotoEditService.swift', service], ['Fixture.swift', fixture]]) {
     writeFileSync(join(directory, name), contents, { flag: 'wx' });
   }
   const execute = (name, serviceFile) => {
     const binary = join(directory, name);
     const compile = spawnSync('/usr/bin/swiftc', ['-parse-as-library', join(directory, 'AIConsent.swift'),
-      join(directory, 'APIError.swift'), join(directory, 'PhotoWorkQueue.swift'), serviceFile, join(directory, 'Fixture.swift'), '-o', binary],
+      join(directory, 'APIError.swift'), join(directory, 'PhotoSavedEditAPI.swift'), new URL('../../apps/ios/Rendprop/Photos/DeclutterAssessment.swift', import.meta.url).pathname,
+      join(directory, 'PhotoWorkQueue.swift'), serviceFile, join(directory, 'Fixture.swift'), '-o', binary],
     { encoding: 'utf8', timeout: 60000 });
     assert.equal(compile.status, 0, `${name} compile: ${compile.error ?? ''}\n${compile.stdout}\n${compile.stderr}`);
     return spawnSync(binary, [`com.rendprop.offline-photo-consent.${randomUUID()}`],

@@ -61,6 +61,9 @@ def main():
     assert "ProfileFeedbackFixtureHost.isRequested" in app and "DetailMetadataRegressionHost.requestedCase" in app
 
     markers = ["    init()", "    private static func cachedSessionOwner(",
+               "    private static var sessionStorageSuppressed:",
+               "    @discardableResult private static func suppressCachedSession()",
+               "    private static func persistTokens(",
                "    nonisolated private static func tokenPayload(", "    nonisolated private static func tokenIdentityClaimIsValid(",
                "    nonisolated private static func jwtExpiry(", "    nonisolated static func tokenIsIdentified(",
                "    static func jwtSubject(", "    @MainActor private func validatedCurrentAccessToken(",

@@ -35,7 +35,7 @@ struct Listing {
 }
 enum SpaceType: String { case realEstate = "real_estate" }
 enum CloudSyncError: Error { case identityChanged }
-struct AIPhotoEditRequest {
+struct AIPhotoEditRequest: Hashable {
     let imageBase64: String
     let mime: String
     let edit: String
@@ -121,12 +121,23 @@ protocol NotificationPrefsAPI { func notificationPrefs() async throws -> Notific
 // actual service's grant checks or asynchronous provider boundaries here.
 @MainActor enum PhotoPendingEdit {
     struct Identity { let actor: String; let library: UUID; let listing: UUID; let sourceVersion: String }
-    struct Saved { let request: AIPhotoEditRequest }
-    static func begin(_ request: AIPhotoEditRequest, identity: Identity, directory: URL) throws -> Saved {
+    struct Saved {
+        let request: AIPhotoEditRequest
+        let identity: Identity
+        let url: URL
+        let parentVersion: String?
+        let stagingReferenceID: String?
+        var outputID: String { "saved-" + request.idempotencyKey!.lowercased() }
+    }
+    enum Failure: Error { case unavailable }
+    static func begin(_ request: AIPhotoEditRequest, identity: Identity, directory: URL,
+                      parentVersion: String? = nil, stagingReferenceID: String? = nil) throws -> Saved {
         var retained = request
         retained.idempotencyKey = request.idempotencyKey ?? UUID().uuidString
-        return Saved(request: retained)
+        return Saved(request: retained, identity: identity, url: directory.appendingPathComponent("synthetic-pending.json"),
+                     parentVersion: parentVersion, stagingReferenceID: stagingReferenceID)
     }
+    static func read(_ url: URL, directory: URL, expected: Identity) throws -> Saved { throw Failure.unavailable }
     static func finish(_ saved: Saved) throws {}
 }
 struct UIImage {
@@ -141,7 +152,11 @@ struct UIImage {
         var effects: [String] = []
         var familyID: String { id }
         var parentID: String? = nil
+        var sourceID: String? = nil
         var stagingBaseID: String? = nil
+        var edit: String? = nil; var style: String? = nil; var disclosure: String? = nil
+        var provenanceID: String? = nil; var originalAssetID: String? = nil; var serverListingID: String? = nil
+        var provenanceRecorded = false
 __VERSION_SELECTION_MEMBERS__
     }
     // File/history reads remain closed; source/parent selection above them is
@@ -168,6 +183,9 @@ __ACTUAL_EDIT_CONTEXT__
     static func stagingReference(id: String, directory: URL) throws -> Version {
         throw Failure.reviewRequired // These consent-only cases never opt in.
     }
+    static func savedEditContext(sourceID: String, parentID: String?, directory: URL) throws -> (parent: Version, source: Version) {
+        throw Failure.changedVersion // Recovery is outside this consent-only fixture.
+    }
     static func saveEdit(jpeg: Data, id: String, parentID: String, sourceID: String, edit: String, style: String?,
                          disclosure: String, provenanceID: String?, provenanceRecorded: Bool, directory: URL,
                          originalAssetID: String?, serverListingID: String?,
@@ -191,6 +209,7 @@ struct AIFailure {
     init(_ error: Error) {}
     var isQuota: Bool { false }; var isUnauthorized: Bool { false }
     var isServiceUnavailable: Bool { false }; var isTrialCapacityUnavailable: Bool { false }
+    static func requiresSavedPhotoCheck(_ error: Error) -> Bool { false }
 }
 struct UIBackgroundTaskIdentifier: Equatable {
     let value: Int

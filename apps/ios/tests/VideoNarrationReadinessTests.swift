@@ -148,7 +148,7 @@
         cleanup.disappear()
         check(!cleanup.work.isPresented && cleanup.voicePermissionID == nil && !cleanup.requestingVoicePermission, "disappearance retires presentation and permission intent")
         check(cleanup.connection.cancellations == 1 && cleanup.connection.action == nil, "disappearance cancels only its unsent reconnect waiter")
-        check(cleanup.player == nil && videoPlayer.pauses == 1 && takePlayer.pauses == 1 && cleanup.musicPreviewPlayer?.pauses == 1, "disappearance releases video playback and pauses narration and music")
+        check(cleanup.player == nil && videoPlayer.pauses == 1 && takePlayer.pauses == 1 && cleanup.musicPreview.pauses == 1, "disappearance releases video playback and pauses narration and music")
         check(cleanup.recorder.cancels == 1 && !cleanup.recorder.isRecording && cleanup.voiceover?.id == "retained-finished-take", "disappearance cancels unfinished microphone take but retains finished audio")
 
         let modeCleanup = NarrationFixture()
