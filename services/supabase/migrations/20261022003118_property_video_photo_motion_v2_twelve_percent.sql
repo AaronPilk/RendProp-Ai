@@ -61,6 +61,20 @@ create function public.property_video_photo_motion_identity_for(p_profile text)r
 end$$;
 revoke all on function public.property_video_photo_motion_profile(jsonb),public.property_video_photo_motion_identity_for(text)from public,anon,authenticated,service_role;
 
+-- Recover the applied saved-identity handoff that preceded aerial composition.
+-- The body is the exact predecessor pinned by 20261022223138 and 20261022223142.
+create function public.property_video_photo_motion_saved_identity(p_profile text,p_identity jsonb)returns boolean language plpgsql stable security definer set search_path=''as $history$
+begin
+ if p_profile='photo-motion-v1-cfr24' then
+  return p_identity is not distinct from public.property_video_photo_motion_identity_for(p_profile);
+ end if;
+ if p_profile is distinct from 'photo-motion-v2-cfr24' then return false;end if;
+ return p_identity is not distinct from '{"algorithm":"fractional-bicubic-cosine-12pct-four-directions","composition_profile":"photo-motion-v2-cfr24","fps":24,"max_audio_attempts":3,"max_compose_attempts":3,"max_processing_wall_ms":1260000,"producer_identity":{"controller_sha256":"604b92b2c8b6a3ccfd49ac6bec6ff81993e52062c71ba6f910f057d1e2cb3db6","image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:f8bf65d52390bdd4470c36638b141251ec9fe924aa30bb7218fdbcba09a809ec","renderer_source_sha256":"a98b48825fbd819dbf49fd4c2cca4b836cdd81d57bedda5bf2de7774a42d98be"},"rate_evidence_sha256":"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a","source_mode":"photo_motion_v1","transition":"cut","visible_frames":[48,72,96,120]}'::jsonb
+     or p_identity is not distinct from '{"algorithm":"fractional-bicubic-cosine-12pct-four-directions","composition_profile":"photo-motion-v2-cfr24","fps":24,"max_audio_attempts":3,"max_compose_attempts":3,"max_processing_wall_ms":1260000,"producer_identity":{"controller_sha256":"c36d9aba8975401865aacb6c58ad4026c9eff810050957435a53e55035705e64","image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:f8bf65d52390bdd4470c36638b141251ec9fe924aa30bb7218fdbcba09a809ec","renderer_source_sha256":"a98b48825fbd819dbf49fd4c2cca4b836cdd81d57bedda5bf2de7774a42d98be"},"rate_evidence_sha256":"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a","source_mode":"photo_motion_v1","transition":"cut","visible_frames":[48,72,96,120]}'::jsonb;
+end$history$;
+revoke all on function public.property_video_photo_motion_saved_identity(text,jsonb)from public,anon,authenticated,service_role;
+
+
 
 CREATE OR REPLACE FUNCTION public.property_video_photo_motion_manifest(p_actor uuid, p_manifest jsonb)
  RETURNS jsonb
@@ -142,7 +156,7 @@ declare j public.property_video_jobs;q jsonb;checked jsonb;h text;org uuid;billi
  if current_setting('role',true)is distinct from'service_role'then raise insufficient_privilege;end if;
  perform pg_advisory_xact_lock(hashtextextended('property-video-operation:'||p_actor||':'||(p_manifest->>'operation_id'),79));h:=encode(sha256(convert_to(p_manifest::text,'UTF8')),'hex');
  select*into j from public.property_video_jobs where actor_id=p_actor and operation_id=(p_manifest->>'operation_id')::uuid;
- if j.id is not null then if j.manifest_sha256<>h or j.manifest->>'source_mode'is distinct from'photo_motion_v1'or j.quality_identity is distinct from public.property_video_photo_motion_identity_for(public.property_video_photo_motion_profile(j.manifest))then raise exception'RP409: This video operation has different saved inputs';end if;return jsonb_build_object('accepted',true,'job',to_jsonb(public.property_video_job_scope(j.id,p_actor,false)));end if;
+ if j.id is not null then if j.manifest_sha256<>h or j.manifest->>'source_mode'is distinct from'photo_motion_v1'or not public.property_video_photo_motion_saved_identity(public.property_video_photo_motion_profile(j.manifest),j.quality_identity)then raise exception'RP409: This video operation has different saved inputs';end if;return jsonb_build_object('accepted',true,'job',to_jsonb(public.property_video_job_scope(j.id,p_actor,false)));end if;
  select*into refused from public.property_video_refused_operations where actor_id=p_actor and operation_id=(p_manifest->>'operation_id')::uuid;
  if refused.operation_id is not null then if refused.manifest_sha256 is distinct from h then raise exception'RP409: This refused video operation has different saved inputs';end if;return jsonb_build_object('accepted',false,'operation_closed',true,'message',refused.message,'operation_id',refused.operation_id);end if;
  begin
@@ -335,7 +349,7 @@ CREATE OR REPLACE FUNCTION public.property_video_photo_motion_publication(p_acto
 AS $function$declare j public.property_video_jobs;normalized jsonb;begin
  if p_actor is distinct from auth.uid()and current_setting('role',true)is distinct from'service_role'then raise insufficient_privilege;end if;
  if p_manifest->>'source_mode'is distinct from'photo_motion_v1'or not coalesce(p_manifest->>'composition_profile'in('photo-motion-v1-cfr24','photo-motion-v2-cfr24'),false)or p_manifest->'fps'is distinct from'24'::jsonb then return false;end if;
- select*into j from public.property_video_jobs where actor_id=p_actor and listing_id=p_listing and manifest->>'purpose'=p_manifest->>'purpose'and manifest->>'aspect'=p_manifest->>'aspect'and result->>'branding_policy'=p_manifest->>'branding_policy'and output_asset_id=p_asset and poster_asset_id=p_poster and state='ready'and manifest->>'source_mode'='photo_motion_v1'and quality_profile=public.property_video_photo_motion_profile(p_manifest)and quality_identity=public.property_video_photo_motion_identity_for(public.property_video_photo_motion_profile(p_manifest));
+ select*into j from public.property_video_jobs where actor_id=p_actor and listing_id=p_listing and manifest->>'purpose'=p_manifest->>'purpose'and manifest->>'aspect'=p_manifest->>'aspect'and result->>'branding_policy'=p_manifest->>'branding_policy'and output_asset_id=p_asset and poster_asset_id=p_poster and state='ready'and manifest->>'source_mode'='photo_motion_v1'and quality_profile=public.property_video_photo_motion_profile(p_manifest)and public.property_video_photo_motion_saved_identity(public.property_video_photo_motion_profile(p_manifest),quality_identity);
  if j.id is null or j.result->'producer_identity'is distinct from j.quality_identity->'producer_identity' or j.result->'total_frames'is distinct from p_manifest->'total_frames'or jsonb_typeof(p_manifest->'sources')is distinct from'array'or jsonb_array_length(p_manifest->'sources')<>j.source_count then return false;end if;
  if exists(select 1 from jsonb_array_elements(j.result->'sources')s left join public.capture_assets a on a.id=(s->>'photo_asset_id')::uuid where a.id is null or a.listing_id<>p_listing or not a.uploaded or a.upload_aborted or a.sha256 is distinct from s->>'source_sha256'or a.bytes is distinct from(s->>'source_bytes')::bigint
   or exists(select 1 from public.media_provenance p where p.org_id=j.org_id and p.listing_id=p_listing and p.altered_key=a.storage_key and p.kind in('photo_edit','virtual_stage','declutter')and p.id is distinct from(s->>'photo_provenance_id')::uuid)
