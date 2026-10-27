@@ -392,10 +392,11 @@ struct PlanBanner: View {
         }
     }
 
-    /// Credits are the primary creative meter for paid retail plans. Actual
-    /// spendable balance is shown by Plan & usage, after ledger funding.
+    /// The plan name comes from /me. Its proposed monthly credit number is
+    /// deliberately absent here: the server may have recorded a paid plan
+    /// before the funded credit grant catalog has been activated.
     static func paidDetail(_ allowances: Allowances?, fallback plan: RendpropPlan) -> String {
-        "\(plan.allowances.credits) Declutter credits per paid month. Check Plan & usage for your available balance."
+        "Paid plan active. Check Settings for current limits and any funded credits."
     }
 
     /// Manual historical plans retain their independent recorded allowances.

@@ -61,10 +61,10 @@ struct CreditWalletView: View {
 
     private var introduction: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Make more with credits")
+            Text("Your credit balance")
                 .font(.title2.weight(.bold)).foregroundStyle(Theme.ink)
                 .accessibilityAddTraits(.isHeader)
-            Text("Your workspace shares one balance. Eligible AI edits show their credit cost before you start.")
+            Text("Your workspace shares one balance. Eligible AI edits show a credit cost when credit spending is available.")
                 .font(.subheadline).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -109,7 +109,7 @@ struct CreditWalletView: View {
             Text("Add credits")
                 .font(.headline).foregroundStyle(Theme.ink)
                 .accessibilityAddTraits(.isHeader)
-            Text("Buy more only when you need them. Your plan and its monthly allowance stay the same.")
+            Text("When credit packs are available, a purchase adds to this workspace's balance. Your plan stays the same.")
                 .font(.subheadline).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
             if !snapshot.canPurchase {

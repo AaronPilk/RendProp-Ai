@@ -5,8 +5,9 @@ import Foundation
 // ONE source of truth for the product ids, the plan they map to, and the
 // "what you get" lines. Feature ceilings and seat counts mirror
 // `services/supabase/migrations/20261027050000_four_tier_retail_plans.sql`;
-// credit amounts are TestFlight candidates that must match the separate
-// verified-term wallet grant catalog before any tier is sold.
+// credit amounts are internal TestFlight candidates. They are not customer
+// benefits until the server's verified-term wallet grant catalog and combined
+// serving policy are active for the exact sold Apple product.
 //
 // A subscription trial begins only after Apple confirmation and server
 // verification. New workspaces start on the free plan. Existing historical
@@ -114,7 +115,7 @@ enum RendpropPlan: String, CaseIterable, Identifiable, Sendable {
 
     /// Base paid allowances after the introductory week. Feature quantities
     /// are hidden safety ceilings; credits require a verified paid period and
-    /// a server ledger grant. This is catalog copy, not spendable balance.
+    /// a server ledger grant. These credit numbers are not customer copy.
     var allowances: PlanAllowances {
         switch self {
         case .pro:   return PlanAllowances(credits: 60,  renders: 2,  photoEdits: 50,  reels: 15,  aerials: 1, topaz: 0, seats: 1)
@@ -125,7 +126,8 @@ enum RendpropPlan: String, CaseIterable, Identifiable, Sendable {
     }
 
     /// Short plan-card benefits. The feature quantities above remain server
-    /// safety limits; customer credits are the advertised creative allowance.
+    /// safety limits. Until the funded retail catalog is live, never advertise
+    /// a monthly credit grant that the server cannot mint.
     var benefits: [String] {
         allowances.benefitLines
     }
@@ -145,12 +147,14 @@ struct PlanAllowances: Hashable, Sendable {
     /// "2 seats" / "1 seat".
     var seatsPhrase: String { "\(seats) \(seats == 1 ? "seat" : "seats")" }
 
-    var benefitLines: [String] {
+    var benefitLines: [String] { customerBenefitLines(seats: seats) }
+
+    func customerBenefitLines(seats: Int) -> [String] {
         [
-            "\(credits) monthly credits for eligible photo edits after the trial",
-            "See the credit cost before eligible AI edits",
+            "AI photo editing with your plan after the trial",
+            "Review available AI usage before creating",
             "Create and share tours",
-            "\(seatsPhrase) in one workspace",
+            "\(seats) \(seats == 1 ? "seat" : "seats") in one workspace",
         ]
     }
 

@@ -288,7 +288,7 @@ struct PaywallView: View {
                             HStack(spacing: 12) {
                                 Image(systemName: "person.2.fill").foregroundStyle(Theme.accent)
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("\(variant.seats) seats · \(variant.monthlyCredits) credits")
+                                    Text("\(variant.seats) seats")
                                         .font(.rpHeadline).foregroundStyle(Theme.ink)
                                     Text(product.displayPrice + "/month")
                                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -636,12 +636,7 @@ private struct SelectedPlanDetails: View {
     }
     private var benefitLines: [String] {
         guard let variant else { return plan.benefits }
-        return [
-            "\(variant.monthlyCredits) monthly AI credits after the trial",
-            "See the credit cost before eligible AI edits",
-            "Create and share tours",
-            "\(variant.seats) seats in one workspace",
-        ]
+        return plan.allowances.customerBenefitLines(seats: variant.seats)
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -652,7 +647,7 @@ private struct SelectedPlanDetails: View {
                     .font(.rpCaption).foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Credits apply to eligible photo edits when a quote appears before you start. Other tools use plan limits or a separate purchase. See Plan & usage for your balance and limits.")
+            Text("Plan & usage shows current limits. Any active balance appears under Credits & extra usage, with costs shown before eligible edits.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
             DisclosureGroup("How video allowances work") {
