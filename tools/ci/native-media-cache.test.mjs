@@ -79,7 +79,7 @@ test("same-run snapshots preserve native paths, full selected kegs, framework sy
 test("absolute opt targets are accepted only when they resolve to the same exact physical native keg", async () => {
   const f = await fixture({ absoluteOpt: true }), result = await f.snapshot(); assert.equal((await f.verify(result.manifest, result.manifestSha256)).passed, true);
 });
-test("consumer requires an external trusted hash and exact same-run source/OS/runtime context", async () => {
+test("consumer requires an external trusted hash and exact same-run source/OS/Node-minor context", async () => {
   const f = await fixture(), result = await f.snapshot();
   for (const hash of [undefined, null, "", "0".repeat(64)]) await assert.rejects(f.verify(result.manifest, hash), NativeCacheError);
   for (const key of ["sourceSha", "workflowSha", "runId", "runAttempt", "ref", "imageOS", "osRelease", "lockSha256", "nodeVersion"]) {
@@ -95,6 +95,15 @@ test("same macOS release on a newer runner image accepts only byte-identical cac
   assert.equal(verified.consumerImageVersion, consumer.imageVersion);
   assert.equal(verified.manifestSha256, result.manifestSha256);
   await f.file(f.kegs.libfixture + "/lib/libfixture.1.dylib", "changed on new image", 0o444);
+  await assert.rejects(f.verify(result.manifest, result.manifestSha256, consumer), { code: "CACHE_CONTENT_DIFFER" });
+});
+test("Node patch drift across same-run jobs keeps the cache bound to exact vendor bytes", async () => {
+  const f = await fixture(), result = await f.snapshot(), consumer = structuredClone(f.context);
+  consumer.nodeVersion = "v22.20.1";
+  const verified = await f.verify(result.manifest, result.manifestSha256, consumer);
+  assert.equal(verified.preparedNodeVersion, "v22.20.0");
+  assert.equal(verified.consumerNodeVersion, consumer.nodeVersion);
+  await f.file(f.kegs.libfixture + "/lib/libfixture.1.dylib", "changed with Node patch", 0o444);
   await assert.rejects(f.verify(result.manifest, result.manifestSha256, consumer), { code: "CACHE_CONTENT_DIFFER" });
 });
 test("changed, extra, missing and mode-altered vendor entries fail the full byte/type inventory", async () => {

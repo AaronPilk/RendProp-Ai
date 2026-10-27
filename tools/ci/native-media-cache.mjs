@@ -225,12 +225,13 @@ export async function verifyNativeCache({ manifest, expectedManifestSha256, expe
   need(exactKeys(manifest, ["schema", "context", "formulae", "browserRoot", "roots", "entries", "bytes", "fixtureFilesystem", "limitations"])
     && manifest.schema === "rendprop-same-run-native-media-cache-v1" && manifestSha256(manifest) === expectedManifestSha256, "CACHE_MANIFEST_HASH_DIFFER");
   checkContext(manifest.context);
-  // GitHub may assign different revisions of the same macos-26 image to two
-  // jobs in one run. ImageVersion records where preparation occurred; it is
-  // not part of the cached vendor bytes. Keep every other context binding,
-  // including OS release, Node, source, workflow, run and installed locks.
-  const { imageVersion: preparedImageVersion, ...preparedBinding } = manifest.context;
-  const { imageVersion: consumerImageVersion, ...consumerBinding } = expectedContext;
+  // GitHub may assign different revisions of the same macos-26 image and
+  // different Node patch releases to two jobs in one run. Neither changes the
+  // cached vendor bytes. Keep OS release, Node major/minor, source, workflow,
+  // run and installed locks bound while rescanning every restored cache byte.
+  const { imageVersion: preparedImageVersion, nodeVersion: preparedNodeVersion, ...preparedBinding } = manifest.context;
+  const { imageVersion: consumerImageVersion, nodeVersion: consumerNodeVersion, ...consumerBinding } = expectedContext;
+  need(preparedNodeVersion.split(".").slice(0, 2).join(".") === consumerNodeVersion.split(".").slice(0, 2).join("."), "CACHE_CONTEXT_DIFFER");
   need(same(preparedBinding, consumerBinding), "CACHE_CONTEXT_DIFFER");
   need(manifest.fixtureFilesystem === policy(seams).fixture, "CACHE_FIXTURE_ASSURANCE_DIFFER");
   // Rescan with the signed preparation provenance so the external manifest
@@ -239,7 +240,7 @@ export async function verifyNativeCache({ manifest, expectedManifestSha256, expe
   need(current.manifestSha256 === expectedManifestSha256, "CACHE_CONTENT_DIFFER");
   return { passed: true, manifestSha256: expectedManifestSha256, cacheKey: current.cacheKey, browserExecutable: current.browserExecutable,
     ffmpegExecutable: current.ffmpegExecutable, ffprobeExecutable: current.ffprobeExecutable, fixtureFilesystem: policy(seams).fixture,
-    preparedImageVersion, consumerImageVersion };
+    preparedImageVersion, consumerImageVersion, preparedNodeVersion, consumerNodeVersion };
 }
 async function outputs(values, environment) {
   if (!environment.GITHUB_OUTPUT) return;
