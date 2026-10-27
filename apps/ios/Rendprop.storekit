@@ -40,7 +40,7 @@
           },
           "localizations": [
             {
-              "description": "80 monthly Declutter credits after the limited 7-day trial. One seat.",
+              "description": "80 AI credits monthly; 1 seat.",
               "displayName": "Pro Monthly",
               "locale": "en_US"
             }
@@ -66,7 +66,7 @@
           },
           "localizations": [
             {
-              "description": "1,000 monthly Declutter credits and 3 seats after the limited 7-day trial.",
+              "description": "1,000 AI credits monthly; 3 seats.",
               "displayName": "Team Monthly",
               "locale": "en_US"
             }
@@ -74,6 +74,162 @@
           "productID": "com.rendprop.app.team.monthly",
           "recurringSubscriptionPeriod": "P1M",
           "referenceName": "Team Monthly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "299.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "8A2B3C08",
+          "introductoryOffer": {
+            "internalID": "8A2B3C09",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "1,100 AI credits monthly; 4 seats.",
+              "displayName": "Team 4 Seats Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.team4.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Team 4 Seats Monthly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "349.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "8A2B3C0A",
+          "introductoryOffer": {
+            "internalID": "8A2B3C0B",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "1,200 AI credits monthly; 5 seats.",
+              "displayName": "Team 5 Seats Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.team5.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Team 5 Seats Monthly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "399.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "8A2B3C0C",
+          "introductoryOffer": {
+            "internalID": "8A2B3C0D",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "1,300 AI credits monthly; 6 seats.",
+              "displayName": "Team 6 Seats Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.team6.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Team 6 Seats Monthly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "449.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "8A2B3C0E",
+          "introductoryOffer": {
+            "internalID": "8A2B3C0F",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "1,400 AI credits monthly; 7 seats.",
+              "displayName": "Team 7 Seats Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.team7.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Team 7 Seats Monthly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "499.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "8A2B3C10",
+          "introductoryOffer": {
+            "internalID": "8A2B3C11",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "1,500 AI credits monthly; 8 seats.",
+              "displayName": "Team 8 Seats Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.team8.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Team 8 Seats Monthly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "549.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "8A2B3C12",
+          "introductoryOffer": {
+            "internalID": "8A2B3C13",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "1,600 AI credits monthly; 9 seats.",
+              "displayName": "Team 9 Seats Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.team9.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Team 9 Seats Monthly",
           "subscriptionGroupID": "5D3A9F21",
           "type": "RecurringSubscription"
         },
@@ -118,7 +274,7 @@
           },
           "localizations": [
             {
-              "description": "440 monthly Declutter credits after the limited 7-day trial. One seat.",
+              "description": "440 AI credits monthly; 1 seat.",
               "displayName": "Ultra Monthly",
               "locale": "en_US"
             }
@@ -170,7 +326,7 @@
           },
           "localizations": [
             {
-              "description": "200 monthly Declutter credits after the limited 7-day trial. One seat.",
+              "description": "200 AI credits monthly; 1 seat.",
               "displayName": "Max Monthly",
               "locale": "en_US"
             }

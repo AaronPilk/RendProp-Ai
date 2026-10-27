@@ -26,7 +26,9 @@ the owner must choose a price-change schedule and whether existing subscribers
 keep their current price. The broad bridge is therefore intentionally blocked.
 
 The 100-credit consumable and six Team extra-seat SKUs are not managed by
-`asc.py`. They are separately gated and must not be inferred from a green
+the default `asc.py` run. The Team 4–9-seat subscriptions have an explicit,
+opt-in [source-only setup plan](TEAM-SEAT-SETUP.md); no Apple change has been
+made from that plan. These SKUs are separately gated and must not be inferred from a green
 subscription status. The monthly credit catalog and introductory trial funding
 also remain inactive; status cannot establish their activation. No App Review
 submission is authorized by a passing local check alone.

@@ -56,6 +56,10 @@ class LaunchCatalogParityTests(unittest.TestCase):
                 self.assertEqual(local[product_id]["recurringSubscriptionPeriod"], "P1M")
                 self.assertEqual(local[product_id]["subscriptionGroupID"],
                                  fixture["subscriptionGroups"][0]["id"])
+                self.assertEqual(local[product_id]["localizations"][0]["displayName"],
+                                 spec["displayName"])
+                self.assertEqual(local[product_id]["localizations"][0]["description"],
+                                 spec["description"])
 
     def test_credit_pack_local_quantity_price_and_identity_match_asc(self):
         fixture = json.loads((asc.REPO_ROOT / "apps/ios/Rendprop.storekit").read_text())
@@ -68,6 +72,36 @@ class LaunchCatalogParityTests(unittest.TestCase):
                          credit_pack_iap.DISPLAY_NAME)
         self.assertEqual(pack["localizations"][0]["description"],
                          credit_pack_iap.DESCRIPTION)
+
+    def test_dormant_team_seat_variants_match_storekit_and_server_targets(self):
+        fixture = json.loads((asc.REPO_ROOT / "apps/ios/Rendprop.storekit").read_text())
+        local = {s["productID"]: s for group in fixture["subscriptionGroups"]
+                 for s in group["subscriptions"]}
+        server = (asc.REPO_ROOT / "services/supabase/migrations"
+                  / "20261027180000_team_paid_seat_variants.sql").read_text()
+        self.assertEqual(len(asc.TEAM_SEAT_SUBSCRIPTIONS), 6)
+        self.assertEqual(len(asc.active_subscriptions(SimpleNamespace())), 7,
+                         "ordinary ASC commands must leave Team variants dormant")
+        included = asc.active_subscriptions(SimpleNamespace(include_team_seats=True))
+        self.assertEqual(len(included), 13)
+        for seats, spec in enumerate(asc.TEAM_SEAT_SUBSCRIPTIONS, start=4):
+            product_id = f"com.rendprop.app.team{seats}.monthly"
+            cents = 24999 + 5000 * (seats - 3)
+            credits = 1000 + 100 * (seats - 3)
+            with self.subTest(seats=seats):
+                self.assertEqual(spec["productId"], product_id)
+                self.assertEqual(spec["groupLevel"], 1)
+                self.assertEqual(spec["period"], "ONE_MONTH")
+                self.assertEqual(Decimal(spec["usd"]), Decimal(cents) / 100)
+                self.assertLessEqual(len(spec["displayName"]), asc.SUB_DISPLAY_NAME_MAX)
+                self.assertLessEqual(len(spec["description"]), asc.SUB_DESCRIPTION_MAX)
+                self.assertEqual(Decimal(local[product_id]["displayPrice"]), Decimal(spec["usd"]))
+                self.assertEqual(local[product_id]["groupNumber"], 1)
+                self.assertEqual(local[product_id]["localizations"][0]["displayName"],
+                                 spec["displayName"])
+                self.assertEqual(local[product_id]["localizations"][0]["description"],
+                                 spec["description"])
+                self.assertIn(f"('{product_id}',{seats},{credits},{cents},false)", server)
 
     def test_obsolete_review_image_is_rejected_before_any_apple_access(self):
         self.assertIn(

@@ -86,9 +86,9 @@ SUBSCRIPTION_GROUP_REFERENCE_NAME = "rendprop_plans"
 SUBSCRIPTION_GROUP_DISPLAY_NAME = "Rendprop Plans"
 
 REVIEW_NOTE = (
-    "Monthly plans include the Declutter credits shown in Settings → Plan & usage "
-    "after the introductory week. Other AI tools have separate plan limits. "
-    "The paywall is Settings → Plan & usage → Upgrade plan."
+    "Monthly plans include the AI credits shown in Account → Settings & plan "
+    "after the introductory week. Eligible work shows its credit cost first. "
+    "The paywall is Account → Settings & plan → Plan & usage → Upgrade plan."
 )
 
 # groupLevel: 1 is the highest-value tier. Apple uses the level to decide whether
@@ -105,7 +105,7 @@ SUBSCRIPTIONS = [
         "usd": "249.99",
         "groupLevel": 1,
         "displayName": "Team Monthly",
-        "description": "1,000 Declutter credits monthly; 3 seats.",
+        "description": "1,000 AI credits monthly; 3 seats.",
     },
     {
         "productId": "com.rendprop.app.team.annual",
@@ -123,7 +123,7 @@ SUBSCRIPTIONS = [
         "usd": "99.99",
         "groupLevel": 2,
         "displayName": "Ultra Monthly",
-        "description": "440 Declutter credits monthly; 1 seat.",
+        "description": "440 AI credits monthly; 1 seat.",
     },
     {
         "productId": "com.rendprop.app.pro.annual",
@@ -141,7 +141,7 @@ SUBSCRIPTIONS = [
         "usd": "49.99",
         "groupLevel": 3,
         "displayName": "Max Monthly",
-        "description": "200 Declutter credits monthly; 1 seat.",
+        "description": "200 AI credits monthly; 1 seat.",
     },
     {
         "productId": "com.rendprop.app.pro29.monthly",
@@ -150,7 +150,7 @@ SUBSCRIPTIONS = [
         "usd": "29.99",
         "groupLevel": 4,
         "displayName": "Pro Monthly",
-        "description": "80 Declutter credits monthly; 1 seat.",
+        "description": "80 AI credits monthly; 1 seat.",
     },
     {
         "productId": "com.rendprop.app.starter.annual",
@@ -161,6 +161,25 @@ SUBSCRIPTIONS = [
         "displayName": "Starter Yearly",
         "description": "4 tours, 100 edits, 6 reel clips a month.",
     },
+]
+
+# Additional Team capacity is a separate subscription at each seat count,
+# within the same Apple subscription group and level as the three-seat Team
+# product. These remain absent from the default release catalog. Supplying
+# --include-team-seats is an explicit setup/inspection step; it never changes
+# the app's dormant SKU allowlist or the server's inactive funding rows.
+TEAM_SEAT_SUBSCRIPTIONS = [
+    {
+        "productId": "com.rendprop.app.team%d.monthly" % seats,
+        "name": "Team %d Seats Monthly" % seats,
+        "period": "ONE_MONTH",
+        "usd": "%d.99" % (249 + 50 * (seats - 3)),
+        "groupLevel": 1,
+        "displayName": "Team %d Seats Monthly" % seats,
+        "description": "%s AI credits monthly; %d seats."
+                       % (format(1000 + 100 * (seats - 3), ","), seats),
+    }
+    for seats in range(4, 10)
 ]
 
 # Introductory offer applied to every product.
@@ -891,10 +910,17 @@ NOT_SOLD_PRODUCT_IDS = (
 )
 
 
+def catalog_subscriptions(args):
+    """Default launch SKUs, plus explicitly requested dormant Team variants."""
+    if getattr(args, "include_team_seats", False):
+        return SUBSCRIPTIONS + TEAM_SEAT_SUBSCRIPTIONS
+    return SUBSCRIPTIONS
+
+
 def active_subscriptions(args, out=None):
     """The products this run should touch, honouring --skip-product."""
     skip = list(getattr(args, "skip_product", None) or [])
-    known = {spec["productId"] for spec in SUBSCRIPTIONS}
+    known = {spec["productId"] for spec in SUBSCRIPTIONS + TEAM_SEAT_SUBSCRIPTIONS}
     unknown = [p for p in skip if p not in known]
     if unknown:
         raise AscError(
@@ -903,7 +929,7 @@ def active_subscriptions(args, out=None):
         )
     if skip and out is not None:
         out.write("Skipping %d product(s): %s\n" % (len(skip), ", ".join(skip)))
-    return [spec for spec in SUBSCRIPTIONS if spec["productId"] not in skip]
+    return [spec for spec in catalog_subscriptions(args) if spec["productId"] not in skip]
 
 
 def find_app(client):
@@ -3756,7 +3782,7 @@ def cmd_status(client, args, out):
     # still printed, but they add nothing to WHAT IS MISSING and do not trigger
     # the WRONG PRICE banner - unless one of them is actually on sale somewhere.
     # active_subscriptions() also refuses an unknown product id.
-    skipped = ({spec["productId"] for spec in SUBSCRIPTIONS}
+    skipped = ({spec["productId"] for spec in catalog_subscriptions(args)}
                - {spec["productId"] for spec in active_subscriptions(args)})
 
     app = find_app(client)
@@ -3914,7 +3940,7 @@ def cmd_status(client, args, out):
         mispriced = []
         notes = []
         submittable = []
-        for spec in SUBSCRIPTIONS:
+        for spec in catalog_subscriptions(args):
             is_skipped = spec["productId"] in skipped
             subscription = by_product.get(spec["productId"])
             if subscription is None:
@@ -4233,6 +4259,9 @@ def build_parser():
             command.add_argument(
                 "--include-annual", action="store_true",
                 help="also touch the annual products (monthly-only by default since 2026-10-09)")
+            command.add_argument(
+                "--include-team-seats", action="store_true",
+                help="explicitly include dormant Team 4-9 seat monthly SKUs for setup/review")
         if name == "review":
             command.add_argument("--yes", action="store_true",
                                  help="for `send`: actually press Submit to App Review")
@@ -4275,6 +4304,9 @@ def build_parser():
     status.add_argument(
         "--include-annual", action="store_true",
         help="count the annual products as expected (monthly-only by default since 2026-10-09)")
+    status.add_argument(
+        "--include-team-seats", action="store_true",
+        help="inspect dormant Team 4-9 seat monthly SKUs (off by default)")
     return parser
 
 
