@@ -3,13 +3,22 @@
 -- public seven-day offer. Sponsor and per-workspace serving limits still apply.
 begin;
 
-do $patch$ declare definition text; anchor text; replacement text; begin
+do $patch$ declare definition text; anchor text; replacement text;
+  old_hits integer; new_hits integer;
+begin
   definition:=pg_get_functiondef('public.grant_sandbox_trial(uuid,uuid,text,text,text,text,timestamptz,timestamptz)'::regprocedure);
   anchor:='current_plan in(''starter'',''solo'',''pro'',''team'',''brokerage'')';
-  replacement:='current_plan in(''starter'',''solo'',''pro'',''max'',''ultra'',''team'',''brokerage'')';
-  if (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 then
-    raise exception 'Review changed Sandbox paid-workspace protection';end if;
-  execute replace(definition,anchor,replacement);
+  replacement:='current_plan in(''starter'',''solo'',''legacy_pro'',''pro'',''max'',''ultra'',''team'',''brokerage'')';
+  old_hits:=(length(definition)-length(replace(definition,anchor,'')))/length(anchor);
+  new_hits:=(length(definition)-length(replace(definition,replacement,'')))/length(replacement);
+  if old_hits=1 and new_hits=0 then
+    execute replace(definition,anchor,replacement);
+  elsif old_hits=0 and new_hits=1 then
+    -- Four-tier plans already installed the complete paid-workspace guard.
+    null;
+  else
+    raise exception 'Review changed Sandbox paid-workspace protection';
+  end if;
 end $patch$;
 
 create or replace function public.grant_sandbox_intro_trial(

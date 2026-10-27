@@ -45,6 +45,12 @@ select pg_temp.monthly_ok(
   'variant credits stay closed until the same seat SKU is retail-funded');
 reset role;
 
+-- This fixture explicitly simulates an already active launch policy before
+-- either signed Team period. The real catalog and combined policy stay dormant.
+update public.app_config set value=value || jsonb_build_object(
+  'enabled',true,'activated_from',(now()-interval '6 days')::text)
+where key='credit_combined_budget';
+
 insert into public.apple_serving_schedules(product_id,storefront,currency,
   price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,
   reserve_components,trial_reserve_components,evidence_sha256) values

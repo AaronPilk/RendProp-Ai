@@ -3,14 +3,22 @@
 -- an inclusive seven-day schedule. This read-only audit exposes those gates.
 begin;
 
-do $patch$ declare definition text; anchor text; replacement text; begin
+do $patch$ declare definition text; anchor text; replacement text;
+  old_hits integer; new_hits integer;
+begin
   definition:=pg_get_functiondef('public.prepare_subscription_trial_purchase(uuid,uuid,text)'::regprocedure);
   anchor:='p_product not in(''com.rendprop.app.starter.monthly''';
   replacement:='p_product not in(''com.rendprop.app.pro29.monthly'',''com.rendprop.app.starter.monthly''';
-  if (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 then
+  old_hits:=(length(definition)-length(replace(definition,anchor,'')))/length(anchor);
+  new_hits:=(length(definition)-length(replace(definition,replacement,'')))/length(replacement);
+  if old_hits=1 and new_hits=0 then
+    execute replace(definition,anchor,replacement);
+  elsif old_hits=0 and new_hits=1 then
+    -- Four-tier plans already added the exact SKU before this audit migration.
+    null;
+  else
     raise exception 'Review changed trial purchase SKU allowlist before Pro29 admission';
   end if;
-  execute replace(definition,anchor,replacement);
 end $patch$;
 
 create or replace function public.subscription_trial_activation_readiness()
