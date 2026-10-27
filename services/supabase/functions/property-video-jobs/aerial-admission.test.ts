@@ -25,18 +25,18 @@ const qualified = { exterior: true, uncertain: false, front_entrance_visible: tr
 function dispatch(evidence: unknown) {
   const calls = { submitted: 0, receipts: 0, rejected: [] as Array<[number, string]>, ambiguous: 0 };
   const store: AerialStageStore = {
-    claimGeneration: async () => ({ claimed: true, token: id(6), manifest,
+    claimGeneration: () => Promise.resolve({ claimed: true, token: id(6), manifest,
       eligibility: evidence as ReturnType<typeof exteriorAssessment>, prepared, inputURL }),
-    receipt: async () => { calls.receipts++; },
-    ambiguous: async () => { calls.ambiguous++; },
-    rejected: async (_job, _token, status, errorClass) => { calls.rejected.push([status, errorClass]); },
-    pollAuthority: async () => null,
+    receipt: () => { calls.receipts++; return Promise.resolve(); },
+    ambiguous: () => { calls.ambiguous++; return Promise.resolve(); },
+    rejected: (_job, _token, status, errorClass) => { calls.rejected.push([status, errorClass]); return Promise.resolve(); },
+    pollAuthority: () => Promise.resolve(null),
   };
   const provider: AerialProvider = {
-    submit: async () => { calls.submitted++; return { provider: 'kie', model: aerialGenerationModel(manifest.profile),
+    submit: () => { calls.submitted++; return Promise.resolve({ provider: 'kie' as const, model: aerialGenerationModel(manifest.profile),
       id: 'accepted-task', submitted_at: '2026-10-27T00:00:00Z',
-      poll_url: 'https://api.kie.ai/api/v1/jobs/recordInfo?taskId=accepted-task' }; },
-    poll: async () => null, rejection: () => null,
+      poll_url: 'https://api.kie.ai/api/v1/jobs/recordInfo?taskId=accepted-task' }); },
+    poll: () => Promise.resolve(null), rejection: () => null,
   };
   return { calls, run: () => submitAerialOnce(id(7), store, provider) };
 }
