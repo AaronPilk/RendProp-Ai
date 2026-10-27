@@ -80,7 +80,7 @@ create function pg_temp.attempt(ev jsonb,p_stage text,p_state text,p_hold numeri
 declare rid uuid:=gen_random_uuid();begin
  insert into serving_cost_reservations(id,org_id,actor_id,request_key,stage,provider,model,input_sha256,tariff_version,hold_cents,sponsored_unlimited,state,settled_at,budget_source)
  values(rid,(ev->>'org_id')::uuid,(ev->>'actor_id')::uuid,ev->>'request_key',p_stage,coalesce(p_provider,ev->>'generation_provider','gemini'),coalesce(p_model,ev->>'generation_model','gemini-3.1-flash-image'),
-  repeat('a',64),'closed-fixture',p_hold,true,p_state,case when p_state='reserved'then null else now()end,p_budget);
+  repeat('a',64),'closed-fixture',p_hold,p_budget='funding',p_state,case when p_state='reserved'then null else now()end,p_budget);
  return rid;end$$;
 create function pg_temp.ledger(ev jsonb,p_stage text,p_cents numeric,p_provider text default null,p_model text default null)returns uuid language plpgsql security definer as $$
 declare lid uuid;begin
