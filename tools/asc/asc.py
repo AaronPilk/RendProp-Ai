@@ -240,6 +240,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 METADATA_DIR = REPO_ROOT / "docs" / "appstore" / "metadata" / PRIMARY_LOCALE
 SCREENSHOT_DIR = REPO_ROOT / "docs" / "appstore" / "screenshots" / "6.9"
 IAP_SCREENSHOT = REPO_ROOT / "docs" / "appstore" / "iap-review" / "paywall.png"
+# The existing image predates Pro/Max/Ultra, the monthly-only catalog and the
+# owner-selected .99 prices. Keep its fingerprint as a permanent upload denylist
+# so an old checkout cannot quietly attach it to the new subscription review.
+OBSOLETE_IAP_SCREENSHOT_SHA256 = {
+    "940850743271be9e9c61ad777660518dacfbf0a9cff5d4500574dd718eb63228"
+}
 # The notes Apple receives verbatim (<= 4000 chars). The .md next to it is the
 # human explainer and must never be sent — it discusses the owner console.
 REVIEW_NOTES_FILE = REPO_ROOT / "docs" / "appstore" / "metadata" / "en-US" / "review_notes.txt"
@@ -734,6 +740,21 @@ def md5_of(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def iap_review_screenshot_issue(path=None):
+    """Return a concrete release blocker before any App Store review write."""
+    path = IAP_SCREENSHOT if path is None else path
+    if not path.is_file():
+        return "The current subscription review paywall capture is missing: %s" % path
+    if png_dimensions(path) != (1320, 2868):
+        return "Subscription review paywall capture is not a 1320 x 2868 PNG: %s" % path
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest in OBSOLETE_IAP_SCREENSHOT_SHA256:
+        return ("Subscription review paywall capture is obsolete (Starter/Pro, "
+                "$49/$99 and a Yearly picker). Recapture the current Pro/Max/Ultra "
+                "monthly paywall with all prices visible before review.")
+    return None
 
 
 def png_dimensions(path):
@@ -3221,6 +3242,9 @@ def cmd_review(client, args, out):
         return cmd_review_stage(client, args, out)
     if getattr(args, "action", None) == "send":
         return cmd_review_send(client, args, out)
+    screenshot_issue = iap_review_screenshot_issue()
+    if screenshot_issue:
+        raise AscError(screenshot_issue + " No App Store review writes were made.")
     plan = Plan(dry_run=args.dry_run, out=out)
     app = require_app(client)
     out.write("App: %s (id %s)\n" % (attributes_of(app).get("name"), app["id"]))
@@ -4053,6 +4077,10 @@ def cmd_status(client, args, out):
 
     # --- review details ----------------------------------------------------
     out.write("\nAPP REVIEW\n")
+    screenshot_issue = iap_review_screenshot_issue()
+    if screenshot_issue:
+        out.write("  subscription paywall: NOT CURRENT - %s\n" % screenshot_issue)
+        missing.append(screenshot_issue)
     if version:
         detail = client.get_optional("/v1/appStoreVersions/%s/appStoreReviewDetail" % version["id"])
         if detail and (detail.get("data") or {}).get("id"):

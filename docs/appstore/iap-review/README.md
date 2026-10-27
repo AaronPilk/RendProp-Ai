@@ -1,5 +1,16 @@
 # In-app purchase review screenshot — `paywall.png`
 
+**27 October launch blocker:** The committed `paywall.png` is an obsolete
+Starter/Pro capture showing $49.00/$99.00, a yearly picker, and old allowances.
+It remains only as historical evidence. `tools/asc/asc.py review plan/apply`
+rejects its exact fingerprint before any App Store review write, and
+`asc.py status` reports it as missing launch evidence. Replace it with a fresh
+capture of the Pro $29.99 / Max $49.99 / Ultra $99.99 / Team $249.99 monthly
+catalog. Inspect the PNG itself: the simulator must show those prices, not a
+dash, stale whole-dollar price, or "temporarily unavailable" purchase state.
+The local StoreKit fixture is only test data; verify the same prices and
+purchase availability against App Store Connect and on a real TestFlight device.
+
 This is an owner-run capture/upload procedure, reviewed against repository code
 on 24 September 2026. The stored PNG is an existing release asset; it has not
 been recaptured or uploaded by this documentation refresh. Local StoreKit
@@ -41,28 +52,26 @@ Review the image before committing it. Before any owner-run upload, reconcile
 
 ### Why this needed its own test
 
-`apps/ios/project.yml` attaches `Rendprop.storekit` to the scheme's **Run** action only, and
-xcodegen has no `storeKitConfiguration` for the **test** action at all. So a plain
-`xcodebuild test` launch has no StoreKit environment: `Product.products(for:)` returns an
-empty array and `PaywallView` correctly renders **"Plans aren't available right now."** That
-empty state is the app behaving properly for an empty product list — and it is exactly what
-must never be uploaded. `StoreShots.swift` still never opens the paywall for that reason.
+`apps/ios/project.yml` selects `Rendprop.storekit` for the Run action and
+`RendpropStoreKit.xctestplan` selects it for the Test action. The test plan must
+actually reach the launched app; merely constructing `SKTestSession` is not
+proof. A product-load failure correctly renders an unavailable state, which
+must never be uploaded. `StoreShots.swift` does not capture the paywall.
 
 `PaywallShot.swift` solves it the way Apple built for automation: it creates an
 `SKTestSession` from `Rendprop.storekit` (StoreKitTest framework) **before** launching the
-app. There is a single StoreKit test environment per simulator and every `SKTestSession`
-controls it, so the app under test sees the six products the moment `PurchaseManager` asks.
+app. The generated screenshot must prove the app saw the local products by
+showing Pro $29.99 and Max $49.99 together.
 The `.storekit` file is a resource of the **test bundle only** (never the app), the session
 has dialogs disabled and transactions cleared, and the storefront is pinned to `USA` /
-`en_US` so the prices read `$49.00/month`. The test never taps a purchase button. Details,
+`en_US`. The test never taps a purchase button. Details,
 identifiers and the by-hand recipe are in `apps/ios/RendpropUITests/README.md`
 (§ PaywallShot).
 
 ### The caveat you are accepting
 
 This is **StoreKit Testing in Xcode, not the App Store.** The prices come from
-`apps/ios/Rendprop.storekit` (49 / 490 / 99 / 990 / 249 for the five displayed products,
-consistent with the repository's current listing copy), the "Start 7-day free trial"
+`apps/ios/Rendprop.storekit` (29.99 / 49.99 / 99.99 / 249.99 for the monthly products), the "Start 7-day free trial"
 eligibility is synthetic, and nothing in the PNG proves the real products load. The capture shows the actual app purchase UI populated by a local fixture;
 the owner must confirm that its names, prices and offers match the intended release. It is not a substitute for checking the live products on a
 device before submission, and it is not a marketing asset.

@@ -24,13 +24,67 @@ import unittest
 import urllib.parse
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import asc  # noqa: E402
+import credit_pack_iap  # noqa: E402
 
 
 HAVE_OPENSSL = shutil.which("openssl") is not None
+
+
+class LaunchCatalogParityTests(unittest.TestCase):
+    def test_local_storekit_monthly_prices_match_exact_asc_contract(self):
+        fixture = json.loads((asc.REPO_ROOT / "apps/ios/Rendprop.storekit").read_text())
+        local = {s["productID"]: s for group in fixture["subscriptionGroups"]
+                 for s in group["subscriptions"]}
+        monthly = {s["productId"]: s for s in asc.SUBSCRIPTIONS
+                   if s["period"] == "ONE_MONTH"}
+        self.assertEqual(set(monthly), {
+            "com.rendprop.app.pro29.monthly",
+            "com.rendprop.app.starter.monthly",
+            "com.rendprop.app.pro.monthly",
+            "com.rendprop.app.team.monthly",
+        })
+        for product_id, spec in monthly.items():
+            with self.subTest(product_id=product_id):
+                self.assertIn(product_id, local)
+                self.assertEqual(Decimal(local[product_id]["displayPrice"]),
+                                 Decimal(spec["usd"]))
+                self.assertEqual(local[product_id]["recurringSubscriptionPeriod"], "P1M")
+                self.assertEqual(local[product_id]["subscriptionGroupID"],
+                                 fixture["subscriptionGroups"][0]["id"])
+
+    def test_credit_pack_local_quantity_price_and_identity_match_asc(self):
+        fixture = json.loads((asc.REPO_ROOT / "apps/ios/Rendprop.storekit").read_text())
+        products = {p["productID"]: p for p in fixture["products"]}
+        self.assertEqual(set(products), {credit_pack_iap.PRODUCT_ID})
+        pack = products[credit_pack_iap.PRODUCT_ID]
+        self.assertEqual(pack["type"], "Consumable")
+        self.assertEqual(Decimal(pack["displayPrice"]), credit_pack_iap.CUSTOMER_PRICE)
+        self.assertEqual(pack["localizations"][0]["displayName"],
+                         credit_pack_iap.DISPLAY_NAME)
+        self.assertEqual(pack["localizations"][0]["description"],
+                         credit_pack_iap.DESCRIPTION)
+
+    def test_obsolete_review_image_is_rejected_before_any_apple_access(self):
+        self.assertIn(
+            "940850743271be9e9c61ad777660518dacfbf0a9cff5d4500574dd718eb63228",
+            asc.OBSOLETE_IAP_SCREENSHOT_SHA256)
+        with tempfile.TemporaryDirectory(prefix="asc-stale-paywall-") as directory:
+            path = Path(directory) / "paywall.png"
+            path.write_bytes(b"not a current PNG")
+            original = asc.IAP_SCREENSHOT
+            asc.IAP_SCREENSHOT = path
+            try:
+                with self.assertRaises(asc.AscError) as caught:
+                    asc.cmd_review(None, SimpleNamespace(action="apply", dry_run=False),
+                                   io.StringIO())
+            finally:
+                asc.IAP_SCREENSHOT = original
+        self.assertIn("No App Store review writes", str(caught.exception))
 
 
 # ---------------------------------------------------------------------------

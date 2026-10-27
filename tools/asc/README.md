@@ -31,6 +31,12 @@ subscription status. The monthly credit catalog and introductory trial funding
 also remain inactive; status cannot establish their activation. No App Review
 submission is authorized by a passing local check alone.
 
+The committed `docs/appstore/iap-review/paywall.png` is the old Starter/Pro
+purchase UI. `review plan/apply` rejects its fingerprint before any Apple
+review write; `status` reports it as a release gap. A fresh screenshot must
+visibly show the selected monthly names and exact prices and be checked against
+the TestFlight purchase flow before it replaces that file.
+
 ## Historical release target caution
 
 On 10 October 2026, `asc.py` targeted **1.0.4** and selected only that exact
