@@ -54,7 +54,7 @@ REFLECTION_FIXTURES = (
     ("build58_db_controls.sql", '{"suite": "build58_db_controls", "assertions": 52}', 52),
     ("property_address_lookup.sql", '"assertions": 25', 25),
     ("trial_full_window_admission.sql", '"assertions": 11', 11),
-    ("trial_hybrid_funded_serving.sql", '"assertions": 42', 42),
+    ("trial_hybrid_funded_serving.sql", '"assertions": 44', 44),
 )
 
 # These already-shipped transactional Studio migrations intentionally create
@@ -201,7 +201,7 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261027211803_photo_motion_plan_review_capacity.sql": ("543ca0e330c2b09374b6d9f6200233c33c291b0227fc9af1d981a118a84e22f1", "Review changed Photo Motion plan quote predecessor"),
     "20261027225416_subscription_trial_full_window_admission.sql": ("23cd11f0b899cc0a5d6bae71d24f7abb7b5efc6722047dbcbc26c5917a730866", "Review changed seven-day trial admission predecessor"),
     "20261027232500_subscription_trial_hybrid_funded_serving.sql": ("6cd0c5bc46406c41bc2db21c5074bb5c843a532e2fe65b13496d78ed790fdb05", 'relation "subscription_trial_media_template" already exists'),
-    "20261027234000_trial_shared_launch_budget_guard.sql": ("3497a2fd566e35d27ce0fe2061971425d675ce6b07e127481193a1c450a0c7f6", 'Review shared launch budget guard already installed'),
+    "20261027234000_trial_shared_launch_budget_guard.sql": ("8720821bdc3aba14bfa2cea89394ba8cfc715584f9da86ed9dff4716242e690b", 'Review shared launch budget guard already installed'),
 }
 
 

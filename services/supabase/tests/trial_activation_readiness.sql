@@ -55,6 +55,26 @@ select pg_temp.ready_ok(
   (public.subscription_trial_activation_readiness()->>'currently_enabled')::boolean=false,
   'bounded sponsor and all four SKU schedules become locally ready without activation');
 reset role;
+-- Six 500-cent slots in this fixture each allocate 23 media cents from the
+-- account; 10,000 fixed + 138 future cents is the exact readiness boundary.
+update public.media_account_reserves set cash_paid_cents=10137
+ where receipt_ref='synthetic-trial-media-account';
+set local role service_role;
+select pg_temp.ready_ok(
+  (public.subscription_trial_activation_readiness()->>'local_prerequisites_met')::boolean=false and
+  jsonb_array_length(public.subscription_trial_activation_readiness()->'missing_funded_skus')=4,
+  'one cent below all remaining media slots closes launch readiness');
+reset role;
+update public.media_account_reserves set cash_paid_cents=10138
+ where receipt_ref='synthetic-trial-media-account';
+set local role service_role;
+select pg_temp.ready_ok(
+  (public.subscription_trial_activation_readiness()->>'local_prerequisites_met')::boolean and
+  jsonb_array_length(public.subscription_trial_activation_readiness()->'missing_funded_skus')=0,
+  'exact full-cohort media account boundary admits readiness');
+reset role;
+update public.media_account_reserves set cash_paid_cents=21000
+ where receipt_ref='synthetic-trial-media-account';
 -- A one-cent overlap above the $500 shared allocation must close both
 -- readiness and per-SKU media coverage before any StoreKit purchase.
 update public.app_config set value=jsonb_build_object('cap_cents',29001,

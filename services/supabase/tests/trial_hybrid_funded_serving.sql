@@ -98,6 +98,19 @@ reset role;
 update public.app_config set value=jsonb_build_object('cap_cents',1,
  'starts_at',now()-interval '1 day','ends_at',now()-interval '1 hour')
  where key='trial_sponsor_pool';
+update public.media_account_reserves set cash_paid_cents=10022
+ where receipt_ref='synthetic-trial-media-account';
+set local role service_role;
+select pg_temp.hybrid_refuses(
+ 'select public.prepare_subscription_trial_purchase(''e4100000-0000-4000-8000-000000000001'',''e4200000-0000-4000-8000-000000000001'',''com.rendprop.app.pro29.monthly'')',
+ 'RP402: Seven-day trial media coverage is unavailable',
+ 'one cent below complete account media coverage refuses before StoreKit');
+select pg_temp.hybrid_ok(not exists(select 1 from public.subscription_trial_purchase_reservations
+ where org_id='e4200000-0000-4000-8000-000000000001'),
+ 'underfunded account leaves no partial trial cash hold');
+reset role;
+update public.media_account_reserves set cash_paid_cents=21000
+ where receipt_ref='synthetic-trial-media-account';
 update public.media_account_reserves set ends_at=now()+interval '50 days'
  where receipt_ref='synthetic-trial-media-account';
 set local role service_role;
