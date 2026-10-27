@@ -129,6 +129,16 @@ import AVFoundation
             work.statusText = changed.localizedDescription
             throw changed
         }
+        catch let low as PropertyVideoCreditBalanceLow {
+            try requireCurrent(watch)
+            guard saved.request.isPhotoMotion, saved.reply == nil,
+                  low.operationID == saved.request.operationID else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+            var review = saved; review.photoMotionQuoteReviewNeeded = true
+            try PropertyVideoJobStore.save(review, documents: FileStore.documents)
+            work.serverJob = review
+            work.statusText = low.localizedDescription
+            throw low
+        }
         catch let refusal as PropertyVideoCapacityRefusal {
             try requireCurrent(watch)
             guard saved.reply == nil, refusal.provesNoAdmission(for: saved.request) else { throw PropertyVideoJobStore.Failure.invalidReceipt }

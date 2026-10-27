@@ -13652,7 +13652,7 @@ struct ReelStudioView: View {
             Label("Your video request is saved", systemImage: "icloud").font(.rpHeadline)
             if let failure { Text(failure.message).font(.rpCaption).foregroundStyle(Theme.inkDim) }
             Text(work.serverJob?.photoMotionQuoteReviewNeeded == true
-                ? "The server found no admitted job for this saved Photo motion operation. Review its updated price before trying the same request again."
+                ? "The server found no admitted job for this saved Photo motion operation. Check its current price and balance before trying the same request again."
                 : work.serverJob?.wasRefusedBeforeAdmission == true
                     ? "This video was not admitted. Choose fewer photos or check your plan; your saved photos and rejected recipe are kept."
                     : "Check this same request before starting again. Leaving Rendprop does not cancel an accepted server job.")

@@ -8,6 +8,13 @@ struct PropertyVideoCreditQuoteChanged: Error, LocalizedError, Sendable {
     var errorDescription: String? { "The Photo motion price changed before your video started. Review the updated price and try again." }
 }
 
+/// A concurrent wallet change made the displayed quote unaffordable. The
+/// server left this exact operation open, so Review can re-quote it after top-up.
+struct PropertyVideoCreditBalanceLow: Error, LocalizedError, Sendable {
+    let operationID: UUID
+    var errorDescription: String? { "Your credit balance changed before the video started. Add credits, then check this saved Photo motion price again." }
+}
+
 /// Current-authority lookup. A plain missing job is not proof of refusal:
 /// only the server's durable, operation-locked closure permits a new recipe.
 struct PropertyVideoOperationLookup: Decodable, Sendable {

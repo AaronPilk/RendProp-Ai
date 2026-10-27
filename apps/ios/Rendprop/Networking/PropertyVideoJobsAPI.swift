@@ -227,6 +227,13 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
                 guard !lookup.operationClosed else { throw error }
                 throw PropertyVideoCreditQuoteChanged(operationID: request.operationID)
             }
+            if case let .server(status, code, _) = error,
+               status == 402, code == "credit_balance_low", request.isPhotoMotion {
+                let lookup = try await propertyVideoOperation(saved, abandon: false)
+                if let job = lookup.job { return try job.checked(request: request) }
+                guard !lookup.operationClosed else { throw error }
+                throw PropertyVideoCreditBalanceLow(operationID: request.operationID)
+            }
             guard case let .server(status, code, message) = error, status == 402, code == "capacity_refused" else { throw error }
             let current = try await PropertyVideoJobHTTP.data("GET", context: context, segments: [], query: [
                 .init(name: "listing_id", value: request.listingID.uuidString.lowercased()),
