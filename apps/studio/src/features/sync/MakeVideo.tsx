@@ -7,7 +7,6 @@ import {abandonVideoOperation,assertVideoScope,decodeJob,decodeSources,enqueueVi
 import {appendVisibleSelection,filterByOrientation,framingSummary,orientationCounts,orientationLabel,orientationSummary,PHOTO_ORIENTATIONS,photoFrame,recordPreviewGeometry,withPreviewGeometry,type PhotoGeometry,type PhotoOrientationFilter} from "./video-framing";
 import {prepareVideoSources} from "./source-preparation";
 import {CONSENT_V2,PROCESSOR_DISCLOSURE,fetchProcessorAvailability,knownVideoPermission,permissionBeforePaidWork,permissionForSavedJob,sameVideoPermission,readVideoStops,reconcileVideoStop,saveVideoStop,type ProcessorAvailability,type VideoPermission} from "./processor-consent";
-import "./make-video.css";
 
 const REFUSED_NOTICE="No video job was accepted. Choose fewer photos or change the options, then create a new video.";
 const DISCARDED_NOTICE="This saved request is discarded. No video was started from it, and it can't start later. Choose your photos and options for a new video.";
@@ -27,7 +26,7 @@ export default function MakeVideo(props:Props){
 
 function VideoSession({services,workspace,listing,active=true,onChanged,readOnly}:Props&{listing:Listing}){
  const scope=useMemo<VideoScope>(()=>({actor:workspace.user.id,org:listing.orgId,library:workspace.libraryOrgId??workspace.org.id,listing:listing.id,identityVersion:services.getSnapshot().identityVersion}),[services,workspace.user.id,workspace.org.id,workspace.libraryOrgId,listing.id,listing.orgId]);
- const control=useRef(new AbortController()),mounted=useRef(true),flight=useRef(false),prospective=useRef<AbortController|null>(null),stopFlight=useRef<Promise<void>|null>(null),unsavedStops=useRef(new Set<string>());
+ const control=useRef(new AbortController()),mounted=useRef(true),flight=useRef(false),prospective=useRef<AbortController|null>(null),stopFlight=useRef<Promise<void>|null>(null),unsavedStops=useRef(new Set<string>()),shareGuard=useRef<(()=>void)|null>(null);
  const [sources,setSources]=useState<VideoSource[]>([]),[selection,setSelection]=useState<string[]>([]),[jobs,setJobs]=useState<VideoJob[]>([]),[job,setJob]=useState<VideoJob|null>(null),[journal,setJournal]=useState<VideoJournal|null>(null);
  const [purpose,setPurpose]=useState<VideoPurpose>("listing"),[voice,setVoice]=useState<"off"|"own"|"ai">("off"),[script,setScript]=useState(""),[voiceID,setVoiceID]=useState(""),[voices,setVoices]=useState<{id:string;name:string}[]>([]),[ownFile,setOwnFile]=useState<File|null>(null),[music,setMusic]=useState("");
  const [camera,setCamera]=useState("automatic"),[transition,setTransition]=useState<VideoPresentation['transition']>("cut"),[caption,setCaption]=useState<VideoPresentation['shot_caption_style']>("off"),[labels,setLabels]=useState<Record<string,string>>({}),[spoken,setSpoken]=useState(false),[titleCard,setTitleCard]=useState(false);
@@ -107,8 +106,21 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
    else {const pub=localStorage.getItem(`${videoScopeKey(scope)}:publication`);let target:string|undefined;try{target=pub?JSON.parse(pub).job_id:undefined;}catch{/* invalid publication is refused again before any mutation */}setJob(existing.find(item=>item.job_id===target)??existing.find(item=>!["ready","failed","cancelled","needs_reconciliation"].includes(item.state))??null);}
    setLoaded(true);
   }catch(value){if(mounted.current&&!controller.signal.aborted)setError(value instanceof Error?value.message:"Saved property videos are unavailable.");}})();
-  return()=>{mounted.current=false;controller.abort();prospective.current?.abort();};
+  return()=>{mounted.current=false;controller.abort();prospective.current?.abort();shareGuard.current=null;};
  },[api,refresh,loadSources,loadProcessor,settleStops,scope,current,services]);
+ // Parent workspace refreshes replace the listing-read generation even if the
+ // user and listing IDs stay the same. Reacquire a current read for the saved
+ // post-publish link; its old guard remains unusable during that refresh.
+ useEffect(()=>{
+  if(!share)return;
+  let active=true;const signal=control.current.signal;shareGuard.current=null;
+  void services.listingReadScope(scope.org,scope.listing,scope.library,signal).then(guard=>{
+   if(!active)return;
+   assertVideoScope(services,scope,signal);guard();
+   shareGuard.current=()=>{assertVideoScope(services,scope,signal);guard();};
+  }).catch(()=>{if(active)shareGuard.current=null;});
+  return()=>{active=false;shareGuard.current=null;};
+ },[services,scope,workspace,share]);
  useEffect(()=>{
   if(!active||!job||["ready","failed","cancelled","needs_reconciliation"].includes(job.state))return;
   // A reply that lands after the agent opened another saved video must not replace it.
@@ -243,7 +255,7 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
   const key=`${videoScopeKey(scope)}:publication`;const saved=localStorage.getItem(key);let prior:{id:string;job_id:string;asset_id:string}|null=null;
   if(saved){try{const value=JSON.parse(saved);if(![value.id,value.job_id,value.asset_id].every((id:unknown)=>typeof id==="string"&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(id)))throw Error();prior=value;}catch{throw Error("The saved publication request is unreadable. Keep the server's current website selection and contact support.");}}
   const publication=prior?.job_id===job.job_id&&prior.asset_id===job.result.asset_id?prior:{id:crypto.randomUUID(),job_id:job.job_id,asset_id:job.result.asset_id};
-  localStorage.setItem(key,JSON.stringify(publication));const url=await publishVideo(services,scope,job,publication.id,control.current.signal);current();setShare(url);setNotice("This reviewed video is selected for your property website.");onChanged();
+  localStorage.setItem(key,JSON.stringify(publication));const published=await publishVideo(services,scope,job,publication.id,control.current.signal);current();published.assertCurrent();shareGuard.current=published.assertCurrent;setShare(published.url??"");setNotice(published.url?"Video selected for your website.":"Video selected; link unavailable. Refresh before sharing.");onChanged();
  }
  const working=job!==null&&!["ready","failed","cancelled","needs_reconciliation"].includes(job.state);
  const pending=journal!==null&&!journal.job_id&&!closed;
@@ -283,7 +295,7 @@ function VideoSession({services,workspace,listing,active=true,onChanged,readOnly
   {job&&<section className="video-job" aria-label="Current property video"><h3>{job.state==="ready"?"Your finished video":"Saved video progress"}</h3><p>{job.state.replaceAll("_"," ")} · {job.completed_sources}/{job.source_count} photos complete</p>{job.message&&<p>{job.message}</p>}{working&&<p>This is a saved server job. You can close Studio while it works.</p>}{(working||job.resume_available===true)&&<><button disabled={!!busy||!writable} onClick={()=>void action("Cancelling saved video…",cancel)}>Cancel video</button></>}
    {job.resume_available===true&&<button disabled={!!busy||!writable||!consent||!resumeAllowed} onClick={()=>void action("Resuming saved video…",async()=>{const resumed=await resumeVideo(services,scope,job,control.current.signal,processor?.kind==="legacy");current();setJob(resumed);setNotice("Resumed the same saved video. Completed shots are retained.");})}>Resume saved video</button>}
    {job.resume_available===true&&!resumePermission&&<p>This saved video’s original AI permission is incomplete. Refresh its status or cancel it; paid resume is paused.</p>}
-   {job.result&&<><video key={`${job.job_id}:${job.result.download_url}`} controls playsInline preload="metadata" src={job.result.download_url}/><p>{job.result.width}×{job.result.height} · {Math.round(job.result.duration_s)}s{job.result.original_photo_count>0?` · ${job.result.original_photo_count} shots use the saved photo`:""}</p><small>AI motion can introduce visual errors. Review the full video and selected photo versions before sharing.</small><div className="video-photo-actions"><a href={job.result.download_url} download rel="noreferrer">Download finished video</a>{job.result.branding_policy==="unbranded"&&<><label><input type="checkbox" checked={reviewed} onChange={event=>setReviewed(event.target.checked)}/>I reviewed the video and property details</label><button disabled={!reviewed||!!busy||!writable} onClick={()=>void action("Selecting website video…",publish)}>Use on property website</button></>}</div>{share&&<a href={share} target="_blank" rel="noreferrer">Open property website</a>}</>}
+   {job.result&&<><video key={`${job.job_id}:${job.result.download_url}`} controls playsInline preload="metadata" src={job.result.download_url}/><p>{job.result.width}×{job.result.height} · {Math.round(job.result.duration_s)}s{job.result.original_photo_count>0?` · ${job.result.original_photo_count} shots use the saved photo`:""}</p><small>AI motion can introduce visual errors. Review the full video and selected photo versions before sharing.</small><div className="video-photo-actions"><a href={job.result.download_url} download rel="noreferrer">Download finished video</a>{job.result.branding_policy==="unbranded"&&<><label><input type="checkbox" checked={reviewed} onChange={event=>setReviewed(event.target.checked)}/>I reviewed the video and property details</label><button disabled={!reviewed||!!busy||!writable} onClick={()=>void action("Selecting website video…",publish)}>Use on property website</button></>}</div>{share&&<a href={share} target="_blank" rel="noreferrer" onClick={event=>{try{if(!shareGuard.current)throw Error("Link refreshing. Try again.");shareGuard.current();current();}catch(value){event.preventDefault();setError(value instanceof Error?value.message:"Reopen this property before sharing.");}}}>Open property website</a>}</>}
   </section>}
   {jobs.length>0&&<details><summary>Saved videos for this property ({jobs.length})</summary><ul className="video-job-list">{jobs.map(item=><li key={item.job_id}><span>{item.state.replaceAll("_"," ")} · {item.source_count} photos</span><button disabled={!!busy} onClick={()=>void action("Opening saved video…",async()=>{setJob(decodeJob(await api(`property-video-jobs/${item.job_id}`),scope,item.operation_id));setReviewed(false);setShare("");})}>Open video</button></li>)}</ul></details>}
  </div>;

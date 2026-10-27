@@ -37,7 +37,6 @@ import {
   subtitleFile,
   text,
 } from "./model";
-import "./creative.css";
 import BatchPhotoStudio from "./BatchPhotoStudio";
 import PhotoExportPanel from "./PhotoExportPanel";
 import PhotoFeedbackControl from "./PhotoFeedbackControl";

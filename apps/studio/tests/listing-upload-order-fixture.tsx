@@ -11,6 +11,7 @@ import type { GalleryPhoto } from "../src/features/listings/model";
 import type { StudioServices } from "../src/data/services";
 import "../src/styles.css";
 import "../src/design/studio.css";
+import "../src/features/listings/listings.css";
 const org = "10000000-0000-4000-8000-000000000001", listing = "20000000-0000-4000-8000-000000000002", asset = "30000000-0000-4000-8000-000000000003", user = "40000000-0000-4000-8000-000000000004", jobId = "50000000-0000-4000-8000-000000000005", renderId = "60000000-0000-4000-8000-000000000006";
 const workspace: Workspace = { user: { id: user, email: "fixture@example.invalid", name: "Fixture Agent", avatarUrl: null }, org: { id: org, name: "Fixture office", handle: "office", spaceType: "real_estate" }, memberships: [{ orgId: org, orgName: "Fixture office", role: "owner", spaceType: "real_estate" }], plan: "team", planRaw: "team", planDegraded: false, planExpiresAt: null, trialEndsAt: null, usage: { listings: 1, leads: 0, leadsNew: 0, renders: 0 } };
 let listings: Listing[] = [{ id: listing, orgId: org, address: "10 Oak Street", tagline: "A bright place to call home", spaceType: "real_estate", details: { imported_nested: { source: "MLS", pending: null }, hours: null, year_built: 1998 }, status: "ready", createdAt: "2026-09-14T12:00:00Z", mainPhotoKey: null, soldAt: null, beds: 3, baths: 2, sqft: 2000, priceCents: 45000000 }];

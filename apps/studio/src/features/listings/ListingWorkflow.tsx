@@ -13,7 +13,6 @@ import { changeListingSelection, confirmsGallerySelection, UnconfirmedGallerySel
 import { prepareGalleryCopy } from "./gallery-copy";
 import { downloadTourQR } from "./qr";
 import { resolveTourLinks, safeTourLinks, type TourShareProof } from "./share-link";
-import "./listings.css";
 import { FeatureCards } from "../home/Dashboard";
 import { FEATURES, homeWords, type FeatureId } from "../home/features";
 import FinishListing from "./FinishListing";

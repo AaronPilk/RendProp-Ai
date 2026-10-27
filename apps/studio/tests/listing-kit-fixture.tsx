@@ -3,6 +3,7 @@ import { useState } from "react";
 import ListingWorkflow from "../src/features/listings/ListingWorkflow";
 import { kitFixture, listingA, listings, workspace } from "./kit-fixtures";
 import "../src/styles.css";
+import "../src/features/listings/listings.css";
 const fixture = kitFixture();
 Object.assign(window, { kitFixture: fixture });
 function Fixture() {

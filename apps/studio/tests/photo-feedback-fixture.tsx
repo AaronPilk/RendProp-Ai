@@ -5,6 +5,7 @@ import PhotoFeedbackReport from "../src/features/admin/PhotoFeedbackReport";
 import { createStudioServices, type StudioAuth, type StudioServices } from "../src/data/services";
 import "../src/styles.css";
 import "../src/design/studio.css";
+import "../src/features/creative/creative.css";
 
 // Isolated fixture with synthetic ids only: no hosted, provider or paid call.
 // Photo feedback and the admin report go through the real Studio transport over

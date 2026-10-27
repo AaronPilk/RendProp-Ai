@@ -7,6 +7,7 @@ import type {Workspace,Listing,StudioPhoto} from "../src/data/contracts";
 import {EMPTY_DRAFT,type ShotPlanHandoff,type AgentPlanHandoff,type CreativeEntryRequest,type CreativeTool} from "../src/features/creative/model";
 import "../src/styles.css";
 import "../src/design/studio.css";
+import "../src/features/creative/creative.css";
 const user="11111111-1111-4111-8111-111111111111",org="22222222-2222-4222-8222-222222222222",listing="33333333-3333-4333-8333-333333333333",other="33333333-3333-4333-8333-333333333334",source="44444444-4444-4444-8444-444444444444",render="55555555-5555-4555-8555-555555555555",job="66666666-6666-4666-8666-666666666666",provenance="77777777-7777-4777-8777-777777777777";
 const calls:{path:string;method:string;body:any}[]=[],docs=new Map<string,any>(),tickets=new Map<string,any>(),results:any[]=[];
 const shotHandoffs:ShotPlanHandoff[]=[],agentHandoffs:AgentPlanHandoff[]=[],editorHandoffs:string[]=[];

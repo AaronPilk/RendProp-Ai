@@ -7,6 +7,7 @@ import type {StudioServices} from "../src/data/services";
 import type {Workspace,Listing} from "../src/data/contracts";
 import "../src/styles.css";
 import "../src/design/studio.css";
+import "../src/features/sync/make-video.css";
 const actor="11111111-1111-4111-8111-111111111111",other="99999999-9999-4999-8999-999999999999",org="22222222-2222-4222-8222-222222222222",listing="44444444-4444-4444-8444-444444444444";
 const uuid=(i:number)=>`00000000-0000-4000-8000-${String(i).padStart(12,"0")}`;
 let who=localStorage.getItem('video-fixture-actor')===other?other:actor,identityVersion=1,loseSubmit=false,losePreparation=false,holdSources=false,holdStatus=false,holdPlan=false,failPlan=false,holdProcessor=false,holdSubmit=false,holdCancel=false,failSubmit=false,loseCancel=false,loseAbandon=false,failOperationRead=false,denySubmit=false,capacityLimit=100;const held:(()=>void)[]=[];

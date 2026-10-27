@@ -8,6 +8,7 @@ import type { StudioServices } from "../src/data/services";
 import type { ClientContact } from "../src/features/listings/client-contact";
 import type { ClientDelivery } from "../src/features/business/model";
 import "../src/styles.css";
+import "../src/features/listings/listings.css";
 const org="10000000-0000-4000-8000-000000000001",user="20000000-0000-4000-8000-000000000002",a="30000000-0000-4000-8000-000000000003",b="30000000-0000-4000-8000-000000000004",video="40000000-0000-4000-8000-000000000004",leadId="50000000-0000-4000-8000-000000000005";
 const workspace:Workspace={user:{id:user,email:"photographer@example.invalid",name:"Photographer",avatarUrl:null,realEstateRole:null},org:{id:org,name:"Photo studio",handle:"photo-studio",spaceType:"real_estate"},memberships:[{orgId:org,orgName:"Photo studio",role:"owner",spaceType:"real_estate"}],plan:"team",planRaw:"team",planDegraded:false,planExpiresAt:null,trialEndsAt:null,usage:{listings:2,leads:1,leadsNew:1,renders:0}};
 const listings:Listing[]=[a,b].map((id,i)=>({id,orgId:org,spaceType:"real_estate",address:i?"20 Maple Avenue":"10 Oak Street",tagline:"",details:{},status:"ready",createdAt:"2026-10-01T12:00:00Z",mainPhotoKey:null,beds:3,baths:2,sqft:2000,priceCents:40000000}));

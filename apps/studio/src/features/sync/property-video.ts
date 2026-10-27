@@ -1,5 +1,6 @@
 import type {StudioServices} from "../../data/services";
 import {privateMediaCapability} from "../../data/private-media";
+import {resolveTourLinks,safeTourLinks} from "../listings/share-link";
 import {CONSENT_V1,decodeVideoPermission,permissionForSavedJob,retainVideoPermissionMetadata,sameVideoPermission,videoPermissionHeaders,type VideoPermission,type VideoPermissionMetadata} from "./processor-consent";
 
 export type VideoScope={actor:string;org:string;library:string;listing:string;identityVersion:number};
@@ -181,11 +182,19 @@ export function retainAbandonedVideo(storage:Pick<Storage,'setItem'>,scope:Video
 export async function recoverVideo(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,journal:VideoJournal,signal?:AbortSignal):Promise<VideoJob|null>{
  return (await inspectVideoOperation(services,scope,journal,signal)).job;
 }
-export async function publishVideo(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,job:VideoJob,publicationID:string,signal?:AbortSignal):Promise<string>{
+export async function publishVideo(services:Pick<StudioServices,"api"|"getSnapshot"|"listingReadScope">,scope:VideoScope,job:VideoJob,publicationID:string,signal?:AbortSignal,resolve:typeof resolveTourLinks=resolveTourLinks):Promise<{url:string|null;assertCurrent:()=>void}>{
  assertVideoScope(services,scope,signal);id(publicationID);const checked=decodeJob(job,scope);
  const result=checked.result;if(!result||result.branding_policy!=="unbranded"||result.width!==1920||result.height!==1080)throw Error("Only a reviewed landscape listing video can be selected for the website.");
  const raw=object(await services.api("/functions/v1/renders/publish-app",{method:"POST",orgId:scope.library,idempotencyKey:`photo-video:${publicationID}`,signal,body:{listing_id:scope.listing,asset_id:result.asset_id,poster_asset_id:result.poster_asset_id,presentation_kind:"photo_video",publication_id:publicationID,composition:{schema:1,purpose:"listing",aspect:"16:9",branding_policy:"unbranded",sources:result.sources}}}));
  assertVideoScope(services,scope,signal);
  if(raw.listing_id!==scope.listing||raw.org_id!==scope.org||raw.library_org_id!==scope.library||raw.presentation_kind!=="photo_video"||raw.presentation_asset_id!==result.asset_id||raw.publication_id!==publicationID||typeof raw.slug!=="string"||!/^[A-Za-z0-9_-]{1,160}$/.test(raw.slug)||raw.share_url!==`https://rendprop.com/f/${raw.slug}`)throw Error("Publication was not confirmed for this exact property video. Check its saved selection before retrying.");
- return `https://rendprop.com/property/${raw.slug}`;
+ // The mutation confirms publication identity, not its address URL. Resolve
+ // the current public link after publication; a directory refresh or account
+ // change must not put a stale property's link into this workspace.
+ const guard=await services.listingReadScope(scope.org,scope.listing,scope.library,signal);
+ assertVideoScope(services,scope,signal);guard();
+ const proof=await resolve(raw.slug,{signal});
+ assertVideoScope(services,scope,signal);guard();
+ return {url:safeTourLinks(raw.slug,proof)?.branded??null,
+  assertCurrent:()=>{assertVideoScope(services,scope,signal);guard();}};
 }

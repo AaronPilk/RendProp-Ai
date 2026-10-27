@@ -13,7 +13,7 @@ const journal:VideoJournal={schema:1,actor,org,library,listing,input,preparation
 const queued=()=>({job_id:jobID,operation_id:operation,listing_id:listing,org_id:org,selected_library_org_id:library,source_count:1,manifest_sha256:"a".repeat(64),state:"queued",completed_sources:0,result:null});
 const ready=()=>({...queued(),state:"ready",completed_sources:1,result:{asset_id:asset,poster_asset_id:poster,download_url:privateURL("renders"),width:1920,height:1080,duration_s:5,bytes:100,sha256:"b".repeat(64),branding_policy:"unbranded",sources:[{photo_asset_id:source.photo_asset_id,photo_version_id:source.photo_version_id,photo_provenance_id:null,generation_request_id:"provider-request-hex",generation_provenance_id:asset,motion_kind:"ai"}],original_photo_count:0,music:null}});
 function storage(){const values=new Map<string,string>();return{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value);},values};}
-function service(api:(path:string,options:any)=>Promise<unknown>){return{api,getSnapshot:()=>({status:"signed-in" as const,identityVersion:1,identity:{userId:actor,isAnonymous:false}})} as any;}
+function service(api:(path:string,options:any)=>Promise<unknown>){return{api,getSnapshot:()=>({status:"signed-in" as const,identityVersion:1,identity:{userId:actor,isAnonymous:false}}),listingReadScope:async()=>()=>{}} as any;}
 
 test("exact selected staged version, empty gallery and ineligible source stay explicit",()=>{
  const raw={listing_id:listing,org_id:org,selected_library_org_id:library,selected_count:100,sources:photos,next_offset:null};
@@ -99,10 +99,36 @@ test("only exact durable refusal proof permits a new operation; unknown or accep
 test("website selection is explicit, scoped and repeats the same publication identity after a lost reply",async()=>{
  const job=decodeJob(ready(),scope),calls:any[]=[];const pub=poster;
  const svc=service(async(path,options)=>{calls.push({path,options});if(calls.length===1)throw Error("lost publication reply");return{listing_id:listing,org_id:org,library_org_id:library,presentation_kind:"photo_video",presentation_asset_id:asset,publication_id:pub,slug:"owned123",share_url:"https://rendprop.com/f/owned123"};});
- await assert.rejects(()=>publishVideo(svc,scope,job,pub));assert.equal(await publishVideo(svc,scope,job,pub),"https://rendprop.com/property/owned123");
+ const address="https://rendprop.com/property/10-oak-street/20261027.owned123";
+ const resolve=async(slug:string,options:{signal?:AbortSignal})=>{assert.equal(slug,"owned123");assert.equal(options.signal,undefined);return{links:{branded:address,unbranded:"https://rendprop.com/u/owned123"},verified:true,addressOnly:false};};
+ await assert.rejects(()=>publishVideo(svc,scope,job,pub,undefined,resolve));const published=await publishVideo(svc,scope,job,pub,undefined,resolve);assert.equal(published.url,address);published.assertCurrent();
  assert.deepEqual(calls[0].options.body,calls[1].options.body);assert.equal(calls[1].options.idempotencyKey,`photo-video:${pub}`);assert.equal(calls[1].options.orgId,library);
+ assert.equal((await publishVideo(svc,scope,job,pub,undefined,async()=>null)).url,"https://rendprop.com/f/owned123",'a published token remains usable when the address read is unavailable');
+ assert.equal((await publishVideo(svc,scope,job,pub,undefined,async()=>false)).url,null,'an authoritative 404 withholds the link after a publish reply');
+ assert.equal((await publishVideo(svc,scope,job,pub,undefined,async()=>({links:{branded:"https://rendprop.com/property/10-oak-street/20261027.other",unbranded:"https://rendprop.com/u/owned123"},verified:true,addressOnly:false}))).url,"https://rendprop.com/f/owned123",'a different publication is never opened');
  await assert.rejects(()=>publishVideo(service(async()=>{throw Error("must not publish social");}),scope,decodeJob({...ready(),result:{...ready().result,width:1080,height:1920,branding_policy:"social"}},scope),pub));
  await assert.rejects(()=>publishVideo(service(async()=>({listing_id:asset})),scope,job,pub),/not confirmed/);
+});
+
+test("a refreshed listing read or changed account cannot surface a stale post-publish website link",async()=>{
+ const reply={listing_id:listing,org_id:org,library_org_id:library,presentation_kind:"photo_video",presentation_asset_id:asset,publication_id:poster,slug:"owned123",share_url:"https://rendprop.com/f/owned123"};
+ const proof={links:{branded:"https://rendprop.com/property/10-oak-street/20261027.owned123",unbranded:"https://rendprop.com/u/owned123"},verified:true,addressOnly:false};
+ const job=decodeJob(ready(),scope);
+ let generation=1;
+ const refreshed=service(async()=>reply);
+ refreshed.listingReadScope=async(selectedOrg:string,selectedListing:string,selectedLibrary:string)=>{
+  assert.deepEqual([selectedOrg,selectedListing,selectedLibrary],[org,listing,library]);
+  const saved=generation;return()=>{if(generation!==saved)throw Error("Your property selection changed. Reopen this property.");};
+ };
+ await assert.rejects(()=>publishVideo(refreshed,scope,job,poster,undefined,async()=>{generation++;return proof;}),/selection changed/);
+ generation=1;
+ const published=await publishVideo(refreshed,scope,job,poster,undefined,async()=>proof);
+ generation++;
+ assert.throws(published.assertCurrent,/selection changed/,'a completed link is not clickable after a same-account directory refresh');
+ let identityVersion=1;
+ const switched=service(async()=>reply);
+ switched.getSnapshot=()=>({status:"signed-in",identityVersion,identity:{userId:actor,isAnonymous:false}});
+ await assert.rejects(()=>publishVideo(switched,scope,job,poster,undefined,async()=>{identityVersion++;return proof;}),/account changed/);
 });
 
 test("optional catalog remains Off by default and pins licensed bytes/evidence",()=>{
