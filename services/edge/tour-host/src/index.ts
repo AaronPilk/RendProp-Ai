@@ -76,30 +76,32 @@ async function uniqueAddressSlug(descriptor: string, env: Env): Promise<AddressL
   return { kind: "unique", slug: value.slug, claimed: value.claimed === true };
 }
 
-async function hasUniqueAddress(tour: Tour, env: Env): Promise<"unique" | "not-unique" | "unavailable"> {
+type AddressState = { state: "unique" | "not-unique" | "unavailable"; descriptor: string | null; lookup?: AddressLookup };
+async function hasUniqueAddress(tour: Tour, env: Env): Promise<AddressState> {
   // Noindex remains private-by-address unless a previously exposed bare URL
   // was reserved for this exact listing before the dated-link migration.
   const descriptor = propertyAddressSlug(tour.listing?.address);
-  if (!descriptor) return "not-unique";
+  if (!descriptor) return { state: "not-unique", descriptor: null };
   const lookup = await uniqueAddressSlug(descriptor, env);
-  if (lookup.kind === "unavailable") return "unavailable";
-  if (lookup.kind !== "unique" || lookup.slug !== tour.slug) return "not-unique";
+  const snapshot = { descriptor, lookup };
+  if (lookup.kind === "unavailable") return { state: "unavailable", ...snapshot };
+  if (lookup.kind !== "unique" || lookup.slug !== tour.slug) return { state: "not-unique", ...snapshot };
   // After dated URLs are enabled, only already-reserved bare addresses keep
   // their single-segment identity. Every new publication gets a collision-
   // proof address+date+slug link, so a later duplicate cannot break its link.
-  if (env.PROPERTY_DATE_SUFFIX === "enabled" && !lookup.claimed) return "not-unique";
-  if (!allowsIndexing(tour) && !lookup.claimed) return "not-unique";
+  if (env.PROPERTY_DATE_SUFFIX === "enabled" && !lookup.claimed) return { state: "not-unique", ...snapshot };
+  if (!allowsIndexing(tour) && !lookup.claimed) return { state: "not-unique", ...snapshot };
   // A one-segment legacy publication slug must continue to name its existing
   // property, even if it happens to equal another listing's address spelling.
   if (/^[A-Za-z0-9_-]{1,64}$/.test(descriptor) && descriptor !== tour.slug) {
     const alias = await fetchUpstreamJSON(`/tours/${encodeURIComponent(descriptor)}`, env);
-    if (alias.kind === "error") return "unavailable";
+    if (alias.kind === "error") return { state: "unavailable", ...snapshot };
     if (alias.kind === "ok") {
-      if (!isTour(alias.value)) return "unavailable";
-      if (alias.value.slug !== tour.slug) return "not-unique";
+      if (!isTour(alias.value)) return { state: "unavailable", ...snapshot };
+      if (alias.value.slug !== tour.slug) return { state: "not-unique", ...snapshot };
     }
   }
-  return "unique";
+  return { state: "unique", ...snapshot };
 }
 
 function htmlResponse(
@@ -420,15 +422,20 @@ async function handleTour(
   try {
     const addressEligible = !unbranded && !embed && !previewTheme
       && (upstream.value.space_type || "real_estate") === "real_estate"
-    const addressState = addressEligible ? await hasUniqueAddress(upstream.value, env) : "not-unique";
-    if (expectedAddress && addressState === "unavailable") return upstreamError(503);
-    const addressOnly = addressState === "unique";
+    const addressState = addressEligible ? await hasUniqueAddress(upstream.value, env) : null;
+    if (expectedAddress && addressState?.state === "unavailable") return upstreamError(503);
+    const addressOnly = addressState?.state === "unique";
     // A resolver result is never publication authority by itself: re-read the
     // actual tour and require a fresh proof for this exact requested alias.
     // A reserved, previously shared bare address can outlive a text address
     // correction, but may never point to another listing's publication.
     if (expectedAddress) {
-      const expected = await uniqueAddressSlug(expectedAddress, env);
+      // The current-tour address proof above is already a fresh resolver read
+      // after the tour response. For a matching bare alias, reusing this exact
+      // proof avoids a third identical gateway/DB round trip. A historical
+      // reserved spelling still gets its separate current proof.
+      const expected = addressState?.descriptor === expectedAddress && addressState.lookup
+        ? addressState.lookup : await uniqueAddressSlug(expectedAddress, env);
       if (expected.kind === "unavailable") return upstreamError(503);
       if (expected.kind !== "unique" || expected.slug !== upstream.value.slug
           || (env.PROPERTY_DATE_SUFFIX === "enabled" && !expected.claimed)
@@ -528,7 +535,7 @@ async function handleShareLink(slug: string, req: Request, url: URL, env: Env): 
   try {
     const tour = upstream.value;
     const realEstate = (tour.space_type || "real_estate") === "real_estate";
-    const unique = realEstate && await hasUniqueAddress(tour, env) === "unique";
+    const unique = realEstate && (await hasUniqueAddress(tour, env)).state === "unique";
     const path = realEstate
       ? unique ? propertyAddressOnlyPath(tour.listing.address)! : propertyAddressPath(slug, tour.listing.address,
           "/property", env.PROPERTY_DATE_SUFFIX === "enabled" ? tour.published_at : undefined)

@@ -69,10 +69,13 @@ check(response.status === 404 && !(await response.text()).includes(address),
   'A missing publication cannot expose an address');
 response = await get('/f/' + slug + '/share-link?address=' + descriptor);
 check(response.status === 404,'Share lookup never takes an address or query as authority');
+const resolverBeforeBare = resolverCalls;
 response = await get(path + '?page=gallery');
 let html = await response.text();
 check(response.status === 200 && html.includes(`rel="canonical" href="https://rendprop.com${path}?page=gallery"`),
   'Address-only gallery resolves a current unique publication');
+check(resolverCalls - resolverBeforeBare === 2,
+  'Bare link uses the initial alias lookup and one fresh post-tour proof, not a redundant third resolver call');
 check(html.includes(`href="${path}?page=contact"`),'Internal navigation retains the address-only path');
 response = await get(oldPath + '?page=gallery');
 check(response.status === 308 && response.headers.get('location') === 'https://rendprop.com' + path + '?page=gallery',

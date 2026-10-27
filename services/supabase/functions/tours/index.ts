@@ -44,7 +44,7 @@ import { propertyAddressLookup } from "./address-lookup.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { assert, HttpError, json, pathSegments, respondError, readJsonLimited } from "../_shared/http.ts";
 import { adminClient } from "../_shared/supabase.ts";
-import { assertMediaVisible, mediaVisibility, type MediaSourceRefs } from "../_shared/media-source-access.ts";
+import { assertMediaVisible, mediaVisibility, type MediaSourceRefs, type PublicationProofs } from "../_shared/media-source-access.ts";
 import { bucketForKey } from "../studio/handler.ts";
 import { propertyGalleryKey, publicMainPhoto } from "../_shared/property-cover.ts";
 import { publicProvenanceDisclosure } from "../_shared/provenance.ts";
@@ -119,7 +119,7 @@ interface AlteredMedium {
  * disclosure — but only the public subset leaves this function.
  */
 // deno-lint-ignore no-explicit-any
-async function alteredMediaFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selectedKeys: ReadonlySet<string> | null, slug: string): Promise<AlteredMedium[]> {
+async function alteredMediaFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selectedKeys: ReadonlySet<string> | null, slug: string, proofs?: PublicationProofs): Promise<AlteredMedium[]> {
   if(selectedKeys!==null&&selectedKeys.size===0)return [];
   let query=admin.from("media_provenance")
     .select("kind, edit, label, disclosure, original_key, altered_key, created_at")
@@ -139,7 +139,7 @@ async function alteredMediaFor(admin: any, orgId: string, listingId: string, ref
   const current=(data??[]).filter((r:Record<string,unknown>)=>selectedKeys===null ||
     (typeof r.altered_key==="string" && selectedKeys.has(r.altered_key))).slice(0,MAX_ALTERED_MEDIA);
   const scopedKeys = current.flatMap((r: Record<string, unknown>) => [r.original_key, r.altered_key]).filter((key: unknown): key is string => bucketForKey(key, { orgId, listingId }) !== null);
-  const visible = await mediaVisibility(admin, listingId, { keys: scopedKeys });
+  const visible = await mediaVisibility(admin, listingId, { keys: scopedKeys },{intermediateProofs:proofs});
   return current.filter((r: Record<string, unknown>) => [r.original_key, r.altered_key].every(key => !key || (typeof key === "string" && visible.keys[key] === true))).map((r: Record<string, unknown>) => {
     for (const key of [r.original_key, r.altered_key]) if (typeof key === "string") refs.keys.push(key);
     return ({
@@ -173,7 +173,7 @@ const MAX_GALLERY = 100;
  * Never fatal: a gallery lookup must not take the tour down.
  */
 // deno-lint-ignore no-explicit-any
-async function galleryFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selection: string[] | null, slug: string, legacySnapshot: {value:string|null}={value:null}): Promise<Array<{ url: string; thumb_url?: string }>> {
+async function galleryFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selection: string[] | null, slug: string, legacySnapshot: {value:string|null}={value:null}, proofs?: PublicationProofs): Promise<Array<{ url: string; thumb_url?: string }>> {
   if(selection===null){const legacy=await legacyGalleryOrder(admin,orgId,listingId);legacySnapshot.value=legacy.snapshot;selection=legacy.ids;}
   if(selection.length===0)return [];
   let query = admin
@@ -193,7 +193,7 @@ async function galleryFor(admin: any, orgId: string, listingId: string, refs: { 
   const eligible = (data ?? []).filter((r: Record<string, unknown>) => propertyGalleryKey(r.storage_key, { orgId, listingId }) &&
     (selection===null || selection.includes(r.id as string)));
   if(selection!==null)eligible.sort((a: {id:string},b: {id:string})=>selection.indexOf(a.id)-selection.indexOf(b.id));
-  const visible = await mediaVisibility(admin, listingId, { assets: eligible.map((r: { id: string }) => r.id), keys: eligible.map((r: { storage_key: string }) => r.storage_key) });
+  const visible = await mediaVisibility(admin, listingId, { assets: eligible.map((r: { id: string }) => r.id), keys: eligible.map((r: { storage_key: string }) => r.storage_key) },{intermediateProofs:proofs});
   const out: Array<{ url: string; thumb_url?: string }> = [];
   for (const r of eligible) {
     if (visible.assets[r.id] !== true || visible.keys[r.storage_key] !== true) continue;
@@ -437,6 +437,10 @@ Deno.serve(async (req) => {
     // 3a. Every AI-altered asset for this listing — the public disclosure list.
     const selectedPhotos=listing.gallery_asset_ids??null;
     const legacyGallerySnapshot={value:null as string|null};
+    // Reuse exact physical receipts only between intermediate gallery and
+    // disclosure assembly within this request. The later final media fence
+    // deliberately omits this map and performs fresh HEADs before release.
+    const intermediateProofs:PublicationProofs=new Map();
     // Independent public reads overlap; every returned lineage/contact still
     // passes the unchanged final freshness fences below before release.
     // Share one actual contact read. Its dependent identity lookup can overlap
@@ -448,17 +452,26 @@ Deno.serve(async (req) => {
       if(error)throw new HttpError(503,"The listing contact could not be verified. Please retry.");
       return data?.enabled===true ? null : await listingAgentIdentity(admin,listing.id);
     });
-    const [gallery, cover_url, { data: job }, { data: clientRow, error: clientError }, identity] = await Promise.all([
-      galleryFor(admin, listing.org_id, listing.id as string, visibleRefs,selectedPhotos,slug,legacyGallerySnapshot),
-      publicMainPhoto(admin,{orgId:listing.org_id,listingId:listing.id},
-        listing.main_photo_key,key=>publishedR2Url(slug,key),visibleRefs,selectedPhotos),
+    const [gallery, legacyCover, { data: job }, { data: clientRow, error: clientError }, identity, presentation] = await Promise.all([
+      galleryFor(admin, listing.org_id, listing.id as string, visibleRefs,selectedPhotos,slug,legacyGallerySnapshot,intermediateProofs),
+      // A selected cover belongs to the same published gallery. Reuse that
+      // gallery's exact current asset/key and physical-publication proof rather
+      // than performing a second identical metadata/HEAD walk. Legacy automatic
+      // galleries retain their independent cover lookup and old behavior.
+      selectedPhotos===null ? publicMainPhoto(admin,{orgId:listing.org_id,listingId:listing.id},
+        listing.main_photo_key,key=>publishedR2Url(slug,key),visibleRefs,selectedPhotos) : Promise.resolve(null),
       admin.from("render_jobs").select("capture_asset_id").eq("id",render.job_id).maybeSingle(),
       contactRead,
       initialIdentity,
+      // This projection is independent of gallery/contact assembly. It adds
+      // selected-video refs to the same request-local array; the final media
+      // fence still runs only after every branch has settled.
+      propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,visibleRefs,publishedR2Url),
     ]);
-    mark("gallery_contact");
-    const presentation=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,visibleRefs,publishedR2Url);
-    mark("presentation");
+    const selectedCover = selectedPhotos!==null && propertyGalleryKey(listing.main_photo_key,{orgId:listing.org_id,listingId:listing.id})
+      ? publishedR2Url(slug,listing.main_photo_key) : null;
+    const cover_url = selectedPhotos===null ? legacyCover : gallery.find(photo=>photo.url===selectedCover)?.url??null;
+    mark("gallery_contact_presentation");
     if(clientError)throw new HttpError(503,"The listing contact could not be verified. Please retry.");
     const clientMode=clientRow?.enabled===true;
     const clientRefs={assets:[] as string[],keys:[] as string[]};
@@ -467,7 +480,7 @@ Deno.serve(async (req) => {
     // lineage, contact revision and publication fence before returning bytes.
     const [altered_media,chapters,client] = await Promise.all([
       alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs,
-        new Set([...visibleRefs.keys,...(render.presentation_kind!=="photo_video"&&typeof render.video_key==="string"?[render.video_key]:[])]),slug),
+        new Set([...visibleRefs.keys,...(render.presentation_kind!=="photo_video"&&typeof render.video_key==="string"?[render.video_key]:[])]),slug,intermediateProofs),
       (async()=>{
         // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
         let chapters: SpatialChapter[] = [];

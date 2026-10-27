@@ -1,10 +1,14 @@
 // Presenter privacy follows derived edits, reflection outputs and published
 // renders. Quality flags alone must never authorize a fresh media capability.
 import { HttpError } from "./http.ts";
-import { publicationVisibilityRows, publicationHeadDenials } from "./photo-publication-visibility.ts";
+import { publicationVisibilityRows, publicationHeadDenials, type PublicationHeadIO } from "./photo-publication-visibility.ts";
 export type MediaSourceRefs = { assets?: readonly string[]; renders?: readonly string[]; keys?: readonly string[] };
 export type MediaVisibility = { assets: Record<string, boolean>; renders: Record<string, boolean>; keys: Record<string, boolean> };
 export type MediaAccessClient = { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> };
+/** Request-local intermediate proof only. Never pass this to a final response
+ * fence: that fence must recheck every physical object after page assembly. */
+export type PublicationProofs = Map<string, string>;
+type VisibilityOptions = { intermediateProofs?: PublicationProofs; headIO?: PublicationHeadIO };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function refs(input: MediaSourceRefs): MediaVisibility {
@@ -18,7 +22,7 @@ function refs(input: MediaSourceRefs): MediaVisibility {
   return out;
 }
 
-export async function mediaVisibility(db: MediaAccessClient, listing: string, input: MediaSourceRefs): Promise<MediaVisibility> {
+export async function mediaVisibility(db: MediaAccessClient, listing: string, input: MediaSourceRefs, options: VisibilityOptions = {}): Promise<MediaVisibility> {
   if (!UUID.test(listing)) throw new HttpError(503, "Media source property could not be verified.");
   const out = refs(input), entries = (["assets", "renders", "keys"] as const).flatMap((kind) => Object.keys(out[kind]).map((value) => ({ kind, value })));
   // At most three independently bounded database calls for a complete page.
@@ -36,13 +40,19 @@ export async function mediaVisibility(db: MediaAccessClient, listing: string, in
     }
     const publications=publicationVisibilityRows((data as Record<string,unknown>).photo_publications,listing);
     if(publications.length){
-      const denied=await publicationHeadDenials(db,publications);
+      const proofs=options.intermediateProofs;
+      const toVerify=proofs ? publications.filter(p=>proofs.get(p.publication_id)!==JSON.stringify(p)) : publications;
+      const denied=await publicationHeadDenials(db,toVerify,options.headIO);
       // Authority or source withdrawal during the physical reads cannot be
       // released using an earlier accepted metadata snapshot.
       const fresh=await db.rpc("studio_presenter_media_visibility",payload);
       if(fresh.error||!fresh.data||typeof fresh.data!=="object"||Array.isArray(fresh.data))throw new HttpError(503,"Photo publication access changed during verification.");
       const current=publicationVisibilityRows((fresh.data as Record<string,unknown>).photo_publications,listing);
       const unchanged=JSON.stringify(current)===JSON.stringify(publications);
+      if(proofs)for(const p of publications){
+        if(!unchanged||denied.has(p.publication_id))proofs.delete(p.publication_id);
+        else proofs.set(p.publication_id,JSON.stringify(p));
+      }
       for(const {kind,value}of batch){
         const group=(fresh.data as Record<string,unknown>)[kind];
         if(!group||typeof group!=="object"||Array.isArray(group)||typeof(group as Record<string,unknown>)[value]!=="boolean")throw new HttpError(503,"Photo publication access returned an incomplete result.");
@@ -54,8 +64,8 @@ export async function mediaVisibility(db: MediaAccessClient, listing: string, in
   return out;
 }
 
-export async function assertMediaVisible(db: MediaAccessClient, listing: string, input: MediaSourceRefs): Promise<void> {
-  const visible = await mediaVisibility(db, listing, input);
+export async function assertMediaVisible(db: MediaAccessClient, listing: string, input: MediaSourceRefs, options: VisibilityOptions = {}): Promise<void> {
+  const visible = await mediaVisibility(db, listing, input, options);
   if (Object.values(visible).some((group) => Object.values(group).some((allowed) => !allowed))) throw new HttpError(404, "This media is no longer available.");
 }
 
