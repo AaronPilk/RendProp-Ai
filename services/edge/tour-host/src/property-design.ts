@@ -351,6 +351,15 @@ const DESIGN_CSS = `
     $P #listing-nav .listing-nav-actions > :is(a,button) { padding-inline:11px; font-size:12px; }
     $P #listing-nav .listing-nav-actions > .listing-backtop { display:none; }
   }
+  /* On short landscape screens the centred identity can sit over the film's
+     Play target. Keep the architectural poster, with copy and Play in separate
+     halves so both remain visible and independently tappable. */
+  @media(min-width:601px) and (max-width:900px) and (orientation:landscape) {
+    $S .listing-cover.property-video-hero .property-hero-copy { inset:auto auto clamp(28px,5vh,48px) clamp(24px,4vw,48px); width:min(46%,440px); margin:0; text-align:left; }
+    $S .listing-cover.property-video-hero .property-hero-copy .lp-eyebrow,$S .listing-cover.property-video-hero .listing-cover-actions { justify-content:flex-start; }
+    $S .listing-cover.property-video-hero .property-hero-title { margin:0; }
+    $S .property-video-hero .property-video-stage.property-film .property-video-play { left:75%; }
+  }
   @media(max-width:759px) {
     $P .lp-wrap { padding-inline:22px; }
     $P .lp-sec { padding:56px 0; }
@@ -434,6 +443,15 @@ const DESIGN_CSS = `
     $P #overview { padding-top:0; }
     .property-site .property-preview-banner { padding:10px 16px; font-size:12px; }
     .property-site .property-preview-watermark { padding:6px 9px; font-size:10px; }
+  }
+  @media(max-width:374px) {
+    /* A full film + walkthrough + share row otherwise runs under Pages at
+       320px. Keep the video and share actions at 44px with their accessible
+       names, and let the hero retain its first-screen clearance. */
+    $P #listing-nav .listing-nav-actions > .property-primary-play,$P #listing-nav #share { width:44px; min-width:44px; padding-inline:0; }
+    $P #listing-nav .property-primary-play .nav-short { font-size:0; }
+    $P #listing-nav .property-primary-play .nav-short::before { content:"▶"; font-size:13px; line-height:1; }
+    $P #listing-nav #share .share-lbl { display:none; }
   }
   @media(max-width:359px) {
     $S .property-video-hero .property-video-stage.property-film .property-video-play { top:26%; }
