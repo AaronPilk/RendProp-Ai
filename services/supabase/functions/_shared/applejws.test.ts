@@ -1003,6 +1003,11 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
         return Promise.resolve({ data: { granted: false, reason: "not_configured" }, error: null });
       }
       calls.push({ name, args });
+      if (name === "credit_purchase_refund") return Promise.resolve({ data: { refunded: true }, error: null });
+      if (name === "credit_purchase_grant") return Promise.resolve(
+        args.p_price_milliunits === 39990
+          ? { data: { transaction_id: args.p_transaction }, error: null }
+          : { data: null, error: { message: "RP409: Signed Apple credit price or storefront differs from reviewed policy" } });
       if (name === "property_website_transaction") return Promise.resolve({data:{recorded:true},error:null});
       if (name === "grant_sandbox_intro_trial") return Promise.resolve(sandboxGrant
         ? { data: { ...sandboxGrant, original_transaction_id: args.p_original, product_id: args.p_product }, error: null }
@@ -1022,7 +1027,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
       return Promise.resolve({ data: { status: "refunded", expires_at: storedExpiry }, error: null });
     },
     from: (table: string) => {
-      let selection = "", notificationID = "", updating = false;
+      let selection = "", notificationID = "", productID = "", activeFilter = false, updating = false;
       let patch: Record<string, unknown> = {};
       const query = {
         select: (columns: string) => { selection = columns; return query; },
@@ -1033,7 +1038,12 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
           ledger.set(id, {...structuredClone(row),processed_at:null});
           return Promise.resolve({data:null,error:null});
         },
-        eq: (column: string, value: string) => { if (column === "notification_uuid") notificationID = value; return query; }, order: () => query, limit: () => query,
+        eq: (column: string, value: string | boolean) => {
+          if (column === "notification_uuid") notificationID = value as string;
+          if (column === "product_id") productID = value as string;
+          if (column === "active") activeFilter = value === true;
+          return query;
+        }, order: () => query, limit: () => query,
         update: (value: Record<string,unknown>) => { updating = true; patch = value; return query; },
         maybeSingle: () => {
           if (table === "apple_notifications") {
@@ -1042,6 +1052,13 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
             if (row && updating) Object.assign(row, patch);
             return Promise.resolve({data:row ?? null,error:null});
           }
+          if (table === "credit_products") return Promise.resolve({
+            data: productID === "com.rendprop.app.credits.100" && !activeFilter
+              ? { product_id: productID } : null, error: null,
+          });
+          if (table === "credit_purchase_intents") return Promise.resolve({
+            data: { actor_id: user }, error: null,
+          });
           return Promise.resolve({ data: table === "memberships" ? { role: "owner" } :
           table === "orgs" ? { plan: "free", plan_source: "apple", plan_expires_at: storedExpiry } :
           table === "apple_sandbox_receipts" ? { org_id: org } :
@@ -1219,6 +1236,41 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
       assertEquals(calls[0].args.p_signed,new Date(event).toISOString(),"outer event chronology stays independent of freshly signed transaction");
       calls.length=0;assertEquals((await(await notify(propertyEvent)).json()).duplicate,true);assertEquals(calls.length,0);
     }
+
+    // The catalog row is deliberately inactive here. A retired pack remains
+    // recognizable for refunds and delayed Ask-to-Buy approvals, while the
+    // grant RPC alone decides whether the signed price can fund credits.
+    const creditPayload = (transactionId: string, price: number) => {
+      const value = transactionPayload({
+        transactionId, originalTransactionId: transactionId,
+        productId: "com.rendprop.app.credits.100", type: "Consumable",
+        quantity: 1, environment: "Production", appAccountToken: user,
+        purchaseDate: now - 20_000, signedDate: now - 10_000,
+        price, currency: "USD", storefront: "USA",
+      });
+      delete value.expiresDate;
+      return value;
+    };
+    const creditRefund = await eventJWS("retired-credit-refund", "REFUND",
+      await signJws(chain, creditPayload("credit-refunded", 39990)));
+    calls.length = 0;
+    assertEquals((await (await notify(creditRefund)).json()).credit_refund, true);
+    assertEquals(calls.map(call => call.name), ["credit_purchase_refund"]);
+    assertEquals(calls[0].args.p_transaction, "credit-refunded");
+    const delayedCredit = await eventJWS("retired-credit-approval", "ONE_TIME_CHARGE",
+      await signJws(chain, creditPayload("credit-delayed", 39990)));
+    calls.length = 0;
+    assertEquals((await (await notify(delayedCredit)).json()).credit_purchase, true);
+    assertEquals(calls.map(call => call.name), ["credit_purchase_grant"]);
+    assertEquals(calls[0].args.p_price_milliunits, 39990);
+    const oldPriceCredit = await eventJWS("retired-old-price-approval", "ONE_TIME_CHARGE",
+      await signJws(chain, creditPayload("credit-old-price", 29990)));
+    calls.length = 0;
+    const oldPriceOutcome = await (await notify(oldPriceCredit)).json();
+    assertEquals(oldPriceOutcome.pending, true);
+    assertEquals(oldPriceOutcome.reason, "signed_credit_terms_unreviewed");
+    assertEquals(calls.map(call => call.name), ["credit_purchase_grant"]);
+    assertEquals(calls[0].args.p_price_milliunits, 29990);
 
     // A paid Sandbox transaction is test-only and cannot become a free trial.
     // Only a signed zero-price seven-day introductory transaction goes through

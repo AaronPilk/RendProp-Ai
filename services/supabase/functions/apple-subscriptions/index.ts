@@ -218,10 +218,12 @@ async function handleNotify(req: Request): Promise<Response> {
 
   const admin = adminClient();
   const originalTransactionId = facts.transaction?.originalTransactionId ?? null;
+  // A retired pack can still receive a delayed Ask-to-Buy charge or refund.
+  // Sale availability gates new intents; it must not hide a signed transaction.
   const creditProduct = facts.transaction?.type === "Consumable" &&
     typeof facts.transaction.productId === "string" ?
       await admin.from("credit_products").select("product_id").eq("product_id", facts.transaction.productId)
-        .eq("active", true).maybeSingle() : null;
+        .maybeSingle() : null;
   if (creditProduct?.error) throw new HttpError(503, "Credit product lookup failed — retry", "upstream");
   const isCreditPurchase = creditProduct?.data?.product_id === facts.transaction?.productId;
 
@@ -342,6 +344,9 @@ async function handleNotify(req: Request): Promise<Response> {
         p_price_milliunits: tx.priceMilliunits, p_currency: tx.currency,
         p_storefront: tx.storefront,
       });
+      if (error && /RP409: Signed Apple credit price or storefront differs/.test(error.message)) {
+        return acknowledge("pending", { ok: true, applied: false, pending: true, reason: "signed_credit_terms_unreviewed" });
+      }
       if (error && /RP(?:400|403|409):/.test(error.message)) {
         return acknowledge("pending", { ok: true, applied: false, pending: true, reason: "purchase_intent_required" });
       }

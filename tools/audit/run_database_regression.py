@@ -36,10 +36,11 @@ KEPT_RED: set[str] = set()
 # the 0044 plan-rework / industry-trial section; 198 before that).
 #
 # The 0047/0048 branches totalled 266. Apple chronology and listing facts
-# registration added four assertions; the limited-trial video policy adds one
-# more, bringing the inventory to 271.
+# registration added four assertions; the limited-trial video policy added one.
+# The pricing repair adds three checks for the SKU map and dormant, bounded
+# monthly/top-up catalog, bringing the inventory to 274.
 # The kept-red exception is identified by its exact name, not its row number.
-INVARIANT_COUNT = 271
+INVARIANT_COUNT = 274
 
 # These tests are transactional and rolled back. Require their exact completion
 # markers on both freshly migrated and historically replayed schemas; merely
@@ -121,6 +122,7 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     # and tables and replace exact predecessor functions only once.
     "20261027183000_credit_aerial_opening.sql",
     "20261027184000_aerial_fair_charge.sql",
+    "20261027190441_pricing_margin_repair.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -175,6 +177,7 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261027180000_team_paid_seat_variants.sql": ("9a54cb1f857e81064e513d517c2e75d9a136e346d0b849cda58e7c25f7f27550", "relation \"team_paid_seat_variants\" already exists"),
     "20261027183000_credit_aerial_opening.sql": ("dbb0adb83dd45bf937fd194399e00f595f39b3778eaf48abddc96a557a8e4110", "column \"credit_hold_id\" of relation \"app_video_cost_reservations\" already exists"),
     "20261027184000_aerial_fair_charge.sql": ("f2499878ec4609dccc526128e6814d3909d041e0d8024d190909e665be9be273", "relation \"credit_aerial_failure_budget\" already exists"),
+    "20261027190441_pricing_margin_repair.sql": ("90ef6a6612f4190814d2dcaed50839b2122a79e09719f39ca806af8c6c082350", "already exists with same argument types"),
 }
 
 

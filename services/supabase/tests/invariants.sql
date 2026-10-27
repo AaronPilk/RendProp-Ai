@@ -1943,12 +1943,12 @@ begin
   -- 0021 the second call re-pointed the row and set the second org's plan while
   -- the first kept its own — one purchase, two paid workspaces.
   r := apply_apple_entitlement_v2(oA, null, '_inv-OT-1', 'T1',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active',
+        'com.rendprop.app.pro.monthly', 'ultra', 'Production', 'active',
         now() + interval '30 days', true, null, now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   ok := false;
   begin
     r := apply_apple_entitlement_v2(oB, null, '_inv-OT-1', 'T1',
-          'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active',
+          'com.rendprop.app.pro.monthly', 'ultra', 'Production', 'active',
           now() + interval '30 days', true, null, now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   exception when others then msg := SQLERRM; ok := msg like 'RP409:%';
   end;
@@ -1962,7 +1962,7 @@ begin
   -- that as stale froze the plan AND the expiry, which then made every later
   -- signal stale too — including the EXPIRED, so the plan never lapsed.
   r := apply_apple_entitlement_v2(oX, null, '_inv-OT-2', 'T1',
-        'com.rendprop.app.pro.annual', 'pro', 'Production', 'active',
+        'com.rendprop.app.pro.annual', 'ultra', 'Production', 'active',
         now() + interval '365 days', true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   r := apply_apple_entitlement_v2(oX, null, '_inv-OT-2', 'T2',
         'com.rendprop.app.team.monthly', 'team', 'Production', 'active',
@@ -1982,7 +1982,7 @@ begin
   -- …and the guard that DID hold oA back is itself worth asserting: an org with
   -- a second live subscription is not dropped to free by an old one expiring.
   r := apply_apple_entitlement_v2(oA, null, '_inv-OT-1b', 'T9',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired',
+        'com.rendprop.app.starter.monthly', 'max', 'Production', 'expired',
         now() - interval '1 day', false, 'EXPIRED', now()+interval '-2000 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds');
   insert into _inv(name, pass, note)
     values ('a lapse does not downgrade an org that still has a live subscription',
@@ -1991,16 +1991,16 @@ begin
   -- The behaviour the stale guard exists for is unchanged: a late signal about
   -- the SAME product with an older expiry is news we already have.
   r := apply_apple_entitlement_v2(oB, null, '_inv-OT-3', 'T1',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active',
+        'com.rendprop.app.pro.monthly', 'ultra', 'Production', 'active',
         now() + interval '30 days', true, 'DID_RENEW', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   r := apply_apple_entitlement_v2(oB, null, '_inv-OT-3', 'T0',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'expired',
+        'com.rendprop.app.pro.monthly', 'ultra', 'Production', 'expired',
         now() - interval '1 day', false, 'EXPIRED', now()+interval '-2000 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds');
   insert into _inv(name, pass, note)
     values ('an out-of-order EXPIRED for the same product is still stale',
             r->>'reason' = 'stale_notification', r::text);
   insert into _inv(name, pass, note)
-    select 'and it does not take the plan away', plan = 'pro', plan from orgs where id = oB;
+    select 'and it does not take the plan away', plan = 'ultra', plan from orgs where id = oB;
 
   -- S1 FINDING 3: Sandbox and Production may never overwrite each other.
   r := apply_apple_entitlement_v2(oB, null, '_inv-OT-4', 'T1',
@@ -2479,16 +2479,16 @@ begin
 
   -- (c) the cancellation fact. oA buys and keeps paying; oB buys and lapses.
   r := apply_apple_entitlement_v2(oA, null, '_inv-CO-1', 'T1',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+        'com.rendprop.app.pro.monthly', 'ultra', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   r := apply_apple_entitlement_v2(oB, null, '_inv-CO-2', 'T1',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+        'com.rendprop.app.starter.monthly', 'max', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
   insert into _inv(name, pass, note)
     values ('an active subscription carries no cancelled_at', s.cancelled_at is null, coalesce(s.cancelled_at::text, '<null>'));
 
   -- Same expiry, so this is a genuine second delivery and not the stale arm.
   r := apply_apple_entitlement_v2(oB, null, '_inv-CO-2', 'T1',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'EXPIRED', now()+interval '-1000 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds');
+        'com.rendprop.app.starter.monthly', 'max', 'Production', 'expired', v_exp, false, 'EXPIRED', now()+interval '-1000 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
   v_cancel := s.cancelled_at;
   insert into _inv(name, pass, note)
@@ -2500,7 +2500,7 @@ begin
   -- time, so a re-stamp inside this fixture would keep the same timestamp but
   -- would carry GRACE_PERIOD_EXPIRED instead of the EXPIRED that got there first.
   r := apply_apple_entitlement_v2(oB, null, '_inv-CO-2', 'T1',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'GRACE_PERIOD_EXPIRED', now()+interval '-1000 seconds', now()+interval '-970 seconds', now()+interval '-970 seconds', now()+interval '-970 seconds');
+        'com.rendprop.app.starter.monthly', 'max', 'Production', 'expired', v_exp, false, 'GRACE_PERIOD_EXPIRED', now()+interval '-1000 seconds', now()+interval '-970 seconds', now()+interval '-970 seconds', now()+interval '-970 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
   insert into _inv(name, pass, note)
     values ('a later terminal signal does NOT move cancelled_at',
@@ -2512,7 +2512,7 @@ begin
   insert into orgs (name, plan, plan_source) values ('_inv cohort renew-off', 'trial', 'trial')
     returning id into oRN;
   r := apply_apple_entitlement_v2(oRN, null, '_inv-CO-4', 'T1',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, false,
+        'com.rendprop.app.starter.monthly', 'max', 'Production', 'active', v_exp, false,
         'DID_CHANGE_RENEWAL_STATUS', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-4';
   insert into _inv(name, pass, note)
@@ -2523,17 +2523,17 @@ begin
                    coalesce(s.cancel_reason, '<null>')));
   -- A second subscription in billing grace, for admin_churn's in_grace count.
   r := apply_apple_entitlement_v2(oRN, null, '_inv-CO-5', 'T1',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'grace', v_exp, true, 'DID_FAIL_TO_RENEW', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+        'com.rendprop.app.starter.monthly', 'max', 'Production', 'grace', v_exp, true, 'DID_FAIL_TO_RENEW', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
 
   -- A win-back clears both columns, so they always describe the CURRENT state.
   r := apply_apple_entitlement_v2(oA, null, '_inv-CO-3', 'T1',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+        'com.rendprop.app.pro.monthly', 'ultra', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   r := apply_apple_entitlement_v2(oA, null, '_inv-CO-3', 'T1',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'expired', v_exp, false, 'EXPIRED', now()+interval '-1000 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds');
+        'com.rendprop.app.pro.monthly', 'ultra', 'Production', 'expired', v_exp, false, 'EXPIRED', now()+interval '-1000 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-3';
   ok := s.cancelled_at is not null;
   r := apply_apple_entitlement_v2(oA, null, '_inv-CO-3', 'T3',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp + interval '30 days', true, 'DID_RENEW', now()+interval '-900 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds');
+        'com.rendprop.app.pro.monthly', 'ultra', 'Production', 'active', v_exp + interval '30 days', true, 'DID_RENEW', now()+interval '-900 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-3';
   insert into _inv(name, pass, note)
     values ('a win-back clears cancelled_at and cancel_reason',
@@ -2599,7 +2599,7 @@ begin
   insert into _inv(name, pass, note)
     values ('admin_churn counts the cancellation and groups it by plan and by reason',
             (r->>'cancellations')::bigint >= 2
-              and r->'by_plan'   @> '[{"plan":"starter"}]'::jsonb
+              and r->'by_plan'   @> '[{"plan":"max"}]'::jsonb
               and r->'by_reason' @> '[{"reason":"EXPIRED"}]'::jsonb
               and r->'by_reason' @> '[{"reason":"DID_CHANGE_RENEWAL_STATUS"}]'::jsonb,
             r::text);
@@ -3335,6 +3335,40 @@ begin
   delete from orgs where id in (oNO, oCL);
   delete from auth.users where id in (uNO, uNA, uNM, uCL);
 end $notif$;
+
+-- 20261027190441: historical Apple identifiers are sold as the new tiers;
+-- launch credit liabilities remain dormant until reviewed proceeds are wired.
+insert into _inv(name, pass, note)
+select 'signed Apple SKU to sold-tier authority preserves the $49 Max and $99 Ultra products',
+       apple_sold_plan_for_product('com.rendprop.app.pro29.monthly') = 'pro'
+       and apple_sold_plan_for_product('com.rendprop.app.starter.monthly') = 'max'
+       and apple_sold_plan_for_product('com.rendprop.app.starter.annual') = 'max'
+       and apple_sold_plan_for_product('com.rendprop.app.pro.monthly') = 'ultra'
+       and apple_sold_plan_for_product('com.rendprop.app.pro.annual') = 'ultra'
+       and apple_sold_plan_for_product('com.rendprop.app.team9.monthly') = 'team'
+       and apple_sold_plan_for_product('unknown.product') is null, '';
+
+insert into _inv(name, pass, note)
+select 'all ten dormant monthly credit rows fit credits, operating reserves and media within 25% of conservative Apple net',
+       count(*) = 10 and bool_and(
+         not c.active and c.credits = p.credits and
+         p.credits * 5 + p.storage_cents + p.delivery_cents +
+         p.compute_cents + p.email_cents + p.support_cents +
+         p.retention_cents + p.uncertainty_cents +
+         p.noncredit_media_floor_cents <=
+           floor(floor(p.target_us_price_cents::numeric * 0.70) * 0.25)),
+       count(*)::text || ' reviewed monthly SKUs'
+  from credit_monthly_margin_policy p
+  join credit_monthly_catalog c using(product_id);
+
+insert into _inv(name, pass, note)
+select '100-credit pack is dormant at $39.99 until exact Apple proceeds evidence is recorded',
+       credits = 100 and not active and target_price_milliunits = 39990
+         and operating_reserve_cents = 190
+         and verified_net_proceeds_floor_cents is null
+         and proceeds_evidence_sha256 is null,
+       product_id
+  from credit_products where product_id = 'com.rendprop.app.credits.100';
 
 -- Remove only these fixture sponsor records; no lifecycle reset is tested here.
 delete from serving_funding_slices where funding_id in(select id from serving_funding where collection_ref like '\_inv-hosting-%');
