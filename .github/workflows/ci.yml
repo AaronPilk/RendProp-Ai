@@ -2611,17 +2611,27 @@ jobs:
           echo "all worker requirements are pinned"
 
       # ffmpeg is what tests/test_hdr_tonemap.py actually exercises (needs
-      # libzimg's zscale+tonemap) — installed explicitly rather than trusting
-      # whatever the runner image happens to preinstall; Ubuntu's package
-      # includes libzimg.
+      # libzimg's zscale+tonemap). Accept a runner copy only after checking
+      # both filters; otherwise install Ubuntu's package before the real test.
       - name: Install pinned worker Python dependencies
         timeout-minutes: 10
         run: pip install --disable-pip-version-check -r services/worker/requirements.txt
       - name: Install worker ffmpeg
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            filters="$(ffmpeg -hide_banner -filters 2>/dev/null || true)"
+            if grep -Eq '[[:space:]]zscale[[:space:]]' <<<"$filters" &&
+               grep -Eq '[[:space:]]tonemap[[:space:]]' <<<"$filters"; then
+              ffmpeg -version | sed -n '1p'
+              exit 0
+            fi
+          fi
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
+          filters="$(ffmpeg -hide_banner -filters 2>/dev/null)"
+          grep -Eq '[[:space:]]zscale[[:space:]]' <<<"$filters"
+          grep -Eq '[[:space:]]tonemap[[:space:]]' <<<"$filters"
 
       # Both hermetic: no live Supabase, no real R2, no network beyond
       # localhost. test_job_lease.py runs a stdlib-only fake PostgREST on
