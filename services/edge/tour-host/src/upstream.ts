@@ -4,7 +4,11 @@ import type { Env } from "./types";
 // Tours contain metadata/URLs (gallery and disclosures are each capped at100
 // upstream), not media bytes. Portfolio cardinality/freeform text is not fully
 // bounded upstream: over-cap payloads must fail explicitly, never be truncated.
-const UPSTREAM_TIMEOUT_MS = 8_000;
+// A fully published tour revalidates its selected photo objects and current
+// presentation before returning. Under concurrent cold reads this can exceed
+// eight seconds even when every authority check succeeds. Keep one bounded
+// header+body deadline; never cache or retry a customer response.
+const UPSTREAM_TIMEOUT_MS = 15_000;
 const UPSTREAM_JSON_BYTES = 4 * 1024 * 1024;
 const MAX_EMPTY_CHUNKS = 64;
 const READ_REGIONS = new Set(["ap-northeast-1", "ap-northeast-2", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "us-east-1", "us-west-1", "us-west-2", "eu-central-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1"]);

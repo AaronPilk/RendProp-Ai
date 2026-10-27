@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Executes the actual Worker with synthetic fetch/stream responses. Never sends
-// a network request. Accelerated timers still assert the production 8s deadline.
+// a network request. Accelerated timers still assert the production 15s deadline.
 import { buildSrc } from "./build-src.mjs";
 
 const load = buildSrc("upstream-check");
@@ -74,7 +74,7 @@ async function run(path, label, expectedStatus, factory, verify = () => {}) {
     expect(requestInit.signal instanceof AbortSignal, `[${path} ${label}] real abort signal passed to fetch`);
     expect(requestInit.cache === "no-store", `[${path} ${label}] explicit origin cache bypass`);
     expect(requestInit.redirect === "manual", `[${path} ${label}] never forward auth through upstream redirects`);
-    expect(delays.length === 1 && delays[0] === 8000, `[${path} ${label}] one 8000ms header+body deadline`);
+    expect(delays.length === 1 && delays[0] === 15000, `[${path} ${label}] one 15000ms header+body deadline`);
     expect(timers.size === 0, `[${path} ${label}] deadline timer cleared`);
     if (expectedStatus !== 200) {
       expect(!text.includes("SYNTHETIC-PRIVATE") && !text.includes("upstream.invalid"), `[${path} ${label}] upstream bytes/secrets absent`);
@@ -151,7 +151,7 @@ for (const path of ["/f/customer", "/u/customer", "/a/customer"]) {
 }
 
 // Region affinity is trusted configuration only, and can be disabled without
-// changing publication, credentials, retries or the 8-second safety budget.
+// changing publication, credentials, retries or the 15-second safety budget.
 for (const [region, expected] of [["us-west-2", "us-west-2"], [undefined, null], ["", null], ["viewer-controlled.invalid", null]]) {
   let headers;
   globalThis.fetch = async (_url, init) => { headers = new Headers(init.headers); return Response.json({ ok: true }); };
