@@ -34,7 +34,10 @@ enum SpaceType: Equatable {
         precondition(RendpropProducts.plan(fromPlanName: "starter") == .max)
         precondition(RendpropProducts.plan(fromPlanName: "solo") == .max)
         precondition(RendpropProducts.plan(fromPlanName: "legacy_pro") == .ultra)
-        precondition(RendpropPlan.allCases.map(\.allowances.credits) == [40, 100, 220, 500])
+        precondition(RendpropPlan.allCases.map(\.allowances.credits) == [80, 200, 440, 1000])
+        for plan in RendpropPlan.allCases {
+            precondition(plan.benefits.first == "\(plan.allowances.credits) monthly AI credits after the trial")
+        }
         precondition(RendpropPlan.team.allowances.seats == 3)
         precondition(RendpropProducts.notSoldAtLaunch.count == 3)
         precondition(!RendpropProducts.sellsAnnual)

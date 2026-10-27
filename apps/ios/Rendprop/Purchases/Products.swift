@@ -5,8 +5,8 @@ import Foundation
 // ONE source of truth for the product ids, the plan they map to, and the
 // "what you get" lines. Feature ceilings and seat counts mirror
 // `services/supabase/migrations/20261027050000_four_tier_retail_plans.sql`;
-// credit amounts mirror the separate verified-term wallet grant catalog.
-// Keep these aligned before selling a new tier.
+// credit amounts are TestFlight candidates that must match the separate
+// verified-term wallet grant catalog before any tier is sold.
 //
 // A subscription trial begins only after Apple confirmation and server
 // verification. New workspaces start on the free plan. Existing historical
@@ -117,10 +117,10 @@ enum RendpropPlan: String, CaseIterable, Identifiable, Sendable {
     /// a server ledger grant. This is catalog copy, not spendable balance.
     var allowances: PlanAllowances {
         switch self {
-        case .pro:   return PlanAllowances(credits: 40,  renders: 2,  photoEdits: 50,  reels: 15,  aerials: 1, topaz: 0, seats: 1)
-        case .max:   return PlanAllowances(credits: 100, renders: 4,  photoEdits: 100, reels: 30,  aerials: 2, topaz: 0, seats: 1)
-        case .ultra: return PlanAllowances(credits: 220, renders: 10, photoEdits: 200, reels: 60,  aerials: 4, topaz: 0, seats: 1)
-        case .team:  return PlanAllowances(credits: 500, renders: 25, photoEdits: 400, reels: 150, aerials: 8, topaz: 2, seats: 3)
+        case .pro:   return PlanAllowances(credits: 80,   renders: 2,  photoEdits: 50,  reels: 15,  aerials: 1, topaz: 0, seats: 1)
+        case .max:   return PlanAllowances(credits: 200,  renders: 4,  photoEdits: 100, reels: 30,  aerials: 2, topaz: 0, seats: 1)
+        case .ultra: return PlanAllowances(credits: 440,  renders: 10, photoEdits: 200, reels: 60,  aerials: 4, topaz: 0, seats: 1)
+        case .team:  return PlanAllowances(credits: 1000, renders: 25, photoEdits: 400, reels: 150, aerials: 8, topaz: 2, seats: 3)
         }
     }
 
