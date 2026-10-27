@@ -746,6 +746,7 @@ struct FlythroughDetailView: View {
     @State private var linkShareTarget: PublicLinkShareTarget?
     @State private var verifiedBuyerLink: (key: String, url: URL)?
     @State private var resolvingBuyerLinkKey: String?
+    @State private var withdrawnBuyerLinkKey: String?
     @StateObject private var connection = FeatureSessionAction()
     @State private var isPublishing = false
     @State private var publishFailure: AIFailure?
@@ -842,6 +843,7 @@ struct FlythroughDetailView: View {
         showAerialIntro = false; showEdit = false; showListingFactsReview = false
         qrTarget = nil
         linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil
+        withdrawnBuyerLinkKey = nil
         connection.cancel()
         dismiss()
     }
@@ -1592,6 +1594,7 @@ struct FlythroughDetailView: View {
         let linkKey = shareLinkKey(for: url, listing: currentListing)
         let displayURL = verifyBrandedLink && verifiedBuyerLink?.key == linkKey
             ? verifiedBuyerLink?.url ?? url : url
+        let withdrawn = publicationWithdrawn
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: icon)
@@ -1610,57 +1613,67 @@ struct FlythroughDetailView: View {
                 Spacer(minLength: 0)
             }
 
-            Text(displayURL.absoluteString)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(Theme.inkDim)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10).padding(.vertical, 8)
-                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-            HStack(spacing: 10) {
-                Button {
-                    guard let target = actionLink(url, key: linkKey,
-                                                  verifyBrandedLink: verifyBrandedLink) else { return }
-                    UIPasteboard.general.url = target
-                    Haptics.success()
-                } label: {
-                    Label("Copy", systemImage: "doc.on.doc")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 11)
-                        .background(.ultraThinMaterial, in: Capsule())
-                }
-                .accessibilityLabel(Text("Copy \(name)"))
-                Button {
-                    guard let target = actionLink(url, key: linkKey,
-                                                  verifyBrandedLink: verifyBrandedLink) else { return }
-                    qrTarget = QRTarget(url: target, linkName: name, caption: qrCaption)
-                } label: {
-                    Label("QR", systemImage: "qrcode")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 11)
-                        .background(.ultraThinMaterial, in: Capsule())
-                }
-                .accessibilityLabel(Text("QR code for \(name)"))
+            if withdrawn {
+                Label("This website is no longer published. Publish it again before sharing.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(displayURL.absoluteString)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(Theme.inkDim)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
-            .font(.rpBody)
 
-            Button {
-                guard let target = actionLink(url, key: linkKey,
-                                              verifyBrandedLink: verifyBrandedLink) else { return }
-                linkShareTarget = PublicLinkShareTarget(
-                    url: target,
-                    subject: shareSubject, message: shareMessage)
-            } label: {
-                Label(shareTitle, systemImage: "square.and.arrow.up")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 13)
-                    .background(tint)
-                    .foregroundStyle(Color.white)
-                    .clipShape(Capsule())
+            if !withdrawn {
+                HStack(spacing: 10) {
+                    Button {
+                        guard let target = actionLink(url, key: linkKey,
+                                                      verifyBrandedLink: verifyBrandedLink) else { return }
+                        UIPasteboard.general.url = target
+                        Haptics.success()
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    .accessibilityLabel(Text("Copy \(name)"))
+                    Button {
+                        guard let target = actionLink(url, key: linkKey,
+                                                      verifyBrandedLink: verifyBrandedLink) else { return }
+                        qrTarget = QRTarget(url: target, linkName: name, caption: qrCaption)
+                    } label: {
+                        Label("QR", systemImage: "qrcode")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    .accessibilityLabel(Text("QR code for \(name)"))
+                }
+                .font(.rpBody)
+
+                Button {
+                    guard let target = actionLink(url, key: linkKey,
+                                                  verifyBrandedLink: verifyBrandedLink) else { return }
+                    linkShareTarget = PublicLinkShareTarget(
+                        url: target,
+                        subject: shareSubject, message: shareMessage)
+                } label: {
+                    Label(shareTitle, systemImage: "square.and.arrow.up")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .background(tint)
+                        .foregroundStyle(Color.white)
+                        .clipShape(Capsule())
+                }
             }
 
             if verifyBrandedLink && resolvingBuyerLinkKey == linkKey {
@@ -1684,19 +1697,29 @@ struct FlythroughDetailView: View {
             guard verifyBrandedLink, let published,
                   canShareLink(url, key: linkKey, verifyBrandedLink: true) else { return }
             resolvingBuyerLinkKey = linkKey
-            let resolved = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: url)
+            let resolution = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: url)
             guard !Task.isCancelled,
                   canShareLink(url, key: linkKey, verifyBrandedLink: true) else {
                 if resolvingBuyerLinkKey == linkKey { resolvingBuyerLinkKey = nil }
                 return
             }
-            verifiedBuyerLink = (linkKey, resolved)
+            switch resolution {
+            case .available(let resolved):
+                verifiedBuyerLink = (linkKey, resolved)
+                withdrawnBuyerLinkKey = nil
+            case .withdrawn:
+                verifiedBuyerLink = nil
+                withdrawnBuyerLinkKey = linkKey
+                qrTarget = nil
+                linkShareTarget = nil
+            }
             resolvingBuyerLinkKey = nil
         }
     }
 
     private func actionLink(_ fallback: URL, key: String, verifyBrandedLink: Bool) -> URL? {
-        PublicShareLinkResolver.linkForAction(
+        guard !publicationWithdrawn else { return nil }
+        return PublicShareLinkResolver.linkForAction(
             fallbackURL: fallback, linkKey: key,
             currentContext: canShareLink(fallback, key: key, verifyBrandedLink: verifyBrandedLink),
             cached: verifyBrandedLink ? verifiedBuyerLink : nil)
@@ -1704,6 +1727,16 @@ struct FlythroughDetailView: View {
 
     private func shareLinkKey(for fallback: URL, listing current: Listing) -> String {
         "\(current.id):\(fallback.absoluteString):\(current.serverShareURL?.absoluteString ?? ""):\(current.address):\(current.allowSearchIndexing == true)"
+    }
+
+    /// Both the branded and MLS cards belong to this one public publication.
+    /// A 404/410 for its branded lookup invalidates both; a new publish changes
+    /// the key and can be checked independently.
+    private var publicationWithdrawn: Bool {
+        guard let published = currentListing.serverShareURL else { return false }
+        let fallback = DeepLink.buyerWebsiteURL(
+            from: published, address: currentListing.spaceType == .realEstate ? currentListing.address : nil) ?? published
+        return withdrawnBuyerLinkKey == shareLinkKey(for: fallback, listing: currentListing)
     }
 
     private func canShareLink(_ fallback: URL, key: String, verifyBrandedLink: Bool) -> Bool {

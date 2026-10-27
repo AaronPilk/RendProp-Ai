@@ -43,6 +43,7 @@ private struct RenderStatusContent: View {
         actorID: AuthStore.shared.userID, orgID: WorkspaceContext.selectedOrgID)
     @State private var resolvedShareLink: (key: String, url: URL)?
     @State private var resolvingShareLinkKey: String?
+    @State private var withdrawnShareLinkKey: String?
     /// The encode is CPU-bound for minutes; on a hot phone iOS throttles it and
     /// the ring visibly crawls. Say so rather than looking stuck. (Seeded in
     /// `onAppear` — a `@State` default can't read a type member here.)
@@ -69,6 +70,9 @@ private struct RenderStatusContent: View {
     private var shareLinkKey: String? {
         guard let published = currentListing.serverShareURL, let fallback = shareURL else { return nil }
         return "\(listing.id):\(published.absoluteString):\(fallback.absoluteString):\(currentListing.address):\(currentListing.allowSearchIndexing == true)"
+    }
+    private var shareWithdrawn: Bool {
+        shareLinkKey != nil && withdrawnShareLinkKey == shareLinkKey
     }
     private var canShareCurrentListing: Bool {
         shareScope.matches(actorID: auth.userID, orgID: WorkspaceContext.selectedOrgID) &&
@@ -193,20 +197,32 @@ private struct RenderStatusContent: View {
             guard let key = shareLinkKey, let published = currentListing.serverShareURL,
                   let fallback = shareURL, canShareCurrentListing else { return }
             resolvingShareLinkKey = key
-            let resolved = await PublicShareLinkResolver.resolve(
+            let resolution = await PublicShareLinkResolver.resolve(
                 publishedURL: published, fallbackURL: fallback)
             guard !Task.isCancelled, canShareCurrentListing, shareLinkKey == key else {
                 if resolvingShareLinkKey == key { resolvingShareLinkKey = nil }
                 return
             }
-            resolvedShareLink = (key, resolved)
+            switch resolution {
+            case .available(let resolved):
+                resolvedShareLink = (key, resolved)
+                withdrawnShareLinkKey = nil
+            case .withdrawn:
+                resolvedShareLink = nil
+                withdrawnShareLinkKey = key
+                linkShareTarget = nil
+            }
             resolvingShareLinkKey = nil
         }
         .onChange(of: auth.userID) { _ in
-            if !canShareCurrentListing { linkShareTarget = nil; resolvedShareLink = nil }
+            if !canShareCurrentListing {
+                linkShareTarget = nil; resolvedShareLink = nil; withdrawnShareLinkKey = nil
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
-            if !canShareCurrentListing { linkShareTarget = nil; resolvedShareLink = nil }
+            if !canShareCurrentListing {
+                linkShareTarget = nil; resolvedShareLink = nil; withdrawnShareLinkKey = nil
+            }
         }
     }
 
@@ -434,7 +450,8 @@ private struct RenderStatusContent: View {
         if let mls = currentListing.serverUnbrandedURL {
             VStack(alignment: .leading, spacing: 6) {
                 Button {
-                    guard canShareCurrentListing, currentListing.serverUnbrandedURL == mls else { return }
+                    guard canShareCurrentListing, !shareWithdrawn,
+                          currentListing.serverUnbrandedURL == mls else { return }
                     UIPasteboard.general.url = DeepLink.unbrandedWebsiteURL(from: mls, address: currentListing.address) ?? mls
                     Haptics.success()
                 } label: {
@@ -448,7 +465,7 @@ private struct RenderStatusContent: View {
                     .foregroundStyle(Theme.ink)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .disabled(!canShareCurrentListing)
+                .disabled(!canShareCurrentListing || shareWithdrawn)
                 Label("Never put your branded link in an MLS unbranded field — most MLSs fine for that.",
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.rpCaption.weight(.semibold))
@@ -503,7 +520,8 @@ private struct RenderStatusContent: View {
                               let target = PublicShareLinkResolver.linkForAction(
                                 fallbackURL: shareURL, linkKey: key,
                                 currentContext: canShareCurrentListing,
-                                cached: resolvedShareLink) else { return }
+                                cached: resolvedShareLink,
+                                withdrawnKey: withdrawnShareLinkKey) else { return }
                         linkShareTarget = PublicLinkShareTarget(
                             url: target, subject: currentListing.address,
                             message: "Fly through \(currentListing.address) — scroll to walk the \(noun).")
@@ -516,7 +534,13 @@ private struct RenderStatusContent: View {
                         .padding(.vertical, 13)
                         .modifier(RendpropActionLabelSurface(primary: false))
                     }
-                    .disabled(!canShareCurrentListing)
+                    .disabled(!canShareCurrentListing || shareWithdrawn)
+                    if shareWithdrawn {
+                        Label("This website is no longer published. Publish it again before sharing.",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.warn)
+                    }
                     if resolvingShareLinkKey == shareLinkKey {
                         ProgressView("Checking address link")
                             .font(.rpCaption)

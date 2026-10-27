@@ -9,16 +9,23 @@ import FoundationNetworking
 /// address link belongs to this publication. A failed or malformed lookup keeps
 /// the existing token link.
 enum PublicShareLinkResolver {
+    enum Resolution: Equatable {
+        case available(URL)
+        /// The public host confirms this publication no longer exists. Do not
+        /// distribute the saved token link or its unbranded twin.
+        case withdrawn
+    }
+
     /// A tap never waits for the lookup. Until a verified address link arrives,
     /// the already-published token link is immediately usable. A result from a
     /// previous listing/account key can never be used by a new presentation.
     static func linkForAction(fallbackURL: URL, linkKey: String, currentContext: Bool,
-                              cached: (key: String, url: URL)?) -> URL? {
-        guard currentContext else { return nil }
+                              cached: (key: String, url: URL)?, withdrawnKey: String? = nil) -> URL? {
+        guard currentContext, withdrawnKey != linkKey else { return nil }
         return cached?.key == linkKey ? cached?.url ?? fallbackURL : fallbackURL
     }
 
-    static func resolve(publishedURL: URL, fallbackURL: URL) async -> URL {
+    static func resolve(publishedURL: URL, fallbackURL: URL) async -> Resolution {
         await resolve(publishedURL: publishedURL, fallbackURL: fallbackURL) { request in
             try await URLSession.shared.data(for: request)
         }
@@ -30,17 +37,20 @@ enum PublicShareLinkResolver {
         publishedURL: URL,
         fallbackURL: URL,
         fetch: (URLRequest) async throws -> (Data, URLResponse)
-    ) async -> URL {
+    ) async -> Resolution {
         guard let slug = publicationSlug(publishedURL),
-              let endpoint = URL(string: "https://rendprop.com/f/\(slug)/share-link") else { return fallbackURL }
+              let endpoint = URL(string: "https://rendprop.com/f/\(slug)/share-link") else { return .available(fallbackURL) }
         var request = URLRequest(url: endpoint)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 8
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         do {
             let (data, response) = try await fetch(request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-                  http.url == endpoint,
+            guard let http = response as? HTTPURLResponse, http.url == endpoint else {
+                return .available(fallbackURL)
+            }
+            if http.statusCode == 404 || http.statusCode == 410 { return .withdrawn }
+            guard http.statusCode == 200,
                   data.count <= 2048,
                   let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   object.count == 2,
@@ -50,10 +60,10 @@ enum PublicShareLinkResolver {
                   let verified = URL(string: raw),
                   proof.boolValue ? validAddressOnlyURL(verified) :
                     (validDatedAddressURL(verified, slug: slug) || validUndatedAddressTokenURL(verified, slug: slug))
-            else { return fallbackURL }
-            return verified
+            else { return .available(fallbackURL) }
+            return .available(verified)
         } catch {
-            return fallbackURL
+            return .available(fallbackURL)
         }
     }
 

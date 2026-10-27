@@ -40,51 +40,71 @@ import FoundationNetworking
             fallbackURL: stable, linkKey: "account-b:listing-b", currentContext: false,
             cached: ("account-b:listing-b", addressOnly)) == nil,
             "A changed account or workspace cannot use either cached or fallback link")
+        verify(PublicShareLinkResolver.linkForAction(
+            fallbackURL: stable, linkKey: "account-a:listing-a", currentContext: true,
+            cached: ("account-a:listing-a", dated), withdrawnKey: "account-a:listing-a") == nil,
+            "A withdrawn publication cannot be shared even when its branded URL was cached")
+        verify(PublicShareLinkResolver.linkForAction(
+            fallbackURL: stable, linkKey: "account-b:listing-b", currentContext: true,
+            cached: nil, withdrawnKey: "account-a:listing-a") == stable,
+            "A withdrawn result for an old context cannot block a different publication")
 
         let verified = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { request in
             verify(request.url == endpoint && request.cachePolicy == .reloadIgnoringLocalCacheData,
                    "Lookup is keyed by the public slug and bypasses cache")
             return response(200, "{\"url\":\"https://rendprop.com/property/855-central-ave\",\"address_only\":true}")
         }
-        verify(verified == addressOnly, "Unique current address is shared without a token")
+        verify(verified == .available(addressOnly), "Unique current address is shared without a token")
 
         let datedResult = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { _ in
             response(200, "{\"url\":\"https://rendprop.com/property/855-central-ave/20261022.published_123-abc\",\"address_only\":false}")
         }
-        verify(datedResult == dated, "A dated address link for this exact published slug is shared")
+        verify(datedResult == .available(dated), "A dated address link for this exact published slug is shared")
 
         let redirected = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { _ in
             (Data("{\"url\":\"https://rendprop.com/property/855-central-ave/20261022.published_123-abc\",\"address_only\":false}".utf8),
              HTTPURLResponse(url: URL(string: "https://other.example/share-link")!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
         }
-        verify(redirected == stable, "A redirected responder cannot assert ownership of a branded link")
+        verify(redirected == .available(stable), "A redirected responder cannot assert ownership of a branded link")
+
+        let redirectedNotFound = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { _ in
+            (Data("{\"error\":\"not_found\"}".utf8),
+             HTTPURLResponse(url: URL(string: "https://other.example/share-link")!, statusCode: 404, httpVersion: nil, headerFields: nil)!)
+        }
+        verify(redirectedNotFound == .available(stable), "A redirected 404 cannot revoke this publication")
 
         let datedSource = await PublicShareLinkResolver.resolve(publishedURL: dated, fallbackURL: stable) { request in
             verify(request.url == endpoint, "A dated published URL still looks up its original publication slug")
             return response(200, "{\"url\":\"https://rendprop.com/property/855-central-ave/20261022.published_123-abc\",\"address_only\":false}")
         }
-        verify(datedSource == dated, "A dated canonical source can resolve its branded share URL")
+        verify(datedSource == .available(dated), "A dated canonical source can resolve its branded share URL")
 
         let legacySource = await PublicShareLinkResolver.resolve(publishedURL: stable, fallbackURL: stable) { request in
             verify(request.url == endpoint, "A legacy property token still looks up the same publication slug")
             return response(200, "{\"url\":\"https://rendprop.com/property/855-central-ave/20261022.published_123-abc\",\"address_only\":false}")
         }
-        verify(legacySource == dated, "A legacy property token can resolve its dated canonical URL")
+        verify(legacySource == .available(dated), "A legacy property token can resolve its dated canonical URL")
 
         let duplicate = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { _ in
             response(200, "{\"url\":\"https://rendprop.com/property/a-new-address/published_123-abc\",\"address_only\":false}")
         }
-        verify(duplicate == URL(string: "https://rendprop.com/property/a-new-address/published_123-abc")!,
+        verify(duplicate == .available(URL(string: "https://rendprop.com/property/a-new-address/published_123-abc")!),
                "A server-authoritative undated link keeps the same publication token")
 
         let noindex = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { _ in
             response(200, "{\"url\":\"https://rendprop.com/property/current-server-address/published_123-abc\",\"address_only\":false}")
         }
-        verify(noindex == URL(string: "https://rendprop.com/property/current-server-address/published_123-abc")!,
+        verify(noindex == .available(URL(string: "https://rendprop.com/property/current-server-address/published_123-abc")!),
                "A noindex listing can use the server's undated address-and-token link")
 
+        for status in [404, 410] {
+            let revoked = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { _ in
+                response(status, "{\"error\":\"not_found\"}")
+            }
+            verify(revoked == .withdrawn, "A direct \(status) stops distribution of a withdrawn publication")
+        }
+
         for (status, body, name) in [
-            (404, "{\"error\":\"not_found\"}", "Withdrawn publication"),
             (503, "{\"error\":\"unavailable\"}", "Lookup outage"),
             (200, "{\"url\":\"https://evil.example/property/855-central-ave\",\"address_only\":true}", "Foreign host"),
             (200, "{\"url\":\"https://rendprop.com/property/855-central-ave/other-token\",\"address_only\":true}", "Token URL posing as an address-only URL"),
@@ -115,14 +135,14 @@ import FoundationNetworking
             let result = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { _ in
                 response(status, body)
             }
-            verify(result == stable, "\(name) keeps the stable token URL")
+            verify(result == .available(stable), "\(name) keeps the stable token URL")
         }
 
         enum Offline: Error { case unreachable }
         let offline = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: stable) { _ in
             throw Offline.unreachable
         }
-        verify(offline == stable, "Transport failure keeps the stable token URL")
+        verify(offline == .available(stable), "Transport failure keeps the stable token URL")
 
         var fetched = false
         let invalidSource = await PublicShareLinkResolver.resolve(
@@ -130,7 +150,7 @@ import FoundationNetworking
                 fetched = true
                 return response(200, "{\"url\":\"https://rendprop.com/property/855-central-ave\",\"address_only\":true}")
             }
-        verify(invalidSource == stable && !fetched, "An untrusted source cannot trigger the lookup")
+        verify(invalidSource == .available(stable) && !fetched, "An untrusted source cannot trigger the lookup")
         for (source, name) in [
             ("https://rendprop.com/property/855-central-ave/20261022.other-slug?preview=1", "Queried source"),
             ("https://rendprop.com/property/855-central-ave/20261022.other-slug/extra", "Extra source path"),
@@ -142,7 +162,7 @@ import FoundationNetworking
                 fetched = true
                 return response(200, "{\"url\":\"https://rendprop.com/property/855-central-ave\",\"address_only\":true}")
             }
-            verify(result == stable && !fetched, "\(name) cannot trigger the lookup")
+            verify(result == .available(stable) && !fetched, "\(name) cannot trigger the lookup")
         }
         print("Public share link resolver: \(checks) protocol and fallback checks passed")
     }
