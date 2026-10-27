@@ -69,7 +69,7 @@ try{
   const tag=`${theme}-${width}x${height}-published-layout`;measurements.push({tag,...geometry});
   check(!geometry.overflow,tag+' has no horizontal overflow');
   if(theme==='signature-estate'&&width===320)check(geometry.playLowerHit&&geometry.eyebrowTop>=geometry.playBottom+4&&geometry.titleTop>=geometry.playBottom+4,tag+' Play stays fully tappable and clear of the property identity');
-  if(theme==='coastal-luxe'&&(width===320||width===768))check(geometry.titleTop>=0&&geometry.priceBottom<height-8&&geometry.actionsBottom<height-8,tag+' identity, price and enquiry action fit the first screen');
+  if(theme==='coastal-luxe'&&(width===320||width===601||width===768))check(geometry.titleTop>=0&&geometry.priceBottom<height-8&&geometry.actionsBottom<height-8,tag+' identity, price and enquiry action fit the first screen');
   if(width>=601){check(geometry.menuVisible&&geometry.pageLinksHidden&&geometry.navActionsHit,tag+' compact navigation keeps every visible action independently hittable');await p.locator('.property-page-menu summary').click();check(await p.locator('.property-page-menu-links a[href*="page=contact"]').evaluate(e=>{const r=e.getBoundingClientRect();return e.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))}),tag+' Contact is reachable through the compact page menu');}
   await context.close();
  }

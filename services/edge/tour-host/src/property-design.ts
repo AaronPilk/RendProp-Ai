@@ -472,7 +472,7 @@ const DESIGN_CSS = `
   $C .field input,$C .field textarea { background:var(--bg); }
   $C .property-video-hero .property-video-stage.property-film .property-film-label { left:20px; right:auto; }
   /* Desktop and tablet-wide: identity beside the framed media panel. */
-  @media(min-width:901px), (min-width:700px) and (orientation:landscape) {
+  @media(min-width:901px), (min-width:601px) and (orientation:landscape) {
     $C .listing-cover,$C .listing-cover.property-video-hero { display:grid; grid-template-columns:minmax(0,.78fr) minmax(0,1.22fr); align-items:center; gap:clamp(28px,4vw,64px); width:calc(100% - clamp(40px,6vw,96px)); max-width:1440px; min-height:0; margin:clamp(20px,3vw,36px) auto 0; padding:0; overflow:visible; color:var(--ink); background:transparent; }
     $C .listing-cover::after { display:none; }
     $C .listing-cover .property-hero-copy { position:static; align-self:center; width:auto; max-width:560px; margin:0; padding:clamp(24px,3vw,40px) 0; color:var(--ink); text-align:left; text-shadow:none; }
@@ -495,7 +495,7 @@ const DESIGN_CSS = `
     $C .listing-cover .listing-cover-actions .property-hero-contact:hover { background:var(--lux-fill-hover); border-color:var(--lux-fill-hover); }
   }
   /* Phones and narrow tablets: the framed panel first, then the identity. */
-  @media(max-width:699px), (max-width:900px) and (orientation:portrait) {
+  @media(max-width:600px), (max-width:900px) and (orientation:portrait) {
     $C .listing-cover,$C .listing-cover.property-video-hero { display:flex; flex-direction:column; min-height:0; max-height:none; margin:8px 0 0; overflow:visible; color:var(--ink); background:var(--bg); }
     $C .listing-cover::after { display:none; }
     $C .property-hero-media,$C .property-video-hero .property-hero-media { position:relative; order:0; inset:auto; width:calc(100% - 24px); height:auto; aspect-ratio:4/3; margin:0 auto; border-radius:24px; overflow:hidden; box-shadow:0 24px 60px -36px rgba(16,48,44,.5); transition:aspect-ratio .4s var(--lux-ease); }
