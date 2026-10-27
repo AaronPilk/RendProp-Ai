@@ -14,7 +14,12 @@ do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();m uuid:=gen_ran
  insert into auth.users(id,email,is_anonymous)values(a,'gallery-owner@fixture.invalid',false),(b,'gallery-other@fixture.invalid',false),(m,'gallery-marketing@fixture.invalid',false);
  select org_id into o from memberships where user_id=a;select org_id into oo from memberships where user_id=b;
  insert into memberships(user_id,org_id,role)values(m,o,'marketing');
+ -- Preserve the Free gallery-editing oracle while creating each original
+ -- listing during a synthetic active intro trial.
+ update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days'
+  where id in(o,oo);
  insert into listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic gallery property'),(ol,oo,b,'Other synthetic gallery property');
+ update orgs set plan='free',plan_source=null,trial_ends_at=null where id in(o,oo);
  insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded)values
   (p1,l,'photo','renders','renders/'||o||'/'||l||'/gallery-'||p1||'.jpg',true),
   (p2,l,'photo','renders','renders/'||o||'/'||l||'/gallery-'||p2||'.jpg',true),
