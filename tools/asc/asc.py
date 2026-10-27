@@ -2110,7 +2110,7 @@ def ensure_categories(client, app_info, plan):
 
 
 def ensure_age_rating(client, app_info, plan):
-    """Declare that nothing applies, which yields a 4+ rating.
+    """Reconcile known declarations, preserving the rating on unknown fields.
 
     Attribute names and enum values are from AgeRatingDeclarationUpdateRequest in
     the v4.4.1 spec. The enum for every content field is
@@ -2124,6 +2124,20 @@ def ensure_age_rating(client, app_info, plan):
     declaration_id = declaration["data"]["id"]
 
     current = attributes_of(declaration.get("data"))
+
+    # A live Rendprop read-back includes gracRatingClassificationNumber, which
+    # is not an attribute this version of the tool can safely update. Do not
+    # clear the other declarations (and lower the public 13+ rating to 4+)
+    # while any field in Apple's current rating is not understood. Metadata
+    # copy can still be updated independently.
+    known = (AGE_RATING_SKIP | AGE_RATING_BOOLEANS |
+             frozenset(AGE_RATING_NONE_VALUES) | AGE_RATING_FREQUENCY_FIELDS)
+    unknown = sorted(set(current) - known)
+    if unknown:
+        plan.warn("age rating: preserving existing declaration; App Store Connect "
+                  "returned unrecognized field(s) %s. Check the current rating "
+                  "in App Information before release." % ", ".join(unknown))
+        return
 
     # Drive the PATCH from the attribute keys App Store Connect actually returns,
     # rather than a list invented here. The first live attempt sent 22 fields
@@ -2142,10 +2156,7 @@ def ensure_age_rating(client, app_info, plan):
         elif key in AGE_RATING_FREQUENCY_FIELDS:
             wanted[key] = "NONE"
         else:
-            # An attribute this tool has never seen. Answering it blind could set
-            # a rating nobody intended, so say so and leave it alone.
-            plan.warn("age rating: App Store Connect returned an attribute this tool "
-                      "does not know (%r) - check it in the UI" % key)
+            raise AscError("Unclassified age-rating field %r" % key)
 
     changed = {k: v for k, v in wanted.items() if current.get(k) != v}
     if not changed:
@@ -2168,8 +2179,8 @@ def ensure_age_rating(client, app_info, plan):
             if isinstance(source, dict) and source.get("pointer"):
                 plan.out.write("      at %s\n" % source["pointer"])
         plan.out.write(
-            "      Set it by hand: App Store Connect -> your app -> App Information\n"
-            "      -> Age Rating -> Edit -> answer None/No to everything -> 4+.\n")
+            "      Check it by hand: App Store Connect -> your app -> App Information\n"
+            "      -> Age Rating -> Edit. Preserve accurate content disclosures.\n")
 
     def apply_patch():
         try:

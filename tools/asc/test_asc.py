@@ -2967,6 +2967,19 @@ class AgeRatingTests(unittest.TestCase):
         self.assertEqual([w for w in fake.writes if w[0] == "PATCH"], [])
         self.assertIn("already says nothing applies", printed)
 
+    def test_unknown_live_grac_field_preserves_every_rating_answer(self):
+        fake = FakeAsc()
+        fake.age_rating = {"gracRatingClassificationNumber": 13,
+                           "userGeneratedContent": True,
+                           "alcoholTobaccoOrDrugUseOrReferences": "INFREQUENT_OR_MILD"}
+        before = dict(fake.age_rating)
+        printed = self.run_age_rating(fake)
+        self.assertEqual(fake.age_rating, before)
+        self.assertEqual([w for w in fake.writes if w[0] == "PATCH"], [])
+        self.assertIn("preserving existing declaration", printed)
+        self.assertIn("gracRatingClassificationNumber", printed)
+        self.assertNotIn("declare age rating (nothing applies -> 4+)", printed)
+
 
 class StatusPriceTests(unittest.TestCase):
     """`status` must show the amount, not just that a price exists."""
