@@ -28,9 +28,16 @@ enum EnhancedPhoto { static func directory(for id:UUID)->URL { URL(fileURLWithPa
     func refreshCloudPhotoSelection(listingID:UUID)async throws->PhotoCloudSelectionProjection {
         try await coordinator.refresh(identity:fixture.identity,physicalOrgID:fixture.physical,api:fixture,catalog:{self.fixture.catalog},requireIdentity:{if !self.identityCurrent{throw PhotoCloudSelectionFailure.identityChanged}})
     }
-    func changeCloudPhotoSelection(listingID:UUID,versionID:String,selecting:Bool,reviewed:Bool,promoteCover:Bool=false,requireEmptyCover:Bool=false)async throws->PhotoCloudSelectionProjection {
+    func changeCloudPhotoSelection(listingID:UUID,versionID:String,selecting:Bool,followFamilyCover:Bool=false,reviewed:Bool,
+                                   promoteCover:Bool=false,requireEmptyCover:Bool=false,requireCurrentSelection:Bool=false)async throws->PhotoCloudSelectionProjection {
         try await coordinator.change(identity:fixture.identity,physicalOrgID:fixture.physical,versionID:versionID,selecting:selecting,
-            followFamilyCover:false,reviewed:reviewed,promoteCover:promoteCover,requireEmptyCover:requireEmptyCover,api:fixture,catalog:{self.fixture.catalog},prepare:{_,_ in self.fixture.prepareCount += 1},requireIdentity:{if !self.identityCurrent{throw PhotoCloudSelectionFailure.identityChanged}})
+            followFamilyCover:followFamilyCover,reviewed:reviewed,promoteCover:promoteCover,requireEmptyCover:requireEmptyCover,
+            requireCurrentSelection:requireCurrentSelection,api:fixture,catalog:{self.fixture.catalog},prepare:{_,_ in self.fixture.prepareCount += 1},
+            validateTarget:{ version, asset, storageKey in
+                self.fixture.validateCount += 1
+                guard version.id == versionID, version.knownAssetID == asset,
+                      storageKey == nil || storageKey == self.fixture.key(asset) else { throw PhotoCloudSelectionFailure.changed }
+            },requireIdentity:{if !self.identityCurrent{throw PhotoCloudSelectionFailure.identityChanged}})
     }
     // __ACTUAL_HIDE_ADMISSION__
     // __ACTUAL_INITIAL_QUEUE__
@@ -50,6 +57,7 @@ enum EnhancedPhoto { static func directory(for id:UUID)->URL { URL(fileURLWithPa
         var (model,store)=setup()
         try await model.publishInitialPhotoChoicesIfNeeded(listingID:fixture.identity.localListingID)
         check(fixture.patchCount==2,"Initial publication serializes two explicit family requests")
+        check(fixture.validateCount==2,"Each initial target is validated before its own cloud mutation")
         check(fixture.ids==[fixture.a2,fixture.b2,unrelated],"Two-family initial publication preserves unrelated cloud anchor/order")
         check(fixture.cover==fixture.key(unrelated),"Initial publication preserves unrelated cloud cover")
         check(fixture.lastOperation?.request.expectedSelection.galleryAssetIDs==[fixture.a2,fixture.b,unrelated],"Second family captures fresh full CAS after first acknowledgment")
