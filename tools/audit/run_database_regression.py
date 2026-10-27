@@ -81,9 +81,33 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     # dependency and adds photo_publication once; its exact second application
     # must refuse, while each fresh database still applies it once.
     "20261020212328_accepted_photo_publication_host_compatible.sql",
+    # These subsequent source/Photo Motion/aerial changes either create an
+    # object once or compare-and-swap an exact predecessor body. Each succeeds
+    # on both fresh database paths and refuses its own second application.
+    "20261020212445_private_video_source_prepare.sql",
+    "20261021161119_property_video_source_read_recovery.sql",
+    "20261021165424_property_video_terminal_temporal_resume_guard.sql",
+    "20261021173551_property_video_prompt_revision_registry.sql",
+    "20261021212436_property_video_immutable_temporal_hold_resume.sql",
+    "20261021222704_property_video_explicit_photo_motion.sql",
+    "20261022003118_property_video_photo_motion_v2_twelve_percent.sql",
+    "20261022223052_aerial_opening_durable_generation_20261022.sql",
+    "20261022223138_aerial_opening_photo_motion_composition_20261022.sql",
+    "20261022223141_photo_motion_prospective_modeled_server_cost_20261022.sql",
+    "20261022223142_photo_motion_preserve_exact_producer_history_20261022.sql",
+    "20261023013450_aerial_opening_pro_1080_prospective.sql",
+    "20261023170504_aerial_raw_source_duration_precision_20261023.sql",
+    "20261023173659_aerial_measured_output_terminal_failure_20261023.sql",
+    "20261023173725_aerial_omni_reference_profile_functions_20261023.sql",
+    "20261023191327_studio_internal_aerial_media_purpose_20261023.sql",
+    "20261023200943_photo_motion_registered_publication_profile_20261023.sql",
+    "20261023202520_photo_publication_internal_scope_validation_20261023.sql",
+    "20261024000646_aerial_original_legacy_byte_verification_20261024.sql",
     # Intro policy has compare-and-swap guards for its live function/catalog
     # anchors; the focused policy driver proves a second application refuses.
     "20261026165813_limit_intro_trial_creative_spend.sql",
+    "20261026175227_public_property_address_lookup.sql",
+    "20261026225116_property_address_reservations.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -101,6 +125,38 @@ LIVE_STATE_ONLY_MIGRATIONS = {
     "20261023215829_studio_current_reviewed_photo_motion_kit_20261023.sql": "f93481224aa3a93331a20e028097507e263650064c514380a414a65d7801d0e0",
 }
 
+# Each of these source migrations has been applied successfully once in a
+# disposable PG17 database in production order. A second application at its
+# historical schema point deliberately refuses: a guarded predecessor has
+# changed, or a one-time object already exists. Pin the exact source bytes and
+# first refusal so an edited migration cannot silently inherit this exception.
+# These remain schema migrations on BOTH fresh databases, unlike the separate
+# six live-state adoptions above. Unknown migrations still replay twice.
+GUARDED_ONE_SHOT_MIGRATIONS = {
+    "20261020212328_accepted_photo_publication_host_compatible.sql": ("c49716cb9efe6f07f6e31c2f77e4ba2bc10fba246ae568352932e58c3810e442", "Review changed photo publication dependency: public.studio_presenter_media_access_inner(uuid)"),
+    "20261020212445_private_video_source_prepare.sql": ("96739271ae3034a252f7fc6649fc29bc68977f831dfda3e87aa540ccb0eac523", "Review private video-source schema/dependency installation"),
+    "20261021161119_property_video_source_read_recovery.sql": ("110d525ee26a2c6576d0f487d4fc9dc97ba2e561cadd16df559031ea90bd6cc8", "relation \"property_video_source_read_retired_keys\" already exists"),
+    "20261021165424_property_video_terminal_temporal_resume_guard.sql": ("61e4a3c3f70df3e4ed398e996664b60dfd76b2e473b70a01e69342509d634d6a", "Review existing terminal-temporal resume guard objects"),
+    "20261021173551_property_video_prompt_revision_registry.sql": ("fc8175e46460ac620887cbc22bcb2b7a671abe0949f149ef7676c8d4a101c60a", "Review changed predecessor: property_video_quality_freeze()"),
+    "20261021212436_property_video_immutable_temporal_hold_resume.sql": ("d9c4ee8d5797447947bf73fdd0fc886680b089aebc6b0b203e156e0f419ccd3e", "Review changed immutable temporal hold authority"),
+    "20261021222704_property_video_explicit_photo_motion.sql": ("689eae838d5d3dc3e2ba60ce44c9d9faf13cc8335e34f41e3f7fbb8facc146f0", "Review changed Photo Motion predecessor: property_video_quality_freeze()"),
+    "20261022003118_property_video_photo_motion_v2_twelve_percent.sql": ("ebae035f84cf0cee07ed544689f5f84ae4924cc025496e5acbca522f5db3d8da", "Photo motion V2 predecessor changed: property_video_job_admit_photo_motion(uuid,jsonb)"),
+    "20261022223052_aerial_opening_durable_generation_20261022.sql": ("84450cef2d7b47dbed0d24784e2608f006c686dc44fcc2b2d879c558f7b77875", "relation \"property_video_aerial_openings\" already exists"),
+    "20261022223138_aerial_opening_photo_motion_composition_20261022.sql": ("1fb1e1b76b575490fdbcd0cdb60eb27944342503a1e4fb63e97a582e34fd9531", "Aerial composition predecessor changed: public.property_video_photo_motion_profile(jsonb)"),
+    "20261022223141_photo_motion_prospective_modeled_server_cost_20261022.sql": ("a9a8de7b1dcf725c4f53f4200445c4d0edaf6eb4dfa92c030307956ce3bb34b9", "Review changed Photo Motion cost predecessor: public.property_video_job_finish_photo_motion(uuid,uuid,jsonb)"),
+    "20261022223142_photo_motion_preserve_exact_producer_history_20261022.sql": ("33b6bb190e42daa889cb03da069d1e79786281cebe2da7277be31e41fa02017f", "Producer history predecessor changed: public.property_video_photo_motion_saved_identity_before_opening_20261022(text,jsonb)"),
+    "20261023013450_aerial_opening_pro_1080_prospective.sql": ("2717dd842aba0fecf4785fb02762a3126945961b2aee728fe459e1db60b12533", "RP409: Aerial Pro predecessor changed: public.property_video_aerial_policy()"),
+    "20261023170504_aerial_raw_source_duration_precision_20261023.sql": ("e43f8eb9ae32841dbca1230fa6f0932309bc73da3951b9c003d883af6fa9cc0f", "Aerial precision predecessor changed; no replacement applied"),
+    "20261023173659_aerial_measured_output_terminal_failure_20261023.sql": ("7ca377fd1e82ba53fbd3f9b39362aa814f5e86ae6813263b1bfbcf076d4b0fa8", "Aerial terminal-output predecessor changed"),
+    "20261023173725_aerial_omni_reference_profile_functions_20261023.sql": ("64381f7fa417fc2c3f8707cb4dace0bb38b6d8553672b7be5bd6be76c28ef781", "RP409: Aerial reference predecessor changed: public.property_video_aerial_policy()"),
+    "20261023191327_studio_internal_aerial_media_purpose_20261023.sql": ("1549c4dd6f55c90bfbe64852b6368a5c05cc6585e90e8e124db3a0d56ce94bfa", "Review changed public.assert_recorded_render_source(uuid,uuid) before applying aerial media purpose"),
+    "20261023200943_photo_motion_registered_publication_profile_20261023.sql": ("704b78181199d9c59f4ca29ef8dfd98de993978f836e74ef2be94e82fa0ac453", "Review changed registered background-video delivery authority"),
+    "20261023202520_photo_publication_internal_scope_validation_20261023.sql": ("696d0e233ca1a4e2398f6c5d1c408b3f2c1161b754feeef773a9648546a6498b", "Review changed photo publication internal authority: photo_publication_source"),
+    "20261024000646_aerial_original_legacy_byte_verification_20261024.sql": ("86b4afcee317adbc088498a85f5297c9be25acc41afe44df4f1a1ed9cdf106a6", "Original verification predecessor changed: property_video_aerial_original"),
+    "20261026175227_public_property_address_lookup.sql": ("aa1eedd3dbfc5452f7a461eea7f4c56292d34ab796caa1bc79069bb2fe3aa0da", "function \"property_address_descriptor\" already exists with same argument types"),
+    "20261026225116_property_address_reservations.sql": ("1581f6dc6b189ee4416d0fe4e0ffcb8655689c0dd6c5a8ac903270afdcc44ce3", "relation \"property_address_reservations\" already exists"),
+}
+
 
 def partition_fresh_migrations(paths):
     paths = tuple(paths)
@@ -108,8 +164,18 @@ def partition_fresh_migrations(paths):
     require(len(names) == len(set(names)), "Duplicate migration filenames in fresh replay")
     missing = set(LIVE_STATE_ONLY_MIGRATIONS) - set(names)
     require(not missing, f"Classified live-state migrations missing: {sorted(missing)}")
+    guarded_missing = set(GUARDED_ONE_SHOT_MIGRATIONS) - set(names)
+    require(not guarded_missing, f"Guarded one-shot migrations missing: {sorted(guarded_missing)}")
+    require(not set(GUARDED_ONE_SHOT_MIGRATIONS) & set(LIVE_STATE_ONLY_MIGRATIONS),
+            "A migration cannot be both guarded one-shot and live-state only")
+    require(set(GUARDED_ONE_SHOT_MIGRATIONS) <= SINGLE_APPLICATION_MIGRATIONS,
+            "Guarded one-shot classification missing from single-application policy")
     schema, live_state = [], []
     for path in paths:
+        guarded = GUARDED_ONE_SHOT_MIGRATIONS.get(path.name)
+        if guarded is not None:
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            require(actual == guarded[0], f"Guarded one-shot migration changed: {path.name}")
         expected = LIVE_STATE_ONLY_MIGRATIONS.get(path.name)
         if expected is None:
             schema.append(path)
@@ -267,12 +333,21 @@ def main():
                         "-v", "ON_ERROR_STOP=1"]
                 run("bootstrap-replay", psql + ["-q", "-f", str(sqlroot / "tests/ci-bootstrap.sql")])
                 replay = []
+                guarded_refusals = []
                 for migration in schema_migrations:
                     run("historical-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
-                    if replayable_migration(migration.name):
+                    if migration.name in GUARDED_ONE_SHOT_MIGRATIONS:
+                        expected_refusal = GUARDED_ONE_SHOT_MIGRATIONS[migration.name][1]
+                        rejected = run("reject-" + migration.stem,
+                                       psql + ["-q", "-1", "-f", str(migration)], expected=3)
+                        require(expected_refusal in rejected,
+                                f"{migration.name} refused for a reason other than its pinned first refusal")
+                        guarded_refusals.append(migration.name)
+                    elif replayable_migration(migration.name):
                         run("replay-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
                         replay.append(migration)
                 receipt["replayedMigrations"] = len(replay)
+                receipt["guardedOneShotRefusals"] = guarded_refusals
                 receipt["singleApplicationMigrations"] = sorted(SINGLE_APPLICATION_MIGRATIONS)
                 receipt["replayMode"] = "second clean database; each replayable migration twice at its historical schema point"
             for filename, marker, assertion_count in REFLECTION_FIXTURES:

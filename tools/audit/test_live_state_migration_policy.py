@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from run_database_regression import (
+    GUARDED_ONE_SHOT_MIGRATIONS,
     LIVE_STATE_ONLY_MIGRATIONS,
     partition_fresh_migrations,
     replayable_migration,
@@ -48,6 +49,32 @@ class LiveStateMigrationPolicyTests(unittest.TestCase):
         self.assertIn(name, {path.name for path in schema})
         self.assertNotIn(name, {path.name for path in live_state})
         self.assertFalse(replayable_migration(name))
+
+    def test_exact_guarded_one_shot_inventory_still_applies_once(self):
+        schema, live_state = partition_fresh_migrations(self.paths)
+        names = {path.name for path in schema}
+        self.assertEqual(len(GUARDED_ONE_SHOT_MIGRATIONS), 22)
+        self.assertLessEqual(set(GUARDED_ONE_SHOT_MIGRATIONS), names)
+        self.assertFalse(set(GUARDED_ONE_SHOT_MIGRATIONS) & {path.name for path in live_state})
+        self.assertTrue(all(not replayable_migration(name) for name in GUARDED_ONE_SHOT_MIGRATIONS))
+        self.assertEqual(sum(replayable_migration(path.name) for path in schema), 164)
+        for digest, refusal in GUARDED_ONE_SHOT_MIGRATIONS.values():
+            self.assertEqual(len(digest), 64)
+            self.assertTrue(refusal)
+
+    def test_changed_guarded_one_shot_sql_is_rejected(self):
+        source = next(path for path in self.paths if path.name in GUARDED_ONE_SHOT_MIGRATIONS)
+        with tempfile.TemporaryDirectory(prefix="rp-one-shot-policy-") as owned:
+            changed = Path(owned) / source.name
+            changed.write_bytes(source.read_bytes() + b"\n-- deliberate source change\n")
+            paths = [changed if path == source else path for path in self.paths]
+            with self.assertRaisesRegex(RuntimeError, "Guarded one-shot migration changed"):
+                partition_fresh_migrations(paths)
+
+    def test_missing_guarded_one_shot_sql_is_rejected(self):
+        source = next(path for path in self.paths if path.name in GUARDED_ONE_SHOT_MIGRATIONS)
+        with self.assertRaisesRegex(RuntimeError, "Guarded one-shot migrations missing"):
+            partition_fresh_migrations(path for path in self.paths if path != source)
 
 
 if __name__ == "__main__":

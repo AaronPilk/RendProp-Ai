@@ -1831,13 +1831,14 @@ jobs:
           psql -v ON_ERROR_STOP=1 -q -f services/supabase/tests/ci-bootstrap.sql
           # Use the same exact replay policy as the disposable runner. The
           # listed transactional Studio migrations still run once in EACH
-          # fresh database; their CREATE statements are not replay APIs.
-          python3 - <<'PY' > /tmp/rendprop-replayable-migrations.txt
+          # fresh database; exact guarded one-shot migrations must refuse
+          # their own second application for a pinned historical reason.
+          python3 - <<'PY'
           from pathlib import Path
-          from tools.audit.run_database_regression import replayable_migration
-          for path in sorted(Path('services/supabase/migrations').glob('*.sql')):
-              if replayable_migration(path.name):
-                  print(path)
+          from tools.audit.run_database_regression import GUARDED_ONE_SHOT_MIGRATIONS, replayable_migration
+          paths = sorted(Path('services/supabase/migrations').glob('*.sql'))
+          Path('/tmp/rendprop-replayable-migrations.txt').write_text(''.join(f'{path}\n' for path in paths if replayable_migration(path.name)))
+          Path('/tmp/rendprop-guarded-one-shot-migrations.txt').write_text(''.join(f'{path}\n' for path in paths if path.name in GUARDED_ONE_SHOT_MIGRATIONS))
           PY
           for f in $(ls services/supabase/migrations/*.sql | LC_ALL=C sort); do
             if ! grep -Fxq "$f" /tmp/rendprop-fresh-schema-migrations.txt; then
@@ -1845,7 +1846,9 @@ jobs:
               continue
             fi
             psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
-            if grep -Fxq "$f" /tmp/rendprop-replayable-migrations.txt; then
+            if grep -Fxq "$f" /tmp/rendprop-guarded-one-shot-migrations.txt; then
+              python3 tools/audit/verify_guarded_one_shot_refusal.py "$f"
+            elif grep -Fxq "$f" /tmp/rendprop-replayable-migrations.txt; then
               psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
             fi
           done
