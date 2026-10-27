@@ -12,7 +12,7 @@ def line(text,marker):
  rows=[x for x in text.splitlines()if marker in x];assert len(rows)==1,marker;return rows[0]
 def run_current(out,mode='sync',fault=None):
  out=Path(out);out.mkdir(parents=True,exist_ok=True);app=(ROOT/'apps/ios/Rendprop/RendpropApp.swift').read_text();detail=(ROOT/'apps/ios/Rendprop/Screens/FlythroughDetailView.swift').read_text()
- paths=['apps/ios/Rendprop/RendpropApp.swift','apps/ios/Rendprop/Screens/FlythroughDetailView.swift','apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift','apps/ios/Rendprop/Photos/PhotoVersionHistory.swift','apps/ios/Rendprop/Photos/PhotoImportSequence.swift','apps/ios/Rendprop/Photos/PhotoGalleryDisclosure.swift','apps/ios/Rendprop/Photos/PhotoGalleryMutationFence.swift','apps/ios/Rendprop/Photos/PhotoCloudSelection.swift','tools/audit/gallery-sync-20261002/Fixture.swift.template','tools/audit/gallery-sync-20261002/current_contract.py','tools/audit/gallery-sync-20261002/CurrentCases.swift.fragment']
+ paths=['apps/ios/Rendprop/RendpropApp.swift','apps/ios/Rendprop/Screens/FlythroughDetailView.swift','apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift','apps/ios/Rendprop/Photos/PhotoVersionHistory.swift','apps/ios/Rendprop/Photos/PhotoImportSequence.swift','apps/ios/Rendprop/Photos/PhotoGalleryDisclosure.swift','apps/ios/Rendprop/Photos/PhotoGalleryMutationFence.swift','apps/ios/Rendprop/Photos/PhotoCloudSelection.swift','tools/audit/gallery-sync-20261002/Fixture.swift.template','tools/audit/gallery-sync-20261002/current_contract.py','tools/audit/gallery-sync-20261002/CurrentCases.swift.fragment','apps/ios/Rendprop/Photos/PhotoGalleryDerivative.swift']
  assert shutil.disk_usage(Path.home()).free>=3*1024**3 and shutil.disk_usage(out).free>=8*1024**3
  sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();before={p:sha(ROOT/p)for p in paths}
  sync=block(app,'    func syncGalleryPhotos(');prepare=block(app,'            prepare: { measured, org in');prepare=prepare.split(' in\n',1)[1][:-1]
@@ -45,12 +45,39 @@ __ACTUAL_PREPARE__
     }
 '''.replace('__ACTUAL_PREPARE__',prepare)
  prefix=prefix.replace('    var isBusy: Bool',extra+'    var isBusy: Bool',1)
+ prefix=prefix.replace('    var isBusy: Bool',block(app,'    private func browserGallerySource(')+'\n    var isBusy: Bool',1)
+ derivative=(ROOT/paths[11]).read_text()
+ history_sha=block(derivative,'    static func historySHA256(')
  prefix+='''
 struct PhotoCloudSelectionProjection {}
 enum DirectUploader {
  static func sha256(of url: URL) -> String? { (try? Data(contentsOf:url)).map { SHA256.hash(data:$0).map { String(format:"%02x",$0) }.joined() } }
+ static func sha256Hex(_ data: Data) -> String { SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined() }
+ struct BrowserPhoto { let bytes: Int64 }
+ enum BrowserPhotoFailure: Error { case unsupportedFormat }
+ // The owned history fixtures contain synthetic text bytes, not encoded images.
+ // Keep this primitive boundary closed while exercising the actual preparation closure.
+ static func browserPhoto(_ url: URL) throws -> BrowserPhoto { BrowserPhoto(bytes: FileStore.fileSize(url)) }
 }
-'''
+actor PhotoGalleryDerivativeStore {
+ static let shared = PhotoGalleryDerivativeStore()
+ struct Source {
+  let identity: PhotoCloudSelectionIdentity
+  let versionID: String
+  let familyID: String
+  let imageFile: String
+  let historySHA256: String
+  let sha256: String
+  let bytes: Int64
+ }
+ struct Loaded { let url: URL; let delivery: PhotoCloudBrowserDelivery }
+__ACTUAL_HISTORY_SHA__
+ func lookup(sourceURL: URL, source: Source) throws -> Loaded? { nil }
+ func prepare(sourceURL: URL, source: Source, physicalOrgID: UUID, version: PhotoVersionHistory.Version, originalURL: URL) throws -> Loaded {
+  throw FixtureError.selection // Synthetic text cannot exercise image derivative encoding.
+ }
+}
+'''.replace('__ACTUAL_HISTORY_SHA__',history_sha)
  source=prefix+(ROOT/paths[10]).read_text().replace('__ORIGINAL_SHA__',hashlib.sha256(b'actual-original-original').hexdigest());main=out/'Current.swift';main.write_text(source);owned=out/'owned';owned.mkdir()
  helper=(ROOT/paths[5]).read_text()
  for name,needle,replacement in [('ignore-original-effects','version.effects.isEmpty','true'),('ignore-original-parent','version.parentID == nil','true'),('ignore-original-sha','maxBytes: maxBytes) == original','maxBytes: maxBytes) != nil')]:
