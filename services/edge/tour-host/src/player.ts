@@ -497,7 +497,7 @@ function planSection(tour: Tour): string {
 // Agent card (extractAgent lives in html.ts; shared with the portfolio page)
 // ---------------------------------------------------------------------------
 
-function renderAgentCard(a: AgentModel, tour: Tour): string {
+function renderAgentCard(a: AgentModel, tour: Tour, premium = false): string {
   const isRE = isRealEstate(tour);
   // "Your agent" is a real-estate concept. A business card falls back to the
   // business itself (brand company, else the listing's business name) and
@@ -513,7 +513,15 @@ function renderAgentCard(a: AgentModel, tour: Tour): string {
   // Don't repeat the company when it is already the headline.
   if (a.company && a.company !== name) subBits.push(escapeHtml(a.company));
   if (a.phone) subBits.push(`<a href="${escapeAttr(telHref(a.phone))}">${escapeHtml(a.phone)}</a>`);
-  const sub = subBits.length ? `<div class="bk">${subBits.join(" · ")}</div>` : "";
+  // Paid designs label each published fact (title, brokerage, phone, email)
+  // in a quiet grid; the same facts, the same links, nothing added.
+  const facts: string[] = [];
+  if (premium) {
+    if (a.title) facts.push(`<span class="bk-item"><span class="bk-k">Title</span><span class="bk-v">${escapeHtml(a.title)}</span></span>`);
+    if (a.company && a.company !== name) facts.push(`<span class="bk-item"><span class="bk-k">${escapeHtml(isRE ? "Brokerage" : "Company")}</span><span class="bk-v">${escapeHtml(a.company)}</span></span>`);
+    if (a.phone) facts.push(`<span class="bk-item"><span class="bk-k">Phone</span><a class="bk-v" href="${escapeAttr(telHref(a.phone))}">${escapeHtml(a.phone)}</a></span>`);
+  }
+  const sub = premium ? (facts.length ? `<div class="bk bk-grid">${facts.join("")}</div>` : "") : subBits.length ? `<div class="bk">${subBits.join(" · ")}</div>` : "";
 
   const socialLinks = a.socials
     .map((s) => `<a href="${escapeAttr(s.url)}" target="_blank" rel="noopener nofollow">${escapeHtml(s.label)}</a>`)
@@ -540,9 +548,9 @@ function renderAgentCard(a: AgentModel, tour: Tour): string {
     ? `<a class="more" href="/a/${encodeURIComponent(a.handle)}">See their selected tours</a>`
     : "";
 
-  return `<div class="agent">
+  return `<div class="agent${premium ? " agent-premium" : ""}">
       ${avatar}
-      <div class="who">
+      <div class="who">${premium ? `<div class="bk-k agent-eyebrow">${escapeHtml(isRE ? "Presented by" : "Contact")}</div>` : ""}
         ${name ? `<div class="nm">${escapeHtml(name)}</div>` : ""}
         ${sub}
         ${social}
@@ -2772,7 +2780,7 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
   if (page === "gallery") visible.sort((a, b) => Number(b.includes('id="gallery"')) - Number(a.includes('id="gallery"')));
   if (page === "gallery" && !imgs.length && !tour.chapters?.length) visible.unshift(sec("gallery", "Gallery", "Photos coming soon", '<p class="lp-tag">No property photos have been published yet.</p>'));
   const pageTitle = page === "gallery" ? "A closer look" : page === "location" ? "The location" : sold && isRE ? "Ask about similar homes" : "Arrange a visit";
-  const pageHead = page && page !== "home" ? `<header class="property-page-head"><div class="lp-wrap"><div class="lp-eyebrow">${escapeHtml(page === "contact" ? sold ? "Contact" : "Private showing enquiry" : page)}</div><h1>${pageTitle}</h1><p>${escapeHtml(headingRaw)}</p></div></header>` : "";
+  const pageHead = page && page !== "home" ? `<header class="property-page-head"><div class="lp-wrap"><div class="lp-eyebrow">${escapeHtml(page === "contact" ? sold ? "Contact" : "Private showing enquiry" : page)}</div><h1>${pageTitle}</h1><p>${escapeHtml(headingRaw)}</p>${page === "gallery" && theme !== "basic" && imgs.length ? `<p class="property-page-count">${imgs.length} ${imgs.length === 1 ? "photograph" : "photographs"}</p>` : ""}</div></header>` : "";
   // The outer property landmark also includes the enquiry and disclosures.
   return `<div id="listing-page">${pageHead}${visible.join("")}</div>`;
 }
@@ -3297,7 +3305,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // The end card IS the branding: agent card + CTA/lead form. `/u/` has none.
   const endcardHtml = embed || unbranded || (page && page !== "home" && page !== "contact") ? "" : `<section id="endcard"${polished ? ' aria-label="Contact the listing agent"' : ""}>
   <div class="panel">
-    ${renderAgentCard(agent, tour)}
+    ${renderAgentCard(agent, tour, premiumPresentation)}
     ${preview ? `<p class="property-preview-note">Design preview. Enquiries are available on the published property website.</p>` : ctaBlock.html}
     ${disclosurePanel}
   </div>
@@ -3306,6 +3314,15 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // Terms/Privacy. All of it is branding or an external link, so `/u/` gets no
   // footer at all.
   const footerHtml = embed || unbranded || preview ? "" : renderFooter(promoPrefs(tour), hideVendor);
+  // Paid designs close with a colophon built only from published listing data:
+  // the address and price already shown above, the four page links, and the
+  // same public agent card. Classic and the unbranded MLS page render nothing.
+  const colophonAgent = premiumPresentation && !unbranded && (agent.name || agent.company) ? `<div class="property-colophon-agent"><p class="lp-eyebrow">${escapeHtml(isRealEstate(tour) ? "Listing contact" : "Contact")}</p>${agent.name ? `<p class="property-colophon-name">${escapeHtml(agent.name)}</p>` : ""}${agent.company && agent.company !== agent.name ? `<p class="property-colophon-company">${escapeHtml(agent.company)}</p>` : ""}${agent.phone ? `<a class="property-colophon-link" href="${escapeAttr(telHref(agent.phone))}">${escapeHtml(agent.phone)}</a>` : ""}${agent.email ? `<a class="property-colophon-link" href="mailto:${escapeAttr(agent.email)}">${escapeHtml(agent.email)}</a>` : ""}</div>` : "";
+  const colophonHtml = premiumPresentation && !embed && !unbranded ? `<section class="property-colophon${coverImage ? " property-colophon-pictured" : ""}" aria-label="About this property website">${coverImage ? `<img class="property-colophon-backdrop" src="${escapeAttr(coverImage)}" alt="" aria-hidden="true" loading="lazy" decoding="async">` : ""}<div class="lp-wrap"><div class="property-colophon-grid">
+    <div class="property-colophon-id"><p class="lp-eyebrow">${escapeHtml(isSoldOrArchived(tour) ? "Sold property" : "The residence")}</p><p class="property-colophon-address">${escapeHtml(header.entityName)}</p>${priceText(tour) ? `<p class="property-colophon-price">${escapeHtml(priceText(tour))}</p>` : ""}</div>
+    <nav class="property-colophon-nav" aria-label="Property pages">${(["home", "gallery", "location", "contact"] as const).map(target => `<a href="${escapeAttr(pageHref(target))}"${target === page ? ' aria-current="page"' : ""}>${target[0].toUpperCase() + target.slice(1)}</a>`).join("")}</nav>
+    ${colophonAgent}
+  </div></div></section>` : "";
 
   // "Get the app" — see renderGetAppSection() for the placement argument.
   // `embed` is excluded as well as `unbranded`: the in-app preview is already
@@ -3450,7 +3467,7 @@ ${getAppHtml}
 ${footerHtml}
 
 ` : `<div id="listing-top"></div>
-<nav id="listing-nav" aria-label="Listing navigation"><div class="listing-nav-inner">
+<nav id="listing-nav" aria-label="Listing navigation"><div class="listing-nav-inner">${premiumPresentation ? `<a class="listing-nav-brand" href="${escapeAttr(pageHref("home"))}" aria-label="${escapeAttr(header.entityName)}">${escapeHtml(heroStreet)}</a>` : ""}
   <div class="listing-nav-links">
   ${polished ? (["home", "gallery", "location", "contact"] as const).map((target) => `<a href="${escapeAttr(pageHref(target))}"${target === page ? ' aria-current="page"' : ""}>${target[0].toUpperCase() + target.slice(1)}</a>`).join("") : `
   <a href="#overview">Details</a>
@@ -3468,7 +3485,7 @@ ${polished ? `<main id="property-content" tabindex="-1">
 ` : ""}${sectionsHtml}
 ${endcardHtml}
 ${page === "contact" ? renderDisclosureSection(tour) : ""}
-${polished ? "</main>\n" : ""}${getAppHtml}
+${polished ? "</main>\n" : ""}${colophonHtml}${getAppHtml}
 ${footerHtml}
 ${polished ? `<dialog id="property-photo-modal" aria-labelledby="property-photo-title"><div class="property-photo-head"><p id="property-photo-title">Property photo</p><button type="button" id="property-photo-close">Close photo ×</button></div><img id="property-photo-full" alt=""><p id="property-photo-status" role="status" aria-live="polite"></p><div class="property-photo-nav" hidden><button type="button" id="property-photo-prev" aria-label="Previous photo">‹ Previous</button><span id="property-photo-count"></span><button type="button" id="property-photo-next" aria-label="Next photo">Next ›</button></div>${page === "home" && galleryItems(tour).length > 4 ? `<a class="property-photo-all" href="${escapeAttr(pageHref("gallery"))}">View all ${galleryItems(tour).length} photos</a>` : ""}${hasDisclosureSection ? '<a href="#disclosure" onclick="document.getElementById(\'property-photo-close\').click()">See disclosures and originals</a>' : ""}</dialog>` : ""}
 <dialog id="flythrough-modal" aria-labelledby="flythrough-title" aria-modal="true">
