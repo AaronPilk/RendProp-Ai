@@ -29,6 +29,9 @@ def scope():
  actor=str(uuid.uuid4());listing=str(uuid.uuid4());job=str(uuid.uuid4())
  query('insert into auth.users(id,email,is_anonymous)values('+lit(actor)+','+lit(actor+'@fixture.invalid')+',false)',False)
  org=query('select to_jsonb(org_id)from public.memberships where user_id='+lit(actor)+"and role='owner'",False)
+ # These cases exercise paid pipeline liability, not introductory admission.
+ # The final trial guard correctly refuses a new listing on a Free workspace.
+ query("update public.orgs set plan='starter',plan_source='manual' where id="+lit(org),False)
  query('insert into public.listings(id,org_id,agent_id,address)values('+','.join(map(lit,[listing,org,actor,'Synthetic pipeline fixture']))+');insert into public.render_jobs(id,listing_id,status,source)values('+','.join(map(lit,[job,listing,'created','worker']))+')',False)
  return {'actor':actor,'org':org,'job':job,'listing':listing}
 def reserve(c,bound=4,finish='uncertain'):

@@ -123,7 +123,10 @@ ktext=KIE.read_text();money=ktext[ktext.index('create function pg_temp.kie_hold'
 ftext=FIX.read_text();helpers=ftext[:ftext.index('-- Migration defaults')]
 identity='create temporary table kie_identity_file as select $ki$'+IDENT.read_text()+'$ki$::jsonb j;grant select on kie_identity_file to service_role;'
 paid="update app_config set value='{\"mode\":\"ceiling\",\"free_published_listings\":1}'where key='serving_mode';update app_config set value=jsonb_set(value,'{enabled}','true')where key='paid_quality_processing';update app_config set value='{\"enabled\":false}'where key='photo_preservation_quality';set local role service_role;select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'owned-scope-fixture-original','owned-scope-fixture-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');reset role;"
-prefix='begin;'+seed+paid+identity+money
+# The shared seed's manual Starter plan only admits its synthetic listing;
+# release it before the verified Apple receipt supplies this fixture's authority.
+release_seed_grant="update public.orgs set plan='free',plan_source=null,plan_expires_at=null where id=(select org from bf);"
+prefix='begin;'+seed+release_seed_grant+paid+identity+money
 published="update ai_routes set enabled=true where id='7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21';update app_config set value=jsonb_set(value,'{enabled}','true')where key='property_video_jobs';insert into app_config(key,value)values('property_video_processor_consent','{\"token\":\"property-video-jobs-v2\",\"disclosure_revision\":\"owned-db-fixture-r1\",\"processors\":[\"fal\",\"kie\"],\"profiles\":[\"kie-kling3-4k-steady-v1\"]}');"
 reuse="begin;create temporary table bf as select actor,other,org,other_org,listing from public.kg_seed;grant select on bf to service_role,authenticated;create temporary table bm as select m from public.kg_seed;grant select on bm to service_role,authenticated;"+identity+helpers
 ROLE='set role service_role;'
@@ -146,7 +149,10 @@ try:
  conn=['-h',SOCK,'-p',PORT,'-U','postgres'];run('createdb',[tool('createdb'),*conn,'kie_scope']);PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','kie_scope','-v','ON_ERROR_STOP=1']
  assert sql('owned-cluster-identity',"select current_setting('data_directory'),current_setting('listen_addresses')").stdout.strip()==str(DATA)+'|'
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in partition_fresh_migrations(MIGS)[0]:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ for m in partition_fresh_migrations(MIGS)[0]:
+  run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+  if m==OWN:
+   run('copy-scope-migration-boundary',[tool('createdb'),*conn,'-T','kie_scope','kie_scope_boundary'])
  r['migrationCount']=len(partition_fresh_migrations(MIGS)[0]);baseline=catalog('all-final-catalog')
  one('review-helper-metadata',"select jsonb_build_object('helpers',(select jsonb_agg(jsonb_build_object('sig',p.oid::regprocedure::text,'body_md5',md5(p.prosrc),'owner',pg_get_userbyid(p.proowner),'security_definer',p.prosecdef,'volatility',p.provolatile,'config',p.proconfig,'acl',p.proacl::text,'result',pg_get_function_result(p.oid),'arguments',p.proargnames,'strict',p.proisstrict,'parallel',p.proparallel))from pg_proc p where p.pronamespace='public'::regnamespace and p.proname in('property_video_kie_test_grant_guard','property_video_kie_test_grant_use_guard','property_video_processor_consent_current','property_video_processor_consent_record','property_video_kie_test_grant_scope','property_video_quality_profile_for','property_video_job_admit_v2','property_video_kie_dispatch_authority')));")
  functional_output=sql('actual-scope-consent-fixture',prefix+ftext).stdout;functional_rows=[json.loads(l)for l in functional_output.splitlines()if l.startswith('{')and'assertions'in l];assert len(functional_rows)==1;functional=functional_rows[0];check('actual consent scope authority fixture',functional['passed'],functional);r['functional']=functional
@@ -155,9 +161,17 @@ try:
  for label,file,prep in [('v1',SQL/'tests/property_video_quality_profile.sql','begin;'+seed),('steady',SQL/'tests/property_video_steady_v2.sql','begin;'+seed+basehelpers),('jobs',BASE,'')]:
   out=sql('final-schema-regression-'+label,prep+file.read_text()).stdout;lines=[json.loads(l)for l in out.splitlines()if l.startswith('{')and'assertions'in l];assert len(lines)==1 and lines[0]['passed'];r['regressions'][label]=lines[0]
  check('regression rollbacks preserve finalcatalog',catalog('after-regressions-catalog')==baseline)
- # Known replay must preserve the ENTIRE final schema/config, not only own funcs.
- run('replay-known-scope',[*PSQL,'-q','-1','-f',OWN]);check('known replay full finalcatalog',catalog('after-known-replay-catalog')==baseline)
- # Replay security controls record defects; never silently repair production SQL.
+ # A later prompt migration deliberately replaced the guarded dispatch helper.
+ # Replaying this historical migration against the final schema must refuse
+ # without touching anything; its idempotent replay belongs at its own boundary.
+ run('replay-final-scope-refuses',[*PSQL,'-q','-1','-f',OWN],expect='Review changed Kie scope helper: public.property_video_kie_dispatch_authority(uuid,uuid,uuid)')
+ check('final-schema scope replay refused without mutation',catalog('after-final-replay-refusal')==baseline)
+ final_psql=PSQL;final_baseline=baseline
+ PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','kie_scope_boundary','-v','ON_ERROR_STOP=1']
+ baseline=catalog('scope-boundary-catalog')
+ run('replay-known-scope-boundary',[*PSQL,'-q','-1','-f',OWN]);check('known replay preserves historical boundary catalog',catalog('after-known-boundary-replay')==baseline)
+ # Replay security controls record defects at that exact migration boundary;
+ # a final-schema replay refusal must not mask their independent oracles.
  sig='public.property_video_processor_consent_current()';definition=sql('read-replay-control-function',"select pg_get_functiondef('%s'::regprocedure);"%sig).stdout.strip();assert definition.count('declare c jsonb;begin')==1
  sql('compile-unknown-body-control',definition.replace('declare c jsonb;begin','declare c jsonb;begin /* OWNED UNKNOWN-BODY CONTROL */',1));changed=catalog('unknown-body-before-replay')
  c=run('replay-unknown-body-control',[*PSQL,'-q','-1','-f',OWN],require=False);after=catalog('unknown-body-after-replay');safe=c.returncode!=0 and after==changed
@@ -169,6 +183,8 @@ try:
  r['checks'].append({'name':'disabled privileged trigger replay refuses and preserves catalog','passed':safe,'exit':c.returncode})
  if not safe:r['productFindings'].append({'name':'disabled-privileged-trigger-overwritten-on-replay','actualExit':c.returncode,'catalogOverwritten':after!=changed})
  sql('restore-trigger-control','alter table property_video_kie_test_grants enable trigger property_video_kie_test_grant_guard;');check('trigger control fully restored',catalog('after-trigger-restore')==baseline)
+ PSQL=final_psql;baseline=final_baseline
+ r['replayScopes']={'historicalBoundary':'idempotent; changed helper body and disabled guard trigger each refuse unchanged','finalSchema':'refuses deliberately replaced prompt dispatch helper unchanged'}
  # A separately committed owned fixture permits actual independent SQL sessions.
  sql('committed-fixture',prefix+helpers+published+'create table public.kg_seed as select bf.*,bm.m from bf,bm;grant select on public.kg_seed to service_role;commit;')
  fixture_catalog=catalog('committed-fixture-catalog')

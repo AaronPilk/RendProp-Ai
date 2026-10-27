@@ -133,7 +133,10 @@ try:
   'property_video_job_temporal_verdicts_source_fkey: FOREIGN KEY (job_id, "position") REFERENCES property_video_job_sources(job_id, "position") ON DELETE CASCADE'],v['constraints']
  assert v['triggers']==['property_video_temporal_verdict_guard O CREATE TRIGGER property_video_temporal_verdict_guard BEFORE UPDATE ON public.property_video_job_temporal_verdicts FOR EACH ROW EXECUTE FUNCTION property_video_temporal_verdict_guard()'],v['triggers']
  assert v['indexes']==['CREATE UNIQUE INDEX property_video_job_temporal_verdicts_pkey ON public.property_video_job_temporal_verdicts USING btree (job_id, "position", attempt_id, limits_sha256)']and v['policies']==[]and v['rls']is True and v['force_rls']is False and v['owner']=='postgres'and v['referenced_by']is None,v
- assert v['acl']=='{postgres=arwdDxt/postgres,service_role=r/postgres}',v['acl']
+ # PostgreSQL 17 adds MAINTAIN (`m`) to the table owner's default ACL.
+ # Pin the complete ACL for the server version; service_role remains SELECT-only.
+ maintain='m' if q('server-version-for-verdict-acl',"select current_setting('server_version_num')::int")>=170000 else ''
+ assert v['acl']=='{postgres=arwdDxt%s/postgres,service_role=r/postgres}'%maintain,v['acl']
  assert q('history-snapshot-after-own',DATA_SNAPSHOT)==hist0,'No historical DML: every existing row byte-identical'
  receipt['firstApply']={'changedFunctions':[],'addedFunctions':sorted(added),'addedRelation':REL,'shotTableShapeUnchanged':True,'historyIdentical':True}
  # ── immediate own replay ──────────────────────────────────────────────────────

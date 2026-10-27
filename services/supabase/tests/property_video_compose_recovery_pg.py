@@ -11,7 +11,7 @@ ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path);args=p.parse_args()
 OUT=args.evidence_dir or Path(tempfile.mkdtemp(prefix='compose-recovery-proof-'));OUT.mkdir(parents=True,exist_ok=True)
 assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve internal3GiB reserve'
-DATA=Path(tempfile.mkdtemp(prefix='compose-recovery-owned-pg-',dir='/Volumes/Rendprop Files/Builds/Active' if Path('/Volumes/Rendprop Files/Builds/Active').is_dir()else None));SOCK=Path(tempfile.mkdtemp(prefix='compose-recovery-socket-',dir='/tmp'))
+DATA=Path(tempfile.mkdtemp(prefix='compose-recovery-owned-pg-',dir='/Volumes/Rendprop Files/Builds/Active' if Path('/Volumes/Rendprop Files/Builds/Active').is_dir()else None));SOCK=Path(tempfile.mkdtemp(prefix='compose-recovery-socket-',dir=os.environ.get('RENDPROP_PG_SOCKET_ROOT','/tmp')))
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)
 MIG=SQL/'migrations/20261015184528_property_video_preoutput_compose_recovery.sql';FIX=SQL/'tests/property_video_compose_recovery.sql'
@@ -32,7 +32,7 @@ def race(name,bodies):
  with ThreadPoolExecutor(max_workers=len(bodies))as pool:return list(pool.map(call,enumerate(bodies)))
 try:
  run('initdb',[tool('initdb'),'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
- run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k {SOCK} -p 55587 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
+ run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k '{SOCK}' -p 55587 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  conn=['-h',SOCK,'-p','55587','-U','postgres'];run('createdb',[tool('createdb'),*conn,'compose_recovery_proof'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','compose_recovery_proof','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
@@ -56,7 +56,9 @@ try:
   ('paid-identity','public.property_video_compose_snapshot(uuid)',"and meta->>'request_id'=r.provider_request_id",'', 'paid ledger request identity required'),
   ('no-uncertain-output','public.property_video_compose_snapshot(uuid)',"or exists(select 1 from public.capture_assets where id in(j.output_asset_id,j.poster_asset_id))",'', 'any reserved output asset blocks uncertain overwrite'),
   ('source-authority','public.property_video_compose_snapshot(uuid)',"or public.property_photo_reference(j.actor_id,j.listing_id,s.asset_id,s.photo_provenance_id)is distinct from s.source",'', 'withdrawn source cannot resume'),
-  ('preserve-output-identity','public.property_video_job_claim(uuid,text)',"output_asset_id=case when j.compose_recoveries>=1 then j.output_asset_id else gen_random_uuid()end,poster_asset_id=case when j.compose_recoveries>=1 then j.poster_asset_id else gen_random_uuid()end",'output_asset_id=gen_random_uuid(),poster_asset_id=gen_random_uuid()', 'recovered claim reuses exact reserved identities and only composes')]:
+  # Photo Motion's final claim router delegates ordinary AI jobs to this
+  # retained implementation; mutate the code that still runs for this fixture.
+  ('preserve-output-identity','public.property_video_job_claim_before_photo_motion_20261021(uuid,text)',"output_asset_id=case when j.compose_recoveries>=1 then j.output_asset_id else gen_random_uuid()end,poster_asset_id=case when j.compose_recoveries>=1 then j.poster_asset_id else gen_random_uuid()end",'output_asset_id=gen_random_uuid(),poster_asset_id=gen_random_uuid()', 'recovered claim reuses exact reserved identities and only composes')]:
   original=run('read-'+label,[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%signature]);assert original.count(anchor)==1,(label,'exact production anchor')
   run('compile-'+label,[*PSQL,'-Atq'],original.replace(anchor,replacement,1));run('negative-'+label,[*PSQL,'-Atq','-f',FIX],refuses=oracle);run('restore-'+label,[*PSQL,'-Atq'],original)
   receipt['controls'].append({'name':label,'compiledActualSQL':True,'unsafeMutationRejected':True})

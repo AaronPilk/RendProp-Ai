@@ -10,7 +10,7 @@ import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path,required=True);a=p.parse_args();OUT=a.evidence_dir;OUT.mkdir(parents=True,exist_ok=True);OUT.chmod(0o700)
 assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve internal3GiB reserve'
-DATA=Path(tempfile.mkdtemp(prefix='submission-receipt-pg-',dir='/Volumes/Rendprop Files/Builds/Active'if Path('/Volumes/Rendprop Files/Builds/Active').is_dir()else None));SOCK=Path(tempfile.mkdtemp(prefix='submission-socket-',dir='/tmp'))
+DATA=Path(tempfile.mkdtemp(prefix='submission-receipt-pg-',dir='/Volumes/Rendprop Files/Builds/Active'if Path('/Volumes/Rendprop Files/Builds/Active').is_dir()else None));SOCK=Path(tempfile.mkdtemp(prefix='submission-socket-',dir=os.environ.get('RENDPROP_PG_SOCKET_ROOT','/tmp')))
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)
 CANDIDATE,=list((SQL/'migrations').glob('*_app_video_submission_receipts.sql'));FIX=SQL/'tests/app_video_submission_receipts.sql';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
@@ -29,7 +29,7 @@ def race(name,bodies):
  with ThreadPoolExecutor(max_workers=len(bodies))as pool:return list(pool.map(call,enumerate(bodies)))
 try:
  run('initdb',[tool('initdb'),'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
- run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k {SOCK} -p 55587 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
+ run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k '{SOCK}' -p 55587 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  conn=['-h',SOCK,'-p','55587','-U','postgres'];run('createdb',[tool('createdb'),*conn,'submission_receipt_proof'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','submission_receipt_proof','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])

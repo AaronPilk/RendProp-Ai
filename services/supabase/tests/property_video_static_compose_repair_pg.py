@@ -10,7 +10,7 @@ import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path,required=True);a=p.parse_args();OUT=a.evidence_dir;OUT.mkdir(parents=True,exist_ok=True)
 assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve internal3GiB reserve'
-DATA=Path(tempfile.mkdtemp(prefix='static-repair-pg-',dir='/Volumes/Rendprop Files/Builds/Active'if Path('/Volumes/Rendprop Files/Builds/Active').is_dir()else None));SOCK=Path(tempfile.mkdtemp(prefix='static-repair-socket-',dir='/tmp'))
+DATA=Path(tempfile.mkdtemp(prefix='static-repair-pg-',dir='/Volumes/Rendprop Files/Builds/Active'if Path('/Volumes/Rendprop Files/Builds/Active').is_dir()else None));SOCK=Path(tempfile.mkdtemp(prefix='static-repair-socket-',dir=os.environ.get('RENDPROP_PG_SOCKET_ROOT','/tmp')))
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)
 CANDIDATE=SQL/'migrations/20261015193930_property_video_static_saved_photo_compose_repair.sql';FIX=SQL/'tests/property_video_static_compose_repair.sql';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
@@ -31,14 +31,26 @@ def race(name,bodies):
  with ThreadPoolExecutor(max_workers=len(bodies))as pool:return list(pool.map(call,enumerate(bodies)))
 try:
  run('initdb',[tool('initdb'),'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
- run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k {SOCK} -p 55589 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
+ run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k '{SOCK}' -p 55589 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  conn=['-h',SOCK,'-p','55589','-U','postgres'];run('createdb',[tool('createdb'),*conn,'static_repair_proof'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','static_repair_proof','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in partition_fresh_migrations(MIGRATIONS)[0]:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ # Prove the guarded candidate's replay at its own historical boundary.
+ # Later Photo Motion migrations intentionally replace the ordinary claim and
+ # Resume entry points, so a final-schema replay must refuse without mutation.
+ for m in partition_fresh_migrations(MIGRATIONS)[0]:
+  run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+  if m==CANDIDATE:
+   out=run('own-boundary-fresh',[*PSQL,'-Atq','-f',FIX]);receipt['ownBoundaryFresh']=next(json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x)
+   run('own-boundary-replay-migration',[*PSQL,'-q','-1','-f',CANDIDATE])
+   out=run('own-boundary-replay',[*PSQL,'-Atq','-f',FIX]);receipt['ownBoundaryReplay']=next(json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x)
+ catalog="select jsonb_agg(jsonb_build_object('oid',p.oid,'definition',pg_get_functiondef(p.oid),'acl',p.proacl)order by p.oid)from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public'and p.prokind in('f','p')"
+ before=run('catalog-before-ancestor-replay',[*PSQL,'-Atq','-c',catalog])
+ run('current-head-refuses-ancestor-replay',[*PSQL,'-q','-1','-f',CANDIDATE],refuses='Review changed ordinary assembly Resume')
+ after=run('catalog-after-ancestor-replay',[*PSQL,'-Atq','-c',catalog]);assert before==after,'Ancestor replay changed current function catalog'
+ receipt['ancestorReplay']={'refused':True,'fullPublicFunctionCatalogUnchanged':True,'catalogSHA256':hashlib.sha256(after.encode()).hexdigest()}
  receipt['functionMD5s']=json.loads(run('function-hashes',[*PSQL,'-Atq','-c',"select json_object_agg(p.oid::regprocedure::text,md5(p.prosrc))from pg_proc p where p.oid in('public.property_video_compose_history_guard()'::regprocedure,'public.property_video_job_claim(uuid,text)'::regprocedure,'public.property_video_job_resume(uuid,uuid,numeric)'::regprocedure)"]))
  for stage in ['fresh','replay']:
-  if stage=='replay':run('replay-external-candidate',[*PSQL,'-q','-f',CANDIDATE])
   out=run(stage+'-actual-static-repair',[*PSQL,'-Atq','-f',FIX]);rows=[json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x];assert len(rows)==1 and rows[0]['passed'];receipt[stage]=rows[0]
  out=run('existing-ordinary-compose-recovery',[*PSQL,'-Atq','-f',SQL/'tests/property_video_compose_recovery.sql']);receipt['ordinaryRecoveryRegression']=next(json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x)
  for label,signature,anchor,replacement,oracle in [
@@ -46,7 +58,7 @@ try:
   ('prefix-identity','public.property_video_static_repair_available(uuid)',"and v=(j.compose_recovery_history->0)-array['prior_compose_lease','prior_compose_attempts','recovered_at']",'', 'prior recovery source snapshot must match'),
   ('paid-identity','public.property_video_compose_snapshot(uuid)',"and meta->>'request_id'=r.provider_request_id",'', 'paid ledger request identity required'),
   ('source-authority','public.property_video_compose_snapshot(uuid)',"or public.property_photo_reference(j.actor_id,j.listing_id,s.asset_id,s.photo_provenance_id)is distinct from s.source",'', 'withdrawn source cannot repair'),
-  ('output-identity','public.property_video_job_claim(uuid,text)',"output_asset_id=case when j.compose_recoveries>=1 then j.output_asset_id else gen_random_uuid()end,poster_asset_id=case when j.compose_recoveries>=1 then j.poster_asset_id else gen_random_uuid()end",'output_asset_id=case when j.compose_recoveries=1 then j.output_asset_id else gen_random_uuid()end,poster_asset_id=case when j.compose_recoveries=1 then j.poster_asset_id else gen_random_uuid()end', 'repair claim preserves exact reserved output identities')]:
+  ('output-identity','public.property_video_job_claim_before_photo_motion_20261021(uuid,text)',"output_asset_id=case when j.compose_recoveries>=1 then j.output_asset_id else gen_random_uuid()end,poster_asset_id=case when j.compose_recoveries>=1 then j.poster_asset_id else gen_random_uuid()end",'output_asset_id=case when j.compose_recoveries=1 then j.output_asset_id else gen_random_uuid()end,poster_asset_id=case when j.compose_recoveries=1 then j.poster_asset_id else gen_random_uuid()end', 'repair claim preserves exact reserved output identities')]:
   original=run('read-'+label,[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%signature]);assert original.count(anchor)==1,(label,'exact production anchor')
   run('compile-'+label,[*PSQL,'-Atq'],original.replace(anchor,replacement,1));run('negative-'+label,[*PSQL,'-Atq','-f',FIX],refuses=oracle);run('restore-'+label,[*PSQL,'-Atq'],original)
   receipt['controls'].append({'name':label,'compiledActualSQL':True,'unsafeMutationRejected':True})

@@ -112,9 +112,10 @@ SCOPE_MIG=SQL/'migrations/20261016110000_property_video_kie_scope_consent_drain.
 INVARIANTS=SQL/'tests/invariants.sql';ASTRA_GATES=SQL/'tests/invariant_astra_paid_gates.sql';CONTRACT=ROOT/'tools/audit/run_database_regression.py'
 spec=importlib.util.spec_from_file_location('database_contract',CONTRACT);contract=importlib.util.module_from_spec(spec);spec.loader.exec_module(contract)
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'));assert MIG in MIGRATIONS
-# Prove this migration at its own point; later migrations are applied afterwards
-# and must keep the same fixture and FAL regressions green (no md5/boundary
-# coupling to future patches, unlike a whole-history boundary).
+# Prove this migration at its own point. The v1 and steady-v2 regressions are
+# valid there; the current whole-history jobs fixture belongs after LATER,
+# because its trial limits describe the final schema rather than this boundary.
+# Later migrations must keep the Kie fixture and all three regressions green.
 OWN=[m for m in MIGRATIONS if m.name<=MIG.name];LATER=[m for m in partition_fresh_migrations(MIGRATIONS)[0] if m.name>MIG.name]
 SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',BASE,STEADY,V1,FIX,IDENTITY,PG_FIXTURE,ACTIVATION,ROLLBACK,VERIFY,ROUTE_OFF,INVARIANTS,ASTRA_GATES,CONTRACT,Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in SOURCES}
@@ -160,6 +161,18 @@ SCOPE_PAIRS={x[0]:(x[1],x[2])for x in re.findall(r"\('(public\.[^']+)','([0-9a-f
 assert set(SCOPE_PAIRS)=={'public.paid_quality_processing_budget(uuid)','public.property_video_quality_freeze()','public.property_video_job_admit(uuid,jsonb,numeric,text)'}
 assert all(PAIRS[k][1]==v[0]for k,v in SCOPE_PAIRS.items()),'migration pin chronology'
 FINAL_PINS={k:SCOPE_PAIRS[k][1]if k in SCOPE_PAIRS else v[1]for k,v in PAIRS.items()}
+# The operational verifier targets the full current schema. The Kie and
+# consent boundary pins above remain exact at their historical migrations.
+# These five later bodies are the deliberate prompt registry (admit/budget),
+# Photo Motion (freeze/audio), and registered publication (delivery) changes.
+OPERATOR_FINAL_PINS={
+ 'public.property_video_quality_profile()':'9671b48a46a1e777bc4b968c1a669d44',
+ 'public.property_video_quality_freeze()':'d3739899b2177091178aa93b886d8873',
+ 'public.property_video_job_admit(uuid,jsonb,numeric,text)':'2929b69b330f4ab7a5aca6257e86398b',
+ 'public.paid_quality_processing_budget(uuid)':'720cf8958b09c01e9d1059ea3d732946',
+ 'public.property_video_job_audio_preflight(uuid,uuid,text,text,numeric,integer)':'2af2e6a298ecfae7c58d6845b94ab509',
+ 'public.background_video_delivery(uuid,uuid,uuid,text,bigint)':'0d5766730ab7c061abc8ee4f2bd10a7e'}
+assert set(OPERATOR_FINAL_PINS)==set(SIGNATURES)
 
 TARGETS=','.join("'%s'::regprocedure"%s for s in SIGNATURES);SIGS=','.join("'%s'"%s for s in SIGNATURES)
 CATALOG="""with f as(select p.oid,p.oid::regprocedure::text signature,md5(p.prosrc)body,pg_get_userbyid(p.proowner)owner,p.prosecdef,p.provolatile,p.proconfig,p.proacl::text acl,l.lanname lang,pg_get_function_result(p.oid)result
@@ -228,6 +241,13 @@ LATER_ADMIT_HELPER="""create function pg_temp.profile_admit(a uuid,m jsonb,q num
  return public.property_video_job_admit(a,m,q,p);end$$;
 """
 later_text=FIX.read_text().replace('public.property_video_job_admit((select','pg_temp.profile_admit((select').replace('property_video_job_admit((select','pg_temp.profile_admit((select')
+# The historical fixture pins four profiles. The later aerial/photo-motion
+# migration deliberately expands this constraint to seven; pin that exact
+# final list when replaying the same Kie behavior on the final schema.
+boundary_profiles="'legacy'::text, 'fal-kling3-4k-v1'::text, 'fal-kling3-4k-steady-v2'::text, 'kie-kling3-4k-steady-v1'::text"
+final_profiles=boundary_profiles+", 'photo-motion-v1-cfr24'::text, 'photo-motion-v2-cfr24'::text, 'photo-motion-v2-opening-cfr24'::text"
+assert later_text.count(boundary_profiles)==1
+later_text=later_text.replace(boundary_profiles,final_profiles,1).replace('saved profile constraint admits exactly four profiles','saved profile constraint admits exactly seven final profiles',1)
 # The direct INSERT identity-spoof control is an internal trigger test, with
 # explicit permission scoped only around that exact synthetic insert.
 insert_context="select set_config('rendprop.property_video_quality_profile','kie-kling3-4k-steady-v1',true);"
@@ -280,12 +300,16 @@ try:
  assert json.loads(scalar('identity-json',f"select property_video_quality_identity('{PROFILE}')"))==IDENTITY_JSON
  assert scalar('identity-null-for-fal',"select property_video_quality_identity('legacy')is null and property_video_quality_identity('fal-kling3-4k-v1')is null and property_video_quality_identity('fal-kling3-4k-steady-v2')is null")=='t'
  r['identityFile']={'path':str(IDENTITY.relative_to(ROOT)),'sha256':hashlib.sha256(IDENTITY_TEXT.encode()).hexdigest(),'sqlEqualsFile':True}
- # Existing FAL/legacy proofs still pass on the Kie-patched schema.
- def regressions(prefix=''):
-  return{'v1-quality-profile':result_line(run(prefix+'regression-v1-quality-profile',[*PSQL,'-Atq'],v1_fixture)),
-   'steady-v2':result_line(run(prefix+'regression-steady-v2',[*PSQL,'-Atq'],steady_fixture)),
-   'property-video-jobs':result_line(run(prefix+'regression-property-video-jobs',[*PSQL,'-Atq','-f',BASE]))}
+ # Exercise historical FAL/legacy proofs at the Kie migration boundary. The
+ # current jobs fixture asserts final trial limits and runs after LATER only.
+ def regressions(prefix='',final_schema=False):
+  checks={'v1-quality-profile':result_line(run(prefix+'regression-v1-quality-profile',[*PSQL,'-Atq'],v1_fixture)),
+   'steady-v2':result_line(run(prefix+'regression-steady-v2',[*PSQL,'-Atq'],steady_fixture))}
+  if final_schema:
+   checks['property-video-jobs']=result_line(run(prefix+'regression-property-video-jobs',[*PSQL,'-Atq','-f',BASE]))
+  return checks
  r['regressions']=regressions()
+ r['regressionScope']={'kieMigrationBoundary':list(r['regressions']),'finalSchemaAfterLaterMigrations':['v1-quality-profile','steady-v2','property-video-jobs']}
  for stage in['fresh','replay']:
   if stage=='replay':
    run('replay-own-migration',[*PSQL,'-q','-1','-f',MIG])
@@ -363,11 +387,19 @@ try:
  assert catalog('after-controls')==after,'a compiled control was not fully restored'
  for m in LATER:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
  if LATER:
+  final_catalog=catalog('after-later-schema')
+  assert final_catalog['target_bodies']==OPERATOR_FINAL_PINS,'operational verifier pins must match deliberate final bodies'
+  assert final_catalog['target_metadata']==after['target_metadata'],'later migrations changed Kie target owner/ACL/configuration or function metadata'
+  assert final_catalog['kie_route']==after['kie_route'],'later migrations changed the pinned Kie route'
+  assert json.loads(scalar('after-later-selector',"select value from app_config where key='property_video_quality'"))=={'enabled':False,'profile':'fal-kling3-4k-v1'},'later migrations changed the inactive selector'
+  r['operatorPinAudit']={'historicalKieBoundary':{k:v[1]for k,v in PAIRS.items()},'historicalScopeBoundary':FINAL_PINS,'currentSchema':OPERATOR_FINAL_PINS,'targetMetadataPreserved':True,'kieRouteOff':True,'selectorOff':True}
   assert pg_fixture_live('later-schema-deno-pg-fixture')==PG_FIXTURE_BYTES,'the Deno PG fixture differs from the later schema';r['pgFixture']['stages']['later']=True
   consent_probe_paid=FIX.read_text()[FIX.read_text().index("reset role;update app_config set value='{\"mode\":\"ceiling\",\"free_published_listings\":1}'where key='serving_mode';"):FIX.read_text().index('select pg_temp.ok(not org_has_internal_testing_grant')]
   no_consent='begin;'+seed+consent_probe_paid+"update app_config set value=jsonb_set(value,'{enabled}','true')where key='property_video_jobs';"+f"update ai_routes set enabled=true where id='{ROUTE}';update app_config set value='{KIE_ON}'where key='property_video_quality';set local role service_role;"+f"select property_video_job_admit('{ACTOR}',(select jsonb_set(jsonb_set(jsonb_set(m,'{{operation_id}}','\"f6a00000-0000-4000-8000-000000009999\"'),'{{sources}}',(select jsonb_agg(value order by ord)from jsonb_array_elements(m->'sources')with ordinality e(value,ord)where ord<=2)),'{{presentation,shot_labels}}','[null,null]')from bm),335,'{PROFILE}');"
   run('later-schema-legacy-without-consent-refuses',[*PSQL,'-Atq'],no_consent,refuses='RP403: Allow the listed AI processors')
-  r['laterSchema']={'legacyNoConsentRefused':True,'kie':result_line(run('later-schema-kie-profile',[*PSQL,'-Atq'],later_fixture)),'regressions':regressions('later-')}
+  r['laterSchema']={'legacyNoConsentRefused':True,'kie':result_line(run('later-schema-kie-profile',[*PSQL,'-Atq'],later_fixture)),'regressions':regressions('later-',final_schema=True)}
+  assert scalar('later-schema-prompt-registry',"select public.property_video_prompt_identity('v1')=public.property_video_quality_identity('kie-kling3-4k-steady-v1') and public.property_video_prompt_identity_registered(public.property_video_prompt_identity('v1')) and public.property_video_prompt_identity_registered(public.property_video_prompt_identity('v2')) and not public.property_video_prompt_identity_registered(jsonb_set(public.property_video_prompt_identity('v2'),'{prompt_template_sha256,push_in}',to_jsonb('unregistered'::text))) and not public.property_video_prompt_identity_registered('{}'::jsonb) and public.property_video_prompt_identity('unknown')is null")=='t','stale or unregistered Kie prompt identity was accepted'
+  r['laterSchema']['promptIdentityRegistry']={'v1AndV2Exact':True,'staleAndUnknownRejected':True}
 
  r['pgFixture'].update({'path':str(PG_FIXTURE.relative_to(ROOT)),'sha256':hashlib.sha256(PG_FIXTURE_BYTES).hexdigest(),'query':PG_FIXTURE_QUERY,'normalised':'"(created_at|updated_at)": "[^"]*" -> 2026-10-16T00:00:00+00:00','bytesEqual':True})
  functions_before_races=catalog('functions-before-races')
@@ -375,7 +407,8 @@ try:
  # Committed owner fixture (same closed Starter receipt) for the operator
  # scripts and the races. The pinned row is still OFF here (fresh migration).
  paid=f"set role service_role;select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'race-kie-original','race-kie-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');reset role;"
- setup='begin;'+seed+paid+PUBLISHED_CONSENT+"update app_config set value=jsonb_set(value,'{enabled}','true')where key='property_video_jobs';create table public.kie_profile_race_fixture as select jsonb_set(jsonb_set(m,'{sources}',jsonb_build_array(m#>'{sources,0}',m#>'{sources,1}')),'{presentation,shot_labels}','[null,null]')m from bm;grant select on public.kie_profile_race_fixture to service_role;commit;"
+ release_seed_grant="update public.orgs set plan='free',plan_source=null,plan_expires_at=null where id=(select org from bf);"
+ setup='begin;'+seed+release_seed_grant+paid+PUBLISHED_CONSENT+"update app_config set value=jsonb_set(value,'{enabled}','true')where key='property_video_jobs';create table public.kie_profile_race_fixture as select jsonb_set(jsonb_set(m,'{sources}',jsonb_build_array(m#>'{sources,0}',m#>'{sources,1}')),'{presentation,shot_labels}','[null,null]')m from bm;grant select on public.kie_profile_race_fixture to service_role;commit;"
  run('race-seed',[*PSQL,'-Atq'],setup)
  op=lambda i:'f6c00000-0000-4000-8000-%012d'%i
  def admit(i,profile=PROFILE,quote=335):
@@ -443,7 +476,7 @@ try:
  # It must change nothing; `false` names exact expected false check numbers.
  VERIFY_ITEMS=['property_video_quality','kie_route_enabled','kie_activation_record','kie_jobs_admitted','kie_jobs_draining','kie_drain_ends_by','property_video_quality_sha256','kie_activation_record_sha256','property_video_quality_hold','property_video_quality_hold_sha256','property_video_kie_test_window','property_video_kie_test_window_sha256','processor_consent_contract','kie_test_grants','kie_test_grants_can_still_create','kie_jobs_admitted_by_authority','kie_jobs_draining_by_authority','kie_unsent_clips','kie_accepted_tasks_pollable']
  VERIFY_NAMES={int(n):name.replace("''","'")for n,name in re.findall(r"select\s+(\d+), '((?:''|[^'])*)'",VERIFY.read_text())}
- VERIFY_NAMES.update({6+i:'migration: body md5 of '+signature+' is the post-patch pin'for i,signature in enumerate(SIGNATURES)})
+ VERIFY_NAMES.update({6+i:'migration: body and execution authority of '+signature+' match the final pin'for i,signature in enumerate(SIGNATURES)})
  assert sorted(VERIFY_NAMES)==list(range(1,29)),VERIFY_NAMES
 
  READ_ONLY_ENV={**ENV,'PGOPTIONS':ENV['PGOPTIONS']+' -c default_transaction_read_only=on'}
@@ -505,7 +538,7 @@ try:
  # default_transaction_read_only), and a write placed inside it is refused.
  vtext=VERIFY.read_text();literal=re.findall(r"^ '(\{.*\})'::jsonb as identity,$",vtext,re.M)
  assert len(literal)==1 and json.loads(literal[0])==IDENTITY_JSON,'KIE-READONLY-VERIFY.sql identity differs from the canonical JSON file'
- pins=dict(re.findall(r"\(\d, '(public\.[^']+)', '([0-9a-f]{32})'\)",vtext));assert pins==FINAL_PINS,('verify md5 pins',pins)
+ pins=dict(re.findall(r"\(\d, '(public\.[^']+)', '([0-9a-f]{32})',",vtext));assert pins==OPERATOR_FINAL_PINS,('verify md5 pins',pins)
  reviewed=re.findall(r"^ reviewed constant jsonb:='(\{.*\})';$",ACTIVATION.read_text(),re.M)
  assert len(reviewed)==1 and json.loads(reviewed[0])==IDENTITY_JSON,'KIE-ACTIVATION.sql reviewed identity differs from the canonical JSON file'
  v=verify('fresh-migrated','inv_fresh',phase='not activated: pinned row OFF, selector pre-Kie, no activation record')
@@ -531,6 +564,21 @@ try:
  verify_control('identity-drift',identity_def.replace('"min_short_side_px":2160','"min_short_side_px":1080',1),[1])
  verify_control('freeze-trigger-disabled',"alter table property_video_jobs disable trigger property_video_quality_freeze;",[4])
  verify_control('patched-body-drift',profile_def.replace(rp503,rp503.replace("exception'","exception '"),1),[6])
+ # The five widened operational body pins each reject a compiled change to
+ # their current installed function, without changing ownership, ACL or config.
+ for number,signature in enumerate(SIGNATURES[1:],start=7):
+  body=definition(signature);assert body.count('AS $function$')==1,signature
+  verify_control('current-body-pin-'+str(number),body.replace('AS $function$','AS $function$/* verifier compiled drift */',1),[number])
+  r['verifyControls'][-1]['compiledActualSQL']=True
+ verify_control('client-execute-granted','grant execute on function public.property_video_job_admit(uuid,jsonb,numeric,text)to authenticated;',[8])
+ verify_control('security-definer-removed','alter function public.property_video_quality_freeze()security invoker;',[7])
+ verify_control('search-path-widened','alter function public.paid_quality_processing_budget(uuid)set search_path to public;',[9])
+ # Photo Motion broadened the final profile and permission constraints. Each
+ # exact pin must refuse an additional profile/revision or a weakened gate.
+ verify_control('profile-constraint-widened',"alter table public.property_video_jobs drop constraint property_video_quality_profile_check;alter table public.property_video_jobs add constraint property_video_quality_profile_check check(quality_profile in('legacy','fal-kling3-4k-v1','fal-kling3-4k-steady-v2','kie-kling3-4k-steady-v1','photo-motion-v1-cfr24','photo-motion-v2-cfr24','photo-motion-v2-opening-cfr24','unreviewed'));",[5])
+ verify_control('consent-revision-widened',"alter table public.property_video_jobs drop constraint property_video_jobs_consent_revision_check;alter table public.property_video_jobs add constraint property_video_jobs_consent_revision_check check(consent_revision in('property-video-jobs-v1','property-video-jobs-v2','photo-motion-v1','unreviewed'));",[21])
+ verify_control('processor-consent-weakened',"alter table public.property_video_jobs drop constraint property_video_jobs_processor_consent_check;alter table public.property_video_jobs add constraint property_video_jobs_processor_consent_check check(true);",[21])
+ verify_control('kie-drain-predicate-widened',"drop index public.property_video_jobs_kie_drain;create index property_video_jobs_kie_drain on public.property_video_jobs(deadline)where quality_profile='kie-kling3-4k-steady-v1';",[21])
  verify_control('pinned-row-drift',f"""update ai_routes set params='{{"kie_mode":"pro","sound":false}}'where id='{ROUTE}';""",[12])
  verify_control('fal-row-price-drift',"update ai_routes set unit_cents=43 where id='b04b57c1-12c8-44f9-9c64-e06561358f01';",[14])
  verify_control('fal-row-disabled',"update ai_routes set enabled=false where id='b04b57c1-12c8-44f9-9c64-e06561358f01';",[14])

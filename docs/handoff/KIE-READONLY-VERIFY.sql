@@ -9,8 +9,10 @@
 -- executable by anon or authenticated, and check 23 needs a session that sees
 -- every row):
 --   psql "<db-url>" -X -v ON_ERROR_STOP=1 -f docs/handoff/KIE-READONLY-VERIFY.sql
--- Both Kie migrations (20261016100000 and 20261016110000) must be applied; it
--- refuses with that message otherwise.
+-- Run against the complete current migration history. Both Kie migrations
+-- (20261016100000 and 20261016110000) must be applied; it refuses with that
+-- message otherwise. This file pins later deliberate Photo Motion and prompt
+-- registry additions too, while Kie identity, activation and route stay exact.
 --
 -- When, and the phase to expect in the "state: phase" row (check 18):
 --   * after the migrations and the edge deploy: "not activated";
@@ -35,10 +37,10 @@
 -- record and the phase, 19-22 the objects of migration 20261016110000, 23 this
 -- session's row visibility, 24-27 the hold record, the route-window record, the
 -- grants and the published processor-permission contract. The md5 pins (6-11)
--- are the bodies after migration 20261016110000 (it re-patches
--- property_video_quality_freeze, property_video_job_admit and
--- paid_quality_processing_budget; a later migration that replaces one of these
--- functions on purpose must update its pin here).
+-- are the bodies after the complete current migration history. The Kie
+-- migration-boundary bodies remain pinned separately by
+-- services/supabase/tests/property_video_kie_profile_pg.py. A later migration
+-- that replaces one of these functions on purpose must update its pin here.
 -- Output 2, the state: item | value, as stored, including the digests every
 -- operator script takes as its exact baselines:
 --   property_video_quality_sha256          -> expected_selector_sha256
@@ -75,13 +77,13 @@ with
 expected as (select
  '{"profile":"kie-kling3-4k-steady-v1","provider":"kie","model":"kling-3.0/video","route_id":"7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21","task":"video.property_reel_clip_kie","mode":"4K","sound":false,"multi_shots":false,"seconds":5,"unit":"second","unit_cents":33.5,"attempt_cents":167.5,"credits_per_second":67,"usd_per_credit":0.005,"price_source":"https://kie.ai/kling-3-0","price_checked":"2026-10-16","bonus_credits_excluded":true,"max_paid_attempts_per_source":2,"prompt_profile":"steady-property-v1","prompt_template_token":"{scene_noun}","prompt_scene_nouns":["home","event venue","restaurant","store","fitness studio","space"],"prompt_template_sha256":{"fly_through":"5a27f080e3affd92fc1f455f09d29df3b9d82c3bb07de6a4fae644ddba95a785","push_in":"275836a1c183898de223d1f576eba246ca4aa635611a0afd410743a264d472f7","side_glide":"cad745c420ac54cd4339a73fde9ad33322949dbbb6764f596c2d1da24d0848a3","pull_back":"e80e5a784366935080e5ab43d2e8ea395859a6993c6c146bfc96c86b138b8aa9"},"composition_profile":"steady-v2-cfr24","output_fps":24,"output_frames":[120,121],"min_short_side_px":2160,"min_pixels":8000000,"aspect_ratio_wire":"omitted_source_auto","privacy_tier":"trains_by_default","content_license_ack":"kie-terms-2025-08-01-section-3-owner-accepted"}'::jsonb as identity,
  '{"enabled":true,"profile":"kie-kling3-4k-steady-v1","vendor_content_license":"kie-terms-2025-08-01-section-3-owner-accepted"}'::jsonb as kie_selector),
-pins(n, signature, after_md5) as (values
- (1, 'public.property_video_quality_profile()', '9671b48a46a1e777bc4b968c1a669d44'),
- (2, 'public.property_video_quality_freeze()', 'a3dd833254a27901b7c79cc70f18ad61'),
- (3, 'public.property_video_job_admit(uuid,jsonb,numeric,text)', '2077ba4e86e2002e94fdc3e43cd8954d'),
- (4, 'public.paid_quality_processing_budget(uuid)', '618a85ee6ec7e94fa6f0d2c02dab8188'),
- (5, 'public.property_video_job_audio_preflight(uuid,uuid,text,text,numeric,integer)', 'e9f7f8c6bb71722f219199612684a902'),
- (6, 'public.background_video_delivery(uuid,uuid,uuid,text,bigint)', '7c8f938eb5822ca727d18ebad808db46')),
+pins(n, signature, after_md5, expected_volatility, expected_result) as (values
+ (1, 'public.property_video_quality_profile()', '9671b48a46a1e777bc4b968c1a669d44', 'v', 'text'),
+ (2, 'public.property_video_quality_freeze()', 'd3739899b2177091178aa93b886d8873', 'v', 'trigger'),
+ (3, 'public.property_video_job_admit(uuid,jsonb,numeric,text)', '2929b69b330f4ab7a5aca6257e86398b', 'v', 'jsonb'),
+ (4, 'public.paid_quality_processing_budget(uuid)', '720cf8958b09c01e9d1059ea3d732946', 's', 'integer'),
+ (5, 'public.property_video_job_audio_preflight(uuid,uuid,text,text,numeric,integer)', '2af2e6a298ecfae7c58d6845b94ab509', 'v', 'property_video_jobs'),
+ (6, 'public.background_video_delivery(uuid,uuid,uuid,text,bigint)', '0d5766730ab7c061abc8ee4f2bd10a7e', 'v', 'jsonb')),
 -- Migration 20261016110000's functions: the RPCs execute only as service_role,
 -- the guard trigger functions by no client role.
 new_functions(signature, rpc) as (values
@@ -253,15 +255,28 @@ checks(n, check_name, ok, detail) as (
         coalesce((select pg_get_triggerdef(oid) || ' enabled=' || tgenabled::text from pg_trigger
                    where tgrelid = 'public.property_video_jobs'::regclass and tgname = 'property_video_quality_freeze' and not tgisinternal), 'trigger missing')
  union all
- select 5, 'migration: saved profile constraint admits exactly legacy, the two FAL profiles and kie-kling3-4k-steady-v1',
-        coalesce((select pg_get_constraintdef(oid) = $c$CHECK ((quality_profile = ANY (ARRAY['legacy'::text, 'fal-kling3-4k-v1'::text, 'fal-kling3-4k-steady-v2'::text, 'kie-kling3-4k-steady-v1'::text])))$c$
+ select 5, 'migration: saved profile constraint admits exactly legacy, two FAL, Kie and three Photo Motion profiles',
+        coalesce((select pg_get_constraintdef(oid) = $c$CHECK ((quality_profile = ANY (ARRAY['legacy'::text, 'fal-kling3-4k-v1'::text, 'fal-kling3-4k-steady-v2'::text, 'kie-kling3-4k-steady-v1'::text, 'photo-motion-v1-cfr24'::text, 'photo-motion-v2-cfr24'::text, 'photo-motion-v2-opening-cfr24'::text])))$c$
                     from pg_constraint where conrelid = 'public.property_video_jobs'::regclass and conname = 'property_video_quality_profile_check' and contype = 'c' and convalidated), false),
         coalesce((select pg_get_constraintdef(oid) from pg_constraint
                    where conrelid = 'public.property_video_jobs'::regclass and conname = 'property_video_quality_profile_check'), 'constraint missing')
  union all
- select 5 + p.n, 'migration: body md5 of ' || p.signature || ' is the post-patch pin',
-        coalesce(md5(f.prosrc) = p.after_md5, false), coalesce('actual ' || md5(f.prosrc), 'function missing') || ', pin ' || p.after_md5
+ select 5 + p.n, 'migration: body and execution authority of ' || p.signature || ' match the final pin',
+        coalesce(md5(f.prosrc) = p.after_md5
+                 and pg_get_userbyid(f.proowner) = 'postgres'
+                 and f.prosecdef and f.proconfig = array['search_path=""']::text[]
+                 and f.provolatile = p.expected_volatility and l.lanname = 'plpgsql'
+                 and pg_get_function_result(f.oid) = p.expected_result
+                 and f.proacl::text = '{postgres=X/postgres,service_role=X/postgres}'
+                 and not has_function_privilege('anon', f.oid, 'EXECUTE')
+                 and not has_function_privilege('authenticated', f.oid, 'EXECUTE'), false),
+        coalesce('actual ' || md5(f.prosrc) || ', owner ' || pg_get_userbyid(f.proowner)
+                 || ', acl ' || f.proacl::text || ', definer ' || f.prosecdef::text
+                 || ', config ' || f.proconfig::text || ', volatility ' || f.provolatile::text
+                 || ', language ' || l.lanname || ', result ' || pg_get_function_result(f.oid), 'function missing')
+                 || '; pin ' || p.after_md5
    from pins p left join pg_proc f on f.oid = to_regprocedure(p.signature)
+               left join pg_language l on l.oid = f.prolang
  union all
  select 12, 'migration: pinned Kie row 7f2c9a3e-4b1d-4e8a-9c55-1d6e0b7a4f21 equals the identity in every field but enabled',
         exists (select 1 from public.ai_routes r, expected e
@@ -364,17 +379,24 @@ checks(n, check_name, ok, detail) as (
         and exists (select 1 from pg_constraint k join pg_attribute a on a.attrelid = k.conrelid and a.attname = 'kie_test_grant_id' and not a.attisdropped
                      where k.conrelid = 'public.property_video_jobs'::regclass and k.contype = 'f'
                        and k.confrelid = to_regclass('public.property_video_kie_test_grants') and k.conkey = array[a.attnum])
-        and coalesce((select pg_get_constraintdef(oid) = $c$CHECK ((consent_revision = ANY (ARRAY['property-video-jobs-v1'::text, 'property-video-jobs-v2'::text])))$c$
+        and coalesce((select pg_get_constraintdef(oid) = $c$CHECK ((consent_revision = ANY (ARRAY['property-video-jobs-v1'::text, 'property-video-jobs-v2'::text, 'photo-motion-v1'::text])))$c$
                        from pg_constraint where conrelid = 'public.property_video_jobs'::regclass
                         and conname = 'property_video_jobs_consent_revision_check' and contype = 'c' and convalidated), false)
+        and coalesce((select pg_get_constraintdef(oid) = $c$CHECK ((((consent_revision = 'property-video-jobs-v1'::text) AND (processor_consent IS NULL)) OR ((consent_revision = 'property-video-jobs-v2'::text) AND (jsonb_typeof(processor_consent) = 'object'::text)) OR ((consent_revision = 'photo-motion-v1'::text) AND (processor_consent IS NULL) AND (quality_profile = ANY (ARRAY['photo-motion-v1-cfr24'::text, 'photo-motion-v2-cfr24'::text, 'photo-motion-v2-opening-cfr24'::text])))))$c$
+                       from pg_constraint where conrelid = 'public.property_video_jobs'::regclass
+                        and conname = 'property_video_jobs_processor_consent_check' and contype = 'c' and convalidated), false)
         and (select count(*) = 3 from pg_constraint where conrelid = 'public.property_video_jobs'::regclass and contype = 'c' and convalidated
               and conname in ('property_video_jobs_processor_consent_check', 'property_video_jobs_kie_consent_check', 'property_video_jobs_kie_test_grant_check'))
-        and to_regclass('public.property_video_jobs_kie_drain') is not null,
+        and coalesce((select i.indisvalid and i.indisready and not i.indisunique and not i.indisprimary
+                            and pg_get_indexdef(i.indexrelid) = $idx$CREATE INDEX property_video_jobs_kie_drain ON public.property_video_jobs USING btree (deadline) WHERE ((quality_profile = 'kie-kling3-4k-steady-v1'::text) AND (cancelled_at IS NULL))$idx$
+                        from pg_index i where i.indexrelid = to_regclass('public.property_video_jobs_kie_drain')
+                          and i.indrelid = 'public.property_video_jobs'::regclass), false),
         coalesce((select string_agg(conname || ': ' || pg_get_constraintdef(oid), '; ' order by conname) from pg_constraint
                    where conrelid = 'public.property_video_jobs'::regclass
                      and conname in ('property_video_jobs_consent_revision_check', 'property_video_jobs_processor_consent_check',
                                      'property_video_jobs_kie_consent_check', 'property_video_jobs_kie_test_grant_check')), 'constraints missing')
-        || '; drain index ' || case when to_regclass('public.property_video_jobs_kie_drain') is null then 'missing' else 'present' end
+        || '; drain index ' || coalesce((select pg_get_indexdef(i.indexrelid) || ' valid=' || i.indisvalid::text || ' ready=' || i.indisready::text
+                                         from pg_index i where i.indexrelid = to_regclass('public.property_video_jobs_kie_drain')), 'missing')
  union all
  select 22, 'migration 20261016110000: its functions are SECURITY DEFINER with an empty search_path; the RPCs execute only as service_role, the guard trigger functions by no client role',
         coalesce(count(*) = 8 and bool_and(ok), false),

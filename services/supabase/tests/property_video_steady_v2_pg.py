@@ -93,7 +93,8 @@ try:
   r['controls'].append({'name':label,'compiledActualSQL':True,'unsafeMutationDetected':True})
  # Same real ordinaryStarter receipt fixture; no funding/grant on any host.
  paid="set role service_role;select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'race-quality-original','race-quality-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');reset role;"
- setup='begin;'+seed+paid+"update app_config set value=jsonb_set(value,'{enabled}','true')where key='property_video_jobs';update app_config set value='{\"enabled\":true,\"profile\":\"fal-kling3-4k-steady-v2\"}'where key='property_video_quality';create table public.steady_v2_race_fixture as select jsonb_set(jsonb_set(m,'{sources}',jsonb_build_array(m#>'{sources,0}',m#>'{sources,1}')),'{presentation,shot_labels}','[null,null]')m from bm;grant select on public.steady_v2_race_fixture to service_role;commit;"
+ release_seed_grant="update public.orgs set plan='free',plan_source=null,plan_expires_at=null where id=(select org from bf);"
+ setup='begin;'+seed+release_seed_grant+paid+"update app_config set value=jsonb_set(value,'{enabled}','true')where key='property_video_jobs';update app_config set value='{\"enabled\":true,\"profile\":\"fal-kling3-4k-steady-v2\"}'where key='property_video_quality';create table public.steady_v2_race_fixture as select jsonb_set(jsonb_set(m,'{sources}',jsonb_build_array(m#>'{sources,0}',m#>'{sources,1}')),'{presentation,shot_labels}','[null,null]')m from bm;grant select on public.steady_v2_race_fixture to service_role;commit;"
  run('race-seed',[*PSQL,'-Atq'],setup)
  actor='f1100000-0000-4000-8000-000000000001'
  def recipe(i):return "jsonb_set((select m from steady_v2_race_fixture),'{operation_id}',to_jsonb('f4800000-0000-4000-8000-%012d'::text))"%i

@@ -15,11 +15,29 @@ fixture=BASE.read_text();anchor='create temporary table manifest as select';asse
 def run(name,args,stdin=None,okay=True):
  x=subprocess.run([str(v)for v in args],input=stdin,env=ENV,cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120);(OUT/(name+'.log')).write_text(x.stdout);r['commands'].append({'name':name,'exit':x.returncode,'sha256':hashlib.sha256(x.stdout.encode()).hexdigest()});assert not okay or x.returncode==0,(name,x.stdout[-3500:]);return x
 try:
- run('initdb',[TOOLS['initdb'],'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8']);run('start',[TOOLS['pg_ctl'],'-D',DATA,'-l',OUT/'postgres.log','-w','-t','30','-o',f"-k {SOCK} -p 55561 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
+ run('initdb',[TOOLS['initdb'],'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8']);run('start',[TOOLS['pg_ctl'],'-D',DATA,'-l',OUT/'postgres.log','-w','-t','30','-o',f"-k '{SOCK}' -p 55561 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  conn=['-h',SOCK,'-p','55561','-U','postgres'];run('createdb',[TOOLS['createdb'],*conn,'studio_recorded']);P=[TOOLS['psql'],'-X','--no-password',*conn,'-d','studio_recorded','-v','ON_ERROR_STOP=1'];run('bootstrap',[*P,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in partition_fresh_migrations(sorted((SQL/'migrations').glob('*.sql')))[0]:run('apply-'+m.stem,[*P,'-q','-1','-f',m])
+ watched_sql=("select jsonb_object_agg(oid::regprocedure::text,jsonb_build_object('body',md5(prosrc),"
+  "'catalog',to_jsonb(p)-'prosrc')) from pg_proc p where oid in("
+  "'public.assert_recorded_render_source(uuid,uuid)'::regprocedure,"
+  "'public.create_render_job(uuid,uuid,text,jsonb,text,text)'::regprocedure,"
+  "'public.publish_recorded_render(uuid,boolean,numeric,numeric,jsonb,uuid)'::regprocedure)")
+ watched=lambda name:json.loads(run(name,[*P,'-Atq','-c',watched_sql]).stdout)
+ migrations=partition_fresh_migrations(sorted((SQL/'migrations').glob('*.sql')))[0];assert MIG in migrations
+ for m in migrations:
+  run('apply-'+m.stem,[*P,'-q','-1','-f',m])
+  if m==MIG:
+   historical=watched('historical-recorded-source-catalog')
+   assert historical['publish_recorded_render(uuid,boolean,numeric,numeric,jsonb,uuid)']['body']=='72e6665c31d00a258bcc6f59f1cb028e'
+   run('historical-replay-migration',[*P,'-q','-1','-f',MIG])
+   assert watched('historical-recorded-source-replay-catalog')==historical,'Own replay must preserve its historical schema'
+ final_catalog=watched('final-recorded-source-catalog')
+ assert final_catalog['assert_recorded_render_source(uuid,uuid)']['body']=='1674897254940d261d54d220ba6433f3'
+ assert final_catalog['publish_recorded_render(uuid,boolean,numeric,numeric,jsonb,uuid)']['body']=='3bb8e91fa737d622083fd18e7f636cfa'
+ refused=run('historical-replay-refused-on-final-schema',[*P,'-q','-1','-f',MIG],okay=False)
+ assert refused.returncode!=0 and 'Review changed public.publish_recorded_render(uuid,boolean,numeric,numeric,jsonb,uuid)' in refused.stdout
+ assert watched('final-recorded-source-after-refusal')==final_catalog,'Refused historical replay must preserve the final schema'
  for name in ['fresh','replay']:
-  if name=='replay':run('replay-migration',[*P,'-q','-1','-f',MIG])
   x=run(name,[*P,'-Atq'],fixture+'\nrollback;');proof=[json.loads(l)for l in x.stdout.splitlines()if l.startswith('{')and 'assertions'in l];assert len(proof)==1 and proof[0]['passed'];r[name]=proof[0]
  sigs=['public.assert_recorded_render_source(uuid,uuid)','public.create_render_job(uuid,uuid,text,jsonb,text,text)','public.publish_recorded_render(uuid,boolean,numeric,numeric,jsonb,uuid)'];defs={sig:run('definition-'+str(i),[*P,'-Atq','-c',f"select pg_get_functiondef('{sig}'::regprocedure)"]).stdout for i,sig in enumerate(sigs)}
  controls=[('generic-publish',sigs[2],[(" perform public.assert_recorded_render_source(j.listing_id,j.capture_asset_id) from public.render_jobs j where j.id=p_job;"," -- omitted generic recorded source guard")],'attested unpublished photo video cannot be recorded footage before composition'),('attestation',sigs[0],[("where attested.asset_id=a.id","where false and attested.asset_id=a.id"),("from public.property_video_attestations where asset_id=a.id","from public.property_video_attestations where false and asset_id=a.id")],'attested unpublished photo video cannot be recorded footage before composition'),('output',sigs[0],[("where output.asset_id=a.id","where false and output.asset_id=a.id"),("from public.property_video_job_outputs where asset_id=a.id","from public.property_video_job_outputs where false and asset_id=a.id")],'registered output without attestation/composition cannot be recorded footage'),('preparation',sigs[0],[("where prepared.asset_id=a.id","where false and prepared.asset_id=a.id"),("from public.property_video_preparations where asset_id=a.id","from public.property_video_preparations where false and asset_id=a.id")],'prepared video-only image cannot become a paid recorded source'),('paid-worker',sigs[1],[("if v_source = 'worker' then perform public.assert_recorded_render_source(p_listing,p_asset); end if;","if false then perform public.assert_recorded_render_source(p_listing,p_asset); end if;")],'typed photo output cannot start new paid recorded work')]

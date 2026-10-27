@@ -11,7 +11,7 @@ ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path);args=p.parse_args()
 OUT=args.evidence_dir or Path(tempfile.mkdtemp(prefix='missing-result-proof-'));OUT.mkdir(parents=True,exist_ok=True)
 assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve internal3GiB reserve'
-DATA=Path(tempfile.mkdtemp(prefix='missing-result-owned-pg-',dir='/Volumes/Rendprop Files/Builds/Active' if Path('/Volumes/Rendprop Files/Builds/Active').is_dir()else None));SOCK=Path(tempfile.mkdtemp(prefix='missing-result-socket-',dir='/tmp'))
+DATA=Path(tempfile.mkdtemp(prefix='missing-result-owned-pg-',dir='/Volumes/Rendprop Files/Builds/Active' if Path('/Volumes/Rendprop Files/Builds/Active').is_dir()else None));SOCK=Path(tempfile.mkdtemp(prefix='missing-result-socket-',dir=os.environ.get('RENDPROP_PG_SOCKET_ROOT','/tmp')))
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)
 MIG=SQL/'migrations/20261015172920_property_video_missing_paid_result_replacement.sql';FIX=SQL/'tests/property_video_missing_result.sql'
@@ -32,7 +32,7 @@ def race(name,bodies):
  with ThreadPoolExecutor(max_workers=len(bodies))as pool:return list(pool.map(call,enumerate(bodies)))
 try:
  run('initdb',[tool('initdb'),'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
- run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k {SOCK} -p 55586 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
+ run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k '{SOCK}' -p 55586 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  conn=['-h',SOCK,'-p','55586','-U','postgres'];run('createdb',[tool('createdb'),*conn,'missing_result_proof'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','missing_result_proof','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])

@@ -25,7 +25,7 @@ def run(name,args,stdin=None,okay=True):
     return x
 try:
     run('initdb',[TOOLS['initdb'],'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
-    run('start',[TOOLS['pg_ctl'],'-D',DATA,'-l',OUT/'postgres.log','-w','-t','30','-o',f"-k {SOCK} -p 55564 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
+    run('start',[TOOLS['pg_ctl'],'-D',DATA,'-l',OUT/'postgres.log','-w','-t','30','-o',f"-k '{SOCK}' -p 55564 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
     conn=['-h',SOCK,'-p','55564','-U','postgres'];run('createdb',[TOOLS['createdb'],*conn,'product_media_serving'])
     P=[TOOLS['psql'],'-X','--no-password',*conn,'-d','product_media_serving','-v','ON_ERROR_STOP=1']
     run('bootstrap',[*P,'-q','-f',SQL/'tests/ci-bootstrap.sql'])

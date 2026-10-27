@@ -215,6 +215,7 @@ let workerState:any;
 const PREFIX=`
 import{HttpError,assert}from ${href("../_shared/http.ts")};
 import{KIE_PROPERTY_PROFILE,kieProperty4KFacts}from ${href("../_shared/property-video-kie.ts")};
+import{isPhotoMotion,photoMotionTimeline,photoMotionProducer,PHOTO_MOTION_MODE,photoMotionProfile}from ${href("../_shared/photo-motion.ts")};
 import{R2_BUCKET_RENDERS,headObject as realHeadObject}from ${href("../_shared/r2.ts")};
 import{presignGet as realPresignGet}from ${href("../_shared/providers/common.ts")};
 import{probeRetainedProviderMP4Video as realProbe}from ${href("../ai-video/mp4video.ts")};

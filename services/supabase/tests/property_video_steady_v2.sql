@@ -19,6 +19,8 @@ select pg_temp.refuse($q$select property_video_job_admit((select actor from bf),
 select pg_temp.ok(not exists(select 1 from property_video_jobs where operation_id=(pg_temp.recipe(2)->>'operation_id')::uuid),'stale quote creates no job');
 -- Closed actual Apple receipt fixture, ordinaryStarter with no internal grant.
 reset role;update app_config set value='{"mode":"ceiling","free_published_listings":1}'where key='serving_mode';
+-- Release the shared seed's manual grant so the verified Apple receipt can win.
+update orgs set plan='free',plan_source=null,plan_expires_at=null where id=(select org from bf);
 set local role service_role;
 select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'quality-original','quality-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');
 select pg_temp.ok(not org_has_internal_testing_grant((select org from bf))and(org_entitlement((select org from bf))).reels_per_month=30,'real ordinary capacity authority, no sponsored fixture');

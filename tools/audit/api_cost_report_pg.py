@@ -58,7 +58,7 @@ if pg_config:
 tool = lambda name: shutil.which(name, path=ENV["PATH"])
 assert all(tool(name) for name in ["initdb", "pg_ctl", "createdb", "psql"]), "PostgreSQL tools must already be installed"
 DATA = Path(tempfile.mkdtemp(prefix="cost-report-owned-pg-", dir=OUT))
-SOCK = Path(tempfile.mkdtemp(prefix="cost-report-sock-", dir="/tmp"))
+SOCK = Path(tempfile.mkdtemp(prefix="cost-report-sock-", dir=os.environ.get("RENDPROP_PG_SOCKET_ROOT", "/tmp")))
 MIGRATIONS = sorted((SQL / "migrations").glob("*.sql"))
 SNAPSHOT_SQL = HERE / "api_cost_snapshot.sql"
 SOURCES = [*MIGRATIONS, SQL / "tests/ci-bootstrap.sql", SNAPSHOT_SQL, HERE / "api_cost_report.py", Path(__file__).resolve()]
@@ -119,7 +119,7 @@ OTHER = "a9200000-0000-4000-8000-000000000033"
 
 try:
     run("initdb", [tool("initdb"), "-D", DATA, "-U", "postgres", "-A", "trust", "--no-locale", "--encoding=UTF8"])
-    run("start", [tool("pg_ctl"), "-D", DATA, "-l", OUT / "postgres.log", "-w", "-o", f"-k {SOCK} -p {PORT} -c listen_addresses='' -c shared_buffers=16MB", "start"])
+    run("start", [tool("pg_ctl"), "-D", DATA, "-l", OUT / "postgres.log", "-w", "-o", f"-k '{SOCK}' -p {PORT} -c listen_addresses='' -c shared_buffers=16MB", "start"])
     started = True
     conn = ["-h", SOCK, "-p", PORT, "-U", "postgres"]
     run("createdb", [tool("createdb"), *conn, "cost_report"])

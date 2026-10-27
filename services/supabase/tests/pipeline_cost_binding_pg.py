@@ -90,13 +90,14 @@ def main():
   pins={str(p):sha(p)for p in inputs};tools={str(p):sha(p)for p in [Path(sys.executable).resolve(),*[pg/n for n in ['initdb','pg_ctl','postgres','psql']]]}
   def verify():
    for p,v in {**pins,**tools}.items():assert sha(p)==v,'Consumed source/tool drift:'+p
+  socket_root=Path(os.environ.get('RENDPROP_PG_SOCKET_ROOT','/tmp')).resolve()
   if a.socket_dir:
-   socket=a.socket_dir.absolute();assert socket.parent.resolve()==Path('/tmp').resolve()and socket.name.startswith('rp-pipeline-')and not socket.exists(),'Exclusive short owned socket path required';socket.mkdir(mode=0o700)
-  else:socket=Path(tempfile.mkdtemp(prefix='rp-pipeline-',dir='/tmp'))
+   socket=a.socket_dir.absolute();assert socket.parent.resolve()==socket_root and socket.name.startswith('rp-pipeline-')and not socket.exists(),'Exclusive short owned socket path required';socket.mkdir(mode=0o700)
+  else:socket=Path(tempfile.mkdtemp(prefix='rp-pipeline-',dir=socket_root))
   port=52000+os.getpid()%10000
   write(out/'INTENT.json',{'sourcePins':pins,'toolPins':tools,'migrations':len(migrations),'ownMigration':OWN,'network':'Supplier and REST HTTP are closed fixture functions; PostgreSQL Unix socket only','wholeSeconds':420,'childCaseSeconds':120})
   run('initdb',[pg/'initdb','-D',data,'-A','trust','-U','postgres','--no-locale','-E','UTF8'])
-  run('start',[pg/'pg_ctl','-D',data,'-l',out/'postgres.log','-o',"-F -c listen_addresses='' -k "+str(socket)+' -p '+str(port),'-w','start']);server=True
+  run('start',[pg/'pg_ctl','-D',data,'-l',out/'postgres.log','-o',"-F -c listen_addresses='' -k '"+str(socket)+"' -p "+str(port),'-w','start']);server=True
   psql=[str(pg/'psql'),'-X','-q','-A','-t','-v','ON_ERROR_STOP=1','-h',str(socket),'-p',str(port),'-U','postgres','-d','postgres']
   def q(name,sql,refuses=None):
    text=run(name,psql,body=sql,refuses=refuses)

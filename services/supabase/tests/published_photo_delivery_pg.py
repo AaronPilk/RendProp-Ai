@@ -13,7 +13,7 @@ if os.uname().sysname=='Darwin':
     assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve 3GiB internal reserve'
     assert a.data_root or os.environ.get('RENDPROP_PG_DATA_ROOT'),'Use external PG DATA on this Mac'
 DATA=Path(tempfile.mkdtemp(prefix='photo-delivery-pg-',dir=a.data_root or os.environ.get('RENDPROP_PG_DATA_ROOT')))
-SOCK=Path(tempfile.mkdtemp(prefix='pds-',dir='/tmp'))
+SOCK=Path(tempfile.mkdtemp(prefix='pds-',dir=os.environ.get('RENDPROP_PG_SOCKET_ROOT','/tmp')))
 TOOLS={n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)for n in ['initdb','pg_ctl','psql','createdb']}
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 MIG=SQL/'migrations/20261015184120_published_photo_delivery.sql';TEST=SQL/'tests/published_photo_delivery.sql'
@@ -77,7 +77,7 @@ insert into media_serving_usage(org_id,usage_day,used_requests,used_bytes)values
             if child and child.poll()is None:child.kill();child.wait(timeout=10)
 try:
     run('initdb',[TOOLS['initdb'],'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
-    run('start',[TOOLS['pg_ctl'],'-D',DATA,'-l',OUT/'postgres.log','-w','-t','30','-o',f"-k {SOCK} -p 55568 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
+    run('start',[TOOLS['pg_ctl'],'-D',DATA,'-l',OUT/'postgres.log','-w','-t','30','-o',f"-k '{SOCK}' -p 55568 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
     conn=['-h',SOCK,'-p','55568','-U','postgres'];run('createdb',[TOOLS['createdb'],*conn,'photo_delivery'])
     P=[TOOLS['psql'],'-X','--no-password',*conn,'-d','photo_delivery','-v','ON_ERROR_STOP=1']
     run('bootstrap',P+['-q','-f',SQL/'tests/ci-bootstrap.sql'])
@@ -100,8 +100,11 @@ try:
         assert x.returncode!=0 and needle in x.stdout,(name,x.stdout[-2000:]);r['controls'].append({'name':name,'compiledActualRPC':True,'oracleRejected':needle})
         run('restore-'+name,P+['-Atq'],definition)
     visibility=run('visibility-definition',P+['-Atq','-c',"select pg_get_functiondef('public.studio_presenter_media_visibility(uuid,uuid[],uuid[],text[])'::regprocedure)"]).stdout
-    for name,old,new in [('visibility-missing','return jsonb_build_object(\'assets\',assets,\'renders\',renders,\'keys\',keys);',"return '{}'::jsonb;"),
-                         ('visibility-string-boolean',"jsonb_build_object('assets',assets,'renders',renders,'keys',keys)","replace(jsonb_build_object('assets',assets,'renders',renders,'keys',keys)::text,': true',': \"true\"')::jsonb")]:
+    # The later accepted-photo-publication migration adds a fifth visibility
+    # field. Fault the actual final helper without removing that authority.
+    final_visibility="jsonb_build_object('assets',assets,'renders',renders,'keys',keys,'photo_publications',public.photo_publication_visibility(p_listing,p_assets,p_keys))"
+    for name,old,new in [('visibility-missing','return '+final_visibility+';',"return '{}'::jsonb;"),
+                         ('visibility-string-boolean',final_visibility,"replace("+final_visibility+"::text,': true',': \"true\"')::jsonb")]:
         assert visibility.count(old)==1,(name,old)
         changed=visibility.replace(old,new)
         malformed(name,changed,'RP404:');run('restore-'+name,P+['-Atq'],visibility)

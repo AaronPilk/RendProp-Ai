@@ -111,7 +111,10 @@ ktext=KIE.read_text();money=ktext[ktext.index('create function pg_temp.kie_hold'
 stext=SCOPE.read_text();helpers=stext[:stext.index('-- Migration defaults')]
 identity='create temporary table kie_identity_file as select $ki$'+IDENT.read_text()+'$ki$::jsonb j;grant select on kie_identity_file to service_role;'
 paid="update app_config set value='{\"mode\":\"ceiling\",\"free_published_listings\":1}'where key='serving_mode';update app_config set value=jsonb_set(value,'{enabled}','true')where key='paid_quality_processing';update app_config set value='{\"enabled\":false}'where key='photo_preservation_quality';set local role service_role;select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'owned-seed-fixture-original','owned-seed-fixture-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');reset role;"
-prefix='begin;'+seed+paid+identity+money+helpers
+# The manual Starter grant in the common seed only admits its listing; the
+# verified Apple receipt must become the plan authority for this fixture.
+release_seed_grant="update public.orgs set plan='free',plan_source=null,plan_expires_at=null where id=(select org from bf);"
+prefix='begin;'+seed+release_seed_grant+paid+identity+money+helpers
 try:
  run('initdb',[tool('initdb'),'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
  run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k {SOCK} -p {PORT} -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
