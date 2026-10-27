@@ -11,11 +11,14 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
+from tools.audit.run_database_regression import LIVE_STATE_ONLY_MIGRATIONS
 SQL = ROOT / "services/supabase"
 parser = argparse.ArgumentParser()
 parser.add_argument("--evidence-dir", type=Path, required=True)
@@ -33,12 +36,22 @@ env = {
     "PGOPTIONS": "-c statement_timeout=60000 -c lock_timeout=15000",
 }
 tool = lambda name: shutil.which(name) or str(Path("/opt/homebrew/opt/postgresql@17/bin") / name)
-migrations = sorted((SQL / "migrations").glob("*.sql"))
-inputs = [SQL / "tests/ci-bootstrap.sql", *migrations,
+all_migrations = sorted((SQL / "migrations").glob("*.sql"))
+for migration in all_migrations:
+    pinned = LIVE_STATE_ONLY_MIGRATIONS.get(migration.name)
+    if pinned is not None:
+        assert hashlib.sha256(migration.read_bytes()).hexdigest() == pinned, (
+            f"Review changed live-state-only migration: {migration.name}")
+migrations = [migration for migration in all_migrations
+              if migration.name not in LIVE_STATE_ONLY_MIGRATIONS]
+trial_migration = SQL / "migrations/20261026165813_limit_intro_trial_creative_spend.sql"
+assert trial_migration in migrations
+inputs = [SQL / "tests/ci-bootstrap.sql", *all_migrations,
           SQL / "tests/limited_trial_creative_spend.sql",
           SQL / "tests/subscription_confirmed_trial.sql",
           SQL / "tests/invariants.sql", SQL / "tests/property_video_jobs.sql",
-          SQL / "tests/paid_quality_processing.sql", Path(__file__).resolve()]
+          SQL / "tests/paid_quality_processing.sql",
+          ROOT / "tools/audit/run_database_regression.py", Path(__file__).resolve()]
 hashes = {
     str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
     for path in inputs
@@ -89,7 +102,7 @@ try:
             if line.startswith("{") and '"assertions"' in line]
     assert len(rows) == 1 and rows[0]["passed"], rows
     receipt["fresh"] = rows[0]
-    run("replay-refused-by-cas", [*psql, "-q", "-1", "-f", migrations[-1]],
+    run("replay-refused-by-cas", [*psql, "-q", "-1", "-f", trial_migration],
         refuses="Review changed org_entitlement before limited-trial migration")
     output = run("post-refusal-limited-trial", [
         *psql, "-Atq", "-f", SQL / "tests/limited_trial_creative_spend.sql"])

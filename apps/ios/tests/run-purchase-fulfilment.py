@@ -46,11 +46,11 @@ struct LiveAPIClient {static func serverError(status:Int,data:Data)->APIError{.s
  static func validAccessToken()async->String?{onToken?();return token};static func storedAccessToken()->String?{token};func forceRefresh()async->Bool{onRefresh?();return true}
 """
 interfaces+=block(auth,'static func jwtSubject(')+'\n}\n'
-base=interfaces+block(api,'enum APIError:')+'\n'+block(b,'struct ServingActivationSummary:')+'\n'+block(a,'struct EntitlementSync:')+'\n'+block(a,'private final class TrialPurchaseRedirectPolicy:').replace('private ','',1)+'\n'+block(a,'@MainActor private enum PurchasesRequest').replace('private enum','enum')+'\n'+block(b,'enum PurchaseWorkspaceBindingStore')+'\n'
+base=interfaces+block(api,'enum APIError:')+'\n'+block(b,'enum RecordedTrialPresentation {')+'\n'+block(b,'struct ServingActivationSummary:')+'\n'+block(a,'struct EntitlementSync:')+'\n'+block(a,'private final class TrialPurchaseRedirectPolicy:').replace('private ','',1)+'\n'+block(a,'@MainActor private enum PurchasesRequest').replace('private enum','enum')+'\n'+block(b,'enum PurchaseWorkspaceBindingStore')+'\n'
 base+='enum RendpropProducts {\n'+block(products,'static func plan(for')+'\n'+block(products,'static func planName(for')+'\n}\n'
 def program(source):
  result=base+block(source,'enum PurchaseFulfilmentRecovery')+'\n'+block(source,'enum PurchaseFulfilmentRefusals')+'\n'
- result+='@MainActor final class PurchaseManager {var api:FulfilmentAPI?;var lastError:String?;var notice:String?;var activePlan:String?;var activeProductID:String?;var activeExpiresAt:Date?;var unsynced:[UInt64:PendingSync]=[:];var unsyncedCount=0;var syncedThisSession:Set<String>=[];var onRenewal:(()->Void)?;func renewalInfoJWS(forProductID:String)async->String?{onRenewal?();return nil}\n'
+ result+='@MainActor final class PurchaseManager {var api:FulfilmentAPI?;var lastError:String?;var notice:String?;var activePlan:String?;var activeProductID:String?;var activeOriginalTransactionID:String?;var activeExpiresAt:Date?;var activeBillingOwner:UUID?;var unsynced:[UInt64:PendingSync]=[:];var unsyncedCount=0;var syncedThisSession:Set<String>=[];var onRenewal:(()->Void)?;func renewalInfoJWS(forProductID:String)async->String?{onRenewal?();return nil}\n'
  result+=block(source,'private struct PendingSync').replace('private ','',1)+'\n'
  for n in ['private func handle(','private func hasCurrentFulfilmentContext(','private func sync(','private func applyServerPlan(','private func remember(','private func forget(','func retryUnsynced(']:result+=block(source,n).replace('private ','',1)+'\n'
  return result+'}\n'
