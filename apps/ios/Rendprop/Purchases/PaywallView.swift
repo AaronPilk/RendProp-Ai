@@ -581,7 +581,7 @@ private struct SelectedPlanDetails: View {
                     .font(.rpCaption).foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("After the trial, AI tools use monthly credits. Each tool also has a usage limit. See Plan & usage for your available balance and limits.")
+            Text("After the trial, Declutter uses monthly credits. Other AI tools have separate plan limits. See Plan & usage for your balance and limits.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
             DisclosureGroup("How video allowances work") {

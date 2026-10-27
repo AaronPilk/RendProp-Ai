@@ -395,7 +395,7 @@ struct PlanBanner: View {
     /// Credits are the primary creative meter for paid retail plans. Actual
     /// spendable balance is shown by Plan & usage, after ledger funding.
     static func paidDetail(_ allowances: Allowances?, fallback plan: RendpropPlan) -> String {
-        "\(plan.allowances.credits) AI credits per paid month. Check Plan & usage for your available balance."
+        "\(plan.allowances.credits) Declutter credits per paid month. Check Plan & usage for your available balance."
     }
 
     /// Manual historical plans retain their independent recorded allowances.
