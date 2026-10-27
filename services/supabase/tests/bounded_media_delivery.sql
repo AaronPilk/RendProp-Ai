@@ -9,7 +9,8 @@ create temp table fixture(a uuid,o uuid,l uuid,b uuid,other uuid,start timestamp
 do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();o uuid;other uuid;l uuid:=gen_random_uuid();begin
  insert into auth.users(id,email)values(a,'media-owner@fixture.invalid'),(b,'media-peer@fixture.invalid');
  select org_id into o from memberships where user_id=a;select org_id into other from memberships where user_id=b;
- insert into listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic media');update orgs set plan='pro',plan_source='manual',plan_expires_at=null where id=o;
+ update orgs set plan='pro',plan_source='manual',plan_expires_at=null where id=o;
+ insert into listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic media');
  insert into fixture values(a,o,l,b,other,now()-interval '1 minute',now()+interval '1 day');end$$;
 grant select on fixture to service_role,authenticated,anon;
 create function pg_temp.tariff()returns jsonb language sql as $$select '{"r2_a_cents_per_million":450,"r2_b_cents_per_million":36,"worker_cents_per_million":30,"worker_cpu_cents_per_million_ms":2,"edge_cents_per_million":200,"db_cents":1,"logs_cents":1,"storage_cents_per_gb_month":1.5}'::jsonb$$;

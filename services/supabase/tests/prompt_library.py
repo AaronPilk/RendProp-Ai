@@ -77,6 +77,10 @@ try:
  complete=True
 finally:
  failure=str(sys.exc_info()[1]) if sys.exc_info()[1] else None
- if started:run([PG/'pg_ctl','-D',OUT/'data','-m','fast','-w','stop'])
+ try:
+  if started:run([PG/'pg_ctl','-D',OUT/'data','-m','fast','-w','stop'])
+ finally:
+  if not (OUT/'data'/'postmaster.pid').exists():
+   shutil.rmtree(SOCK,ignore_errors=True)
  receipt={'ok':complete,'checks':checks,'passed':len(checks),'sourceSHA256':hashes,'productionCalls':0,'socketOnly':True,'clusterStopped':started,'output':str(OUT),'error':failure}
  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps(receipt,indent=2))

@@ -10,7 +10,11 @@ do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();c uuid:=gen_ran
  insert into auth.users(id,email,is_anonymous,email_confirmed_at)values(a,'auth-owner@fixture.invalid',false,now()),(b,'unconfirmed@fixture.invalid',false,null),(c,'anonymous@fixture.invalid',true,now()),(m,'marketing@fixture.invalid',false,now());
  select org_id into o from memberships where user_id=a;select org_id into other from memberships where user_id=b;
  insert into memberships(user_id,org_id,role)values(m,o,'marketing'),(c,o,'agent');
+ -- The recipient contract runs on Free after this synthetic property was
+ -- created during the owner's active intro week.
+ update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=o;
  insert into listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic private property');
+ update orgs set plan='free',plan_source=null,trial_ends_at=null where id=o;
  update profiles set email='attacker@fixture.invalid'where id=a;
  insert into fixture values(a,b,c,m,o,other,l,gen_random_uuid());
 end$$;

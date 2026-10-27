@@ -10,7 +10,11 @@ do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();m uuid:=gen_ran
  insert into auth.users(id,email,is_anonymous)values(a,'owner@fixture.invalid',false),(b,'other@fixture.invalid',false),(m,'marketing@fixture.invalid',false);
  select org_id into o from memberships where user_id=a;select org_id into other from memberships where user_id=b;
  insert into memberships(user_id,org_id,role)values(m,o,'marketing');
+ -- The cleanup contract runs on Free after a synthetic active intro week
+ -- admitted this existing private property.
+ update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=o;
  insert into listings(id,org_id,agent_id,address)values(l,o,a,'Private cleanup fixture');
+ update orgs set plan='free',plan_source=null,trial_ends_at=null where id=o;
  insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,transport_version)values(p,l,'photo','renders','renders/'||o||'/'||l||'/'||p||'.jpg',true,2);
  insert into fixture values(a,b,m,o,other,l,gen_random_uuid(),p,'ai-router/'||o||'/image.edit/'||gen_random_uuid()||'.jpg');
 end$$;
@@ -105,7 +109,9 @@ do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();o uuid;other uu
  insert into auth.users(id,email,is_anonymous)values(a,'deletion@fixture.invalid',false),(b,'shared@fixture.invalid',false);
  select org_id into o from memberships where user_id=a;select org_id into other from memberships where user_id=b;
  insert into memberships(user_id,org_id,role)values(a,other,'agent');
+ update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=o;
  insert into listings(id,org_id,agent_id,address)values(l,o,a,'Account deletion fixture');
+ update orgs set plan='free',plan_source=null,trial_ends_at=null where id=o;
  insert into leads(org_id,listing_id,phone,created_at)values(o,l,'7275550102',now()-interval '1 day');
  set local role service_role;
  r:=prepare_account_deletion(a,'uploads','renders');
