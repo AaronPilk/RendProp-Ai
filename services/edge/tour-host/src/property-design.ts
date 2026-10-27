@@ -47,8 +47,9 @@ const DESIGN_CSS = `
   $P .lp-prose p { max-width:60ch; font-size:clamp(16px,1.25vw,18px); line-height:1.85; color:var(--ink-dim); }
   $P .lp-prose p:first-child { color:var(--ink); font-size:clamp(18px,1.6vw,22px); line-height:1.6; font-weight:400; }
 
-  /* Floating glass navigation: one capsule, native links, 44px targets. */
-  $P #listing-nav { position:sticky; top:14px; z-index:30; width:calc(100% - 40px); max-width:1240px; margin:14px auto 0; border:1px solid var(--premium-line); border-radius:999px; color:var(--ink); background:var(--premium-paper); box-shadow:0 1px 2px rgba(20,24,20,.05),0 14px 40px -18px rgba(20,24,20,.28); }
+  /* Opaque floating navigation keeps muted labels legible over any hero image,
+     including in Safari versions that do not expose Reduce Transparency. */
+  $P #listing-nav { position:sticky; top:14px; z-index:30; width:calc(100% - 40px); max-width:1240px; margin:14px auto 0; border:1px solid var(--premium-line); border-radius:999px; color:var(--ink); background:var(--premium-paper); backdrop-filter:none; -webkit-backdrop-filter:none; box-shadow:0 1px 2px rgba(20,24,20,.05),0 14px 40px -18px rgba(20,24,20,.28); }
   $P.site-preview #listing-nav { position:relative; top:auto; }
   $P .listing-nav-inner { max-width:none; padding:5px 6px 5px 10px; gap:10px; }
   $P #listing-nav :is(a,button,summary) { min-height:44px; min-width:44px; padding:10px 15px; border:0; border-radius:999px; color:var(--ink); background:transparent; font:500 13px/1.3 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; letter-spacing:.01em; transition:background-color .16s ease,color .16s ease,transform .16s var(--lux-ease); }
@@ -60,9 +61,6 @@ const DESIGN_CSS = `
   $P #listing-nav .listing-backtop { color:var(--ink-dim); }
   $P #listing-nav :is(a,button):active { transform:scale(.97); }
   $P .property-page-menu { display:none; }
-  @supports ((backdrop-filter:blur(16px)) or (-webkit-backdrop-filter:blur(16px))) {
-    $P #listing-nav { background:var(--premium-glass); backdrop-filter:blur(24px) saturate(1.5); -webkit-backdrop-filter:blur(24px) saturate(1.5); }
-  }
   @media(hover:hover) and (pointer:fine) {
     $P #listing-nav .listing-nav-links a:hover { color:var(--ink); background:var(--accent-soft); }
     $P #listing-nav .walkthrough-secondary:hover,$P #listing-nav .listing-backtop:hover { color:var(--ink); }
@@ -78,7 +76,7 @@ const DESIGN_CSS = `
   }
 
   /* ─────────────── Opening: the property's own media is the architecture ──
-     Desktop: the poster (or cover photo) fills the viewport under the glass
+     Desktop: the poster (or cover photo) fills the viewport under the floating
      navigation; the complete, uncropped film plays after an explicit tap with
      native controls, over a softened still of itself. Identity, price and the
      actions stay inside the first screen at every size. */
@@ -463,7 +461,7 @@ const DESIGN_CSS = `
 
   /* ═══════════ Signature Estate: an architectural dark opening, then ivory
      editorial spreads. Sharp corners, hairlines, brass only as a whisper. ═══ */
-  $S { --bg:#f5f1e9; --premium-paper:#fbf8f1; --premium-glass:rgba(251,248,241,.74); --ink:#1c201d; --ink-dim:#5f645d; --accent:#7a5f31; --accent-3:#7a5f31; --accent-soft:#ece5d4; --premium-line:rgba(28,32,29,.12); --premium-line-strong:rgba(28,32,29,.3); --lux-fill:#1d2320; --lux-fill-hover:#2c342f; --on-accent:#f5f1e9; --hero-bg:#141816; --hero-accent:#d9c493; --hero-cta:#f3ecdc; --hero-cta-ink:#1d2320; --lux-serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif; --lux-radius:0px; --lux-radius-s:4px; }
+  $S { --bg:#f5f1e9; --premium-paper:#fbf8f1; --ink:#1c201d; --ink-dim:#5f645d; --accent:#7a5f31; --accent-3:#7a5f31; --accent-soft:#ece5d4; --premium-line:rgba(28,32,29,.12); --premium-line-strong:rgba(28,32,29,.3); --lux-fill:#1d2320; --lux-fill-hover:#2c342f; --on-accent:#f5f1e9; --hero-bg:#141816; --hero-accent:#d9c493; --hero-cta:#f3ecdc; --hero-cta-ink:#1d2320; --lux-serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif; --lux-radius:0px; --lux-radius-s:4px; }
   $S .listing-cover .property-hero-price { color:var(--hero-accent); }
   $S #gallery { background:#efe9dc; }
   $S #gallery + .lp-sec,$S #story + #gallery { border-top:0; }
@@ -475,7 +473,7 @@ const DESIGN_CSS = `
 
   /* ═══════════ Coastal Luxe: sunlit sand, sea glass and open space. The opening
      is a framed panel beside the identity; everything is softly rounded. ═══ */
-  $C { --bg:#f8f7f2; --premium-paper:#ffffff; --premium-glass:rgba(255,255,255,.72); --ink:#10302c; --ink-dim:#57716b; --accent:#1f6b60; --accent-3:#1f6b60; --accent-soft:#e4efe9; --premium-line:rgba(16,48,44,.12); --premium-line-strong:rgba(16,48,44,.3); --lux-fill:#124a42; --lux-fill-hover:#0d3b35; --on-accent:#f3f8f5; --hero-bg:#10302c; --hero-accent:#bfe3d6; --hero-cta:#f3f8f5; --hero-cta-ink:#124a42; --lux-serif:"Hoefler Text",Baskerville,"Baskerville Old Face","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif; --lux-radius:24px; --lux-radius-s:14px; }
+  $C { --bg:#f8f7f2; --premium-paper:#ffffff; --ink:#10302c; --ink-dim:#57716b; --accent:#1f6b60; --accent-3:#1f6b60; --accent-soft:#e4efe9; --premium-line:rgba(16,48,44,.12); --premium-line-strong:rgba(16,48,44,.3); --lux-fill:#124a42; --lux-fill-hover:#0d3b35; --on-accent:#f3f8f5; --hero-bg:#10302c; --hero-accent:#bfe3d6; --hero-cta:#f3f8f5; --hero-cta-ink:#124a42; --lux-serif:"Hoefler Text",Baskerville,"Baskerville Old Face","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif; --lux-radius:24px; --lux-radius-s:14px; }
   $C .lp-h,$C .property-hero-title,$C .property-page-head h1,$C .panel h2 { letter-spacing:-.02em; }
   $C #listing-nav { border-radius:999px; }
   $C .lp-sec + .lp-sec { border-top:0; }

@@ -14,6 +14,7 @@
     "check:property-video-browser": "node scripts/check-property-video-browser.mjs",
     "check:property-video-controls": "node scripts/check-property-video-controls.mjs",
     "check:property-site-browser": "node scripts/check-property-site-browser.mjs",
+    "check:paid-nav-accessibility": "node scripts/check-paid-nav-accessibility.mjs",
     "check:spatial": "node scripts/check-spatial.mjs",
     "check:bundle": "node scripts/check-bundle.mjs",
     "tail": "wrangler tail",
