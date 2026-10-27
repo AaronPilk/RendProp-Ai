@@ -32,6 +32,8 @@ EXTERNAL = Path("/Volumes/Rendprop Files")
 MIG = SQL / "migrations/20261017200000_photo_output_feedback.sql"
 FIX = SQL / "tests/photo_feedback.sql"
 ROLLBACK = SQL / "tests/fixtures/photo_output_feedback_rollback.sql"
+def psql_include(path):
+    return "\\i '" + str(path).replace("'", "''") + "'\n"
 MIGRATIONS = sorted((SQL / "migrations").glob("*.sql"))
 assert MIG in MIGRATIONS, "Photo feedback migration missing"
 SCHEMA_MIGRATIONS = partition_fresh_migrations(MIGRATIONS)[0]
@@ -268,7 +270,7 @@ commit;""")
         ("guard-foreign-evidence-check", "alter table public.photo_edit_evidence drop constraint photo_edit_evidence_recipe_pair_check;alter table public.photo_edit_evidence add constraint photo_edit_evidence_recipe_pair_check check(true);", "Review changed photo evidence recipe columns"),
     ]:
         # Each foreign object is refused by the replay guard inside a transaction that is rolled back.
-        run("replay-refuses-" + label, [*PSQL, "-q"], "begin;\n" + mutate + "\n\\i " + str(MIG) + "\n", refuses=needle)
+        run("replay-refuses-" + label, [*PSQL, "-q"], "begin;\n" + mutate + "\n" + psql_include(MIG), refuses=needle)
         r["controls"].append({"name": label, "replayGuardRefused": True, "oracle": needle})
     assert json.loads(query("after-guard-controls", CATALOG)) == final_boundary
     # Real concurrent offline resends against committed outputs.
@@ -328,10 +330,10 @@ commit;""")
     run("rollback-refuses-observations", [*PSQL, "-q", "-f", ROLLBACK], refuses="Rollback would discard")
     original = query("read-rollback-foreign", "select pg_get_functiondef('public.photo_feedback_state(uuid,uuid,uuid)'::regprocedure);")
     query("compile-rollback-foreign", original.replace("select*into c from public.photo_regression_cases where provenance_id=p_provenance;", "select*into c from public.photo_regression_cases where provenance_id=p_provenance and true;", 1))
-    run("rollback-refuses-foreign-helper", [*PSQL, "-q"], "set rendprop.photo_feedback_rollback='discard-observations';\n\\i " + str(ROLLBACK) + "\n", refuses="Rollback refuses a changed photo feedback helper")
+    run("rollback-refuses-foreign-helper", [*PSQL, "-q"], "set rendprop.photo_feedback_rollback='discard-observations';\n" + psql_include(ROLLBACK), refuses="Rollback refuses a changed photo feedback helper")
     query("restore-rollback-foreign", original)
     data_before = json.loads(query("rollback-data-before", DATA_DIGEST))
-    run("rollback-confirmed", [*PSQL, "-q"], "set rendprop.photo_feedback_rollback='discard-observations';\n\\i " + str(ROLLBACK) + "\n")
+    run("rollback-confirmed", [*PSQL, "-q"], "set rendprop.photo_feedback_rollback='discard-observations';\n" + psql_include(ROLLBACK))
     assert query("rollback-own-absent", OWN_ABSENT).strip() == "t"
     after_rollback = json.loads(query("rollback-catalog", CATALOG))
     for key in ["functions", "constraints", "columns", "relations", "triggers", "policies"]:
