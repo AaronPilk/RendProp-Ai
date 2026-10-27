@@ -81,9 +81,13 @@ try{
   await page.goto(origin+'/property/synthetic-video?published_theme='+theme,{waitUntil:'networkidle'});
   check(mediaRequests().length===before,'No initial video download for '+theme);
   check(await page.locator('#property-video-play').isVisible(),'Clear Play affordance for '+theme);
-  const layout=await page.evaluate(()=>{const v=document.getElementById('property-video'),stage=v.parentElement,bounds=stage.getBoundingClientRect();return {width:bounds.width,height:bounds.height,fit:getComputedStyle(v).objectFit,overflow:document.documentElement.scrollWidth>innerWidth,poster:v.poster,body:document.body.className};});
+  const layout=await page.evaluate(()=>{const v=document.getElementById('property-video'),stage=v.parentElement,bounds=stage.getBoundingClientRect();const vb=v.getBoundingClientRect();return {width:bounds.width,height:bounds.height,video:{width:vb.width,height:vb.height},fit:getComputedStyle(v).objectFit,overflow:document.documentElement.scrollWidth>innerWidth,poster:v.poster,body:document.body.className};});
   check(!layout.overflow,'No horizontal mobile overflow for '+theme);
-  check(Math.abs(layout.width/layout.height-16/9)<.01&&layout.fit==='contain','Complete landscape master retained at mobile width for '+theme);
+  // Classic keeps a 16:9 stage. The paid openings use the poster as a full
+  // first-screen display image; the master itself stays object-fit contain
+  // inside that stage, so the complete landscape frame is never cropped.
+  if(theme==='basic')check(Math.abs(layout.width/layout.height-16/9)<.01&&layout.fit==='contain','Complete landscape master retained at mobile width for '+theme);
+  else check(layout.fit==='contain'&&layout.video.width===layout.width&&layout.video.height===layout.height&&Math.min(layout.width,layout.height*16/9)>0,'Complete landscape master retained at mobile width for '+theme);
   check(layout.body.includes('site-theme-'+theme),'Actual server style rendered for '+theme);measurements.push({theme,...layout});
   await page.screenshot({path:join(evidence,theme+'-mobile.png'),fullPage:false});
   // W1: premium designs present a film (running time, quiet play mark, silent
@@ -142,8 +146,9 @@ try{
  check(requests.filter(x=>x.path.includes('/beacon/')).length===beaconBefore,'Actual preview playback emits no analytics/billing requests');
  await page.setViewportSize({width:1440,height:1000});await page.goto(origin+'/property/synthetic-video?published_theme=signature-estate',{waitUntil:'networkidle'});
  await page.screenshot({path:join(evidence,'signature-estate-desktop.png'),fullPage:false});
- const desktop=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth>innerWidth,width:document.querySelector('.property-video-stage').getBoundingClientRect().width}));
- check(!desktop.overflow&&desktop.width<=1200,'Desktop hero retains bounded usable content');
+ // A full-bleed paid opening is allowed only while the complete contained 16:9 frame still fits the viewport height.
+ const desktop=await page.evaluate(()=>{const r=document.querySelector('.property-video-stage').getBoundingClientRect();return {overflow:document.documentElement.scrollWidth>innerWidth,width:r.width,frameHeight:Math.min(r.height,r.width*9/16),viewport:innerHeight};});
+ check(!desktop.overflow&&(desktop.width<=1200||desktop.frameHeight<=desktop.viewport),'Desktop hero retains bounded usable content');
  await page.emulateMedia({reducedMotion:'reduce'});
  await page.locator('.lp-gcell').first().hover();
  const stillCard=await page.locator('.lp-gcell').first().evaluate(el=>({transform:getComputedStyle(el).transform,transition:getComputedStyle(el).transitionDuration,imageTransform:getComputedStyle(el.querySelector('img')).transform}));
@@ -152,6 +157,29 @@ try{
  await page.goto(origin+'/property/synthetic-video?published_theme=coastal-luxe',{waitUntil:'networkidle'});
  const coastal=await page.evaluate(()=>{const stage=document.querySelector('.property-video-stage').getBoundingClientRect(),hero=document.querySelector('.property-video-hero');return {display:getComputedStyle(hero).display,width:stage.width,height:stage.height,overflow:document.documentElement.scrollWidth>innerWidth};});
  check(coastal.display==='grid'&&!coastal.overflow&&Math.abs(coastal.width/coastal.height-16/9)<.01,'Coastal desktop layout stays distinct while retaining the full landscape canvas');
+ // Reduced Motion must leave the identity visible wherever the playing
+ // layout places it beside or below the film. Signature desktop intentionally
+ // clears the overlay to leave the full frame unobstructed.
+ await page.emulateMedia({reducedMotion:'reduce'});
+ for(const theme of ['signature-estate','coastal-luxe'])for(const width of [390,1440]){
+  await page.setViewportSize({width,height:width===390?844:1000});
+  await page.goto(origin+'/property/synthetic-video?published_theme='+theme,{waitUntil:'networkidle'});
+  await page.locator('#property-video-play').click();
+  await page.waitForFunction(()=>document.querySelector('.property-film.is-playing')&&document.getElementById('property-video').currentTime>0);
+  const identity=await page.locator('.property-hero-copy').evaluate(el=>{const style=getComputedStyle(el),rect=el.getBoundingClientRect();return {opacity:style.opacity,visibility:style.visibility,display:style.display,width:rect.width,height:rect.height};});
+  measurements.push({theme,width,reducedMotion:true,playingIdentity:identity});
+  const shouldShow=theme==='coastal-luxe'||width===390;
+  check(identity.opacity===(shouldShow?'1':'0')&&identity.visibility==='visible'&&identity.display!=='none'&&identity.width>0&&identity.height>0,`Reduced Motion playing ${theme} at ${width}px ${shouldShow?'keeps the identity visible':'clears the desktop overlay'}`);
+ }
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ await page.setViewportSize({width:1440,height:1000});
+ await page.goto(origin+'/property/synthetic-video?published_theme=signature-estate',{waitUntil:'networkidle'});
+ await page.locator('#property-video-play').click();
+ await page.waitForFunction(()=>document.querySelector('.property-film.is-playing'));
+ const hiddenActions=await page.locator('.property-hero-copy a,.property-hero-copy button,.property-hero-copy summary').evaluateAll(elements=>elements.map(el=>getComputedStyle(el).visibility));
+ check(hiddenActions.length>=3&&hiddenActions.every(value=>value==='hidden'),'Signature desktop removes faded film hero actions from the keyboard order');
+ const invisibleActionFocused=await page.locator('.property-hero-copy a').first().evaluate(el=>{el.focus();return document.activeElement===el;});
+ check(!invisibleActionFocused,'Signature desktop cannot focus an invisible hero action after Play');
  await page.goto(origin+'/u/synthetic-video',{waitUntil:'networkidle'});
  check(await page.locator('#property-video-play').isVisible()&&await page.locator('form').count()===0,'MLS retains normal property video without contact');
  check(errors.length===0,'No actual browser script errors');check(external.length===0,'No external template assets, fonts, trackers or provider requests');

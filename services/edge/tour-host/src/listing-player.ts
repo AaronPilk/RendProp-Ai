@@ -72,7 +72,7 @@ export const LISTING_PLAYER_JS = `
     if (listingNav) {
       var navHeight = listingNav.getBoundingClientRect().height;
       var previewHeight = previewBanner ? previewBanner.getBoundingClientRect().height : 0;
-      document.documentElement.style.setProperty('--listing-nav-offset',(Math.ceil(Math.max(navHeight,previewHeight))+16)+'px');
+      document.body.style.setProperty('--listing-nav-offset',(Math.ceil(Math.max(navHeight,previewHeight))+16)+'px');
     }
   }
   updateNavOffset();

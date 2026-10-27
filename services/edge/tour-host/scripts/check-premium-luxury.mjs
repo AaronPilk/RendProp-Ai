@@ -14,10 +14,17 @@ const {server,origin,load,retained}=await premiumPreview();const {renderTourPage
 // The pushed parent of the initial handoff commit is available in a full clone.
 // Classic and MLS rendering must remain identical across the luxury redesign.
 const PRESENTATION_BASELINE='6fc7485a1aae7b8354fd7c21ff2a01e71c3e1376';
+// The later shared navigation fix moved this custom property from <html> to
+// <body>. Permit exactly that separately committed change while keeping the
+// Classic/MLS comparison against the pre-redesign presentation baseline.
+const OFFSET_BEFORE="document.documentElement.style.setProperty('--listing-nav-offset',(Math.ceil(Math.max(navHeight,previewHeight))+16)+'px');";
+const OFFSET_AFTER="document.body.style.setProperty('--listing-nav-offset',(Math.ceil(Math.max(navHeight,previewHeight))+16)+'px');";
+const oldListingPlayer=execFileSync('git',['show',PRESENTATION_BASELINE+':services/edge/tour-host/src/listing-player.ts'],{cwd:ROOT,encoding:'utf8'});
+check(oldListingPlayer.includes(OFFSET_BEFORE)&&readFileSync(join(ROOT,'src/listing-player.ts'),'utf8')===oldListingPlayer.replace(OFFSET_BEFORE,OFFSET_AFTER),'shared listing-player differs from pre-redesign baseline only by the verified navigation offset fix');
 const baseline=join(output,'baseline-esm');mkdirSync(baseline,{recursive:true});writeFileSync(join(baseline,'package.json'),'{"type":"module"}');
 for(const f of readdirSync(join(ROOT,'src')).filter(n=>n.endsWith('.ts'))){const s=execFileSync('git',['show',PRESENTATION_BASELINE+':services/edge/tour-host/src/'+f],{cwd:ROOT,encoding:'utf8',stdio:['ignore','pipe','pipe']});const js=ts.transpileModule(s,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText.replace(/(\bfrom\s*["'])(\.\.?\/[^"']+?)(["'])/g,(_,a,b,c)=>a+b+'.js'+c);writeFileSync(join(baseline,f.replace(/\.ts$/,'.js')),js)}
 const before=await import(pathToFileURL(join(baseline,'player.js'))),oldDesign=await import(pathToFileURL(join(baseline,'property-design.js')));
-for(const t of[retained.tour,buildDemoTour()])for(const page of['home','gallery','location','contact'])for(const unbranded of[false,true]){const opts={origin,page,unbranded};const after=renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(PROPERTY_DESIGN_CSS,'__PAID_CSS__');const prior=before.renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(oldDesign.PROPERTY_DESIGN_CSS,'__PAID_CSS__');check(after===prior,`Classic/MLS markup+scripts+shared CSS exact: ${t.slug}/${page}/${unbranded}`)}
+for(const t of[retained.tour,buildDemoTour()])for(const page of['home','gallery','location','contact'])for(const unbranded of[false,true]){const opts={origin,page,unbranded};const after=renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(PROPERTY_DESIGN_CSS,'__PAID_CSS__');const prior=before.renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(oldDesign.PROPERTY_DESIGN_CSS,'__PAID_CSS__');assert.equal(prior.split(OFFSET_BEFORE).length-1,1,'historical Classic/MLS HTML contains exactly one shared navigation offset');check(after===prior.replace(OFFSET_BEFORE,OFFSET_AFTER),`Classic/MLS markup+scripts+shared CSS exact, apart from verified navigation offset fix: ${t.slug}/${page}/${unbranded}`)}
 for(const file of['property-site.ts','property-video.ts']){const old=execFileSync('git',['show',PRESENTATION_BASELINE+':services/edge/tour-host/src/'+file],{cwd:ROOT});check(old.equals(readFileSync(join(ROOT,'src',file))),file+' byte-exact handoff parent')}
 const browser=await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});
 try{
@@ -42,6 +49,32 @@ try{
   if(!rich){const hrefs=await p.locator('[data-property-photo]').evaluateAll(xs=>xs.map(e=>e.getAttribute('href')));check(JSON.stringify(hrefs)===JSON.stringify(retained.tour.gallery.map(g=>g.url)),tag+'855 observed gallery order exact; first4 masterlinks retained');}
   if(width===390){const cdp=await context.newCDPSession(p);await cdp.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-transparency',value:'reduce'},{name:'prefers-reduced-motion',value:'reduce'}]});check(await p.locator('#listing-nav').evaluate(e=>getComputedStyle(e).backdropFilter)==='none',tag+' reduced transparency uses opaque material fallback');}
   check(!requests.some(r=>r.type==='fetch'&&!r.url.startsWith(origin)),tag+' no API/telemetry leaves localhost');check(errors.length===0,tag+' no pageJS error '+errors.join(';'));await context.close();
+ }
+ // Published-style geometry, without the preview banner: compact phones and
+ // narrow landscape tablets must keep Play, identity, actions and navigation
+ // reachable. The film stays unattached; no lead or provider request is made.
+ const layoutTour=buildDemoTour();
+ layoutTour.listing_video={url:'/local-fixture/synthetic-listing-8s.mp4',poster_url:'/assets/demo-poster.webp',duration_s:8,width:1920,height:1080,disclosure:'Synthetic photo-based film.',branding_policy:'unbranded'};
+ for(const [theme,width,height] of [['signature-estate',320,568],['coastal-luxe',320,568],['signature-estate',360,640],['coastal-luxe',360,640],['coastal-luxe',768,600],['signature-estate',601,600],['signature-estate',768,600],['signature-estate',900,600],['signature-estate',844,390],['coastal-luxe',601,600]]){
+  const context=await browser.newContext({viewport:{width,height},isMobile:true,hasTouch:true,reducedMotion:'reduce'});
+  await context.route('**/*',route=>{const u=new URL(route.request().url());return u.origin===origin||u.protocol==='data:'?route.continue():route.abort()});
+  await context.route(origin+'/property/layout-probe',route=>route.fulfill({status:200,contentType:'text/html',body:renderTourPage({...layoutTour,website_theme:theme},'/closed-api','','',{origin,publicBase:'/property'})}));
+  const p=await context.newPage();await p.goto(origin+'/property/layout-probe',{waitUntil:'networkidle'});
+  const geometry=await p.evaluate(()=>{
+   const rect=s=>document.querySelector(s)?.getBoundingClientRect();
+   const play=document.querySelector('#property-video-play'),playBox=play.getBoundingClientRect(),menu=document.querySelector('.property-page-menu'),summary=menu.querySelector('summary'),navPrimary=document.querySelector('#listing-nav .property-primary-play');
+   const hit=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&e.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))};
+   const navActions=[...document.querySelectorAll('#listing-nav .listing-nav-actions > a,#listing-nav .listing-nav-actions > button')].filter(e=>getComputedStyle(e).display!=='none');
+   return{playBottom:playBox.bottom,playCenterHit:hit(play),playLowerHit:play.contains(document.elementFromPoint(playBox.left+playBox.width/2,playBox.bottom-5)),eyebrowTop:rect('.property-hero-copy .lp-eyebrow')?.top,titleTop:rect('.property-hero-title')?.top,priceBottom:rect('.property-hero-price')?.bottom,actionsBottom:rect('.listing-cover-actions')?.bottom,menuVisible:getComputedStyle(menu).display!=='none'&&hit(summary),menuRight:summary.getBoundingClientRect().right,navPrimaryLeft:navPrimary.getBoundingClientRect().left,pageLinksHidden:getComputedStyle(document.querySelector('.listing-nav-links')).display==='none',navActionsHit:navActions.every(hit),navTargets44:navActions.every(e=>{const r=e.getBoundingClientRect();return r.width>=44&&r.height>=44}),overflow:document.documentElement.scrollWidth>innerWidth};
+  });
+  const tag=`${theme}-${width}x${height}-published-layout`;measurements.push({tag,...geometry});
+  check(!geometry.overflow,tag+' has no horizontal overflow');
+  if(theme==='signature-estate'&&width===320)check(geometry.playLowerHit&&geometry.eyebrowTop>=geometry.playBottom+4&&geometry.titleTop>=geometry.playBottom+4,tag+' Play stays fully tappable and clear of the property identity');
+  if(theme==='signature-estate'&&width>=601)check(geometry.playCenterHit&&geometry.playLowerHit,tag+' film Play is not covered by the identity at compact landscape widths');
+  if(width<=374)check(geometry.menuVisible&&geometry.pageLinksHidden&&geometry.navActionsHit&&geometry.navTargets44&&geometry.navPrimaryLeft>=geometry.menuRight+2,tag+' 44px navigation actions do not overlap the Pages menu');
+  if(theme==='coastal-luxe'&&(width===320||width===601||width===768))check(geometry.titleTop>=0&&geometry.priceBottom<height-8&&geometry.actionsBottom<height-8,tag+' identity, price and enquiry action fit the first screen');
+  if(width>=601){check(geometry.menuVisible&&geometry.pageLinksHidden&&geometry.navActionsHit,tag+' compact navigation keeps every visible action independently hittable');await p.locator('.property-page-menu summary').click();check(await p.locator('.property-page-menu-links a[href*="page=contact"]').evaluate(e=>{const r=e.getBoundingClientRect();return e.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))}),tag+' Contact is reachable through the compact page menu');}
+  await context.close();
  }
  writeFileSync(join(output,'receipt.json'),JSON.stringify({passed:true,checks:checks.length,assertions:checks,measurements,sourceOnly:true,fixtureLimits:retained.lineage,liveAPI:0,publish:0},null,2)+'\n');console.log('Premium luxury: '+checks.length+' checks passed; Classic exact, both paid designs and separate Listing/recorded video through actual renderer.');
 }finally{await browser.close();await new Promise(r=>server.close(r));}
