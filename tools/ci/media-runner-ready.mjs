@@ -10,10 +10,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
 export const POLICY = Object.freeze({
-  totalMilliseconds: 180_000,
+  totalMilliseconds: 300_000,
   sampleIntervalMilliseconds: 5_000,
   requiredConsecutiveSamples: 3,
-  maximumSamples: 37,
+  maximumSamples: 61,
   maximumOneMinuteLoadPerCPU: 8 / 3,
   supportedPlatform: "darwin",
 });

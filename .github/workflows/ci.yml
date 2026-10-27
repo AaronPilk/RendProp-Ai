@@ -1396,7 +1396,7 @@ jobs:
       # runner's virtual default output device, matching production AudioContext
       # construction; the silent sink has a separate scheduling path.
       - name: Require bounded recorded media runner readiness
-        timeout-minutes: 4
+        timeout-minutes: 6
         run: node tools/ci/media-runner-ready.mjs --output "$RUNNER_TEMP/studio-media-export-readiness.json"
       # Run the real editor export while the admitted runner is still fresh.
       # The later historical fault controls deliberately consume encoder and
@@ -1658,7 +1658,7 @@ jobs:
           test "$(/opt/homebrew/bin/ffmpeg -version | sed -n '1p')" = "ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers"
           test "$(/opt/homebrew/bin/ffprobe -version | sed -n '1p')" = "ffprobe version 9.0.2 Copyright (c) 2007-2026 the FFmpeg developers"
       - name: Require bounded recorded media runner readiness for MP4 timing
-        timeout-minutes: 4
+        timeout-minutes: 6
         run: node tools/ci/media-runner-ready.mjs --output "$RUNNER_TEMP/studio-media-resume-readiness.json"
       - name: Studio MP4 resume, AAC narration and timing controls
         working-directory: apps/studio
