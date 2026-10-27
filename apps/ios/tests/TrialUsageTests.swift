@@ -99,6 +99,36 @@ import Foundation
         check(usage.endDate != nil && usage.status == .active, "Server status is authoritative regardless of local elapsed date")
         let home = PlanBanner.boundedTrialState(usage)
         check(home.kind == .trial && home.detail.contains("3 photo edit credits"), "Home banner presents actual remaining photo credits")
+        var photoOnly = trial()
+        photoOnly["walkthroughs"] = counter(0, 0)
+        photoOnly["published_listings"] = counter(0, 0)
+        var photoOnlyOffer = offer()
+        photoOnlyOffer["walkthroughs"] = 0
+        photoOnlyOffer["published_listings"] = 0
+        photoOnlyOffer["max_video_seconds"] = 0
+        let fundedIntro = try await LiveTrialFixture(data: reply(photoOnly, photoOnlyOffer,
+            activation: activation("funded_trial", available: true, funded: true), plan: "pro")).me()
+        let limited = fundedIntro.trialUsage!
+        check(limited.checked(org: org) != nil && limited.photoEdits.remaining == 3,
+              "Current five-edit trial decoded without inventing paid features")
+        check(limited.rows.map(\.title) == ["AI photo edit credits", "Trial upload space"],
+              "Unavailable walkthrough and publishing rows are omitted")
+        check(limited.creationScope.contains("website publishing begin with a paid plan")
+              && PlanBanner.boundedTrialState(limited).detail.contains("aerial openings"),
+              "Trial presentation keeps paid-only tools out of the free week")
+        check(fundedIntro.trialOffer?.benefitLines.count == 3
+              && fundedIntro.trialOffer?.benefitLines.contains(where: { $0.contains("website publishing begin with a paid plan") }) == true,
+              "Held zero-cap trial promises only draft, photos and limited AI edits")
+        let fundedBilling = try SubscriptionBillingContext.fromMe(reply(photoOnly, photoOnlyOffer,
+            activation: activation("funded_trial", available: true, funded: true), plan: "pro"), selectedOrg: org)
+        check(fundedBilling.trialUsage?.walkthroughs.cap == 0 && fundedBilling.trialOffer?.maxVideoSeconds == 0,
+              "Billing and /me agree on the funded intro contract")
+        var mixed = photoOnly; mixed["published_listings"] = counter(0, 1)
+        do { _ = try await LiveTrialFixture(data: reply(mixed)).me(); fatalError("Mixed free and legacy trial caps accepted") }
+        catch { checks += 1 }
+        var mixedOffer = photoOnlyOffer; mixedOffer["max_video_seconds"] = 2
+        do { _ = try await LiveTrialFixture(data: reply(nil, mixedOffer)).me(); fatalError("Free video leaked into zero-cap trial") }
+        catch { checks += 1 }
         for status in ["exhausted", "expired"] {
             let recorded = try await LiveTrialFixture(data: reply(trial(status), ["enabled": false])).me()
             check(recorded.trialUsage?.rows.count == 4 && recorded.trialUsage?.photoEdits.used == 2,

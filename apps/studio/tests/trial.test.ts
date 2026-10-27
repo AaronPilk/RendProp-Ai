@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { decodeServingActivation, decodeTrialOffer, decodeTrialUsage } from "../src/data/trial";
 import { decodeWorkspace, type Membership } from "../src/data/contracts";
 import TrialAllowance from "../src/features/business/TrialAllowance";
-import { decodeAccount, notificationLabels, serviceActivationPending } from "../src/features/business/model";
+import { currentTrialAllowance, decodeAccount, notificationLabels, serviceActivationPending } from "../src/features/business/model";
 
 const USER = "11111111-1111-4111-8111-111111111111";
 const ORG = "33333333-3333-4333-8333-333333333333";
@@ -98,6 +98,28 @@ test("signed seven-day trial crossing month-end retains three independent counte
   assert.equal(decoded.trialUsage?.photoEdits.remaining, 3);
   assert.equal(decoded.trialUsage?.publishedListings.remaining, 1);
 });
+test("funded five-edit intro stays visible with a paid SKU name and ceiling envelope without claiming video or publishing", () => {
+  const limited = { ...trial(), walkthroughs: { used: 0, cap: 0, remaining: 0 },
+    published_listings: { used: 0, cap: 0, remaining: 0 } };
+  const offer = { enabled: true, walkthroughs: 0, photo_edits: 5, published_listings: 0,
+    max_days: 7, max_video_seconds: 0, upload_budget_bytes: 1_073_741_824 };
+  const activation = { org_id: ORG, authority: "funded_trial", available: true, funded: true };
+  const envelope = { kind: "trial", ceiling_cents: 500, spent_cents: 0, held_cents: 0, available_cents: 500,
+    period_start: limited.starts_at, period_end: limited.ends_at, window: "intro_window" };
+  const selected = decodeWorkspace({ ...workspace(), trial_usage: limited, trial_offer: offer, serving_activation: activation }, USER, memberships);
+  const current = decodeAccount({ ...account(), trial_usage: limited, serving_activation: activation,
+    serving_envelope: envelope }, selected);
+  assert.equal(selected.trialOffer?.maxVideoSeconds, 0);
+  assert.equal(current.trialUsage?.photoEdits.remaining, 3);
+  assert.equal(currentTrialAllowance(current), true);
+  const html = renderToStaticMarkup(createElement(TrialAllowance, { trial: current.trialUsage! }));
+  assert.match(html, /5 AI photo edit|AI photo edit credits/);
+  assert.match(html, /decluttering or staging/);
+  assert.match(html, /website publishing begin with a paid plan/);
+  assert.doesNotMatch(html, /Hosted walkthrough<|Published listing<|1 remaining/);
+  assert.equal(currentTrialAllowance({ ...current, servingActivation: null, plan: "pro" }), false,
+    "Historical trial counters must not replace a current paid plan");
+});
 test("a different workspace trial cannot be attached to the current account", () => {
   assert.throws(() => decodeWorkspace({ ...workspace(), trial_usage: { ...trial(), org_id: USER } }, USER, memberships), /different workspace/);
 });
@@ -132,6 +154,8 @@ test("malformed trial counters and windows are refused instead of offering addit
     { ...trial(), walkthroughs: { used: 0, cap: 2, remaining: 2 } },
     { ...trial(), photo_edits: { used: 0, cap: 21, remaining: 21 } },
     { ...trial(), published_listings: { used: 0, cap: 2, remaining: 2 } },
+    { ...trial(), walkthroughs: { used: 0, cap: 0, remaining: 0 } },
+    { ...trial(), published_listings: { used: 0, cap: 0, remaining: 0 } },
     { ...trial(), upload_budget_bytes: 1_073_741_825 },
   ]) assert.throws(() => decodeTrialUsage(value, ORG), /allowance could not be verified/);
 });
@@ -158,6 +182,9 @@ test("dormant offer never displays proposed caps; enabled offers require verifie
   assert.equal(decodeTrialOffer({ enabled: false, photo_edits: 1000 }), null);
   const offer = { enabled: true, walkthroughs: 1, photo_edits: 5, published_listings: 1, max_days: 7, max_video_seconds: 90, upload_budget_bytes: 1_073_741_824 };
   assert.equal(decodeTrialOffer(offer)?.photoEdits, 5);
+  assert.equal(decodeTrialOffer({ ...offer, walkthroughs: 0, published_listings: 0, max_video_seconds: 0 })?.photoEdits, 5);
+  assert.throws(() => decodeTrialOffer({ ...offer, walkthroughs: 0, published_listings: 0, max_video_seconds: 0, photo_edits: 6 }),
+    /allowance could not be verified/);
   for (const value of [{ ...offer, enabled: "true" }, { ...offer, max_days: 8 }, { ...offer, walkthroughs: 0 }, { ...offer, photo_edits: -1 }, { ...offer, max_video_seconds: undefined }, { ...offer, walkthroughs: 2 }, { ...offer, photo_edits: 21 }, { ...offer, photo_edits: 20.5 }, { ...offer, photo_edits: "20" }, { ...offer, published_listings: 2 }, { ...offer, max_video_seconds: 91 }, { ...offer, upload_budget_bytes: 1_073_741_825 }]) {
     assert.throws(() => decodeTrialOffer(value), /allowance could not be verified/);
   }
@@ -169,7 +196,7 @@ test("active trial view preserves remaining photo and publication steps after wa
   assert.match(html, /Upload space/);
   assert.match(html, /including files still uploading/);
   assert.match(html, /access and retention terms/);
-  assert.match(html, /They do not reset during the trial/);
+  assert.match(html, /do not reset during the trial/);
   assert.match(html, /does not bring Apple/);
   assert.doesNotMatch(html, /Resets|Monthly|unlimited|100 AI/);
 });
@@ -177,7 +204,7 @@ test("exhausted and expired views keep saved-work access and explicit subscripti
   for (const status of ["exhausted", "expired"]) {
     const decoded = decodeTrialUsage({ ...trial(), status }, ORG)!;
     const html = renderToStaticMarkup(createElement(TrialAllowance, { trial: decoded }));
-    assert.match(html, /saved photos, videos and downloads remain accessible/);
+    assert.match(html, /saved photos and downloads remain accessible/);
     assert.match(html, /apps.apple.com\/account\/subscriptions/);
     assert.match(html, status === "expired" ? /creation window has ended/ : /included trial allowance/);
     assert.doesNotMatch(html, /charged now|delete your/);

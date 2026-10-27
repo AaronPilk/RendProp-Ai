@@ -49,7 +49,7 @@ assert purchase.index('validateHeldTrialPurchase(') < purchase.index('validateCu
 assert purchase.count('await trialRegionSupported(') == 2
 assert check.index('await trialRegionSupported(') < check.index('validateHeldTrialPurchase(')
 assert 'discardUnpurchased' not in check and 'automatically released or restarted' in check
-assert purchase.count('if !retainTrialBinding, createdBinding, let binding = preparedBinding') == 4
+assert purchase.count('if !retainTrialBinding, createdBinding, let binding = preparedBinding') == 5
 assert purchase.index('verifiedHeldTrialForDispatch = true') > purchase.index('validateCurrentHeldTrialPurchase(')
 assert purchase.index('guard PurchaseDispatchAdmission.allows(') < purchase.index('try await product.purchase(')
 assert 'await ' not in purchase.split('guard PurchaseDispatchAdmission.allows(', 1)[1].split('try await product.purchase(', 1)[0]
@@ -197,7 +197,7 @@ faults = [
     ('hold-token', 'appAccountToken == actor,', 'true,', 'Wrong echoed appAccountToken accepted'),
     ('hold-org', 'orgId == org, productId == product,', 'true, productId == product,', 'Wrong held workspace accepted'),
     ('hold-product', 'productId == product,', 'true,', 'Wrong held product accepted'),
-    ('hold-photo-cap', '(5...20).contains(trialOffer.photoEdits ?? 0),', 'true,', 'Wrong held allowance accepted'),
+    ('hold-photo-cap', '(5...20).contains(trialOffer.photoEdits ?? 0) else', 'true else', 'Wrong held allowance accepted'),
     ('hold-enabled', 'trialOffer.enabled,', 'true,', 'Disabled held offer accepted'),
     ('region-country', 'country == "USA" &&', 'true &&', 'Foreign country created a hold'),
     ('region-currency', 'currency == "USD"', 'true', 'Non-USD currency created a hold'),

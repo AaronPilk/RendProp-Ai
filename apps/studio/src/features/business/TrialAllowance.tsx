@@ -4,9 +4,9 @@ export default function TrialAllowance({ trial }: { trial: TrialUsage }) {
   const ends = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(trial.endsAt));
   const uploadRemainingMiB = Math.max(0, Math.floor((trial.uploadBudgetBytes - trial.uploadUsedBytes) / 1_048_576));
   const meters = [
-    { title: "Hosted walkthrough", value: trial.walkthroughs },
+    ...(trial.walkthroughs.cap ? [{ title: "Hosted walkthrough", value: trial.walkthroughs }] : []),
     { title: "AI photo edit credits", value: trial.photoEdits },
-    { title: "Published listing", value: trial.publishedListings },
+    ...(trial.publishedListings.cap ? [{ title: "Published listing", value: trial.publishedListings }] : []),
   ];
   return <section className="business-card" aria-labelledby="trial-allowance-title">
     <h3 id="trial-allowance-title">Your trial</h3>
@@ -20,8 +20,8 @@ export default function TrialAllowance({ trial }: { trial: TrialUsage }) {
       <progress value={trial.uploadUsedBytes} max={trial.uploadBudgetBytes} aria-label="Trial upload space used" />
       <small>{Math.floor(trial.uploadBudgetBytes / 1_048_576).toLocaleString()} MB total for this trial, including files still uploading</small>
     </div></div>
-    <p className="business-subtle">These allowances are shared with your iPhone. Each has its own limit, so using your walkthrough does not use your photo edit credits. They do not reset during the trial.</p>
-    <p className="business-subtle">Your saved photos, videos and downloads remain accessible under your account’s access and retention terms. Published links follow your hosting terms. Using the allowance does not bring Apple’s renewal date forward.</p>
+    <p className="business-subtle">{trial.walkthroughs.cap === 0 ? "Create one listing, add photos, and use limited AI edits for decluttering or staging. Video, aerial openings, hosted walkthroughs, and website publishing begin with a paid plan." : "Your recorded trial includes the earlier hosted walkthrough and publishing allowances shown above."}</p>
+    <p className="business-subtle">These allowances are shared with your iPhone and do not reset during the trial. Your saved photos and downloads remain accessible under your account’s access and retention terms. Using the allowance does not bring Apple’s renewal date forward.</p>
     <div className="business-actions"><a href="https://apps.apple.com/us/app/id6808982413" target="_blank" rel="noopener noreferrer">Review your plan on iPhone ↗</a><a href="https://apps.apple.com/account/subscriptions" target="_blank" rel="noopener noreferrer">Manage Apple subscription ↗</a></div>
   </section>;
 }

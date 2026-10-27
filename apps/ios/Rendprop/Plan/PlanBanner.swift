@@ -297,8 +297,12 @@ struct PlanBanner: View {
     static func boundedTrialState(_ trial: TrialUsageSummary) -> PlanState {
         switch trial.status {
         case .active:
-            let videos = trial.walkthroughs.remaining
             let photos = trial.photoEdits.remaining
+            if trial.walkthroughs.cap == 0 {
+                return PlanState(kind: .trial, title: trial.statusLabel,
+                    detail: "\(photos) AI photo edit credit\(photos == 1 ? "" : "s") left. Create a listing and add photos; video, aerial openings, walkthroughs and website publishing begin with a paid plan. Upload space: \(trial.uploadSpaceValue).")
+            }
+            let videos = trial.walkthroughs.remaining
             let listings = trial.publishedListings.remaining
             return PlanState(kind: .trial, title: trial.statusLabel,
                 detail: "\(videos) walkthrough\(videos == 1 ? "" : "s"), \(photos) photo edit credit\(photos == 1 ? "" : "s") and \(listings) published listing\(listings == 1 ? "" : "s") left. Each allowance is separate. Upload space: \(trial.uploadSpaceValue).")

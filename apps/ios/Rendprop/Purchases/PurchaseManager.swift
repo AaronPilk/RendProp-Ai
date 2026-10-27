@@ -268,7 +268,6 @@ final class PurchaseManager: ObservableObject {
     /// product: the customer is eligible AND the product really carries an
     /// introductory offer.
     func showsIntroOffer(for product: Product) -> Bool {
-        if billingContext?.isCeilingMode == true { return ceilingShowsIntroOffer(for: product) }
         return trialEligibility(for: product) == true && heldTrialOffer(for: product) != nil
     }
 
@@ -302,9 +301,14 @@ final class PurchaseManager: ObservableObject {
 
     func canStartNewPurchase(for product: Product) -> Bool {
         guard Config.useLiveBackend && !Config.isUITesting else { return true }
-        // Ceiling serving mode (2026-10-08): no server-held trial exists; the
-        // workspace billing authority alone decides who may buy.
-        if billingContext?.isCeilingMode == true { return ceilingModePurchaseAllowed() }
+        if billingContext?.isCeilingMode == true {
+            guard ceilingModePurchaseAllowed() else { return false }
+            switch trialEligibility(for: product) {
+            case .some(false): return true // Known paid purchase or renewal.
+            case .some(true): return heldTrialOffer(for: product) != nil
+            case .none: return false // Apple eligibility has not been verified.
+            }
+        }
         let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
             revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
         guard trialEligibility(for: product) == true, heldTrialOffer(for: product) != nil else { return false }
@@ -321,9 +325,8 @@ final class PurchaseManager: ObservableObject {
         return preparedTrialReservation?.trialOffer
     }
 
-    /// Ceiling serving mode: a signed-in, identified owner/admin of the selected
-    /// workspace may start an ordinary StoreKit purchase. Apple applies its own
-    /// introductory offer when the customer is eligible.
+    /// Ceiling serving mode still allows a known paid purchase for this exact
+    /// workspace; an eligible seven-day intro must be reserved separately.
     func ceilingModePurchaseAllowed() -> Bool {
         guard let billing = billingContext, billing.isCeilingMode else { return false }
         return AuthStore.shared.isSignedIn && AuthStore.shared.isIdentified
@@ -331,14 +334,13 @@ final class PurchaseManager: ObservableObject {
             && billing.orgID == WorkspaceContext.billingOrgID && billing.canManageSubscription
     }
 
-    /// Ceiling serving mode: the introductory offer is Apple's own.
+    /// Ceiling serving mode never advertises an unreserved introductory offer.
     func ceilingShowsIntroOffer(for product: Product) -> Bool {
-        billingContext?.isCeilingMode == true && trialEligibility(for: product) == true
+        billingContext?.isCeilingMode == true && showsIntroOffer(for: product)
     }
 
     func canCheckTrialAvailability(for product: Product) -> Bool {
         guard Config.useLiveBackend && !Config.isUITesting else { return false }
-        if billingContext?.isCeilingMode == true { return false }
         return trialEligibility(for: product) != false && AuthStore.shared.isSignedIn && AuthStore.shared.isIdentified
             && AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil
             && billingContext?.orgID == WorkspaceContext.billingOrgID
@@ -493,6 +495,7 @@ final class PurchaseManager: ObservableObject {
         let heldAtTap = continuingHeldTrial ? preparedTrialReservation : nil
         var retainTrialBinding = continuingHeldTrial
         var verifiedHeldTrialForDispatch = false
+        var finalIntroEligibility: Bool? = hasFreeIntroductoryOffer(for: product) ? nil : false
         var ceilingMode = false
         if Config.useLiveBackend && !Config.isUITesting {
             guard let owner = actor.flatMap(UUID.init(uuidString:)), let api else { return }
@@ -523,10 +526,11 @@ final class PurchaseManager: ObservableObject {
         }
         // Eligibility may have changed since the paywall loaded. Recheck it
         // with Apple, then fetch fresh server authority before Apple's sheet.
-        if Config.useLiveBackend && !Config.isUITesting, !ceilingMode, hasFreeIntroductoryOffer(for: product) {
+        if Config.useLiveBackend && !Config.isUITesting, hasFreeIntroductoryOffer(for: product) {
             let captured = TrialPurchaseSnapshot(actor: actor, revision: identityRevision, org: viewedOrgID, billingOrg: expectedOrgID)
             let storeEligibility = await product.subscription?.isEligibleForIntroOffer
             let eligible: Bool? = storeEligibility == true && !hasSevenDayTrial(for: product) ? nil : storeEligibility
+            finalIntroEligibility = eligible
             let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
                 revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
             guard captured == current else {
@@ -535,10 +539,13 @@ final class PurchaseManager: ObservableObject {
             }
             do {
                 if continuingHeldTrial || eligible == true {
-                    retainTrialBinding = true
+                    retainTrialBinding = heldAtTap != nil
                     guard eligible == true, let heldAtTap,
                           TrialPurchaseAdmission.allowsHeld(heldAtTap, product: product.id,
                             captured: preparedTrialSnapshot ?? captured, current: current) else {
+                        if !retainTrialBinding, createdBinding, let binding = preparedBinding {
+                            PurchaseWorkspaceBindingStore.discardUnpurchased(owner: binding.owner, productID: binding.productID, orgID: binding.orgID)
+                        }
                         lastError = "Trial eligibility changed or the reservation is not confirmed. No Apple billing has started. Refresh or Restore, then explicitly check trial availability. Paid subscriptions are temporarily unavailable."
                         return
                     }
@@ -591,7 +598,9 @@ final class PurchaseManager: ObservableObject {
             // new SKU charge. Only the exact freshly rechecked hold above may
             // dispatch in live mode; there is no await after this check.
             guard PurchaseDispatchAdmission.allows(liveBackend: Config.useLiveBackend,
-                    uiTesting: Config.isUITesting, ceilingMode: ceilingMode, verifiedHeldTrial: verifiedHeldTrialForDispatch,
+                    uiTesting: Config.isUITesting, ceilingMode: ceilingMode,
+                    eligibleIntro: finalIntroEligibility, continuingHeldTrial: continuingHeldTrial,
+                    verifiedHeldTrial: verifiedHeldTrialForDispatch,
                     captured: .init(actor: actor, revision: identityRevision, org: viewedOrgID, billingOrg: expectedOrgID),
                     current: .init(actor: AuthStore.shared.userID,
                         revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)) else {

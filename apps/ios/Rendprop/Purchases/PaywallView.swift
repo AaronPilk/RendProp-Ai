@@ -81,7 +81,7 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             } else if purchases.billingContext?.isCeilingMode == true {
-                Text("The 7-day trial lets you create one listing and make limited AI photo edits. Video, aerial openings and website publishing begin after payment. Apple handles billing and cancellation.")
+                Text("An eligible, funded 7-day trial lets you create one listing, add photos, and use limited AI edits for decluttering or staging. Video, aerial openings, hosted walkthroughs, and website publishing begin with a paid plan. Apple handles billing and cancellation.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
             } else {
@@ -141,13 +141,16 @@ struct PaywallView: View {
     }
 
     @ViewBuilder private var trialDetails: some View {
-        if RecordedTrialPresentation.isCurrent(planName: purchases.billingContext?.planName),
+        if RecordedTrialPresentation.isCurrent(planName: purchases.billingContext?.planName)
+            || purchases.billingContext?.servingActivation?.authority == .fundedTrial,
            let trial = purchases.billingContext?.trialUsage {
             VStack(alignment: .leading, spacing: 10) {
                 Text(trial.statusLabel).font(.rpHeadline).foregroundStyle(Theme.ink)
                 ForEach(trial.rows, id: \.title) { row in
                     LabeledContent(row.title, value: row.value).font(.rpCaption)
                 }
+                Text(trial.creationScope).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let end = trial.endDate {
                     Text("Trial access ends \(end.formatted(date: .abbreviated, time: .shortened)).")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -155,14 +158,6 @@ struct PaywallView: View {
                 Text(TrialUsageSummary.explanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
             }.frame(maxWidth: .infinity, alignment: .leading).card()
                 .accessibilityIdentifier("paywall.recordedTrial")
-        } else if selectedHasIntroOffer, purchases.billingContext?.isCeilingMode == true {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("7-day free trial").font(.rpHeadline).foregroundStyle(Theme.ink)
-                Text("Confirm with Apple to start seven days to create one listing and use a limited number of AI photo edits. Video and aerial generation are not included until the first paid renewal. The selected plan's full monthly limits begin after the trial. Apple shows the renewal price and date before you confirm.")
-                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    .fixedSize(horizontal: false, vertical: true)
-            }.frame(maxWidth: .infinity, alignment: .leading).card()
-                .accessibilityIdentifier("paywall.appleTrial")
         } else if selectedHasIntroOffer, let product = selectedOffer.product,
                   let offer = purchases.heldTrialOffer(for: product),
                   offer.enabled, !offer.benefitLines.isEmpty {
@@ -449,7 +444,7 @@ struct PaywallView: View {
                         (purchases.activeProductID != product.id && Config.useLiveBackend &&
                             (purchases.billingContext?.canManageSubscription != true ||
                              (!purchases.canStartNewPurchase(for: product) && !purchases.canCheckTrialAvailability(for: product))))) {
-            let continuingHeldTrial = purchases.billingContext?.isCeilingMode != true && purchases.showsIntroOffer(for: product)
+            let continuingHeldTrial = purchases.showsIntroOffer(for: product)
             let checkingAvailability = !purchases.canStartNewPurchase(for: product) && purchases.canCheckTrialAvailability(for: product)
             let expectedOrgID = purchases.billingContext?.orgID
             Task {
@@ -494,7 +489,8 @@ struct PaywallView: View {
     private func buyTitle(for product: Product) -> String {
         if purchases.activeProductID == product.id { return "Manage current subscription" }
         if purchases.billingContext?.isCeilingMode == true {
-            if purchases.ceilingShowsIntroOffer(for: product) { return "Start 7-day free trial" }
+            if purchases.showsIntroOffer(for: product) { return "Continue with Apple" }
+            if purchases.canCheckTrialAvailability(for: product) && !purchases.canStartNewPurchase(for: product) { return "Check trial availability" }
             if purchases.activePlan != nil { return "Confirm plan change with Apple" }
             return "Subscribe with Apple"
         }
@@ -511,7 +507,10 @@ struct PaywallView: View {
     private func disclosure(for product: Product, period: BillingPeriod) -> String {
         if purchases.activeProductID == product.id { return "This is the subscription on this Apple ID. Apple shows its renewal date and cancellation options; its original workspace keeps the plan." }
         if purchases.billingContext?.isCeilingMode == true {
-            return SubscriptionOfferPolicy.disclosure(sevenDayTrial: purchases.ceilingShowsIntroOffer(for: product),
+            if purchases.canCheckTrialAvailability(for: product) && !purchases.canStartNewPurchase(for: product) {
+                return "A seven-day free trial needs an exact funded reservation and Apple's eligibility. Checking does not start billing; you can review its terms before Apple's confirmation."
+            }
+            return SubscriptionOfferPolicy.disclosure(sevenDayTrial: purchases.showsIntroOffer(for: product),
                 price: product.displayPrice, period: period.priceSuffix)
         }
         if Config.useLiveBackend && !Config.isUITesting,

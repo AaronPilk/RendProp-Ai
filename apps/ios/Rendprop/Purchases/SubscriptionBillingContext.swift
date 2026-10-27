@@ -232,7 +232,7 @@ struct TrialUsageCounter: Codable, Hashable, Sendable {
     let cap: Int
     let remaining: Int
     var isValid: Bool {
-        used >= 0 && cap > 0 && cap <= 20 && used <= cap && remaining == cap - used
+        used >= 0 && cap >= 0 && cap <= 20 && used <= cap && remaining == cap - used
     }
     var displayValue: String { "\(used) of \(cap) used · \(remaining) remaining" }
 }
@@ -253,7 +253,8 @@ struct TrialUsageSummary: Codable, Hashable, Sendable {
         guard orgId == org, let start = Self.date(startsAt), let end = endDate, end > start,
               end.timeIntervalSince(start) <= 7 * 24 * 60 * 60,
               walkthroughs.isValid, photoEdits.isValid, publishedListings.isValid,
-              walkthroughs.cap <= 1, publishedListings.cap <= 1,
+              photoEdits.cap > 0, walkthroughs.cap <= 1, publishedListings.cap <= 1,
+              walkthroughs.cap == publishedListings.cap,
               uploadBudgetBytes > 0, uploadBudgetBytes <= 1_073_741_824,
               uploadUsedBytes >= 0, uploadUsedBytes <= uploadBudgetBytes else { return nil }
         return self
@@ -278,10 +279,15 @@ struct TrialUsageSummary: Codable, Hashable, Sendable {
         return "\(ByteCountFormatter.string(fromByteCount: uploadUsedBytes, countStyle: .binary)) used · \(remainingLabel) remaining of \(ByteCountFormatter.string(fromByteCount: uploadBudgetBytes, countStyle: .binary))"
     }
     var rows: [(title: String, value: String)] {
-        [("Hosted walkthroughs", walkthroughs.displayValue),
-         ("AI photo edit credits", photoEdits.displayValue),
-         ("Published listings", publishedListings.displayValue),
-         ("Trial upload space", uploadSpaceValue)]
+        (walkthroughs.cap > 0 ? [("Hosted walkthroughs", walkthroughs.displayValue)] : [])
+        + [("AI photo edit credits", photoEdits.displayValue)]
+        + (publishedListings.cap > 0 ? [("Published listings", publishedListings.displayValue)] : [])
+        + [("Trial upload space", uploadSpaceValue)]
+    }
+    var creationScope: String {
+        walkthroughs.cap == 0
+            ? "Create one listing, add photos, and use limited AI edits for decluttering or staging. Video, aerial openings, hosted walkthroughs, and website publishing begin with a paid plan."
+            : "Your recorded trial includes the earlier hosted walkthrough and publishing allowances shown above."
     }
     static let explanation = "These trial allowances belong to the account that started the trial in this workspace. The same counters apply on iPhone and Studio. Each allowance is separate and does not reset. Your saved work stays available to view and download under your workspace's access and retention terms. Using your allowance does not change Apple's renewal date."
 }
@@ -316,14 +322,20 @@ struct TrialOfferSummary: Codable, Hashable, Sendable {
         guard enabled else { return self }
         guard let walkthroughs, let photoEdits, let publishedListings,
               maxDays == 7, let maxVideoSeconds, let uploadBudgetBytes,
-              walkthroughs == 1, photoEdits > 0, photoEdits <= 20, publishedListings == 1,
-              maxVideoSeconds > 0, maxVideoSeconds <= 90,
+              photoEdits > 0, photoEdits <= 20,
+              ((walkthroughs == 0 && publishedListings == 0 && maxVideoSeconds == 0 && photoEdits == 5)
+               || (walkthroughs == 1 && publishedListings == 1 && maxVideoSeconds > 0 && maxVideoSeconds <= 90)),
               uploadBudgetBytes > 0, uploadBudgetBytes <= 1_073_741_824 else { return nil }
         return self
     }
     var benefitLines: [String] {
         guard enabled, checked() != nil, let walkthroughs, let photoEdits,
               let publishedListings, let maxVideoSeconds else { return [] }
+        if walkthroughs == 0 {
+            return ["Create one listing and add photos",
+                    "\(photoEdits) AI photo edits for decluttering or staging",
+                    "Video, aerial openings, hosted walkthroughs, and website publishing begin with a paid plan"]
+        }
         return ["\(walkthroughs) hosted walkthrough\(walkthroughs == 1 ? "" : "s") from your captured or imported footage",
                 "\(photoEdits) AI photo edit credit\(photoEdits == 1 ? "" : "s")",
                 "\(publishedListings) distinct published listing\(publishedListings == 1 ? "" : "s")",
@@ -346,8 +358,8 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
     var trialReservation: TrialPurchaseReservation? = nil
     var servingActivation: ServingActivationSummary? = nil
     var planName: String? = nil
-    /// Server cost model (2026-10-08). "ceiling": ordinary StoreKit purchases
-    /// and Apple's own introductory offer; no server-held trial exists.
+    /// "ceiling" meters paid work. A seven-day Apple intro still needs the
+    /// exact funded server reservation before StoreKit can begin it.
     var servingMode: String? = nil
     var isCeilingMode: Bool { servingMode == "ceiling" }
     var showsServicePending: Bool {
@@ -435,8 +447,7 @@ struct TrialPurchaseReservation: Codable, Hashable, Sendable {
         guard actorId == actor, appAccountToken == actor, orgId == org, productId == product,
               TrialUsageSummary.date(heldAt) != nil,
               trialOffer.enabled, trialOffer.checked() != nil,
-              trialOffer.walkthroughs == 1, (5...20).contains(trialOffer.photoEdits ?? 0),
-              trialOffer.publishedListings == 1 else { return nil }
+              (5...20).contains(trialOffer.photoEdits ?? 0) else { return nil }
         return self
     }
     static func decode(_ data: Data, actor: UUID, org: UUID, product: String) throws -> Self {
@@ -455,14 +466,16 @@ struct TrialPurchaseReservation: Codable, Hashable, Sendable {
 enum PurchaseDispatchAdmission {
     static let paidUnavailableMessage = "Paid subscriptions are temporarily unavailable. No Apple purchase has started. You can restore purchases or manage an existing subscription below."
 
-    static func allows(liveBackend: Bool, uiTesting: Bool, ceilingMode: Bool = false, verifiedHeldTrial: Bool,
+    static func allows(liveBackend: Bool, uiTesting: Bool, ceilingMode: Bool = false,
+                       eligibleIntro: Bool? = nil, continuingHeldTrial: Bool = false, verifiedHeldTrial: Bool,
                        captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
         guard liveBackend && !uiTesting else { return true }
         guard captured == current, current.actor.flatMap(UUID.init(uuidString:)) != nil,
               current.org != nil, current.purchaseOrg != nil else { return false }
-        // Ceiling serving mode (2026-10-08): the server meters and caps spend
-        // per plan, so an ordinary StoreKit purchase is the live purchase path.
-        if ceilingMode { return true }
+        // Apple can silently apply a free intro to an eligible subscription.
+        // Only its exact, freshly rechecked server hold may start that week.
+        if continuingHeldTrial || eligibleIntro == true { return verifiedHeldTrial }
+        if ceilingMode { return eligibleIntro == false }
         return verifiedHeldTrial
     }
 }

@@ -1,11 +1,12 @@
 import Foundation
 
 func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(uuidString: "00000000-0000-4000-8000-000000000099")!,
-              enabled: Bool = true, photos: Int = 5, days: Int = 7) -> TrialPurchaseReservation {
+              enabled: Bool = true, photos: Int = 5, days: Int = 7, photoOnly: Bool = false) -> TrialPurchaseReservation {
     .init(reservationId: reservation, actorId: actor, appAccountToken: actor, orgId: org, productId: product,
           heldAt: "2026-10-06T00:00:00Z", trialOffer: .init(enabled: enabled,
-            walkthroughs: 1, photoEdits: photos, publishedListings: 1, maxDays: days,
-            maxVideoSeconds: 90, uploadBudgetBytes: 1_073_741_824))
+            walkthroughs: photoOnly ? 0 : 1, photoEdits: photos,
+            publishedListings: photoOnly ? 0 : 1, maxDays: days,
+            maxVideoSeconds: photoOnly ? 0 : 90, uploadBudgetBytes: 1_073_741_824))
 }
 
 @main struct TrialPurchaseHoldTests {
@@ -57,28 +58,61 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
         check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: true, verifiedHeldTrial: false,
               captured: bound, current: bound), "UI-test purchase test purpose blocked")
         check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
-              verifiedHeldTrial: false, captured: bound, current: bound), "Ceiling purchase requires no funded hold")
+              eligibleIntro: false, verifiedHeldTrial: false, captured: bound, current: bound),
+              "Known paid ceiling purchase remains available")
+        check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: true, verifiedHeldTrial: false, captured: bound, current: bound),
+              "Eligible Apple intro cannot bypass its funded hold in ceiling mode")
+        check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: nil, verifiedHeldTrial: false, captured: bound, current: bound),
+              "Unknown Apple eligibility cannot become an unfunded purchase")
+        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: true, verifiedHeldTrial: true, captured: bound, current: bound),
+              "Exact held intro can reach Apple in ceiling mode")
         for changed in [TrialPurchaseSnapshot(actor: other.uuidString, revision: bound.revision, org: org),
                         TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision + 1, org: org),
                         TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision, org: other)] {
             check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
                   verifiedHeldTrial: false, captured: bound, current: changed), "Stale ceiling dispatch snapshot accepted")
         }
-        // Ceiling mode uses Apple's own offer, without creating or retaining a
-        // server-held trial. Fresh workspace authority still gates the sheet.
+        // Ceiling mode may admit known paid purchases, but an eligible Apple
+        // introductory week needs its exact, still-current funded hold.
         for eligible in [true, false] {
             let (manager, api, product) = fixture()
             var context = try await api.billingContext(); context.servingMode = "ceiling"
             api.overrideContext = context; manager.billingContext = context
             manager.introOfferEligible[sku] = eligible
-            check(manager.canStartNewPurchase(for: product), "Ceiling mode did not allow ordinary purchase")
-            check(!manager.canCheckTrialAvailability(for: product), "Ceiling mode offered funded trial reservation")
-            check(manager.showsIntroOffer(for: product) == eligible, "Ceiling offer display does not match Apple eligibility")
+            product.subscription?.values = [eligible]
+            check(manager.canStartNewPurchase(for: product) == !eligible,
+                  "Ceiling mode offered an unheld free intro or blocked a known paid purchase")
+            check(manager.canCheckTrialAvailability(for: product) == eligible,
+                  "Eligible ceiling intro must check funded trial availability")
+            check(!manager.showsIntroOffer(for: product), "Unheld Apple intro was advertised as funded")
             await manager.purchase(product, expectedOrgID: org)
-            check(Product.sheetCalls == 1 && api.prepareCalls == 0, "Ceiling purchase created hold or failed to open Apple sheet")
-            check(Product.receivedOptions == [.appAccountToken(actor)], "Ceiling purchase did not bind named account")
+            check(Product.sheetCalls == (eligible ? 0 : 1) && api.prepareCalls == 0,
+                  "Unheld free week reached Apple or known paid purchase failed")
+            if !eligible { check(Product.receivedOptions == [.appAccountToken(actor)], "Ceiling paid purchase did not bind named account") }
             check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku) == nil,
                   "Cancelled ordinary ceiling purchase retained unpurchased binding")
+        }
+        do {
+            let (manager, api, product) = fixture()
+            api.held = makeHold(actor: actor, org: org, product: sku, photoOnly: true)
+            var context = try await api.billingContext(); context.servingMode = "ceiling"
+            api.overrideContext = context; manager.billingContext = context
+            manager.introOfferEligible[sku] = true
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 1 && Product.sheetCalls == 0,
+                  "Explicit ceiling trial check opened Apple before a hold")
+            check(manager.heldTrialOffer(for: product)?.walkthroughs == 0
+                  && manager.heldTrialOffer(for: product)?.publishedListings == 0
+                  && manager.heldTrialOffer(for: product)?.maxVideoSeconds == 0,
+                  "Current zero-cap held terms were not shown")
+            check(manager.canStartNewPurchase(for: product) && manager.showsIntroOffer(for: product),
+                  "Exact funded ceiling hold could not continue")
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(api.prepareCalls == 2 && Product.sheetCalls == 1,
+                  "Funded ceiling intro did not recheck the same hold before Apple")
         }
         for reason in ["guest", "denied", "foreign-org", "actor", "revision", "workspace"] {
             let (manager, api, product) = fixture()
@@ -98,6 +132,12 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Unauthorized or stale ceiling purchase opened Apple sheet")
         }
         check(hold.checked(actor: actor, org: org, product: sku) == hold, "Exact held identity refused")
+        let photoOnlyHold = makeHold(actor: actor, org: org, product: sku, photoOnly: true)
+        check(photoOnlyHold.checked(actor: actor, org: org, product: sku) == photoOnlyHold,
+              "Current zero-cap, five-photo reservation was rejected")
+        check(makeHold(actor: actor, org: org, product: sku, photos: 6, photoOnly: true)
+              .checked(actor: actor, org: org, product: sku) == nil,
+              "Current held trial silently expanded beyond five photo edits")
         for cap in [5, 6, 20] {
             let recorded = makeHold(actor: actor, org: org, product: sku, photos: cap)
             check(recorded.checked(actor: actor, org: org, product: sku) == recorded,

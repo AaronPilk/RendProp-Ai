@@ -54,6 +54,8 @@ try {
   receipt.checks.push("Notification preference write and guarded account deletion");
   const trial = { org_id: "22222222-2222-4222-8222-222222222222", status: "active", starts_at: "2026-10-29T12:00:00Z", ends_at: "2026-11-05T12:00:00Z", walkthroughs: { used: 1, cap: 1, remaining: 0 }, photo_edits: { used: 2, cap: 5, remaining: 3 }, published_listings: { used: 0, cap: 1, remaining: 1 }, upload_budget_bytes: 1_073_741_824, upload_used_bytes: 100 };
   await page.evaluate(value => window.businessFixture.trial(value), trial);
+  await page.evaluate(value => window.businessFixture.activation(value, "pro"),
+    { org_id: trial.org_id, available: true, funded: true, authority: "funded_trial" });
   await page.getByRole("button", { name: "Refresh allowance" }).click();
   const trialCard = page.getByRole("region", { name: "Your trial" });
   await expect(trialCard).toContainText("3 remaining"); await expect(trialCard).toContainText("1 remaining");
@@ -72,7 +74,8 @@ try {
   await page.getByRole("button", { name: "Refresh allowance" }).click();
   await expect(page.getByRole("alert")).toContainText("allowance could not be verified");
   await expect(trialCard).toHaveCount(0); await expect(page.getByText("The plan could not be verified. Refresh before starting new paid work.", { exact: true })).toBeVisible();
-  await page.evaluate(() => window.businessFixture.trial(null));
+  await page.evaluate(() => { window.businessFixture.trial(null);
+    window.businessFixture.activation({ org_id: "22222222-2222-4222-8222-222222222222", available: true, funded: true, authority: "verified_retail" }, "team"); });
   await page.getByRole("button", { name: "Refresh allowance" }).click();
   await expect(trialCard).toHaveCount(0); await expect(page.locator(".business-plan-name")).toHaveText("team");
   await expect(page.getByText(/Current access through/)).toContainText("2026");
@@ -97,7 +100,7 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.evaluate(value => { window.businessFixture.trial(value); window.businessFixture.activation({ org_id: value.org_id, available: false, funded: false, authority: "subscription_activation_unavailable" }, "pro"); }, trial);
   await page.getByRole("button", { name: "Refresh allowance" }).click();
-  await expect(pendingCard).toContainText("Recorded trial usage: 1 / 1 walkthroughs, 2 / 5 photo edits and 0 / 1 published listings");
+  await expect(pendingCard).toContainText("Recorded trial usage: 2 / 5 photo edits, 1 / 1 walkthroughs and 0 / 1 published listings");
   await expect(pendingCard).toContainText("new creation is unavailable until service activation succeeds");
   await expect(trialCard).toHaveCount(0);
   await page.evaluate(value => { window.businessFixture.trial({ ...value, status: "expired" }); window.businessFixture.activation({ org_id: value.org_id, available: false, funded: false, authority: "subscription_activation_unavailable" }, "free"); }, trial);

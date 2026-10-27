@@ -21,6 +21,12 @@ export type InviteResult = { email: string; outcome: string; code: string | null
 export const brandFields = ["name", "title", "brokerage", "phone", "email", "website", "avatar_url", "headshot_url", "instagram", "linkedin", "tiktok", "accent"] as const;
 export type Brand = Record<typeof brandFields[number], string> & { org_name: string; handle: string; space_type: string };
 export type Account = { brand: Brand; notifications: Notifications; portfolioUrl: string | null; planSource: string; plan: string | null; planExpiresAt: string | null; trialEndsAt: string | null; degraded: boolean; trialUsage?: TrialUsage | null; servingActivation?: ServingActivation | null; servingPhotoPackage?: PhotoPackage | null; servingEnvelope?: ServingEnvelope | null; meters: { key: string; title: string; used: number; cap: number; resetsAt: string | null }[] };
+/** A paid plan name can be recorded during Apple's free intro. The funded
+ * authority, not the plan name or a historical counter, identifies that week. */
+export function currentTrialAllowance(account: Account): boolean {
+  return !!account.trialUsage && (account.servingActivation?.authority === "funded_trial"
+    || (account.plan === "trial" && !account.servingEnvelope));
+}
 export function serviceActivationPending(account: Account, now = Date.now()): boolean {
   if (account.servingActivation?.available !== false) return false;
   if (account.trialUsage) return account.trialUsage.status === "active";

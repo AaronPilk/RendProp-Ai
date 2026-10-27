@@ -874,7 +874,7 @@ struct SettingsView: View {
         } header: {
             Text("Plan & usage")
         } footer: {
-            Text(canShowSupplierCosts && usage?.servingEnvelope != nil ? ServingEnvelopeSummary.explanation : usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil && RecordedTrialPresentation.isCurrent(planName: usage?.entitlements?.plan ?? usage?.planName) ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo and reel allowances use their 30-day window. Pull down to refresh.")
+            Text(usage?.servingActivation?.authority == .fundedTrial && usage?.trialUsage != nil ? TrialUsageSummary.explanation : canShowSupplierCosts && usage?.servingEnvelope != nil ? ServingEnvelopeSummary.explanation : usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil && RecordedTrialPresentation.isCurrent(planName: usage?.entitlements?.plan ?? usage?.planName) ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo and reel allowances use their 30-day window. Pull down to refresh.")
         }
     }
 
@@ -929,7 +929,8 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func usageRows(_ usage: UsageSummary) -> some View {
-        let showCurrentTrial = RecordedTrialPresentation.isCurrent(planName: usage.entitlements?.plan ?? usage.planName)
+        let fundedTrial = usage.servingActivation?.authority == .fundedTrial
+        let showCurrentTrial = fundedTrial || RecordedTrialPresentation.isCurrent(planName: usage.entitlements?.plan ?? usage.planName)
         if let hosting = usage.hostingRetention {
             if let deadline = hosting.deadline {
                 LabeledContent(hosting.hostingAvailable ? "Public hosting ends" : "Public hosting ended", value: deadline.formatted(date: .abbreviated, time: .omitted))
@@ -942,7 +943,10 @@ struct SettingsView: View {
         }
         // A checked ceiling envelope describes the current serving period.
         // An older funded-trial record must not hide it or replace its copy.
-        if usage.servingEnvelope == nil, showCurrentTrial, let trial = usage.trialUsage, trial.status != .active {
+        if fundedTrial, let trial = usage.trialUsage {
+            trialUsageRows(trial)
+            if let package = usage.servingPhotoPackage { photoPackageRows(package) }
+        } else if usage.servingEnvelope == nil, showCurrentTrial, let trial = usage.trialUsage, trial.status != .active {
             trialUsageRows(trial)
             if let package = usage.servingPhotoPackage { photoPackageRows(package) }
         } else if usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true {
@@ -1031,13 +1035,13 @@ struct SettingsView: View {
             LabeledContent(row.title, value: row.value)
         }
         if trial.status == .expired {
-            Text("New trial work has ended. Your saved walkthroughs, photo versions and downloads remain available under your workspace's access and retention terms.")
+            Text("New trial work has ended. Your saved photo versions and downloads remain available under your workspace's access and retention terms.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
         } else if trial.status == .exhausted {
             Text("The included trial usage is used up. Your saved work remains available under your workspace's access and retention terms. Apple keeps the renewal date you confirmed.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
         } else {
-            Text("Listing and photo edit allowances are tracked separately. Video and website publishing begin after payment.")
+            Text(trial.creationScope)
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
         }
     }
