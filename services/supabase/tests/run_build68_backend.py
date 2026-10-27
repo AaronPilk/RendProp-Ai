@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from fresh_schema_migrations import partition_fresh_migrations
 
 def main():
     parser = argparse.ArgumentParser()
@@ -66,7 +67,7 @@ def main():
         if identity.strip() != f"{data}||rendprop_build68_audit":
             raise RuntimeError("Owned cluster identity mismatch")
         run("bootstrap", psql + ["-q", "-f", str(root / "services/supabase/tests/ci-bootstrap.sql")])
-        for path in sorted((root / "services/supabase/migrations").glob("*.sql")):
+        for path in partition_fresh_migrations(sorted((root / "services/supabase/migrations").glob("*.sql")))[0]:
             run("apply-" + path.stem, psql + ["-q", "-1", "-f", str(path)])
         run("replay-review", psql + ["-q", "-1", "-f", str(migration)])
         positive = run("review-suite", psql + ["-f", str(suite)])

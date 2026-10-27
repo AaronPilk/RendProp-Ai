@@ -8,6 +8,7 @@ with the existing offline synthetic-chain suite, separately from SQL adapters.
 from datetime import datetime, timezone
 import hashlib, json, os, pathlib, re, shutil, subprocess, tempfile
 from run_database_regression import invariant_rows
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261001143615_subscription_confirmed_trial_start.sql'
@@ -43,7 +44,7 @@ try:
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_audit'])
  assert query('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  query('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
- for p in sorted((SQL/'migrations').glob('*.sql')):
+ for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:
   if p!=TARGET:query('migration-'+p.stem,p.read_text())
  query('legacy-fixtures',"insert into auth.users(id,email,is_anonymous)values('d0100104-0000-4000-8000-000000000001','legacy@fixture.invalid',false),('d0100104-0000-4000-8000-000000000002','manual@fixture.invalid',false),('d0100104-0000-4000-8000-000000000003','paid@fixture.invalid',false);update orgs set plan='pro',plan_source='manual',trial_ends_at=null where id=(select org_id from memberships where user_id='d0100104-0000-4000-8000-000000000002');update orgs set plan='pro',plan_source='apple',plan_expires_at=now()+interval '30 days',trial_ends_at=null where id=(select org_id from memberships where user_id='d0100104-0000-4000-8000-000000000003');")
  snapshot="select jsonb_agg(to_jsonb(o) order by o.id)::text from orgs o join memberships m on m.org_id=o.id where m.user_id::text like 'd0100104-%';"

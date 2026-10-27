@@ -8,6 +8,7 @@ configured DB URL are accepted. Synthetic outbox rows are never drained.
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib, json, os, pathlib, re, shutil, subprocess, tempfile, time
+from run_database_regression import partition_fresh_migrations
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SQL = ROOT / 'services/supabase'
@@ -70,7 +71,7 @@ try:
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_audit'])
  assert query('identity',"select current_setting('data_directory'), current_setting('listen_addresses');").strip()==str(DATA)+'|'
  query('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
- for p in sorted((SQL/'migrations').glob('*.sql')):
+ for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:
   if p!=TARGET:query('migration-'+p.stem,p.read_text())
  before=query('enqueue-before',(SQL/'tests/team_readiness.sql').read_text(),3)
  assert 'TEAM FAIL: addressed invite queues with the real profile name column' in before

@@ -6,6 +6,7 @@ The receipt binds all migrations, fixtures and this runner to their SHA256.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import hashlib
 import json
@@ -79,7 +80,7 @@ try:
     run("createdb", [TOOLS["createdb"], *conn, "retail_guest_audit"])
     psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "retail_guest_audit", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap", [*psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for m in sorted((SQL / "migrations").glob("*.sql")):
+    for m in partition_fresh_migrations(sorted((SQL / "migrations").glob("*.sql")))[0]:
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     receipt["fresh"] = run("guest-fresh", [*psql,"-Atq","-f",SQL / "tests/verified_retail_guest.sql"]).strip()
     # Replay the overlay at its historical schema point in a separate database.
@@ -89,7 +90,7 @@ try:
     run("createdb-historical-replay", [TOOLS["createdb"], *conn, "historical_replay"])
     replay_psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "historical_replay", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap-historical-replay", [*replay_psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for m in sorted((SQL / "migrations").glob("*.sql")):
+    for m in partition_fresh_migrations(sorted((SQL / "migrations").glob("*.sql")))[0]:
         run("replay-apply-" + m.stem, [*replay_psql, "-q", "-1", "-f", m])
         if m.name == "20261007135551_verified_retail_guest_admission.sql":
             run("historical-exact-overlay-replay", [*replay_psql, "-q", "-1", "-f", m])

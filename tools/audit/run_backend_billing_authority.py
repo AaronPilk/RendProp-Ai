@@ -2,6 +2,7 @@
 """Owned socket-only billing/video/slug authority regression; no remote connections."""
 from pathlib import Path
 import argparse,hashlib,json,os,re,shutil,subprocess,tempfile
+from run_database_regression import partition_fresh_migrations
 ROOT=Path(__file__).resolve().parents[2]
 parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path);args=parser.parse_args()
 OUT=args.output or Path(tempfile.mkdtemp(prefix='rendprop-billing-authority-',dir='/tmp'));OUT.mkdir(parents=True,exist_ok=True)
@@ -11,6 +12,7 @@ B={n:shutil.which(n)for n in('initdb','pg_ctl','createdb','psql')};assert all(B.
 CONN=['-h',str(SOCK),'-p','55469','-U','postgres'];DB='rendprop_billing_authority'
 TARGET=ROOT/'services/supabase/migrations/20261005220841_render_slug_crypto_entropy.sql'
 files=sorted(TARGET.parent.glob('*.sql'));fixture=ROOT/'services/supabase/tests/backend_billing_authority.sql'
+schema_files,live_state_files=partition_fresh_migrations(files)
 BROKERAGE=TARGET.parent/'20261005215707_brokerage_pricing_service_acl.sql'
 BROKERAGE_HELPERS=[
  ('brokerage_price_cents','public.brokerage_price_cents(integer)'),
@@ -21,7 +23,7 @@ BROKERAGE_HELPERS=[
 owned=[BROKERAGE,*[TARGET.parent/n for n in ['20261005220556_app_video_allowance_receipts.sql','20261005220709_apple_sandbox_authority_fence.sql',TARGET.name]]]
 bound=[*files,fixture,Path(__file__).resolve(),*[ROOT/('services/supabase/functions/'+f)for f in ['ai-video/index.ts','ai-video/cost-reservation.ts','ai-video/cost-reservation.test.ts','ai-video/cost-reservation-handler_test.ts','ai-video/fal-status-handler_test.ts','ai-video/output-journal.test.ts','_shared/ratelimit.ts','_shared/ratelimit.test.ts','_shared/providers/common.ts','_shared/providers/jobtoken.ts','_shared/providers/providers_test.ts','_shared/providers/fal_submission_audit_test.ts','_shared/applejws.ts','_shared/applejws.test.ts','me/index.ts','apple-subscriptions/index.ts']],ROOT/'services/supabase/tests/ci-bootstrap.sql']
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in bound}
-r={'passed':False,'sourceHashes':hashes,'migrationCount':len(files),'limits':['Synthetic local socket-only database','No provider calls/live writes','Unknown charged video holds never expire; no provider reconciliation or paid output proof','Sandbox purchase never creates service testing authority; App Review fixed lifetime caps remain operationally blocked']}
+r={'passed':False,'sourceHashes':hashes,'migrationCount':len(schema_files),'excludedLiveStateMigrations':[p.name for p in live_state_files],'limits':['Synthetic local socket-only database','No provider calls/live writes','Unknown charged video holds never expire; no provider reconciliation or paid output proof','Sandbox purchase never creates service testing authority; App Review fixed lifetime caps remain operationally blocked']}
 def run(name,command,ok=True):
  v=subprocess.run(command,env=ENV,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=90);(OUT/(name+'.log')).write_text(v.stdout)
  if ok:assert v.returncode==0,(name,v.stdout[-2500:])
@@ -40,7 +42,7 @@ try:
  unrelated_acls="select jsonb_agg(to_jsonb(x)order by oid)from(select oid,proacl from pg_proc where pronamespace='public'::regnamespace and oid not in("+helper_oids+"))x"
  helper_privileges="select jsonb_agg(to_jsonb(x)order by signature)from(select oid::regprocedure::text signature,has_function_privilege('anon',oid,'EXECUTE')anon,has_function_privilege('authenticated',oid,'EXECUTE')authenticated,has_function_privilege('service_role',oid,'EXECUTE')service_role from pg_proc where oid in("+helper_oids+"))x"
  prior_attrs=None
- for f in files:
+ for f in schema_files:
   if f==BROKERAGE:
    before_brokerage=run('brokerage-metadata-before',[*PS,'-Atqc',brokerage_metadata]).stdout
    before_unrelated_acls=run('brokerage-unrelated-acls-before',[*PS,'-Atqc',unrelated_acls]).stdout
@@ -65,7 +67,7 @@ try:
  run('create-historical',[B['createdb'],*CONN,DB+'_replay'])
  PS=[B['psql'],'-X','--no-password',*CONN,'-d',DB+'_replay','-v','ON_ERROR_STOP=1']
  run('bootstrap-historical',[*PS,'-q','-f',str(ROOT/'services/supabase/tests/ci-bootstrap.sql')])
- for f in files:
+ for f in schema_files:
   run('historical-'+f.stem,[*PS,'-q','-f',str(f)])
   if f in owned:run('ordered-replay-'+f.stem,[*PS,'-q','-f',str(f)])
   if f.name=='20261005220709_apple_sandbox_authority_fence.sql':

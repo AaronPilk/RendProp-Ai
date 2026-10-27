@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime,timezone
 from decimal import Decimal
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase';TARGET=SQL/'migrations/20261010030225_reaudit_library_session_settlement.sql'
 FINAL_OVERLAY=SQL/'migrations/20261010042000_legacy_notification_session_retirement.sql'
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-team-private-final-',dir='/tmp'));DATA=OUT/'cluster';SOCK=OUT/'socket';SOCK.mkdir(mode=0o700)
@@ -44,7 +45,7 @@ try:
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_audit']);assert q('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  q('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
  snapshot="select json_object_agg(p.oid::regprocedure::text,json_build_object('definition',pg_get_functiondef(p.oid),'acl',p.proacl,'owner',p.proowner,'config',p.proconfig,'definer',p.prosecdef))from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public';"
- for p in sorted((SQL/'migrations').glob('*.sql')):
+ for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:
   q('migration-'+p.stem,p.read_text())
   if p==TARGET:
    historical=json.loads(q('historical-followup-catalog',snapshot))

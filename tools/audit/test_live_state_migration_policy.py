@@ -2,6 +2,7 @@
 """Fail closed when an exact live-state adoption is mistaken for fresh schema SQL."""
 
 from pathlib import Path
+import re
 import tempfile
 import unittest
 
@@ -14,6 +15,7 @@ from run_database_regression import (
 
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "services/supabase/migrations"
+ROOT = MIGRATIONS.parents[2]
 
 
 class LiveStateMigrationPolicyTests(unittest.TestCase):
@@ -75,6 +77,44 @@ class LiveStateMigrationPolicyTests(unittest.TestCase):
         source = next(path for path in self.paths if path.name in GUARDED_ONE_SHOT_MIGRATIONS)
         with self.assertRaisesRegex(RuntimeError, "Guarded one-shot migrations missing"):
             partition_fresh_migrations(path for path in self.paths if path != source)
+
+    def test_publication_ci_full_schema_runners_use_the_pinned_policy(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        job = workflow.split("  db-publication-regression:\n", 1)[1]
+        job = re.split(r"(?m)^  [a-z][a-z0-9-]*:\n", job, maxsplit=1)[0]
+        runners = {
+            ROOT / path for path in re.findall(
+                r"python3 ((?:services/supabase/tests|tools/audit)/[\w./-]+\.py)", job
+            )
+        }
+        # Check the complete disposable-PostgreSQL job, including audit runners
+        # that do not have a _pg.py suffix. Source-only scanners are excluded.
+        database_runners = {
+            runner for runner in runners
+            if "initdb" in runner.read_text() and ".glob(" in runner.read_text()
+        }
+        self.assertGreaterEqual(len(database_runners), 45)
+        # These proofs stop at an explicit historical migration boundary before
+        # the 2026-10-23 adoptions, so the full-set policy cannot apply.
+        historical_only = {
+            "bounded_subscription_trial_pg.py",
+            "subscription_trial_video_duration_pg.py",
+            "run_internal_testing_grants.py",
+            "run_spatial_regression.py",
+            "run_spatial_provider_regression.py",
+        }
+        self.assertLessEqual(historical_only, {runner.name for runner in database_runners})
+        for runner in database_runners:
+            with self.subTest(runner=runner.name):
+                source = runner.read_text()
+                if runner.name in historical_only:
+                    continue
+                self.assertIn("partition_fresh_migrations", source)
+                # This runner also has a separately bounded October 5 proof.
+                if runner.name != "run_private_internal_testing.py":
+                    self.assertNotRegex(source, r"for \w+ in MIGRATIONS:")
+                self.assertNotRegex(source, r"for \w+ in MIGS:")
+                self.assertNotRegex(source, r"for \w+ in sorted\(\(SQL\s*/\s*['\"]migrations['\"]\)\.glob\(['\"]\*\.sql['\"]\)\):")
 
 
 if __name__ == "__main__":

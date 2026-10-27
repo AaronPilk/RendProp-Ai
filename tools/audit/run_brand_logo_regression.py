@@ -3,6 +3,7 @@
 from datetime import datetime,timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 from run_database_regression import invariant_rows
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 SQL=ROOT/'services/supabase'
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
@@ -70,7 +71,7 @@ try:
  run('create',[BINS['createdb'],'--no-password',*CONN,'rendprop_logo'])
  assert query('identity',"select current_setting('data_directory')||'|'||current_setting('listen_addresses')||'|'||current_database();").strip()==f'{DATA}||rendprop_logo'
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for migration in MIGRATIONS:run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
+ for migration in partition_fresh_migrations(MIGRATIONS)[0]:run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
  run('deletion-repair-replay',[*PSQL,'-q','-1','-f',DELETION_REPAIR])
  positive=run('logo-positive',[*PSQL,'-At','-f',TEST])
  assert 'PASS: org logo lifecycle SQL assertions; all fixtures rolled back.'in positive

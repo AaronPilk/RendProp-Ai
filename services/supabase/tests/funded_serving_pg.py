@@ -6,6 +6,7 @@ The receipt binds all migrations, fixtures and this runner to their SHA256.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import hashlib
 import json
@@ -78,7 +79,7 @@ try:
     run("createdb", [TOOLS["createdb"], *conn, "funded_serving_audit"])
     psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "funded_serving_audit", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap", [*psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for m in sorted((SQL / "migrations").glob("*.sql")):
+    for m in partition_fresh_migrations(sorted((SQL / "migrations").glob("*.sql")))[0]:
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     receipt["fresh"] = run("funded-fresh", [*psql, "-Atq", "-f", SQL / "tests/funded_serving.sql"]).strip()
     # The old anchor-patching migration cannot be replayed over the later Team
@@ -90,7 +91,7 @@ try:
     run("createdb-replay", [TOOLS["createdb"], *conn, "funded_serving_replay"])
     replay_psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "funded_serving_replay", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap-replay", [*replay_psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for m in sorted((SQL / "migrations").glob("*.sql")):
+    for m in partition_fresh_migrations(sorted((SQL / "migrations").glob("*.sql")))[0]:
         run("replay-apply-" + m.stem, [*replay_psql, "-q", "-1", "-f", m])
         if m == MIGRATION:
             run("replay-funded-historical", [*replay_psql, "-q", "-1", "-f", m])

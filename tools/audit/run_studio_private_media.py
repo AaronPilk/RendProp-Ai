@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from run_database_regression import partition_fresh_migrations
 
 
 def main():
@@ -82,7 +83,7 @@ def main():
             raise RuntimeError("Database identity/network mismatch")
         environment["PGOPTIONS"] = "-c statement_timeout=30000 -c lock_timeout=5000"
         run("bootstrap", psql + ["-q", "-f", str(sqlroot / "tests/ci-bootstrap.sql")])
-        for migration in migrations:
+        for migration in partition_fresh_migrations(migrations)[0]:
             run("migration-" + migration.stem, psql + ["-q", "-f", str(migration)])
         for fixture in fixtures:
             output = run(fixture.stem, psql + ["-f", str(fixture)])

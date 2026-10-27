@@ -2,6 +2,7 @@
 """Real service/tenant cleanup boundaries; owned socket-only synthetic cluster."""
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile
 from datetime import datetime,timezone
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase';TARGET=SQL/'migrations/20261005222001_upload_identity_monthly_technical_ceiling.sql';TEST=SQL/'tests/upload_privacy_admission.sql'
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-upload-privacy-',dir='/tmp'));SOCK=OUT/'socket';DATA=OUT/'cluster';SOCK.mkdir(mode=0o700)
@@ -21,7 +22,7 @@ try:
  run('init',[BIN['initdb'],'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8']);run('start',[BIN['pg_ctl'],'-D',DATA,'-l',OUT/'server.log','-w','-t','30','-o',f"-k {SOCK} -p 55481 -c listen_addresses='' -c shared_buffers=16MB -c max_connections=15",'start']);started=True
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_privacy_audit']);assert query('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  query('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
- for p in MIGRATIONS:query('migration-'+p.stem,p.read_text())
+ for p in partition_fresh_migrations(MIGRATIONS)[0]:query('migration-'+p.stem,p.read_text())
  receipt['freshAssertions']=positive('fresh')
  # Replay the historical migration before the later launch patches; applying
  # it backwards to the final schema would replace current security guards.
@@ -29,7 +30,7 @@ try:
  run('create-historical',[BIN['createdb'],'--no-password',*CONN,'rendprop_privacy_audit_replay'])
  PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_privacy_audit_replay','-v','ON_ERROR_STOP=1','-Atq']
  query('bootstrap-historical',(SQL/'tests/ci-bootstrap.sql').read_text())
- for p in MIGRATIONS:
+ for p in partition_fresh_migrations(MIGRATIONS)[0]:
   query('historical-'+p.stem,p.read_text())
   if p==TARGET:query('ordered-replay-'+p.stem,p.read_text())
  receipt['replayAssertions']=positive('replayed')

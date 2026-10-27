@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from run_database_regression import partition_fresh_migrations
 
 argparse.ArgumentParser(description=__doc__).parse_args()
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +24,7 @@ LEGACY_TEST = SQL / 'tests/private_internal_testing_legacy.sql'
 FINAL_TARGET = SQL / 'migrations/20261010030225_reaudit_library_session_settlement.sql'
 FINAL_OVERLAY = SQL / 'migrations/20261010042000_legacy_notification_session_retirement.sql'
 FINAL_MIGRATIONS = sorted((SQL / 'migrations').glob('*.sql'))
+FINAL_SCHEMA_MIGRATIONS, FINAL_LIVE_STATE_MIGRATIONS = partition_fresh_migrations(FINAL_MIGRATIONS)
 OUT = Path(tempfile.mkdtemp(prefix='rendprop-private-testing-', dir='/tmp'))
 DATA, SOCK = OUT / 'cluster', OUT / 'socket'
 SOCK.mkdir(mode=0o700)
@@ -273,7 +275,7 @@ try:
  run('drop-historical-clone', [*psql('postgres'), '-c', f'drop database {DB};'])
  run('create-current-final', [BINS['createdb'], '--no-password', *CONN, DB])
  run('current-bootstrap', [*psql(), '-q', '-f', SQL / 'tests/ci-bootstrap.sql'])
- for migration in FINAL_MIGRATIONS:
+ for migration in FINAL_SCHEMA_MIGRATIONS:
   run('current-' + migration.stem, [*psql(), '-q', '-f', migration])
   if migration == FINAL_TARGET:
    historical_followup = json.loads(query('historical-followup-functions', SNAPSHOT))
@@ -281,7 +283,8 @@ try:
    assert json.loads(query('historical-followup-replayed-functions', SNAPSHOT)) == historical_followup
    receipt['historicalFollowupSQLAssertions'] = positive('historical-followup-private-positive', TEST)
    receipt['historicalFollowupReplayAtOwnSchemaPoint'] = True
- receipt['currentMigrationCount'] = len(FINAL_MIGRATIONS)
+ receipt['currentMigrationCount'] = len(FINAL_SCHEMA_MIGRATIONS)
+ receipt['excludedLiveStateMigrations'] = [p.name for p in FINAL_LIVE_STATE_MIGRATIONS]
  receipt['currentSQLAssertions'] = positive('current-final-private-positive', TEST)
  current_snapshot = json.loads(query('current-final-functions', SNAPSHOT))
  # Build 57 (20261010141500) supersedes select_workspace, the first differing pin of this overlay.

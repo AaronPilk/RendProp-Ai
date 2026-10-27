@@ -6,6 +6,7 @@ Owns a disposable socket-only Postgres cluster; no external auth or network.
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261010030225_reaudit_library_session_settlement.sql'
 FINAL_OVERLAY=SQL/'migrations/20261010042000_legacy_notification_session_retirement.sql'
@@ -71,7 +72,7 @@ try:
  run('start',[BIN['pg_ctl'],'-D',DATA,'-l',OUT/'server.log','-w','-t','30','-o',f"-k {SOCK} -p 55453 -c listen_addresses='' -c shared_buffers=16MB -c max_connections=15",'start'])
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_audit']);assert query('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  query('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
- for p in sorted((SQL/'migrations').glob('*.sql')):
+ for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:
   query('migration-'+p.stem,p.read_text())
   if p==TARGET:
    historical=query('historical-followup-catalog',CATALOG)

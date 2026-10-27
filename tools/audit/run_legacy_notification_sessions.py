@@ -2,6 +2,7 @@
 """Legacy push account-switch recovery: owned synthetic PostgreSQL, no hosted writes."""
 from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase';TARGET=SQL/'migrations/20261010042000_legacy_notification_session_retirement.sql'
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rp-legacy-notification-',dir='/tmp'));DATA=OUT/'cluster';SOCK=OUT/'socket';SOCK.mkdir(mode=0o700)
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC'};BIN={n:shutil.which(n)for n in['initdb','pg_ctl','psql','createdb']};assert all(BIN.values())
@@ -26,7 +27,7 @@ try:
  run('start',[BIN['pg_ctl'],'-D',DATA,'-l',OUT/'server.log','-w','-t','30','-o',f"-k {SOCK} -p 55494 -c listen_addresses='' -c shared_buffers=16MB -c max_connections=20",'start']);started=True
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_audit']);assert q('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  q('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
- for p in sorted((SQL/'migrations').glob('*.sql')):q('migration-'+p.stem,p.read_text())
+ for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:q('migration-'+p.stem,p.read_text())
  suite('fresh')
  catalog="select md5(string_agg(oid::regprocedure::text||prosrc||coalesce(proacl::text,'')||proowner::text||prosecdef::text||coalesce(proconfig::text,''),'|'order by oid::regprocedure::text))from pg_proc where pronamespace='public'::regnamespace;"
  before=q('catalog-final',catalog);q('exact-final-replay',TARGET.read_text());assert q('catalog-replayed',catalog)==before;suite('replay')

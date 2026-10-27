@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib, json, os, re, shutil, subprocess, tempfile, uuid
-from run_database_regression import invariant_rows
+from run_database_regression import invariant_rows, partition_fresh_migrations
 
 ROOT=Path(__file__).resolve().parents[2]
 SQL=ROOT/'services/supabase'
@@ -27,8 +27,10 @@ PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERRO
 paths=[TARGET,CUTOVER,FACTS,SQL/'tests/ci-bootstrap.sql',SQL/'tests/invariants.sql',SQL/'tests/invariant_astra_paid_gates.sql',SQL/'tests/listing_facts_cas.sql',SQL/'tests/subscription_chronology.sql',SQL/'tests/subscription_confirmed_trial.sql',Path(__file__).resolve(),*sorted((SQL/'functions/apple-subscriptions').glob('*.ts')),SQL/'functions/me/index.ts',SQL/'functions/_shared/applejws.test.ts']
 paths += [ROOT/'tools/audit/run_database_regression.py',STUDIO/'listing-actions.ts',STUDIO/'listing-actions.test.ts',STUDIO/'index.ts',FLOORPLAN,SQL/'tests/studio_floorplan_cas.sql']
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
-migrations=[(p,p.read_text())for p in sorted((SQL/'migrations').glob('*.sql'))]
-receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'migrationHashes':{p.name:hashlib.sha256(s.encode()).hexdigest()for p,s in migrations},'commands':[],'productionMutations':0,'providerCalls':0,'appleCalls':0,'passed':False}
+all_migrations=sorted((SQL/'migrations').glob('*.sql'))
+schema_migrations,live_state_migrations=partition_fresh_migrations(all_migrations)
+migrations=[(p,p.read_text())for p in schema_migrations]
+receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'migrationHashes':{p.name:hashlib.sha256(p.read_bytes()).hexdigest()for p in all_migrations},'excludedLiveStateMigrations':[p.name for p in live_state_migrations],'commands':[],'productionMutations':0,'providerCalls':0,'appleCalls':0,'passed':False}
 def run(name,args,sql=None,expected=0):
  p=subprocess.run(list(map(str,args)),input=sql,text=True,env=ENV,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)
  log=OUT/(name+'.log');log.write_text(p.stdout)
@@ -233,7 +235,7 @@ try:
  receipt['floorplanNegativeControl']='Replacing request service RPC with client RPC fails actual handler boundary fixture'
  run('handler-compilation',deno[:2]+['--no-run']+deno[2:]+[SQL/'functions/apple-subscriptions/index.ts',SQL/'functions/me/index.ts',STUDIO/'index.ts'])
  assert hashes=={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths},'Billing source changed during verification'
- assert receipt['migrationHashes']=={p.name:hashlib.sha256(p.read_bytes()).hexdigest()for p,_ in migrations},'Migration sources changed during verification'
+ assert receipt['migrationHashes']=={p.name:hashlib.sha256(p.read_bytes()).hexdigest()for p in all_migrations},'Migration sources changed during verification'
  receipt.update(passed=True,finishedAt=datetime.now(timezone.utc).isoformat(),confirmedTrialAssertions=27,limits=['Synthetic certificate trust root and owned database; no real App Store purchase or restore','Legacy deployed handlers and production schema remain unchanged','No new pricing, margin or Apple offer eligibility certification'])
 finally:
  if started and(DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])

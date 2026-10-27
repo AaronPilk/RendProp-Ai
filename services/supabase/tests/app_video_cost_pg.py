@@ -6,6 +6,7 @@ The receipt binds all migrations, fixtures and this runner to their SHA256.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import hashlib
 import json
@@ -289,7 +290,7 @@ try:
     run("createdb", [TOOLS["createdb"], *conn, "video_cost_audit"])
     psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "video_cost_audit", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap", [*psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for m in sorted((SQL / "migrations").glob("*.sql")):
+    for m in partition_fresh_migrations(sorted((SQL / "migrations").glob("*.sql")))[0]:
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     for name in ("video_erase", "video_erase_direct_bria"):
         receipt[name + "-preserved"] = run(name + "-preserved", [*psql, "-f", SQL / f"tests/{name}.sql"]).strip()

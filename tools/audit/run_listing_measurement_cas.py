@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+from run_database_regression import partition_fresh_migrations
 
 ROOT = Path(__file__).resolve().parents[2]
 SQL = ROOT / 'services/supabase'
@@ -57,7 +58,7 @@ try:
     run('createdb', [TOOLS['createdb'], *conn, 'measurement_cas_audit'])
     psql = [TOOLS['psql'], '-X', '--no-password', *conn, '-d', 'measurement_cas_audit', '-v', 'ON_ERROR_STOP=1']
     run('bootstrap', [*psql, '-q', '-f', SQL / 'tests/ci-bootstrap.sql'])
-    for m in sorted((SQL / 'migrations').glob('*.sql')):
+    for m in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:
         run('apply-' + m.stem, [*psql, '-q', '-1', '-f', m])
     receipt['fresh'] = json.loads(run('fresh', [*psql, '-Atq', '-f', FIXTURE]).strip())
     signatures = [

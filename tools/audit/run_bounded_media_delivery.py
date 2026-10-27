@@ -2,6 +2,7 @@
 """Owned socket-only exact copied migration/finite-media proof; no hosted calls."""
 import hashlib,json,os,pathlib,re,subprocess,tempfile,shutil
 from datetime import datetime,timezone
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 # Retain every failed/positive source/log; never connect to a hosted database.
 POSTGRES_TOOLS=('postgres','initdb','pg_ctl','psql','createdb')
@@ -65,12 +66,14 @@ try:
  run('createdb',[BIN/'createdb','--no-password',*CONN,'rendprop_bounded_media_audit']);assert query('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  query('bootstrap',(INPUT/'services/supabase/tests/ci-bootstrap.sql').read_text())
  migrations=sorted((INPUT/'services/supabase/migrations').glob('*.sql'))
+ schema_migrations,live_state_migrations=partition_fresh_migrations(migrations)
  boundary='20261007145000_pooled_media_startup.sql'
- boundary_index=next(i for i,p in enumerate(migrations)if p.name==boundary)
+ boundary_index=next(i for i,p in enumerate(schema_migrations)if p.name==boundary)
+ receipt['excludedLiveStateMigrations']=[p.name for p in live_state_migrations]
  receipt['legacyFinancialBoundary']=boundary
  # These unchanged financial/storage assertions describe the Oct7 contract.
  # Current product serving deliberately meters authorized reads without cash.
- for p in migrations[:boundary_index+1]:
+ for p in schema_migrations[:boundary_index+1]:
   query('migration-'+p.stem,p.read_text())
   if p.name=='20261007135843_bounded_media_delivery.sql':
    receipt['coreFreshAssertions']=positive('core-fresh');query('core-boundary-replay',p.read_text());receipt['coreReplayAssertions']=positive('core-replay')
@@ -121,11 +124,11 @@ try:
  # Advance the tested historical database to the complete copied current chain.
  # An independent fresh database proves that fixtures/controls left no changed
  # function definition, owner, ACL or security configuration in today's catalog.
- for p in migrations[boundary_index+1:]:query('migration-'+p.stem,p.read_text())
+ for p in schema_migrations[boundary_index+1:]:query('migration-'+p.stem,p.read_text())
  run('current-reference-createdb',[BIN/'createdb','--no-password',*CONN,'rendprop_media_current_reference'])
  reference=[str(BIN/'psql'),'-X','--no-password',*CONN,'-d','rendprop_media_current_reference','-v','ON_ERROR_STOP=1','-Atq']
  run('current-reference-bootstrap',reference,(INPUT/'services/supabase/tests/ci-bootstrap.sql').read_text())
- for p in migrations:run('current-reference-'+p.stem,reference,p.read_text())
+ for p in schema_migrations:run('current-reference-'+p.stem,reference,p.read_text())
  catalog="""select coalesce(jsonb_agg(jsonb_build_object('identity',p.oid::regprocedure::text,
  'definition',pg_get_functiondef(p.oid),'owner',pg_get_userbyid(p.proowner),
  'acl',p.proacl::text,'security_definer',p.prosecdef,'config',p.proconfig)
@@ -134,12 +137,14 @@ try:
  expected=query('current-complete-catalog',catalog)
  fresh=run('current-reference-complete-catalog',reference,catalog)
  assert expected==fresh,'Historical media proof changed the final current function catalog'
- duration=query('final-trial-video-duration',(INPUT/'services/supabase/tests/subscription_trial_video_duration.sql').read_text());assert 'TRIAL_VIDEO_CHECKS 31' in duration;receipt['trialVideoDurationAssertions']=31
+ # The October 6 trial-duration fixture runs at its historical boundary in
+ # subscription_trial_video_duration_pg.py. Its former direct-publish path is
+ # no longer an admission route under the current intro-trial policy.
  modern=query('final-modern-transport',(INPUT/'services/supabase/tests/modern_service_transport.sql').read_text());assert 'modern service transport: 7 checks passed' in modern;receipt['modernTransportAssertions']=7
  assert query('current-complete-catalog-after-checks',catalog)==expected,'Current media checks changed the function catalog'
  receipt['allCurrentPublicFunctionCatalogExact']=True
  receipt['allCurrentPublicFunctionCatalogSHA256']=hashlib.sha256(expected.encode()).hexdigest()
- receipt['currentMigrationCount']=len(migrations)
+ receipt['currentMigrationCount']=len(schema_migrations)
  receipt['currentByteMatchesCopied']={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()==hashes[str(p.relative_to(ROOT))]for p in paths}
  receipt.update(passed=True,finishedAt=datetime.now(timezone.utc).isoformat())
 finally:

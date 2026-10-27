@@ -4,6 +4,7 @@ Owns a socket-only synthetic PG cluster. No hosted mutation or provider calls.
 """
 from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261010030225_reaudit_library_session_settlement.sql'
 FINAL_OVERLAY=SQL/'migrations/20261010042000_legacy_notification_session_retirement.sql'
@@ -83,7 +84,7 @@ try:
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_audit']);assert q('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  q('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
  old={}
- for p in sorted((SQL/'migrations').glob('*.sql')):
+ for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:
   if p==TARGET:
    for name,sig in [('accept_org_invite','accept_org_invite(uuid,text)'),('workspace_directory','workspace_directory(uuid,uuid)'),('cost_ledger_settle_serving_hold','cost_ledger_settle_serving_hold()'),('notification_register_device_session','notification_register_device_session(uuid,uuid,text,text,text,text,text)')]:old[name]=definition(name,sig)
    for name,label in [('reaudit_library_selection','bound non-switcher default aligns'),('reaudit_device_takeover','late displaced A POST'),('reaudit_deleted_team_video','exact late deleted-child receipt binds')]:

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Actual prompt document RLS/constraints in an owned Unix-socket cluster only."""
 import hashlib,json,os,pathlib,shutil,subprocess,sys,tempfile
+from fresh_schema_migrations import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 PG=pathlib.Path(os.environ.get('RENDPROP_TEST_PG_BIN','/opt/homebrew/opt/postgresql@17/bin'))
 if not (PG/'initdb').is_file():
@@ -43,7 +44,7 @@ try:
  run([PG/'initdb','-D',OUT/'data','-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
  run([PG/'pg_ctl','-D',OUT/'data','-l',OUT/'server.log','-w','-o',f"-k '{SOCK}' -p 55474 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  query((SQL/'tests/ci-bootstrap.sql').read_text())
- for p in sorted((SQL/'migrations').glob('*.sql')):query(p.read_text())
+ for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:query(p.read_text())
  query((SQL/'migrations/20260924184052_studio_prompt_library.sql').read_text());ok('all migrations apply and prompt schema replays')
  query(f"insert into auth.users(id,email) values('{A}','prompts-a@fixture.invalid'),('{B}','prompts-b@fixture.invalid');insert into orgs(id,name) values('{ORG}','Prompt fixture'),('{OTHER}','Other workspace');insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','agent'),('{A}','{OTHER}','agent');insert into listings(id,org_id,agent_id) values('{LIST}','{ORG}','{A}');")
  payload={'schema':1,'entries':[{'title':'My private notes'}]}

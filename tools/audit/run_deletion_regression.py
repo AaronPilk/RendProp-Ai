@@ -13,6 +13,7 @@ import signal
 import subprocess
 import tempfile
 import time
+from run_database_regression import partition_fresh_migrations
 
 POSTGRES_TOOLS = ('initdb', 'pg_ctl', 'psql', 'createdb')
 # The Homebrew keg this fixture was first written against, kept as the
@@ -100,7 +101,7 @@ def main():
         assert identity.strip() == f'{cluster}||rendprop_deletion_audit'
         env['PGOPTIONS'] = '-c statement_timeout=15000 -c lock_timeout=5000'
         run('bootstrap', psql + ['-q', '-f', str(bootstrap)])
-        for migration in migrations:
+        for migration in partition_fresh_migrations(migrations)[0]:
             if migration != target:
                 run('apply-' + migration.stem, psql + ['-q', '-1', '-f', str(migration)])
             else:

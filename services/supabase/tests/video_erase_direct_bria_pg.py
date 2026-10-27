@@ -4,6 +4,7 @@ Does not read credentials or contact any provider or production database.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import hashlib, json, os, shutil, subprocess, tempfile, uuid
 ROOT=Path(__file__).resolve().parents[3]
 SQL=ROOT/'services/supabase'
@@ -34,8 +35,15 @@ try:
     psql=[TOOLS['psql'],'-X','--no-password',*conn,'-d','bria_audit','-v','ON_ERROR_STOP=1']
     run('bootstrap',[*psql,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
     migrations=sorted((SQL/'migrations').glob('*.sql'))
-    for m in migrations: run('apply-'+m.stem,[*psql,'-q','-1','-f',m])
-    for name in ('video_erase','video_erase_direct_bria'): receipt[name+'-fresh']=run(name+'-fresh',[*psql,'-f',SQL/f'tests/{name}.sql'])
+    schema_migrations,live_state=partition_fresh_migrations(migrations)
+    receipt['liveStateOnlyMigrations']=[m.name for m in live_state]
+    for m in schema_migrations: run('apply-'+m.stem,[*psql,'-q','-1','-f',m])
+    fixture_markers={'video_erase':'PASS video erase SQL: 51 assertions',
+                     'video_erase_direct_bria':'PASS direct Bria SQL: 40 assertions'}
+    for name,marker in fixture_markers.items():
+        output=run(name+'-fresh',[*psql,'-f',SQL/f'tests/{name}.sql'])
+        assert marker in output,(name,'fixture assertion inventory changed',output[-1000:])
+        receipt[name+'-fresh']=output
     # Replay reflection migrations immediately after their ordered application
     # in a second fresh DB. Some existing Studio migrations are deliberately
     # one-time CREATE TABLE scripts, so do not claim full historical idempotency.
@@ -44,10 +52,13 @@ try:
     run('createdb-historical',[TOOLS['createdb'],*conn,'bria_historical'])
     historical=[TOOLS['psql'],'-X','--no-password',*conn,'-d','bria_historical','-v','ON_ERROR_STOP=1']
     run('bootstrap-historical',[*historical,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
-    for m in migrations:
+    for m in schema_migrations:
         run('historical-'+m.stem,[*historical,'-q','-1','-f',m])
         if m.name in ('0055_video_reflection_jobs.sql','0056_active_photo_fallback.sql','20261002225458_video_erase_direct_bria.sql'): run('ordered-replay-'+m.stem,[*historical,'-q','-1','-f',m])
-    for name in ('video_erase','video_erase_direct_bria'): receipt[name+'-replay']=run(name+'-ordered-replay',[*historical,'-f',SQL/f'tests/{name}.sql'])
+    for name,marker in fixture_markers.items():
+        output=run(name+'-ordered-replay',[*historical,'-f',SQL/f'tests/{name}.sql'])
+        assert marker in output,(name,'replay fixture assertion inventory changed',output[-1000:])
+        receipt[name+'-replay']=output
     receipt['replayMode']='second clean database; reflection migrations twice at their historical schema points'
     # Eight actual transactions compete for each durable paid admission/receipt.
     u,o,l,a,b,idem=[str(uuid.uuid4()) for _ in range(6)]

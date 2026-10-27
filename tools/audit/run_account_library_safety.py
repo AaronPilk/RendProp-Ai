@@ -6,6 +6,7 @@ provider calls or inherited credentials. Actual compiled defects must fail.
 """
 from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261010000032_private_library_adoption_and_serving_safety.sql'
 FOLLOWUP=SQL/'migrations/20261010030225_reaudit_library_session_settlement.sql'
@@ -91,7 +92,7 @@ try:
  catalog="select md5(string_agg(oid::regprocedure::text||prosrc||coalesce(proacl::text,'')||proowner::text||prosecdef::text||coalesce(proconfig::text,''),'|'order by oid::regprocedure::text))from pg_proc where pronamespace='public'::regnamespace;"
  pins=re.findall(r"oid='public\.([^']+)'::regprocedure\)not in\(",TARGET.read_text());assert len(pins)==7,pins
  historical_accept=None
- for p in sorted((SQL/'migrations').glob('*.sql')):
+ for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:
   q('migration-'+p.stem,p.read_text())
   if p==TARGET:
    # Replay and predecessor controls belong at this migration's historical

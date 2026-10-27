@@ -2,6 +2,7 @@
 """Account-card authority/CAS/public identity proof in an owned socket-only DB."""
 from datetime import datetime,timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
 TARGET=SQL/'migrations/20261005160701_personal_public_card.sql';TEST=SQL/'tests/personal_public_card.sql'
@@ -87,7 +88,7 @@ try:
  run('create',[BINS['createdb'],'--no-password',*CONN,'rendprop_card'])
  assert query('identity',"select current_setting('data_directory')||'|'||current_setting('listen_addresses')||'|'||current_database();").strip()==f'{DATA}||rendprop_card'
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for p in MIGRATIONS:
+ for p in partition_fresh_migrations(MIGRATIONS)[0]:
   if p==ADOPTION_MIGRATION:
    adoption_before=query('adoption-before-definition',"select pg_get_functiondef('adopt_anonymous_org(uuid,uuid,uuid,uuid)'::regprocedure);")
    adoption_acl=query('adoption-before-acl',"select json_build_object('acl',proacl,'owner',proowner,'definer',prosecdef,'config',proconfig)from pg_proc where oid='adopt_anonymous_org(uuid,uuid,uuid,uuid)'::regprocedure;")

@@ -18,7 +18,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
-from tools.audit.run_database_regression import LIVE_STATE_ONLY_MIGRATIONS
+from tools.audit.run_database_regression import partition_fresh_migrations
 SQL = ROOT / "services/supabase"
 parser = argparse.ArgumentParser()
 parser.add_argument("--evidence-dir", type=Path, required=True)
@@ -37,13 +37,7 @@ env = {
 }
 tool = lambda name: shutil.which(name) or str(Path("/opt/homebrew/opt/postgresql@17/bin") / name)
 all_migrations = sorted((SQL / "migrations").glob("*.sql"))
-for migration in all_migrations:
-    pinned = LIVE_STATE_ONLY_MIGRATIONS.get(migration.name)
-    if pinned is not None:
-        assert hashlib.sha256(migration.read_bytes()).hexdigest() == pinned, (
-            f"Review changed live-state-only migration: {migration.name}")
-migrations = [migration for migration in all_migrations
-              if migration.name not in LIVE_STATE_ONLY_MIGRATIONS]
+migrations, live_state_migrations = partition_fresh_migrations(all_migrations)
 trial_migration = SQL / "migrations/20261026165813_limit_intro_trial_creative_spend.sql"
 assert trial_migration in migrations
 inputs = [SQL / "tests/ci-bootstrap.sql", *all_migrations,
@@ -57,7 +51,9 @@ hashes = {
     for path in inputs
 }
 receipt = {"passed": False, "scope": "disposable local PostgreSQL; no network/provider calls",
-           "sourceHashes": hashes, "commands": []}
+           "sourceHashes": hashes,
+           "liveStateOnlyMigrations": [migration.name for migration in live_state_migrations],
+           "commands": []}
 started = False
 
 

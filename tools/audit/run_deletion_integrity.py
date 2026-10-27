@@ -7,6 +7,7 @@ Pass an existing reviewed PostgREST binary for HTTP proof; no installer runs her
 from pathlib import Path
 import argparse, base64, hashlib, hmac, importlib.util, json, os, shutil, signal
 import socket, subprocess, tempfile, time, urllib.request, urllib.error, uuid, select, re
+from run_database_regression import partition_fresh_migrations
 
 ROOT=Path(__file__).resolve().parents[2]
 parser=argparse.ArgumentParser()
@@ -155,7 +156,7 @@ try:
  identity=sql('owned-identity',"select current_setting('data_directory'),current_setting('listen_addresses'),current_database();").strip()
  if identity!=str(DATA)+'||'+DB:raise RuntimeError('Owned cluster identity differs')
  run('bootstrap',psql+['-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for f in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+f.stem,psql+['-q','-1','-f',f])
+ for f in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:run('apply-'+f.stem,psql+['-q','-1','-f',f])
  for phase in ['fresh','replay']:
   if phase=='replay':run('replay-integrity',psql+['-q','-1','-f',MIGRATION])
   out=run(phase+'-fixture',psql+['-f',FIXTURE])

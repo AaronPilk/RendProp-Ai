@@ -2,6 +2,7 @@
 """Real service/tenant cleanup boundaries; owned socket-only synthetic cluster."""
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile
 from datetime import datetime,timezone
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase';TARGET=SQL/'migrations/20261005220002_privacy_cleanup_inventory.sql';TEST=SQL/'tests/privacy_cleanup_inventory.sql'
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-privacy-cleanup-',dir='/tmp'));SOCK=OUT/'socket';DATA=OUT/'cluster';SOCK.mkdir(mode=0o700)
@@ -37,7 +38,7 @@ try:
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_privacy_audit']);assert query('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  fresh_oid=query('fresh-database-oid',"select oid from pg_database where datname=current_database();").strip()
  query('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
- for p in MIGRATIONS:query('migration-'+p.stem,p.read_text())
+ for p in partition_fresh_migrations(MIGRATIONS)[0]:query('migration-'+p.stem,p.read_text())
  receipt['freshAssertions']=positive('fresh')
  # Later integrity migrations deliberately change this guarded writer. The
  # old patch must refuse that future shape and roll back every preceding DDL.
@@ -60,7 +61,7 @@ try:
  replay_oid=query('replay-database-oid',"select oid from pg_database where datname=current_database();").strip();assert replay_oid!=fresh_oid
  receipt['databases']={'fresh':{'retainedName':'rendprop_privacy_fresh_audit','oid':fresh_oid},'replayed':{'name':replay_db,'oid':replay_oid},'distinctDatabases':True}
  query('replay-bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
- for p in MIGRATIONS:
+ for p in partition_fresh_migrations(MIGRATIONS)[0]:
   query('replay-migration-'+p.stem,p.read_text())
   if p==TARGET:query('target-boundary-replay',p.read_text())
  receipt['replayAssertions']=positive('chronology-replayed-final')

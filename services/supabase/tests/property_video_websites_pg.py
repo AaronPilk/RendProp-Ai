@@ -4,6 +4,7 @@ No inherited credentials, TCP listener, Apple/R2 or production database.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -34,7 +35,7 @@ try:
  conn=['-h',SOCK,'-p','55537','-U','postgres'];run('createdb',[TOOLS['createdb'],*conn,'property_sites'])
  PSQL=[TOOLS['psql'],'-X','--no-password',*conn,'-d','property_sites','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for migration in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
+ for migration in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
  newest=SQL/'migrations/20261014162938_property_video_websites.sql';run('replay-property-migration',[*PSQL,'-q','-1','-f',newest])
  for newer in sorted(set((SQL/'migrations').glob('20261014*property_video*.sql'))|set((SQL/'migrations').glob('20261014*registered_background_video_delivery.sql'))):
   if newer.name!='20261014162938_property_video_websites.sql':run('replay-'+newer.stem,[*PSQL,'-q','-1','-f',newer])

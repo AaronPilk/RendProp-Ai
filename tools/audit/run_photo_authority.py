@@ -2,6 +2,7 @@
 """Owned socket-only photo/pricing authority regression; no remote connections."""
 from pathlib import Path
 import argparse,hashlib,json,os,re,shutil,subprocess,tempfile
+from run_database_regression import partition_fresh_migrations
 ROOT=Path(__file__).resolve().parents[2]
 parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path);args=parser.parse_args()
 OUT=args.output or Path(tempfile.mkdtemp(prefix='rendprop-photo-authority-',dir='/tmp'));OUT.mkdir(parents=True,exist_ok=True)
@@ -11,10 +12,11 @@ B={n:shutil.which(n)for n in('initdb','pg_ctl','createdb','psql')};assert all(B.
 CONN=['-h',str(SOCK),'-p','55469','-U','postgres'];DB='rendprop_photo_authority'
 TARGET=ROOT/'services/supabase/migrations/20261005215832_photo_authority_acl_contract.sql'
 files=sorted(TARGET.parent.glob('*.sql'));fixture=ROOT/'services/supabase/tests/photo_authority.sql'
+schema_files,live_state_files=partition_fresh_migrations(files)
 owned=[TARGET.parent/n for n in ['20261005215707_brokerage_pricing_service_acl.sql','20261005215724_photo_authority_rpc_expand.sql',TARGET.name]]
 bound=[*files,fixture,Path(__file__).resolve(),ROOT/'services/supabase/functions/studio/listing-actions.ts',ROOT/'services/supabase/functions/studio/listing-actions.test.ts',ROOT/'services/supabase/tests/ci-bootstrap.sql']
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in bound}
-r={'passed':False,'sourceHashes':hashes,'migrationCount':len(files),'limits':['Synthetic local socket-only database','No provider calls/live writes','Proves existing declared provenance authority; does not classify re-uploaded image semantics']}
+r={'passed':False,'sourceHashes':hashes,'migrationCount':len(schema_files),'excludedLiveStateMigrations':[p.name for p in live_state_files],'limits':['Synthetic local socket-only database','No provider calls/live writes','Proves existing declared provenance authority; does not classify re-uploaded image semantics']}
 def run(name,command,ok=True):
  v=subprocess.run(command,env=ENV,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=90);(OUT/(name+'.log')).write_text(v.stdout)
  if ok:assert v.returncode==0,(name,v.stdout[-2500:])
@@ -24,7 +26,7 @@ try:
  run('start',[B['pg_ctl'],'-D',str(DATA),'-l',str(OUT/'postgres.log'),'-w','-o',f"-k {SOCK} -p 55469 -c listen_addresses='' -c shared_buffers=16MB",'start'])
  run('create',[B['createdb'],*CONN,DB]);PS=[B['psql'],'-X','--no-password',*CONN,'-d',DB,'-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PS,'-q','-f',str(ROOT/'services/supabase/tests/ci-bootstrap.sql')])
- for f in files:
+ for f in schema_files:
   if f==TARGET:
    stage=run('expand-before-contract',[*PS,'-Atqc',"select has_table_privilege('authenticated','photos','UPDATE') and has_function_privilege('service_role','studio_attach_photo(uuid,uuid,uuid,uuid,text,uuid)','EXECUTE')"])
    assert stage.stdout.strip()=='t';r['expandSupportsNewRPCBeforeLegacyRevoke']=True

@@ -9,6 +9,7 @@ The receipt binds all migrations, fixtures and this runner to their SHA256.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import hashlib
 import json
@@ -82,7 +83,7 @@ try:
     run("createdb", [TOOLS["createdb"], *conn, "launch_blockers_audit"])
     psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "launch_blockers_audit", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap", [*psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for m in sorted((SQL / "migrations").glob("*.sql")):
+    for m in partition_fresh_migrations(sorted((SQL / "migrations").glob("*.sql")))[0]:
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     receipt["fresh"] = run("launch-blockers-fresh", [*psql, "-Atq", "-f", SQL / "tests/launch_blockers.sql"]).strip()
     receipt["settlementIdentity"] = json.loads(run("settlement-identity", [*psql, "-Atq", "-f", SQL / "tests/serving_settlement_identity.sql"]).strip())

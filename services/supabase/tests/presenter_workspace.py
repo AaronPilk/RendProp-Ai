@@ -4,6 +4,7 @@ All cluster files/logs stay under this checkout's ignored build/ directory.
 """
 import hashlib, json, os, pathlib, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
+from fresh_schema_migrations import partition_fresh_migrations
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 SQL = ROOT / 'services/supabase'
 # Only an executable directory may be configured, never a DB URL/connection.
@@ -88,7 +89,7 @@ try:
  run([PG/'initdb','-D',OUT/'data','-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
  run([PG/'pg_ctl','-D',OUT/'data','-l',OUT/'server.log','-w','-o',f"-k '{SOCK}' -p 55473 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  query((SQL/'tests/ci-bootstrap.sql').read_text())
- for path in sorted((SQL/'migrations').glob('*.sql')):query(path.read_text())
+ for path in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:query(path.read_text())
  ok('all real migrations apply from an empty database')
  query(MIGRATION.read_text());ok('presenter migration replays safely')
  query('\n'.join(f"insert into auth.users(id,email) values('{u}','presenter-{i}@fixture.invalid');" for i,u in enumerate([A,B,C,M,X])))

@@ -5,6 +5,7 @@ Owns a socket-only synthetic PG cluster. No hosted mutation or provider calls.
 """
 from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261010141500_build57_select_workspace_lock_order.sql'
 SUPERSEDED=SQL/'migrations/20261010030225_reaudit_library_session_settlement.sql'
@@ -89,7 +90,7 @@ try:
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_audit']);assert q('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  q('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
  old=None
- for p in sorted((SQL/'migrations').glob('*.sql')):
+ for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:
   if p==TARGET:
    old=definition('select_workspace-predecessor','select_workspace(uuid,uuid)')
    assert q('predecessor-md5',"select md5(prosrc)from pg_proc where oid='public.select_workspace(uuid,uuid)'::regprocedure;").strip()=='922f967fa624cc026dbe6f60ad922a0e','Predecessor must be the deployed reviewed body'

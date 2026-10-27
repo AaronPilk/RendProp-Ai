@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 import argparse, hashlib, json, os, pathlib, shutil, subprocess, tempfile, time, uuid
+from run_database_regression import partition_fresh_migrations
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SQL = ROOT / "services/supabase"
@@ -22,6 +23,7 @@ assert all(BIN.values())
 CONN = ["-h", str(SOCK), "-p", "55458", "-U", "postgres"]
 PSQL = [BIN["psql"], "-X", "--no-password", *CONN, "-d", "rendprop_audit", "-v", "ON_ERROR_STOP=1", "-Atq"]
 migrations = sorted((SQL / "migrations").glob("*.sql")); assert TARGET in migrations
+schema_migrations, live_state_migrations = partition_fresh_migrations(migrations)
 paths = [*migrations, SQL / "tests/ci-bootstrap.sql", TEST, CURRENT_TEST, pathlib.Path(__file__).resolve()]
 CATALOG = "select coalesce(jsonb_agg(jsonb_build_object('signature',oid::regprocedure::text,'definition',pg_get_functiondef(oid),'owner',pg_get_userbyid(proowner),'acl',proacl,'security',prosecdef,'config',proconfig)order by oid::regprocedure::text),'[]')from pg_proc where pronamespace='public'::regnamespace and prokind='f';"
 def hashes():
@@ -52,8 +54,8 @@ try:
     # The unchanged fixture also tests that explicit fact edits omit gallery
     # fields. That RPC first exists Oct5; gallery functions are unchanged up to
     # this dependency-complete boundary. Replay Oct2 at its own boundary first.
-    boundary = migrations.index(FIXTURE_DEPENDENCY)
-    for p in migrations[:boundary + 1]:
+    boundary = schema_migrations.index(FIXTURE_DEPENDENCY)
+    for p in schema_migrations[:boundary + 1]:
         query("migration-" + p.stem, p.read_text())
         if p == TARGET:
             own_catalog = json.loads(query("own-boundary-catalog", CATALOG))
@@ -117,7 +119,7 @@ try:
     # The unchanged 47-oracle fixture, two compiled controls, and original two
     # races above execute at their own historical function boundary. Never
     # reinstall this unguarded ancestor over later authority/capacity changes.
-    for p in migrations[boundary + 1:]:
+    for p in schema_migrations[boundary + 1:]:
         query("migration-" + p.stem, p.read_text())
     current_catalog = json.loads(query("current-catalog", CATALOG))
     refused = query("current-head-obsolete40-oracle", TEST.read_text(), expected=3)
@@ -140,7 +142,7 @@ try:
         modern_counts.append(values[0]["assertions"])
     assert json.loads(run("clone-final-catalog", current_psql, CATALOG)) == current_catalog
     assert receipt["sourceHashes"] == hashes(), "Source changed during verification"
-    receipt.update(passed=True, historicalSqlAssertionsEach=counts, chronologicalBoundary=TARGET.name, fixtureDependencyBoundary=FIXTURE_DEPENDENCY.name, historicalReplayCatalogExact=True, negativeControls=["wrong-media-kind", "foreign-storage-prefix"], historicalConcurrencyChecks=['different additions preserved','repeat additions idempotent'], currentSqlAssertionsEach=modern_counts, obsolete40OracleRefusesCurrentPolicy=True, currentConcurrencyChecks=['different additions preserved','repeat additions idempotent'], fullCurrentCatalogOwnerACLSecurityConfigUnchanged=True, migrationCount=len(migrations), finishedAt=datetime.now(timezone.utc).isoformat())
+    receipt.update(passed=True, historicalSqlAssertionsEach=counts, chronologicalBoundary=TARGET.name, fixtureDependencyBoundary=FIXTURE_DEPENDENCY.name, historicalReplayCatalogExact=True, negativeControls=["wrong-media-kind", "foreign-storage-prefix"], historicalConcurrencyChecks=['different additions preserved','repeat additions idempotent'], currentSqlAssertionsEach=modern_counts, obsolete40OracleRefusesCurrentPolicy=True, currentConcurrencyChecks=['different additions preserved','repeat additions idempotent'], fullCurrentCatalogOwnerACLSecurityConfigUnchanged=True, migrationCount=len(schema_migrations), excludedLiveStateMigrations=[p.name for p in live_state_migrations], finishedAt=datetime.now(timezone.utc).isoformat())
 finally:
     if started and (DATA / "postmaster.pid").exists():
         run("stop", [BIN["pg_ctl"], "-D", DATA, "-m", "immediate", "-w", "stop"])

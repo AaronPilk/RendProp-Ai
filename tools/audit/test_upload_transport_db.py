@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import unittest
 import uuid
+from run_database_regression import partition_fresh_migrations
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = Path(tempfile.mkdtemp(prefix="rendprop-upload-pg-", dir="/tmp"))
@@ -374,9 +375,12 @@ def main():
         if sql("select current_setting('data_directory')||':'||current_setting('listen_addresses');") != str(DATA)+":":
             raise RuntimeError("Owned cluster identity mismatch")
         ENV["PGOPTIONS"] = "-c statement_timeout=20000 -c lock_timeout=10000"
-        sources = [ROOT/"services/supabase/tests/ci-bootstrap.sql", *sorted((ROOT/"services/supabase/migrations").glob("*.sql"))]
+        migrations = sorted((ROOT/"services/supabase/migrations").glob("*.sql"))
+        schema_migrations, live_state_migrations = partition_fresh_migrations(migrations)
+        sources = [ROOT/"services/supabase/tests/ci-bootstrap.sql", *migrations]
         RECEIPT["sourceHashes"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
-        for source in sources: run(source.stem, PSQL+["-1", "-f", str(source)])
+        RECEIPT["excludedLiveStateMigrations"] = [p.name for p in live_state_migrations]
+        for source in [sources[0], *schema_migrations]: run(source.stem, PSQL+["-1", "-f", str(source)])
         result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(UploadDatabase))
         RECEIPT.update(tests=result.testsRun, failed=len(result.failures)+len(result.errors), skipped=len(result.skipped))
         if not result.wasSuccessful() or result.skipped or result.testsRun != 26: raise RuntimeError("Database regression gate failed")

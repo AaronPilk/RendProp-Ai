@@ -2,7 +2,9 @@
 """Synthetic portfolio authority/CAS proof in an owned, socket-only database."""
 from datetime import datetime,timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
+from run_database_regression import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
+SCHEMA_MIGRATIONS,LIVE_STATE_MIGRATIONS=partition_fresh_migrations(MIGRATIONS)
 TARGET=SQL/'migrations/20261006164755_hosted_portfolio_selection.sql';TEST=SQL/'tests/member_portfolios.sql'
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-portfolio-db-',dir='/tmp'));DATA=OUT/'cluster';SOCK=OUT/'socket';SOCK.mkdir(mode=0o700)
 BINS={n:shutil.which(n)for n in['initdb','pg_ctl','createdb','psql']};assert all(BINS.values())
@@ -26,7 +28,8 @@ try:
  run('create',[BINS['createdb'],'--no-password',*CONN,'rendprop_portfolio'])
  assert query('identity',"select current_setting('data_directory')||'|'||current_setting('listen_addresses')||'|'||current_database();").strip()==f'{DATA}||rendprop_portfolio'
  run('bootstrap',[*PSQL,'-q','-f',SNAP/'ci-bootstrap.sql'])
- for p in MIGRATIONS:run('apply-'+p.stem,[*PSQL,'-q','-1','-f',SNAP/p.name])
+ for p in SCHEMA_MIGRATIONS:run('apply-'+p.stem,[*PSQL,'-q','-1','-f',SNAP/p.name])
+ receipt['excludedLiveStateMigrations']=[p.name for p in LIVE_STATE_MIGRATIONS]
  for phase in['fresh','target-replayed']:
   if phase=='target-replayed':
    run('target-replay',[*PSQL,'-q','-1','-f',SNAP/TARGET.name]);run('retention-target-replay',[*PSQL,'-q','-1','-f',SNAP/RETENTION_MIGRATION.name])
