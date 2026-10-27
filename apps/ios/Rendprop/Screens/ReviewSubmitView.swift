@@ -68,11 +68,13 @@ struct ReviewSubmitView: View {
     /// loaded) counts as locked; Smooth rendering remains on-device.
     private var aiTiersLocked: Bool {
         guard Config.useLiveBackend else { return false }
+        guard LaunchFeatureAvailability.canUseTopaz else { return true }
         guard let entitlements else { return true }
         return !entitlements.canUseTopaz
     }
 
     private var lockReason: String {
+        if !LaunchFeatureAvailability.canUseTopaz { return "AI enhancement is temporarily unavailable. Smooth rendering runs on your phone." }
         if Config.enableAuth && !auth.isSignedIn { return "Not connected yet — Smooth rendering runs on your phone. Publishing requires paid access." }
         if entitlements == nil {
             return entitlementsChecked ? "Couldn't check your plan right now — Smooth rendering runs on your phone. Publishing requires paid access."
@@ -275,6 +277,7 @@ struct ReviewSubmitView: View {
         let selected = tier == t
         return Button {
             if locked {
+                guard LaunchFeatureAvailability.canUseTopaz else { return }
                 if entitlements != nil {
                     PaywallRouter.shared.present(reason: .featureLocked(t.displayName))
                     return
@@ -319,7 +322,7 @@ struct ReviewSubmitView: View {
                 }
                 Spacer()
                 if locked {
-                    Text("Team plan")
+                    Text(LaunchFeatureAvailability.canUseTopaz ? "Team plan" : "Unavailable")
                         .font(.rpCaption.weight(.semibold))
                         .foregroundStyle(Theme.inkDim)
                         .padding(.horizontal, 8).padding(.vertical, 4)
@@ -343,7 +346,7 @@ struct ReviewSubmitView: View {
             .opacity(locked ? 0.55 : 1)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text(locked ? "\(t.displayName). Team plan." : t.displayName))
+        .accessibilityLabel(Text(locked ? "\(t.displayName). \(LaunchFeatureAvailability.canUseTopaz ? "Team plan" : "Temporarily unavailable")." : t.displayName))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 

@@ -137,6 +137,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     JSON.stringify(new URL("./owner-reel-qa.ts", import.meta.url).href)
   };
     import {admitFundedReelSteps as actualAdmitFundedReelSteps} from ${JSON.stringify(new URL("./reel-provider-admission.ts", import.meta.url).href)};
+    import {assertTopazSupplierReady as actualAssertTopazSupplierReady} from ${JSON.stringify(new URL("./topaz-supplier-admission.ts", import.meta.url).href)};
     import {OWNER_RAIL_MOTION_PROFILE} from ${JSON.stringify(new URL("../_shared/property-motion-profile.ts", import.meta.url).href)};
     import {parseReelFraming,reelFramingSteps,buildPhotoPreservingReelPrompt,buildPropertyCanvasReelPrompt,buildSteadyPropertyReelPrompt} from ${
     JSON.stringify(new URL("./reel-framing.ts", import.meta.url).href)
@@ -153,6 +154,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     type RouteStep=any;type JobRef=any;type JobTokenOwner=any;type ChainResult<T>={value:T,step:any};type GenerateInput=any;type DroneBody=any;type AerialBody=any;type ReelBody=any;type DroneEstimate=any;type AerialMotion=any;type ReelMotion=any;
     export const state:any={options:{},events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,legacyProvenanceCalls:0,admitted:new Set(),holds:new Map(),ledger:[]};
     export function reset(options:any={}){Object.assign(state,{options,events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],grantReads:[],access:null,billing:null,refunds:0,oldLedger:0,legacyProvenanceCalls:0,profileReads:0,admitted:new Set(),holds:new Map(),ledger:[]});}
+    const assertTopazSupplierReady=()=>{if(state.options.realTopazGate)actualAssertTopazSupplierReady();};
     const getUser=async(_req:Request)=>({id:"actor-synthetic",is_anonymous:false});
     const userClient=(_req:Request)=>({});
     const orgForUser=async(..._a:any[])=>"org-synthetic";
@@ -355,6 +357,17 @@ Deno.test("Topaz actual handler pins the frame-scaled estimate to both hold and 
   assertEquals(f.state.ledger[0].p_units, 90);
   assertEquals(f.state.ledger[0].p_unit_cost_cents, 16);
   assertEquals(f.state.ledger[0].p_hold_cents, 1440);
+});
+
+Deno.test("production Topaz gate refuses the unfunded FAL-only route before upload probe, allowance, hold or POST", async () => {
+  const f = await fixture();
+  f.reset({ realTopazGate: true });
+  const response = await f.handler(req("drone"));
+  assertEquals(response.status, 503);
+  assertEquals(f.state.probes, []);
+  assertEquals(f.state.charges, []);
+  assertEquals(f.state.posts, []);
+  assertEquals(f.state.holds.size, 0);
 });
 
 async function actual4KHold(f: Awaited<ReturnType<typeof fixture>>) {

@@ -246,6 +246,7 @@ import {PROPERTY_VIDEO_QUALITY_PROFILE,PROPERTY_VIDEO_STEADY_PROFILE,isPropertyV
 import {KIE_PROPERTY_IDENTITY,KIE_PROPERTY_ROUTE_ID,kiePropertyPromptPinned} from "../_shared/property-video-kie.ts";
 import { buildPhotoPreservingReelPrompt, buildPropertyCanvasReelPrompt,buildSteadyPropertyReelPrompt, parseReelFraming, reelFramingSteps } from "./reel-framing.ts";
 import { admitFundedReelSteps } from "./reel-provider-admission.ts";
+import { assertTopazSupplierReady } from "./topaz-supplier-admission.ts";
 import { probeMP4Video } from "./mp4video.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
 import {
@@ -1167,6 +1168,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
 
     // ---- POST /ai-video/drone ----
     if (req.method === "POST" && seg.length === 1 && seg[0] === "drone") {
+      assertTopazSupplierReady();
       const body = await readJson<DroneBody>(req);
       assert(body.asset_id, 400, "asset_id is required");
       const tier = body.tier ?? "4k30";

@@ -8,6 +8,7 @@ enum LaunchFeatureAvailability {
     // the separate quoted, scoped and explicitly accepted opening protocol.
     static let canGenerateAerial = false
     static let canCreateOpening = true
+    static let canUseTopaz = false
     static let openingMessage = "Choose an original front exterior photo in Aerial intro. Review its framing and processing terms, then create one opening clip. Use an accepted opening first in a new Listing or Social video."
     static let legacyAerialHeader = "Review or resume an earlier aerial request here. For a new front-of-home opening, use Aerial intro in the listing toolbox."
     static let aerialMessage = "This earlier aerial generator no longer starts new requests. Saved clips remain in your listing's files."

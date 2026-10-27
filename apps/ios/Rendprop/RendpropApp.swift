@@ -2723,6 +2723,10 @@ final class RenderCoordinator: ObservableObject {
     private func enhance(listingID id: UUID, run: UUID,
                          tour: AppModel.RenderedTour, tier: Render.Tier) async -> EnhanceOutcome {
         guard let model else { return .fallback(masterAssetID: nil) }
+        guard LaunchFeatureAvailability.canUseTopaz else {
+            setNote(id, run, "AI enhancement is temporarily unavailable — publishing your standard tour instead.")
+            return .fallback(masterAssetID: nil)
+        }
         update(id, run) {
             $0.stage = .enhancing; $0.phase = "Checking your plan…"
             $0.isRunning = true; $0.canSkipEnhance = true; $0.note = nil
