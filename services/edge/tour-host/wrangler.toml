@@ -58,6 +58,10 @@ SUPABASE_READ_REGION = "us-west-2"
 # Public house-address links are enabled only after the live lookup, gateway,
 # collision and legacy-link checks passed. Ambiguous/noindex pages keep tokens.
 ADDRESS_ONLY_CANONICAL = "enabled"
+# Existing bare links are reserved in the database. New indexable properties
+# use the address plus publication date and identity, so another agent can
+# publish the same house later without taking over the first agent's URL.
+PROPERTY_DATE_SUFFIX = "enabled"
 
 # Supabase anon (publishable) key. This is PUBLIC by design — RLS enforces
 # access and it already ships in every Supabase client. It's the apikey/Bearer
