@@ -1770,6 +1770,9 @@ jobs:
               continue
             fi
             echo "== $f"
+            if [ "$(basename "$f")" = '20261023191327_studio_internal_aerial_media_purpose_20261023.sql' ]; then
+              python3 tools/audit/verify_aerial_media_purpose_guard.py "$f"
+            fi
             psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
           done
 
@@ -1844,6 +1847,9 @@ jobs:
             if ! grep -Fxq "$f" /tmp/rendprop-fresh-schema-migrations.txt; then
               echo "== classified live-state adoption (source hash verified): $f"
               continue
+            fi
+            if [ "$(basename "$f")" = '20261023191327_studio_internal_aerial_media_purpose_20261023.sql' ]; then
+              python3 tools/audit/verify_aerial_media_purpose_guard.py "$f"
             fi
             psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
             if grep -Fxq "$f" /tmp/rendprop-guarded-one-shot-migrations.txt; then

@@ -81,9 +81,10 @@ $new0$;
     (select md5(prosrc) from pg_proc where oid=to_regprocedure('public.assert_recorded_render_source(uuid,uuid)')) is distinct from '1674897254940d261d54d220ba6433f3' then raise exception 'Aerial media purpose changed unrelated metadata or body';end if;
 end $guard0$;
 do $guard1$
-declare before_meta jsonb; actual text;
+declare before_meta jsonb; before_defaults text; actual text;
 begin
- select pg_get_functiondef(oid),to_jsonb(p)-'prosrc' into actual,before_meta from pg_proc p where oid=to_regprocedure('public.studio_gallery_copy_source(uuid,uuid,uuid,uuid,uuid)');
+ select pg_get_functiondef(oid),to_jsonb(p)-'prosrc'-'proargdefaults',pg_get_expr(p.proargdefaults,0)
+   into actual,before_meta,before_defaults from pg_proc p where oid=to_regprocedure('public.studio_gallery_copy_source(uuid,uuid,uuid,uuid,uuid)');
  if actual is distinct from $prior1$CREATE OR REPLACE FUNCTION public.studio_gallery_copy_source(p_org uuid, p_listing uuid, p_source uuid, p_provenance uuid DEFAULT NULL::uuid, p_destination uuid DEFAULT NULL::uuid)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -186,7 +187,8 @@ begin
  return jsonb_build_object('asset_id',a.id,'key',a.storage_key,'bytes',a.bytes,'sha256',a.sha256,'mime',a.content_type,'kind',kind,'provenance',proof);
 end$function$
 $new1$;
- if (select to_jsonb(p)-'prosrc' from pg_proc p where oid=to_regprocedure('public.studio_gallery_copy_source(uuid,uuid,uuid,uuid,uuid)')) is distinct from before_meta or
+ if (select to_jsonb(p)-'prosrc'-'proargdefaults' from pg_proc p where oid=to_regprocedure('public.studio_gallery_copy_source(uuid,uuid,uuid,uuid,uuid)')) is distinct from before_meta or
+    (select pg_get_expr(p.proargdefaults,0) from pg_proc p where oid=to_regprocedure('public.studio_gallery_copy_source(uuid,uuid,uuid,uuid,uuid)')) is distinct from before_defaults or
     (select md5(prosrc) from pg_proc where oid=to_regprocedure('public.studio_gallery_copy_source(uuid,uuid,uuid,uuid,uuid)')) is distinct from 'eca7169c1b82e4e2fa75728d221c9ed5' then raise exception 'Aerial media purpose changed unrelated metadata or body';end if;
 end $guard1$;
 do $guard2$
