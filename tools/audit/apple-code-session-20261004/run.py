@@ -35,6 +35,9 @@ def main():
     markers = ["    struct AppleSessionIdentity:", "    private struct PendingAppleCode:",
                "    @MainActor static func submitAppleAuthorizationCode(", "    @MainActor private static func sendPendingAppleCode(",
                "    @MainActor static func retryPendingAppleAuthorizationCodeIfNeeded()", "    private func applySession(",
+               "    private static var sessionStorageSuppressed:", "    @discardableResult private static func suppressCachedSession(",
+               "    private static func persistTokens(", "    private static func clearTokens(",
+               "    private static func priorAccessTokenForAdoption(", "    func signOut(",
                "    static func jwtSubject(", "    nonisolated static func tokenIsIdentified(", "    private struct SupabaseSession:",
                "    nonisolated private static func tokenPayload(", "    nonisolated private static func tokenIdentityClaimIsValid(", "    nonisolated private static func jwtExpiry(",
                "    func exchangeAppleIdentityToken("]
@@ -66,7 +69,12 @@ def main():
         expected = "exchange cannot return a sign-in receipt after replacement identity"
     elif args.inject_fault == "drop-apply-acceptance":
         marker = "    func exchangeAppleIdentityToken("
-        needle = "        guard applySession(accessToken: session.accessToken,\n                           refreshToken: session.refreshToken,\n                           expiresAt: session.expiryDate) else { throw APIError.decoding }"
+        needle = '''        guard applySession(accessToken: session.accessToken,
+                           refreshToken: session.refreshToken,
+                           expiresAt: session.expiryDate) else {
+            throw APIError.server(status: 503, code: "session_storage",
+                message: "Your sign-in could not be securely saved on this iPhone. Your saved work is kept. Please try signing in again.")
+        }'''
         assert methods[marker].count(needle) == 1
         methods[marker] = methods[marker].replace(needle, "        _ = applySession(accessToken: session.accessToken, refreshToken: session.refreshToken, expiresAt: session.expiryDate)")
         expected = "exchange cannot issue a receipt when session application was refused"

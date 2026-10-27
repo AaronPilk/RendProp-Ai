@@ -6,8 +6,10 @@ final class UserDefaults {
     static let standard = UserDefaults()
     var values: [String: Any] = [:]
     func string(forKey key: String) -> String? { values[key] as? String }
+    func object(forKey key: String) -> Any? { values[key] }
     func set(_ value: Any?, forKey key: String) { values[key] = value }
     func removeObject(forKey key: String) { values[key] = nil }
+    func synchronize() -> Bool { true }
 }
 enum Config {
     static let enableAuth = true, useLiveBackend = true
@@ -17,12 +19,17 @@ enum Config {
 }
 enum APIError: Error { case notConfigured, badResponse(Int), decoding, server(status: Int, code: String, message: String) }
 enum AnonymousAdoptionRecovery { enum RecoveryError: Error { case conflict, malformed, storage } }
+struct FixtureLogger { func error(_ message: String) {} }
 // Account-switch side effects are closed boundaries in this Apple-code harness;
 // their own actual-source privacy suites verify registration and local custody.
 @MainActor final class PushManager {
     static let shared = PushManager()
     func accountWillChange(retainCleanup: Bool = true) {}
     func accountDidChange() {}
+}
+@MainActor final class UploadManager {
+    static let shared = UploadManager()
+    func accountWillChange() {}
 }
 @MainActor final class PurchaseManager {
     static let shared = PurchaseManager()
@@ -54,6 +61,7 @@ enum AnonymousAdoptionRecovery { enum RecoveryError: Error { case conflict, malf
 }
 @MainActor final class AuthStore {
     static let shared = AuthStore()
+    private static let log = FixtureLogger()
     var isSignedIn = false, isIdentified = false
     var userID: String?
     var displayName = "", userName = "", orgName = ""
@@ -67,6 +75,7 @@ enum AnonymousAdoptionRecovery { enum RecoveryError: Error { case conflict, malf
     static var onToken: (() -> Void)?
     enum Keys {
         static let userID = "id", userName = "name", orgName = "org", accessToken = "access", refreshToken = "refresh"
+        static let expiresAt = "expiry", sessionSuppressed = "session-suppressed", sessionWritePending = "session-write-pending"
         static let sessionIdentified = "sessionIdentified"
         static let pendingAppleAuthCode = "legacy"
         static let pendingAppleAuthCodeOwnerPrefix = "owned:"
@@ -87,14 +96,14 @@ enum AnonymousAdoptionRecovery { enum RecoveryError: Error { case conflict, malf
     }
     static func storedAccessToken() -> String? { SecureStore.values[Keys.accessToken] }
     static func storedRefreshToken() -> String? { SecureStore.values[Keys.refreshToken] }
-    static func persistTokens(access: String, refresh: String?, expiresAt: Date?) { SecureStore.values[Keys.accessToken] = access; SecureStore.values[Keys.refreshToken] = refresh }
     func scheduleAutoRefresh() {}
     func retryPendingAdoptionIfNeeded() async { onAdoption?() }
+    @discardableResult func discardPendingAdoption() -> Bool { adoptionRecovery?.discard() ?? true }
     static func authError(status: Int, data: Data) -> APIError { .badResponse(status) }
     static func validAccessToken() async -> String? { onToken?(); return storedAccessToken() }
 __METHODS__
     func signIn(_ owner: String) -> AppleSessionIdentity {
-        applySession(accessToken: Checks.jwt(owner), refreshToken: "synthetic-refresh", expiresAt: Date().addingTimeInterval(3600))
+        precondition(applySession(accessToken: Checks.jwt(owner), refreshToken: "synthetic-refresh", expiresAt: Date().addingTimeInterval(3600)))
         return AppleSessionIdentity(ownerID: owner, sessionRevision: syncSessionRevision)
     }
 }
@@ -220,6 +229,12 @@ __METHODS__
         do { _ = try await auth.exchangeAppleIdentityToken(idToken: "synthetic-expiring-A") } catch { failedApply = true }
         check(failedApply, "exchange cannot issue a receipt when session application was refused")
         check(AuthStore.storedAccessToken() == previousAccess && auth.userID == a && pending(a) == nil, "rejected expiring exchange retains the previous account session")
+        reset(); exchangeReply(a); AuthStore.SecureStore.writeFailure = true
+        var failedStorage = false
+        do { _ = try await auth.exchangeAppleIdentityToken(idToken: "synthetic-storage-A") } catch { failedStorage = true }
+        check(failedStorage && !auth.isSignedIn && auth.userID == nil, "failed credential write cannot issue or retain a signed-in identity")
+        check(UserDefaults.standard.object(forKey: "session-suppressed") != nil && AuthStore.storedAccessToken() == nil,
+              "failed credential write keeps the durable session barrier and clears partial tokens")
         print("PASS: \(assertions) actual Apple-code owner/session/retry assertions")
     }
 }
