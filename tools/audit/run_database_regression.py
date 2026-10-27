@@ -36,7 +36,8 @@ KEPT_RED: set[str] = set()
 # the 0044 plan-rework / industry-trial section; 198 before that).
 #
 # The 0047/0048 branches totalled 266. Apple chronology and listing facts
-# registration add four assertions, bringing the current inventory to 270.
+# registration added four assertions; the limited-trial video policy adds one
+# more, bringing the inventory to 271.
 # The kept-red exception is identified by its exact name, not its row number.
 INVARIANT_COUNT = 271
 

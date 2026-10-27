@@ -25,13 +25,14 @@ from unittest.mock import patch
 # +13 for the 0048 brokerage section, 234 since the 0046 commercial-telemetry
 # section, 213 for the 0044 plan-rework section).
 # Apple chronology and listing facts registration add four assertions to the
-# prior 266-row inventory. Keep the mocked inventory exact and independent.
-COUNT = 270
+# prior 266-row inventory; limited-trial video policy adds one more. Keep the
+# mocked inventory exact and independent.
+COUNT = 271
 REQUIRED = [
     'all three explicit Astra writing seats keep their 0030/0034 paid-plan gates',
     'no gpt-6-astra row is reachable on the free or trial tier',
     'plan_entitlements match current paid/trial/free catalog for every metered feature',
-    'org_entitlement on a fitness trial org is the single-location free week (1/20/20/1/1, 1 seat, 1500¢)',
+    'org_entitlement on a fitness trial org is the single-location free week (0/5/0/0/0, 1 seat, 500¢)',
 ]
 NAMES = REQUIRED + [f'synthetic invariant {n:03d}' for n in range(len(REQUIRED) + 1, COUNT + 1)]
 PAID_MARKER = ('PASS: exact paid-plan predicates registered 6 expected outcomes across baseline '

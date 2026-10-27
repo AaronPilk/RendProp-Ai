@@ -38,8 +38,8 @@ def invariants(name):
  f=OUT/(name+'.log');save(f,p.stdout.encode());receipt['commands'].append({'name':name,'exit':p.returncode,'log':str(f),'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
  spec=importlib.util.spec_from_file_location('invariant_contract',ROOT/'tools/audit/run_database_regression.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
  rows,failed=m.invariant_rows(p.stdout,p.returncode)
- if p.returncode!=0 or failed or len(rows)!=270:raise RuntimeError('All270 invariant gate failed')
- print(name+': all270 pass',flush=True)
+ if p.returncode!=0 or failed or len(rows)!=271:raise RuntimeError('All271 invariant gate failed')
+ print(name+': all271 pass',flush=True)
 def stop(p):
  try:os.killpg(p.pid,signal.SIGTERM)
  except ProcessLookupError:pass

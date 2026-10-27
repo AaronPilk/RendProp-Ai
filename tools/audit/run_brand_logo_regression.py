@@ -138,7 +138,7 @@ try:
  receipt['invariants']={'passed':len(invariant_names),'failures':[],'total':len(invariant_names)}
 
  # Restore only the former headroom failure in an owned SQL copy. The same
- # positive acceptance gate must refuse its complete 270-row/exit3 result.
+ # positive acceptance gate must refuse its complete 271-row/exit3 result.
  original=(SQL/'tests/invariants.sql').read_text()
  anchor="when 'copy.agent_reel' then 500"
  assert original.count(anchor)==1
