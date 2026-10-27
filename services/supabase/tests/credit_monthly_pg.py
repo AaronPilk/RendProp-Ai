@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 from tools.audit.run_database_regression import partition_fresh_migrations
 
 SQL = ROOT / "services/supabase"
+FIXTURE = SQL / "tests" / (sys.argv[1] if len(sys.argv) > 1 else "credit_monthly_period.sql")
 TOOLS = {name: shutil.which(name) or str(Path("/opt/homebrew/opt/postgresql@17/bin") / name)
          for name in ("initdb", "pg_ctl", "createdb", "psql")}
 ENV = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LC_ALL": "C",
@@ -45,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix="rendprop-monthly-pg-", dir=str(ROOT.par
         migrations, _ = partition_fresh_migrations(sorted((SQL / "migrations").glob("*.sql")))
         for migration in migrations:
             run("migration " + migration.name, [*psql, "-q", "-1", "-f", migration])
-        output = run("monthly fixture", [*psql, "-Atq", "-f", SQL / "tests/credit_monthly_period.sql"])
+        output = run("monthly fixture", [*psql, "-Atq", "-f", FIXTURE])
         results = [json.loads(line) for line in output.splitlines()
                    if line.startswith("{") and '"assertions"' in line]
         assert len(results) == 1 and results[0]["passed"] is True, output

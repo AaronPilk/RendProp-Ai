@@ -1,11 +1,29 @@
-# Team extra-seat variants (design only)
+# Team extra seats: implemented authority, pending sale activation
 
-The implemented Team product grants **3 seats** and has a catalog target of **$249.99 per month** and a TestFlight candidate of **1,000 AI credits per verified paid month**. The existing `com.rendprop.app.team.monthly` product remains restorable and renewable; its current App Store Connect price was reported as $249, so the app must show StoreKit's actual price. No extra-seat product is sold by this change.
+The existing `com.rendprop.app.team.monthly` remains a three-seat Team subscription. Its App Store price was last reported as $249. The server catalog target is $249.99, but the app must display StoreKit's actual localized price. Existing renewals and restores keep their Team entitlement.
 
-If extra seats are approved, use a finite set of **new monthly auto-renewable subscription products in the existing Rendprop subscription group**, one signed SKU per total seat capacity. A 4-seat product would grant 1,100 monthly credits, a 5-seat product 1,200, and generally `1,000 + 100 × (seats − 3)`. Map each exact signed SKU to its seat count and credit grant on the server; never derive an entitlement from a product ID suffix, client claim, displayed price, or unsigned renewal preference. Preserve the 3-seat legacy SKU as an exact separate mapping.
+Six exact monthly auto-renewable identifiers are now known to the Apple verifier and iOS restore path. They are **not requested from StoreKit or sold in the paywall** until the activation checklist below is complete. Team ends at nine seats; ten or more is the separate brokerage product.
 
-Price intent is about $49.99 per additional seat, but $249.99 + $49.99 = $299.98 and further increments do not create a normal uniform `.99` price ladder. Select actual App Store Connect price points and storefront prices for every variant before naming or selling SKUs. StoreKit must supply the localized display price. The backend serving ceiling must use a verified price for each SKU, not a formula that assumes those targets were configured.
+| Total seats | Apple product ID | Proposed US price/month | Monthly AI credits |
+| ---: | --- | ---: | ---: |
+| 3 | `com.rendprop.app.team.monthly` | Existing ASC price; target $249.99 | 1,000 |
+| 4 | `com.rendprop.app.team4.monthly` | $299.99 | 1,100 |
+| 5 | `com.rendprop.app.team5.monthly` | $349.99 | 1,200 |
+| 6 | `com.rendprop.app.team6.monthly` | $399.99 | 1,300 |
+| 7 | `com.rendprop.app.team7.monthly` | $449.99 | 1,400 |
+| 8 | `com.rendprop.app.team8.monthly` | $499.99 | 1,500 |
+| 9 | `com.rendprop.app.team9.monthly` | $549.99 | 1,600 |
 
-On an Apple upgrade or downgrade, grant the capacity and credits for the **currently effective verified paid transaction and its period**. An announced future renewal product must not change today's seats or credits. One credit grant per verified paid term, idempotent by Apple's stable original transaction and term identifiers, is needed to avoid duplicate 100-credit seat increments during notification replay or restore. Expiry, refund, revocation, billing retry, grace and term replacement need explicit tests; credits and seat capacity must change only under the same signed authority rules as the base Team plan. Existing members over a reduced capacity need a defined read-only/owner-removal policy before a downgrade can be sold.
+These price points are targets, not an assertion that App Store Connect has them. The server requires an active exact-SKU catalog row, an active matching credit catalog row, the **current signed paid Production Apple transaction**, and retail serving funding with a price-attested US/USD schedule matching the target amount. If any is absent, a variant cannot increase seat capacity above the three-seat Team base. Client-provided suffixes, prices, and future `autoRenewProductId` never grant capacity. Sandbox receipts cannot grant Production seats. The extra credit catalog is inactive by default.
 
-The remaining release decisions are the variant range and Apple price points, whether prorated upgrades receive a full or prorated credit increment, credit behavior on a midterm downgrade/refund, and how excess members are handled. Until those are resolved and the SKUs exist in App Store Connect, extra seats remain unavailable in the paywall and server.
+Apple handles subscription billing within the existing `rendprop_plans` group. A higher-level upgrade takes effect immediately and Apple refunds the unused part of the old subscription; the new paid term receives its full 1,100–1,600 credit allowance once. Remaining credits from the overlapping old term are revoked when the new verified paid term is granted; already spent credits stay spent, and previously admitted holds can settle. A lower-level downgrade normally takes effect at the next renewal. A notification replay or restore cannot mint a second allowance, and an old transaction's refund reversal cannot restore credits after a newer transaction becomes current. Top-up credits are unaffected.
+
+Before selling these products:
+
+1. Create all intended auto-renewable products in the existing Apple subscription group with exact product IDs and monthly durations. Set group levels in ascending service order: Team 9 highest, then Team 8 through Team 4, then existing three-seat Team, then Ultra/Max/Pro. Check Apple's upgrade/downgrade timing in Sandbox.
+2. Confirm every storefront's actual StoreKit price and Apple's proceeds. Create a bounded `apple_serving_schedules` row for each intended US/USD price with real reserve and net-proceeds evidence; the proposed prices in this file are not payment evidence.
+3. Approve the monthly credit tariff and profit analysis, then activate the matching `credit_monthly_catalog` and `team_paid_seat_variants` rows together. Add only these ready SKUs to `RendpropProducts.all` and the Team paywall. Do not advertise an introductory trial for a variant until its exact Apple intro offer and funded trial admission are tested.
+4. Define and implement how an existing workspace with more active members than its reduced paid seat capacity is handled after a downgrade. The current invitation path blocks new seats at the reduced cap, but does not suspend already accepted members; variants remain unsold until that policy is implemented and tested.
+5. Run Production-like signed subscription tests for each SKU, midterm upgrades, next-renewal downgrades, expiry, refunds, billing retry/grace, and a TestFlight purchase/restore. Only then remove the iOS sale gate and verify actual device pricing.
+
+The disposable PostgreSQL fixture `services/supabase/tests/team_paid_seat_variants.sql` checks inactive-catalog denial, exact funded-price seat entitlement, upgrade credit replacement, stale refund reversal, replay, and signed-SKU mismatch. It does not claim App Store Connect or device verification.

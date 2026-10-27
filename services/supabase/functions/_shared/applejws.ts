@@ -732,6 +732,12 @@ const PRODUCT_TO_PLAN: Readonly<Record<string, AppleSoldPlan>> = Object.freeze({
   "com.rendprop.app.pro.annual": "ultra",
   "com.rendprop.app.team.monthly": "team",
   "com.rendprop.app.team.annual": "team",
+  "com.rendprop.app.team4.monthly": "team",
+  "com.rendprop.app.team5.monthly": "team",
+  "com.rendprop.app.team6.monthly": "team",
+  "com.rendprop.app.team7.monthly": "team",
+  "com.rendprop.app.team8.monthly": "team",
+  "com.rendprop.app.team9.monthly": "team",
 });
 
 export type AppleSoldPlan = "pro" | "max" | "ultra" | "team";

@@ -39,7 +39,16 @@ enum SpaceType: Equatable {
             precondition(plan.benefits.first == "\(plan.allowances.credits) monthly Declutter credits after the trial")
         }
         precondition(RendpropPlan.team.allowances.seats == 3)
-        precondition(RendpropProducts.notSoldAtLaunch.count == 3)
+        precondition(RendpropProducts.notSoldAtLaunch.count == 9)
+        precondition(TeamSeatVariant.all.map(\.seats) == [4, 5, 6, 7, 8, 9])
+        precondition(TeamSeatVariant.all.map(\.monthlyCredits) == [1100, 1200, 1300, 1400, 1500, 1600])
+        for variant in TeamSeatVariant.all {
+            precondition(RendpropProducts.plan(for: variant.productID) == .team)
+            precondition(RendpropProducts.period(for: variant.productID) == .monthly)
+            precondition(RendpropProducts.notSoldAtLaunch.contains(variant.productID))
+            precondition(!RendpropProducts.all.contains(variant.productID))
+        }
+        precondition(RendpropProducts.plan(for: "com.rendprop.app.team10.monthly") == nil)
         precondition(!RendpropProducts.sellsAnnual)
         print("PASS: four sellable tiers, legacy renewal/restore mappings, credits and three Team seats")
     }

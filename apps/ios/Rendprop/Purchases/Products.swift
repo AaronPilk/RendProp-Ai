@@ -207,6 +207,29 @@ enum BillingPeriod: String, CaseIterable, Identifiable, Sendable {
 
 // MARK: - Product id ⇄ plan
 
+/// Exact Apple subscription identifiers for Team capacity above the existing
+/// three-seat product. These are known for restore, but remain unsold until
+/// App Store Connect prices and the server's paid-period catalog are active.
+/// An Apple renewal preference never changes the currently verified seat count.
+struct TeamSeatVariant: Hashable, Sendable {
+    let productID: String
+    let seats: Int
+    let monthlyCredits: Int
+
+    static let all: [Self] = [
+        .init(productID: "com.rendprop.app.team4.monthly", seats: 4, monthlyCredits: 1100),
+        .init(productID: "com.rendprop.app.team5.monthly", seats: 5, monthlyCredits: 1200),
+        .init(productID: "com.rendprop.app.team6.monthly", seats: 6, monthlyCredits: 1300),
+        .init(productID: "com.rendprop.app.team7.monthly", seats: 7, monthlyCredits: 1400),
+        .init(productID: "com.rendprop.app.team8.monthly", seats: 8, monthlyCredits: 1500),
+        .init(productID: "com.rendprop.app.team9.monthly", seats: 9, monthlyCredits: 1600),
+    ]
+
+    static func forProduct(_ productID: String) -> Self? {
+        all.first { $0.productID == productID }
+    }
+}
+
 enum RendpropProducts {
     /// App Store Connect subscription group reference name. Every product
     /// lives in ONE group so Apple manages upgrades/downgrades for us.
@@ -223,8 +246,11 @@ enum RendpropProducts {
     /// offered. Their ids stay mapped below so a stray historical or Sandbox
     /// annual purchase still resolves to its plan; they are never requested
     /// from StoreKit and never shown a price. The products must also be
-    /// removed from sale in App Store Connect.
+    /// removed from sale in App Store Connect. The six Team capacity variants
+    /// also stay dormant pending exact ASC prices, funded schedules and an
+    /// over-capacity downgrade policy.
     static let notSoldAtLaunch: Set<String> = Set(RendpropPlan.allCases.compactMap(\.annualProductID))
+        .union(TeamSeatVariant.all.map(\.productID))
 
     /// True when at least one annual product is on sale. Drives whether the
     /// paywall shows the Monthly / Yearly picker at all.
@@ -235,21 +261,25 @@ enum RendpropProducts {
     /// Every product id the app asks StoreKit for, in the order the paywall
     /// shows them. Ids in `notSoldAtLaunch` are left out: asking the App Store
     /// for a product that isn't on sale just returns nothing.
-    static let all: [String] = RendpropPlan.allCases
+    static let known: [String] = RendpropPlan.allCases
         .flatMap { [$0.monthlyProductID, $0.annualProductID].compactMap { $0 } }
+        + TeamSeatVariant.all.map(\.productID)
+    static let all: [String] = known
         .filter { !RendpropProducts.notSoldAtLaunch.contains($0) }
 
     /// "com.rendprop.app.pro.annual" → .ultra. nil for an id that was never ours.
     /// Deliberately covers `notSoldAtLaunch` ids too: entitlement mapping is
     /// about what somebody already bought, not about what is on sale today.
     static func plan(for productID: String) -> RendpropPlan? {
-        RendpropPlan.allCases.first {
+        if TeamSeatVariant.forProduct(productID) != nil { return .team }
+        return RendpropPlan.allCases.first {
             $0.monthlyProductID == productID || $0.annualProductID == productID
         }
     }
 
     /// "com.rendprop.app.pro.annual" → .annual.
     static func period(for productID: String) -> BillingPeriod? {
+        if TeamSeatVariant.forProduct(productID) != nil { return .monthly }
         if RendpropPlan.allCases.contains(where: { $0.annualProductID == productID }) { return .annual }
         if RendpropPlan.allCases.contains(where: { $0.monthlyProductID == productID }) { return .monthly }
         return nil

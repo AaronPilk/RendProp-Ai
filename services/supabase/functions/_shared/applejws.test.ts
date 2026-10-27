@@ -584,6 +584,10 @@ Deno.test("product ids map to plans, and anything else maps to null", () => {
   assertEquals(productToPlan("com.rendprop.app.pro.annual"), "ultra");
   assertEquals(productToPlan("com.rendprop.app.team.monthly"), "team");
   assertEquals(productToPlan("com.rendprop.app.team.annual"), "team");
+  for (const seats of [4, 5, 6, 7, 8, 9]) {
+    assertEquals(productToPlan(`com.rendprop.app.team${seats}.monthly`), "team");
+  }
+  assertEquals(productToPlan("com.rendprop.app.team10.monthly"), null);
   // `solo` is a legacy alias of starter and is never sold; `trial` and `free`
   // are not products at all.
   assertEquals(productToPlan("com.rendprop.app.solo.monthly"), null);

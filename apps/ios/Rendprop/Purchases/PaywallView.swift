@@ -26,6 +26,7 @@ struct PaywallView: View {
 
     @State private var period: BillingPeriod = .monthly
     @State private var selectedPlan: RendpropPlan = .max
+    @State private var selectedTeamVariant: TeamSeatVariant?
 
     var body: some View {
         NavigationStack {
@@ -126,7 +127,8 @@ struct PaywallView: View {
             planCards
             trialDetails
             if purchases.billingContext?.servingActivation?.available != false {
-                SelectedPlanDetails(plan: selectedPlan, period: planOffer(for: selectedPlan).period,
+                SelectedPlanDetails(plan: selectedPlan, variant: selectedTeamVariant,
+                                    period: selectedOffer.period,
                                     afterTrial: (purchases.billingContext?.trialUsage != nil &&
                                                  RecordedTrialPresentation.isCurrent(planName: purchases.billingContext?.planName)) || selectedHasIntroOffer)
             }
@@ -135,7 +137,7 @@ struct PaywallView: View {
     }
 
     private var selectedHasIntroOffer: Bool {
-        planOffer(for: selectedPlan).product.map { purchases.showsIntroOffer(for: $0) } ?? false
+        selectedOffer.product.map { purchases.showsIntroOffer(for: $0) } ?? false
     }
 
     @ViewBuilder private var trialDetails: some View {
@@ -161,7 +163,7 @@ struct PaywallView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }.frame(maxWidth: .infinity, alignment: .leading).card()
                 .accessibilityIdentifier("paywall.appleTrial")
-        } else if selectedHasIntroOffer, let product = planOffer(for: selectedPlan).product,
+        } else if selectedHasIntroOffer, let product = selectedOffer.product,
                   let offer = purchases.heldTrialOffer(for: product),
                   offer.enabled, !offer.benefitLines.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
@@ -239,6 +241,7 @@ struct PaywallView: View {
             ForEach(RendpropPlan.allCases) { plan in
                 planCard(plan)
             }
+            teamSeatOptions
         }
     }
 
@@ -248,12 +251,13 @@ struct PaywallView: View {
         Button {
             Haptics.selection()
             selectedPlan = plan
+            selectedTeamVariant = nil
         } label: {
             PlanCardBody(plan: plan,
                          period: offer.period,
                          priceText: Self.priceText(offer.product, period: offer.period),
                          note: offer.note,
-                         isSelected: selectedPlan == plan,
+                         isSelected: selectedPlan == plan && selectedTeamVariant == nil,
                          isCurrent: purchases.activeProductID == offer.product?.id)
         }
         .buttonStyle(.plain)
@@ -261,7 +265,52 @@ struct PaywallView: View {
         .opacity(offer.product == nil ? 0.45 : 1)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("paywall.plan.\(plan.rawValue)")
-        .accessibilityAddTraits(selectedPlan == plan ? [.isSelected] : [])
+        .accessibilityAddTraits(selectedPlan == plan && selectedTeamVariant == nil ? [.isSelected] : [])
+    }
+
+    /// Appears only after an approved variant is requested and StoreKit gives
+    /// a real localized price. All variants remain gated out at launch.
+    @ViewBuilder private var teamSeatOptions: some View {
+        let available = TeamSeatVariant.all.filter {
+            !RendpropProducts.notSoldAtLaunch.contains($0.productID) &&
+                purchases.product(for: $0.productID) != nil
+        }
+        if !available.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("More Team seats").font(.rpHeadline).foregroundStyle(Theme.ink)
+                ForEach(available, id: \.productID) { variant in
+                    if let product = purchases.product(for: variant.productID) {
+                        Button {
+                            Haptics.selection()
+                            selectedPlan = .team
+                            selectedTeamVariant = variant
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "person.2.fill").foregroundStyle(Theme.accent)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("\(variant.seats) seats · \(variant.monthlyCredits) credits")
+                                        .font(.rpHeadline).foregroundStyle(Theme.ink)
+                                    Text(product.displayPrice + "/month")
+                                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: selectedTeamVariant == variant ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(Theme.accent)
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 13)
+                            .frame(minHeight: 52)
+                            .background(Theme.card, in: Capsule())
+                            .overlay(Capsule().strokeBorder(
+                                selectedTeamVariant == variant ? Theme.accent : Theme.border,
+                                lineWidth: selectedTeamVariant == variant ? 2 : 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("paywall.team.seats.\(variant.seats)")
+                        .accessibilityAddTraits(selectedTeamVariant == variant ? [.isSelected] : [])
+                    }
+                }
+            }
+        }
     }
 
     /// What one card offers while the picker is on `period`.
@@ -290,6 +339,15 @@ struct PaywallView: View {
         return PlanOffer(product: purchases.product(for: productID),
                          period: sold,
                          note: sold == period ? nil : sold.onlyNote)
+    }
+
+    private var selectedOffer: PlanOffer {
+        if selectedPlan == .team, let variant = selectedTeamVariant,
+           !RendpropProducts.notSoldAtLaunch.contains(variant.productID),
+           let product = purchases.product(for: variant.productID) {
+            return PlanOffer(product: product, period: .monthly, note: nil)
+        }
+        return planOffer(for: selectedPlan)
     }
 
     /// StoreKit's price string, or a plain dash when that product didn't load.
@@ -334,13 +392,13 @@ struct PaywallView: View {
 
     @ViewBuilder
     private var buyBar: some View {
-        buyBarContent(planOffer(for: selectedPlan))
+        buyBarContent(selectedOffer)
     }
 
     private func buyBarContent(_ offer: PlanOffer) -> some View {
         VStack(spacing: 10) {
             if let product = offer.product {
-                Text("Selected: \(selectedPlan.displayName) · \(offer.period.pickerLabel)")
+                Text("Selected: \(selectedPlan.displayName)\(selectedTeamVariant.map { " · \($0.seats) seats" } ?? "") · \(offer.period.pickerLabel)")
                     .font(.rpCaption.weight(.semibold))
                     .foregroundStyle(Theme.ink)
                     .accessibilityIdentifier("paywall.selection")
@@ -570,13 +628,26 @@ private struct PlanCardBody: View {
 /// inside every choice. Price and actual billing period remain on each row.
 private struct SelectedPlanDetails: View {
     let plan: RendpropPlan
+    let variant: TeamSeatVariant?
     let period: BillingPeriod
     var afterTrial: Bool = false
+    private var title: String {
+        variant.map { "Team · \($0.seats) seats" } ?? plan.displayName
+    }
+    private var benefitLines: [String] {
+        guard let variant else { return plan.benefits }
+        return [
+            "\(variant.monthlyCredits) monthly AI credits after the trial",
+            "Use credits across eligible AI tools",
+            "Create and share tours",
+            "\(variant.seats) seats in one workspace",
+        ]
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(afterTrial ? "After the trial · \(plan.displayName)" : "Included with \(plan.displayName)").font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text(afterTrial ? "After the trial · \(title)" : "Included with \(title)").font(.rpHeadline).foregroundStyle(Theme.ink)
             Text(plan.tagline).font(.rpCaption).foregroundStyle(Theme.inkDim)
-            ForEach(plan.benefits, id: \.self) { line in
+            ForEach(benefitLines, id: \.self) { line in
                 Label(line, systemImage: "checkmark")
                     .font(.rpCaption).foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
