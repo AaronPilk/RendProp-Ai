@@ -152,10 +152,11 @@ class FoundationTests(unittest.TestCase):
         result = validate_capabilities(self.cap, SWIFT)
         # Includes the dedicated measurements CAS route, reflection,
         # photographer/client, photo selection, distinct personal-card/logo methods
-        # and the account-owned JSON inventory export.
+        # the account-owned JSON inventory export, and the second abortUpload
+        # declaration that rechecks account identity at network dispatch.
         # Inventory coverage does not establish browser, phone or live parity.
         self.assertEqual(result["apiMethods"], 76)
-        self.assertEqual(result["apiDeclarations"], 78)
+        self.assertEqual(result["apiDeclarations"], 79)
         self.assertEqual(result["capabilityGroups"], 25)
         self.assertEqual(result["outsideProtocol"], 25)
         self.assertEqual(result["browserVerified"], 0)
