@@ -55,6 +55,7 @@ REFLECTION_FIXTURES = (
     ("property_address_lookup.sql", '"assertions": 25', 25),
     ("trial_full_window_admission.sql", '"assertions": 11', 11),
     ("trial_hybrid_funded_serving.sql", '"assertions": 43', 43),
+    ("paid_media_budget_cap.sql", '"assertions": 18', 18),
 )
 
 # These already-shipped transactional Studio migrations intentionally create
@@ -139,6 +140,7 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20261027225416_subscription_trial_full_window_admission.sql",
     "20261027232500_subscription_trial_hybrid_funded_serving.sql",
     "20261027234000_trial_shared_launch_budget_guard.sql",
+    "20261027234243_paid_media_budget_cap.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -202,6 +204,7 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261027225416_subscription_trial_full_window_admission.sql": ("23cd11f0b899cc0a5d6bae71d24f7abb7b5efc6722047dbcbc26c5917a730866", "Review changed seven-day trial admission predecessor"),
     "20261027232500_subscription_trial_hybrid_funded_serving.sql": ("6cd0c5bc46406c41bc2db21c5074bb5c843a532e2fe65b13496d78ed790fdb05", 'relation "subscription_trial_media_template" already exists'),
     "20261027234000_trial_shared_launch_budget_guard.sql": ("3497a2fd566e35d27ce0fe2061971425d675ce6b07e127481193a1c450a0c7f6", 'Review shared launch budget guard already installed'),
+    "20261027234243_paid_media_budget_cap.sql": ("b661ffae702cdeabbcac4d3aa53132c1faa8ec950245393e1285069deae1e42c", 'Review paid media budget cap already installed'),
 }
 
 

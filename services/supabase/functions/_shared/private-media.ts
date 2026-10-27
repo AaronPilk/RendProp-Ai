@@ -10,6 +10,7 @@ import { assertHostingAvailable } from "./hosting-retention.ts";
 import { admitMediaRead } from "./media-delivery-admission.ts";
 import { bucketForKey } from "../studio/handler.ts";
 import { assertMediaVisible } from "./media-source-access.ts";
+import { adminClient } from "./supabase.ts";
 
 export interface PrivateMediaScope { actor:string;org:string;listing:string|null;bucket:"uploads"|"renders";key:string;review?:{owner:string;result:string;revision:number} }
 interface Capability extends PrivateMediaScope { v:1;exp:number }
@@ -37,12 +38,25 @@ async function mac(body:string):Promise<string>{
  const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
  return Array.from(new Uint8Array(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(body))),b=>b.toString(16).padStart(2,"0")).join("");
 }
+/** Direct R2 signatures are unsafe for a paid period: they never reach the
+ * database request/byte meter. Preserve the old path for workspaces that have
+ * never received a paid media budget; fail closed on an uncertain lookup. */
+export async function paidMediaGatewayRequired(
+ admin:{rpc:(name:string,args:Record<string,unknown>)=>PromiseLike<{data:unknown;error:unknown}>},org:string,
+):Promise<boolean>{
+ const {data,error}=await admin.rpc("paid_media_gateway_required",{p_org:org});
+ assert(!error&&typeof data==="boolean",503,"Media service configuration unavailable.");
+ return data;
+}
 /** Caller has already authorized this exact row. A capability carries identity,
  * not final byte authority: the gateway checks current records on every read. */
 export async function privateMediaUrl(scope:PrivateMediaScope,seconds=600):Promise<string>{
  assert(Number.isSafeInteger(seconds)&&seconds>0&&seconds<=600,503,"Media expiry could not be verified.");
  const flag=Deno.env.get("PRIVATE_MEDIA_DELIVERY");assert(flag===undefined||flag===""||flag==="off"||flag==="gateway-v1",503,"Media service configuration unavailable.");
- if(flag!=="gateway-v1")return await presignGet(scope.bucket==="uploads"?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS,scope.key,Math.min(seconds,600));
+ if(flag!=="gateway-v1"){
+  assert(!(await paidMediaGatewayRequired(adminClient(),scope.org)),503,"Media gateway activation pending.");
+  return await presignGet(scope.bucket==="uploads"?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS,scope.key,Math.min(seconds,600));
+ }
  const now=Math.floor(Date.now()/1000),c:Capability={v:1,...scope,exp:now+Math.min(seconds,600)};
  assert(valid(c,now),503,"Media identity could not be verified.");
  const body=btoa(unescape(encodeURIComponent(JSON.stringify(c)))).replaceAll("+","-").replaceAll("/","_").replace(/=+$/,"");

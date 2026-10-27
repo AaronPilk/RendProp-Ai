@@ -1,9 +1,18 @@
 import {assert,assertEquals,assertRejects} from "https://deno.land/std@0.224.0/assert/mod.ts";
-import {privateMediaUrl,privateMediaIdentity,verifyPrivateCapability,privateMediaAuthority} from "./private-media.ts";
+import {privateMediaUrl,privateMediaIdentity,verifyPrivateCapability,privateMediaAuthority,paidMediaGatewayRequired} from "./private-media.ts";
 import {HttpError} from "./http.ts";
 const actor="10000000-0000-4000-8000-000000000001",org="20000000-0000-4000-8000-000000000002",listing="30000000-0000-4000-8000-000000000003",other="40000000-0000-4000-8000-000000000004",key=`renders/${org}/${listing}/photo.jpg`;
 async function setup<T>(fn:()=>Promise<T>){const prior=Deno.env.get("MEDIA_GATEWAY_SECRET"),flag=Deno.env.get("PRIVATE_MEDIA_DELIVERY");Deno.env.set("MEDIA_GATEWAY_SECRET","a".repeat(64));Deno.env.set("PRIVATE_MEDIA_DELIVERY","gateway-v1");try{return await fn();}finally{for(const[name,value]of [["MEDIA_GATEWAY_SECRET",prior],["PRIVATE_MEDIA_DELIVERY",flag]])value===undefined?Deno.env.delete(name!):Deno.env.set(name!,value!);}}
 async function token(extra:Record<string,unknown>={}){return new URL(await privateMediaUrl({actor,org,listing,bucket:"renders",key,...extra} as any)).pathname.slice(15);}
+Deno.test("paid media gateway lookup fails closed and never trusts tenant claims",async()=>{
+ const calls:Array<{name:string;args:Record<string,unknown>}>=[];
+ const db=(data:unknown,error:unknown=null)=>({rpc:async(name:string,args:Record<string,unknown>)=>{calls.push({name,args});return{data,error};}});
+ assertEquals(await paidMediaGatewayRequired(db(false),org),false);
+ assertEquals(await paidMediaGatewayRequired(db(true),org),true);
+ for(const [data,error] of [[null,null],["false",null],[false,{message:"lookup failed"}]])
+  await assertRejects(()=>paidMediaGatewayRequired(db(data,error),org),HttpError);
+ assert(calls.every(call=>call.name==="paid_media_gateway_required"&&call.args.p_org===org));
+});
 function admin(fault="",mediaKey=key){
  let reads=0,admits=0;const order:string[]=[];
  const rpc=async(name:string,args:any)=>{order.push(name);if(name==="library_media_delivery_admit"){admits++;assertEquals(args.p_org,org);assertEquals(args.p_actor,actor);assertEquals(args.p_required,true);return fault==="budget"?{data:null,error:{message:"RP429: Media serving allowance exhausted"}}:{data:{admitted:true,legacy_unbudgeted:false},error:null};}
