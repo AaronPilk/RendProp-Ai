@@ -67,8 +67,12 @@ const server = createServer((req, res) => {
     noAddress = url.searchParams.has("noaddress");
     let html = renderTourPage(fixture(), origin + "/closed-api", "", "", { origin, page: propertyPage(url.searchParams.get("page")), publicBase: "/property", previewTheme:url.searchParams.get("preview_theme"), nearby: url.searchParams.get("cached") === "downtown" ? downtownResult : url.searchParams.has("cached") ? nearbyResult : null });
     if (arg("--fault") === "omit-preview-offset") {
-      assert.equal(html.split("Math.max(navHeight,previewHeight)").length - 1, 1, "one exact preview-offset expression is omitted");
-      html = html.replace("Math.max(navHeight,previewHeight)", "navHeight");
+      const offset = "Math.ceil(Math.max(navHeight,previewHeight))+16";
+      assert.equal(html.split(offset).length - 1, 1, "one exact preview-offset expression is omitted");
+      // Published pages keep their normal safety inset. Only preview pages
+      // lose the sticky banner measurement, so a short relative premium nav
+      // must make the real keyboard skip target land beneath that banner.
+      html = html.replace(offset, "previewBanner ? Math.ceil(navHeight) : Math.ceil(navHeight)+16");
     }
     res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" }); res.end(arg("--fault")==="skip-target" ? html.replace('class="property-skip-link" href="#property-content"','class="property-skip-link" href="#listing-top"') : html); return;
   }

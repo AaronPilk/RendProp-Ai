@@ -1113,17 +1113,18 @@ jobs:
           assert.equal(witnesses.length, 1);
           const g = witnesses[0];
           assert.equal(q.measurements.at(-1), g, 'failure immediately follows recorded geometry');
-          assert(g.active === true && g.top === 72 && g.obstruction === 74 && g.scrollMargin === '72px' && g.top < g.obstruction - 1, 'exact retained72/74 strict clearance failure');
+          assert(g.active === true && g.top < g.obstruction - 1, 'actual short-nav preview overlap');
           assert(Array.isArray(g.surfaces) && g.surfaces.length === 2);
           const banners = g.surfaces.filter(x => x.selector === '.property-preview-banner'), navs = g.surfaces.filter(x => x.selector === '#listing-nav');
           assert.equal(banners.length, 1); assert.equal(navs.length, 1);
           const banner = banners[0], nav = navs[0];
-          assert(banner.position === 'sticky' && banner.top === 0 && banner.bottom === 74 && banner.height === 74, 'actual74px sticky preview banner');
+          assert(banner.position === 'sticky' && banner.top === 0 && banner.bottom === g.obstruction && banner.height > nav.height, 'actual sticky preview banner taller than premium navigation');
           // A relative nav scrolls with the page, so its absolute viewport top
           // depends on the browser's final scroll position. Its size, position
           // mode and relationship to the focused main are the stable witness.
-          assert(nav.position === 'relative' && nav.height === 56 && Number.isFinite(nav.top) && Number.isFinite(nav.bottom) && Math.abs(nav.bottom - nav.top - nav.height) < 0.5 && nav.bottom <= g.top, 'actual56px relative navigation precedes the focused main');
-          console.log('Exact preview-offset omission witnessed: focused main72, sticky banner74, no runtime errors.');
+          assert(nav.position === 'relative' && Number.isFinite(nav.top) && Number.isFinite(nav.bottom) && Math.abs(nav.bottom - nav.top - nav.height) < 0.5 && nav.bottom <= g.top, 'actual relative navigation precedes the focused main');
+          assert(g.scrollMargin === `${Math.ceil(nav.height)}px` && Math.abs(g.top - Math.ceil(nav.height)) < 1.5, 'fault used only nav height for preview clearance');
+          console.log('Exact preview-offset omission witnessed: focused main beneath the taller sticky banner, no runtime errors.');
           NODE
           node services/edge/tour-host/scripts/check-property-video-browser.mjs
           node services/edge/tour-host/scripts/check-property-video-controls.mjs
