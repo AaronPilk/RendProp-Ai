@@ -3,6 +3,11 @@
 -- runtime authority, and QA. Keep this dormant; no pool or grant is changed.
 begin;
 
+do $$begin
+ if to_regprocedure('public.subscription_trial_private_authority_clear()') is not null then
+  raise exception 'Review shared launch budget guard already installed';end if;
+end$$;
+
 -- Count the whole future legacy ceiling conservatively. A settled historical
 -- cost is sunk, whereas an overlapping open runtime cap is future authority.
 -- This check is made again under the purchase admission lock before StoreKit.
