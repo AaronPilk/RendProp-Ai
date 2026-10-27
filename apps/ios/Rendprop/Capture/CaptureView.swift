@@ -81,7 +81,8 @@ struct CaptureView: View {
                     Group {
                         CameraPreview(session: camera.session)
                             .ignoresSafeArea()
-                        ThirdsGrid().ignoresSafeArea()
+                        ThirdsGrid(frameAspectRatio: CGFloat(camera.activeHeight) / CGFloat(max(camera.activeWidth, 1)))
+                            .ignoresSafeArea()
                         overlays
                     }
                     .environment(\.colorScheme, .dark)

@@ -5437,6 +5437,9 @@ struct PhotoStudioView: View {
     @State private var localProcessing = false
     @State private var libraryImportID: UUID?
     @State private var libraryImportCancellation: PhotoImportCancellation?
+    @State private var libraryImportCount = 0
+    /// Loading and saving each account for half of the visible batch progress.
+    @State private var libraryImportStep = 0
     @ObservedObject private var photoJobs = PhotoWorkQueue.shared
     @State private var handledPhotoJob: UUID?
     private var isProcessing: Bool { localProcessing || checkingSavedPhoto || photoJobs.job?.running == true }
@@ -5759,9 +5762,30 @@ struct PhotoStudioView: View {
     }
 
     private var studioSpinnerRow: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-            Text(processingText).foregroundStyle(Theme.inkDim)
+        Group {
+            if libraryImportID != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(processingText)
+                        .font(.rpBody.weight(.semibold))
+                        .foregroundStyle(Theme.ink)
+                    ProgressView(value: Double(libraryImportStep),
+                                 total: Double(max(libraryImportCount * 2, 1)))
+                        .tint(Theme.accent)
+                    Text("Photos appear in the grid when saving finishes.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Photo import")
+                .accessibilityValue("\(processingText) \(libraryImportStep * 100 / max(libraryImportCount * 2, 1)) percent complete")
+                .accessibilityIdentifier("photos.importProgress")
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text(processingText).foregroundStyle(Theme.inkDim)
+                }
+            }
         }
         .padding(.vertical, 8)
     }
@@ -5964,12 +5988,15 @@ struct PhotoStudioView: View {
                 }
                 libraryImportID = id
                 libraryImportCancellation = cancellation
+                libraryImportCount = count
+                libraryImportStep = 0
                 localProcessing = true
                 photoSaveError = nil
                 processingText = "Loading \(count) photos from your library…"
                 return true
             }, onProgress: { id, completed, total in
-                guard libraryImportID == id else { return }
+                guard libraryImportID == id, libraryImportStep < libraryImportCount else { return }
+                libraryImportStep = max(libraryImportStep, min(completed, total))
                 processingText = "Loading photo \(completed) of \(total)…"
             }, onCancel: {
                 pendingShowcaseEdit = nil; pendingShowcaseStyle = nil
@@ -7636,12 +7663,14 @@ struct PhotoStudioView: View {
               !batch.cancellation.isCancelled else {
             batch.removeTemporaryFiles()
             localProcessing = false; libraryImportID = nil; libraryImportCancellation = nil
+            libraryImportCount = 0; libraryImportStep = 0
             pendingShowcaseEdit = nil; pendingShowcaseStyle = nil
             photoSaveError = "The account or workspace changed. No photos were imported into another account. Choose the photos again in the original listing."
             return
         }
         let targetDir = dir
         let existingIDs = Array(((try? PhotoVersionHistory.load(directory: targetDir).versions) ?? [:]).keys)
+        libraryImportStep = libraryImportCount
         processingText = "Saving your photos…"
         PhotoImportWriter.save(batch, existingIDs: existingIDs, process: { item, id in
             let original = try Data(contentsOf: item.url, options: .mappedIfSafe)
@@ -7658,12 +7687,14 @@ struct PhotoStudioView: View {
         }, progress: { completed in
             DispatchQueue.main.async {
                 guard libraryImportID == batch.id else { return }
+                libraryImportStep = libraryImportCount + min(completed, libraryImportCount)
                 processingText = "Saving photo \(completed) of \(batch.requestedCount)…"
             }
         }, completion: { report in
             DispatchQueue.main.async {
                 guard libraryImportID == batch.id else { return }
                 localProcessing = false; libraryImportID = nil; libraryImportCancellation = nil
+                libraryImportCount = 0; libraryImportStep = 0
                 guard batch.context.matches(owner: AuthStore.shared.userID,
                                             revision: AuthStore.shared.syncSessionRevision,
                                             workspace: WorkspaceContext.selectedOrgID) else {
