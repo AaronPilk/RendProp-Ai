@@ -156,6 +156,11 @@ schemes:
       config: Debug
       targets:
         - RendpropUITests
+      # The Run-action StoreKit file is not automatically applied to
+      # `xcodebuild test`. Select it explicitly for the Test action too.
+      testPlans:
+        - path: RendpropStoreKit.xctestplan
+          defaultPlan: true
       # Only the screenshots the walk names are attached. Xcode's automatic
       # per-step capture would bury `01-home` … `09-health-probe` in hundreds
       # of unnamed PNGs at export time.

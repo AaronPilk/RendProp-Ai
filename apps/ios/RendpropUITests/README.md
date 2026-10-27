@@ -173,11 +173,18 @@ contain a legacy `xcresulttool ... --legacy` export fallback.
 
 ## StoreKit screenshots and real-device checks
 
-`PaywallShot` loads [Rendprop.storekit](../Rendprop.storekit) through
-`SKTestSession` before launching, sets USA / en_US, clears synthetic
-transactions and disables purchase dialogs. The configuration is bundled in
-the test target only; the scheme's Run-action StoreKit configuration alone
-does not provide products to `xcodebuild test`.
+The [RendpropStoreKit test plan](../RendpropStoreKit.xctestplan) selects
+[Rendprop.storekit](../Rendprop.storekit) for the Test action. The scheme's
+Run-action StoreKit setting by itself does not select the local file for
+`xcodebuild test`. `PaywallShot` also opens that file through `SKTestSession`
+before launching, sets USA / en_US, clears synthetic transactions and disables
+purchase dialogs. The configuration is bundled in the test target only.
+
+`SubscriptionFlowTests` fails before any purchase if StoreKitTest cannot save
+its local configuration. This is a simulator service failure, not a payment
+result. Check the result bundle's action log for `SKInternalErrorDomain Code=3`
+before diagnosing application behavior; Apple has reported this error in some
+simulator runtimes even with a test plan configured.
 
 `p01-paywall-monthly` is the review deliverable; `p02-paywall-yearly` and
 `p03-paywall-legal` are supporting evidence. `p01-paywall-EMPTY` must never be
