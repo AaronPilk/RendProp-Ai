@@ -15,7 +15,7 @@ do $patch$ declare d text;a text;b text;
 begin
  d:=pg_get_functiondef('public.subscription_trial_media_template_ready(uuid)'::regprocedure);
  a:='tariff jsonb; r jsonb;delivery numeric;compute numeric;storage numeric;';
- b:='tariff jsonb; r jsonb;delivery numeric;compute numeric;storage numeric;runtime jsonb;legacy_future numeric:=0;account_fixed numeric;media_per_trial numeric;remaining_slots numeric;';
+ b:='tariff jsonb; r jsonb;delivery numeric;compute numeric;storage numeric;runtime jsonb;legacy_future numeric:=0;';
  if (length(d)-length(replace(d,a,'')))/length(a)<>1 then
   raise exception 'Review changed trial media shared-budget declaration';end if;
  d:=replace(d,a,b);
@@ -30,19 +30,6 @@ begin
   and (runtime->>'starts_at')::timestamptz<p.ends_at then
   legacy_future:=(runtime->>'cap_cents')::numeric;end if;
  if a.cash_paid_cents+legacy_future>50000 then return false;end if;
- -- Conversion allocates these media cents on the account ledger as well as
- -- the sponsor slice. Reserve account capacity for every remaining cohort
- -- slot now, so a successful StoreKit purchase cannot lose photo delivery.
- account_fixed:=(select coalesce(sum(value::numeric),0) from jsonb_each_text(a.reserves));
- media_per_trial:=(s.trial_reserve_components->>'delivery')::numeric
-  +(s.trial_reserve_components->>'compute')::numeric
-  +(s.trial_reserve_components->>'storage')::numeric
-  +(s.trial_reserve_components->>'retention')::numeric;
- remaining_slots:=floor(p.funded_cents::numeric/500)-(
-  select count(*) from public.serving_funding f where f.sponsor_pool_id=p.id);
- if remaining_slots<0 or media_per_trial<=0
-  or a.cash_paid_cents-a.allocated_org_cents-account_fixed<media_per_trial*remaining_slots
- then return false;end if;
  tariff:=a.tariff;r:=s.trial_reserve_components;$body$;
  if (length(d)-length(replace(d,a,'')))/length(a)<>1 then
   raise exception 'Review changed trial media shared-budget gate';end if;
