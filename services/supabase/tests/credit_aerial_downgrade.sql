@@ -1,5 +1,6 @@
--- A period paid at submission may lapse before KIE accepts. The exact saved
--- hold still settles, while unspent monthly credits are revoked on downgrade.
+-- A period paid at submission may lapse before KIE accepts. The admitted hold
+-- remains frozen until a usable clip is ready; failed work refunds it without
+-- restoring unspent monthly credits revoked on downgrade.
 begin;
 create temporary table downgrade_checks(n integer not null default 0);
 insert into downgrade_checks default values;
@@ -99,7 +100,7 @@ begin
      from public.serving_cost_reservations
      where request_key='aerial-opening:'||j.operation_id
        and stage='aerial_assessment'),
-   'paid-period aerial judge receipt debits credits without double budgeting');
+   'paid-period aerial judge receipt uses reserved credits without double budgeting');
  perform public.serving_cost_finish(
    'a0111111-1111-4111-8111-111111111111',org,
    'aerial-opening:'||j.operation_id,'aerial_assessment','succeeded',null);
