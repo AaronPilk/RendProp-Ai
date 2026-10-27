@@ -5,6 +5,7 @@ struct Listing { let id: UUID; var cloudUnavailable: Bool? = nil }
 @MainActor final class AuthStore { static let shared = AuthStore(); var userID: String? = "owner"; var syncSessionRevision = 1 }
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID() }
 @MainActor final class FeatureSessionAction { var isWaiting = false; func cancel() { isWaiting = false } }
+@MainActor final class PhotoDeclutterReviewModel { func cancel() {} }
 @MainActor final class PhotoWorkQueue {
     static let shared = PhotoWorkQueue(); struct Job { var running = true }; var visibleJob: Job?
 }
@@ -17,6 +18,7 @@ __CONTEXT__
     var imageContext: NativeMediaExportContext? = NativeMediaExportContext()
     var selectionWorkID: UUID?; var editContext: NativeMediaExportContext?; var singleEditJobID: UUID?
     var showEditActions = false; var pendingEdit: String?; var singleStagingSetup: String?; var singleCustomPhoto: String?
+    var singleDeclutterReview: PhotoDeclutterReviewModel?
     var editConnection = FeatureSessionAction(); var photoJobs = PhotoWorkQueue.shared
     var requestedCover = true; var showFullComparison = false; var exporting: Bool?
     var selectionError: String?; var selectedForListing = true
