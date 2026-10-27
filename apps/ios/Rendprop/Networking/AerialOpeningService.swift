@@ -192,7 +192,8 @@ struct AerialOpeningJournal: Codable, Equatable {
             incoming: NativeGenerationProgress.steps(kind: "aerial", phase: status?.state),
             incomplete: false, total: NativeGenerationProgress.aerialTotal)
         let regressed = previous.flatMap { old in incoming.map { $0 < old } } ?? false
-        if status?.state != result.state && !regressed { lastPhaseChangedAt = now }
+        // Failure and cancellation confirm a terminal outcome, not new work.
+        if status?.state != result.state && !regressed && incoming != nil { lastPhaseChangedAt = now }
         lastStatusCheckedAt = now
         completedMilestones = NativeGenerationProgress.retained(previous: previous, incoming: incoming,
             incomplete: ["failed", "ineligible", "cancelled"].contains(result.state), total: NativeGenerationProgress.aerialTotal)

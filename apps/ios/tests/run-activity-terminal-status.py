@@ -81,6 +81,31 @@ struct AerialOpeningStatus: Codable, Equatable {
         let failed = entry.generationProgress
         assert(!failed.checksExpected && failed.percent == nil)
 
+        // Local photo/video phases must move the observation clock forward on
+        // every confirmed change, while a failure alone is not progress.
+        var local = entry
+        local.state = .working
+        local.progressToken = "queued"
+        local.milestoneCompleted = 1
+        local.lastProgressAt = nil
+        var phaseHistory = NativeActivityHistory(entries: [local])
+        local.progressToken = "generating"
+        local.milestoneCompleted = 2
+        phaseHistory.observe(local, now: Date(timeIntervalSince1970: 10))
+        assert(phaseHistory.entries[0].lastProgressAt == Date(timeIntervalSince1970: 10))
+        local.progressToken = "quality_review"
+        local.milestoneCompleted = 3
+        phaseHistory.observe(local, now: Date(timeIntervalSince1970: 20))
+        assert(phaseHistory.entries[0].lastProgressAt == Date(timeIntervalSince1970: 20))
+        local.state = .failed
+        local.progressToken = "failed"
+        local.milestoneCompleted = nil
+        phaseHistory.observe(local, now: Date(timeIntervalSince1970: 30))
+        assert(phaseHistory.entries[0].lastProgressAt == Date(timeIntervalSince1970: 20))
+        local.state = .stopped
+        phaseHistory.observe(local, now: Date(timeIntervalSince1970: 40))
+        assert(phaseHistory.entries[0].lastProgressAt == Date(timeIntervalSince1970: 20))
+
         let aerialPhases: [(String, Int)] = [
             ("queued_input", 0), ("preparing_input", 0),
             ("queued_assessment", 1), ("checking_source", 1),
@@ -110,6 +135,18 @@ struct AerialOpeningStatus: Codable, Equatable {
             }
         }
         assert(NativeGenerationProgress.stepTotal(kind: "aerial") == 5)
+        let operationID = UUID()
+        aerial = NativeActivityEntry(
+            id: "aerial:\\(operationID)", scope: scope, listingID: aerial.listingID,
+            listingTitle: aerial.listingTitle, kind: .aerial, state: .working,
+            stage: "Making opening", completed: nil, total: nil, startedAt: nil,
+            firstObservedAt: Date())
+        for state in [NativeActivityEntry.State.working, .waiting, .attention, .ready, .failed, .stopped] {
+            aerial.state = state
+            assert(aerial.matchesAerialOperation(operationID, scope: scope), "Exact aerial route lost in \\(state)")
+        }
+        assert(!aerial.matchesAerialOperation(UUID(), scope: scope))
+        assert(!aerial.matchesAerialOperation(operationID, scope: .init(actor: UUID(), library: scope.library)))
 
         var oldAerial = aerial
         oldAerial.state = .attention
@@ -165,11 +202,14 @@ struct AerialOpeningStatus: Codable, Equatable {
         assert(journal.lastPhaseChangedAt == previousChange)
         journal.recordConfirmedStatus(.init(state: "failed"), at: Date(timeIntervalSince1970: 30))
         assert(journal.generationProgress().completed == 4)
+        assert(journal.lastPhaseChangedAt == previousChange)
         journal.recordConfirmedStatus(.init(state: "ready_for_acceptance"), at: Date(timeIntervalSince1970: 40))
         assert(journal.generationProgress().completed == 5)
+        assert(journal.lastPhaseChangedAt == Date(timeIntervalSince1970: 40))
         assert(!journal.canStopUnfinishedRequest)
         journal.recordConfirmedStatus(.init(state: "cancelled"), at: Date(timeIntervalSince1970: 50))
         assert(journal.generationProgress().percent == nil)
+        assert(journal.lastPhaseChangedAt == Date(timeIntervalSince1970: 40))
         assert(!journal.canStopUnfinishedRequest)
         print("Activity terminal/active status model: passed")
     }
@@ -189,6 +229,13 @@ assert "if let lastProgressAt = progress.lastProgressAt {" in progress_view
 assert "else if progress.active || progress.checksExpected {" in progress_view
 activity_view = declaration(VIEW, "struct NativeActivityView: View")
 activity_card = declaration(VIEW, "struct NativeActivityCard: View")
+exact_aerial = declaration(VIEW, "private func exactAerialJournal(_ entry: NativeActivityEntry)")
+review = declaration(VIEW, "@ViewBuilder private func review(_ entry: NativeActivityEntry")
+assert "entry.state.isActive" not in exact_aerial
+assert "entry.matchesAerialOperation(saved.manifest.operationID, scope: NativeActivityStore.currentScope)" in exact_aerial
+assert "if entry.kind == .aerial && exactAerial(entry)" in review
+assert "expectedOperationID: UUID(uuidString:" in review
+assert "lastProgressAt: confirmedProgressAt," in QUEUE
 assert "exactAerialJournal(entry)?.canStopUnfinishedRequest == true" in activity_view
 assert "entry.state.isActive && !entry.isAerialAwaitingReview" in activity_card
 assert "saved.canStopUnfinishedRequest else { return }" in QUEUE

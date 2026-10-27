@@ -414,6 +414,9 @@ struct NativeActivityEntry: Codable, Identifiable, Equatable {
     var countUnit: String? = nil
     var progressKind: String? = nil
     var isAerialAwaitingReview: Bool { kind == .aerial && progressToken == "ready_for_acceptance" }
+    func matchesAerialOperation(_ operationID: UUID, scope currentScope: NativeActivityScope) -> Bool {
+        kind == .aerial && scope == currentScope && id == "aerial:\(operationID)"
+    }
     var generationProgress: NativeGenerationProgress {
         let terminalIncomplete = state == .failed || state == .stopped
         let measuredKind = kind == .aerial ? "aerial" : progressKind
@@ -460,7 +463,11 @@ struct NativeActivityHistory: Codable {
                 ? NativeGenerationProgress.normalizedAerialMilestone(incoming.milestoneCompleted, version: incoming.aerialProgressVersion)
                 : incoming.milestoneCompleted
             let regressed = previousMilestone.flatMap { previous in incomingMilestone.map { $0 < previous } } ?? false
-            value.lastProgressAt = old.signature == incoming.signature || regressed ? (old.lastProgressAt ?? incoming.lastProgressAt) : (incoming.lastProgressAt ?? now)
+            let advancedMilestone = incomingMilestone.map { $0 > (previousMilestone ?? 0) } ?? false
+            let advancedCount = incoming.completed.map { $0 > (old.completed ?? 0) } ?? false
+            let endedWithoutProgress = (incoming.state == .failed || incoming.state == .stopped) && !advancedMilestone && !advancedCount
+            value.lastProgressAt = old.signature == incoming.signature || regressed || endedWithoutProgress
+                ? (old.lastProgressAt ?? incoming.lastProgressAt) : (incoming.lastProgressAt ?? now)
             value.milestoneCompleted = NativeGenerationProgress.retained(previous: previousMilestone,
                 incoming: incomingMilestone, incomplete: incoming.state == .failed || incoming.state == .stopped, total: NativeGenerationProgress.stepTotal(kind: incoming.kind == .aerial ? "aerial" : incoming.progressKind) ?? 1)
             if incoming.kind == .aerial { value.aerialProgressVersion = NativeGenerationProgress.aerialProgressVersion }
@@ -673,7 +680,7 @@ struct NativeActivityPresentationState {
         let old = history.entries.first { $0.id == id && $0.scope == scope }
         let entry = NativeActivityEntry(id: id, scope: scope, listingID: listingID, listingTitle: listing.address.isEmpty ? "Your listing" : listing.address,
             kind: kind, state: state, stage: stage, completed: completed, total: total, startedAt: startedAt,
-            firstObservedAt: old?.firstObservedAt ?? now, progressToken: progressToken, lastProgressAt: confirmedProgressAt ?? old?.lastProgressAt, lastCheckedAt: lastCheckedAt, milestoneCompleted: confirmedMilestones ?? NativeGenerationProgress.steps(kind: kind == .aerial ? "aerial" : progressKind ?? "", phase: progressToken), aerialProgressVersion: kind == .aerial ? NativeGenerationProgress.aerialProgressVersion : nil, expectsStatusChecks: expectsStatusChecks, countUnit: countUnit, progressKind: progressKind)
+            firstObservedAt: old?.firstObservedAt ?? now, progressToken: progressToken, lastProgressAt: confirmedProgressAt, lastCheckedAt: lastCheckedAt, milestoneCompleted: confirmedMilestones ?? NativeGenerationProgress.steps(kind: kind == .aerial ? "aerial" : progressKind ?? "", phase: progressToken), aerialProgressVersion: kind == .aerial ? NativeGenerationProgress.aerialProgressVersion : nil, expectsStatusChecks: expectsStatusChecks, countUnit: countUnit, progressKind: progressKind)
         let previous = history
         history.observe(entry, now: now)
         guard previous.entries != history.entries else { return }

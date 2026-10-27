@@ -389,11 +389,11 @@ struct NativeActivityView: View {
     }
     private func exactAerial(_ entry: NativeActivityEntry) -> Bool { exactAerialJournal(entry) != nil }
     private func exactAerialJournal(_ entry: NativeActivityEntry) -> AerialOpeningJournal? {
-        guard entry.state.isActive, entry.scope == NativeActivityStore.currentScope, let actor = entry.scope.actor, let library = entry.scope.library,
+        guard entry.scope == NativeActivityStore.currentScope, let actor = entry.scope.actor, let library = entry.scope.library,
               let listing = model.listings.first(where: { $0.id == entry.listingID }), let server = listing.serverID else { return nil }
         let context = PropertyVideoJobContext(localListingID: listing.id, listingID: server, actorID: actor, orgID: library)
         guard let saved = try? AerialOpeningStore.load(context), saved.physicalOrgID == listing.serverOrgID,
-              entry.id == "aerial:\(saved.manifest.operationID)" else { return nil }
+              entry.matchesAerialOperation(saved.manifest.operationID, scope: NativeActivityStore.currentScope) else { return nil }
         return saved
     }
     @ViewBuilder private func review(_ entry: NativeActivityEntry, listing: Listing) -> some View {
