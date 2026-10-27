@@ -70,21 +70,21 @@ import StoreKit
                 setMessage("A credit purchase is still pending. Recover it before buying again.", context: context)
                 return
             }
-            guard (try await api.openCreditPurchaseIntents(context: context)).intents.isEmpty else {
-                setMessage("A credit purchase is already pending for this account. Check it before buying again.", context: context)
-                return
-            }
             let prepared = try await api.prepareCreditPurchase(productID: product.id, context: context)
             guard context.isCurrent else { throw CloudSyncError.identityChanged }
+            if prepared.replay == true {
+                // A server intent may outlive a crash before the device saved
+                // it, or a pending Ask-to-Buy. Never invent a local Apple
+                // transaction from that server-only record. Its signed token
+                // remains recoverable if Apple later completes the purchase.
+                setMessage("An earlier credit purchase may still be pending with Apple. Check pending purchase, then try again shortly if Apple did not start it.", context: context)
+                return
+            }
             let intent = CreditPurchaseIntent(intentID: prepared.intentID, actorID: context.actorID,
                                               orgID: context.servingOrgID, productID: product.id,
                                               appAccountToken: prepared.appAccountToken,
                                               createdAt: Date(), transactionID: nil, signedTransaction: nil)
             try CreditPurchaseIntentStore.save(intent)
-            if prepared.replay == true {
-                setMessage("A credit purchase is already awaiting Apple approval for this workspace. Check pending purchase before trying again.", context: context)
-                return
-            }
             let result: Product.PurchaseResult
             do {
                 result = try await product.purchase(options: [.appAccountToken(prepared.appAccountToken), .quantity(1)])
