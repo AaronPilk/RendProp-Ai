@@ -1826,11 +1826,11 @@ jobs:
       # The adversarial battery: privileged surface, grants, plan coherence
       # (enforced == published), lifecycle schema, and a mutating fixture that
       # exercises signup → publish → quota → chapters → leads → delete.
-      - name: Invariants (all270 must pass)
+      - name: Invariants (all271 must pass)
         run: |
           set -euo pipefail
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql 2>&1 | tee /tmp/invariants.out
-          grep -q 'All 270 invariants passed.' /tmp/invariants.out
+          grep -q 'All 271 invariants passed.' /tmp/invariants.out
 
       # Replay each historical version before a later migration replaces it.
       #0050's old overload is intentionally superseded by0051; applying0050
@@ -1891,13 +1891,13 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_deleted_team_video.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/build57_db_controls.sql
 
-      - name: Invariants after the replay (all270 must pass)
+      - name: Invariants after the replay (all271 must pass)
         env:
           PGDATABASE: rendprop_replay
         run: |
           set -euo pipefail
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql 2>&1 | tee /tmp/invariants.out
-          grep -q 'All 270 invariants passed.' /tmp/invariants.out
+          grep -q 'All 271 invariants passed.' /tmp/invariants.out
 
   db-publication-regression:
     name: Disposable PostgreSQL publication, invariant and deletion regression
