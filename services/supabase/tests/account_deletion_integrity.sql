@@ -11,6 +11,10 @@ create temp table integrity_fixture(n text primary key,u uuid,o uuid,l uuid);
 insert into integrity_fixture select n,gen_random_uuid(),null,gen_random_uuid() from unnest(array['removed','owner','studio','solo','admin','reflection'])n;
 insert into auth.users(id,email,raw_user_meta_data,is_anonymous)select u,n||'@deletion-integrity.fixture.invalid','{}',false from integrity_fixture;
 update integrity_fixture f set o=(select org_id from public.memberships where user_id=f.u);
+-- Custody and deletion, not free-week admission, are under test. The owner
+-- fixture also creates a second listing and a late-reference negative case.
+update public.orgs set plan='starter',plan_source='manual'
+where id in(select o from integrity_fixture);
 insert into public.listings(id,org_id,agent_id,address)select l,o,u,n from integrity_fixture;
 create function pg_temp.refuse_deletion(n text, fragment text) returns boolean language plpgsql as $$
 begin

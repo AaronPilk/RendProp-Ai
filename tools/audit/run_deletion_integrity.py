@@ -179,7 +179,7 @@ try:
  run('restore-post-lock-recheck',psql+['-q','-1','-f',MIGRATION])
  # A real concurrent insertion must wait for Auth lock, then see pending intent.
  actor,owner,lid=[str(uuid.uuid4())for _ in range(3)]
- setup=f"""insert into auth.users(id,email,raw_user_meta_data)values('{actor}','race-subject@fixture.invalid','{{}}'),('{owner}','race-owner@fixture.invalid','{{}}');insert into public.listings(id,org_id,agent_id,address)select '{lid}',org_id,'{actor}','race solo'from public.memberships where user_id='{actor}';"""
+ setup=f"""insert into auth.users(id,email,raw_user_meta_data)values('{actor}','race-subject@fixture.invalid','{{}}'),('{owner}','race-owner@fixture.invalid','{{}}');update public.orgs set plan='starter',plan_source='manual' where id in(select org_id from public.memberships where user_id in('{actor}','{owner}'));insert into public.listings(id,org_id,agent_id,address)select '{lid}',org_id,'{actor}','race solo'from public.memberships where user_id='{actor}';"""
  sql('race-setup',setup)
  hold=OUT/'deletion-race-hold.sql';save(hold,f"begin;set local role service_role;select public.prepare_account_deletion('{actor}','fixture-uploads','fixture-renders');select 'deletion-intent-ready';select pg_sleep(1);commit;".encode())
  p=subprocess.Popen(psql+['-Atq','-f',str(hold)],env=ENV,cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
