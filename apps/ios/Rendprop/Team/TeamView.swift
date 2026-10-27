@@ -146,6 +146,18 @@ struct TeamView: View {
         Section {
             LabeledContent("Workspace access", value: s.accessLabel)
             LabeledContent("Seats used", value: s.seatUsageLabel)
+            if s.pausedSeatCount > 0 {
+                Label {
+                    Text(s.isYourSeatPaused
+                         ? "Your Team access is paused until a seat is available. Your private work is saved. Ask the owner to free a seat or choose a plan with more seats."
+                         : "\(s.pausedSeatCount) member\(s.pausedSeatCount == 1 ? "" : "s") paused after the plan changed. Their private work is saved. Remove members or choose a plan with more seats to restore access.")
+                        .font(.rpCaption)
+                } icon: {
+                    Image(systemName: "pause.circle.fill")
+                }
+                .foregroundStyle(Theme.warn)
+                .accessibilityIdentifier("team-seat-pause-notice")
+            }
             if s.canManage && s.seats.isFull {
                 // App Store 3.1.1: the ONLY thing offered here is the in-app
                 // paywall. No link, no web page, no "contact us to add seats".
@@ -222,6 +234,12 @@ struct TeamView: View {
                         Text(m.roleLabel)
                             .font(.rpCaption)
                             .foregroundStyle(Theme.inkDim)
+                        if m.isSeatPaused {
+                            Label("Access paused", systemImage: "pause.circle.fill")
+                                .font(.rpCaption)
+                                .foregroundStyle(Theme.warn)
+                                .accessibilityIdentifier("team-member-paused-\(m.userId)")
+                        }
                     }
                     Spacer()
                     if s.canManage && !m.isYou && m.role != "owner" {

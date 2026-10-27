@@ -69,9 +69,16 @@ struct TeamSummary: Decodable, Sendable {
         return "\(seats.used) of \(seats.allowed)"
     }
 
+    var pausedMembers: [Member] { members.filter(\.isSeatPaused) }
+    var pausedSeatCount: Int { seats.paused ?? pausedMembers.count }
+    var isYourSeatPaused: Bool { members.contains { $0.isYou && $0.isSeatPaused } }
+
     struct Seats: Decodable, Sendable {
         let used: Int
         let allowed: Int
+        /// Optional on older /team responses. The server counts only members
+        /// whose paid Team access is currently fenced.
+        let paused: Int?
         var isFull: Bool { used >= allowed }
         var remaining: Int { max(0, allowed - used) }
     }
@@ -83,8 +90,12 @@ struct TeamSummary: Decodable, Sendable {
         let email: String?
         let isYou: Bool
         let accessMode: String?
+        /// Absent on older servers. Only an explicit false means the server
+        /// has fenced this member after a paid-seat downgrade.
+        let seatActive: Bool?
         var id: String { userId }
         var isPrivateTesting: Bool { accessMode == "private_testing" }
+        var isSeatPaused: Bool { seatActive == false }
 
         /// What to show as the person's name. An invited agent who signed in
         /// with Apple and withheld their name has neither, so the role is the
