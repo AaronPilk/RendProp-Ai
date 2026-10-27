@@ -6,7 +6,11 @@ Deno.test("iOS closes only the local aerial extra route and retains accepted ope
   const card = studio.slice(studio.indexOf("private var clipsCard: some View"), studio.indexOf("private var generateTitle:"));
   assert(!card.includes("selectedExtras.append"), "Legacy local aerial extras must not be selectable");
   assert(card.includes("Older clips on this phone cannot be added"));
-  assert(studio.includes("private var canGenerate: Bool { selectedExtras.isEmpty"));
+  assert(studio.includes("private var canGenerate: Bool { (photoMotion || aiCameraAvailable) && selectedExtras.isEmpty"));
+  assert(studio.includes("private var aiCameraAvailable: Bool { false }"), "Release must not offer unfunded AI camera");
+  assert(studio.includes(".disabled(!choice && !aiCameraAvailable)"));
+  assert(studio.includes("AI camera is temporarily unavailable. Photo motion is ready to use."));
+  assert(studio.includes("if !photoMotion && !aiCameraAvailable { return \"AI camera temporarily unavailable\" }"));
   assert(studio.includes("guard phase == .setup, canGenerate, selectedExtras.isEmpty else { return }"));
   assert(studio.includes("private var chosenOpening: PropertyVideoAcceptedOpening?"));
   assert(studio.includes("opening: frozenOpening?.reference"), "Accepted opening stays in the server recipe");

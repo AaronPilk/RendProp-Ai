@@ -11916,6 +11916,9 @@ struct ReelStudioView: View {
     }
 
     private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
+    /// Release gate while the only enabled AI-camera routes use an unfunded
+    /// supplier. Existing saved jobs remain reviewable; Photo motion stays on.
+    private var aiCameraAvailable: Bool { false }
     /// The screen photos are added on — same words as its title bar.
     private var photosScreenName: String { "AI Photo Studio" }
     private var totalSelected: Int { selectedExtras.count + selected.count }
@@ -11929,7 +11932,7 @@ struct ReelStudioView: View {
         if ttsInFlight { return "Making your voice…" }
         return nil
     }
-    private var canGenerate: Bool { selectedExtras.isEmpty && openingSelectionIsResolved && !photoMotionTimingRestorePending && (!photoMotion || (!listing.isSample && reelTransition == .cut && !bigCaptionsOn && selected.allSatisfy { photoMotionKey($0) != nil })) && narrationPreparationMessage == nil && (work.serverJob == nil || work.serverJob?.reply?.isTerminal == true) && VideoSelectionCapacity.canCreate(photoCount: selected.count, totalCount: totalSelected) && pendingRequest == nil && unreadablePendingContext == nil && pendingBatch == nil && !unreadableBatch }
+    private var canGenerate: Bool { (photoMotion || aiCameraAvailable) && selectedExtras.isEmpty && openingSelectionIsResolved && !photoMotionTimingRestorePending && (!photoMotion || (!listing.isSample && reelTransition == .cut && !bigCaptionsOn && selected.allSatisfy { photoMotionKey($0) != nil })) && narrationPreparationMessage == nil && (work.serverJob == nil || work.serverJob?.reply?.isTerminal == true) && VideoSelectionCapacity.canCreate(photoCount: selected.count, totalCount: totalSelected) && pendingRequest == nil && unreadablePendingContext == nil && pendingBatch == nil && !unreadableBatch }
     /// The app-owned job continues when this sheet is dismissed. Only the
     /// explicit Cancel action or a captured permission change stops it.
     private var isWorking: Bool { work.running || work.isServerRendering || phase == .generating || phase == .stitching }
@@ -12968,6 +12971,11 @@ struct ReelStudioView: View {
                     VStack(spacing: 10) { photoMotionModeChoices }
                 }
             }
+            if !aiCameraAvailable {
+                Text("AI camera is temporarily unavailable. Photo motion is ready to use.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let id = selected.first, let photo = reelPhotos.first(where: { $0.id == id }) {
                 HStack(spacing: 14) {
                     if !videoDynamicTypeSize.isAccessibilitySize {
@@ -13003,6 +13011,8 @@ struct ReelStudioView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(RendpropPillButtonStyle(selected: photoMotion == choice, compact: true, horizontalPadding: 16))
+            .disabled(!choice && !aiCameraAvailable)
+            .accessibilityHint(!choice && !aiCameraAvailable ? "Temporarily unavailable. Choose Photo motion." : "")
             .accessibilityAddTraits(photoMotion == choice ? .isSelected : [])
             .accessibilityIdentifier(choice ? "video.mode.photoMotion" : "video.mode.ai")
         }
@@ -13236,6 +13246,7 @@ struct ReelStudioView: View {
 
     private var generateTitle: String {
         if let narrationPreparationMessage { return narrationPreparationMessage }
+        if !photoMotion && !aiCameraAvailable { return "AI camera temporarily unavailable" }
         if canGenerate { return "Make my video" }
         if !selectedExtras.isEmpty { return "Use the saved opening above" }
         if includeAcceptedOpening, acceptedOpening != nil, !photoMotion { return "Choose Photo motion or turn opening off" }
