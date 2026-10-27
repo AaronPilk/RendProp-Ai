@@ -82,10 +82,23 @@ test("absolute opt targets are accepted only when they resolve to the same exact
 test("consumer requires an external trusted hash and exact same-run source/OS/Node-minor context", async () => {
   const f = await fixture(), result = await f.snapshot();
   for (const hash of [undefined, null, "", "0".repeat(64)]) await assert.rejects(f.verify(result.manifest, hash), NativeCacheError);
-  for (const key of ["sourceSha", "workflowSha", "runId", "runAttempt", "ref", "imageOS", "osRelease", "lockSha256", "nodeVersion"]) {
-    const changed = structuredClone(f.context); changed[key] = key.endsWith("Sha") ? "c".repeat(40) : key === "lockSha256" ? "c".repeat(64) : key === "nodeVersion" ? "v22.21.0" : key === "runId" || key === "runAttempt" ? "2" : changed[key] + "x";
+  for (const key of ["sourceSha", "workflowSha", "runId", "ref", "imageOS", "osRelease", "lockSha256", "nodeVersion"]) {
+    const changed = structuredClone(f.context); changed[key] = key.endsWith("Sha") ? "c".repeat(40) : key === "lockSha256" ? "c".repeat(64) : key === "nodeVersion" ? "v22.21.0" : key === "runId" ? "2" : changed[key] + "x";
     await assert.rejects(f.verify(result.manifest, result.manifestSha256, changed), NativeCacheError);
   }
+});
+test("a failed-job rerun accepts an earlier sealed cache only within the exact run and source", async () => {
+  const f = await fixture(), result = await f.snapshot(), consumer = structuredClone(f.context);
+  consumer.runAttempt = "2";
+  assert.equal((await f.verify(result.manifest, result.manifestSha256, consumer)).passed, true);
+  for (const change of [
+    { runId: "987654321" }, { sourceSha: "c".repeat(40) }, { workflowSha: "c".repeat(40) },
+    { helperSha256: "c".repeat(64) }, { lockSha256: "c".repeat(64) },
+  ]) await assert.rejects(f.verify(result.manifest, result.manifestSha256, { ...consumer, ...change }), { code: "CACHE_CONTEXT_DIFFER" });
+  const future = structuredClone(result.manifest); future.context.runAttempt = "3";
+  await assert.rejects(f.verify(future, manifestSha256(future), consumer), { code: "CACHE_CONTEXT_DIFFER" });
+  await f.file(f.kegs.libfixture + "/lib/libfixture.1.dylib", "stale vendor bytes", 0o444);
+  await assert.rejects(f.verify(result.manifest, result.manifestSha256, consumer), { code: "CACHE_CONTENT_DIFFER" });
 });
 test("same macOS release on a newer runner image accepts only byte-identical cache content", async () => {
   const f = await fixture(), result = await f.snapshot(), consumer = structuredClone(f.context);
@@ -169,6 +182,8 @@ test("record and verify CLI use a private separate manifest and emit no verified
   assert.equal((await lstat(f.map(path))).mode & 0o777, 0o600); assert.equal((await lstat(f.map(dirname(path)))).mode & 0o777, 0o700);
   const before = await readFile(output, "utf8"); assert(before.includes("manifest-sha256<<")); assert(before.includes("cache-paths<<")); assert(before.includes("cache-key<<"));
   assert(!before.includes("verified-manifest-sha256"));
+  assert.equal((await runCli(["verify", "--expected-sha256", record.manifestSha256], { environment: f.environment, seams: f.seams })).passed, true);
+  f.environment.GITHUB_RUN_ATTEMPT = "2";
   assert.equal((await runCli(["verify", "--expected-sha256", record.manifestSha256], { environment: f.environment, seams: f.seams })).passed, true);
   const verifiedOutput = await readFile(output, "utf8"); assert(verifiedOutput.includes("verified-manifest-sha256<<")); assert(verifiedOutput.includes("ffprobe-executable<<"));
   await f.file(f.kegs.libfixture + "/lib/extra.dylib", "bad");

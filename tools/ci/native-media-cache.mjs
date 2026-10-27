@@ -229,9 +229,12 @@ export async function verifyNativeCache({ manifest, expectedManifestSha256, expe
   // different Node patch releases to two jobs in one run. Neither changes the
   // cached vendor bytes. Keep OS release, Node major/minor, source, workflow,
   // run and installed locks bound while rescanning every restored cache byte.
-  const { imageVersion: preparedImageVersion, nodeVersion: preparedNodeVersion, ...preparedBinding } = manifest.context;
-  const { imageVersion: consumerImageVersion, nodeVersion: consumerNodeVersion, ...consumerBinding } = expectedContext;
+  // A failed-job rerun keeps the same run ID and source but increments the
+  // attempt. It may consume the earlier sealed cache, never a future attempt.
+  const { imageVersion: preparedImageVersion, nodeVersion: preparedNodeVersion, runAttempt: preparedRunAttempt, ...preparedBinding } = manifest.context;
+  const { imageVersion: consumerImageVersion, nodeVersion: consumerNodeVersion, runAttempt: consumerRunAttempt, ...consumerBinding } = expectedContext;
   need(preparedNodeVersion.split(".").slice(0, 2).join(".") === consumerNodeVersion.split(".").slice(0, 2).join("."), "CACHE_CONTEXT_DIFFER");
+  need(Number(preparedRunAttempt) <= Number(consumerRunAttempt), "CACHE_CONTEXT_DIFFER");
   need(same(preparedBinding, consumerBinding), "CACHE_CONTEXT_DIFFER");
   need(manifest.fixtureFilesystem === policy(seams).fixture, "CACHE_FIXTURE_ASSURANCE_DIFFER");
   // Rescan with the signed preparation provenance so the external manifest
