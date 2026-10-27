@@ -41,7 +41,7 @@ import Foundation
                 let allowance = PlanAllowances(credits: 100, renders: 4, photoEdits: 100, reels: shots, aerials: cap, topaz: 0, seats: 1)
                 check(allowance.aerials == cap, "internal future and saved-result entitlement is retained")
                 check(!allowance.benefitLines.contains { $0.lowercased().contains("aerial") }, "paid plan benefits cannot include aerial generation")
-                check(allowance.benefitLines.first == "\(allowance.credits) monthly AI credits after the trial", "paid benefits lead with monthly credits")
+                check(allowance.benefitLines.first == "\(allowance.credits) monthly Declutter credits after the trial", "paid benefits lead with monthly credits")
                 check(!allowance.benefitLines.contains { $0.contains("\(shots) AI video shots") }, "anti-abuse shot cap is not marketed as a separate allowance")
             }
         }

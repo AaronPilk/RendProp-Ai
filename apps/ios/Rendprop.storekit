@@ -40,7 +40,7 @@
           },
           "localizations": [
             {
-              "description": "80 monthly AI credits after the limited 7-day trial. One seat.",
+              "description": "80 monthly Declutter credits after the limited 7-day trial. One seat.",
               "displayName": "Pro Monthly",
               "locale": "en_US"
             }
@@ -66,7 +66,7 @@
           },
           "localizations": [
             {
-              "description": "1,000 monthly AI credits and 3 seats after the limited 7-day trial.",
+              "description": "1,000 monthly Declutter credits and 3 seats after the limited 7-day trial.",
               "displayName": "Team Monthly",
               "locale": "en_US"
             }
@@ -118,7 +118,7 @@
           },
           "localizations": [
             {
-              "description": "440 monthly AI credits after the limited 7-day trial. One seat.",
+              "description": "440 monthly Declutter credits after the limited 7-day trial. One seat.",
               "displayName": "Ultra Monthly",
               "locale": "en_US"
             }
@@ -170,7 +170,7 @@
           },
           "localizations": [
             {
-              "description": "200 monthly AI credits after the limited 7-day trial. One seat.",
+              "description": "200 monthly Declutter credits after the limited 7-day trial. One seat.",
               "displayName": "Max Monthly",
               "locale": "en_US"
             }
