@@ -263,6 +263,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 METADATA_DIR = REPO_ROOT / "docs" / "appstore" / "metadata" / PRIMARY_LOCALE
 SCREENSHOT_DIR = REPO_ROOT / "docs" / "appstore" / "screenshots" / "6.9"
 IAP_SCREENSHOT = REPO_ROOT / "docs" / "appstore" / "iap-review" / "paywall.png"
+# An IAP review screenshot is not a marketing screenshot set. Apple accepts
+# any screenshot size supported by the iPhone app; the phone's native PNG must
+# not be resized just to satisfy the automated 6.9-inch store-shot recipe.
+# https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/
+IAP_REVIEW_IPHONE_PORTRAIT_SIZES = frozenset({
+    (1320, 2868), (1290, 2796), (1260, 2736),
+    (1206, 2622), (1179, 2556), (1284, 2778),
+    (1242, 2688), (1170, 2532), (1125, 2436), (1080, 2340),
+    (1242, 2208), (750, 1334), (640, 1136), (640, 1096),
+    (640, 960), (640, 920),
+})
 # The existing image predates Pro/Max/Ultra, the monthly-only catalog and the
 # owner-selected .99 prices. Keep its fingerprint as a permanent upload denylist
 # so an old checkout cannot quietly attach it to the new subscription review.
@@ -770,8 +781,9 @@ def iap_review_screenshot_issue(path=None):
     path = IAP_SCREENSHOT if path is None else path
     if not path.is_file():
         return "The current subscription review paywall capture is missing: %s" % path
-    if png_dimensions(path) != (1320, 2868):
-        return "Subscription review paywall capture is not a 1320 x 2868 PNG: %s" % path
+    if png_dimensions(path) not in IAP_REVIEW_IPHONE_PORTRAIT_SIZES:
+        return ("Subscription review paywall capture is not a native supported "
+                "iPhone portrait PNG: %s" % path)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if digest in OBSOLETE_IAP_SCREENSHOT_SHA256:
         return ("Subscription review paywall capture is obsolete (Starter/Pro, "

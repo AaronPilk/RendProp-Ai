@@ -23,7 +23,9 @@ Cloud AI asks permission before sending selected content to named providers. You
 With paid access, Aerial intro can make an optional AI-generated opening from a front exterior photo. Review the result before choosing whether it starts a video. Floor plans, measurements and 3D tours are Coming soon and are not included in any plan.
 
 SUBSCRIPTIONS
-Available plans and localized prices appear in the app before you confirm an Apple purchase. Subscriptions renew automatically unless cancelled at least 24 hours before the current period ends. Manage or cancel subscriptions in Apple account Settings. Deleting the app or account does not cancel an Apple subscription.
+The monthly plans are Pro ($29.99, 60 credits, one seat), Max ($49.99, 120 credits, one seat), Ultra ($99.99, 250 credits, one seat) and Team ($249.99, 600 credits, three seats). Credits cover eligible AI photo edits after the trial; the app shows each eligible edit's credit cost first. Prices above are for the U.S. storefront. The app shows your localized price and current offer before you confirm with Apple.
+
+Eligible new subscribers can start a 7-day free trial by confirming a subscription with Apple. The trial permits one draft listing and limited AI photo edits. Video generation, aerial generation and website publication begin after the first paid renewal. Full paid allowances begin after the trial. Subscriptions renew automatically unless cancelled at least 24 hours before the current period ends. Manage or cancel subscriptions in Apple account Settings. Deleting the app or account does not cancel an Apple subscription.
 
 Terms of Use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 Rendprop terms: https://rendprop.com/terms
