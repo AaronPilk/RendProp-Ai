@@ -16,6 +16,12 @@ create function pg_temp.grace_refuse(statement text,label text)returns void lang
  end;
  raise exception 'SERVING-GRACE FAIL: % — expected financial refusal',label;
 end$$;
+-- This fixture also runs against the Oct 24 historical schema, before the
+-- four-tier migration. Use the sold tier supported by the schema under test.
+create function pg_temp.grace_apple_plan() returns text language sql stable as $$
+ select case when exists(select 1 from public.plan_entitlements where plan='max')
+   then 'max' else 'starter' end
+$$;
 
 update public.app_config set value=jsonb_build_object('mode','ceiling','free_published_listings',1)where key='serving_mode';
 -- Exercise the manual workspace's configured ceiling independently of the
@@ -23,19 +29,19 @@ update public.app_config set value=jsonb_build_object('mode','ceiling','free_pub
 update public.plan_entitlements set cogs_ceiling_cents=4157 where plan='pro';
 insert into auth.users(id,email,is_anonymous,email_confirmed_at)values
  ('b9100000-0000-4000-8000-000000000001','grace-owner@example.invalid',false,now());
--- Historical Starter product IDs sell Max on the final schema.
+-- Historical Starter product IDs sell Max only on the final schema.
 insert into orgs(id,name,plan,plan_source,apple_product_id,plan_expires_at)values
- ('b9200000-0000-4000-8000-000000000001','Exhausted monthly fallback','max','apple','com.rendprop.app.starter.monthly',now()-interval '2 days'),
- ('b9200000-0000-4000-8000-000000000002','Partly unused monthly fallback','max','apple','com.rendprop.app.starter.monthly',now()-interval '2 days'),
- ('b9200000-0000-4000-8000-000000000003','Exhausted annual fallback','max','apple','com.rendprop.app.starter.annual',now()-interval '2 days'),
- ('b9200000-0000-4000-8000-000000000004','Partly unused annual fallback','max','apple','com.rendprop.app.starter.annual',now()-interval '2 days'),
- ('b9200000-0000-4000-8000-000000000005','Ended actual grace','max','apple','com.rendprop.app.starter.monthly',now()-interval '2 days'),
+ ('b9200000-0000-4000-8000-000000000001','Exhausted monthly fallback',pg_temp.grace_apple_plan(),'apple','com.rendprop.app.starter.monthly',now()-interval '2 days'),
+ ('b9200000-0000-4000-8000-000000000002','Partly unused monthly fallback',pg_temp.grace_apple_plan(),'apple','com.rendprop.app.starter.monthly',now()-interval '2 days'),
+ ('b9200000-0000-4000-8000-000000000003','Exhausted annual fallback',pg_temp.grace_apple_plan(),'apple','com.rendprop.app.starter.annual',now()-interval '2 days'),
+ ('b9200000-0000-4000-8000-000000000004','Partly unused annual fallback',pg_temp.grace_apple_plan(),'apple','com.rendprop.app.starter.annual',now()-interval '2 days'),
+ ('b9200000-0000-4000-8000-000000000005','Ended actual grace',pg_temp.grace_apple_plan(),'apple','com.rendprop.app.starter.monthly',now()-interval '2 days'),
  ('b9200000-0000-4000-8000-000000000006','Manual no receipt','pro','manual',null,null),
- ('b9200000-0000-4000-8000-000000000007','Legacy no receipt','max','apple','com.rendprop.app.starter.monthly',now()+interval '20 days'),
- ('b9200000-0000-4000-8000-000000000008','Grace missing chronology','max','apple','com.rendprop.app.starter.monthly',now()+interval '5 days'),
- ('b9200000-0000-4000-8000-000000000009','Expired intro no paid renewal','max','apple','com.rendprop.app.starter.monthly',now()-interval '1 day'),
- ('b9200000-0000-4000-8000-000000000010','Seven-day intro plus28-day grace','max','apple','com.rendprop.app.starter.monthly',now()+interval '25 days'),
- ('b9200000-0000-4000-8000-000000000011','Paid-looking actual grace without retained paid expiry','max','apple','com.rendprop.app.starter.monthly',now()+interval '5 days');
+ ('b9200000-0000-4000-8000-000000000007','Legacy no receipt',pg_temp.grace_apple_plan(),'apple','com.rendprop.app.starter.monthly',now()+interval '20 days'),
+ ('b9200000-0000-4000-8000-000000000008','Grace missing chronology',pg_temp.grace_apple_plan(),'apple','com.rendprop.app.starter.monthly',now()+interval '5 days'),
+ ('b9200000-0000-4000-8000-000000000009','Expired intro no paid renewal',pg_temp.grace_apple_plan(),'apple','com.rendprop.app.starter.monthly',now()-interval '1 day'),
+ ('b9200000-0000-4000-8000-000000000010','Seven-day intro plus28-day grace',pg_temp.grace_apple_plan(),'apple','com.rendprop.app.starter.monthly',now()+interval '25 days'),
+ ('b9200000-0000-4000-8000-000000000011','Paid-looking actual grace without retained paid expiry',pg_temp.grace_apple_plan(),'apple','com.rendprop.app.starter.monthly',now()+interval '5 days');
 insert into memberships(user_id,org_id,role)
 select 'b9100000-0000-4000-8000-000000000001',id,'owner'from orgs where id::text like 'b9200000-%';
 insert into apple_subscriptions(original_transaction_id,org_id,user_id,product_id,plan,environment,status,expires_at,last_transaction_id,transaction_purchased_at)
@@ -116,7 +122,7 @@ do $$declare o uuid;sku text;r jsonb;begin
  foreach o in array array['b9200000-0000-4000-8000-000000000002'::uuid,'b9200000-0000-4000-8000-000000000004'::uuid]loop
   select apple_product_id into sku from public.orgs where id=o;
   r:=public.apply_apple_entitlement_v2(o,'b9100000-0000-4000-8000-000000000001',
-   'grace-original-'||right(o::text,2),'grace-tx-'||right(o::text,2)||'-recovered',sku,'max','Production','active',
+   'grace-original-'||right(o::text,2),'grace-tx-'||right(o::text,2)||'-recovered',sku,pg_temp.grace_apple_plan(),'Production','active',
    (now()-interval '2 days')+case when sku like '%.annual'then interval '1 year'else interval '1 month'end,
    true,'DID_RENEW',now()-interval '2 days',now(),now(),null);
   perform pg_temp.grace_ok((r->>'org_updated')::boolean and r->>'status'='active','verified recovered transaction applies through the real entitlement authority');
