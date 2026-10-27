@@ -2504,7 +2504,7 @@ jobs:
       # GPU), Pillow for the JPEG decode, numpy + tyro for the trainer CLI
       # parsing. Nothing here contacts Modal, a GPU or any provider.
       - name: Install spatial worker + training adapter deps (pinned)
-        run: pip install --disable-pip-version-check modal==1.5.3 Pillow==12.3.0 numpy==1.26.4 tyro==0.9.35
+        run: pip install --disable-pip-version-check modal==1.5.3 Pillow==13.0.0 numpy==1.26.4 tyro==0.9.35
 
       - name: Run spatial worker tests (unittest discovery)
         run: python3 -m unittest discover -s services/spatial-worker -p 'test_*.py'
