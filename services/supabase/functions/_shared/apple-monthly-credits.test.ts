@@ -23,6 +23,8 @@ Deno.test("only a signed positive-price subscription period may mint monthly cre
   assertEquals(monthlyCreditEvent({ ...paid, inAppOwnershipType: "FAMILY_SHARED" }), null);
   assertEquals(monthlyCreditEvent({ ...paid, type: "Consumable" }), null);
   assertEquals(monthlyCreditEvent({ ...paid, expiresDate: null }), null);
+  assertEquals(monthlyCreditEvent({ ...paid, currency: "EUR" }), null);
+  assertEquals(monthlyCreditEvent({ ...paid, storefront: "CAN" }), null);
 });
 
 Deno.test("refund is terminal until Apple's explicit reversal", () => {

@@ -1233,21 +1233,24 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     );
   }
 
-  if (tx.environment === "Sandbox" && await servingMode() === "ceiling") {
-    // Ceiling mode (launch): a Sandbox purchase — only App Review or a Sandbox
-    // tester the owner created can make one — opens a 7-day `trial` plan,
-    // bounded by that plan's meters, the 500¢ trial envelope and the global
-    // sponsor pool. The RPC validates the receipt's status and expiry, persists
-    // the receipt either way, grants once per receipt, replays without
-    // restarting, and never downgrades a paid workspace or binds a retail
-    // subscription. A receipt that grants nothing is a 200 with granted:false.
+  const signedSandboxFreeIntro = tx.environment === "Sandbox" &&
+    tx.priceMilliunits === 0 && tx.currency === "USD" && tx.storefront === "USA" &&
+    tx.offerType === 1 && tx.offerDiscountType === "FREE_TRIAL";
+  if (signedSandboxFreeIntro && await servingMode() === "ceiling") {
+    // Only Apple's signed free-intro facts can open this TestFlight-only
+    // seven-day trial. The RPC repeats every check, protects paid workspaces,
+    // and requires a live, bounded sponsor allocation before a new grant.
     const derivedSandbox = deriveEntitlement(tx, renewal);
-    const { data, error } = await admin.rpc("grant_sandbox_trial", {
+    const { data, error } = await admin.rpc("grant_sandbox_intro_trial", {
       p_org: orgId, p_actor: userId, p_original: tx.originalTransactionId, p_transaction: tx.transactionId,
       p_product: tx.productId, p_status: derivedSandbox.status, p_expires_at: derivedSandbox.expiresAt, p_signed_at: tx.signedDate,
+      p_purchased_at: tx.purchaseDate, p_price_milliunits: tx.priceMilliunits,
+      p_currency: tx.currency, p_storefront: tx.storefront,
+      p_offer_type: tx.offerType, p_offer_discount_type: tx.offerDiscountType,
+      p_app_account_token: tx.appAccountToken, p_product_type: tx.type,
     });
     if (error) {
-      if (/RP(?:400|403|409):/.test(error.message)) throwRpc(error.message);
+      if (/RP(?:400|402|403|409):/.test(error.message)) throwRpc(error.message);
       throw new HttpError(503, "Test purchase could not be confirmed. Please retry.", "upstream");
     }
     const grant = (data ?? {}) as { plan?: unknown; source?: unknown; expires_at?: unknown; granted?: unknown; replay?: unknown; reason?: unknown };

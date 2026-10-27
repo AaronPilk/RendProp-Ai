@@ -1004,7 +1004,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
       }
       calls.push({ name, args });
       if (name === "property_website_transaction") return Promise.resolve({data:{recorded:true},error:null});
-      if (name === "grant_sandbox_trial") return Promise.resolve(sandboxGrant
+      if (name === "grant_sandbox_intro_trial") return Promise.resolve(sandboxGrant
         ? { data: { ...sandboxGrant, original_transaction_id: args.p_original, product_id: args.p_product }, error: null }
         : { data: null, error: { message: "RP409: This test purchase belongs to another account or workspace" } });
       if (name === "record_apple_sandbox_receipt") return Promise.resolve(sandboxGranted
@@ -1142,6 +1142,17 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     assertEquals(calls[0].args.p_event_signed_at, new Date(oldReversalEvent).toISOString());
     const sandboxTx = await signJws(chain, transactionPayload({ environment: "Sandbox", purchaseDate: purchase, signedDate: signed, appAccountToken: user }));
     const sandboxRequest = () => new Request("https://fixture.invalid/me/entitlement", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ signed_transaction: sandboxTx, expected_org_id: org }) });
+    const sandboxIntroTx = await signJws(chain, transactionPayload({
+      environment: "Sandbox", purchaseDate: purchase, signedDate: signed,
+      expiresDate: purchase + 7 * 24 * HOUR, appAccountToken: user,
+      transactionId: "2000000700000091", originalTransactionId: "2000000700000090",
+      price: 0, currency: "USD", storefront: "USA", offerType: 1,
+      offerDiscountType: "FREE_TRIAL",
+    }));
+    const sandboxIntroRequest = () => new Request("https://fixture.invalid/me/entitlement", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ signed_transaction: sandboxIntroTx, expected_org_id: org }),
+    });
     calls.length = 0;
     const refusal = await assertRejects(() => methods.handleEntitlement(sandboxRequest(), user), HttpError);
     assertEquals(refusal.status, 403); assertEquals(refusal.code, "sandbox_testing_required");
@@ -1209,32 +1220,42 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
       calls.length=0;assertEquals((await(await notify(propertyEvent)).json()).duplicate,true);assertEquals(calls.length,0);
     }
 
-    // Ceiling mode (2026-10-08): a Sandbox purchase goes to grant_sandbox_trial
-    // with the whole verified receipt — identity, status, expiry, signature —
-    // and the response carries the RPC's grant verdict.
+    // A paid Sandbox transaction is test-only and cannot become a free trial.
+    // Only a signed zero-price seven-day introductory transaction goes through
+    // the bounded trial RPC with its complete verified Apple evidence.
     try {
       (fixture as Record<string, unknown>).servingMode = "ceiling";
       calls.length = 0;
-      const grant = await (await methods.handleEntitlement(sandboxRequest(), user)).json();
-      assertEquals(calls.map((call) => call.name), ["grant_sandbox_trial", "subscription_serving_activation"]);
+      const noIntro = await (await methods.handleEntitlement(sandboxRequest(), user)).json();
+      assertEquals(noIntro.test_only, true);
+      assertEquals(calls.map((call) => call.name), ["record_apple_sandbox_receipt"]);
+      calls.length = 0;
+      const grant = await (await methods.handleEntitlement(sandboxIntroRequest(), user)).json();
+      assertEquals(calls.map((call) => call.name), ["grant_sandbox_intro_trial", "subscription_serving_activation"]);
       const args = calls[0].args;
       assertEquals(args.p_org, org); assertEquals(args.p_actor, user);
-      assertEquals(args.p_original, "2000000700000000"); assertEquals(args.p_transaction, "2000000700000001");
+      assertEquals(args.p_original, "2000000700000090"); assertEquals(args.p_transaction, "2000000700000091");
       assertEquals(args.p_product, "com.rendprop.app.pro.monthly"); assertEquals(args.p_status, "active");
       assert(typeof args.p_expires_at === "string" && Date.parse(args.p_expires_at) > Date.now());
       assert(typeof args.p_signed_at === "string" && Number.isFinite(Date.parse(args.p_signed_at)));
+      assertEquals(args.p_purchased_at, new Date(purchase).toISOString());
+      assertEquals(args.p_price_milliunits, 0); assertEquals(args.p_currency, "USD");
+      assertEquals(args.p_storefront, "USA"); assertEquals(args.p_offer_type, 1);
+      assertEquals(args.p_offer_discount_type, "FREE_TRIAL");
+      assertEquals(args.p_app_account_token, user);
+      assertEquals(args.p_product_type, "Auto-Renewable Subscription");
       assertEquals(grant.test_only, true); assertEquals(grant.environment, "Sandbox"); assertEquals(grant.plan, "trial");
       assertEquals(grant.granted, true); assertEquals(grant.replay, false); assertEquals(grant.reason, "granted");
-      assertEquals(grant.original_transaction_id, "2000000700000000");
+      assertEquals(grant.original_transaction_id, "2000000700000090");
       sandboxGrant = { plan: "free", source: null, expires_at: null, granted: false, replay: false, reason: "receipt_inactive" };
       calls.length = 0;
-      const inactive = await (await methods.handleEntitlement(sandboxRequest(), user)).json();
+      const inactive = await (await methods.handleEntitlement(sandboxIntroRequest(), user)).json();
       assertEquals(inactive.granted, false); assertEquals(inactive.plan, "free"); assertEquals(inactive.reason, "receipt_inactive");
       sandboxGrant = null;
       calls.length = 0;
-      const refused = await assertRejects(() => methods.handleEntitlement(sandboxRequest(), user), HttpError);
+      const refused = await assertRejects(() => methods.handleEntitlement(sandboxIntroRequest(), user), HttpError);
       assertEquals(refused.status, 409);
-      assertEquals(calls.map((call) => call.name), ["grant_sandbox_trial"]);
+      assertEquals(calls.map((call) => call.name), ["grant_sandbox_intro_trial"]);
     } finally {
       delete (fixture as Record<string, unknown>).servingMode;
     }

@@ -25,10 +25,16 @@ Store data and cash evidence were checked.
 
 Before activation, verify a signed StoreKit **Sandbox/TestFlight** zero-price
 intro against the originally reserved actor, org and SKU, then renewal,
-expiration and refund/revocation. Repeat the signed Production path for the
-first paid renewal. Sandbox trial funding is not yet implemented; current
-`apple-funding.ts` returns `reason:sandbox`, so this is a release blocker rather
-than a claimed TestFlight pass. Reconfirm the 5-edit supplier/assessment and
+expiration and refund/revocation. The test-only `grant_sandbox_intro_trial`
+accepts only Apple's signed `FREE_TRIAL`, zero price, USA/USD, matching
+`appAccountToken` and a term no longer than seven days. It creates one finite
+test workspace trial only when the sponsor allocation covers the next seven
+days and has at least the 500-cent trial envelope available. A paid Sandbox
+purchase stays test-only and cannot open a trial. This exercises the trial UX
+and bounded supplier path in TestFlight; it is **not** evidence of a funded
+Production free-intro purchase. `apple-funding.ts` still returns
+`reason:sandbox` for public purchase funding. Repeat the signed Production
+path for the first paid renewal. Reconfirm the 5-edit supplier/assessment and
 media-delivery bounds. Only then admit the funded pool and enable
 `subscription_trial_config` in a reviewed, auditable database change.
 
@@ -43,10 +49,23 @@ No introductory, grace, refunded or Sandbox transaction may create Production
 monthly credit grants. Purchased top-ups are nonexpiring and remain usable
 after downgrade; they are bound to the original org and Apple transaction.
 
-The initial credit ledger separately limits supplier Declutter attempts to
-5 cents per credit, and the assessment quota bounds skipped photos. That is
-not yet a combined subscription margin cap: noncredit tools still spend from
-the prior plan serving envelope. Activating monthly grants before the
-combined org-period limit and usable-video/aerial stress test would allow two
-independent supplier budgets. Keep this catalog dormant until the shared
-ceiling is verified against real supplier receipts and every advertised tool.
+The dormant `credit_combined_budget` policy makes the total subscription
+supplier ceiling **45% of conservative 70% Apple net proceeds, less 50 cents
+for hosting**, using only the signed USA/USD price for the current exact paid
+term. It reserves the full 5-cent supplier face of every monthly credit up
+front, then limits video, aerial, assessments and other noncredit costs to the
+remainder. Linked credit supplier receipts are counted once. Purchased top-up
+supplier liability is independent because those credits have separate cash
+proceeds. The policy also requires an explicit `activated_from` timestamp:
+paid periods that began before it remain on their legacy allowance until
+renewal. Activating only the monthly catalog cannot mint Production grants;
+the matching combined policy and date must be deliberately enabled after
+final economics QA.
+
+At candidate prices/grants the combined ceilings are Pro $8.94, Max $15.24,
+Ultra $30.99 and Team $78.24. The monthly-credit reserves are $4/$10/$22/$50,
+leaving only $4.94/$5.24/$8.99/$28.24 for all other supplier work, including
+assessments. This deliberately guarantees the monthly credits remain usable,
+but the remaining video/aerial headroom may not support advertised quotas.
+Keep the catalog and combined policy dormant until signed-period and renewal
+tests, full-use supplier stress, and every marketed creative quote pass.

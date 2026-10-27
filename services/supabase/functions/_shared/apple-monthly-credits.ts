@@ -14,6 +14,9 @@ export function monthlyCreditEvent(
 ): MonthlyCreditEvent | null {
   if (tx.type !== "Auto-Renewable Subscription") return null;
   if (tx.environment !== "Production" && tx.environment !== "Sandbox") return null;
+  // The launch combined budget is denominated in USD. A foreign storefront
+  // needs its own signed-price/commission schedule before credit activation.
+  if (tx.currency !== "USD" || tx.storefront !== "USA") return null;
   if (!tx.purchaseDate || !tx.expiresDate || !tx.signedDate) return null;
   if (notificationType === "REFUND" || notificationType === "REVOKE") return "refunded";
   if (notificationType === "REFUND_REVERSED") {

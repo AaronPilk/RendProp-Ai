@@ -65,6 +65,32 @@ insert into public.apple_subscriptions(original_transaction_id,org_id,user_id,
   now()-interval '1 day',now()-interval '1 day'+interval '1 minute');
 
 set local role service_role;
+select pg_temp.credit_ok(
+ (public.credit_verified_monthly_apply(
+   'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','com.rendprop.app.pro.monthly',
+   'Production','monthly-chain','monthly-one',now()-interval '1 day',
+   now()+interval '29 days',99990,now()-interval '1 day'+interval '1 minute',
+   now()-interval '1 day'+interval '1 minute','paid')->>'reason')
+   ='combined_policy_inactive_or_preexisting_period',
+ 'turning on catalog alone cannot mint an unbudgeted monthly grant');
+reset role;
+update public.app_config set value=value||jsonb_build_object(
+  'enabled',true,'activated_from',now())
+  where key='credit_combined_budget';
+set local role service_role;
+select pg_temp.credit_ok(
+ (public.credit_verified_monthly_apply(
+   'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','com.rendprop.app.pro.monthly',
+   'Production','monthly-chain','monthly-one',now()-interval '1 day',
+   now()+interval '29 days',99990,now()-interval '1 day'+interval '1 minute',
+   now()-interval '1 day'+interval '1 minute','paid')->>'reason')
+   ='combined_policy_inactive_or_preexisting_period',
+ 'activation does not backfill a paid term that already began');
+reset role;
+update public.app_config set value=jsonb_set(value,'{activated_from}',
+  to_jsonb(now()-interval '2 days')) where key='credit_combined_budget';
+
+set local role service_role;
 do $$
 declare
   actor uuid:='11111111-1111-4111-8111-111111111111';

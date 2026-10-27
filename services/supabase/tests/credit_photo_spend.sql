@@ -97,17 +97,27 @@ do $$
 declare actor uuid:='31111111-1111-4111-8111-111111111111';
  org uuid:='3aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
  key text:='declutter-credit-0001'; second_key text:='declutter-credit-0002';
- result jsonb; supplier uuid; qc_id uuid; qc_key text; i integer;
+ result jsonb; invite_result jsonb; accept_result jsonb;
+ supplier uuid; qc_id uuid; qc_key text; i integer;
  trial_actor uuid:='41111111-1111-4111-8111-111111111111';
  trial_org uuid:='4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
  max_org uuid:='5aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
  team_owner uuid:='71111111-1111-4111-8111-111111111111';
  team_agent uuid:='81111111-1111-4111-8111-111111111111';
  team_org uuid:='7aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
- agent_library uuid:='8aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+ agent_library uuid;
 begin
- result:=public.create_org_invite(team_owner,team_org,null,'agent',repeat('f',64));
- result:=public.accept_org_invite(team_agent,repeat('f',64));
+ invite_result:=public.create_org_invite(team_owner,team_org,null,'agent',repeat('f',64));
+ accept_result:=public.accept_org_invite(team_agent,repeat('f',64));
+ agent_library:=(accept_result->>'private_org_id')::uuid;
+ if public.library_actor_billing_org(team_agent,agent_library) is distinct from team_org or
+   not public.library_financial_actor(team_agent,agent_library) then
+   raise exception 'TEAM FIXTURE: invite %, accept %, billing %, financial %, effective %',
+     invite_result,accept_result,
+     public.library_actor_billing_org(team_agent,agent_library),
+     public.library_financial_actor(team_agent,agent_library),
+     public.effective_plan(team_org);
+ end if;
  perform pg_temp.photo_ok(public.library_actor_billing_org(team_agent,agent_library)=team_org and
    public.library_financial_actor(team_agent,agent_library),
    'Team agent may edit private library against shared owner-funded billing org');
