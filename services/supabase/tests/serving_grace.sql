@@ -18,6 +18,9 @@ create function pg_temp.grace_refuse(statement text,label text)returns void lang
 end$$;
 
 update public.app_config set value=jsonb_build_object('mode','ceiling','free_published_listings',1)where key='serving_mode';
+-- Exercise the manual workspace's configured ceiling independently of the
+-- current retail Pro price ladder. This synthetic value is rolled back below.
+update public.plan_entitlements set cogs_ceiling_cents=4157 where plan='pro';
 insert into auth.users(id,email,is_anonymous,email_confirmed_at)values
  ('b9100000-0000-4000-8000-000000000001','grace-owner@example.invalid',false,now());
 insert into orgs(id,name,plan,plan_source,apple_product_id,plan_expires_at)values
