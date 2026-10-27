@@ -31,7 +31,13 @@ insert into fixture select 'c068be01-0000-4000-8000-000000000001','c068be01-0000
  (select org_id from memberships where user_id='c068be01-0000-4000-8000-000000000003'),gen_random_uuid(),gen_random_uuid(),'paid-source-68',null;
 update orgs set plan='team',plan_source='manual'where id=(select team from fixture);
 update orgs set plan='pro',plan_source='manual'where id=(select solo_org from fixture);
+-- Create the agent's original listing while her synthetic intro trial can
+-- lawfully admit it, then keep the Free private-library state under review.
+update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days'
+ where id=(select sally_org from fixture);
 insert into listings(id,org_id,agent_id,address)select sally_listing,sally_org,sally,'Private agent fixture'from fixture;
+update orgs set plan='free',plan_source=null,trial_ends_at=null
+ where id=(select sally_org from fixture);
 insert into listings(id,org_id,agent_id,address)select solo_listing,solo_org,solo,'Private solo fixture'from fixture;
 select pg_temp.ok((select relrowsecurity from pg_class where oid='public.app_video_drift_checks'::regclass),'QC journal enables RLS');
 select pg_temp.ok(not has_table_privilege('authenticated','app_video_drift_checks','SELECT,INSERT,UPDATE,DELETE')and not has_table_privilege('anon','app_video_drift_checks','SELECT,INSERT,UPDATE,DELETE'),'QC journal has no tenant grants');
