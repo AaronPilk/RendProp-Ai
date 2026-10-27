@@ -111,7 +111,7 @@ for needle in ['private var showsRolePicker:', 'private var invitationRole:', 'p
 common += 'var showsRoles: Bool { showsRolePicker }\nvar explanation: String { invitationExplanation }\n'
 common += 'var accessRow: LabeledContent { ' + inviteLabel[0] + ' }\nfunc dispatch() async { ' + inviteSend[0] + ' }\n}\n'
 common += '''
-enum Config { static var useLiveBackend = true }
+enum Config { static var useLiveBackend = true; static var isOfflineAccountFixture = false }
 enum WorkspaceContext { static var selectedOrgID: UUID?; static var billingOrgID: UUID? { selectedOrgID }; static var servingOrgID: UUID? { selectedOrgID } }
 struct WorkspaceStore { static var hasAuthority = true; static let shared = WorkspaceStore(); var selected: UUID? { WorkspaceContext.selectedOrgID }; var isLoading=false; func canViewLibrary(_ org:UUID)->Bool { Self.hasAuthority && org == WorkspaceContext.selectedOrgID }; func refresh() async {} }
 struct Listing {
@@ -158,7 +158,7 @@ controls = [
     ('private-join-treated-shared', 'if accessMode == "private_testing" {', 'if false {', 'actual join confirmation does not promise shared houses'),
     ('nil-workspace-shows-cache', 'guard let selected = WorkspaceContext.selectedOrgID,',
         'if WorkspaceContext.selectedOrgID == nil { return true }; guard let selected = WorkspaceContext.selectedOrgID,', 'nil live workspace cannot expose cached host houses'),
-    ('missing-workspace-prompt', 'Config.useLiveBackend && workspaceStore.selected == nil', 'false', 'nil live workspace offers explicit selection'),
+    ('missing-workspace-prompt', 'Config.useLiveBackend && !Config.isOfflineAccountFixture && workspaceStore.selected == nil', 'false', 'nil live workspace offers explicit selection'),
     ('home-ignores-workspace', '&& model.isInSelectedWorkspace($0)', '', 'actual Home hides old host inventory after private selection'),
     ('revoked-directory-cache', 'WorkspaceStore.shared.canViewLibrary(selected)', 'true', 'revoked directory delegation exposed cached cards'),
     ('foreign-owner-local-draft', 'if !listing.isSample, let owner = listing.cloudSyncOwnerID,\n           owner != AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) { return false }',
