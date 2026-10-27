@@ -2,7 +2,7 @@ import Foundation
 
 enum CloudSyncError: Error, Equatable { case identityChanged, invalidResponse }
 enum APIError: Error { case decoding, server(Int); var status: Int? { if case .server(let value) = self { return value }; return nil } }
-enum Config { static var useLiveBackend = true; static var isUITesting = false }
+enum Config { static var useLiveBackend = true; static var isUITesting = false; static var isOfflineAccountFixture = false }
 final class AuthStore {
     static let shared = AuthStore()
     var userID: String? = "fixture-owner"
