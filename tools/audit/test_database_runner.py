@@ -25,14 +25,18 @@ from unittest.mock import patch
 # +13 for the 0048 brokerage section, 234 since the 0046 commercial-telemetry
 # section, 213 for the 0044 plan-rework section).
 # Apple chronology and listing facts registration add four assertions to the
-# prior 266-row inventory; limited-trial video policy adds one more. Keep the
-# mocked inventory exact and independent.
-COUNT = 271
+# prior 266-row inventory; limited-trial video policy adds one more. The
+# signed-SKU and dormant credit catalog repair adds three. Keep the mocked
+# inventory exact and independent.
+COUNT = 274
 REQUIRED = [
     'all three explicit Astra writing seats keep their 0030/0034 paid-plan gates',
     'no gpt-6-astra row is reachable on the free, trial or new Pro tier',
     'plan_entitlements match current paid/trial/free catalog for every metered feature',
     'org_entitlement on a fitness trial org is the single-location free week (0/5/0/0/0, 1 seat, 500¢)',
+    'signed Apple SKU to sold-tier authority preserves the $49 Max and $99 Ultra products',
+    'all ten dormant monthly credit rows fit credits, operating reserves and media within 25% of conservative Apple net',
+    '100-credit pack is dormant at $39.99 until exact Apple proceeds evidence is recorded',
 ]
 NAMES = REQUIRED + [f'synthetic invariant {n:03d}' for n in range(len(REQUIRED) + 1, COUNT + 1)]
 PAID_MARKER = ('PASS: exact paid-plan predicates registered 6 expected outcomes across baseline '
@@ -251,7 +255,7 @@ class InventoryTests(RunnerCase):
         result = self.invoke()
         self.assertIsNone(result.failure)
         guarded = subject_module().GUARDED_ONE_SHOT_MIGRATIONS
-        self.assertEqual(len(guarded), 29)
+        self.assertEqual(len(guarded), 30)
         self.assertEqual(set(result.receipt['guardedOneShotRefusals']), set(guarded))
         commands = {row['name']: row for row in result.receipt['commands']}
         for filename in guarded:
