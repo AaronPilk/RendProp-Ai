@@ -30,7 +30,8 @@ export async function makeAerialQuote(actor:string,m:AerialManifest,expires?:str
 }
 function reference(j:any){return aerialOpeningReference({aerial_job_id:j.id,asset_id:j.qualified_output.asset_id,provenance_id:j.qualified_output.provenance_id,sha256:j.qualified_output.sha256,bytes:j.qualified_output.bytes,visible_frames:j.qualified_output.available_frames,source:j.manifest.source});}
 export async function aerialReply(j:any){
- const result:any={schema:1,aerial_job_id:j.id,operation_id:j.operation_id,actor_id:j.actor_id,org_id:j.org_id,selected_library_org_id:j.library_org_id,listing_id:j.listing_id,manifest_sha256:j.manifest_sha256,manifest:j.manifest,state:j.state,message:j.message??null,quote:j.quote,cancel_requested:j.cancel_requested_at!==null,may_accept:j.state==='ready_for_acceptance'&&j.cancel_requested_at===null,may_submit:false};
+ const missingEntrance=j.state==='ineligible'&&j.eligibility?.exterior===true&&j.eligibility?.front_entrance_visible===false;
+ const result:any={schema:1,aerial_job_id:j.id,operation_id:j.operation_id,actor_id:j.actor_id,org_id:j.org_id,selected_library_org_id:j.library_org_id,listing_id:j.listing_id,manifest_sha256:j.manifest_sha256,manifest:j.manifest,state:j.state,message:missingEntrance?'The front entrance is not visible in this photo. Choose an original front exterior photo that shows the actual entrance, review its framing, and start a new opening. No video was generated.':j.message??null,quote:j.quote,cancel_requested:j.cancel_requested_at!==null,may_accept:j.state==='ready_for_acceptance'&&j.cancel_requested_at===null,may_submit:false};
  if(['ready_for_acceptance','accepted'].includes(j.state)){
   const o=j.qualified_output;await ownedHead({bucket:'renders',storage_key:o.storage_key,bytes:o.bytes,sha256:o.sha256,etag:o.etag,content_type:'video/mp4'});
   result.preview_url=await privateMediaUrl({actor:j.actor_id,org:j.org_id,listing:j.listing_id,bucket:'renders',key:o.storage_key});

@@ -237,7 +237,7 @@ struct AerialOpeningContent: View {
                 if state.selectedPhoto != nil { framing }
             }
             if state.opening != nil { sequence }
-            if let message = state.availabilityMessage, !message.isEmpty {
+            if let message = state.availabilityMessage, !message.isEmpty, state.phase != .stopped {
                 Label(message, systemImage: "info.circle")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
@@ -272,7 +272,7 @@ struct AerialOpeningContent: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Label("Show the whole front", systemImage: "checkmark.circle.fill")
                         .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
-                    Text("Use an exterior view. An indoor room, doorway or balcony alone won’t work.")
+                    Text("Show the whole front and its actual entrance. Windows, a porch, or a doorway without the home are not enough.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -359,9 +359,9 @@ struct AerialOpeningContent: View {
         case .review:
             statusCard("Review the opening", detail: "Check that it still shows your home before using it.", symbol: "play.rectangle")
         case .stopped:
-            statusCard("Stopped", detail: state.dispatchAvailable
+            statusCard("Stopped", detail: state.availabilityMessage ?? (state.dispatchAvailable
                 ? "Your saved work is kept. Choose a photo when you’re ready to continue."
-                : "Your saved work is kept. Check Aerial access below before starting another opening.", symbol: "pause.circle")
+                : "Your saved work is kept. Check Aerial access below before starting another opening."), symbol: "pause.circle")
         case .needsAttention(let message):
             statusCard("Opening needs attention", detail: message, symbol: "exclamationmark.circle")
         }
