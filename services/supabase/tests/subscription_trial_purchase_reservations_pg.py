@@ -32,7 +32,9 @@ ENV = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LC_ALL": "C",
        "PGOPTIONS": "-c statement_timeout=30000 -c lock_timeout=15000 -c TimeZone=UTC"}
 PORT = "55489"
 SOURCES = [*sorted((SQL / "migrations").glob("*.sql")), SQL / "tests/ci-bootstrap.sql",
+           SQL / "tests/trial_media_fixture.sql",
            SQL / "tests/subscription_trial_purchase_reservations.sql", SQL / "tests/invariants.sql",
+           SQL / "tests/trial_hybrid_funded_serving.sql",
            ROOT / "tools/audit/run_database_regression.py", Path(__file__).resolve()]
 receipt = {"kind": "owned disposable local PostgreSQL; no providers or hosted calls", "output": str(OUT),
            "commands": [], "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}}
@@ -83,8 +85,16 @@ try:
     run("bootstrap", [*psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
     for m in partition_fresh_migrations(sorted((SQL / "migrations").glob("*.sql")))[0]:
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
+    receipt["hybrid"] = run("hybrid-fresh", [*psql, "-Atq", "-f", SQL / "tests/trial_hybrid_funded_serving.sql"]).strip()
     receipt["fresh"] = run("trial-fresh", [*psql, "-Atq", "-f", SQL / "tests/subscription_trial_purchase_reservations.sql"]).strip()
+    # The historical replay restates these two RPCs at their old schema point.
+    # Save and restore the exact current definitions before checking the final
+    # contract a second time; the production migration remains one-shot.
+    current_trial_rpcs = run("snapshot-current-trial-rpcs", [*psql, "-Atq"],
+      "select pg_get_functiondef('public.prepare_subscription_trial_purchase(uuid,uuid,text)'::regprocedure)||';';"
+      "select pg_get_functiondef('public.fund_reserved_subscription_trial(uuid,uuid,text,text,text,bigint,text,text,integer,text,timestamptz,timestamptz,timestamptz,text)'::regprocedure)||';';")
     run("replay-trial", [*psql, "-q", "-f", MIGRATION])
+    run("restore-current-trial-rpcs", [*psql, "-q"], current_trial_rpcs)
     receipt["replay"] = run("trial-replay", [*psql, "-Atq", "-f", SQL / "tests/subscription_trial_purchase_reservations.sql"]).strip()
     actor1="f1000000-0000-4000-8000-000000000001"
     actor2="f1000000-0000-4000-8000-000000000002"
@@ -92,6 +102,12 @@ try:
     org2="f2000000-0000-4000-8000-000000000002"
     product="com.rendprop.app.starter.monthly"
     run("cash-race-fixture",[*psql,"-q"],f"""
+      set role service_role;
+      select provision_media_account_reserve('synthetic-race-media-account','9c332c75b96cc642621dad5d86d4bf18','business_paid_cash',repeat('9',64),now()-interval '1 day',now()+interval '130 days',50000,
+        '{{"r2_a_cents_per_million":450,"r2_b_cents_per_million":36,"worker_cents_per_million":30,"worker_cpu_cents_per_million_ms":2,"edge_cents_per_million":200,"db_cents":100,"logs_cents":100,"storage_cents_per_gb_month":1.5}}',
+        '{{"storage":0,"delivery":5000,"compute":5000,"email":0,"support":0,"retention":0,"uncertainty":0}}');
+      reset role;
+      update subscription_trial_media_template set enabled=true,account_reserve_ref='synthetic-race-media-account',request_limit=1000,byte_limit=1073741824,storage_limit=1342177280,evidence_sha256=repeat('8',64);
       insert into auth.users(id,email,is_anonymous,email_confirmed_at)values('{actor1}','cash-race1@example.invalid',false,now()),('{actor2}','cash-race2@example.invalid',false,now());
       insert into orgs(id,name,plan,plan_source)values('{org1}','Synthetic cash race1','free','apple'),('{org2}','Synthetic cash race2','free','apple');
       insert into memberships(user_id,org_id,role)values('{actor1}','{org1}','owner'),('{actor2}','{org2}','owner');
@@ -100,7 +116,7 @@ try:
       insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
         select '{product}','USA','USD',49000,4165,1,now()-interval '1 day',now()+interval '20 days',
         '{{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}}',500,
-        '{{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}}',7,id,repeat('e',64)from serving_sponsor_pools where collection_ref='synthetic-cash-race';
+        '{{"storage":8,"delivery":3,"compute":4,"email":5,"support":6,"retention":8,"uncertainty":8}}',7,id,repeat('e',64)from serving_sponsor_pools where collection_ref='synthetic-cash-race';
     """)
     parties=[(actor1,org1),(actor2,org2)]
     outcomes=race("last-cash-hold",[f"select prepare_subscription_trial_purchase('{a}','{o}','{product}');"for a,o in parties])
@@ -142,9 +158,10 @@ try:
       insert into auth.users(id,email,is_anonymous,email_confirmed_at)values('{actor3}','cash-owner-loss@example.invalid',false,now());
       insert into orgs(id,name,plan,plan_source)values('{org3}','Synthetic final owner loss','free','apple');
       insert into memberships(user_id,org_id,role)values('{actor3}','{org3}','owner');
+      update serving_sponsor_pools set admissions_enabled=false where collection_ref='synthetic-cash-race';
       insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256,admissions_enabled)values('synthetic-owner-loss','trial',500,now()-interval '1 day',now()+interval '20 days',repeat('e',64),true);
       insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
-       select 'com.rendprop.app.pro.monthly','USA','USD',99000,8415,1,now()-interval '1 day',now()+interval '20 days','{{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}}',500,'{{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}}',7,id,repeat('e',64)from serving_sponsor_pools where collection_ref='synthetic-owner-loss';
+       select 'com.rendprop.app.pro.monthly','USA','USD',99000,8415,1,now()-interval '1 day',now()+interval '20 days','{{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}}',500,'{{"storage":8,"delivery":3,"compute":4,"email":5,"support":6,"retention":8,"uncertainty":8}}',7,id,repeat('e',64)from serving_sponsor_pools where collection_ref='synthetic-owner-loss';
     """)
     before=" perform 1 from public.orgs where id=p_org and deleted_at is null for update;"
     assert definition.count(before)==1

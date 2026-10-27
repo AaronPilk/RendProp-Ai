@@ -41,11 +41,13 @@ const step = routeStep();
 
 function mode(value: unknown): void { answer = value; serving.resetServingModeCache(); }
 type Call = { name: string; args: Record<string, unknown> };
-function context(options: { reserveError?: string; sponsored?: boolean } = {}): { calls: Call[]; context: FundingContext } {
+function context(options: { reserveError?: string; sponsored?: boolean; trialFunded?: boolean; trialUsage?: unknown; trialRouteError?: boolean } = {}): { calls: Call[]; context: FundingContext } {
   const calls: Call[] = [];
   return { calls, context: { actorId: "a", orgId: "o", requestKey: "request-key-1", async rpc(name, args) {
     calls.push({ name, args });
     if (name === "org_has_internal_testing_grant" || name === "org_has_private_internal_testing") return { data: options.sponsored === true, error: null };
+    if (name === "serving_trial_funded_actor") return options.trialRouteError ? { data: null, error: {message:"unavailable"} } : { data: options.trialFunded === true, error: null };
+    if (name === "subscription_trial_context") return { data: {trial_usage: options.trialUsage ?? null,trial_offer:null}, error: null };
     if (name === "serving_cost_reserve") return options.reserveError ? { data: null, error: { message: options.reserveError } } : { data: { reserved: true, id: "r1", hold_cents: args.p_hold_cents, budget: "ceiling" }, error: null };
     if (name === "serving_cost_finish") return { data: { finished: true, state: args.p_state }, error: null };
     if (name === "serving_operation_no_dispatch") return { data: { aborted: true }, error: null };
@@ -103,6 +105,21 @@ Deno.test("ceiling mode: an attempt reserves its DOCUMENTED bound (never below t
   await assertRejects(() => serving.fundedAttempt(h.context, "photo.stage:1", step, {}, null, async () => new Response("ok") as never), HttpError);
   assertEquals(h.calls.map((call) => call.name), ["serving_cost_reserve", "serving_cost_finish"]);
   assertEquals(h.calls[1].args.p_state, "uncertain");
+});
+
+Deno.test("ceiling legacy helpers stay metered; funded trial helpers preserve the five edits and fail closed on unknown route", async () => {
+  mode("ceiling");
+  const legacy=context();await serving.assertPhotoHelperSponsorship(legacy.context);
+  assertEquals(legacy.calls.map(call=>call.name),["serving_trial_funded_actor"]);
+  const trial=context({trialFunded:true,trialUsage:{org_id:"o",status:"active"}});
+  const denied=await assertRejects(()=>serving.assertPhotoHelperSponsorship(trial.context),HttpError);
+  assertEquals(denied.status,503);
+  assertEquals(trial.calls.map(call=>call.name),["serving_trial_funded_actor","org_has_internal_testing_grant","org_has_private_internal_testing","subscription_trial_context"]);
+  await serving.assertPhotoHelperSponsorship(trial.context,true);
+  const unavailable=context({trialRouteError:true});
+  const error=await assertRejects(()=>serving.assertPhotoHelperSponsorship(unavailable.context),HttpError);
+  assertEquals(error.status,503);
+  assert(!unavailable.calls.some(call=>call.name==="serving_cost_reserve"));
 });
 
 Deno.test("documented bounds: gpt-image-2, FLUX fill per rounded-up megapixel, Kontext per image, lite image; others keep the caller's quote", () => {
@@ -214,6 +231,24 @@ Deno.test("ceiling mode: inactive credit policy preserves the legacy paid path",
     purchaseDate: new Date().toISOString(), expiresDate: new Date(Date.now() + 86400000).toISOString(), signedDate: new Date().toISOString(), appAccountToken: "a",
   } as never);
   assertEquals(calls, ["credit_paid_funding_route", "fund_verified_retail_apple_transaction"]);
+});
+
+Deno.test("ceiling mode converts exact signed Production free-intro receipt before service, preserves refund and Sandbox", async () => {
+  mode("ceiling");
+  const now=new Date(),expires=new Date(now.getTime()+7*86400000);
+  const tx={environment:"Production",type:"Auto-Renewable Subscription",originalTransactionId:"trial-chain",transactionId:"trial-tx",
+    productId:"com.rendprop.app.pro29.monthly",priceMilliunits:0,currency:"USD",storefront:"USA",offerType:1,
+    offerDiscountType:"FREE_TRIAL",purchaseDate:now.toISOString(),expiresDate:expires.toISOString(),signedDate:now.toISOString(),
+    revocationDate:null,appAccountToken:"a"} as Record<string,unknown>;
+  const calls:string[]=[];
+  assertEquals((await fundVerifiedAppleTransaction(async name=>{calls.push(name);return {data:{funded:true,funding_id:"slice"},error:null};},"o",tx as never) as Record<string,unknown>).funded,true);
+  assertEquals(calls,["fund_reserved_subscription_trial"]);
+  const refusal=await assertRejects(()=>fundVerifiedAppleTransaction(async name=>{calls.push(name);return {data:{funded:false,reason:"trial_purchase_not_reserved"},error:null};},"o",tx as never),HttpError);
+  assertEquals(refusal.status,503);
+  assertEquals(calls,["fund_reserved_subscription_trial","fund_reserved_subscription_trial"]);
+  const refund=await fundVerifiedAppleTransaction(async name=>{calls.push(name);return {data:{funded:false,reason:"revoked"},error:null};},"o",{...tx,revocationDate:now.toISOString()} as never);
+  assertEquals(refund,{funded:false,reason:"revoked"});assertEquals(calls.at(-1),"fund_reserved_subscription_trial");
+  assertEquals(await fundVerifiedAppleTransaction(async()=>{throw Error("Sandbox dispatch");},"o",{...tx,environment:"Sandbox"} as never),{funded:false,reason:"sandbox"});
 });
 
 Deno.test("ceiling mode: activated paid credit period funds before its monthly grant", async () => {

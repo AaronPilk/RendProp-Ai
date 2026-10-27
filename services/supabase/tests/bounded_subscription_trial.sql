@@ -1,5 +1,6 @@
 \set ON_ERROR_STOP on
 begin;
+\ir trial_media_fixture.sql
 -- Receipt durations are absolute seven-day UTC terms. Keep the fixture stable
 -- when local calendar time crosses a daylight-saving transition.
 set local timezone='UTC';
@@ -65,7 +66,7 @@ insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,e
 insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
  select 'com.rendprop.app.starter.monthly','USA','USD',49000,4165,1,now()-interval '1 day',now()+interval '20 days',
  '{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',500,
- '{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',7,id,repeat('b',64)from serving_sponsor_pools where collection_ref='synthetic-bounded-local-pool';
+ '{"storage":8,"delivery":3,"compute":4,"email":5,"support":6,"retention":8,"uncertainty":8}',7,id,repeat('b',64)from serving_sponsor_pools where collection_ref='synthetic-bounded-local-pool';
 update serving_sponsor_pools set admissions_enabled=true where collection_ref='synthetic-bounded-local-pool';
 set local role service_role;
 select prepare_subscription_trial_purchase(u,o,'com.rendprop.app.starter.monthly')from fixture;

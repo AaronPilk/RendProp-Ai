@@ -1,5 +1,6 @@
 \set ON_ERROR_STOP on
 begin;
+\ir trial_media_fixture.sql
 -- Apple receipt windows are absolute UTC terms, including across DST changes.
 set local timezone='UTC';
 -- Funded-model regression: pin funded serving mode for this transaction. The
@@ -34,7 +35,7 @@ update subscription_trial_config set enabled=true;
 insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256)values('synthetic-held-pool','trial',1000,now()-interval '3 days',now()+interval '20 days',repeat('b',64));
 update buy set pool=(select id from serving_sponsor_pools where collection_ref='synthetic-held-pool');
 insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
- select product,'USA','USD',49000,4165,1,now()-interval '3 days',now()+interval '20 days','{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',500,'{"storage":2,"delivery":3,"compute":4,"email":5,"support":6,"retention":7,"uncertainty":8}',7,pool,repeat('a',64)from buy;
+ select product,'USA','USD',49000,4165,1,now()-interval '3 days',now()+interval '20 days','{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',500,'{"storage":8,"delivery":3,"compute":4,"email":5,"support":6,"retention":8,"uncertainty":8}',7,pool,repeat('a',64)from buy;
 set local role service_role;
 do $$declare b record;h jsonb;begin select * into b from buy;
  perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),'RP402','disabled pool cannot acquire despite enabled config');
@@ -99,18 +100,24 @@ reset role;update memberships set role='owner'where user_id=(select actor from b
 update subscription_trial_purchase_reservations set held_at=now()-interval '2 days'where id=(select hold from buy);
 update serving_sponsor_pools set admissions_enabled=false,ends_at=now()-interval '1 day'where id=(select pool from buy);
 update apple_serving_schedules set ends_at=now()-interval '1 day',trial_sponsored_cents=400,trial_reserve_components='{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}'where trial_pool_id=(select pool from buy);
-update subscription_trial_config set enabled=false,max_video_seconds=30;
+update subscription_trial_config set enabled=false;
 set local role service_role;
 do $$declare b record;r jsonb;h jsonb;begin select * into b from buy;
- h:=prepare_subscription_trial_purchase(b.actor,b.org,b.product);perform pg_temp.purchase_ok(h#>>'{trial_offer,max_video_seconds}'='90','previous exact held offer remains pinned after disable');
+ h:=prepare_subscription_trial_purchase(b.actor,b.org,b.product);perform pg_temp.purchase_ok(h#>>'{trial_offer,max_video_seconds}'='0','previous exact held offer remains pinned after disable');
  r:=fund_reserved_subscription_trial(b.actor,b.org,'held-original','held-tx',b.product,0,'USD','USA',1,'FREE_TRIAL',b.purchased,b.expires,b.stamp,repeat('c',64));
  perform pg_temp.purchase_ok((r->>'funded')::boolean,'late genuine purchase converts after config/schedule/pool expiry');
- perform pg_temp.purchase_ok((select sponsored_cents=500 and recurring_reserve_cents=35 and actor_id=b.actor from serving_funding where id=(r->>'funding_id')::uuid),'conversion honors exact admitted dollars/reserve and buying actor');
- perform pg_temp.purchase_ok((select max_video_seconds=90 and photo_cap=5 and identity_sha256=(select identity_sha256 from subscription_trial_purchase_reservations where id=b.hold)from subscription_trial_grants where actor_id=b.actor),'immutable grant uses admitted capacity/identity snapshot');
+ perform pg_temp.purchase_ok((select sponsored_cents=500 and recurring_reserve_cents=42 and actor_id=b.actor from serving_funding where id=(r->>'funding_id')::uuid),'conversion honors exact admitted dollars/reserve and buying actor');
+ perform pg_temp.purchase_ok((select max_video_seconds=0 and walkthrough_cap=0 and listing_cap=0 and photo_cap=5 and identity_sha256=(select identity_sha256 from subscription_trial_purchase_reservations where id=b.hold)from subscription_trial_grants where actor_id=b.actor),'immutable grant uses admitted photo-only capacity/identity snapshot');
  perform pg_temp.purchase_ok(subscription_trial_held_offer(b.actor,b.org)is null,'converted offer is not advertised as a second trial');
  perform pg_temp.purchase_ok((select coalesce(sum(sponsored_cents),0)from serving_funding where sponsor_pool_id=b.pool)+(select coalesce(sum(sponsored_cents),0)from subscription_trial_purchase_reservations where pool_id=b.pool and funding_id is null)=500,'conversion replaces hold without double-counting cash');
+ perform pg_temp.purchase_ok((select count(*)=1 from media_delivery_budgets
+   where org_id=b.org and funding_id=(r->>'funding_id')::uuid),
+   'conversion creates one exact funded media budget');
+ perform media_delivery_admit(b.org,1024,true);
  r:=fund_reserved_subscription_trial(b.actor,b.org,'held-original','held-tx',b.product,0,'USD','USA',1,'FREE_TRIAL',b.purchased,b.expires,b.stamp,repeat('c',64));
- perform pg_temp.purchase_ok((r->>'replay')::boolean and(select count(*)=1 from subscription_trial_grants where actor_id=b.actor),'duplicate notification/device restore does not replenish money or counters');
+ perform pg_temp.purchase_ok((r->>'replay')::boolean and(select count(*)=1 from subscription_trial_grants where actor_id=b.actor)
+   and(select count(*)=1 and min(used_requests)=1 and min(used_bytes)=1024 from media_delivery_budgets where org_id=b.org),
+   'duplicate signed receipt does not replenish money, grant, or media counters: '||r::text||' / '||(select to_jsonb(budget)::text from media_delivery_budgets budget where org_id=b.org));
  r:=fund_reserved_subscription_trial(b.other,b.org,'held-original','held-tx',b.product,0,'USD','USA',1,'FREE_TRIAL',b.purchased,b.expires,b.stamp,repeat('c',64));
  perform pg_temp.purchase_ok(r->>'reason'='trial_actor_mismatch','wrong actor cannot restore converted hold');
  perform apply_apple_entitlement_v2(b.org,b.actor,'held-original','held-tx',b.product,'max','Production','refunded',b.expires,false,'REFUND',b.purchased,b.stamp+interval '1 second',b.stamp+interval '1 second',b.stamp+interval '1 second');

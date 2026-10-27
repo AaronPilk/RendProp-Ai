@@ -41,6 +41,7 @@ migrations, live_state_migrations = partition_fresh_migrations(all_migrations)
 trial_migration = SQL / "migrations/20261026165813_limit_intro_trial_creative_spend.sql"
 assert trial_migration in migrations
 inputs = [SQL / "tests/ci-bootstrap.sql", *all_migrations,
+          SQL / "tests/trial_media_fixture.sql",
           SQL / "tests/limited_trial_creative_spend.sql",
           SQL / "tests/subscription_confirmed_trial.sql",
           SQL / "tests/invariants.sql", SQL / "tests/property_video_jobs.sql",

@@ -4,9 +4,9 @@ import {fundVerifiedAppleTransaction} from "./apple-funding.ts";
 import {inputHash} from "./funded-serving.ts";
 import {HttpError} from "./http.ts";
 const actor="e1000000-0000-4000-8000-000000000002",org="e2000000-0000-4000-8000-000000000001",product="com.rendprop.app.starter.monthly";
-const receipt=()=>({reservation_id:"e3000000-0000-4000-8000-000000000001",actor_id:actor,app_account_token:actor,org_id:org,product_id:product,held_at:new Date().toISOString(),trial_offer:{enabled:true,walkthroughs:1,photo_edits:5,published_listings:1,max_days:7,max_video_seconds:90,upload_budget_bytes:1073741824}});
+const receipt=()=>({reservation_id:"e3000000-0000-4000-8000-000000000001",actor_id:actor,app_account_token:actor,org_id:org,product_id:product,held_at:new Date().toISOString(),trial_offer:{enabled:true,walkthroughs:0,photo_edits:5,published_listings:0,max_days:7,max_video_seconds:0,upload_budget_bytes:1073741824}});
 const body=()=>({actor_id:actor,app_account_token:actor,org_id:org,product_id:product});
-const tx=()=>({environment:"Production",appAccountToken:actor,productId:product,originalTransactionId:"synthetic-original",transactionId:"synthetic-tx",priceMilliunits:0,currency:"USD",storefront:"USA",offerType:1,offerDiscountType:"FREE_TRIAL",purchaseDate:new Date().toISOString(),expiresDate:new Date(Date.now()+7*86400000).toISOString(),signedDate:new Date().toISOString()}) as any;
+const tx=()=>({environment:"Production",type:"Auto-Renewable Subscription",appAccountToken:actor,productId:product,originalTransactionId:"synthetic-original",transactionId:"synthetic-tx",priceMilliunits:0,currency:"USD",storefront:"USA",offerType:1,offerDiscountType:"FREE_TRIAL",purchaseDate:new Date().toISOString(),expiresDate:new Date(Date.now()+7*86400000).toISOString(),signedDate:new Date().toISOString()}) as any;
 Deno.test("trial prepare requires explicit authenticated buyer/token/org and echoes exact held seven-day terms",async()=>{
  let calls=0;const data=receipt();const admin={rpc:(name:string,args:unknown)=>{calls++;assertEquals(name,"prepare_subscription_trial_purchase");assertEquals(args,{p_actor:actor,p_org:org,p_product:product});return Promise.resolve({data,error:null});}};
  assertEquals(await prepareTrialPurchase(admin,actor,org,body()),data);
@@ -28,6 +28,10 @@ Deno.test("trial held and prepare preserve each exact five-to-twenty photo reser
   assertEquals(await prepareTrialPurchase(admin,actor,org,body()),data);
   assertEquals(calls,["subscription_trial_held_offer","prepare_subscription_trial_purchase"]);
  }
+});
+Deno.test("historical immutable held terms remain readable without changing new zero-video offers",async()=>{
+ const data=receipt();data.trial_offer.walkthroughs=1;data.trial_offer.published_listings=1;data.trial_offer.max_video_seconds=90;
+ assertEquals(await heldTrialPurchase({rpc:()=>Promise.resolve({data,error:null})},actor,org),data);
 });
 Deno.test("trial held DTO refuses foreign actor/token/org/SKU and inflated or short terms",async()=>{
  const data=receipt();for(const mutate of [(r:any)=>r.actor_id=org,(r:any)=>r.app_account_token=org,(r:any)=>delete r.app_account_token,(r:any)=>r.org_id=actor,(r:any)=>r.product_id="unknown",(r:any)=>r.trial_offer.max_days=3,(r:any)=>r.trial_offer.photo_edits=21,(r:any)=>r.trial_offer.photo_edits=4,(r:any)=>r.trial_offer.photo_edits=5.5,(r:any)=>r.trial_offer.photo_edits="20",(r:any)=>r.trial_offer.photo_edits=null,(r:any)=>r.trial_offer.walkthroughs=2,(r:any)=>r.trial_offer.published_listings=2,(r:any)=>r.trial_offer.max_video_seconds=91,(r:any)=>r.trial_offer.upload_budget_bytes=1073741825,(r:any)=>r.held_at="invalid"]){const r=structuredClone(data);mutate(r);await assertRejects(()=>heldTrialPurchase({rpc:()=>Promise.resolve({data:r,error:null})},actor,org),HttpError);}

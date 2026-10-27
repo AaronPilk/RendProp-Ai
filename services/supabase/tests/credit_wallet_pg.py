@@ -65,7 +65,7 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
                             [*psql, "-Atq", "-f", SQL / "tests/trial_full_window_admission.sql"])
         window_results = [json.loads(line) for line in window_output.splitlines()
                           if line.startswith("{") and '"assertions"' in line]
-        assert len(window_results) == 1 and window_results[0] == {"passed": True, "assertions": 13}, window_output
+        assert len(window_results) == 1 and window_results[0] == {"passed": True, "assertions": 11}, window_output
         combined_output = run("combined credit budget fixture", [*psql, "-Atq", "-f", SQL / "tests/credit_combined_budget.sql"])
         combined_results = [json.loads(line) for line in combined_output.splitlines()
                             if line.startswith("{") and '"assertions"' in line]

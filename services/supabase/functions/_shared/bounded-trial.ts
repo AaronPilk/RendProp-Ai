@@ -26,16 +26,16 @@ export function trialServingActivationForSync(funding: unknown, tx: { environmen
   return { funded: row.funded, ...(typeof row.reason === "string" ? { reason: row.reason } : {}) };
 }
 const unavailable = "Trial usage could not be verified. Please retry.";
-function bucket(value: unknown, maximum: number): TrialBucket {
+function bucket(value: unknown, maximum: number, allowZero = false): TrialBucket {
   const row = value as TrialBucket | null;
   assert(row && [row.used, row.cap, row.remaining].every(Number.isSafeInteger) &&
-    row.cap > 0 && row.cap <= maximum && row.used >= 0 && row.used <= row.cap &&
+    row.cap >= (allowZero ? 0 : 1) && row.cap <= maximum && row.used >= 0 && row.used <= row.cap &&
     row.remaining === row.cap - row.used, 503, unavailable);
   return { used: row.used, cap: row.cap, remaining: row.remaining };
 }
-/** Trial eligibility is not an availability read. This release deliberately
- * has no enabled offer until pre-purchase money reservation and trusted video
- * duration enforcement exist. Current paid authority returns no old trial. */
+/** Trial eligibility is not an availability read. The live offer remains
+ * dormant until its seven-day cash pool and Apple schedules are verified.
+ * Current paid authority returns no old trial usage. */
 export async function boundedTrialContext(admin: any, actor: string, org: string): Promise<{ trial_usage: TrialUsage | null; trial_offer: null }> {
   const { data, error } = await admin.rpc("subscription_trial_context", { p_actor: actor, p_org: org });
   assert(!error && data && typeof data === "object" && data.trial_offer === null &&
@@ -48,7 +48,7 @@ export async function boundedTrialContext(admin: any, actor: string, org: string
     Number.isSafeInteger(row.upload_budget_bytes) && row.upload_budget_bytes > 0 && row.upload_budget_bytes <= 1073741824 &&
     Number.isSafeInteger(row.upload_used_bytes) && row.upload_used_bytes >= 0 && row.upload_used_bytes <= row.upload_budget_bytes,
     503, unavailable);
-  const walkthroughs = bucket(row.walkthroughs, 1), photo_edits = bucket(row.photo_edits, 20), published_listings = bucket(row.published_listings, 1);
+  const walkthroughs = bucket(row.walkthroughs, 1, true), photo_edits = bucket(row.photo_edits, 20), published_listings = bucket(row.published_listings, 1, true);
   assert(row.status === "expired" || end > Date.now(), 503, unavailable);
   assert(row.status !== "active" ||
     walkthroughs.remaining + photo_edits.remaining + published_listings.remaining > 0, 503, unavailable);

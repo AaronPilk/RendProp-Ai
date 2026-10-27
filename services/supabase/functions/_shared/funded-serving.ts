@@ -175,8 +175,19 @@ export async function boundedPhotoChain(context: FundingContext, steps: RouteSte
  * accounts retain separately metered helpers through the shared funded wallet;
  * private unlimited QA retains its existing sponsorship. */
 export async function assertPhotoHelperSponsorship(context: FundingContext,assessmentOnly=false): Promise<void> {
- // Ceiling mode: helpers are ordinary priced attempts against the envelope.
- if(await servingMode()==="ceiling")return;
+ // Legacy ceiling workspaces retain their existing helper path. A verified
+ // Production trial that spends its own funded slice must preserve the five
+ // included edits instead of using that cash for general prompt helpers.
+ if(await servingMode()==="ceiling"){
+  let route;
+  try {route=await context.rpc("serving_trial_funded_actor",{p_actor:context.actorId,p_org:context.orgId});}
+  catch {await abortFundingOperationBeforeDispatch(context);throw new FundingAdmissionError(503,"Trial helper funding could not be checked. No generation was submitted.","upstream");}
+  if(route.error||typeof route.data!=="boolean"){
+   await abortFundingOperationBeforeDispatch(context);
+   throw new FundingAdmissionError(503,"Trial helper funding could not be checked. No generation was submitted.","upstream");
+  }
+  if(route.data===false)return;
+ }
  if(await unlimitedSponsored(context))return;
  let trial;
  try { trial=await context.rpc("subscription_trial_context",{p_actor:context.actorId,p_org:context.orgId}); }

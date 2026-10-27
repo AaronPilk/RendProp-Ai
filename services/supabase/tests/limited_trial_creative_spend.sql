@@ -1,6 +1,8 @@
 -- Disposable local PostgreSQL fixture. All identities and financial attempts
 -- are synthetic and rolled back. No provider or hosted database is contacted.
 begin;
+\ir trial_media_fixture.sql
+set local timezone='UTC';
 create temporary table trial_checks(n integer not null default 0);
 insert into trial_checks default values;
 grant all on trial_checks to service_role;
@@ -51,6 +53,24 @@ select pg_temp.trial_ok(has_function_privilege('authenticated',
   and not has_function_privilege('authenticated','public.trial_intro_upload_guard()','execute'),
   'read access and private money authority are unchanged');
 
+-- The current Production intro must be cash-held before its Apple sheet.
+-- These synthetic seven-component commitments exist only in this rollback.
+insert into public.serving_sponsor_pools(
+  collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256,admissions_enabled)
+values('synthetic-limited-intro','trial',500,now()-interval '1 day',
+  now()+interval '20 days',repeat('e',64),true);
+insert into public.apple_serving_schedules(
+  product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,
+  service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,
+  trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
+select 'com.rendprop.app.starter.monthly','USA','USD',49990,4165,1,
+  now()-interval '1 day',now()+interval '20 days',
+  '{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',
+  500,'{"storage":8,"delivery":3,"compute":4,"email":5,"support":6,"retention":8,"uncertainty":8}',
+  7,id,repeat('f',64) from public.serving_sponsor_pools
+  where collection_ref='synthetic-limited-intro';
+update public.subscription_trial_config set enabled=true;
+
 -- The real provider route runs app_video_cost_reserve before network dispatch;
 -- reflection removal also checks org_entitlement(). No financial reservation
 -- may be created for the first week, even though Apple granted a paid SKU.
@@ -61,6 +81,7 @@ declare
   owner_org uuid:=gen_random_uuid(); owner_actor uuid:=gen_random_uuid();
   intro_listing uuid:=gen_random_uuid(); second_listing uuid:=gen_random_uuid();
   intro public.plan_entitlements; paid public.plan_entitlements; r jsonb;
+  purchased timestamptz; expires timestamptz; signed timestamptz;
   h text:=repeat('a',64);
 begin
   insert into auth.users(id,email,is_anonymous,email_confirmed_at) values
@@ -90,10 +111,28 @@ begin
     actor,sandbox_org,'trial-reel-denied',h),'RP402:',
     'unpaid trial reel refused before supplier hold');
 
+  execute 'set local role service_role';
+  r:=public.prepare_subscription_trial_purchase(actor,apple_org,
+    'com.rendprop.app.starter.monthly');
+  perform pg_temp.trial_ok(r#>>'{trial_offer,max_video_seconds}'='0'
+    and r#>>'{trial_offer,published_listings}'='0',
+    'current seven-day hold promises photos but no video or website');
+  execute 'reset role';
+  purchased:=now();expires:=purchased+interval '168 hours';signed:=now();
+
   perform public.apply_apple_entitlement_v2(apple_org,actor,
     'limited-trial-original','limited-trial-intro-transaction',
     'com.rendprop.app.starter.monthly','max','Production','active',
-    now()+interval '7 days',true,'SUBSCRIBED',now(),now(),now(),now());
+    expires,true,'SUBSCRIBED',purchased,signed,signed,signed);
+  execute 'set local role service_role';
+  r:=public.fund_reserved_subscription_trial(actor,apple_org,
+    'limited-trial-original','limited-trial-intro-transaction',
+    'com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',
+    purchased,expires,signed,repeat('c',64));
+  perform pg_temp.trial_ok((r->>'funded')::boolean,
+    'signed Production intro converts its immutable sponsor hold: '||r::text);
+  execute 'reset role';
+  perform set_config('request.jwt.claim.sub',actor::text,true);
   intro:=public.org_entitlement(apple_org);
   perform pg_temp.trial_ok(intro.plan='max' and intro.price_cents=4999
     and intro.renders_per_month=0 and intro.photo_edits_per_month=5
@@ -139,6 +178,7 @@ begin
     'insert into public.render_jobs(listing_id,source) values(%L,''worker'')',intro_listing),
     'RP402: Video and public website creation start after payment',
     'Apple intro cannot start a server render without payment');
+  perform set_config('request.jwt.claim.sub','',true);
 
   paid:=public.org_entitlement(manual_org);
   perform pg_temp.trial_ok(paid.reels_per_month=30 and paid.photo_edits_per_month=100,
@@ -180,10 +220,12 @@ set local role service_role;
 do $$declare f record;photos jsonb;r jsonb;video jsonb;video_id uuid:=gen_random_uuid();begin
   select * into f from trial_oneoff_fixture;
   r:=public.subscription_trial_context(f.actor,f.org);
-  perform pg_temp.trial_ok(r->'trial_usage'='null'::jsonb
+  perform pg_temp.trial_ok(r#>>'{trial_usage,photo_edits,cap}'='5'
+    and r#>>'{trial_usage,walkthroughs,cap}'='0'
+    and r#>>'{trial_usage,published_listings,cap}'='0'
     and r->'trial_offer'='null'::jsonb
     and public.subscription_trial_held_offer(f.actor,f.org) is null,
-    'ceiling-mode Apple intro exposes no incompatible legacy bounded-trial response');
+    'cash-funded Apple intro exposes exact photo-only lifetime usage');
   select jsonb_agg(jsonb_build_object(
     'id',a.id,'listing_id',f.listing,'kind','photo','bucket','renders',
     'storage_key','renders/'||f.org||'/'||f.listing||'/gallery-'||a.id||'.jpg',
@@ -240,6 +282,14 @@ do $$declare f record;video_id uuid:=gen_random_uuid();video jsonb;r jsonb;begin
     select 1 from public.capture_assets a where a.id=video_id and a.kind='video'),
     'verified one-time website credit allows its own on-device video upload');
 end$$;
+reset role;
+set local role service_role;
+select pg_temp.trial_ok((public.media_delivery_admit(
+  (select org from trial_oneoff_fixture),10485760,true)->>'admitted')='true',
+  'one-time paid property media remains readable during the intro');
+select pg_temp.trial_ok((select used_bytes>=10485760
+  from public.media_delivery_budgets where org_id=(select org from trial_oneoff_fixture)),
+  'paid property read during the intro also spends its finite media budget');
 reset role;
 insert into public.render_jobs(listing_id,source)
   select listing,'app' from trial_oneoff_fixture;
@@ -432,18 +482,19 @@ do $$declare f record;r jsonb;begin
     'private library inherits the parent introductory service term');
 end$$;
 reset role;
-insert into public.listings(id,org_id,agent_id,address)
-  select first_listing,first_org,agent_one,'Synthetic first private listing'
-  from trial_team_fixture;
-select pg_temp.trial_ok((select count(*)=1 from public.workspace_publication_slots s
-  join trial_team_fixture f on f.team_org=s.org_id
-  where s.listing_id=f.first_listing),
-  'first private Team listing consumes parent trial slot');
+select pg_temp.trial_refuses($q$insert into public.listings(id,org_id,agent_id,address)
+  select first_listing,first_org,agent_one,'Unheld Team private trial listing'
+  from trial_team_fixture$q$,
+  'RP402: Verified trial funding is unavailable',
+  'unheld Team Production intro cannot create a private-library draft');
+select pg_temp.trial_ok((select count(*)=0 from public.workspace_publication_slots s
+  join trial_team_fixture f on f.team_org=s.org_id),
+  'rejected unheld Team draft does not consume parent slot');
 select pg_temp.trial_refuses($q$insert into public.listings(id,org_id,agent_id,address)
   select second_listing,second_org,agent_two,'Synthetic second private listing'
   from trial_team_fixture$q$,
-  'RP402: Unpaid access includes one listing',
-  'second private Team library cannot create another trial listing');
+  'RP402: Verified trial funding is unavailable',
+  'second unheld Team library cannot create a draft');
 
 -- The parent Team binding can disappear on downgrade. A paid job in a child's
 -- second listing retains its admission-time parent payer and content identity,

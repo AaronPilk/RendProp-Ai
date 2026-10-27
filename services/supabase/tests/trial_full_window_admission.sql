@@ -1,5 +1,6 @@
 \set ON_ERROR_STOP on
 begin;
+\ir trial_media_fixture.sql
 -- Run the boundary in a timezone with DST so the purchase authority cannot
 -- silently stretch or shorten the absolute 168-hour Apple term.
 set local timezone='America/New_York';
@@ -57,7 +58,7 @@ insert into public.apple_serving_schedules(
 select 'com.rendprop.app.pro29.monthly','USA','USD',29990,2549,
   1,now()-interval '1 day',now()+interval '168 hours'-interval '1 microsecond',
   '{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',
-  500,'{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',
+  500,'{"storage":8,"delivery":3,"compute":4,"email":5,"support":6,"retention":8,"uncertainty":8}',
   7,id,repeat('b',64) from public.serving_sponsor_pools
   where collection_ref='synthetic-full-week';
 
@@ -78,21 +79,17 @@ reset role;
 update public.serving_sponsor_pools set ends_at=now()+interval '168 hours'
   where collection_ref='synthetic-full-week';
 set local role service_role;
-select pg_temp.window_refuses(
-  'select public.prepare_subscription_trial_purchase(''e3100000-0000-4000-8000-000000000001'',''e3200000-0000-4000-8000-000000000001'',''com.rendprop.app.pro29.monthly'')',
-  'runtime ceiling pool one microsecond short');
+select pg_temp.window_ok(
+  (public.trial_sponsor_pool()->>'ends_at')::timestamptz<now()+interval '168 hours',
+  'legacy runtime window may close before the funded seven-day purchase');
 reset role;
-update public.app_config set value=jsonb_set(value,'{ends_at}',to_jsonb(now()+interval '168 hours'))
-  where key='trial_sponsor_pool';
 update public.app_config set value=jsonb_set(value,'{cap_cents}','499'::jsonb)
   where key='trial_sponsor_pool';
 set local role service_role;
-select pg_temp.window_refuses(
-  'select public.prepare_subscription_trial_purchase(''e3100000-0000-4000-8000-000000000001'',''e3200000-0000-4000-8000-000000000001'',''com.rendprop.app.pro29.monthly'')',
-  '499 cents cannot back the 500-cent package');
+select pg_temp.window_ok(
+  (public.trial_sponsor_pool()->>'cap_cents')::integer=499,
+  'legacy runtime cap is independent of the immutable 500-cent sponsor hold');
 reset role;
-update public.app_config set value=jsonb_set(value,'{cap_cents}','500'::jsonb)
-  where key='trial_sponsor_pool';
 insert into public.serving_cost_reservations(
   org_id,actor_id,request_key,stage,provider,model,input_sha256,
   tariff_version,hold_cents,budget_source,trial_kind,state)
@@ -101,19 +98,20 @@ values('e3200000-0000-4000-8000-000000000001',
        'photo_edit','gemini','synthetic',repeat('c',64),'synthetic',
        1,'ceiling',true,'uncertain');
 set local role service_role;
-select pg_temp.window_refuses(
-  'select public.prepare_subscription_trial_purchase(''e3100000-0000-4000-8000-000000000001'',''e3200000-0000-4000-8000-000000000001'',''com.rendprop.app.pro29.monthly'')',
-  'one spent cent leaves only 499 cents for a 500-cent package');
+select pg_temp.window_ok(public.trial_sponsor_spent_cents()=1,
+  'legacy runtime spend remains separately accounted');
+select pg_temp.window_ok(
+  not exists(select 1 from public.subscription_trial_purchase_reservations
+    where actor_id='e3100000-0000-4000-8000-000000000001'),
+  'runtime accounting never creates a partial sponsor hold');
 reset role;
-update public.app_config set value=jsonb_set(value,'{cap_cents}','501'::jsonb)
-  where key='trial_sponsor_pool';
 set local role service_role;
 select pg_temp.window_ok(
   (public.prepare_subscription_trial_purchase(
     'e3100000-0000-4000-8000-000000000001',
     'e3200000-0000-4000-8000-000000000001',
     'com.rendprop.app.pro29.monthly')#>>'{trial_offer,max_days}')='7',
-  'all windows ending at exactly seven days admit the complete term');
+  'schedule and sponsor cash ending at exactly seven days admit the complete term');
 select pg_temp.window_ok(
   (select count(*)=1 and min(sponsored_cents)=500
    from public.subscription_trial_purchase_reservations

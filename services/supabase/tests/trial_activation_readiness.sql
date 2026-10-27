@@ -1,5 +1,6 @@
 -- Activation audit is read-only and does not turn a public free trial on.
 begin;
+\ir trial_media_fixture.sql
 create temporary table trial_ready_checks(n integer not null default 0);
 insert into trial_ready_checks default values;
 grant all on trial_ready_checks to service_role;
@@ -37,7 +38,7 @@ insert into public.apple_serving_schedules(
 select sku,'USA','USD',price,least(price/20,3000),1,
   now()-interval '1 day',now()+interval '20 days',
   '{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',
-  500,'{"storage":2,"delivery":3,"compute":4,"email":5,"support":6,"retention":7,"uncertainty":8}',
+  500,'{"storage":8,"delivery":3,"compute":4,"email":5,"support":6,"retention":8,"uncertainty":8}',
   7,(select id from public.serving_sponsor_pools
     where collection_ref='synthetic-trial-readiness'),repeat('b',64)
 from (values
@@ -52,6 +53,16 @@ select pg_temp.ready_ok(
   (public.subscription_trial_activation_readiness()->>'purchase_pool_available_cents')::integer=3000 and
   (public.subscription_trial_activation_readiness()->>'currently_enabled')::boolean=false,
   'bounded sponsor and all four SKU schedules become locally ready without activation');
+reset role;
+update public.app_config set value=jsonb_build_object('cap_cents',1,
+  'starts_at',now()-interval '1 day','ends_at',now()-interval '1 hour')
+  where key='trial_sponsor_pool';
+set local role service_role;
+select pg_temp.ready_ok(
+  (public.subscription_trial_activation_readiness()->>'local_prerequisites_met')::boolean and
+  (public.subscription_trial_activation_readiness()->>'trial_funded_dispatch_ready')::boolean and
+  (public.subscription_trial_activation_readiness()->>'serving_envelope_ready')::boolean=false,
+  'funded trial readiness does not double-count expired legacy ceiling');
 reset role;
 update public.serving_sponsor_pools set admissions_enabled=false
  where collection_ref='synthetic-trial-readiness';

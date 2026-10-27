@@ -35,8 +35,12 @@ Deno.test("bounded trial context preserves exact historical and twenty-photo rec
   assertEquals(result.trial_usage?.published_listings,{used:0,cap:1,remaining:1});
  }
 });
+Deno.test("funded seven-day photo-only usage accepts zero video and publication caps",async()=>{
+ const usage=current();usage.walkthroughs={used:0,cap:0,remaining:0};usage.published_listings={used:0,cap:0,remaining:0};
+ assertEquals(await boundedTrialContext(client({trial_usage:usage,trial_offer:null}),actor,org),{trial_usage:usage,trial_offer:null});
+});
 Deno.test("bounded trial context refuses wrong workspace, inflated counters, old active time and live proposal",async()=>{
- const mutations=[(u:any)=>u.org_id="other",(u:any)=>u.photo_edits={used:0,cap:21,remaining:21},(u:any)=>u.photo_edits.remaining=4,
+ const mutations=[(u:any)=>u.org_id="other",(u:any)=>u.photo_edits={used:0,cap:21,remaining:21},(u:any)=>u.photo_edits={used:0,cap:0,remaining:0},(u:any)=>u.photo_edits.remaining=4,
   (u:any)=>u.photo_edits={used:0,cap:20.5,remaining:20.5},(u:any)=>u.photo_edits={used:0,cap:"20",remaining:20},
   (u:any)=>u.photo_edits={used:21,cap:20,remaining:0},(u:any)=>u.walkthroughs={used:0,cap:2,remaining:2},(u:any)=>u.published_listings={used:0,cap:2,remaining:2},
   (u:any)=>u.upload_budget_bytes=1073741825,(u:any)=>u.upload_used_bytes=-1,(u:any)=>u.ends_at=new Date(Date.now()-1000).toISOString(),
