@@ -174,9 +174,11 @@ final class AVAudioSession {
         let erased = PhotoReviewHarness()
         await erased.loadImages()
         erased.showFullComparison = true
+        erased.showAccessibilityFeedback = true
         erased.exporting = true
         erased.clearAndDismiss()
         Checks.check(!erased.showFullComparison && erased.exporting == nil && erased.imageContext == nil, "dismissal clears enlarged preview and export context")
+        Checks.check(!erased.showAccessibilityFeedback, "dismissal closes optional feedback before clearing the photo")
         Checks.check(erased.enhanced == nil && erased.original == nil && erased.dismissCount == 1, "dismissal clears both decoded images")
 
         Checks.reset()

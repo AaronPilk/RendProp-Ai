@@ -62,7 +62,7 @@ var selectedVersion: EnhancedPhoto?; var viewed: EnhancedPhoto { selectedVersion
 var enhanced:UIImage?;var original:UIImage?;var imageLoadComplete=false;var selectedForListing=false
 var selectionWorkID:UUID?
 var stagingReview=PhotoVersionHistory.StagingReview();var customReview=PhotoVersionHistory.CustomReview()
-var showOriginal=false;var showFullComparison=false;var exporting:Bool?;var imageContext:NativeMediaExportContext?;var dismissCount=0
+var showOriginal=false;var showFullComparison=false;var showAccessibilityFeedback=false;var exporting:Bool?;var imageContext:NativeMediaExportContext?;var dismissCount=0
 func dismiss(){dismissCount+=1}
 // Single-photo edit cleanup has its own actual-source executable controls.
 func clearSinglePhotoEdit() {}
@@ -76,6 +76,7 @@ variants=[('actual',actual,None),
  ('negative-photo',actual.replace('viewed.id == target.id','true'),'photo change during decode rejects the stale completed preview'),
  ('negative-late-decode',actual.replace('guard context.isCurrent, viewed.id == target.id else { return }','guard true else { return }'),'owner change during decode rejects the stale completed preview'),
  ('negative-dismissed-fullsize',actual.replace('        showFullComparison = false\n        exporting = nil','        exporting = nil'),'dismissal clears enlarged preview and export context'),
+ ('negative-dismissed-feedback',actual.replace('        showAccessibilityFeedback = false','        // feedback sheet cleanup omitted'),'dismissal closes optional feedback before clearing the photo'),
  ('negative-stale-version',actual.replace('        imageContext = nil\n        enhanced = nil\n        original = nil\n        imageLoadComplete = false','        imageLoadComplete = false'),'version switch clears prior preview before the next decode'),
  ('negative-same-version',actual.replace('        if version.id == viewed.id {\n            showOriginal = false\n            return\n        }\n',''),'choosing the current version preserves loaded pixels because the decode task ID is unchanged'),
  ('negative-same-version-original',actual.replace('        if version.id == viewed.id {\n            showOriginal = false','        if version.id == viewed.id {\n            // lost source toggle'),'choosing the current edited chip switches back from Original without reloading'),
