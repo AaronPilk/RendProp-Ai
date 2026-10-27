@@ -107,6 +107,7 @@ enum DirectUploader {
                                 try await checkOwner()
                                 try await api.abortUpload(assetID: id, beforeSend: {
                                     guard AuthStore.shared.syncSessionRevision == sessionRevision,
+                                          AuthStore.shared.userID == owner,
                                           AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == owner else { throw CancellationError() }
                                 })
                             }, create: create)

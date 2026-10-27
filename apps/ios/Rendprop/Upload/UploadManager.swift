@@ -742,12 +742,14 @@ final class UploadManager: NSObject, ObservableObject {
     @MainActor
     private func abortUploadIfCurrent(assetID: String, ownerID: String?, boundary: UInt64) async {
         guard boundary == accountBoundaryRevision else { return }
+        let sessionRevision = AuthStore.shared.syncSessionRevision
         if Config.enableAuth {
             guard let ownerID, AuthStore.shared.userID == ownerID,
                   AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == ownerID else { return }
         }
         try? await api.abortUpload(assetID: assetID, beforeSend: { [weak self] in
-            guard let self, boundary == self.accountBoundaryRevision else { throw CancellationError() }
+            guard let self, boundary == self.accountBoundaryRevision,
+                  AuthStore.shared.syncSessionRevision == sessionRevision else { throw CancellationError() }
             if Config.enableAuth {
                 guard let ownerID, AuthStore.shared.userID == ownerID,
                       AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == ownerID else { throw CancellationError() }

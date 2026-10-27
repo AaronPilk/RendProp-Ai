@@ -72,6 +72,7 @@ final class RecoveryAPI: APIClient {
     var uncertain = false
     var rollback = false
     var failAbortOnce = false
+    var beforeAbortDispatch: (() async -> Void)?
     var completionFailure: APIError?
     var admissionFailure: APIError?
     /// `/renew` keeps answering "cannot plan a transfer" (503) even though the
@@ -130,6 +131,11 @@ final class RecoveryAPI: APIClient {
         guard assetID == oldID && (legacy || abortable) else { throw APIError.badResponse(409) }
         aborted = true; legacy = false
         if failAbortOnce { failAbortOnce = false; throw URLError(.networkConnectionLost) }
+    }
+    func abortUpload(assetID: String, beforeSend: @escaping @MainActor () throws -> Void) async throws {
+        await beforeAbortDispatch?()
+        try await beforeSend()
+        try await abortUpload(assetID: assetID)
     }
     func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] { [:] }
     func transfer(_ request: URLRequest, _ file: URL) async throws -> URLResponse {

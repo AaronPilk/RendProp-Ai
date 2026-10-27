@@ -251,8 +251,22 @@ import Foundation
                                              recovering: multipart, persistState: { _ in true })
         sameOwnerManager.cancel()
         await until("Current owner can still abort an explicit cancellation") { sameOwnerAPI.cancels == 1 }
-        check(AuthStore.shared.syncSessionRevision == originalRevision + 2,
-              "Abort tests changed only fixture identity and restored the current account")
+
+        let changedRevisionAPI = RecoveryAPI(); changedRevisionAPI.abortable = true
+        changedRevisionAPI.beforeAbortDispatch = {
+            await MainActor.run { AuthStore.shared.syncSessionRevision += 1 }
+        }
+        let changedRevisionManager = UploadManager(api: changedRevisionAPI, session: URLSession(configuration: .ephemeral),
+                                                    recovering: multipart, persistState: { _ in true })
+        changedRevisionManager.cancel()
+        await until("Transport reached the changed-session boundary") {
+            AuthStore.shared.syncSessionRevision == originalRevision + 3
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        check(changedRevisionAPI.cancels == 0,
+              "Session revision changed during transport hop cannot send a former abort")
+        check(AuthStore.shared.syncSessionRevision == originalRevision + 3 && AuthStore.shared.userID == originalActor,
+              "Abort tests restored the original account after each simulated boundary")
         var resuming = persisted
         resuming.prepareForExplicitResume()
         check(resuming.assetID == persisted.assetID && resuming.uploadID == persisted.uploadID &&
