@@ -49,8 +49,12 @@ disposable runners still retain and hash their sources, but apply the other
 211 schema migrations in order. Changing or removing any classified file
 fails before replay. A disposable negative check verifies that the bfb1 file
 still refuses an empty database at its exact historical job predicate. With
-the six classified files omitted, all 211 remaining migrations applied and
-the invariant suite reached a separate failing `media_provenance` assertion.
+the six classified files omitted, all 211 remaining migrations applied. The
+invariant suite initially exposed a stale 16-column `media_provenance` count;
+the documented `photo_publication jsonb` addition makes 17, which the updated
+invariant now verifies by name and type. The accepted-photo publication
+migration is also applied once per fresh database: its guarded second
+application is deliberately refused and covered by a disposable negative test.
 This schema replay does not certify the historical live jobs, producer
 configuration transitions, or their resulting live-only function versions.
 No live SQL was changed.

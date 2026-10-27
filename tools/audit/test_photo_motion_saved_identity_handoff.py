@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the recovered Photo motion -> aerial SQL handoff in owned Postgres.
+"""Exercise guarded historical SQL handoffs in owned Postgres.
 
 The cluster uses a private Unix socket and is stopped even when a migration fails.
 No configured Supabase database or inherited PostgreSQL connection is used.
@@ -16,6 +16,7 @@ MIGRATIONS = ROOT / "services/supabase/migrations"
 AERIAL = "20261022223138_aerial_opening_photo_motion_composition_20261022.sql"
 HISTORY = "20261022223142_photo_motion_preserve_exact_producer_history_20261022.sql"
 LIVE_ADOPTION = "20261023044520_photo_motion_bfb1_fixed_recovery_controller.sql"
+PHOTO_PUBLICATION = "20261020212328_accepted_photo_publication_host_compatible.sql"
 PREDECESSOR_MD5 = "28867ce20c2e3d208c78083f4a232376"
 HISTORY_MD5 = "c29019ad250ba607244137d0e2140719"
 ADMISSION_MD5 = "208841bb1ad938ce350f523db1287e3b"
@@ -102,6 +103,10 @@ end$verify$;
                         if f"Aerial composition predecessor changed: {signature}" not in rejected.stderr:
                             raise AssertionError(f"Aerial guard did not identify {signature}: {rejected.stderr[-1500:]}")
                 apply(env, path)
+                if path.name == PHOTO_PUBLICATION:
+                    rejected = apply(env, path, ok=False)
+                    if "Review changed photo publication dependency: public.studio_presenter_media_access_inner(uuid)" not in rejected.stderr:
+                        raise AssertionError(f"Photo publication second application did not fail closed: {rejected.stderr[-1500:]}")
                 if path.name == AERIAL:
                     assert_handoff(env, PREDECESSOR_MD5, renamed=True)
                 if path.name == HISTORY:
@@ -118,7 +123,7 @@ end$verify$;
         finally:
             if started:
                 run(["pg_ctl", "-D", str(data), "-m", "immediate", "-w", "stop"], env)
-    print("PASS: fresh Photo motion/aerial handoff; changed predecessors and live-state adoption refused")
+    print("PASS: historical handoffs; changed predecessors, duplicate publication and live-state adoption refused")
 
 
 if __name__ == "__main__":

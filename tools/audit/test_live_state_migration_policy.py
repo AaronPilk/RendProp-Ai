@@ -42,6 +42,13 @@ class LiveStateMigrationPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Classified live-state migrations missing"):
             partition_fresh_migrations(path for path in self.paths if path != source)
 
+    def test_photo_publication_is_once_per_fresh_database(self):
+        name = "20261020212328_accepted_photo_publication_host_compatible.sql"
+        schema, live_state = partition_fresh_migrations(self.paths)
+        self.assertIn(name, {path.name for path in schema})
+        self.assertNotIn(name, {path.name for path in live_state})
+        self.assertFalse(replayable_migration(name))
+
 
 if __name__ == "__main__":
     unittest.main()
