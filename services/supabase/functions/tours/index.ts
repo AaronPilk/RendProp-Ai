@@ -545,17 +545,24 @@ Deno.serve(async (req) => {
     const status = (listing.status as string) ?? "ready";
     mark("optional_media");
 
-    // These service-role reads bypass RLS; recheck every exposed lineage after
-    // assembling the response, so revocation during optional reads cannot leak.
-    await assertMediaVisible(admin, listing.id, visibleRefs);
-    mark("media_fence");
-    // All are fresh reads AFTER assembled media passed its final visibility
-    // fence. Parallelism changes neither the snapshots nor their refusal rules.
+    // All final metadata reads start after the entire public response is
+    // assembled. Independent photo/contact/presentation/hosting reads overlap;
+    // for public pages, the physical media HEAD fence then runs LAST, closest
+    // to release. Byte-capability routes retain their additional final checks.
+    const assertCurrentPresentation=async()=>{
+      const current=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,{assets:[],keys:[]},publishedR2Url);
+      if(JSON.stringify(current)!==JSON.stringify(presentation))throw new HttpError(503,'The property website changed. Please refresh.');
+    };
+    const publicMetadata = mediaDelivery ? Promise.resolve() : Promise.all([
+      assertCurrentPresentation(), assertHostingAvailable(admin,listing.org_id),
+    ]).then(()=>{});
+    if(mediaDelivery)await assertMediaVisible(admin,listing.id,visibleRefs);
     const [{data:currentPhotos,error:currentPhotosError},
       {data:currentClient,error:currentClientError}, currentIdentity] = await Promise.all([
       admin.from("listings").select("main_photo_key,gallery_asset_ids,deleted_at").eq("id",listing.id).maybeSingle(),
       admin.from("listing_client_contacts").select("revision,enabled").eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle(),
       clientMode ? Promise.resolve(null) : listingAgentIdentity(admin,listing.id),
+      publicMetadata,
     ]);
     if(currentPhotosError || !currentPhotos || currentPhotos.deleted_at ||
        (currentPhotos.main_photo_key??null)!==(listing.main_photo_key??null) ||
@@ -567,12 +574,7 @@ Deno.serve(async (req) => {
       throw new HttpError(503,"The listing contact changed. Please refresh.");
     if (!clientMode && JSON.stringify(currentIdentity)!==JSON.stringify(identity))
       throw new HttpError(503,"The listing agent changed. Please refresh.");
-    mark("fresh_photos_contact");
-    // Byte requests need publication freshness too, not merely lineage approval.
-    const assertCurrentPresentation=async()=>{
-      const current=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,{assets:[],keys:[]},publishedR2Url);
-      if(JSON.stringify(current)!==JSON.stringify(presentation))throw new HttpError(503,'The property website changed. Please refresh.');
-    };
+    mark("fresh_metadata");
     if (mediaDelivery) {
       const {data:currentRender,error:currentRenderError}=await admin.from("renders").select("id,listing_id,slug,video_key,poster_key,stream_uid,published_at").eq("id",render.id).not("published_at","is",null).maybeSingle();
       if(currentRenderError)throw new HttpError(503,"Published media could not be verified.");
@@ -587,8 +589,11 @@ Deno.serve(async (req) => {
       return json({...envelope,...(Object.keys(object_limits).length?{object_limits}:{})},200,deliveryHeaders);
     }
     const publicDetails = publicListingDetails(listing.details);
-    await Promise.all([assertCurrentPresentation(), assertHostingAvailable(admin, listing.org_id)]);
-    mark("fresh_presentation_hosting");
+    // This still repeats real R2 HEADs and presenter visibility after every
+    // metadata snapshot. Request-local intermediate proofs are never accepted
+    // here, including when one published photo was replaced mid-request.
+    await assertMediaVisible(admin,listing.id,visibleRefs);
+    mark("media_fence");
     return json({
       slug: render.slug,
       share_url: brandedUrl(render.slug as string),
