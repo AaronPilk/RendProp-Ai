@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import re
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -14,7 +15,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--inject-fault', choices=['drop-legacy-reconciliation', 'bypass-stage-review', 'latest-as-cover', 'blank-family-badges', 'forget-reviewed-stage'])
 parser.add_argument('--output-dir', type=Path)
 args = parser.parse_args()
-output = args.output_dir or Path(tempfile.mkdtemp(prefix='rendprop-photo-reconciliation-', dir='/tmp'))
+output = args.output_dir or Path(tempfile.mkdtemp(prefix='rendprop-photo-reconciliation-', dir=os.environ.get('RUNNER_TEMP')))
 output.mkdir(parents=True, exist_ok=True)
 source = ROOT / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift'
 tests = ROOT / 'apps/ios/tests/PhotoVersionHistoryTests.swift'
