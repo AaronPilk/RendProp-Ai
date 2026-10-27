@@ -2,6 +2,9 @@ import type { IconName } from "../../icons";
 
 export type FeatureId = "tour" | "spatial" | "photos" | "studio" | "reel" | "floorplan" | "aerial" | "agent" | "voice" | "copy" | "animate" | "chapters" | "coach" | "presenter";
 export type Feature = { id: FeatureId; title: string; description: string; icon: IconName; ai?: boolean; comingSoon?: boolean };
+// Public Studio follows the ordinary iPhone release; these experiments remain
+// in the separate TestFlight Lab until they are accepted for release.
+export const PUBLIC_SPATIAL_TOOLS_ENABLED = false;
 // Labels and ordering follow the iPhone Home shortcuts (photos → AI edits →
 // Make a video → optional recorded walkthrough). Desktop promises describe the
 // actual available workflow instead of promising local iPhone enhancement.
@@ -11,8 +14,8 @@ export const FEATURES: readonly Feature[] = [
   {id:"reel",title:"Make a video",description:"A listing or social media video from your photos",icon:"film",ai:true},
   {id:"tour",title:"Recorded walkthrough",description:"Optional · turn your walkthrough into a tour",icon:"video",ai:true},
   {id:"aerial",title:"Aerial intro",description:"Coming soon · not included in any plan",icon:"aerial",comingSoon:true},
-  {id:"floorplan",title:"Measurements",description:"Room dimensions, outlines, worksheets and saved plans",icon:"floorplan"},
-  {id:"spatial",title:"3D walkthrough",description:"Coming soon · experiments stay in the TestFlight Lab",icon:"cube"},
+  {id:"floorplan",title:"Floor plans & measurements",description:"Coming soon · not included in any plan",icon:"floorplan",comingSoon:!PUBLIC_SPATIAL_TOOLS_ENABLED},
+  {id:"spatial",title:"3D walkthrough",description:"Coming soon · experiments stay in the TestFlight Lab",icon:"cube",comingSoon:!PUBLIC_SPATIAL_TOOLS_ENABLED},
   {id:"agent",title:"Agent card",description:"You, on every tour you send",icon:"person"},
 ];
 export const AI_FEATURES: readonly Feature[] = [

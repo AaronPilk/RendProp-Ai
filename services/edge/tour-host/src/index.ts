@@ -600,7 +600,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   if (canonical) return canonical;
 
   const path = rawPath;
-  if (path.startsWith("/media/") || path.startsWith("/media-brand/") || path.startsWith("/private-media/")) return handleMediaDelivery(req,env);
+  if (path.startsWith("/media/") || path.startsWith("/media-brand/") || path.startsWith("/private-media/") || path.startsWith("/private-media-download/")) return handleMediaDelivery(req,env);
 
   // Keep the discoverable apex entry pointed at the deployed browser app.
   // The destination is fixed; query strings do not cross into the app.

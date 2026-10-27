@@ -145,9 +145,11 @@ try {
   await page.getByRole("button", { name: "Edit room chapters" }).click(); await expect(page.getByLabel("Time and room name", { exact: true })).toHaveValue("0:00 Entry\n0:12 Kitchen");
   await page.getByLabel("Time and room name", { exact: true }).fill("0:00 Front door\n0:14 Kitchen"); await page.getByRole("button", { name: "Save chapters", exact: true }).click(); await expect(page.getByRole("status").filter({ hasText: "chapters updated" })).toBeVisible();
   receipt.checks.push("Saved phone chapters restored and updated through the native route");
-  await tab("Floor plan & 3D").click(); await page.locator('input[type="file"][accept=".jpg,.jpeg,.png,.webp"]').setInputFiles({ name: "floorplan.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
-  await expect(page.getByRole("img", { name: "Property floor plan" })).toBeVisible(); await expect(page.getByText("New 3D generation is currently unavailable", { exact: false })).toBeVisible();
-  receipt.checks.push("Floor plan attachment roundtrip and honest disabled 3D capability");
+  await expect(tab("Floor plan & 3D")).toHaveCount(0);
+  await expect(page.locator('input[type="file"][accept=".jpg,.jpeg,.png,.webp"]')).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "3D rooms from your phone" })).toHaveCount(0);
+  assert.equal((await page.evaluate(() => window.listingFixture.calls())).some(call => call.path.includes("/spatial")), false);
+  receipt.checks.push("Floor-plan attachment and 3D review/publishing are absent from the public property workspace");
   await tab("Details").click(); await page.getByRole("button", { name: "Remove property…" }).click(); await expect(page.getByRole("button", { name: "Remove property and unpublish tours" })).toBeDisabled();
   await page.getByLabel("Confirm property name").fill("wrong property"); await expect(page.getByRole("button", { name: "Remove property and unpublish tours" })).toBeDisabled();
   receipt.checks.push("Destructive property removal requires matching typed property name");

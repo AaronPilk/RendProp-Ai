@@ -18,7 +18,7 @@ import Planner from "./Planner";
 import { AppearanceSelector } from "./Appearance";
 import { SafeLoad } from "./StudioBoundary";
 import Dashboard, { FeatureGate } from "./features/home/Dashboard";
-import { homeWords, type FeatureId } from "./features/home/features";
+import { homeWords, PUBLIC_SPATIAL_TOOLS_ENABLED, type FeatureId } from "./features/home/features";
 import type { BusinessSectionRequest } from "./features/business/BusinessWorkspace";
 import type { ListingEntryRequest } from "./features/listings/ListingWorkflow";
 import type { ContactNavigationGuard } from "./features/listings/ClientContactEditor";
@@ -309,6 +309,7 @@ export default function App({ servicesFactory }: {
   }
   function openFeature(feature:FeatureId,requestedId?:string) {
     if (feature === "aerial") return;
+    if (!PUBLIC_SPATIAL_TOOLS_ENABLED && (feature === "floorplan" || feature === "spatial")) return;
     if (!workspace) { setShowLogin(true); return; }
     if (feature === "agent") { openBusiness("brand"); return; }
     const available=listings.filter(item=>!item.soldAt);

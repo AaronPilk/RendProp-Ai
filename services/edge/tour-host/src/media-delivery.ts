@@ -33,7 +33,8 @@ function etagMatch(header:string|null,etag:string,weak=true):boolean{return Bool
 export async function handleMediaDelivery(req:Request,env:Env):Promise<Response>{
   const u=new URL(req.url),match=u.pathname.match(/^\/media\/([A-Za-z0-9_-]{1,64})\/(r2|stream|thumb)\/([^/]+)(?:\/([^/]+))?$/);
   const brand=u.pathname.match(/^\/media-brand\/(renders\/([a-f0-9-]{36})\/brand\/[a-f0-9-]{36}\.(?:jpg|png))$/);
-  const privateMatch=u.pathname.match(/^\/private-media\/([A-Za-z0-9_-]+\.[a-f0-9]{64})$/);
+  const privateMatch=u.pathname.match(/^\/private-media(?:-download)?\/([A-Za-z0-9_-]+\.[a-f0-9]{64})$/);
+  const privateDownload=u.pathname.startsWith("/private-media-download/");
   if((!match&&!brand&&!privateMatch)||u.search||!["GET","HEAD"].includes(req.method))return unavailable();
   if(privateMatch&&privateMatch[1].length>4096)return unavailable();
   const slug=privateMatch?"private":brand?brand[2]:match![1],kind=privateMatch||brand?"r2":match![2],encodedPath=match?.[4];
@@ -59,6 +60,9 @@ export async function handleMediaDelivery(req:Request,env:Env):Promise<Response>
     return streamResponse(req,env,slug,key,path,revalidate);
   }
   if(encodedPath||!Object.hasOwn(delivery.objects,key))return unavailable();
+  // The attachment path shares the exact private capability and byte admission
+  // with inline playback, but only finished MP4 renders can be downloaded here.
+  if(privateDownload&&(delivery.objects[key]!=="renders"||!key.endsWith(".mp4")))return unavailable();
   const bucket=delivery.objects[key]==="renders"?env.MEDIA_RENDERS:env.MEDIA_UPLOADS;
   if(!bucket)return unavailable(503);
   const head=await bucket.head(key);
@@ -74,6 +78,10 @@ export async function handleMediaDelivery(req:Request,env:Env):Promise<Response>
   },revalidate);
   const h=new Headers(headers);head.writeHttpMetadata(h);
   for(const [name,value]of Object.entries(headers))h.set(name,value);
+  if(privateDownload){
+    if(h.get("Content-Type")!=="video/mp4")return unavailable();
+    h.set("Content-Disposition",'attachment; filename="Rendprop-listing-video.mp4"');
+  }
   h.set("ETag",head.httpEtag);h.set("Accept-Ranges","bytes");h.set("Content-Length",String(head.size));h.set("Last-Modified",head.uploaded.toUTCString());
   if(req.headers.has("If-Match")&&!etagMatch(req.headers.get("If-Match"),head.httpEtag,false)){h.set("Content-Length","0");return new Response(null,{status:412,headers:h});}
   const unmodified=req.headers.get("If-Unmodified-Since");
