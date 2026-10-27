@@ -329,13 +329,18 @@ from pg_proc where proname = 'create_render_job';
 
 insert into _inv(name, pass, note)
 select 'media_provenance exists with the disclosure columns',
-       count(*) = 16, format('%s columns', count(*))
+       count(*) = 17
+         and count(*) filter (where column_name = 'disclosure' and data_type = 'text' and is_nullable = 'NO') = 1
+         and count(*) filter (where column_name = 'qc' and data_type = 'jsonb') = 1
+         and count(*) filter (where column_name = 'qc_checked_at' and data_type = 'timestamp with time zone') = 1
+         and count(*) filter (where column_name = 'photo_publication' and data_type = 'jsonb') = 1,
+       format('%s columns', count(*))
 from information_schema.columns
 where table_schema = 'public' and table_name = 'media_provenance';
 -- 14 at 0012; 16 since 0029 added `qc` + `qc_checked_at` (the AI drift check's
--- verdict, stored next to the disclosure sentence it qualifies). This count
--- exists to catch ACCIDENTAL drift in the compliance spine, so a migration that
--- deliberately grows it updates the number here in the same commit.
+-- verdict, stored next to the disclosure sentence it qualifies); 17 since
+-- 20261020212328 added the service-owned `photo_publication` association.
+-- A deliberate column addition must update this inventory in the same commit.
 
 -- 0029: the verdict is evidence ABOUT the tenant's media, so the tenant must
 -- never be able to write one. record_media_qc() is service-role only — the same
