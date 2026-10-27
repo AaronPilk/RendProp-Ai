@@ -14,7 +14,13 @@ insert into auth.users(id,email,is_anonymous)values
 create temp table deletion_media_fixture as select user_id actor,org_id org from memberships where user_id::text like 'b0100508-%';
 grant select on deletion_media_fixture to service_role;
 insert into memberships(user_id,org_id,role)select 'b0100508-0000-4000-8000-000000000002',org,'agent' from deletion_media_fixture where actor='b0100508-0000-4000-8000-000000000003';
+-- The voice alias points to an existing listing created during its owner's
+-- synthetic free week; deletion itself is checked after Free is restored.
+update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days'
+ where id=(select org from deletion_media_fixture where actor='b0100508-0000-4000-8000-000000000001');
 insert into listings(id,org_id,agent_id,address)select 'b0100512-0000-4000-8000-000000000001',org,actor,'Synthetic aliased voice'from deletion_media_fixture where actor='b0100508-0000-4000-8000-000000000001';
+update orgs set plan='free',plan_source=null,trial_ends_at=null
+ where id=(select org from deletion_media_fixture where actor='b0100508-0000-4000-8000-000000000001');
 select pg_temp.deletion_media_ok('deletion writer remains service only',not has_function_privilege('authenticated','prepare_account_deletion(uuid,text,text)','execute') and not has_function_privilege('anon','prepare_account_deletion(uuid,text,text)','execute') and has_function_privilege('service_role','prepare_account_deletion(uuid,text,text)','execute'));
 select pg_temp.deletion_media_ok('Studio inventory helpers remain internal',not has_function_privilege('service_role','studio_voice_deletion_targets(uuid[],text)','execute') and not has_function_privilege('service_role','studio_project_deletion_targets(uuid,uuid[],text)','execute'));
 set local role service_role;
