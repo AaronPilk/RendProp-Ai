@@ -224,12 +224,22 @@ export async function verifyNativeCache({ manifest, expectedManifestSha256, expe
   need(hex(expectedManifestSha256), "CACHE_EXTERNAL_HASH_REQUIRED"); checkContext(expectedContext);
   need(exactKeys(manifest, ["schema", "context", "formulae", "browserRoot", "roots", "entries", "bytes", "fixtureFilesystem", "limitations"])
     && manifest.schema === "rendprop-same-run-native-media-cache-v1" && manifestSha256(manifest) === expectedManifestSha256, "CACHE_MANIFEST_HASH_DIFFER");
-  need(same(manifest.context, expectedContext), "CACHE_CONTEXT_DIFFER");
+  checkContext(manifest.context);
+  // GitHub may assign different revisions of the same macos-26 image to two
+  // jobs in one run. ImageVersion records where preparation occurred; it is
+  // not part of the cached vendor bytes. Keep every other context binding,
+  // including OS release, Node, source, workflow, run and installed locks.
+  const { imageVersion: preparedImageVersion, ...preparedBinding } = manifest.context;
+  const { imageVersion: consumerImageVersion, ...consumerBinding } = expectedContext;
+  need(same(preparedBinding, consumerBinding), "CACHE_CONTEXT_DIFFER");
   need(manifest.fixtureFilesystem === policy(seams).fixture, "CACHE_FIXTURE_ASSURANCE_DIFFER");
-  const current = await snapshotNativeCache({ context: expectedContext, formulaNames: manifest.formulae.map(item => item.name), browserRoot: manifest.browserRoot }, seams);
+  // Rescan with the signed preparation provenance so the external manifest
+  // digest still covers the exact restored file tree after image rollout.
+  const current = await snapshotNativeCache({ context: manifest.context, formulaNames: manifest.formulae.map(item => item.name), browserRoot: manifest.browserRoot }, seams);
   need(current.manifestSha256 === expectedManifestSha256, "CACHE_CONTENT_DIFFER");
   return { passed: true, manifestSha256: expectedManifestSha256, cacheKey: current.cacheKey, browserExecutable: current.browserExecutable,
-    ffmpegExecutable: current.ffmpegExecutable, ffprobeExecutable: current.ffprobeExecutable, fixtureFilesystem: policy(seams).fixture };
+    ffmpegExecutable: current.ffmpegExecutable, ffprobeExecutable: current.ffprobeExecutable, fixtureFilesystem: policy(seams).fixture,
+    preparedImageVersion, consumerImageVersion };
 }
 async function outputs(values, environment) {
   if (!environment.GITHUB_OUTPUT) return;

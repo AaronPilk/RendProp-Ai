@@ -79,13 +79,23 @@ test("same-run snapshots preserve native paths, full selected kegs, framework sy
 test("absolute opt targets are accepted only when they resolve to the same exact physical native keg", async () => {
   const f = await fixture({ absoluteOpt: true }), result = await f.snapshot(); assert.equal((await f.verify(result.manifest, result.manifestSha256)).passed, true);
 });
-test("consumer requires an external trusted hash and exact same-run source/image/runtime context", async () => {
+test("consumer requires an external trusted hash and exact same-run source/OS/runtime context", async () => {
   const f = await fixture(), result = await f.snapshot();
   for (const hash of [undefined, null, "", "0".repeat(64)]) await assert.rejects(f.verify(result.manifest, hash), NativeCacheError);
-  for (const key of ["sourceSha", "workflowSha", "runId", "runAttempt", "ref", "imageOS", "imageVersion", "osRelease", "lockSha256", "nodeVersion"]) {
+  for (const key of ["sourceSha", "workflowSha", "runId", "runAttempt", "ref", "imageOS", "osRelease", "lockSha256", "nodeVersion"]) {
     const changed = structuredClone(f.context); changed[key] = key.endsWith("Sha") ? "c".repeat(40) : key === "lockSha256" ? "c".repeat(64) : key === "nodeVersion" ? "v22.21.0" : key === "runId" || key === "runAttempt" ? "2" : changed[key] + "x";
     await assert.rejects(f.verify(result.manifest, result.manifestSha256, changed), NativeCacheError);
   }
+});
+test("same macOS release on a newer runner image accepts only byte-identical cache content", async () => {
+  const f = await fixture(), result = await f.snapshot(), consumer = structuredClone(f.context);
+  consumer.imageVersion = "20261021.0445.8";
+  const verified = await f.verify(result.manifest, result.manifestSha256, consumer);
+  assert.equal(verified.preparedImageVersion, "20261015.1");
+  assert.equal(verified.consumerImageVersion, consumer.imageVersion);
+  assert.equal(verified.manifestSha256, result.manifestSha256);
+  await f.file(f.kegs.libfixture + "/lib/libfixture.1.dylib", "changed on new image", 0o444);
+  await assert.rejects(f.verify(result.manifest, result.manifestSha256, consumer), { code: "CACHE_CONTENT_DIFFER" });
 });
 test("changed, extra, missing and mode-altered vendor entries fail the full byte/type inventory", async () => {
   for (const change of [
