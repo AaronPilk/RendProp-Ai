@@ -16,10 +16,10 @@ create temporary table oldjob as select(property_video_job_enqueue((select actor
 select pg_temp.ok((select quality_profile='legacy'and deadline=created_at+interval'4h'from oldjob),'legacy manifest retains4h');
 select pg_temp.refuse($q$select property_video_job_admit((select actor from bf),pg_temp.recipe(2),500,'fal-kling3-4k-v1')$q$,'RP409:','future profile while OFF is stale');
 select pg_temp.ok(not exists(select 1 from property_video_jobs where operation_id=(pg_temp.recipe(2)->>'operation_id')::uuid),'stale quote creates no job');
--- Closed actual Apple receipt fixture, ordinaryStarter with no internal grant.
+-- Closed actual Apple receipt fixture, ordinaryMax with no internal grant.
 reset role;update app_config set value='{"mode":"ceiling","free_published_listings":1}'where key='serving_mode';
 set local role service_role;
-select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'quality-original','quality-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');
+select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'quality-original','quality-transaction','com.rendprop.app.starter.monthly','max','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');
 select pg_temp.ok(not org_has_internal_testing_grant((select org from bf))and(org_entitlement((select org from bf))).reels_per_month=30,'real ordinary capacity authority, no sponsored fixture');
 reset role;update app_config set value='{"enabled":true,"profile":"fal-kling3-4k-v1"}'where key='property_video_quality';set local role service_role;
 select pg_temp.ok(property_video_quality_profile()='fal-kling3-4k-v1','explicit ON selects v1');

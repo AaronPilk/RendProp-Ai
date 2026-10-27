@@ -28,7 +28,7 @@ grant select on abandon_bm to service_role,authenticated;
 update app_config set value=jsonb_set(value,'{enabled}','true')where key='property_video_jobs';
 update app_config set value='{"mode":"ceiling","free_published_listings":1}'where key='serving_mode';
 set role service_role;
-select apply_apple_entitlement_v2((select org from abandon_bf),(select actor from abandon_bf),'abandon-paid-original','abandon-paid-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');
+select apply_apple_entitlement_v2((select org from abandon_bf),(select actor from abandon_bf),'abandon-paid-original','abandon-paid-transaction','com.rendprop.app.starter.monthly','max','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');
 reset role;
 -- fixture:end
 

@@ -51,8 +51,8 @@ try:
   run('compile-'+label,[*PSQL,'-Atq'],original.replace(anchor,replacement,1))
   run('negative-'+label,[*PSQL,'-Atq'],fixture,refuses=oracle)
   run('restore-'+label,[*PSQL,'-Atq'],original);r['controls'].append({'name':label,'compiledActualSQL':True,'unsafeMutationDetected':True})
- # Same real ordinaryStarter receipt fixture; no funding/grant on any host.
- paid="set role service_role;select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'race-quality-original','race-quality-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');reset role;"
+ # Same real ordinaryMax receipt fixture; no funding/grant on any host.
+ paid="set role service_role;select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'race-quality-original','race-quality-transaction','com.rendprop.app.starter.monthly','max','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');reset role;"
  setup='begin;'+seed+paid+"update app_config set value=jsonb_set(value,'{enabled}','true')where key='property_video_jobs';update app_config set value='{\"enabled\":true,\"profile\":\"fal-kling3-4k-v1\"}'where key='property_video_quality';create table public.quality_profile_race_fixture as select jsonb_set(jsonb_set(m,'{sources}',jsonb_build_array(m#>'{sources,0}',m#>'{sources,1}')),'{presentation,shot_labels}','[null,null]')m from bm;grant select on public.quality_profile_race_fixture to service_role;commit;"
  run('race-seed',[*PSQL,'-Atq'],setup)
  actor='f1100000-0000-4000-8000-000000000001'

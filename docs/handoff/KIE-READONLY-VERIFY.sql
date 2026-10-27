@@ -81,7 +81,7 @@ pins(n, signature, after_md5, expected_volatility, expected_result) as (values
  (1, 'public.property_video_quality_profile()', '9671b48a46a1e777bc4b968c1a669d44', 'v', 'text'),
  (2, 'public.property_video_quality_freeze()', 'd3739899b2177091178aa93b886d8873', 'v', 'trigger'),
  (3, 'public.property_video_job_admit(uuid,jsonb,numeric,text)', '2929b69b330f4ab7a5aca6257e86398b', 'v', 'jsonb'),
- (4, 'public.paid_quality_processing_budget(uuid)', '720cf8958b09c01e9d1059ea3d732946', 's', 'integer'),
+ (4, 'public.paid_quality_processing_budget(uuid)', 'bb8399f07e08f42447915f1513dbd0c7', 's', 'integer'),
  (5, 'public.property_video_job_audio_preflight(uuid,uuid,text,text,numeric,integer)', '2af2e6a298ecfae7c58d6845b94ab509', 'v', 'property_video_jobs'),
  (6, 'public.background_video_delivery(uuid,uuid,uuid,text,bigint)', '0d5766730ab7c061abc8ee4f2bd10a7e', 'v', 'jsonb')),
 -- Migration 20261016110000's functions: the RPCs execute only as service_role,

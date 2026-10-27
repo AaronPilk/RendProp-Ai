@@ -117,14 +117,14 @@ select pg_temp.refuse($q$select property_video_job_admit((select actor from bf),
 select pg_temp.ok(pg_temp.job(8)is null,'fresh migration: refused Kie quote creates no job');
 create temporary table oldjob as select(property_video_job_enqueue((select actor from bf),pg_temp.recipe(1))).*;grant select on oldjob to service_role;
 select pg_temp.ok((select quality_profile='legacy'and quality_identity is null and deadline=created_at+interval'4h'from oldjob),'legacy job keeps 4h with no identity');
--- Closed actual Apple receipt fixture: ordinary Starter, no internal grant.
+-- Closed actual Apple receipt fixture: ordinary Max, no internal grant.
 reset role;update app_config set value='{"mode":"ceiling","free_published_listings":1}'where key='serving_mode';
 -- The shared seed's manual Starter grant admitted its listing. Release it so
 -- this test exercises the verified Apple entitlement as the plan authority.
 update orgs set plan='free',plan_source=null,plan_expires_at=null where id=(select org from bf);
 set local role service_role;
-select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'kie-quality-original','kie-quality-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');
-select pg_temp.ok(not org_has_internal_testing_grant((select org from bf))and(org_entitlement((select org from bf))).reels_per_month=30,'real ordinary Starter capacity, no sponsored grant');
+select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'kie-quality-original','kie-quality-transaction','com.rendprop.app.starter.monthly','max','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');
+select pg_temp.ok(not org_has_internal_testing_grant((select org from bf))and(org_entitlement((select org from bf))).reels_per_month=30,'real ordinary Max capacity, no sponsored grant');
 reset role;
 update app_config set value=jsonb_set(value,'{enabled}','true')where key='paid_quality_processing';
 update app_config set value='{"enabled":false}'where key='photo_preservation_quality';

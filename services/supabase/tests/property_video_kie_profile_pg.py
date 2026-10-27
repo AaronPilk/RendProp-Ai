@@ -165,11 +165,13 @@ FINAL_PINS={k:SCOPE_PAIRS[k][1]if k in SCOPE_PAIRS else v[1]for k,v in PAIRS.ite
 # consent boundary pins above remain exact at their historical migrations.
 # These five later bodies are the deliberate prompt registry (admit/budget),
 # Photo Motion (freeze/audio), and registered publication (delivery) changes.
+# The retail-plan migration further adjusts the paid-quality budget to retain
+# the historical Max/Ultra allowance while capping the new lower-priced Pro.
 OPERATOR_FINAL_PINS={
  'public.property_video_quality_profile()':'9671b48a46a1e777bc4b968c1a669d44',
  'public.property_video_quality_freeze()':'d3739899b2177091178aa93b886d8873',
  'public.property_video_job_admit(uuid,jsonb,numeric,text)':'2929b69b330f4ab7a5aca6257e86398b',
- 'public.paid_quality_processing_budget(uuid)':'720cf8958b09c01e9d1059ea3d732946',
+ 'public.paid_quality_processing_budget(uuid)':'bb8399f07e08f42447915f1513dbd0c7',
  'public.property_video_job_audio_preflight(uuid,uuid,text,text,numeric,integer)':'2af2e6a298ecfae7c58d6845b94ab509',
  'public.background_video_delivery(uuid,uuid,uuid,text,bigint)':'0d5766730ab7c061abc8ee4f2bd10a7e'}
 assert set(OPERATOR_FINAL_PINS)==set(SIGNATURES)
@@ -233,7 +235,17 @@ def kie_fixture(text=PG_FIXTURE_TEXT,identity=PG_FIXTURE_IDENTITY):
  assert PG_TAG not in text+identity
  return('begin;\n'+seed+'\n'+helpers+'\ncreate temporary table kie_identity_file as select '+IDENTITY_SQL+' j;grant select on kie_identity_file to service_role;\n'
   +'create temporary table kie_pg_fixture as select '+PG_TAG+text+PG_TAG+'::text t,'+PG_TAG+identity+PG_TAG+'::text identity;grant select on kie_pg_fixture to service_role;\n'+FIX.read_text())
-fixture=kie_fixture()
+current_fixture=kie_fixture()
+# This proof replays the historical October 16 KIE migration before Max
+# existed. The sold Starter SKU was named Starter at that boundary, whereas
+# the final schema maps the same Apple product to Max. Keep both assertions
+# against the corresponding schema instead of weakening the product/plan guard.
+historical_plan="'com.rendprop.app.starter.monthly','starter','Production'"
+current_plan="'com.rendprop.app.starter.monthly','max','Production'"
+def at_historical_apple_plan(sql):
+ assert sql.count(current_plan)==1,'Expected exactly one sold Starter fixture'
+ return sql.replace(current_plan,historical_plan,1)
+fixture=at_historical_apple_plan(current_fixture)
 # After the consent migration, explicit synthetic customer permission must go
 # through the actual v2 RPC. Non-Kie calls/replays retain their original API.
 LATER_ADMIT_HELPER="""create function pg_temp.profile_admit(a uuid,m jsonb,q numeric,p text default'legacy')returns jsonb language plpgsql as $$begin
@@ -256,11 +268,13 @@ later_text=later_text.replace(insert_context,"select set_config('rendprop.proper
 clear_context="select set_config('rendprop.property_video_quality_profile','',true);"
 assert later_text.count(clear_context)==1
 later_text=later_text.replace(clear_context,clear_context+"\nselect set_config('rendprop.property_video_consent','',true);",1)
-later_fixture=fixture[:-len(FIX.read_text())]+PUBLISHED_CONSENT+LATER_ADMIT_HELPER+later_text
+later_fixture=current_fixture[:-len(FIX.read_text())]+PUBLISHED_CONSENT+LATER_ADMIT_HELPER+later_text
 
 def pg_fixture_live(name):return pg_normalise(run(name,[*PSQL,'-Atq','-c',PG_FIXTURE_QUERY])).encode('utf-8')
-steady_fixture='begin;\n'+seed+'\n'+helpers+'\n'+STEADY.read_text()
-v1_fixture='begin;\n'+seed+'\n'+V1.read_text()
+current_steady_fixture='begin;\n'+seed+'\n'+helpers+'\n'+STEADY.read_text()
+current_v1_fixture='begin;\n'+seed+'\n'+V1.read_text()
+steady_fixture=at_historical_apple_plan(current_steady_fixture)
+v1_fixture=at_historical_apple_plan(current_v1_fixture)
 drift=f"update ai_routes set unit_cents=33.6 where id='{ROUTE}';";undrift=f"update ai_routes set unit_cents=33.5 where id='{ROUTE}';"
 try:
  run('initdb',[tool('initdb'),'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
@@ -303,8 +317,10 @@ try:
  # Exercise historical FAL/legacy proofs at the Kie migration boundary. The
  # current jobs fixture asserts final trial limits and runs after LATER only.
  def regressions(prefix='',final_schema=False):
-  checks={'v1-quality-profile':result_line(run(prefix+'regression-v1-quality-profile',[*PSQL,'-Atq'],v1_fixture)),
-   'steady-v2':result_line(run(prefix+'regression-steady-v2',[*PSQL,'-Atq'],steady_fixture))}
+  v1=current_v1_fixture if final_schema else v1_fixture
+  steady=current_steady_fixture if final_schema else steady_fixture
+  checks={'v1-quality-profile':result_line(run(prefix+'regression-v1-quality-profile',[*PSQL,'-Atq'],v1)),
+   'steady-v2':result_line(run(prefix+'regression-steady-v2',[*PSQL,'-Atq'],steady))}
   if final_schema:
    checks['property-video-jobs']=result_line(run(prefix+'regression-property-video-jobs',[*PSQL,'-Atq','-f',BASE]))
   return checks
@@ -372,8 +388,8 @@ try:
  drifted_identity=PG_FIXTURE_IDENTITY.replace('"min_short_side_px": 2160','"min_short_side_px": 1080',1);assert PG_FIXTURE_IDENTITY.count('"min_short_side_px": 2160')==1 and drifted_identity!=PG_FIXTURE_IDENTITY
  drifted_text=PG_PREFIX+drifted_identity+PG_FIXTURE_TEXT[PG_FIXTURE_TEXT.index(PG_SEP):]
  assert pg_fixture_live('pg-fixture-control-baseline')==PG_FIXTURE_BYTES and drifted_text.encode('utf-8')!=PG_FIXTURE_BYTES
- run('negative-pg-fixture-file-identity-drift',[*PSQL,'-Atq'],kie_fixture(drifted_text,drifted_identity),refuses=PG_ORACLE)
- run('negative-pg-fixture-job-identity-drift',[*PSQL,'-Atq'],kie_fixture(PG_FIXTURE_TEXT,drifted_identity),refuses=PG_JOB_ORACLE)
+ run('negative-pg-fixture-file-identity-drift',[*PSQL,'-Atq'],at_historical_apple_plan(kie_fixture(drifted_text,drifted_identity)),refuses=PG_ORACLE)
+ run('negative-pg-fixture-job-identity-drift',[*PSQL,'-Atq'],at_historical_apple_plan(kie_fixture(PG_FIXTURE_TEXT,drifted_identity)),refuses=PG_JOB_ORACLE)
  identity_signature='public.property_video_quality_identity(text)'
  identity_original=run('read-pg-fixture-identity',[*PSQL,'-Atq','-c',f"select pg_get_functiondef('{identity_signature}'::regprocedure)"]);assert identity_original.count('"min_short_side_px":2160')==1
  identity_md5=scalar('md5-pg-fixture-identity',f"select md5(prosrc)from pg_proc where oid='{identity_signature}'::regprocedure")
@@ -406,7 +422,7 @@ try:
 
  # Committed owner fixture (same closed Starter receipt) for the operator
  # scripts and the races. The pinned row is still OFF here (fresh migration).
- paid=f"set role service_role;select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'race-kie-original','race-kie-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');reset role;"
+ paid=f"set role service_role;select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'race-kie-original','race-kie-transaction','com.rendprop.app.starter.monthly','max','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');reset role;"
  release_seed_grant="update public.orgs set plan='free',plan_source=null,plan_expires_at=null where id=(select org from bf);"
  setup='begin;'+seed+release_seed_grant+paid+PUBLISHED_CONSENT+"update app_config set value=jsonb_set(value,'{enabled}','true')where key='property_video_jobs';create table public.kie_profile_race_fixture as select jsonb_set(jsonb_set(m,'{sources}',jsonb_build_array(m#>'{sources,0}',m#>'{sources,1}')),'{presentation,shot_labels}','[null,null]')m from bm;grant select on public.kie_profile_race_fixture to service_role;commit;"
  run('race-seed',[*PSQL,'-Atq'],setup)

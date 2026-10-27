@@ -203,10 +203,10 @@ select pg_temp.ok(not(property_video_operation_lookup((select actor from bf),(se
 -- Ordinary paidStarter actualreceipt window, no sponsored/unlimited grant.
 reset role;update app_config set value='{"mode":"ceiling","free_published_listings":1}'where key='serving_mode';
 set local role service_role;
-select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'bg-paid-original','bg-paid-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');
-select pg_temp.ok((org_entitlement((select org from bf))).reels_per_month=30 and not org_has_internal_testing_grant((select org from bf)),'ordinaryStarter allows30 photo shots without owner grant');
-select pg_temp.ok((plan_serving_ceiling((select org from bf))->>'ceiling_cents')::integer=2032,'Starter50percentnetallocation deducts actual hosting reserve');
-select pg_temp.ok((property_video_recipe_capacity((select actor from bf),(select listing from bf),20,676.908+622.592+20)->>'admitted')::boolean,'normalStarter paidwindow admits20stage plus20defaultclips QC/planner bound');
+select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'bg-paid-original','bg-paid-transaction','com.rendprop.app.starter.monthly','max','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');
+select pg_temp.ok((org_entitlement((select org from bf))).reels_per_month=30 and not org_has_internal_testing_grant((select org from bf)),'ordinaryMax allows30 photo shots without owner grant');
+select pg_temp.ok((plan_serving_ceiling((select org from bf))->>'ceiling_cents')::integer=2032,'Max50percentnetallocation deducts actual hosting reserve');
+select pg_temp.ok((property_video_recipe_capacity((select actor from bf),(select listing from bf),20,676.908+622.592+20)->>'admitted')::boolean,'normalMax paidwindow admits20stage plus20defaultclips QC/planner bound');
 create temporary table accepted_job as select(property_video_job_enqueue((select actor from bf),(select jsonb_set(m,'{operation_id}','"f1700000-0000-4000-8000-000000000052"')from bm))).id id;
 create temporary table accepted_claim as select property_video_job_claim((select id from accepted_job),'slot-0')c;
 select app_video_cost_reserve((select actor from bf),(select org from bf),(select c#>>'{source,request_key}'from accepted_claim),'reel','fal','bytedance/seedance/v1/pro/fast/image-to-video',repeat('a',64),24.3,5,4.86,'{}');
@@ -254,7 +254,7 @@ select pg_temp.ok(provision_serving_funding((select org from bf),'retail','bg-ne
 select pg_temp.ok((select photo_edits=5 from subscription_trial_config),'futuretrialofferallowsfivephotoedits');
 select pg_temp.ok((select(value->>'trial_ceiling_cents')::integer=500 and(value->>'free_lifetime_cents')::integer=0 from app_config where key='serving_envelope'),'trial500free0bothtruthful');
 set local role service_role;
-select apply_apple_entitlement_v2((select other_org from bf),(select other from bf),'bg-trial-original','bg-trial-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'7 days',true,'SUBSCRIBED',now(),now(),now(),now());
+select apply_apple_entitlement_v2((select other_org from bf),(select other from bf),'bg-trial-original','bg-trial-transaction','com.rendprop.app.starter.monthly','max','Production','active',now()+interval'7 days',true,'SUBSCRIBED',now(),now(),now(),now());
 reset role;insert into listings(id,org_id,agent_id,address)values('f1300000-0000-4000-8000-000000000002',(select other_org from bf),(select other from bf),'Synthetic trial property');set local role service_role;
 select pg_temp.ok(plan_serving_ceiling((select other_org from bf))->>'ceiling_cents'='500','ordinaryintroductorywindowuses500cap');
 select pg_temp.refuse($q$select property_video_recipe_capacity((select other from bf),'f1300000-0000-4000-8000-000000000002',20,676.908+622.592+20)$q$,'RP402:','introductorytrialrefuseswholevideoquotebeforeproviderdispatch');
