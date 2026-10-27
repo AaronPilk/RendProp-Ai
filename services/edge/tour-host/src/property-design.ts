@@ -335,6 +335,22 @@ const DESIGN_CSS = `
     $P #endcard .panel > :not(.agent) { grid-column:1; }
     $P .property-story-spread { gap:40px; }
   }
+  /* Full page links collide with the media actions before the phone breakpoint.
+     Keep the compact page menu through narrow tablet widths. */
+  @media(min-width:601px) and (max-width:900px) {
+    $P .listing-nav-links { display:none; }
+    $P .property-page-menu { display:block; position:relative; }
+    $P .property-page-menu summary { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:44px; padding:8px 12px; border-radius:12px; cursor:pointer; list-style:none; font-weight:600; }
+    $P .property-page-menu summary::-webkit-details-marker { display:none; }
+    $P .property-page-menu summary svg { width:12px; height:12px; }
+    $P .property-page-menu[open] summary { background:var(--accent-soft); }
+    $P .property-page-menu-links { position:absolute; top:calc(100% + 10px); left:0; width:220px; padding:8px; border:1px solid var(--premium-line); border-radius:16px; background:var(--premium-paper); box-shadow:0 20px 48px -16px rgba(20,24,20,.35); }
+    $P .property-page-menu-links a { display:flex; align-items:center; min-height:44px; padding:10px 14px; border-radius:10px; }
+    $P .property-page-menu-links a[aria-current=page] { background:var(--accent-soft); }
+    $P .listing-nav-actions { display:flex; flex:1; justify-content:flex-end; gap:2px; width:auto; }
+    $P #listing-nav .listing-nav-actions > :is(a,button) { padding-inline:11px; font-size:12px; }
+    $P #listing-nav .listing-nav-actions > .listing-backtop { display:none; }
+  }
   @media(max-width:759px) {
     $P .lp-wrap { padding-inline:22px; }
     $P .lp-sec { padding:56px 0; }
@@ -419,6 +435,10 @@ const DESIGN_CSS = `
     .property-site .property-preview-banner { padding:10px 16px; font-size:12px; }
     .property-site .property-preview-watermark { padding:6px 9px; font-size:10px; }
   }
+  @media(max-width:359px) {
+    $S .property-video-hero .property-video-stage.property-film .property-video-play { top:26%; }
+    $S .property-video-hero .property-video-stage.property-film #property-video-status { top:calc(26% - 14px); }
+  }
 
   /* ═══════════ Signature Estate: an architectural dark opening, then ivory
      editorial spreads. Sharp corners, hairlines, brass only as a whisper. ═══ */
@@ -452,7 +472,7 @@ const DESIGN_CSS = `
   $C .field input,$C .field textarea { background:var(--bg); }
   $C .property-video-hero .property-video-stage.property-film .property-film-label { left:20px; right:auto; }
   /* Desktop and tablet-wide: identity beside the framed media panel. */
-  @media(min-width:901px) {
+  @media(min-width:901px), (min-width:700px) and (orientation:landscape) {
     $C .listing-cover,$C .listing-cover.property-video-hero { display:grid; grid-template-columns:minmax(0,.78fr) minmax(0,1.22fr); align-items:center; gap:clamp(28px,4vw,64px); width:calc(100% - clamp(40px,6vw,96px)); max-width:1440px; min-height:0; margin:clamp(20px,3vw,36px) auto 0; padding:0; overflow:visible; color:var(--ink); background:transparent; }
     $C .listing-cover::after { display:none; }
     $C .listing-cover .property-hero-copy { position:static; align-self:center; width:auto; max-width:560px; margin:0; padding:clamp(24px,3vw,40px) 0; color:var(--ink); text-align:left; text-shadow:none; }
@@ -475,7 +495,7 @@ const DESIGN_CSS = `
     $C .listing-cover .listing-cover-actions .property-hero-contact:hover { background:var(--lux-fill-hover); border-color:var(--lux-fill-hover); }
   }
   /* Phones and narrow tablets: the framed panel first, then the identity. */
-  @media(max-width:900px) {
+  @media(max-width:699px), (max-width:900px) and (orientation:portrait) {
     $C .listing-cover,$C .listing-cover.property-video-hero { display:flex; flex-direction:column; min-height:0; max-height:none; margin:8px 0 0; overflow:visible; color:var(--ink); background:var(--bg); }
     $C .listing-cover::after { display:none; }
     $C .property-hero-media,$C .property-video-hero .property-hero-media { position:relative; order:0; inset:auto; width:calc(100% - 24px); height:auto; aspect-ratio:4/3; margin:0 auto; border-radius:24px; overflow:hidden; box-shadow:0 24px 60px -36px rgba(16,48,44,.5); transition:aspect-ratio .4s var(--lux-ease); }
@@ -502,6 +522,9 @@ const DESIGN_CSS = `
     $C .property-hero-media,$C .property-video-hero .property-hero-media { aspect-ratio:1/1; }
     $C .listing-cover,$C .listing-cover.property-video-hero { margin-top:6px; }
   }
+  @media(max-width:359px) {
+    $C .property-hero-media,$C .property-video-hero .property-hero-media { aspect-ratio:16/9; }
+  }
 `;
 
 export const PROPERTY_DESIGN_CSS = `
@@ -516,4 +539,3 @@ export const PROPERTY_DESIGN_CSS = `
   .property-site #listing-nav .walkthrough-secondary { background:transparent; border-color:transparent; font-weight:400; color:inherit; }
   .property-site #listing-nav .property-primary-play { background:var(--accent-3); border:1px solid transparent; color:#fff; font-weight:600; }
 ` + DESIGN_CSS.split("$P").join(PAID).split("$S").join(SIGNATURE).split("$C").join(COASTAL);
-
