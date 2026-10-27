@@ -49,11 +49,26 @@ from (values
 set local role service_role;
 select pg_temp.ready_ok(
   (public.subscription_trial_activation_readiness()->>'local_prerequisites_met')::boolean and
+  (public.subscription_trial_activation_readiness()->>'private_launch_authority_clear')::boolean and
   jsonb_array_length(public.subscription_trial_activation_readiness()->'missing_funded_skus')=0 and
   (public.subscription_trial_activation_readiness()->>'purchase_pool_available_cents')::integer=3000 and
   (public.subscription_trial_activation_readiness()->>'currently_enabled')::boolean=false,
   'bounded sponsor and all four SKU schedules become locally ready without activation');
 reset role;
+-- A one-cent overlap above the $500 shared allocation must close both
+-- readiness and per-SKU media coverage before any StoreKit purchase.
+update public.app_config set value=jsonb_build_object('cap_cents',29001,
+  'starts_at',now()-interval '1 day','ends_at',now()+interval '20 days')
+  where key='trial_sponsor_pool';
+set local role service_role;
+select pg_temp.ready_ok(
+  (public.subscription_trial_activation_readiness()->>'local_prerequisites_met')::boolean=false and
+  jsonb_array_length(public.subscription_trial_activation_readiness()->'missing_funded_skus')=4,
+  'shared media account plus legacy cap above 500 dollars closes readiness');
+reset role;
+update public.app_config set value=jsonb_build_object('cap_cents',29000,
+  'starts_at',now()-interval '1 day','ends_at',now()+interval '20 days')
+  where key='trial_sponsor_pool';
 update public.app_config set value=jsonb_build_object('cap_cents',1,
   'starts_at',now()-interval '1 day','ends_at',now()-interval '1 hour')
   where key='trial_sponsor_pool';

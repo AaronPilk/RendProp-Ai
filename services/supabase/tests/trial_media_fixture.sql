@@ -4,7 +4,7 @@ set local role service_role;
 select public.provision_media_account_reserve(
  'synthetic-trial-media-account','9c332c75b96cc642621dad5d86d4bf18',
  'business_paid_cash',repeat('9',64),now()-interval '1 day',
- now()+interval '130 days',50000,
+ now()+interval '130 days',21000,
  '{"r2_a_cents_per_million":450,"r2_b_cents_per_million":36,"worker_cents_per_million":30,"worker_cpu_cents_per_million_ms":2,"edge_cents_per_million":200,"db_cents":100,"logs_cents":100,"storage_cents_per_gb_month":1.5}',
  '{"storage":0,"delivery":5000,"compute":5000,"email":0,"support":0,"retention":0,"uncertainty":0}');
 reset role;

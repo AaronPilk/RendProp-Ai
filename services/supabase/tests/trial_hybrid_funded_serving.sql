@@ -17,6 +17,9 @@ select pg_temp.hybrid_ok(not enabled,'migration leaves public trial disabled')
 select pg_temp.hybrid_ok(not has_function_privilege('authenticated',
  'public.serving_trial_funded_actor(uuid,uuid)','EXECUTE'),
  'per-actor funding status is service-only');
+select pg_temp.hybrid_ok(not has_function_privilege('authenticated',
+ 'public.subscription_trial_private_authority_clear()','EXECUTE'),
+ 'private launch authority audit remains service-only');
 update public.app_config set value=jsonb_build_object('mode','ceiling','free_published_listings',1)
  where key='serving_mode';
 update public.app_config set value=jsonb_build_object('cap_cents',1,
@@ -78,6 +81,23 @@ select pg_temp.hybrid_refuses(
  'missing media template refuses without a sponsor hold');
 reset role;
 update public.subscription_trial_media_template set enabled=true where singleton;
+update public.app_config set value=jsonb_build_object('cap_cents',29001,
+ 'starts_at',now()-interval '1 day','ends_at',now()+interval '20 days')
+ where key='trial_sponsor_pool';
+set local role service_role;
+select pg_temp.hybrid_refuses(
+ 'select public.prepare_subscription_trial_purchase(''e4100000-0000-4000-8000-000000000001'',''e4200000-0000-4000-8000-000000000001'',''com.rendprop.app.pro29.monthly'')',
+ 'RP402: Seven-day trial media coverage is unavailable',
+ 'overlapping shared media and legacy cap above 500 dollars refuses before StoreKit');
+select pg_temp.hybrid_ok(not exists(select 1 from public.subscription_trial_purchase_reservations
+ where org_id='e4200000-0000-4000-8000-000000000001'),
+ 'shared-cost overlap refusal leaves no partial sponsor hold');
+select pg_temp.hybrid_ok(not public.subscription_trial_private_authority_clear(),
+ 'active unbounded QA grant closes launch readiness without revoking QA');
+reset role;
+update public.app_config set value=jsonb_build_object('cap_cents',1,
+ 'starts_at',now()-interval '1 day','ends_at',now()-interval '1 hour')
+ where key='trial_sponsor_pool';
 update public.media_account_reserves set ends_at=now()+interval '50 days'
  where receipt_ref='synthetic-trial-media-account';
 set local role service_role;
