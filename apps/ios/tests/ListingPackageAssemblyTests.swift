@@ -18,7 +18,21 @@ struct Listing {
     var cardChips = ["3 beds", "2 baths", "1,800 sqft"]
     var serverShareURL: URL? = URL(string: "https://example.invalid/f/fixture")
     var serverUnbrandedURL: URL? = URL(string: "https://example.invalid/mls/fixture")
+    var spaceType: SpaceType = .realEstate
     var soldAt: Date? = Date(timeIntervalSince1970: 1_700_000_000)
+}
+enum SpaceType { case realEstate }
+enum DeepLink {
+    static func buyerWebsiteURL(from published: URL, address: String?) -> URL? { published }
+}
+enum PublicShareLinkResolver {
+    enum Resolution { case available(URL), withdrawn }
+    static var next: Resolution? = nil
+    static var reads = 0
+    static func resolve(publishedURL: URL, fallbackURL: URL) async -> Resolution {
+        reads += 1
+        return next ?? .available(fallbackURL)
+    }
 }
 struct EnhancedPhoto {
     let id: String
@@ -44,13 +58,13 @@ enum RPGradient {
     func mediaExportAdmission(for listing: Listing) -> () -> Bool {
         { self.admissionReads += 1; return self.admissionAllowed }
     }
-    func run() { shareListingPackage() }
+    func run() async { await shareListingPackage() }
 
 // __ACTUAL_ASSEMBLY_METHODS__
 }
 
 @main struct ListingPackageAssemblyTests {
-    @MainActor static func main() throws {
+    @MainActor static func main() async throws {
         var checks = 0
         func check(_ value: @autoclosure () -> Bool, _ message: String) {
             precondition(value(), message); checks += 1
@@ -90,7 +104,9 @@ enum RPGradient {
         // Reverse video order to prove assembly applies createdAt before names.
         let rich = ListingPackageAssemblyHarness()
         rich.mediaItems = Array(items.reversed())
-        rich.run()
+        let canonical = URL(string: "https://rendprop.com/property/400-synthetic-package-lane/20261027.fixture")!
+        PublicShareLinkResolver.next = .available(canonical)
+        await rich.run()
         check(rich.packageError == nil, "rich package must prepare without error")
         check(rich.filePhotoExport != nil, "rich package must present the export selection")
         let photos = rich.filePhotoExport!.photos
@@ -117,19 +133,36 @@ enum RPGradient {
         let noteURL = rich.filePackageExtras.first { $0.name == "listing-details.txt" }!.url
         let note = try String(contentsOf: noteURL, encoding: .utf8)
         for expected in ["400 Synthetic Package Lane", "Synthetic listing description", "3 beds · 2 baths · 1,800 sqft",
-                         "Listing page: https://example.invalid/f/fixture", "MLS-safe page (no branding): https://example.invalid/mls/fixture",
+                         "Listing page: \(canonical.absoluteString)", "MLS-safe page (no branding): https://example.invalid/mls/fixture",
                          "Marked sold on", "Photos made or changed with AI carry their own disclosure notes"] {
             check(note.contains(expected), "listing details contains: \(expected)")
         }
+        check(PublicShareLinkResolver.reads == 1, "listing package resolves the actual canonical public link")
         check(rich.filePhotoExportAdmission?() == true, "export carries the same current admission closure")
         rich.admissionAllowed = false
         check(rich.filePhotoExportAdmission?() == false, "export admission can refuse after account context changes")
+
+        PublicShareLinkResolver.next = nil
+        let fallback = ListingPackageAssemblyHarness()
+        fallback.mediaItems = [items.first { $0.kind == .photo }!]
+        await fallback.run()
+        let fallbackNoteURL = fallback.filePackageExtras.first { $0.name == "listing-details.txt" }!.url
+        let fallbackNote = try String(contentsOf: fallbackNoteURL, encoding: .utf8)
+        check(fallbackNote.contains("Listing page: https://example.invalid/f/fixture"),
+            "lookup unavailability retains the published fallback link")
+        PublicShareLinkResolver.next = .withdrawn
+        let withdrawn = ListingPackageAssemblyHarness()
+        withdrawn.mediaItems = [items.first { $0.kind == .photo }!]
+        await withdrawn.run()
+        check(withdrawn.filePhotoExport == nil && withdrawn.packageError?.contains("no longer published") == true,
+            "withdrawn publication cannot be exported with a dead buyer link")
+        PublicShareLinkResolver.next = .available(canonical)
 
         let missing = ListingPackageAssemblyHarness()
         missing.mediaItems = items
         let vanished = items.first { $0.kind == .tour }!.url
         try fm.removeItem(at: vanished)
-        missing.run()
+        await missing.run()
         check(missing.filePhotoExport == nil, "a missing cached video prevents package presentation")
         check(missing.filePackageExtras.isEmpty && missing.filePhotoExportAdmission == nil,
             "a missing source cannot leave partial export state")
@@ -141,7 +174,7 @@ enum RPGradient {
         FileManager.default.temporaryDirectory = blocked
         let writeFailed = ListingPackageAssemblyHarness()
         writeFailed.mediaItems = items
-        writeFailed.run()
+        await writeFailed.run()
         check(writeFailed.filePhotoExport == nil, "details write failure prevents package presentation")
         check(writeFailed.filePackageExtras.isEmpty && writeFailed.filePhotoExportAdmission == nil,
             "details write failure cannot leave partial export state")
@@ -152,23 +185,23 @@ enum RPGradient {
         let refused = ListingPackageAssemblyHarness()
         refused.mediaItems = items
         refused.admissionAllowed = false
-        refused.run()
+        await refused.run()
         check(refused.filePhotoExport == nil && refused.filePackageExtras.isEmpty && refused.filePhotoExportAdmission == nil,
             "refused admission prevents package presentation")
         check(refused.packageError == nil, "account refusal does not fabricate a media failure")
         let empty = ListingPackageAssemblyHarness()
-        empty.run()
+        await empty.run()
         check(empty.filePhotoExport == nil && empty.filePackageExtras.isEmpty && empty.packageError == nil,
             "an empty listing does not present a phantom details-only package")
 
         let videoOnly = ListingPackageAssemblyHarness()
         videoOnly.mediaItems = [items.first { $0.kind == .tour }!]
-        videoOnly.run()
+        await videoOnly.run()
         check(videoOnly.filePhotoExport?.photos.isEmpty == true && videoOnly.filePackageExtras.count == 2,
             "a video-only listing offers its walkthrough and details without requiring photos")
         let photoOnly = ListingPackageAssemblyHarness()
         photoOnly.mediaItems = [items.first { $0.kind == .photo }!]
-        photoOnly.run()
+        await photoOnly.run()
         check(photoOnly.filePhotoExport?.photos.count == 1 && photoOnly.filePackageExtras.map(\.name) == ["listing-details.txt"],
             "a photo-only listing offers its photo and details")
         for (url, before) in sourceBytes {

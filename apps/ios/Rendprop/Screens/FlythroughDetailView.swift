@@ -726,6 +726,10 @@ struct FlythroughDetailView: View {
     @State private var websiteVideoPlayer: AVPlayer?
     @State private var publishedVideoStatus: PublishedListingVideoStatus = .unpublished
     @State private var publishedVideoTask: Task<Void, Never>?
+    @State private var isDownloadingSelectedVideo = false
+    @State private var selectedVideoDownloadNote: String?
+    @State private var selectedVideoShare: AuditExport?
+    @State private var selectedVideoShareFile: URL?
     @State private var showAerialIntro = false
     /// The toolbox's "Make a reel" tile presents Reel Studio DIRECTLY now.
     ///
@@ -833,6 +837,9 @@ struct FlythroughDetailView: View {
         websiteVideoPlayer?.pause(); websiteVideoPlayer = nil
         publishedVideoTask?.cancel(); publishedVideoTask = nil
         publishedVideoStatus = .unpublished
+        selectedVideoDownloadNote = nil
+        if let selectedVideoShareFile { try? FileManager.default.removeItem(at: selectedVideoShareFile) }
+        selectedVideoShareFile = nil; selectedVideoShare = nil
         filesTask?.cancel(); filesTask = nil; filesStamp = nil
         mediaItems = []; availableRerenderSource = nil; openedFile = nil
         filePhotoExport = nil; filePhotoExportAdmission = nil; filePackageExtras = []; packageError = nil
@@ -986,6 +993,7 @@ struct FlythroughDetailView: View {
     /// selection so a Studio publication cannot be mistaken for missing work.
     private func refreshPublishedVideo() {
         publishedVideoTask?.cancel()
+        selectedVideoDownloadNote = nil
         let live = currentListing, expectedScope = presentationScope
         guard hasCurrentPresentationContext, !live.isSample, live.serverID != nil,
               let slug = live.shareSlug, Config.useLiveBackend else {
@@ -1242,6 +1250,12 @@ struct FlythroughDetailView: View {
         .sheet(item: $auditExport) { export in
             ShareSheet(items: [export.url])
         }
+        .sheet(item: $selectedVideoShare, onDismiss: {
+            if let selectedVideoShareFile { try? FileManager.default.removeItem(at: selectedVideoShareFile) }
+            selectedVideoShareFile = nil
+        }) { export in
+            ShareSheet(items: [export.url])
+        }
         .confirmationDialog("Delete this \(space.spaceNoun)?", isPresented: $showDeleteConfirm,
                             titleVisibility: .visible) {
             Button("Delete \(space.spaceNoun)", role: .destructive) { deleteListing() }
@@ -1380,6 +1394,28 @@ struct FlythroughDetailView: View {
                                     .modifier(RendpropActionLabelSurface(primary: true))
                             }
                         }
+                        Button { downloadSelectedVideo(share: false) } label: {
+                            Label("Save video to Photos", systemImage: "square.and.arrow.down")
+                                .font(.rpBody.weight(.semibold))
+                                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                                .modifier(RendpropActionLabelSurface(primary: false))
+                        }
+                        .disabled(isDownloadingSelectedVideo)
+                        .accessibilityIdentifier("listing.videoSaveCloudSelected")
+                        Button { downloadSelectedVideo(share: true) } label: {
+                            Label("Share video file for MLS", systemImage: "square.and.arrow.up")
+                                .font(.rpBody.weight(.semibold))
+                                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                                .modifier(RendpropActionLabelSurface(primary: false))
+                        }
+                        .disabled(isDownloadingSelectedVideo)
+                        .accessibilityIdentifier("listing.videoShareCloudSelected")
+                        if isDownloadingSelectedVideo { ProgressView("Getting selected video…") }
+                        if let selectedVideoDownloadNote {
+                            Text(selectedVideoDownloadNote)
+                                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }.padding()
                 } else if listingVideoCardContent == .local {
                     if let selectedWebsiteVideoURL {
@@ -1440,7 +1476,8 @@ struct FlythroughDetailView: View {
                 }
             }
                 .id(playerRefresh)
-                .frame(height: currentListing.isSample ? 460 : 230)
+                .frame(height: currentListing.isSample ? 460 :
+                    (listingVideoCardContent.isLive ? nil : 230))
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
@@ -1449,6 +1486,80 @@ struct FlythroughDetailView: View {
             Text(listingVideoCaption)
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
+        }
+    }
+
+    @MainActor private func downloadSelectedVideo(share: Bool) {
+        guard !isDownloadingSelectedVideo, case .live(let duration) = listingVideoCardContent,
+              let actor = auth.userID.flatMap(UUID.init(uuidString:)),
+              let library = WorkspaceContext.selectedOrgID,
+              let serverID = currentListing.serverID,
+              let slug = currentListing.shareSlug else { return }
+        let snapshot = currentListing
+        let context = PropertyVideoJobContext(localListingID: snapshot.id, listingID: serverID,
+                                              actorID: actor, orgID: library)
+        let admission = mediaExportAdmission(for: snapshot)
+        let expectedScope = presentationScope
+        func requireCurrent() throws {
+            try Task.checkCancellation()
+            guard admission(), context.hasCurrentIdentity,
+                  expectedScope == presentationScope,
+                  currentListing.shareSlug == slug,
+                  case .live(let currentDuration) = listingVideoCardContent,
+                  abs(currentDuration - duration) <= 0.1 else {
+                throw PhotosLibrarySaver.ContextChanged()
+            }
+        }
+        guard (try? requireCurrent()) != nil else { return }
+        isDownloadingSelectedVideo = true
+        selectedVideoDownloadNote = nil
+        Task {
+            defer { isDownloadingSelectedVideo = false }
+            do {
+                let first = try await PropertyVideoJobHTTP.selectedListingDownload(
+                    context: context, physicalOrgID: snapshot.serverOrgID, liveDuration: duration)
+                try requireCurrent()
+                let downloaded = try await PropertyVideoJobHTTP.downloadSelected(first,
+                    requireCurrent: requireCurrent)
+                var temporary: URL? = downloaded
+                defer { if let temporary { try? FileManager.default.removeItem(at: temporary) } }
+                try requireCurrent()
+                // Re-read the owner-scoped selection after bytes arrive. A
+                // different video must not be saved under the old live card.
+                let current = try await PropertyVideoJobHTTP.selectedListingDownload(
+                    context: context, physicalOrgID: snapshot.serverOrgID, liveDuration: duration)
+                guard current.compositionID == first.compositionID,
+                      current.assetID == first.assetID,
+                      current.bytes == first.bytes,
+                      current.sha256 == first.sha256 else {
+                    throw PublishedListingVideoState.StateError.invalid
+                }
+                try requireCurrent()
+                // URLSession downloads to an extensionless temporary path.
+                // Photos and the MLS share sheet need a typed MP4 file.
+                let destination = FileManager.default.temporaryDirectory.appendingPathComponent(
+                    "Rendprop-listing-video-\(UUID().uuidString).mp4")
+                try FileManager.default.moveItem(at: downloaded, to: destination)
+                temporary = destination
+                if share {
+                    do { try requireCurrent() }
+                    catch { try? FileManager.default.removeItem(at: destination); throw error }
+                    selectedVideoShareFile = destination
+                    selectedVideoShare = AuditExport(url: destination)
+                    temporary = nil
+                } else {
+                    try await PhotosLibrarySaver.saveVideo(at: destination, while: {
+                        (try? requireCurrent()) != nil
+                    })
+                    try requireCurrent()
+                    selectedVideoDownloadNote = "Saved to Photos. You can upload it to your MLS from there."
+                    Haptics.success()
+                }
+            } catch {
+                if (try? requireCurrent()) != nil {
+                    selectedVideoDownloadNote = "Couldn't get this selected video. \(error.localizedDescription)"
+                }
+            }
         }
     }
 
@@ -1995,7 +2106,7 @@ struct FlythroughDetailView: View {
             photoCount: mediaItems.filter { $0.kind == .photo }.count,
             openReel: { showReelStudio = true },
             openRoomTagger: { openRoomTags() },
-            sharePackage: { shareListingPackage() },
+            sharePackage: { _ = Task { await shareListingPackage() } },
             hasAnythingToShare: !mediaItems.isEmpty
         ), resumeAerial: !currentListing.isSample && PendingAerialJob.load(for: currentListing.id) != nil
             ? { showAerialIntro = true } : nil)
@@ -2102,8 +2213,9 @@ struct FlythroughDetailView: View {
     /// Photos go through the ordinary export (JPEG copies, disclosure notes,
     /// retained originals); videos and the scan are read straight from where
     /// they live, never copied or moved.
-    @MainActor private func shareListingPackage() {
-        let admission = mediaExportAdmission(for: currentListing)
+    @MainActor private func shareListingPackage() async {
+        let snapshot = currentListing
+        let admission = mediaExportAdmission(for: snapshot)
         let items = mediaItems
         guard !items.isEmpty, admission() else { return }
         // A stale scan must not silently turn "everything" into a partial
@@ -2142,8 +2254,28 @@ struct FlythroughDetailView: View {
             }
             extras.append(PhotoExportRenderer.Extra(name: "\(stem).\(ext)", url: item.url, note: note))
         }
+        let brandedURL: URL?
+        if let published = snapshot.serverShareURL {
+            let fallback = DeepLink.buyerWebsiteURL(
+                from: published,
+                address: snapshot.spaceType == .realEstate ? snapshot.address : nil) ?? published
+            let resolution = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: fallback)
+            guard admission(), !Task.isCancelled else { return }
+            guard currentListing.serverShareURL == snapshot.serverShareURL,
+                  currentListing.serverUnbrandedURL == snapshot.serverUnbrandedURL,
+                  currentListing.address == snapshot.address else {
+                packageError = "The listing changed while preparing its links. Try sharing again."
+                return
+            }
+            switch resolution {
+            case .available(let url): brandedURL = url
+            case .withdrawn:
+                packageError = "This website is no longer published. Publish it again before sharing its link."
+                return
+            }
+        } else { brandedURL = nil }
         do {
-            let note = try Self.listingDetailsNote(for: currentListing)
+            let note = try Self.listingDetailsNote(for: snapshot, brandedURL: brandedURL)
             extras.append(PhotoExportRenderer.Extra(name: "listing-details.txt", url: note,
                                                     note: "the address, the facts on the listing page and the share links"))
         } catch {
@@ -2159,12 +2291,12 @@ struct FlythroughDetailView: View {
     /// A plain-text note for the package: what the listing says about itself,
     /// in the words on the listing page, plus the public links. Written to the
     /// temporary directory; the usual cleanup removes it.
-    private static func listingDetailsNote(for listing: Listing) throws -> URL {
+    private static func listingDetailsNote(for listing: Listing, brandedURL: URL?) throws -> URL {
         var lines: [String] = [listing.address.isEmpty ? "Untitled listing" : listing.address, ""]
         if let tagline = listing.tagline?.trimmingCharacters(in: .whitespacesAndNewlines), !tagline.isEmpty { lines.append(tagline); lines.append("") }
         let chips = listing.cardChips
         if !chips.isEmpty { lines.append(chips.joined(separator: " · ")); lines.append("") }
-        if let url = listing.serverShareURL { lines.append("Listing page: \(url.absoluteString)") }
+        if let brandedURL { lines.append("Listing page: \(brandedURL.absoluteString)") }
         if let url = listing.serverUnbrandedURL { lines.append("MLS-safe page (no branding): \(url.absoluteString)") }
         if let sold = listing.soldAt {
             let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .none

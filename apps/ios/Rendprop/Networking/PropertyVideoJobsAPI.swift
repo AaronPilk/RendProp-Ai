@@ -253,6 +253,15 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
     // Internal transport seam for closed URLProtocol tests; consent and scope
     // checks remain in data(), regardless of transport.
     static var session = URLSession(configuration: .ephemeral, delegate: PropertyVideoJobRedirectPolicy(), delegateQueue: nil)
+    static func selectedListingDownload(context: PropertyVideoJobContext, physicalOrgID: UUID?,
+                                        liveDuration: Double) async throws -> SelectedListingVideoDownload {
+        let data = try await PropertyVideoJobHTTP.data("GET", context: context, segments: ["selected-download"], query: [
+            .init(name: "listing_id", value: context.listingID.uuidString.lowercased()),
+            .init(name: "expected_org_id", value: context.orgID.uuidString.lowercased())])
+        return try JSONDecoder().decode(SelectedListingVideoDownload.self, from: data).checked(
+            listingID: context.listingID, libraryID: context.orgID,
+            physicalOrgID: physicalOrgID, liveDuration: liveDuration)
+    }
     static func stopOwnedJobs(_ intent: PropertyVideoCancellationIntent) async throws {
         guard intent.isValid, var url = Config.apiBaseURL else { throw PropertyVideoJobStore.Failure.invalidReceipt }
         let revision = AuthStore.shared.syncSessionRevision
@@ -348,18 +357,27 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
     /// The renewed private capability is sent alone: no Supabase bearer, cookies,
     /// redirects or signed URL is retained in the durable receipt after download.
     static func download(_ result: PropertyVideoJobResult, requireCurrent: @MainActor () throws -> Void) async throws -> URL {
-        try requireCurrent()
         guard let downloadURL = result.downloadURL else { throw PropertyVideoJobStore.Failure.invalidReceipt }
-        var request = URLRequest(url: downloadURL); request.timeoutInterval = 180
+        return try await downloadVerified(url: downloadURL, bytes: result.bytes, sha256: result.sha256, requireCurrent: requireCurrent)
+    }
+    static func downloadSelected(_ selected: SelectedListingVideoDownload,
+                                 requireCurrent: @MainActor () throws -> Void) async throws -> URL {
+        try await downloadVerified(url: selected.downloadURL, bytes: selected.bytes,
+                                   sha256: selected.sha256, requireCurrent: requireCurrent)
+    }
+    private static func downloadVerified(url: URL, bytes: Int64, sha256: String,
+                                         requireCurrent: @MainActor () throws -> Void) async throws -> URL {
+        try requireCurrent()
+        var request = URLRequest(url: url); request.timeoutInterval = 180
         let (file, response) = try await session.download(for: request)
         do {
             try requireCurrent()
             guard let http = response as? HTTPURLResponse, http.statusCode == 200,
                   (http.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("video/") ?? false),
-                  FileStore.fileSize(file) == result.bytes else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+                  FileStore.fileSize(file) == bytes else { throw PropertyVideoJobStore.Failure.invalidReceipt }
             let digest = try await Task.detached(priority: .utility) { try ListingVideoStore.digest(file) }.value
             try requireCurrent()
-            guard digest == result.sha256 else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+            guard digest == sha256 else { throw PropertyVideoJobStore.Failure.invalidReceipt }
             return file
         } catch { try? FileManager.default.removeItem(at: file); throw error }
     }

@@ -65,4 +65,38 @@ enum PublishedListingVideoStatus: Equatable {
 
 enum ListingVideoCardContent: Equatable {
     case live(Double), local, checking, unavailable, start
+    var isLive: Bool { if case .live = self { return true }; return false }
+}
+
+/// A short-lived, account-scoped download of the server's exact selected
+/// website composition. This is not inferred from local reels or newest jobs.
+struct SelectedListingVideoDownload: Decodable, Equatable {
+    let listingID: UUID
+    let orgID: UUID
+    let selectedLibraryOrgID: UUID
+    let compositionID: UUID
+    let assetID: UUID
+    let durationS: Double
+    let bytes: Int64
+    let sha256: String
+    let downloadURL: URL
+
+    enum CodingKeys: String, CodingKey {
+        case listingID = "listing_id", orgID = "org_id"
+        case selectedLibraryOrgID = "selected_library_org_id"
+        case compositionID = "composition_id", assetID = "asset_id"
+        case durationS = "duration_s", bytes, sha256, downloadURL = "download_url"
+    }
+
+    func checked(listingID expectedListing: UUID, libraryID: UUID, physicalOrgID: UUID?, liveDuration: Double) throws -> Self {
+        guard listingID == expectedListing, selectedLibraryOrgID == libraryID,
+              physicalOrgID == nil || orgID == physicalOrgID,
+              durationS.isFinite, durationS > 0, abs(durationS - liveDuration) <= 0.1,
+              bytes > 0, bytes <= 1_610_612_736,
+              sha256.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+              downloadURL.scheme == "https", downloadURL.user == nil, downloadURL.password == nil else {
+            throw PublishedListingVideoState.StateError.invalid
+        }
+        return self
+    }
 }

@@ -8,6 +8,7 @@ import{assert,HttpError,json,pathSegments,readJsonLimited,respondError,throwRpc}
 import{adminClient,assertNotDeleting,contentOrgForUser,getUser,preferredOrg}from'../_shared/supabase.ts';
 import{putCapability}from'./storage.ts';
 import{selectedSources,pastJobs,operationJob,abandonOperation}from'./selected.ts';
+import{selectedVideoDownload}from'./selected-download.ts';
 import{savedVersionSources}from'./saved-versions.ts';
 import{privateMediaUrl}from'../_shared/private-media.ts';
 import{withVisibleMedia}from'../_shared/media-source-access.ts';
@@ -44,6 +45,13 @@ export async function handler(req:Request):Promise<Response>{if(req.method==='OP
   const q=new URL(req.url).searchParams;assert([...q.keys()].every(k=>['listing_id','expected_org_id','offset'].includes(k)&&q.getAll(k).length===1),400,'Use one exact saved-photo catalog page.');
   const listing=uuid(q.get('listing_id')),expected=uuid(q.get('expected_org_id')??preferredOrg(req)),value=q.get('offset')??'0';assert(/^(0|[1-9][0-9]{0,4})$/.test(value)&&Number(value)<=10000&&(!preferredOrg(req)||preferredOrg(req)===expected),400,'Keep the saved-photo page and selected library.');
   return json(await savedVersionSources(user.id,listing,expected,Number(value),{db:adminClient(),scope:contentOrgForUser,rpc,head:ownedHead,preview:s=>withVisibleMedia(adminClient(),s.listing,{assets:[s.asset_id],keys:[s.key]},()=>privateMediaUrl({actor:s.actor,org:s.org,listing:s.listing,bucket:s.bucket,key:s.key}))}),200,{'cache-control':'no-store'});
+ }
+ if(req.method==='GET'&&seg.join('/')==='selected-download'){
+  const q=new URL(req.url).searchParams;
+  assert([...q.keys()].length===2&&['listing_id','expected_org_id'].every(k=>q.getAll(k).length===1),400,'Choose one selected listing video.');
+  const listing=uuid(q.get('listing_id')),expected=uuid(q.get('expected_org_id'));
+  assert(!preferredOrg(req)||preferredOrg(req)===expected,409,'The selected library changed.');
+  return json(await selectedVideoDownload(user.id,listing,expected),200,{'cache-control':'no-store'});
  }
  if(req.method==='GET'&&(seg.length===0||seg.join('/')==='sources')){const url=new URL(req.url),listing=uuid(url.searchParams.get('listing_id')),expected=uuid(url.searchParams.get('expected_org_id')??preferredOrg(req));const value=url.searchParams.get('offset')??'0';assert(/^(0|[1-9][0-9]{0,4})$/.test(value)&&Number(value)<=10000,400,'Use a bounded saved-video page.');if(!seg.length&&url.searchParams.has('operation_id'))return json(await operationJob(user.id,listing,expected,uuid(url.searchParams.get('operation_id'))),200,{'cache-control':'no-store'});return json(seg.length?await selectedSources(user.id,listing,expected,Number(value)):await pastJobs(user.id,listing,expected,Number(value)),200,{'cache-control':'no-store'});}
  // Read-only: the published processor disclosure a client shows before sending v2.

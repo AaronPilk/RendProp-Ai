@@ -62,8 +62,8 @@ def command(name, argv, timeout):
 try:
     source, export, template = source_path.read_text(), export_path.read_text(), fixture_path.read_text()
     methods = '\n'.join(block(source, anchor) for anchor in [
-        '    @MainActor private func shareListingPackage() {',
-        '    private static func listingDetailsNote(for listing: Listing) throws -> URL {'])
+        '    @MainActor private func shareListingPackage() async {',
+        '    private static func listingDetailsNote(for listing: Listing, brandedURL: URL?) throws -> URL {'])
     value_types = block(source, 'struct ListingMediaItem: Identifiable, Hashable, Sendable {')
     value_types += '\n' + block(export, 'struct PhotoExportSelection: Identifiable {')
     value_types += '\nenum PhotoExportRenderer {\n' + block(export, '    struct Extra: Identifiable, Hashable, Sendable {') + '\n}\n'
@@ -81,7 +81,8 @@ try:
          'a missing cached video prevents package presentation'),
         ('negative-swallowed-details-error', actual.replace(write, 'try? Data(lines.joined(separator: "\\n").utf8).write(to: url, options: .atomic)'),
          'details write failure prevents package presentation'),
-        ('negative-admission-guard', actual.replace('guard !items.isEmpty, admission() else { return }', 'guard !items.isEmpty else { return }'),
+        ('negative-admission-guard', actual.replace('guard !items.isEmpty, admission() else { return }', 'guard !items.isEmpty else { return }')
+         .replace('guard admission(), !Task.isCancelled else { return }', 'guard !Task.isCancelled else { return }'),
          'refused admission prevents package presentation'),
         ('negative-original-mutated', actual.replace('        let items = mediaItems\n',
          '        let items = mediaItems\n        if let item = items.first { try? Data("mutated".utf8).write(to: item.url, options: .atomic) }\n'),
