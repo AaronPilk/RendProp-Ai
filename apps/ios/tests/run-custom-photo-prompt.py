@@ -6,6 +6,7 @@ The transport is closed in memory. No provider, live account or image is used.
 import pathlib
 import subprocess
 import tempfile
+import os
 
 root = pathlib.Path(__file__).resolve().parents[3]
 adapter = (root / "apps/ios/Rendprop/Networking/LiveAPIClient.swift").read_text()
@@ -25,7 +26,9 @@ assert "customReview.isComplete" in sheet
 assert "customReviewed: customReview.isComplete" in sheet
 assert "customReview = PhotoVersionHistory.CustomReview()" in sheet
 service = (root / "apps/ios/Rendprop/Photos/PhotoEditService.swift").read_text()
-assert "if wasMain && version.canAutomaticallySelectForListing" in service
+assert "coverSource: wasMain ? p.enhancedURL : nil" in service
+assert "if let coverSource, version.canAutomaticallySelectForListing," in service
+assert "mainPhotoRelPath == FileStore.relativePath(for: coverSource)" in service
 api_source = (root / "apps/ios/Rendprop/Networking/APIClient.swift").read_text()
 api_error = api_source[api_source.index("enum APIError:"):api_source.index("// MARK: - Admin console models")]
 
@@ -87,7 +90,7 @@ struct Request { let body: [String: Any] }
     }
 }
 '''
-with tempfile.TemporaryDirectory(prefix="rendprop-custom-prompt-") as directory:
+with tempfile.TemporaryDirectory(prefix="rendprop-custom-prompt-", dir=os.environ.get("RUNNER_TEMP")) as directory:
     path = pathlib.Path(directory)
     swift = path / "adapter.swift"
     swift.write_text(source)
