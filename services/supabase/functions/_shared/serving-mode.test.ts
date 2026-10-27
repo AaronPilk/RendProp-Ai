@@ -5,7 +5,8 @@
 // photo chain is kept and helpers are not fenced because each step is admitted
 // against the workspace envelope by serving_cost_reserve. Anything else
 // (missing row, 'funded', an unreadable setting) keeps Codex's funded model,
-// which fails closed. A purchase in ceiling mode records no funding row.
+// which fails closed. Legacy purchases in ceiling mode record no funding row;
+// activated credit periods and their later refunds still need an exact row.
 //
 // The module reads env at import time and caches its admin client, so the
 // fixture installs env + a fetch stub BEFORE the dynamic import and flips the
@@ -196,21 +197,79 @@ Deno.test("funded mode: the same attempt is refused before dispatch when nothing
   assertEquals(g.calls[0].args.p_hold_cents, 31.1296);
 });
 
-Deno.test("ceiling mode: a Production purchase records no funding row and reports available service", async () => {
+Deno.test("ceiling mode: inactive credit policy preserves the legacy paid path", async () => {
   mode("ceiling");
   const calls: string[] = [];
-  const result = await fundVerifiedAppleTransaction(async (name) => { calls.push(name); return { data: null, error: null }; }, "o", {
-    environment: "Production", originalTransactionId: "1", transactionId: "2", productId: "com.rendprop.app.starter.monthly",
+  const result = await fundVerifiedAppleTransaction(async (name) => { calls.push(name); return { data: "none", error: null }; }, "o", {
+    environment: "Production", type: "Auto-Renewable Subscription", originalTransactionId: "1", transactionId: "2", productId: "com.rendprop.app.starter.monthly",
     priceMilliunits: 49000, currency: "USD", storefront: "USA", offerType: null, offerDiscountType: null,
     purchaseDate: new Date().toISOString(), expiresDate: new Date(Date.now() + 86400000).toISOString(), signedDate: new Date().toISOString(), appAccountToken: "a",
   } as never);
   assertEquals(result, { funded: false, available: true, reason: "ceiling_mode" });
-  assertEquals(calls, []);
+  assertEquals(calls, ["credit_paid_funding_route"]);
   mode("funded");
   await fundVerifiedAppleTransaction(async (name) => { calls.push(name); return { data: { funded: false }, error: null }; }, "o", {
-    environment: "Production", originalTransactionId: "1", transactionId: "2", productId: "com.rendprop.app.starter.monthly",
+    environment: "Production", type: "Auto-Renewable Subscription", originalTransactionId: "1", transactionId: "2", productId: "com.rendprop.app.starter.monthly",
     priceMilliunits: 49000, currency: "USD", storefront: "USA", offerType: null, offerDiscountType: null,
     purchaseDate: new Date().toISOString(), expiresDate: new Date(Date.now() + 86400000).toISOString(), signedDate: new Date().toISOString(), appAccountToken: "a",
   } as never);
-  assertEquals(calls, ["fund_verified_retail_apple_transaction"]);
+  assertEquals(calls, ["credit_paid_funding_route", "fund_verified_retail_apple_transaction"]);
+});
+
+Deno.test("ceiling mode: activated paid credit period funds before its monthly grant", async () => {
+  mode("ceiling");
+  const calls: string[] = [];
+  const tx = {
+    environment: "Production", type: "Auto-Renewable Subscription",
+    originalTransactionId: "chain", transactionId: "paid-1",
+    productId: "com.rendprop.app.pro29.monthly", priceMilliunits: 29990,
+    currency: "USD", storefront: "USA", offerType: null,
+    offerDiscountType: null, purchaseDate: "2026-10-27T19:00:00Z",
+    expiresDate: "2026-11-27T19:00:00Z", signedDate: "2026-10-27T19:01:00Z",
+    appAccountToken: "buyer",
+  } as never;
+  const rpc = async (name: string, args: Record<string,unknown>) => {
+    calls.push(name);
+    if (name === "credit_paid_funding_route") {
+      assertEquals(args.p_product, "com.rendprop.app.pro29.monthly");
+      assertEquals(args.p_purchased_at, "2026-10-27T19:00:00Z");
+      return { data: "activated_paid_period", error: null };
+    }
+    return { data: { funded: true, funding_id: "receipt" }, error: null };
+  };
+  assertEquals((await fundVerifiedAppleTransaction(rpc, "org", tx) as Record<string,unknown>).funded, true);
+  assertEquals(calls, ["credit_paid_funding_route", "fund_verified_retail_apple_transaction"]);
+  calls.length=0;
+  await assertRejects(() => fundVerifiedAppleTransaction(async (name, args) => {
+    const result = await rpc(name, args);
+    return name === "credit_paid_funding_route" ? result : { data: { funded: false, reason: "unattested_proceeds_and_serving" }, error: null };
+  }, "org", tx), HttpError);
+  assertEquals(calls, ["credit_paid_funding_route", "fund_verified_retail_apple_transaction"]);
+  calls.length=0;
+  await assertRejects(() => fundVerifiedAppleTransaction(async (name) => {
+    calls.push(name);
+    return { data: null, error: { message: "gate unavailable" } };
+  }, "org", tx), HttpError);
+  assertEquals(calls, ["credit_paid_funding_route"]);
+});
+
+Deno.test("ceiling mode: retired credit SKU still settles an existing refunded paid receipt", async () => {
+  mode("ceiling");
+  const calls: string[] = [];
+  const result = await fundVerifiedAppleTransaction(async (name) => {
+    calls.push(name);
+    return name === "credit_paid_funding_route"
+      ? { data: "existing_receipt", error: null }
+      : { data: { funded: false, reason: "revoked" }, error: null };
+  }, "org", {
+    environment: "Production", type: "Auto-Renewable Subscription",
+    originalTransactionId: "chain", transactionId: "paid-1",
+    productId: "com.rendprop.app.pro29.monthly", priceMilliunits: null,
+    currency: "USD", storefront: "USA", offerType: null,
+    offerDiscountType: null, purchaseDate: "2026-10-27T19:00:00Z",
+    expiresDate: "2026-11-27T19:00:00Z", signedDate: "2026-10-27T19:01:00Z",
+    revocationDate: "2026-10-28T19:00:00Z", appAccountToken: "buyer",
+  } as never);
+  assertEquals(result, { funded: false, reason: "revoked" });
+  assertEquals(calls, ["credit_paid_funding_route", "fund_verified_apple_transaction"]);
 });

@@ -46,6 +46,7 @@ INVARIANT_COUNT = 274
 # markers on both freshly migrated and historically replayed schemas; merely
 # hashing/registering an SQL file does not prove its receipts or cost fences.
 REFLECTION_FIXTURES = (
+    ("credit_paid_ceiling_funding_gate.sql", "PASS credit paid ceiling funding gate: 6 assertions", 6),
     ("video_erase.sql", "PASS video erase SQL: 51 assertions", 51),
     ("video_erase_direct_bria.sql", "PASS direct Bria SQL: 40 assertions", 40),
     ("member_portfolios.sql", "PASS: member portfolio SQL assertions; all fixtures rolled back.", 23),
