@@ -109,7 +109,7 @@ try {
         const watchContrast = [...document.querySelectorAll("#listing-nav .watch-button")].map(button => { const style = getComputedStyle(button); const [hi,lo] = [lum(style.color),lum(style.backgroundColor)].sort((a,b) => b-a); return (hi+.05)/(lo+.05); });
         const stage = document.querySelector(".property-video-stage"), status = document.getElementById("property-video-status"), play = document.getElementById("property-video-play");
         const hero = stage ? { film:stage.classList.contains("property-film"),text:stage.textContent.replace(/\s+/g," ").trim(),status:status.textContent,statusLive:status.getAttribute("aria-live"),statusRole:status.getAttribute("role"),label:stage.querySelector(".property-film-label")?.textContent ?? null,play:play.textContent.replace(/\s+/g," ").trim(),playHidden:play.hidden,videoLabel:document.getElementById("property-video").getAttribute("aria-label"),preload:document.getElementById("property-video").getAttribute("preload"),src:document.getElementById("property-video").getAttribute("src"),backdrop:stage.querySelectorAll(".property-film-backdrop").length } : null;
-        return { media:box(media),copy:box(document.querySelector(".property-hero-copy")),title:box(document.querySelector(".property-hero-title")),nav:box(document.querySelector("#listing-nav")),overflow:document.documentElement.scrollWidth > innerWidth,bodyText:document.body.innerText,watchContrast,contain:document.querySelector("#property-video") ? getComputedStyle(document.querySelector("#property-video")).objectFit : null,hero };
+        return { media:box(media),video:document.getElementById("property-video") ? box(document.getElementById("property-video")) : null,play:document.getElementById("property-video-play") ? box(document.getElementById("property-video-play")) : null,copy:box(document.querySelector(".property-hero-copy")),title:box(document.querySelector(".property-hero-title")),nav:box(document.querySelector("#listing-nav")),overflow:document.documentElement.scrollWidth > innerWidth,bodyText:document.body.innerText,watchContrast,contain:document.querySelector("#property-video") ? getComputedStyle(document.querySelector("#property-video")).objectFit : null,hero };
       });
       measurements.push({ theme,width,presentation,composition });
       const tag = `${theme}-${width}-${presentation}`;
@@ -126,7 +126,13 @@ try {
         if(arg("--classic-baseline")) check(withoutPropertyBypass(html) === withoutPropertyBypass(readFileSync(join(resolve(arg("--classic-baseline")),tag+".html"),"utf8")),tag+": Classic markup changes only by the exact semantic bypass link/main wrapper outside existing CSS checks");
       }
       check(!composition.overflow,tag+": no horizontal overflow");
-      if(presentation === "video") check(composition.contain === "contain" && Math.abs(composition.media.width/composition.media.height-16/9)<.01,tag+": full16:9 film remains contain, independent of page height");
+      // Classic keeps its 16:9 stage. The paid openings fill the first screen
+      // with the poster (a display image) while the film itself stays object-fit
+      // contain: its complete 16:9 frame is painted inside the stage, never cropped.
+      if(presentation === "video") {
+        if(theme === "basic") check(composition.contain === "contain" && Math.abs(composition.media.width/composition.media.height-16/9)<.01,tag+": full16:9 film remains contain, independent of page height");
+        else { const frame = Math.min(composition.media.width, composition.media.height*16/9); check(composition.contain === "contain" && frame > 0 && composition.video.width === composition.media.width && composition.video.height === composition.media.height && frame <= composition.media.width && frame*9/16 <= composition.media.height + .5, tag+": premium opening keeps the complete16:9 film contained inside its full-bleed stage, independent of page height"); }
+      }
       // W1 hero copy per design. Premium designs present a film (running time,
       // one quiet play mark, loading-only status); Classic keeps its exact copy.
       if (presentation === "video") {
@@ -154,9 +160,14 @@ try {
         // Photo-led paid pages place the address on the property image. A real
         // 16:9 Listing film stays uncropped; on phones its address follows the
         // film in the same first screen instead of covering the play target.
-        const photoOverlay = presentation === "photo" && composition.copy.y >= composition.media.y && composition.copy.bottom <= composition.media.bottom + 1;
-        const phoneFilm = presentation === "video" && width === 390 && composition.copy.y >= composition.media.bottom - 1;
-        const desktopFilm = presentation === "video" && width !== 390 && composition.copy.y >= composition.media.y && composition.copy.bottom <= composition.media.bottom + 1 && composition.copy.x < composition.media.x + composition.media.width / 2;
+        // Coastal phones frame the photo as a panel with the identity below it.
+        const photoOverlay = presentation === "photo" && ((composition.copy.y >= composition.media.y && composition.copy.bottom <= composition.media.bottom + 1) || (width === 390 && composition.copy.y >= composition.media.bottom - 1) || (width !== 390 && composition.copy.right <= composition.media.x + 1));
+        // A phone opening may also place the identity on the poster below the
+        // play target (the full-screen opening), never over it.
+        const phoneFilm = presentation === "video" && width === 390 && (composition.copy.y >= composition.media.bottom - 1 || (composition.play && composition.copy.y >= composition.play.bottom && composition.copy.bottom <= composition.media.bottom + 1));
+        // Desktop: the identity sits on the film (lower/left) or, for the framed
+        // Coastal panel, entirely beside it; never over the play target.
+        const desktopFilm = presentation === "video" && width !== 390 && ((composition.copy.y >= composition.media.y && composition.copy.bottom <= composition.media.bottom + 1 && composition.copy.x < composition.media.x + composition.media.width / 2) || composition.copy.right <= composition.media.x + 1) && !(composition.play && composition.copy.y < composition.play.bottom && composition.copy.bottom > composition.play.y && composition.copy.x < composition.play.right && composition.copy.right > composition.play.x);
         presentationChecks.push([photoOverlay || phoneFilm || desktopFilm,tag+": paid identity follows the immersive photo or uncropped film layout"]);
         presentationChecks.push([composition.title.y < (width === 390 ? 844 : 1000),tag+": property address is visible in the opening viewport"]);
       }
@@ -375,9 +386,10 @@ try {
     check(await page.locator(".property-photo noscript img").count()===PHOTOS.length && await page.locator(".property-photo noscript img").first().isVisible(),theme+": existing noscript master images remain available");
     await page.goto(origin+"/property/synthetic-site",{waitUntil:"networkidle"});
     const session=await context.newCDPSession(page);await session.send("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"reduce"},{name:"prefers-reduced-transparency",value:"reduce"}]});
-    const fallback=await page.locator("#listing-nav").evaluate(el=>({background:getComputedStyle(el).backgroundColor,blur:getComputedStyle(el).backdropFilter,animation:getComputedStyle(document.querySelector(".property-hero-copy")).animationName,opacity:getComputedStyle(document.querySelector(".property-hero-copy")).opacity,film:[".property-video-stage.property-film",".property-video-stage.property-film > video","#property-video-play",".property-film-label"].map(selector=>{const node=document.querySelector(selector);return node?getComputedStyle(node).animationName+"/"+getComputedStyle(node).opacity+"/"+getComputedStyle(node).transitionDuration:"missing";})}));
+    const fallback=await page.locator("#listing-nav").evaluate(el=>({background:getComputedStyle(el).backgroundColor,blur:getComputedStyle(el).backdropFilter,animation:getComputedStyle(document.querySelector(".property-hero-copy")).animationName,opacity:getComputedStyle(document.querySelector(".property-hero-copy")).opacity,film:[".property-video-stage.property-film",".property-film-backdrop","#property-video-play",".property-film-label"].map(selector=>{const node=document.querySelector(selector);return node?getComputedStyle(node).animationName+"/"+getComputedStyle(node).opacity+"/"+getComputedStyle(node).transitionDuration:"missing";}),video:(()=>{const v=document.querySelector(".property-video-stage.property-film > video");return v?getComputedStyle(v).animationName+"/"+getComputedStyle(v).transitionDuration:"missing";})()}));
     check(fallback.blur==="none"&&!fallback.background.startsWith("rgba")&&fallback.animation==="none"&&fallback.opacity==="1",theme+": actual reduced-transparency/motion preferences keep opaque visible content");
-    check(fallback.film.length===4&&fallback.film.every(value=>value==="none/1/0s"),theme+": reduced motion removes every film hero animation and transition while keeping the poster, play mark and running time fully visible");
+    // The paid opening shows its poster through the full-bleed backdrop; the film element itself is revealed by Play, so it is checked for stillness, not opacity.
+    check(fallback.film.length===4&&fallback.film.every(value=>value==="none/1/0s")&&fallback.video==="none/0s",theme+": reduced motion removes every film hero animation and transition while keeping the poster, play mark and running time fully visible");
     await page.screenshot({path:join(evidence,theme+"-390-long-no-price-no-script-opaque.png"),fullPage:true});
     await page.goto(origin+"/property/synthetic-site?preview_theme="+theme,{waitUntil:"networkidle"});
     check(await page.locator(".property-preview-banner").isVisible() && await page.locator("form").count()===0,theme+": actual design preview retains its label and omits enquiry");
