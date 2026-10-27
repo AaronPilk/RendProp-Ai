@@ -165,6 +165,8 @@ try:
         def log_message(self, *args): pass
     server = HTTPServer(('127.0.0.1', 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    preparation_guard = 'guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision,\n                              PropertyVideoProcessorConsent.shared.revision == frozenProcessorRevision else {'
+    assert actual.count(preparation_guard) == 1, 'actual captured preparation guard'
     variants = [
         ('actual', actual, None),
         ('negative-prepared-jpeg-refusal-ignored', actual.replace('        try VideoPreparedSourcePolicy.requireUsableJPEG(jpeg, aspect: aspect)', '        // omitted prepared JPEG refusal'), 'prepared JPEG refusal propagates before paid dispatch'),
@@ -186,9 +188,10 @@ try:
         ('negative-receipt-lower-bound', actual.replace('(1...VideoSelectionCapacity.maximumPhotos).contains(request.photoNumber)', 'request.photoNumber <= VideoSelectionCapacity.maximumPhotos'), 'invalid photo receipt cannot resume'),
         ('negative-early-download-ack', actual.replace('if clearReceiptOnDownload { pending?.clear() }', 'pending?.clear()'), 'temporary successful download keeps request'),
         ('negative-no-pre-dispatch-marker', actual.replace('try submission.save()', '// omitted pre-dispatch marker'), 'durable operation marker exists before POST'),
-        ('negative-preparation-consent', actual.replace('guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision,\n                          PropertyVideoProcessorConsent.shared.revision == frozenProcessorRevision else {', 'guard PropertyVideoProcessorConsent.shared.revision == frozenProcessorRevision else {'), 'revocation during preparation permits no paid POST'),
-        ('negative-preparation-processor-revision', actual.replace('guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision,\n                          PropertyVideoProcessorConsent.shared.revision == frozenProcessorRevision else {', 'guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision else {'), 'processor revocation during preparation permits no paid POST'),
+        ('negative-preparation-consent', actual.replace(preparation_guard, 'guard PropertyVideoProcessorConsent.shared.revision == frozenProcessorRevision else {'), 'revocation during preparation permits no paid POST'),
+        ('negative-preparation-processor-revision', actual.replace(preparation_guard, 'guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision else {'), 'processor revocation during preparation permits no paid POST'),
         ('negative-preparation-processor-permission', actual.replace(block(actual, '                    if let permission = frozenProcessorPermission, let context = frozenProcessorContext {'), '// omitted captured processor permission'), 'withdrawn frozen processor permission permits no paid POST'),
+        ('negative-preparation-opening', actual.replace('guard chosenOpening == frozenOpening else { throw PropertyVideoJobStore.Failure.identityChanged }', '// omitted saved opening identity'), 'changed opening must reject the captured job'),
         ('negative-preparation-review', actual.replace('        try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL)', '        // omitted persisted review admission'), 'unreviewed preparation calls persisted review before paid dispatch'),
         ('negative-dispatch-consent', actual.replace(block(actual, '            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consentRevision else {'), '// omitted dispatch permission fence'), 'token refresh revocation must reject'),
         ('negative-dispatch-workspace', actual.replace('guard WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }', '// omitted dispatch workspace fence'), 'token refresh workspace switch must reject'),
@@ -243,8 +246,11 @@ try:
         variants = [('actual-quality', actual, None)] + quality_variants
     else:
         variants += quality_variants + choice_variants
+    # Validate every mutation before any Swift compile: source custody changes
+    # must fail fast instead of burning minutes compiling preceding variants.
     for name, text, reason in variants:
         assert reason is None or text != actual, name + ' mutation anchor missing'
+    for name, text, reason in variants:
         path, binary = out / (name + '.swift'), out / name
         path.write_text(text)
         flags = ['-D', 'SPATIAL_CAPTURE_LAB'] if name == 'actual-lab-dispatch' else []
