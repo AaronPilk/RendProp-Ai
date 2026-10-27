@@ -75,6 +75,9 @@ import Foundation
         let switchedAccount = host(); switchedAccount.mediaItems = [99]; switchedAccount.loadFiles()
         switchedAccount.filePackageExtras = [101]; switchedAccount.packageError = "Old account package error"
         let oldPlayer = FixturePlayer(); switchedAccount.websiteVideoPlayer = oldPlayer
+        switchedAccount.publishedVideoStatus = .live
+        let oldVideoStatusTask = Task<Void, Never> { try? await Task.sleep(nanoseconds: 30_000_000_000) }
+        switchedAccount.publishedVideoTask = oldVideoStatusTask
         let accountScan = switchedAccount.filesTask
         await waitFor { ScanFixture.pending.count == 1 }
         switchedAccount.auth.userID = "actor-b"
@@ -86,6 +89,10 @@ import Foundation
         switchedAccount.invalidatePresentation()
         check(oldPlayer.pauses == 1, "Account invalidation pauses the old property video")
         check(switchedAccount.websiteVideoPlayer == nil, "Account invalidation drops the old property video reference")
+        check(oldVideoStatusTask.isCancelled && switchedAccount.publishedVideoTask == nil,
+              "Invalidation cancels old published-video status fetch")
+        check(switchedAccount.publishedVideoStatus == .unpublished,
+              "Invalidation clears old published-video status")
         check(switchedAccount.filePackageExtras.isEmpty, "Account invalidation clears old listing package extras")
         check(switchedAccount.packageError == nil, "Account invalidation clears old listing package error")
 
@@ -112,6 +119,9 @@ import Foundation
         cleared.availableRoomTagAsset = 404
         cleared.showComplianceDetails = true
         cleared.availableRerenderSource = URL(fileURLWithPath: "/synthetic.mov")
+        cleared.linkShareTarget = 777
+        cleared.verifiedBuyerLink = ("old-link", URL(string: "https://old-buyer-link.invalid/")!)
+        cleared.resolvingBuyerLinkKey = "old-link"
         cleared.loadFiles(); await waitFor { ScanFixture.pending.count == 1 }
         let cancelledScan = cleared.filesTask
         cleared.invalidatePresentation()
@@ -129,6 +139,9 @@ import Foundation
         check(!cleared.showRoomTagsWalkthroughHelp, "Invalidation closes old room-tag help")
         check(!cleared.showWalkthroughForRoomTags, "Invalidation closes old walkthrough destination")
         check(cleared.availableRoomTagAsset == nil, "Invalidation drops old room-tag source")
+        check(cleared.linkShareTarget == nil, "Invalidation closes the old buyer-link share sheet")
+        check(cleared.verifiedBuyerLink == nil, "Invalidation clears the old verified buyer link")
+        check(cleared.resolvingBuyerLinkKey == nil, "Invalidation clears the old buyer-link lookup identity")
         check(cleared.sharedAdmittedJobs == 7, "Presentation invalidation leaves admitted shared jobs untouched")
         ScanFixture.pending.removeFirst().resume(returning: .init(stamp: 4, items: [55]))
         await cancelledScan?.value

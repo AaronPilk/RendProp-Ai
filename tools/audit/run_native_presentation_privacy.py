@@ -65,6 +65,7 @@ struct FixtureTour { var url: URL }
 }
 @MainActor final class FixtureConnection { var cancelled = 0; func cancel() { cancelled += 1 } }
 @MainActor final class FixturePlayer { var pauses = 0; func pause() { pauses += 1 } }
+enum FixturePublishedVideoStatus: Equatable { case unpublished, live }
 @MainActor final class FixtureModel {
     var contactCalls = 0
     func refreshClientContact(for id: UUID) async throws { contactCalls += 1 }
@@ -87,6 +88,8 @@ INDEXING
     var listing: FixtureListing { currentListing }; let model = FixtureModel()
     var filesTask: Task<Void, Never>?; var filesStamp: Int?; var mediaItems: [Int] = []
     var websiteVideoPlayer: FixturePlayer?
+    var publishedVideoTask: Task<Void, Never>?
+    var publishedVideoStatus: FixturePublishedVideoStatus = .unpublished
     var availableRerenderSource: URL?; var openedFile: Int?; var filePhotoExport: Int?; var filePhotoExportAdmission: (() -> Bool)?
     var filePackageExtras: [Int] = []; var packageError: String?
     var provenance: [Int] = []; var provenanceCanExport: (() -> Bool)?; var auditExport: Int?
@@ -94,7 +97,9 @@ INDEXING
     var showRoomTagsWalkthroughHelp = false, showWalkthroughForRoomTags = false
     var availableRoomTagAsset: Int?
     var showComplianceDetails = false
-    var qrTarget: Int?; let connection = FixtureConnection(); var dismissals = 0; var sharedAdmittedJobs = 7
+    var qrTarget: Int?; var linkShareTarget: Int?
+    var verifiedBuyerLink: (key: String, url: URL)?; var resolvingBuyerLinkKey: String?
+    let connection = FixtureConnection(); var dismissals = 0; var sharedAdmittedJobs = 7
     init(scope: NativePresentationScope, auth: FixtureAuth) { presentationScope = scope; self.auth = auth }
     func dismiss() { dismissals += 1 }
 CURRENT
@@ -126,6 +131,11 @@ CONTACT
         ("keeps-room-tag-source", "; availableRoomTagAsset = nil", "", "Invalidation drops old room-tag source"),
         ("keeps-video-playing", "websiteVideoPlayer?.pause(); websiteVideoPlayer = nil", "websiteVideoPlayer = nil", "Account invalidation pauses the old property video"),
         ("keeps-video-reference", "websiteVideoPlayer?.pause(); websiteVideoPlayer = nil", "websiteVideoPlayer?.pause()", "Account invalidation drops the old property video reference"),
+        ("keeps-video-status-fetch", "publishedVideoTask?.cancel(); publishedVideoTask = nil", "publishedVideoTask = nil", "Invalidation cancels old published-video status fetch"),
+        ("keeps-video-status", "publishedVideoStatus = .unpublished", "// omitted published-video status reset", "Invalidation clears old published-video status"),
+        ("keeps-link-share", "linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "Invalidation closes the old buyer-link share sheet"),
+        ("keeps-verified-link", "linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "linkShareTarget = nil; resolvingBuyerLinkKey = nil", "Invalidation clears the old verified buyer link"),
+        ("keeps-link-lookup", "linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "linkShareTarget = nil; verifiedBuyerLink = nil", "Invalidation clears the old buyer-link lookup identity"),
         ("ignores-scan-cancellation", "!Task.isCancelled, expectedScope == presentationScope,\n                  hasCurrentPresentationContext else { return }", "true, expectedScope == presentationScope,\n                  hasCurrentPresentationContext else { return }", "Cancelled scan cannot restore files after invalidation"),
         ("stale-contact-dispatch", "!Task.isCancelled, hasCurrentPresentationContext, !currentListing.isSample", "!Task.isCancelled, !currentListing.isSample", "Stale account cannot dispatch listing contact request"),
         ("actor-global-indexing", 'return "\\(actor.lowercased()):\\(org.uuidString.lowercased())"', 'return actor.lowercased()', "Indexing opt-in cannot carry into another workspace"),
