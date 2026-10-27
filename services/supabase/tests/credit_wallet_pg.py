@@ -71,6 +71,10 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         stage_results = [json.loads(line) for line in stage_output.splitlines()
                          if line.startswith("{") and '"assertions"' in line]
         assert len(stage_results) == 1 and stage_results[0]["passed"] is True, stage_output
+        recovery_output = run("photo credit recovery fixture", [*psql, "-Atq", "-f", SQL / "tests/credit_hold_recovery.sql"])
+        recovery_results = [json.loads(line) for line in recovery_output.splitlines()
+                            if line.startswith("{") and '"assertions"' in line]
+        assert len(recovery_results) == 1 and recovery_results[0]["passed"] is True, recovery_output
         team_output = run("Team paid seat variant fixture", [*psql, "-Atq", "-f", SQL / "tests/team_paid_seat_variants.sql"])
         team_results = [json.loads(line) for line in team_output.splitlines()
                          if line.startswith("{") and '"assertions"' in line]
@@ -79,6 +83,7 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
                           "assertions": results[0]["assertions"] + photo_results[0]["assertions"]
                           + trial_results[0]["assertions"] + combined_results[0]["assertions"]
                           + sandbox_results[0]["assertions"] + stage_results[0]["assertions"]
+                          + recovery_results[0]["assertions"]
                           + team_results[0]["assertions"],
                           "migrations": len(migrations), "scope": "disposable PostgreSQL"}))
     finally:
