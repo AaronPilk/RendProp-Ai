@@ -55,8 +55,11 @@ import Foundation
         let oldFree = try SubscriptionBillingContext.fromMe(reply(activation: activation(), plan: "free"), selectedOrg: org)
         check(!oldFree.showsServicePending, "Historical free access precedes generic service pending")
         let oldTrial = try SubscriptionBillingContext.fromMe(reply(trial("expired"), activation: activation()), selectedOrg: org)
-        check(!oldTrial.showsServicePending && oldTrial.trialUsage?.status == .expired,
-              "Recorded expired trial precedes generic service pending")
+        check(oldTrial.showsServicePending && oldTrial.trialUsage?.status == .expired,
+              "A paid plan awaiting activation is not hidden by its expired trial history")
+        let expiredTrial = try SubscriptionBillingContext.fromMe(reply(trial("expired"), activation: activation(), plan: "trial"), selectedOrg: org)
+        check(!expiredTrial.showsServicePending,
+              "An expired trial without a paid plan is not shown as pending paid service")
         check(PlanBanner.pendingActivationState().kind == .activationPending && PlanBanner.pendingActivationState().title == "Service activation pending",
               "Home shows explicit service activation pending")
         let syncPending = try JSONDecoder().decode(EntitlementSync.self, from: reply(activation: activation()))
@@ -82,6 +85,11 @@ import Foundation
         let current = try await LiveTrialFixture(data: reply(trial(), offer())).me()
         check(current.trialUsage?.photoEdits.cap == 5, "Actual me forwards recorded trial usage")
         check(current.trialOffer?.benefitLines.first?.contains("1 hosted walkthrough") == true, "Actual me forwards enabled offer")
+        check(!RecordedTrialPresentation.isCurrent(planName: current.planName),
+              "A paid plan keeps trial history without displaying its spent allowance as current access")
+        let downgraded = try await LiveTrialFixture(data: reply(trial("expired"), nil, plan: "free")).me()
+        check(downgraded.trialUsage != nil && !RecordedTrialPresentation.isCurrent(planName: downgraded.planName),
+              "Downgrading to free does not reactivate old trial usage")
         let usage = current.trialUsage!
         check(usage.status == .active && usage.walkthroughs.remaining == 0 && usage.photoEdits.remaining == 3 && usage.publishedListings.remaining == 1,
               "Buckets remain independent after the walkthrough is used")

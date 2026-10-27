@@ -31,11 +31,13 @@ def block(source, needle):
 
 # Bind real presentation call sites to the actual compiled counter/offer data.
 rows = block(settings, 'private func usageRows(')
-assert 'if let trial = usage.trialUsage {' in rows and 'trialUsageRows(trial)' in rows
+assert 'let showCurrentTrial = RecordedTrialPresentation.isCurrent(planName: usage.entitlements?.plan ?? usage.planName)' in rows
+assert rows.count('showCurrentTrial, let trial = usage.trialUsage') == 3 and 'trialUsageRows(trial)' in rows
 assert '} else if let e = usage.entitlements {' in rows
 assert 'ForEach(trial.rows, id: \\.title)' in block(settings, 'private func trialUsageRows(')
 details = block(paywall, '@ViewBuilder private var trialDetails:')
-assert 'if let trial = purchases.billingContext?.trialUsage' in details
+assert 'RecordedTrialPresentation.isCurrent(planName: purchases.billingContext?.planName)' in details
+assert 'let trial = purchases.billingContext?.trialUsage' in details
 assert 'else if selectedHasIntroOffer' in details and 'offer.enabled, !offer.benefitLines.isEmpty' in details
 assert 'ForEach(offer.benefitLines, id: \\.self)' in details
 assert 'After the trial' in block(paywall, 'private struct SelectedPlanDetails:')
