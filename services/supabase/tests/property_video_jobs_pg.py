@@ -5,17 +5,21 @@ No inherited credentials, TCP listener, Apple/R2 or production database.
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
-import argparse,hashlib,json,os,shutil,subprocess,tempfile
+import argparse,hashlib,json,os,shutil,subprocess,sys,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
+sys.path.insert(0,str(ROOT/'tools/audit'))
+from run_database_regression import partition_fresh_migrations
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path);args=p.parse_args()
 OUT=args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-property-jobs-pg-',dir='/tmp'));OUT.mkdir(parents=True,exist_ok=True)
 DATA=Path(tempfile.mkdtemp(prefix='rendprop-property-jobs-owned-pg-',dir=OUT));SOCK=Path(tempfile.mkdtemp(prefix='rendprop-property-jobs-socket-',dir='/tmp'))
 TOOLS={n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)for n in ['initdb','pg_ctl','psql','createdb']}
 assert all(Path(t).is_file()and os.access(t,os.X_OK)for t in TOOLS.values())
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
-SOURCES=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/property_video_jobs.sql',Path(__file__).resolve()]
+MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
+SCHEMA_MIGRATIONS,LIVE_STATE_MIGRATIONS=partition_fresh_migrations(MIGRATIONS)
+SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',SQL/'tests/property_video_jobs.sql',ROOT/'tools/audit/run_database_regression.py',Path(__file__).resolve()]
 hashes=lambda:{str(x.relative_to(ROOT)):hashlib.sha256(x.read_bytes()).hexdigest()for x in SOURCES}
-receipt={'passed':False,'scope':'owned disposable PostgreSQL, actual schema/RPC/roles/races; transport/provider fixtures closed','networkCalls':0,'AppleCalls':0,'sourceHashes':hashes(),'commands':[],'races':[]}
+receipt={'passed':False,'scope':'owned disposable PostgreSQL, actual schema/RPC/roles/races; transport/provider fixtures closed','networkCalls':0,'AppleCalls':0,'sourceHashes':hashes(),'liveStateOnlyMigrations':[str(p.relative_to(ROOT))for p in LIVE_STATE_MIGRATIONS],'commands':[],'races':[]}
 def run(name,argv,sql=None):
  r=subprocess.run([str(a)for a in argv],input=sql,env=ENV,cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)
  (OUT/(name+'.log')).write_text(r.stdout);receipt['commands'].append({'name':name,'exit':r.returncode,'logSHA256':hashlib.sha256(r.stdout.encode()).hexdigest()})
@@ -35,7 +39,7 @@ try:
  PSQL=[TOOLS['psql'],'-X','--no-password',*conn,'-d','property_sites','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
  replay_migrations=set((SQL/'migrations').glob('20261014*property_video*.sql'))|set((SQL/'migrations').glob('20261014*registered_background_video_delivery.sql'))|set((SQL/'migrations').glob('20261015*property_video_structural_fallback_cpu_recovery.sql'))|set((SQL/'migrations').glob('20261015*property_video_cpu_retained_recovery_capacity.sql'))|set((SQL/'migrations').glob('20261015*property_video_one_quality_retry.sql'))|set((SQL/'migrations').glob('20261015*property_video_parallel_admission_fair_poll.sql'))|set((SQL/'migrations').glob('20261015*property_video_derived_quality_retry.sql'))|set((SQL/'migrations').glob('20261015*property_video_retained_result_delivery_recovery.sql'))
- for migration in sorted((SQL/'migrations').glob('*.sql')):
+ for migration in SCHEMA_MIGRATIONS:
   run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
   # Replay the same coherent historical chain at its final boundary, then
   # apply later migrations. Never replace current recovery wrappers at HEAD.
@@ -47,8 +51,8 @@ try:
  unit=run('actual-jobs-rpc-roles',[*PSQL,'-Atq','-f',SQL/'tests/property_video_jobs.sql']);rows=[json.loads(s)for s in unit.splitlines()if s.startswith('{')and 'assertions'in s];assert len(rows)==1 and rows[0]['passed'];receipt['unit']=rows[0]
  # Compiled actual SQL mutations retain independent failure/category oracles.
  for control,signature,needle,replacement,expected in [
-  ('serial-source-admission','public.property_video_job_claim(uuid,text)',"if active>=4", "if exists(select 1 from public.property_video_job_sources where job_id=p_job and state='processing'and clip is null)or active>=4",'accepted first shot doesnotstarve second pending admission'),
-  ('poll-position-starvation','public.property_video_job_claim(uuid,text)','order by provider_status_checked_at nulls first,position for update','order by position for update','neverchecked secondreceipt polledbefore firstagain'),
+  ('serial-source-admission','public.property_video_job_claim_before_photo_motion_20261021(uuid,text)',"if active>=4", "if exists(select 1 from public.property_video_job_sources where job_id=p_job and state='processing'and clip is null)or active>=4",'accepted first shot doesnotstarve second pending admission'),
+  ('poll-position-starvation','public.property_video_job_claim_before_photo_motion_20261021(uuid,text)','order by provider_status_checked_at nulls first,position for update','order by position for update','neverchecked secondreceipt polledbefore firstagain'),
   ('terminal-qc-action','public.property_video_structural_rejection(uuid,uuid)',"or p.qc->>'action'is distinct from'refuse'",'', 'unknown or hold verdict never certifies fallback'),
   ('paid-qc-receipt','public.property_video_structural_rejection(uuid,uuid)',"if q.id is null then return null;end if;",'', 'unpaid or mismatched QC verdict cannot certify fallback'),
   ('retry-null-history-grant','public.property_video_quality_history_guard()',"public.property_video_quality_retry_evidence(old.job_id,old.attempt_id)is null or",'', 'directtable absentgrant cannot append paidretryhistory'),
@@ -64,7 +68,7 @@ try:
  # Compile the realSQL authority without itsduration predicate. The exact
  # same publicjob fixture must reject that mutant beforea paidshotcanstart.
  signature='public.property_video_job_audio_preflight(uuid,uuid,text,text,numeric,integer)'
- audio_original=run('read-audio-preflight-function',[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%signature]);guard='if p_duration>max_duration+.1 then';assert audio_original.count(guard)==1
+ audio_original=run('read-audio-preflight-function',[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%signature]);guard="if p_duration>max_duration+(case when j.manifest->>'source_mode'='photo_motion_v1'then 0 else .1 end)then";assert audio_original.count(guard)==1
  run('install-no-audio-duration-guard',[*PSQL,'-Atq'],audio_original.replace(guard,'if false then'))
  mutant=subprocess.run([*PSQL,'-Atq','-f',SQL/'tests/property_video_jobs.sql'],env=ENV,cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)
  (OUT/'negative-audio-duration.log').write_text(mutant.stdout);assert mutant.returncode!=0 and'20svoice on2photo10svideo refusesbefore anypaidclip'in mutant.stdout
@@ -109,7 +113,7 @@ try:
  assert len(set(r['source']['lease_token']for r in polls))==2
  receipt['races'].append({'name':'two-accepted-distinct-poll-leases','actualConcurrentRequests':10,'distinctPolls':[0,1],'noDuplicateReceiptLease':True,'providerCalls':0})
  run('negative-reset',[*PSQL,'-Atq'],"update property_video_job_sources set state='pending',attempt_id=null,lease_token=null,lease_until=null,request_key=null,receipt=null,provider_status_checked_at=null;update property_video_jobs set state='queued';")
- sig='public.property_video_job_claim(uuid,text)';original=run('read-claim-function',[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%sig]);lock="perform pg_advisory_xact_lock(hashtextextended('property-video-global-slots',79));";assert lock in original
+ sig='public.property_video_job_claim_before_photo_motion_20261021(uuid,text)';original=run('read-claim-function',[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%sig]);lock="perform pg_advisory_xact_lock(hashtextextended('property-video-global-slots',79));";assert lock in original
  mutant=original.replace(lock,'-- omitted global slot lock',1);needle="if active>=4";assert needle in mutant;mutant=mutant.replace(needle,"perform pg_sleep(0.4);\n if active>=4",1);run('install-no-slot-lock',[*PSQL,'-Atq'],mutant)
  result=race('negative-no-global-slot-lock',[claim(j)for j in jobs]);assert all(r['exit']==0 for r in result),result
  actions=[json.loads(next(s for s in r['output'].splitlines()if s.startswith('{')))['action']for r in result];assert actions.count('dispatch')>4,actions
