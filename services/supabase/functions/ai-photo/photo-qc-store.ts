@@ -61,6 +61,16 @@ export async function statusPhotoQuality(admin:PhotoAdmin,actor:string,checkId:s
  const row=photoEnvelope(await photoQualityRpc(admin,"photo_quality_status",{p_actor:actor,p_check:checkId}),actor);
  await photoQualityScope(admin,row,actor,selected);return row;
 }
+/** Read a pre-existing request only. A local journal may predate dispatch, so
+ * absence is404 and must never begin, continue, fund or judge an operation. */
+export async function requestPhotoQualityStatus(admin:PhotoAdmin,identity:PhotoResultIdentity,selected:string|null):Promise<PhotoQualityEnvelope>{
+ assert(photoUUID(identity.requestKey),400,"Choose a valid saved photo request.");
+ const raw=await photoQualityRpc(admin,"photo_quality_lookup",{p_actor:identity.actorId,p_org:identity.orgId,p_key:identity.requestKey});
+ assert(raw!==null,404,"This saved photo request is unavailable. No new edit was started.","not_found");
+ const row=photoEnvelope(raw,identity.actorId),e=row.evidence;
+ assert(e.org_id===identity.orgId&&e.request_key===identity.requestKey&&e.listing_id===identity.listingId,404,"This saved photo request is unavailable in the selected listing.","not_found");
+ await photoQualityScope(admin,row,identity.actorId,selected);return row;
+}
 export interface PhotoEvidenceIO {
  write(key:string,bytes:Uint8Array<ArrayBuffer>,mime:string,sha:string):Promise<void>;
  inspect(key:string):Promise<{bytes:number;mime:string;sha256:string;etag:string}|null>;

@@ -56,7 +56,7 @@ Deno.test("verified input returns the exact owned object location additively; ex
 });
 
 Deno.test("compiled defect controls: the Kie CFR24 binding is load-bearing",async()=>{
- const noKie=await variant("['fal-kling3-4k-steady-v2',KIE_PROPERTY_PROFILE]","['fal-kling3-4k-steady-v2']");
+ const noKie=await variant("const CFR24_MASTER_PROFILES:readonly unknown[]=[...PHOTO_PROFILES,'fal-kling3-4k-steady-v2',KIE_PROPERTY_PROFILE];","const CFR24_MASTER_PROFILES:readonly unknown[]=[...PHOTO_PROFILES,'fal-kling3-4k-steady-v2'];");
  const kie=master({fps:24,profile:KIE_PROPERTY_PROFILE});await assertRejects(()=>noKie.attestPropertyVideo(actor,listing,asset,kie.deps),HttpError);assertEquals(kie.writes(),0);
  const thirty=await variant("},cfr24?24:30);","},30);");
  const k2=master({fps:24,profile:KIE_PROPERTY_PROFILE});await assertRejects(()=>thirty.attestPropertyVideo(actor,listing,asset,k2.deps),HttpError);

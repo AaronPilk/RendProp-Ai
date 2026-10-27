@@ -28,6 +28,7 @@
 //   PATCH /renders/:render_id/chapters { chapters:[{label,t_ms,sort}] } -> { ok, count, chapters }
 
 import { assertMediaVisible } from "../_shared/media-source-access.ts";
+import { assertOrdinaryRecordedMedia } from "./internal-media.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, readJsonLimited, respondError, throwRpc } from "../_shared/http.ts";
 import { adminClient, assertNotDeleting, contentOrgForUser, getUser, preferredOrg, userClient } from "../_shared/supabase.ts";
@@ -104,6 +105,15 @@ Deno.serve(async (req) => {
         sign: (_bucket, key, expires) => presignGet(R2_BUCKET_RENDERS, key, expires), fetch,
       });
     };
+    const ordinarySource = async (listing: unknown, asset: unknown) => {
+      assert(typeof listing === "string" && UUID_RE.test(listing) && typeof asset === "string" && UUID_RE.test(asset),
+        400, "Choose a valid video and property.");
+      const org = await contentOrgForUser(user.id, preferredOrg(req), listing, true);
+      const { data: row, error } = await db.from("capture_assets").select("id,listing_id,storage_key")
+        .eq("id", asset).eq("listing_id", listing).maybeSingle();
+      assert(!error && row, 404, "Video upload not found.");
+      assertOrdinaryRecordedMedia(row, { orgId: org, listingId: listing });
+    };
     const alreadyPublished = async (job: string) => {
       const { data, error } = await db.from("renders").select("id").eq("job_id", job).maybeSingle();
       if (error) throw new HttpError(503, "Recorded publication could not be checked.");
@@ -117,6 +127,7 @@ Deno.serve(async (req) => {
       assert(body.asset_id, 400, "asset_id is required");
       const tier = (body.tier as string) ?? "smooth";
       assert(TIERS.includes(tier), 400, `tier must be one of ${TIERS.join(", ")}`);
+      await ordinarySource(body.listing_id, body.asset_id);
       await assertNotDeleting(user.id); // no new paid work once deletion starts
 
       const { data, error } = await db.rpc("create_render_job", {
@@ -143,7 +154,14 @@ Deno.serve(async (req) => {
         const { data: job, error: jobError } = await db.from("render_jobs")
           .select("id,listing_id,capture_asset_id").eq("id", jobId).maybeSingle();
         assert(!jobError && job, 404, "Render job not found.");
+        await ordinarySource(job.listing_id, job.capture_asset_id);
         verifiedDuration = (await attest(job.listing_id, job.capture_asset_id))?.duration_s ?? null;
+      }
+      const ordinaryPoster = optionalUuid(body.poster_asset_id, "poster_asset_id");
+      if (ordinaryPoster) {
+        const { data: job, error } = await db.from("render_jobs").select("listing_id").eq("id", jobId).maybeSingle();
+        assert(!error && job, 404, "Render job not found.");
+        await ordinarySource(job.listing_id, ordinaryPoster);
       }
 
       const { data: render, error } = await db.rpc("publish_recorded_render", {
@@ -154,7 +172,7 @@ Deno.serve(async (req) => {
         // `staged` is deliberately NOT forwarded: virtual-staging disclosure is
         // derived server-side from the job's enhancements (migration 0008).
         p_chapters: chapterRows(body.chapters),
-        p_poster: optionalUuid(body.poster_asset_id, "poster_asset_id"),
+        p_poster: ordinaryPoster,
       });
       if (error) throwRpc(error.message);
       await assertMediaVisible(db, render.listing_id, { renders: [render.id] });
@@ -191,7 +209,7 @@ Deno.serve(async (req) => {
           rpc:(name,args)=>adminClient().rpc(name,args),
           head:(_bucket,key,signal)=>headObject(R2_BUCKET_RENDERS,key,signal),
           sign:(_bucket,key,seconds)=>presignGet(R2_BUCKET_RENDERS,key,seconds),fetch,
-        });
+        },manifest);
         const org=await contentOrgForUser(user.id,preferredOrg(req),listing,true);
         assert(org===info.org_id,409,'The property video workspace changed.');
         const {data:render,error}=await db.rpc('publish_property_video',{p_listing:listing,p_asset:asset,p_manifest:manifest,p_poster:posterAsset,p_key:key});
@@ -202,6 +220,8 @@ Deno.serve(async (req) => {
           share_url:shareUrl(render.slug),unbranded_url:unbrandedUrl(render.slug),republished:republish},republish?200:201);
       }
       assert(body.composition===undefined,400,'Photo-video source receipts need their typed presentation.');
+      await ordinarySource(body.listing_id, body.asset_id);
+      if (posterAsset) await ordinarySource(body.listing_id, posterAsset);
       let duration = optionalNumber(body.duration_s, "duration_s");
       const speed = optionalNumber(body.speed_factor, "speed_factor") ?? 2.0;
       await assertNotDeleting(user.id);

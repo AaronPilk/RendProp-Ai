@@ -5,8 +5,18 @@ const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
 // Complete structural JPEG geometry fixture, not a decoded/visual quality proof.
 const outputJPEG=(width=2048,height=2048)=>btoa(String.fromCharCode(...[255,216,255,192,0,11,8,height>>8,height&255,width>>8,width&255,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]));
 const OUTPUT=outputJPEG(4096,4096);
-async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|"protocol"|"declutter_prompt"|"recipe"|null=null,actualEvidence=false){
+type SavedStatusFault="selector"|"key_case"|"judge"|"listing"|null;
+async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|"protocol"|"declutter_prompt"|"recipe"|null=null,actualEvidence=false,statusFault:SavedStatusFault=null){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
+ if(statusFault){
+  const pairs={
+   selector:['assert(!params.has("check_id")&&params.getAll("request_key").length===1&&params.getAll("listing_id").length<=1&&[...params.keys()].every(key=>key==="request_key"||key==="listing_id"),400,"Choose one exact saved photo request.");','/* compiled ambiguous selector acceptance */'],
+   key_case:['{actorId:user.id,orgId,requestKey,listingId},preferredOrg(req)??null)','{actorId:user.id,orgId,requestKey:requestKey.toLowerCase(),listingId},preferredOrg(req)??null)'],
+   judge:['row=await requestPhotoQualityStatus(adminClient(),{actorId:user.id,orgId,requestKey,listingId},preferredOrg(req)??null);','row=await requestPhotoQualityStatus(adminClient(),{actorId:user.id,orgId,requestKey,listingId},preferredOrg(req)??null); row=await waitForPhotoQuality(adminClient(),row,{actor:user.id,selected:preferredOrg(req)??null,request:req,deadline:qualityDeadline});'],
+   listing:['const listingId=listingParam?.toLowerCase()??null;','const listingId=null;'],
+  } as const;
+  const [anchor,replacement]=pairs[statusFault];assertEquals(source.split(anchor).length-1,1,statusFault+" exact actual-handler control");source=source.replace(anchor,replacement);
+ }
  if(removeAdmission==="recipe"){
   const anchor="try{await recordPhotoRecipe(adminClient(),quality,genInput.prompt??\"\");}";assertEquals(source.split(anchor).length-1,1);source=source.replace(anchor,"try{/* compiled recipe omission */}");
  }
@@ -73,6 +83,8 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {assertPhotoRecoveryProtocol,hasPhotoRecoveryProtocol} from ${url("./protocol.ts")};
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
+ import {DECLUTTER_ASSESSMENT_PROTOCOL,DECLUTTER_ASSESSMENT_INSTRUCTION,parseDeclutterAssessment,unavailableDeclutterAssessment} from ${url("./declutter-assessment.ts")};
+ import {decodeBase64Bytes} from ${url("../_shared/base64-bytes.ts")};
  import {PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from ${url("./photo-qc-wait.ts")};
  import {preparePhoto4KInput,photo4KChain,assertPhoto4KGeometry,assertPhotoPro4KGeometry} from ${url("./photo-quality.ts")};
  import {normalPhotoQualityProfile as actualNormalProfile,normalPhotoQualityRoutes as actualNormalRoutes,prepareNormalPhotoPro4KInput,priceNormalPhotoQualityRoute} from ${url("./normal-photo-quality.ts")};
@@ -104,7 +116,9 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {runChain} from ${url("../_shared/providers/chain.ts")};
  const actualEvidence=${actualEvidence};
  export const state={objects:new Map(),actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,quality:null,qualityEnabled:true,qualityPending:false,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0,recipes:[],events:[],recipeFail:false,noDispatch:0};
- const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{}};
+ const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{photo:"property photo",audience:"owner",greenery:"lawn: grass",clutter:"papers,loose items,personal items",stageShort:"furnish an empty room"}};
+ ${source.slice(source.indexOf("interface Suggestion {"),source.indexOf('/**\n * edit:"improve_prompt"'))}
+ ${source.slice(source.indexOf("async function geminiText("))}
  ${source.slice(locksStart,locksEnd)}
  ${source.slice(reflectionStart,reEnd)}
  ${source.slice(customStart,customEnd)}
@@ -126,7 +140,11 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  return {data:{actor_id:state.actor,org_id:state.org,library_owner_user_id:state.actor,role:state.role,access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:state.org,team_org_id:null,
  ...(name==="listing_library_scope"?{listing_id:args.p_listing,library_org_id:state.org,listing_owner_user_id:state.actor}:{})},error:null};
  }
- if(name==="photo_quality_lookup"||name==="photo_quality_status")return {data:state.quality?structuredClone(state.quality):null,error:null};
+ if(name==="photo_quality_lookup"||name==="photo_quality_status"){
+  const e=state.quality?.evidence,q=state.quality?.check;
+  const matches=e?.actor_id===args.p_actor&&(name==="photo_quality_lookup"?e.org_id===args.p_org&&e.request_key===args.p_key:q?.id===args.p_check);
+  return {data:matches?structuredClone(state.quality):null,error:null};
+ }
  if(name==="photo_quality_begin"){
   if(!state.qualityEnabled)return{data:null,error:{message:"RP503: Photo quality review is not active yet"}};
   if(state.quality)return{data:{...structuredClone(state.quality),created:false},error:null};
@@ -167,7 +185,9 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  // This existing prompt/ledger/legacy-storage harness supplies a synthetic
  // accepted QC dependency. Actual quarantine/funding/judge/status behavior is
  // tested in photo-qc-runtime.test.ts, never inferred from this dependency.
- const preferredOrg=()=>state.org;
+ const preferredOrg=()=>state.selectedOrg??state.org;
+ const photoUUID=actualQualityStore.photoUUID;
+ const requestPhotoQualityStatus=actualQualityStore.requestPhotoQualityStatus;
  const lookupPhotoQuality=actualEvidence?actualQualityStore.lookupPhotoQuality:async()=>state.quality;
  const photoQualityScope=actualEvidence?actualQualityStore.photoQualityScope:async()=>{};
  const statusPhotoQuality=actualEvidence?actualQualityStore.statusPhotoQuality:async()=>state.quality;
@@ -201,6 +221,11 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const previous=globalThis.fetch;
  globalThis.fetch=(async(input:Request|string|URL,init?:RequestInit)=>{
  const request=input instanceof Request?input:new Request(input,init),u=new URL(request.url),method=request.method;
+ if(u.hostname==="generativelanguage.googleapis.com"){
+  assertEquals(method,"POST");assertEquals(u.pathname,"/v1beta/models/gemini-3.6-flash:generateContent");
+  imported.state.helperDispatch++;const payload=await request.json();(imported.state.helperPayloads??=[]).push(payload);
+  return Response.json({candidates:[{content:{parts:[{text:imported.state.suggestText??'{"suggestions":[]}'}]}}]});
+ }
  if(!u.hostname.endsWith(".r2.cloudflarestorage.com"))throw Error("Unexpected vendor/network transport");
  if(actualEvidence){
   const key=decodeURIComponent(u.pathname.split("/").slice(2).join("/")),object=imported.state.objects.get(key);
@@ -785,4 +810,114 @@ Deno.test("a recipe recording failure aborts before any provider call, refunds t
    const retry=await f.run(f.request({edit:"stage",style:"modern"}));assert(retry.status!==200);assertEquals(f.state.submits,0,"A retry of the same request never dispatches");
   }
  }finally{f.close();}}
+});
+
+const SAVED_STATUS_KEY="EA100606-0000-4000-8000-0000000000A1";
+async function savedStatusFixture(savedListing:string|null=listing,fault:SavedStatusFault=null){
+ const f=await fixture(false,null,true,fault),eid="ea100606-0000-4000-8000-000000000004",cid="ea100606-0000-4000-8000-000000000005";
+ const bytes=Uint8Array.from(atob(OUTPUT),c=>c.charCodeAt(0)),sha=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),v=>v.toString(16).padStart(2,"0")).join("");
+ const key=`ai-router/${org}/photo-evidence/${actor}/${eid}/candidate.jpg`;
+ f.state.quality={evidence:{id:eid,actor_id:actor,org_id:org,library_org_id:org,listing_id:savedListing,request_key:SAVED_STATUS_KEY,request_sha256:"a".repeat(64),policy:"photo-fixed-features-v1",edit:"declutter",style:null,input:{bucket:"renders",key:`ai-router/${org}/photo-evidence/${actor}/${eid}/input.jpg`,sha256:"b".repeat(64),bytes:27,mime:"image/jpeg",width:1,height:1},output:{bucket:"renders",key,sha256:sha,bytes:bytes.length,mime:"image/jpeg",width:4096,height:4096},input_etag:'"source-etag"',output_etag:'"fixture-etag"',state:"accept",provenance_id:"ea100606-0000-4000-8000-000000000008",generation_stage:"photo.declutter:0",generation_provider:"gemini",generation_model:"gemini-3-pro-image"},check:{id:cid,evidence_id:eid,policy:"photo-fixed-features-v1",state:"accept",lease_token:null,lease_until:null,judge_started_at:"2026-10-20T18:29:02Z",finished_at:"2026-10-20T18:29:10Z",derivatives:null,derivative_manifest_sha256:null},can_continue:false};
+ f.state.objects.set(key,{bytes:bytes.buffer,mime:"image/jpeg",sha256:sha,etag:'"fixture-etag"'});
+ f.state.journal={org_id:org,user_id:actor,listing_id:savedListing,bucket:"renders",storage_key:key,bytes:bytes.length};
+ const query=new URLSearchParams({request_key:SAVED_STATUS_KEY});if(savedListing)query.set("listing_id",savedListing.toUpperCase());
+ return{...f,cid,key,query,get:(params=new URLSearchParams(query))=>new Request("https://example.invalid/ai-photo/status?"+params)};
+}
+function assertSavedStatusNoWork(f:Awaited<ReturnType<typeof savedStatusFixture>>){
+ assertEquals([f.state.started,f.state.charges,f.state.holds,f.state.submits,f.state.polls,f.state.puts,f.state.completes,f.state.waits??0,f.state.helperDispatch],[false,0,0,0,0,0,0,0,0],"Saved-status GET must never create an operation, fund, generate, prepare or judge");
+ assertEquals(f.state.costs,[],"Saved-status GET must not book another generation or quality cost");
+}
+async function acceptedSavedStatusOracle(fault:SavedStatusFault=null){
+ for(const savedListing of[null,listing]){const f=await savedStatusFixture(savedListing,fault);try{
+  const response=await f.run(f.get());assertEquals(response.status,200,"Existing saved request-key GET must recover accepted bytes");const body=await response.json();
+  assertEquals(body.image_b64,OUTPUT);assertEquals(body.generation_request_key,SAVED_STATUS_KEY,"Opaque saved operation key casing stays exact");
+  assertEquals(body.check_id,f.cid);assertEquals(body.listing_id,savedListing);assertEquals(body.provenance.id,f.state.quality.evidence.provenance_id);assertEquals(body.photo_quality.state,"accept");
+  assertSavedStatusNoWork(f);assertEquals(f.state.gets,1,"Exactly one existing private object is read");
+ }finally{f.close();}}
+}
+Deno.test("saved photo request-key GET returns exact accepted bytes for original nil or saved listing without new work",()=>acceptedSavedStatusOracle());
+Deno.test("saved photo request-key GET pending checking ready refusal and closed are read-only non-images",async()=>{
+ for(const state of["pending","preparing","derivative_ready","checking","refuse","hold"]){const f=await savedStatusFixture(null);try{
+  f.state.quality.check.state=state;f.state.quality.evidence.state=state==="refuse"?"refuse":state==="hold"?"hold":"evidence_ready";
+  if(state!=="hold")f.state.quality.check.finished_at=null;
+  f.state.quality.can_continue=true;const before=structuredClone(f.state.quality);
+  const response=await f.run(f.get());assertEquals(response.status,state==="refuse"||state==="hold"?422:409);const body=await response.json();
+  assertEquals(body.image_b64,undefined);assertEquals(body.generation_request_key,SAVED_STATUS_KEY);assertEquals(body.check_id,f.cid);
+  assertEquals(f.state.quality,before,"Status cannot continue a derivative-ready judge or mutate its saved check");
+  assertSavedStatusNoWork(f);assertEquals(f.state.gets,0,"Unaccepted states reveal no photo bytes");
+ }finally{f.close();}}
+});
+Deno.test("saved photo request-key GET absent never-dispatched and foreign identities fail closed without fallback",async()=>{
+ for(const mode of["absent","other_key","other_actor","other_org","other_listing","nil_listing","wrong_library","removed"]){const f=await savedStatusFixture();try{
+  const params=new URLSearchParams(f.query);
+  if(mode==="absent")f.state.quality=null;
+  if(mode==="other_key")params.set("request_key","ea100606-0000-4000-8000-000000000099");
+  if(mode==="other_actor")f.state.actor="ea100606-0000-4000-8000-000000000099";
+  if(mode==="other_org")f.state.org="ea100606-0000-4000-8000-000000000099";
+  if(mode==="other_listing")params.set("listing_id","ea100606-0000-4000-8000-000000000099");
+  if(mode==="nil_listing")params.delete("listing_id");
+  if(mode==="wrong_library")f.state.selectedOrg="ea100606-0000-4000-8000-000000000099";
+  if(mode==="removed")f.state.deleted=true;
+  const response=await f.run(f.get(params));assert(response.status>=400,mode+" cannot deliver a foreign saved photo");
+  if(["absent","other_key","other_actor","other_org"].includes(mode))assertEquals(response.status,404,"A never-dispatched/missing identity is 404, never a fresh operation");
+  const body=await response.json();assertEquals(body.image_b64,undefined);assertSavedStatusNoWork(f);assertEquals(f.state.gets,0);
+ }finally{f.close();}}
+});
+async function savedStatusSelectorOracle(fault:SavedStatusFault=null){
+ for(const query of[
+  "request_key="+SAVED_STATUS_KEY+"&check_id=ea100606-0000-4000-8000-000000000005",
+  "request_key="+SAVED_STATUS_KEY+"&request_key="+SAVED_STATUS_KEY,
+  "request_key="+SAVED_STATUS_KEY+"&listing_id="+listing+"&listing_id="+listing,
+  "request_key=","request_key=not-a-uuid","request_key="+SAVED_STATUS_KEY+"&listing_id=",
+  "request_key="+SAVED_STATUS_KEY+"&listing_id=not-a-uuid","request_key="+SAVED_STATUS_KEY+"&edit=declutter",
+ ]){const f=await savedStatusFixture(null,fault);try{
+  const response=await f.run(f.get(new URLSearchParams(query)));assertEquals(response.status,400,"Ambiguous or invalid saved-status selector must be refused");
+  assertEquals((await response.json()).image_b64,undefined);assertSavedStatusNoWork(f);assertEquals(f.state.gets,0);
+ }finally{f.close();}}
+}
+Deno.test("saved photo request-key GET rejects ambiguous duplicate invalid or unrelated selectors before any work",()=>savedStatusSelectorOracle());
+Deno.test("saved photo request-key GET keeps existing check-id status compatible",async()=>{
+ const f=await savedStatusFixture();try{
+  const response=await f.run(f.get(new URLSearchParams({check_id:f.cid})));assertEquals(response.status,200);assertEquals((await response.json()).image_b64,OUTPUT);assertSavedStatusNoWork(f);
+ }finally{f.close();}
+});
+Deno.test("saved photo request-key GET compiled behavioral controls cannot weaken identity no-work or selector oracles",async()=>{
+ for(const fault of["key_case","judge","listing"] as const)await assertRejects(()=>acceptedSavedStatusOracle(fault),AssertionError);
+ await assertRejects(()=>savedStatusSelectorOracle("selector"),AssertionError,"Ambiguous or invalid saved-status selector must be refused");
+});
+
+Deno.test("declutter assessment actual funded helper is additive and never dispatches an image",async()=>{
+ const f=await fixture();try{
+  f.state.suggestText=JSON.stringify({suggestions:[{edit:"sky",reason:"A dull sky.",confidence:.9}]});
+  const response=await f.run(f.request({edit:"suggest"}));assertEquals(response.status,200);const body=await response.json();
+  assertEquals(body.suggestions,[{edit:"sky",reason:"A dull sky.",confidence:.9}]);assertEquals(body.declutter_assessment,undefined);
+  assertEquals([f.state.helperDispatch,f.state.submits,f.state.polls,f.state.puts],[1,0,0,0]);
+  assert(!f.state.helperPayloads[0].contents[0].parts[0].text.includes("declutter_assessment:"));
+ }finally{f.close();}
+});
+Deno.test("declutter assessment actual handler binds source and funding replay while missing or ambiguous model advice stays unselected",async()=>{
+ const bytes=Uint8Array.from(atob(OUTPUT),c=>c.charCodeAt(0)),sha=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),b=>b.toString(16).padStart(2,"0")).join("");
+ for(const [assessment,decision]of[
+  [{decision:"needed",confidence:.95,reason:"Loose papers are on the table.",targets:["papers"]},"needed"],
+  [{decision:"unnecessary",confidence:.95,reason:"The room is already clear.",targets:[]},"unnecessary"],
+  [{decision:"needed",confidence:.6,reason:"The objects are unclear.",targets:["loose_items"]},"uncertain"],
+  [{decision:"needed",confidence:1,reason:"Only a door is visible.",targets:["door"]},"uncertain"],
+  [undefined,"uncertain"],
+ ]as const){const f=await fixture();try{
+  f.state.suggestText=JSON.stringify({suggestions:[],...(assessment?{declutter_assessment:assessment}:{})});
+  const request=()=>f.request({edit:"suggest",image_b64:OUTPUT,source_sha256:sha,declutter_assessment_protocol:"declutter-assessment-v1"});
+  const first=await f.run(request());assertEquals(first.status,200);const result=await first.json();
+  assertEquals(result.declutter_assessment.decision,decision);assertEquals(result.source_sha256,sha);assertEquals(result.analysis_only,true);
+  assertEquals(result.analysis_request_key,"owned-photo-0001");assertEquals(result.selected_library_org_id,org);assertEquals(result.listing_id,listing);
+  const payload=f.state.helperPayloads[0];assertEquals(payload.generationConfig,{candidateCount:1,maxOutputTokens:1024,temperature:.4,responseMimeType:"application/json"});
+  assertEquals(payload.contents[0].parts[1].inline_data.data,OUTPUT);assert(payload.contents[0].parts[0].text.includes("Doors"));
+  assertEquals(f.state.costs.length,1);assertEquals(f.state.costs[0].feature,"photo_helper");assertEquals(result.analysis_cost_bound_cents,f.state.costs[0].unitCentsOverride);
+  const replay=await f.run(request());assertEquals(replay.status,200);assertEquals(await replay.json(),result);
+  assertEquals([f.state.helperDispatch,f.state.submits,f.state.polls,f.state.puts,f.state.holds],[1,0,0,0,1]);
+ }finally{f.close();}}
+});
+Deno.test("declutter assessment invalid protocol or changed prepared bytes refuse before analysis or generation",async()=>{
+ for(const extra of[{declutter_assessment_protocol:"unknown",source_sha256:"a".repeat(64)},{declutter_assessment_protocol:"declutter-assessment-v1"},{declutter_assessment_protocol:"declutter-assessment-v1",source_sha256:"a".repeat(64)}]){
+  const f=await fixture();try{const response=await f.run(f.request({edit:"suggest",...extra}));assertEquals(response.status,400);assertEquals([f.state.helperDispatch,f.state.submits,f.state.puts],[0,0,0]);assertEquals(f.state.costs,[]);}finally{f.close();}
+ }
 });

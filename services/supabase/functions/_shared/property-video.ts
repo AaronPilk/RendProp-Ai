@@ -2,9 +2,13 @@ import { assert,HttpError,throwRpc } from './http.ts';
 import { driftLineageKey } from './drift.ts';
 import { probeComposedMP4Video,probeMP4Video } from '../ai-video/mp4video.ts';
 import { KIE_PROPERTY_PROFILE } from './property-video-kie.ts';
+const PHOTO_MODE='photo_motion_v1';
+const PHOTO_PROFILES=['photo-motion-v1-cfr24','photo-motion-v2-cfr24','photo-motion-v2-opening-cfr24'] as const;
+const PHOTO_MOVES=['push_in','pull_back','slide_left','slide_right'];
+const HEX=/^[a-f0-9]{64}$/;
 const UUID=/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
-/** Registered steady masters (FAL steady-v2 and Kie native 4K) compose at native 24 fps CFR. */
-const CFR24_MASTER_PROFILES:readonly unknown[]=['fal-kling3-4k-steady-v2',KIE_PROPERTY_PROFILE];
+/** Registered Photo motion, FAL steady-v2 and Kie native 4K masters compose at native 24 fps CFR. */
+const CFR24_MASTER_PROFILES:readonly unknown[]=[...PHOTO_PROFILES,'fal-kling3-4k-steady-v2',KIE_PROPERTY_PROFILE];
 /** The exact owned object whose bytes were verified; never returned to a client. */
 export type PropertySourceLocation={bucket:'uploads'|'renders';storage_key:string;etag:string;bytes:number;content_type:string};
 type Rpc=(name:string,args:Record<string,unknown>)=>PromiseLike<{data:unknown;error:{message:string}|null}>;
@@ -25,6 +29,24 @@ export function propertyVideoManifest(value:unknown){
  assert(value!==null&&typeof value==='object'&&!Array.isArray(value),400,'Choose a finished listing video with its saved source receipts.');
  const m=value as Record<string,unknown>;assert(m.schema===1&&m.purpose==='listing'&&m.aspect==='16:9'&&m.branding_policy==='unbranded'&&Array.isArray(m.sources)
   &&m.sources.length>=1&&m.sources.length<=100&&new TextEncoder().encode(JSON.stringify(m)).byteLength<=100000,400,'Choose a landscape listing video with up to100 sources.');
+ const photo=Object.hasOwn(m,'source_mode')||Object.hasOwn(m,'composition_profile')||m.sources.some((s:unknown)=>s!==null&&typeof s==='object'&&!Array.isArray(s)&&(s as Record<string,unknown>).motion_kind==='photo_motion');
+ if(photo){
+  assert(m.source_mode===PHOTO_MODE&&PHOTO_PROFILES.includes(m.composition_profile as typeof PHOTO_PROFILES[number])&&m.fps===24&&Number.isSafeInteger(m.total_frames),400,'Keep the saved Photo motion mode, profile and exact timeline.');
+  let frames=0;for(const item of m.sources){const s=item as Record<string,unknown>;
+   assert(s&&typeof s==='object'&&!Array.isArray(s)&&s.motion_kind==='photo_motion'&&s.source_bound===true&&(s.generation_request_id===undefined||s.generation_request_id===null)&&(s.generation_provenance_id===undefined||s.generation_provenance_id===null)
+    &&typeof s.photo_asset_id==='string'&&UUID.test(s.photo_asset_id)&&s.photo_version_id==='asset:'+s.photo_asset_id
+    &&typeof s.source_sha256==='string'&&HEX.test(s.source_sha256)&&Number.isSafeInteger(s.source_bytes)&&Number(s.source_bytes)>=1&&Number(s.source_bytes)<=52428800
+    &&[48,72,96,120].includes(Number(s.visible_frames))&&Number.isSafeInteger(s.visible_frames)
+    &&(m.composition_profile==='photo-motion-v1-cfr24'?(s.motion===undefined||s.motion==='push_in'):PHOTO_MOVES.includes(String(s.motion))),400,'Keep exact saved Photo motion masters, timing and ungenerated source receipts.');
+   assert(s.photo_provenance_id===undefined||s.photo_provenance_id===null||typeof s.photo_provenance_id==='string'&&UUID.test(s.photo_provenance_id),400,'Keep the saved photo disclosure.');frames+=Number(s.visible_frames);
+  }
+  assert(new Set(m.sources.map((s:Record<string,unknown>)=>s.photo_asset_id)).size===m.sources.length,400,'Keep each saved Photo motion master once.');
+  if(m.composition_profile==='photo-motion-v2-opening-cfr24'){
+   const o=m.opening as Record<string,unknown>;assert(o&&typeof o==='object'&&!Array.isArray(o)&&o.kind==='aerial_opening'&&o.position===0&&o.aspect===m.aspect&&o.fps===24
+    &&[120,121,144,192].includes(Number(o.visible_frames))&&o.available_frames===o.visible_frames,400,'Keep the exact accepted full opening receipt.');frames+=Number(o.visible_frames);
+  }else assert(!Object.hasOwn(m,'opening'),400,'An opening requires its saved composition profile.');
+  assert(m.total_frames===frames,400,'Keep the full saved Photo motion timeline.');return m;
+ }
  for(const item of m.sources){assert(item!==null&&typeof item==='object'&&!Array.isArray(item),400,'Saved video source is invalid.');
   const s=item as Record<string,unknown>;assert(typeof s.photo_asset_id==='string'&&UUID.test(s.photo_asset_id)&&typeof s.photo_version_id==='string'
    &&s.photo_version_id.length>=1&&s.photo_version_id.length<=200&&['ai','original_photo'].includes(String(s.motion_kind)),400,'Saved video source is incomplete.');
@@ -57,7 +79,7 @@ export async function verifyPropertyVideoInput(actor:string,listing:string,asset
 }
 /** Reuse the bounded real MP4 metadata parser; completion metadata supplied by
  * an iPhone is not authority for1080p/aspect/duration. No GPU/model calls. */
-export async function attestPropertyVideo(actor:string,listing:string,asset:string,deps:PropertyVideoDeps){
+export async function attestPropertyVideo(actor:string,listing:string,asset:string,deps:PropertyVideoDeps,composition?:Record<string,unknown>){
  try{
   const c=await owned(actor,listing,asset,'video',deps),signal=AbortSignal.timeout(20000);
   assert(c.bucket==='renders'&&c.content_type.split(';')[0].trim().toLowerCase()==='video/mp4',400,'Choose the saved H.264 property video.');
@@ -71,6 +93,9 @@ export async function attestPropertyVideo(actor:string,listing:string,asset:stri
   if(master!==null)assert(master&&master.kind==='registered_background_video'&&master.asset_id===asset&&master.bytes===c.bytes
    &&typeof c.sha256==='string'&&/^[a-f0-9]{64}$/.test(c.sha256)&&master.sha256===c.sha256,409,'The registered property video receipt changed.');
   assert(same(await deps.head(c.bucket,c.storage_key,signal),c),409,'The finalized video changed. Upload it again.');
+  const photo=composition?.source_mode===PHOTO_MODE;
+  const photoMaster=!!master&&PHOTO_PROFILES.includes(master.quality_profile as typeof PHOTO_PROFILES[number]);
+  if(photo||photoMaster)assert(photo&&photoMaster&&master!.quality_profile===composition!.composition_profile,409,'This Photo motion video needs its exact registered server profile.');
   const signed=await deps.sign(c.bucket,c.storage_key,300);
   const cfr24=!!master&&CFR24_MASTER_PROFILES.includes(master.quality_profile);
   assert(!master||master.quality_profile===undefined||cfr24,409,'The saved composition profile is unavailable.');
@@ -80,6 +105,7 @@ export async function attestPropertyVideo(actor:string,listing:string,asset:stri
    const response=await deps.fetch(url,{...init,headers:h,signal:AbortSignal.any([signal,...(init.signal?[init.signal]:[])])});
    assert(response.headers.get('etag')===c.etag&&new RegExp(`^bytes \\d+-\\d+/${c.bytes}$`).test(response.headers.get('content-range')??''),409,'The video changed during verification.');return response;
   },cfr24?24:30);
+  if(photo)assert(info.fps===24&&Math.abs(info.duration_s-Number(composition!.total_frames)/24)<=.001,409,'The registered Photo motion timeline changed.');
   assert(info.width>=1920&&info.height>=1080&&info.width*9===info.height*16&&info.width<=7680&&info.height<=4320&&info.duration_s<=600,400,'The listing video must be landscape16:9 at1080p or higher.');
   assert(same(await deps.head(c.bucket,c.storage_key,signal),c),409,'The finalized video changed. Upload it again.');
   const {data,error}=await deps.rpc('record_property_video_attestation',{p_actor:actor,p_listing:listing,p_asset:asset,p_etag:c.etag,p_bytes:c.bytes,p_width:info.width,p_height:info.height,p_duration:info.duration_s});if(error)throwRpc(error.message);

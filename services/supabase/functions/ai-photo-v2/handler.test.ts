@@ -34,3 +34,17 @@ Deno.test("actual versioned entry still authenticates ordinary JWT before any re
 Deno.test("forwarded request cancellation remains attached without reconstructing its body",()=>{
  const control=new AbortController(),req=new Request("https://ordinary.example/ai-photo-v2",{method:"POST",body:"exact",signal:control.signal}),forward=canonicalPhotoRequest(req);assertEquals(forward.signal.aborted,false);control.abort();assertEquals(forward.signal.aborted,true);
 });
+
+Deno.test("request-key status GET keeps exact opaque key nullable listing and selected-library headers through alias",()=>{
+ for(const prefix of["","/functions/v1"])for(const listing of[null,"EA100606-0000-4000-8000-000000000003"]){
+  const query=new URLSearchParams({request_key:"EA100606-0000-4000-8000-0000000000A1"});if(listing)query.set("listing_id",listing);
+  const request=new Request("https://ordinary.example"+prefix+"/ai-photo-v2/status?"+query,{headers:{authorization:"Bearer owner","x-org-id":"owned-library"}});
+  const forwarded=canonicalPhotoRequest(request),url=new URL(forwarded.url);
+  assertEquals(url.pathname,prefix+"/ai-photo/status");assertEquals(url.search,new URL(request.url).search);assertEquals(forwarded.method,"GET");assertEquals([...forwarded.headers],[...request.headers]);assertEquals(forwarded.body,null);
+ }
+});
+Deno.test("actual request-key status GET authenticates before any saved lookup delivery or provider",async()=>{
+ const previous=fetch,calls:string[]=[];
+ globalThis.fetch=async(raw,init)=>{const req=new Request(raw,init);calls.push(req.url);assertEquals(req.url,"https://v2-db.fixture.invalid/auth/v1/user");assertEquals(req.headers.get("authorization"),"Bearer expired-status-caller");return Response.json({message:"expired"},{status:401});};
+ try{const response=await handleAIPhotoV2(new Request("https://ordinary.example/ai-photo-v2/status?request_key=EA100606-0000-4000-8000-0000000000A1",{headers:{authorization:"Bearer expired-status-caller","x-org-id":"owned-library"}}));assertEquals(response.status,401);assertEquals(calls.length,1);}finally{globalThis.fetch=previous;}
+});

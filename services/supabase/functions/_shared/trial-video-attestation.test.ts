@@ -172,7 +172,8 @@ async function actualPublish(options: Options = {}, replay = false, removeLibrar
     }
     const table = url.pathname.split("/").at(-1);
     if (table === "deletion_requests") return response([]);
-    if (table === "capture_assets") return response({ id: scope.asset, listing_id: scope.listing });
+    if (table === "capture_assets") return response({ id: scope.asset, listing_id: scope.listing,
+      storage_key: `renders/${scope.org}/${scope.listing}/recorded-${scope.asset}.mp4` });
     if (table === "listings") return response({ id: scope.listing, org_id: scope.org });
     if (table === "render_jobs") return response(replay ? { id: job, listing_id: scope.listing, capture_asset_id: scope.asset } : null);
     if (table === "renders") return response(replay ? { id: render, published_at: "2026-10-06T00:00:00Z" } : null);
@@ -188,9 +189,12 @@ async function actualPublish(options: Options = {}, replay = false, removeLibrar
           const url=new URL("../renders/index.ts",import.meta.url);
           const source=await Deno.readTextFile(url);
           const anchor="const org = await contentOrgForUser(user.id, preferredOrg(req), listing, true);";
-          ok(source.includes(anchor));
-          const mutant=source.replace(anchor,"const org = property.org_id;")
-            .replace(/from (["'])(\.\.\/[^"']+)\1/g,(_all,_quote,path)=>`from ${JSON.stringify(new URL(path,url).href)}`);
+          eq(source.split(anchor).length-1,2);
+          // Both the attestation and ordinary-media purpose path now recheck
+          // the selected library. Model an attacker trusting physical org at
+          // both boundaries so the negative oracle still tests authority.
+          const mutant=source.replaceAll(anchor,`const org = ${JSON.stringify(scope.org)};`)
+            .replace(/from (["'])(\.\.?\/[^"']+)\1/g,(_all,_quote,path)=>`from ${JSON.stringify(new URL(path,url).href)}`);
           await import("data:application/typescript,"+encodeURIComponent(mutant));
         }else{await import("../renders/index.ts");actualRenders=run;}
       } finally { Object.defineProperty(Deno, "serve", descriptor); }
@@ -237,7 +241,7 @@ Deno.test("actual publish-app refuses a foreign logical library before probing o
   ok(!result.operations.includes("subscription_trial_video_context"));
   ok(!result.operations.includes("create_render_job")&&!result.operations.includes("publish_recorded_render"));
 });
-Deno.test("actual publish-app rechecks library authority after RLS reads; compiled guard removal fails that oracle",async()=>{
+Deno.test("actual publish-app rechecks library authority after RLS reads; compiled removal of both guards fails that oracle",async()=>{
   const oracle=async(remove:boolean)=>{
     const result=await actualPublish({logicalOrg:id(9),selectedOrg:id(9),libraryError:"RP403: The Team library relationship was removed"},false,remove);
     eq(result.status,403);ok(!result.operations.includes("HEAD"));

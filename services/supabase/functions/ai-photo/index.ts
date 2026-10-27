@@ -119,7 +119,9 @@ import { restorePhotoResult, type PhotoResultPointer } from "./photo-result.ts";
 import { photoJsonResponse } from "./photo-response.ts";
 import { validatePhotoInputs, validatePhotoPrompt, decodePhotoOutput } from "./input-policy.ts";
 import { photoHelperPayload, photoHelperQuote, type PhotoHelperPayload } from "./helper-policy.ts";
-import {lookupPhotoQuality,statusPhotoQuality,photoQualityScope,beginPhotoQuality,retainPhotoCandidate,failPhotoQuality,photoQualityResponse,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
+import {DECLUTTER_ASSESSMENT_PROTOCOL,DECLUTTER_ASSESSMENT_INSTRUCTION,parseDeclutterAssessment,unavailableDeclutterAssessment,type DeclutterAssessment} from "./declutter-assessment.ts";
+import {decodeBase64Bytes} from "../_shared/base64-bytes.ts";
+import {lookupPhotoQuality,statusPhotoQuality,requestPhotoQualityStatus,photoUUID,photoQualityScope,beginPhotoQuality,retainPhotoCandidate,failPhotoQuality,photoQualityResponse,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
 import {waitForPhotoQuality,PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from "./photo-qc-wait.ts";
 import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
 import {assertPhotoRecoveryProtocol,hasPhotoRecoveryProtocol} from "./protocol.ts";
@@ -519,6 +521,9 @@ function stagePrompt(p: Profile, styleDesc: string): string {
 }
 
 interface Body {
+  /** Additive analysis contract. Legacy suggestions and image POSTs are unchanged. */
+  declutter_assessment_protocol?: string;
+  source_sha256?: string;
   image_b64?: string;
   mime?: string;
   edit?: string;
@@ -614,7 +619,19 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
   try {
     const user = await getUser(req); // owner auth; RLS not needed (no DB touch beyond quota)
     if(req.method==="GET"&&new URL(req.url).pathname.endsWith("/ai-photo/status")){
-      const row=await statusPhotoQuality(adminClient(),user.id,new URL(req.url).searchParams.get("check_id")??"",preferredOrg(req)??null);
+      const params=new URL(req.url).searchParams;
+      let row:PhotoQualityEnvelope;
+      if(params.has("request_key")){
+        assert(!params.has("check_id")&&params.getAll("request_key").length===1&&params.getAll("listing_id").length<=1&&[...params.keys()].every(key=>key==="request_key"||key==="listing_id"),400,"Choose one exact saved photo request.");
+        const requestKey=params.get("request_key")!,listingParam=params.get("listing_id");
+        assert(photoUUID(requestKey)&&(listingParam===null||photoUUID(listingParam)),400,"Choose valid saved photo request and listing identities.");
+        assert(preferredOrg(req),400,"Select the saved photo's library.");
+        const listingId=listingParam?.toLowerCase()??null;
+        const orgId=await requireEditorRole(user,req,"Saved photo edits",listingId??undefined);
+        // Preserve the opaque key's casing and the original nullable listing.
+        // This branch performs lookup/delivery only, never the paid POST path.
+        row=await requestPhotoQualityStatus(adminClient(),{actorId:user.id,orgId,requestKey,listingId},preferredOrg(req)??null);
+      }else row=await statusPhotoQuality(adminClient(),user.id,params.get("check_id")??"",preferredOrg(req)??null);
       return await photoQualityResponse(adminClient(),row,user.id,preferredOrg(req)??null);
     }
     if (req.method !== "POST") throw new HttpError(405, "POST only");
@@ -679,6 +696,8 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     }
     if (edit === "suggest") {
       assert(body.image_b64, 400, "image_b64 is required");
+      const assessmentRequested=body.declutter_assessment_protocol!==undefined;
+      assert(!assessmentRequested||body.declutter_assessment_protocol===DECLUTTER_ASSESSMENT_PROTOCOL&&typeof body.source_sha256==="string"&&/^[a-f0-9]{64}$/.test(body.source_sha256),400,"Use the exact photo assessment protocol and source identity.");
       const helperCharge = await guardHelper(user, req, body.listing_id);
       try {
         const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
@@ -687,13 +706,18 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
         await assertPhotoHelperSponsorship(funding);
         try { validatePhotoInputs(body.image_b64,mime); }
         catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
+        if(assessmentRequested){
+          const bytes=decodeBase64Bytes(body.image_b64),digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),b=>b.toString(16).padStart(2,"0")).join("");
+          if(digest!==body.source_sha256){await abortFundingOperationBeforeDispatch(funding);throw new HttpError(400,"The assessment photo changed. No analysis or image edit was started.");}
+        }
         const step = legacyPhotoStep("photo.suggest");
         step.provider = "gemini"; step.model = TEXT_MODEL;
-        const payload=photoHelperPayload([{text:suggestInstruction(profile)},{inline_data:{mime_type:mime,data:body.image_b64!}}]);
-        const suggestions = await fundedAttempt(funding, "photo.suggest", step, body, photoHelperQuote(step.model,payload), () => suggestEdits(payload));
+        const payload=photoHelperPayload([{text:suggestInstruction(profile)+(assessmentRequested?"\n\n"+DECLUTTER_ASSESSMENT_INSTRUCTION:"")},{inline_data:{mime_type:mime,data:body.image_b64!}}]);
+        const assessment:{value?:DeclutterAssessment}|undefined=assessmentRequested?{}:undefined;
+        const suggestions = await fundedAttempt(funding, "photo.suggest", step, body, photoHelperQuote(step.model,payload), () => suggestEdits(payload,assessment));
         // Billed text call: the ledger row names the hold so it settles.
         await recordRoutedAiCost(adminClient(), { orgId: helperCharge.orgId, feature: "photo_helper", step, unitCentsOverride: photoHelperQuote(step.model,payload)?.cents, meta: { request_key: funding.requestKey, stage: "photo.suggest", kind: "suggest" } });
-        return json(await completeFundingOperation(funding, { suggestions, space_type: space }));
+        return json(await completeFundingOperation(funding, { suggestions, space_type: space,...(assessmentRequested?{declutter_assessment_protocol:DECLUTTER_ASSESSMENT_PROTOCOL,source_sha256:body.source_sha256,declutter_assessment:assessment?.value??unavailableDeclutterAssessment(),analysis_cost_bound_cents:photoHelperQuote(step.model,payload)?.cents,analysis_only:true,analysis_request_key:funding.requestKey,org_id:helperCharge.orgId,selected_library_org_id:preferredOrg(req)??null,listing_id:body.listing_id??null}:{} ) }));
       } catch (e) {
         await refundHelperCharge(helperCharge);
         throw e;
@@ -1096,10 +1120,11 @@ function suggestInstruction(p: Profile): string {
 }
 
 /** edit:"suggest" — analyze the photo and pick up to 3 genuinely useful edits. */
-async function suggestEdits(payload:PhotoHelperPayload): Promise<Suggestion[]> {
+async function suggestEdits(payload:PhotoHelperPayload,assessment?:{value?:DeclutterAssessment}): Promise<Suggestion[]> {
   const raw = await geminiText(payload);
 
   const parsed = parseJsonLoose(raw);
+  if(assessment)assessment.value=parseDeclutterAssessment((parsed as Record<string,unknown>)?.declutter_assessment);
   const list = Array.isArray((parsed as Record<string, unknown>)?.suggestions)
     ? (parsed as { suggestions: unknown[] }).suggestions
     : Array.isArray(parsed)

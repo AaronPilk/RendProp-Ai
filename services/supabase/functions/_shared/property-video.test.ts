@@ -1,4 +1,4 @@
-import {assert,assertEquals,assertRejects} from 'https://deno.land/std@0.224.0/assert/mod.ts';
+import {assert,assertEquals,assertRejects,assertThrows} from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import {HttpError} from './http.ts';
 import {propertyVideoManifest,verifyPropertyVideoInput,attestPropertyVideo,type PropertyVideoDeps} from './property-video.ts';
 import {propertyPublicPresentation} from './property-public-presentation.ts';
@@ -8,6 +8,12 @@ import composedMaster from '../ai-video/fixtures/composed-landscape70s-publicati
 const id=(n:number)=>`e1000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const actor=id(1),org=id(2),listing=id(3),asset=id(4),poster=id(5),source=id(6),composition=id(7);
 const manifest={schema:1,purpose:'listing',aspect:'16:9',branding_policy:'unbranded',sources:[{photo_asset_id:source,photo_version_id:'retained-version.jpg',motion_kind:'original_photo'}]};
+const photoSource={photo_asset_id:source,photo_version_id:`asset:${source}`,motion_kind:'photo_motion',source_bound:true,source_sha256:'a'.repeat(64),source_bytes:4,visible_frames:48,motion:'push_in'};
+const photoManifest=(profile:'photo-motion-v1-cfr24'|'photo-motion-v2-cfr24'|'photo-motion-v2-opening-cfr24')=>({
+ schema:1,purpose:'listing',aspect:'16:9',branding_policy:'unbranded',source_mode:'photo_motion_v1',composition_profile:profile,fps:24,
+ total_frames:profile==='photo-motion-v2-opening-cfr24'?168:48,sources:[photoSource],
+ ...(profile==='photo-motion-v2-opening-cfr24'?{opening:{kind:'aerial_opening',position:0,aspect:'16:9',fps:24,visible_frames:120,available_frames:120}}:{}),
+});
 Deno.test('manifest permits original-photo motion without successful generation,100 items, and filename version IDs',()=>{
  assertEquals(propertyVideoManifest(manifest),manifest);
  assertEquals((propertyVideoManifest({...manifest,sources:Array(100).fill(manifest.sources[0])}).sources as unknown[]).length,100);
@@ -18,6 +24,19 @@ Deno.test('manifest rejects wrong purpose/aspect, unbounded sources, empty sourc
  {...manifest,sources:[{...manifest.sources[0],motion_kind:'ai',source_bound:true}]}, {...manifest,sources:[{...manifest.sources[0],generation_request_id:'x'.repeat(257)}]}]){
  let refused=false;try{propertyVideoManifest(value);}catch(error){assert(error instanceof HttpError);refused=true;}assert(refused);
  }
+});
+Deno.test('saved Photo motion v1, v2 and accepted opening manifests retain exact 24 fps source receipts',()=>{
+ for(const profile of ['photo-motion-v1-cfr24','photo-motion-v2-cfr24','photo-motion-v2-opening-cfr24'] as const){
+  const m=photoManifest(profile);assertEquals(propertyVideoManifest(m),m);
+ }
+ for(const changed of [
+  {...photoManifest('photo-motion-v2-cfr24'),total_frames:49},
+  {...photoManifest('photo-motion-v2-cfr24'),sources:[{...photoSource,motion:'spiral'}]},
+  {...photoManifest('photo-motion-v2-cfr24'),sources:[{...photoSource,generation_request_id:'client-claim'}]},
+  {...photoManifest('photo-motion-v2-cfr24'),sources:[photoSource,photoSource],total_frames:96},
+  {...photoManifest('photo-motion-v2-opening-cfr24'),opening:{kind:'aerial_opening',position:1,aspect:'16:9',fps:24,visible_frames:120,available_frames:120}},
+  {...manifest,source_mode:'photo_motion_v1'},
+ ])assertThrows(()=>propertyVideoManifest(changed),HttpError);
 });
 const hex=async(bytes:Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new Uint8Array(bytes))),b=>b.toString(16).padStart(2,'0')).join('');
 async function inputFixture(change:'inline'|'object'|'etag'|'head'|'provenance'|'scope'|null=null){
@@ -34,14 +53,14 @@ Deno.test('private source is checked against actual retained bytes before dispat
 Deno.test('inline/source/object/version/provenance substitution never reaches paid dispatch',async()=>{
  for(const kind of ['inline','object','etag','head','provenance','scope']as const){const f=await inputFixture(kind);await assertRejects(()=>f.result,HttpError);assertEquals(f.counts().paidDispatches,0);if(['inline','provenance','scope'].includes(kind))assertEquals(f.counts().reads,0);}
 });
-function outputFixture(o:{width?:number;height?:number;seconds?:number;changed?:boolean;receipt?:boolean;fps?:number;masterProfile?:string}={}){
+function outputFixture(o:{width?:number;height?:number;seconds?:number;changed?:boolean;receipt?:boolean;fps?:number;masterProfile?:string;composition?:Record<string,unknown>}={}){
  const f=propertyMP4Fixture({width:o.width??1920,height:o.height??1080,seconds:o.seconds??15,fps:o.fps??30}),key=`renders/${org}/${listing}/finished.mp4`;
  let writes=0,heads=0;
  const deps:PropertyVideoDeps={rpc:async(name,args)=>{if(name==='property_owned_upload')return{error:null,data:{actor_id:actor,org_id:org,listing_id:listing,asset_id:asset,bucket:'renders',storage_key:key,bytes:f.total,etag:'"fixture-version"',content_type:'video/mp4',...(o.masterProfile?{sha256:'a'.repeat(64)}:{})}};
  if(name==='background_video_delivery')return{error:null,data:o.masterProfile?{kind:'registered_background_video',asset_id:asset,bytes:f.total,sha256:'a'.repeat(64),quality_profile:o.masterProfile}:null};
  writes++;assertEquals(args.p_width,o.width??1920);assertEquals(args.p_height,o.height??1080);return{error:null,data:{attested:o.receipt!==false}};},
  head:async()=>({exists:true,bytes:f.total,etag:o.changed&&++heads>1?'"changed"':'"fixture-version"',contentType:'video/mp4'}),sign:async()=>`https://video.fixture.invalid/${key}`,fetch:async(url,init)=>{assertEquals(new Headers((init as RequestInit)?.headers).get('if-match'),'"fixture-version"');return f.fetch(String(url),init!);}};
- return{result:()=>attestPropertyVideo(actor,listing,asset,deps),writes:()=>writes};
+ return{result:()=>attestPropertyVideo(actor,listing,asset,deps,o.composition),writes:()=>writes};
 }
 Deno.test('actual bounded AVC parser binds landscape1080p finished bytes instead of client metadata',async()=>{const f=outputFixture(),r=await f.result();assertEquals([r.width,r.height,r.duration_s],[1920,1080,15]);assertEquals(f.writes(),1);});
 Deno.test('portrait,720p,too-long,and changed object cannot attest; missing positive receipt cannot acknowledge',async()=>{
@@ -100,4 +119,17 @@ Deno.test('pre-migration projection is closed basic; unexpected SQL failure neve
 Deno.test('publication selects24 only from the exact registered steady-v2 source receipt',async()=>{
  const f=outputFixture({fps:24,masterProfile:'fal-kling3-4k-steady-v2'}),r=await f.result();assertEquals([r.width,r.height,r.fps],[1920,1080,24]);assertEquals(f.writes(),1);
  for(const o of[{fps:30,masterProfile:'fal-kling3-4k-steady-v2'},{fps:24,masterProfile:'invented'},{fps:24,masterProfile:'fal-kling3-4k-v1'}]){const f=outputFixture(o);await assertRejects(f.result,HttpError);assertEquals(f.writes(),0);}
+});
+Deno.test('registered Photo motion and opening profiles require exact 24 fps profile and timeline',async()=>{
+ for(const profile of ['photo-motion-v1-cfr24','photo-motion-v2-cfr24','photo-motion-v2-opening-cfr24'] as const){
+  const composition=photoManifest(profile),seconds=composition.total_frames/24;
+  const accepted=outputFixture({fps:24,seconds,masterProfile:profile,composition});
+  assertEquals((await accepted.result()).fps,24);assertEquals(accepted.writes(),1);
+  for(const failure of [
+   {fps:30,seconds,masterProfile:profile,composition},
+   {fps:24,seconds:seconds+1,masterProfile:profile,composition},
+   {fps:24,seconds,masterProfile:'fal-kling3-4k-steady-v2',composition},
+   {fps:24,seconds,masterProfile:profile},
+  ]){const f=outputFixture(failure);await assertRejects(f.result,HttpError);assertEquals(f.writes(),0);}
+ }
 });

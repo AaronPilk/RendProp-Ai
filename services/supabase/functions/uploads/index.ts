@@ -318,7 +318,7 @@ Deno.serve(async (req) => {
     }
 
     assert(seg.length === 2, 405, "Unsupported uploads path");
-    const assetId = seg[0], asset = await requireAsset(db, assetId);
+    const assetId = seg[0], asset = await requireCompletionAsset(db, admin, user.id, assetId, seg[1]);
     await requireAssetWriteRole(db, admin, user.id, asset);
     const bucket = r2BucketFor(asset.bucket);
     if (seg[1] === "renew") {
@@ -673,4 +673,41 @@ async function requireAsset(db: any, assetId: string) {
   if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);
   if (!data) throw new HttpError(404, "Asset not found");
   return data as Record<string, unknown>;
+}
+
+/** A presenter's media gate may hide an unapproved AI master after its bytes
+ * were stored. Only its original v2 reservation owner may finish that transport;
+ * completion never certifies publication, QC or media-read permission. */
+// deno-lint-ignore no-explicit-any
+async function requireCompletionAsset(db: any, admin: any, actor: string, assetId: string, action: string) {
+  try { return await requireAsset(db, assetId); }
+  catch (error) {
+    if (!(error instanceof HttpError) || error.status !== 404 || action !== "complete") throw error;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuid.test(actor) || !uuid.test(assetId)) throw error;
+    actor = actor.toLowerCase(); assetId = assetId.toLowerCase();
+    const { data: reservation, error: lookupError } = await admin.from("upload_reservations")
+      .select("asset_id,actor_id,org_id,listing_id,state,spec").eq("asset_id", assetId).eq("actor_id", actor).maybeSingle();
+    if (lookupError) throw new HttpError(503, "Owned upload completion authority could not be verified");
+    if (!reservation || reservation.asset_id !== assetId || reservation.actor_id !== actor ||
+        !uuid.test(reservation.org_id) || !uuid.test(reservation.listing_id) ||
+        !["open", "completed"].includes(reservation.state) || !reservation.spec ||
+        typeof reservation.spec !== "object" || Array.isArray(reservation.spec)) throw error;
+    // Recheck today's listing-specific writable library, never a cached member
+    // role or the existence of a transport record alone.
+    await requireWriteRole(admin, actor, reservation.org_id, reservation.listing_id);
+    const asset = await requireAsset(admin, assetId), spec = reservation.spec;
+    assert(asset.id === assetId && asset.listing_id === reservation.listing_id && asset.transport_version === 2 &&
+      asset.upload_aborted === false && typeof asset.uploaded === "boolean" &&
+      reservation.state === (asset.uploaded ? "completed" : "open") && spec.listing_id === reservation.listing_id &&
+      ["kind", "bucket", "bytes", "content_type_declared", "part_size", "parts_total"].every(k => asset[k] === spec[k]) &&
+      (asset.uploaded && !spec.content_type_declared || asset.content_type === spec.content_type),
+      409, "The saved upload no longer matches its original reservation");
+    const prefix = `${asset.bucket}/${reservation.org_id}/${reservation.listing_id}/`;
+    const role = spec.key_role, stem = role === "gallery" ? `gallery-${assetId}` : role === "original" ? `original-${assetId}` : assetId;
+    assert(["gallery", "original", "default"].includes(role) && typeof asset.storage_key === "string" &&
+      asset.storage_key.startsWith(prefix) && new RegExp(`^${stem}(?:-complete-[0-9a-f-]{36})?\\.[a-zA-Z0-9]{1,8}$`).test(asset.storage_key.slice(prefix.length)),
+      409, "The saved upload key no longer matches its original reservation");
+    return asset;
+  }
 }
