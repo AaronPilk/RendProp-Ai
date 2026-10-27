@@ -85,7 +85,7 @@ Deno.test('actual generation prompt branch switches only saved steady-v2 and omi
 
 Deno.test('actual CPU action binds saved24 profile and matching narration limit without changing old task shape',async()=>{
  const src=await Deno.readTextFile(new URL('../property-video-worker/engine.ts',import.meta.url)),start=src.indexOf('export async function action(');assert(start>0);
- const prefix=`type WorkerAction=any;type ComposeAction=any;const PROPERTY_VIDEO_STEADY_PROFILE='fal-kling3-4k-steady-v2';const KIE_PROPERTY_PROFILE='kie-kling3-4k-steady-v1';const scope=async()=>{};const seconds=()=> 'closed-expiry';const media=async(c:any)=>c;const bytesFrom=async()=>({sha256:'exact'});const assert=(ok:boolean)=>{if(!ok)throw Error('assert')};const rpc=async()=>({});const headObject=async()=>({});const bucket=(x:any)=>x;
+ const prefix=`import{isPhotoMotion}from ${JSON.stringify(new URL('../_shared/photo-motion.ts',import.meta.url).href)};type WorkerAction=any;type ComposeAction=any;const PROPERTY_VIDEO_STEADY_PROFILE='fal-kling3-4k-steady-v2';const KIE_PROPERTY_PROFILE='kie-kling3-4k-steady-v1';const scope=async()=>{};const seconds=()=> 'closed-expiry';const media=async(c:any)=>c;const bytesFrom=async()=>({sha256:'exact'});const assert=(ok:boolean)=>{if(!ok)throw Error('assert')};const rpc=async()=>({});const headObject=async()=>({});const bucket=(x:any)=>x;
  const adminClient=()=>({from:()=>{const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({error:null,data:{state:'ready',storage_key:'saved-voice',bytes:12,sha256:'a'.repeat(64),etag:'owned',mime:'audio/mp4'}})};return q;}});`;
  const compile=async(code:string)=>await import('data:application/typescript,'+encodeURIComponent(prefix+code));
  const actual=await compile(src.slice(start));
@@ -94,5 +94,5 @@ Deno.test('actual CPU action binds saved24 profile and matching narration limit 
  const old=await actual.action({action:'compose',job:j(P),sources}),steady=await actual.action({action:'compose',job:j(S),sources});
  assertEquals(old.composition_profile,undefined);assertEquals(steady.composition_profile,'steady-v2-cfr24');const{composition_profile,...rest}=steady;assertEquals(rest,old);assertEquals(steady.sources.map((x:any)=>x.sha256),['first','second']);
  for(const [profile,max]of[[P,10-8/30],[S,10-6/24]]as const){const job=j(profile);(job.manifest as any).narration_asset_id='saved';assertEquals((await actual.action({action:'inspect_audio',job})).max_duration_s,max);}
- const bad=await compile(src.slice(start).replace("...(steady?{composition_profile:'steady-v2-cfr24' as const}:{}),",''));assertEquals((await bad.action({action:'compose',job:j(S),sources})).composition_profile,undefined,'Compiled omitted profile exposes silent30fallback');
+ const bad=await compile(src.slice(start).replace("steady?{composition_profile:'steady-v2-cfr24' as const}:{}",'{}'));assertEquals((await bad.action({action:'compose',job:j(S),sources})).composition_profile,undefined,'Compiled omitted profile exposes silent30fallback');
 });
