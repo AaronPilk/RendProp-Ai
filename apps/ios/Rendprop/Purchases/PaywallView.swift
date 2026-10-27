@@ -258,7 +258,7 @@ struct PaywallView: View {
                          priceText: Self.priceText(offer.product, period: offer.period),
                          note: offer.note,
                          isSelected: selectedPlan == plan && selectedTeamVariant == nil,
-                         isCurrent: purchases.activeProductID == offer.product?.id)
+                         isCurrent: offer.product.map { purchases.activeProductID == $0.id } ?? false)
         }
         .buttonStyle(.plain)
         .disabled(offer.product == nil)
