@@ -61,6 +61,7 @@ enum Config {
 }
 // Push cleanup and purchase presentation have a separate executable account-switch harness.
 @MainActor final class PushManager { static let shared = PushManager(); func accountWillChange(retainCleanup: Bool = true) {}; func accountDidChange() {} }
+@MainActor final class UploadManager { static let shared = UploadManager(); var retirements = 0; func accountWillChange() { retirements += 1 } }
 @MainActor final class PurchaseManager { static let shared = PurchaseManager(); func clearAccountPresentation() {} }
 @MainActor enum AccountLocalPreferences { static func activate(previous: UUID?, next: UUID) {} }
 @MainActor final class AuthStore {
@@ -77,8 +78,13 @@ enum Config {
  let connection = Connection()
  enum Keys { static let userID = "id", userName = "name", orgName = "org", sessionIdentified = "sessionIdentified" }
  static var access: String?; static var refresh: String?
+ static var suppressed = false
  static func storedRefreshToken() -> String? { refresh }
- static func persistTokens(access: String, refresh: String?, expiresAt: Date?) { Self.access = access; Self.refresh = refresh }
+ static func persistTokens(access: String, refresh: String?, expiresAt: Date?, explicitNewSession: Bool) -> Bool {
+  guard explicitNewSession || !suppressed else { return false }
+  Self.access = access; Self.refresh = refresh; suppressed = false; return true
+ }
+ static func suppressCachedSession() -> Bool { suppressed = true; return true }
  static func clearTokens() { access = nil; refresh = nil }
  func discardPendingAdoption() {}
  func scheduleAutoRefresh() {}
@@ -119,6 +125,7 @@ enum Failure: Error { case assertion(String) }
   let owner = UUID().uuidString.lowercased(), listingID = UUID(), orgID = UUID()
   auth.applySession(accessToken: jwt(owner), refreshToken: "synthetic", expiresAt: Date())
   let firstRevision = auth.syncSessionRevision, firstEpoch = auth.sessionEpoch
+  let firstUploadRetirements = UploadManager.shared.retirements
   let context = ProductionPlanSyncStore.Context(owner: owner, listingID: listingID)
   let identity = "\(owner):\(firstRevision)"
   let store = ProductionPlanSyncStore(), wire = TestWire(listingID)
@@ -136,14 +143,20 @@ enum Failure: Error { case assertion(String) }
   check(AuthStore.refresh == "rotated-synthetic", "The rotated credential must still commit")
   check(await auth.performRefresh(), "Repeated same-account refresh must succeed")
   check(auth.syncSessionRevision == firstRevision, "Repeated refresh stopped the remaining clip queue identity")
+  check(UploadManager.shared.retirements == firstUploadRetirements,
+        "Ordinary JWT rotation must preserve this account's active upload")
 
   auth.applySession(accessToken: jwt(owner), refreshToken: "synthetic", expiresAt: Date())
   check(auth.syncSessionRevision != firstRevision, "Explicit sign-in must invalidate outstanding work even for the same account")
+  check(UploadManager.shared.retirements == firstUploadRetirements + 1,
+        "Explicit new session must retire the earlier upload")
   let denied = await store.save(context, serverID: listingID, orgID: orgID, api: wire, identity: identity)
   check(!denied && wire.writes == 1, "Stale-session writers must never dispatch")
   let beforeSignOut = auth.syncSessionRevision
   auth.signOut()
   check(auth.syncSessionRevision != beforeSignOut && !auth.isSignedIn, "Sign-out must invalidate cloud work immediately")
+  check(UploadManager.shared.retirements == firstUploadRetirements + 2,
+        "Sign-out must retire the former account's upload")
   auth.applySession(accessToken: jwt(owner), refreshToken: "synthetic", expiresAt: Date())
   let restored = auth.syncSessionRevision
   check(restored != firstRevision, "Sign-out and back into the same account must not revive old work")
@@ -198,7 +211,7 @@ test('ordinary JWT rotation preserves cloud work while real session boundaries i
     const run = spawnSync(binary, [], { encoding: 'utf8', timeout: 15_000 });
     writeFileSync(join(output, name + '-run.log'), run.stdout + run.stderr);
     assert.equal(run.status, name === 'actual' ? 0 : 1, run.stdout + run.stderr);
-    assert.match(run.stdout, name === 'actual' ? /PASS: 19 production auth refresh and Studio writer assertions/ : /same-account token refresh discarded the successful Studio plan receipt/);
+    assert.match(run.stdout, name === 'actual' ? /PASS: 22 production auth refresh and Studio writer assertions/ : /same-account token refresh discarded the successful Studio plan receipt/);
     results.push({ name, exit: run.status, output: run.stdout.trim() });
   }
   writeFileSync(join(output, 'receipt.json'), JSON.stringify({ accepted: true, results,

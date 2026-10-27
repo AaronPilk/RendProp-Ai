@@ -36,6 +36,25 @@ import Foundation
         check(AuthStore.connections == 1 && firstLaunch.physicalWrites == 1,
               "Anonymous connection is established before binding upload owner")
 
+        // A→B→A may restore the same JWT subject while an old foreground PUT
+        // is still returning. Its earlier session must not complete that asset.
+        let replacedSession = RecoveryAPI()
+        let beforeReplacement = AuthStore.shared.syncSessionRevision
+        do {
+            _ = try await DirectUploader.uploadPhoto(fileURL: file, listingID: listing, role: "capture",
+                contentType: "image/jpeg", keyPrefix: "photo", api: replacedSession,
+                journalStore: DirectUploadJournal(directory: root.appendingPathComponent("replaced-session")),
+                transfer: { request, source in
+                    let response = try await replacedSession.transfer(request, source)
+                    AuthStore.shared.syncSessionRevision += 2
+                    return response
+                }, delay: { _ in })
+            check(false, "Replaced session completed a former photo upload")
+        } catch is CancellationError { assertions += 1 }
+        check(AuthStore.shared.syncSessionRevision != beforeReplacement &&
+              replacedSession.physicalWrites == 1 && !replacedSession.completed,
+              "Same owner after a session replacement cannot complete the former photo ticket")
+
         let putLoss = RecoveryAPI(); putLoss.loseTransferReplyOnce = true
         _ = try await upload(putLoss, "put-loss")
         check(putLoss.transfers == 1 && putLoss.physicalWrites == 1 && putLoss.creates == 1,
@@ -182,6 +201,28 @@ import Foundation
         check(persisted.assetID == "legacy-id" && persisted.parts.first?.etag == "old-etag", "Old video records retain asset and part receipts")
         check(persisted.transportVersion == nil && persisted.ticketKey == nil, "Old record is not silently relabelled v2")
         check(persisted.legacyRecoveryApproved == nil, "Relaunch does not manufacture legacy consent")
+        check(!persisted.belongsToCurrentAccount(), "Legacy upload without owner proof cannot resume in another account")
+        var owned = UploadManager.State(filePath: "original.jpg", bytesTotal: Int64(bytes.count),
+                                        status: .paused, mode: "pending")
+        owned.ownerID = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
+        check(owned.belongsToCurrentAccount(), "A proven owner can retain a paused upload")
+        let encodedOwner = try JSONDecoder().decode(UploadManager.State.self, from: JSONEncoder().encode(owned))
+        check(encodedOwner.ownerID == owned.ownerID, "The upload owner survives relaunch")
+        var foreign = owned; foreign.ownerID = UUID().uuidString.lowercased()
+        var persistedAfterSwitch: UploadManager.State? = foreign
+        let foreignAPI = RecoveryAPI()
+        let foreignManager = UploadManager(api: foreignAPI, session: URLSession(configuration: .ephemeral),
+                                           recovering: foreign, persistState: { persistedAfterSwitch = $0; return true })
+        foreignManager.resume()
+        check(foreignManager.state == nil && persistedAfterSwitch == nil && foreignAPI.creates == 0,
+              "Foreign saved upload cannot resume or reserve from another account")
+        var persistedAfterSignOut: UploadManager.State? = owned
+        let signOutManager = UploadManager(api: RecoveryAPI(), session: URLSession(configuration: .ephemeral),
+                                           recovering: owned, persistState: { persistedAfterSignOut = $0; return true })
+        signOutManager.accountWillChange()
+        check(signOutManager.state == nil && persistedAfterSignOut == nil && signOutManager.photoProgress == nil,
+              "Sign-out retires the queued upload and its presentation")
+        check(try Data(contentsOf: file) == bytes, "Account cleanup preserves the owner's original file")
         var resuming = persisted
         resuming.prepareForExplicitResume()
         check(resuming.assetID == persisted.assetID && resuming.uploadID == persisted.uploadID &&
@@ -221,8 +262,9 @@ import Foundation
         ]
         for (index, item) in cases.enumerated() {
             let api = RecoveryAPI(); api.admissionFailure = item.0
-            let initial = UploadManager.State(filePath: "admission.mov", bytesTotal: Int64(original.count),
+            var initial = UploadManager.State(filePath: "admission.mov", bytesTotal: Int64(original.count),
                 status: .paused, mode: "pending")
+            initial.ownerID = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
             let session = URLSession(configuration: .ephemeral)
             let manager = UploadManager(api: api, session: session, recovering: initial, persistState: { _ in true })
             manager.resume()
@@ -383,6 +425,7 @@ import Foundation
             var record = UploadManager.State(filePath: "bounded.mov", bytesTotal: 64,
                 status: .paused, mode: "multipart", assetID: api.assetID,
                 uploadID: "fixture-session", partSize: 16, partCount: 4)
+            record.ownerID = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
             record.parts = (1...4).map { .init(number: $0, offset: Int64($0 - 1) * 16, length: 16) }
             record.transportVersion = 2
             record.ticketKey = "immutable-batch-fixture"
@@ -528,6 +571,7 @@ import Foundation
             var record = UploadManager.State(filePath: "multipart.mov", bytesTotal: 64,
                 status: .paused, mode: "multipart", assetID: api.assetID,
                 uploadID: "fixture-session", partSize: 16, partCount: 4)
+            record.ownerID = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
             record.parts = (1...4).map { .init(number: $0, offset: Int64($0 - 1) * 16, length: 16) }
             record.transportVersion = 2
             record.ticketKey = "immutable-batch-fixture"

@@ -571,6 +571,7 @@ final class AuthStore: ObservableObject {
             // Capture the outgoing account's cleanup before the write barrier
             // hides its bearer or a new account's token replaces it.
             PushManager.shared.accountWillChange()
+            UploadManager.shared.accountWillChange()
             PurchaseManager.shared.clearAccountPresentation()
         }
         guard Self.persistTokens(access: accessToken, refresh: refreshToken,
@@ -623,6 +624,7 @@ final class AuthStore: ObservableObject {
     @MainActor
     func signOut(preservingAdoption: Bool = false, serverAccountDeleted: Bool = false) {
         PushManager.shared.accountWillChange(retainCleanup: !serverAccountDeleted)
+        UploadManager.shared.accountWillChange()
         let suppressionSaved = Self.suppressCachedSession()
         PurchaseManager.shared.clearAccountPresentation()
         // Cancel any in-flight refresh FIRST — otherwise a refresh that resolves

@@ -30,19 +30,21 @@ enum DirectUploader {
             guard await AuthStore.shared.ensureSession() else { throw CancellationError() }
         }
         let owner = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
+        let sessionRevision = await MainActor.run { AuthStore.shared.syncSessionRevision }
         let key = keyPrefix + ":" + sha256Hex("\(listingID.uuidString)|\(role)|\(digest)|\(bytes)")
         let journalKey = photoJournalKey(owner: owner ?? "anonymous-pending", listingID: listingID,
             role: role, keyPrefix: keyPrefix, digest: digest, bytes: bytes)
-        func checkOwner() throws {
+        func checkOwner() async throws {
             try Task.checkCancellation()
-            guard AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == owner else { throw CancellationError() }
+            let sameSession = await MainActor.run { AuthStore.shared.syncSessionRevision == sessionRevision }
+            guard sameSession, AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == owner else { throw CancellationError() }
         }
         func create() async throws -> UploadTicket {
-            try checkOwner(); try checkBody()
+            try await checkOwner(); try checkBody()
             let ticket = try await api.requestUpload(filename: fileURL.lastPathComponent, bytes: bytes,
                 listingID: listingID, sha256: digest, kind: "photo", role: role,
                 contentType: contentType, idempotencyKey: key)
-            try checkOwner(); try checkBody()
+            try await checkOwner(); try checkBody()
             if let browser { try requireBrowserTicket(ticket, contentType: browser.contentType, role: role, listingID: listingID, allowUnknown: ticket.replayed != false) }
             return ticket
         }
@@ -57,7 +59,7 @@ enum DirectUploader {
             if let browser, let ticket = record.ticket {
                 if let declared = record.photoContentType, declared != browser.contentType { throw BrowserPhotoFailure.legacyReceipt }
                 try requireBrowserTicket(ticket, contentType: browser.contentType, role: role, listingID: listingID, allowUnknown: true)
-                try checkOwner(); try checkBody()
+                try await checkOwner(); try checkBody()
             }
             // A ticket that already ran a whole call dry may be retired and
             // replaced on THIS later, explicit attempt — once. The flag is
@@ -75,11 +77,11 @@ enum DirectUploader {
                 record.ticket = ticket; try await store.save(record, for: journalKey)
             }
             guard let initial = record.ticket, initial.mode == .single else { throw UploadRecovery.Failure.invalidTicket }
-            if record.completed { try checkOwner(); try checkBody(); await store.release(journalKey); return initial.assetID }
+            if record.completed { try await checkOwner(); try checkBody(); await store.release(journalKey); return initial.assetID }
             var metadata = UploadMetadata(); metadata.bytes = bytes; metadata.sha256 = digest
             var lastError: Error = UploadRecovery.Failure.invalidTicket
             for attempt in 0..<3 {
-                try checkOwner()
+                try await checkOwner()
                 if attempt > 0 { try await delay(UInt64(attempt) * 1_000_000_000) }
                 do {
                     try checkBody()
@@ -88,47 +90,47 @@ enum DirectUploader {
                             allowLegacyCancellation: explicitResume,
                             allowRetiredReplacement: allowReplacement,
                             persistCancellation: { id in
-                                try checkOwner()
+                                try await checkOwner()
                                 record.cancellationAuthorizedFor = id
                                 try await store.save(record, for: journalKey)
                             }, complete: { id in
-                                try checkOwner(); try checkBody()
+                                try await checkOwner(); try checkBody()
                                 try await api.completeUpload(assetID: id, parts: nil, metadata: metadata)
                             }, renew: { id in
-                                try checkOwner(); try checkBody()
+                                try await checkOwner(); try checkBody()
                                 let renewed = try await api.renewUpload(assetID: id)
-                                try checkOwner(); try checkBody()
+                                try await checkOwner(); try checkBody()
                                 if let browser { try requireBrowserTicket(renewed, contentType: browser.contentType, role: role, listingID: listingID, allowUnknown: record.photoContentType == nil) }
                                 return renewed
                             },
-                            cancel: { id in try checkOwner(); try await api.abortUpload(assetID: id) }, create: create)
+                            cancel: { id in try await checkOwner(); try await api.abortUpload(assetID: id) }, create: create)
                         switch result {
                         case .complete(let id):
-                            try checkOwner(); try checkBody()
+                            try await checkOwner(); try checkBody()
                             record.completed = true; try await store.save(record, for: journalKey)
-                            try checkOwner(); await store.release(journalKey); return id
+                            try await checkOwner(); await store.release(journalKey); return id
                         case .ticket(let ticket):
                             if let browser { try requireBrowserTicket(ticket, contentType: browser.contentType, role: role, listingID: listingID, allowUnknown: record.photoContentType == nil) }
-                            try checkOwner(); try checkBody()
+                            try await checkOwner(); try checkBody()
                             record.ticket = ticket
                             try await store.save(record, for: journalKey)
                         }
                     }
                     guard let ticket = record.ticket, let put = ticket.putURL,
                           put.scheme == "https", ticket.mode == .single else { throw UploadRecovery.Failure.invalidTicket }
-                    try checkOwner(); try checkBody()
+                    try await checkOwner(); try checkBody()
                     // Persist BEFORE handing bytes to URLSession: app death or
                     // network handover afterward is always reconciled first.
                     record.dispatched = true
                     try await store.save(record, for: journalKey)
                     let response = try await transfer(photoPutRequest(url: put, contentType: contentType), fileURL)
-                    try checkOwner(); try checkBody()
+                    try await checkOwner(); try checkBody()
                     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                     guard (200..<300).contains(status) else { throw APIError.badResponse(status) }
                     try await api.completeUpload(assetID: ticket.assetID, parts: nil, metadata: metadata)
-                    try checkOwner(); try checkBody()
+                    try await checkOwner(); try checkBody()
                     record.completed = true; try await store.save(record, for: journalKey)
-                    try checkOwner(); await store.release(journalKey); return ticket.assetID
+                    try await checkOwner(); await store.release(journalKey); return ticket.assetID
                 } catch is CancellationError { throw CancellationError() }
                 catch {
                     lastError = error

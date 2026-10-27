@@ -57,6 +57,9 @@ final class UploadManager: NSObject, ObservableObject {
 
     struct State: Codable, Identifiable {
         var id = UUID()
+        /// A persisted transfer is usable only by the account that reserved it.
+        /// Older records have no proven owner and cannot be resumed safely.
+        var ownerID: String? = nil
         var filePath: String              // relative to Documents (container path changes between installs)
         var bytesTotal: Int64
         var bytesSent: Int64 = 0          // done-part bytes + in-flight bytes (UI progress)
@@ -130,6 +133,11 @@ final class UploadManager: NSObject, ObservableObject {
         /// Resume simply asks for one.
         var canStartOver: Bool { status == .failed && assetID != nil && recoveryExhausted == true }
 
+        func belongsToCurrentAccount() -> Bool {
+            guard Config.useLiveBackend && Config.enableAuth else { return true }
+            return ownerID != nil && ownerID == AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
+        }
+
         mutating func prepareForExplicitResume() {
             // The server decides whether the original can finish. Clearing
             // identifiers here would orphan a charged reservation and its parts.
@@ -196,6 +204,7 @@ final class UploadManager: NSObject, ObservableObject {
     private(set) var pathIsExpensive = false
     private var pathIsSatisfied = true
     private var simulateTimer: Timer?
+    private var photoBatchTask: Task<Void, Never>?
     private let maxConcurrent = 3
 
     // Transient (never persisted): live per-part sent bytes + per-part retry gates.
@@ -267,23 +276,22 @@ final class UploadManager: NSObject, ObservableObject {
         if let saved = UploadStore.load() {
             state = saved
             lastFailureMessage = saved.failureMessage
-            switch saved.status {
-            case .uploading:
-                // Relaunch is not consent to discard an old reservation.
-                startOrResume()
-            case .queued:
-                // .queued means the upload was awaiting the cellular-data
-                // confirmation when the app died. Re-raise the prompt instead of
-                // silently starting a multi-GB upload on cellular — the UI calls
-                // confirmCellularAndStart() (or cancel()) exactly as before.
-                pendingCellularConfirmation = true
-            case .done:
-                // A completed record from an older build — its completion was
-                // already consumed (or lost); never show "Complete · 100%" forever.
-                state = nil
-                UploadStore.save(nil)
-            case .failed, .paused:
-                break   // network-regain (non-terminal) or the user resumes
+            if !saved.belongsToCurrentAccount() {
+                accountWillChange()
+            } else {
+                switch saved.status {
+                case .uploading:
+                    // Relaunch is not consent to discard an old reservation.
+                    startOrResume()
+                case .queued:
+                    // The user has not approved cellular on this launch.
+                    pendingCellularConfirmation = true
+                case .done:
+                    state = nil
+                    UploadStore.save(nil)
+                case .failed, .paused:
+                    break   // network-regain (non-terminal) or the user resumes
+                }
             }
         }
         _ = backgroundSession // create eagerly so background events attach
@@ -340,6 +348,11 @@ final class UploadManager: NSObject, ObservableObject {
         var newState = State(filePath: FileStore.relativePath(for: fileURL),
                              bytesTotal: bytes,
                              mode: Config.useLiveBackend ? "pending" : "simulate")
+        newState.ownerID = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
+        guard newState.belongsToCurrentAccount() else {
+            onUploadFailed?("Sign in to upload media.")
+            return
+        }
         newState.listingID = listingID
         newState.listingLocalID = listingLocalID
         newState.role = role
@@ -381,6 +394,9 @@ final class UploadManager: NSObject, ObservableObject {
     @MainActor
     func upload(fileURL: URL, listingID: UUID, listingLocalID: UUID? = nil, role: String,
                 metadata: UploadMetadata, cellularApproved: Bool = false) async throws -> String {
+        if let state, !state.belongsToCurrentAccount() { accountWillChange() }
+        if Config.useLiveBackend && Config.enableAuth,
+           AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == nil { throw CancellationError() }
         let relPath = FileStore.relativePath(for: fileURL)
         // The SAME file parked for Wi-Fi earlier: adopt it (the user approved
         // cellular, or asked again before Wi-Fi came back).
@@ -551,11 +567,13 @@ final class UploadManager: NSObject, ObservableObject {
     func beginPhotoBatch(listingID: UUID, fileURLs: [URL]) {
         let urls = fileURLs.filter { FileStore.fileSize($0) > 0 }
         guard !urls.isEmpty else { return }
+        photoBatchTask?.cancel()
         photoProgress = PhotoProgress(total: urls.count, completed: 0, failed: 0)
-        Task { [weak self] in await self?.runPhotoBatch(listingID: listingID, fileURLs: urls) }
+        photoBatchTask = Task { [weak self] in await self?.runPhotoBatch(listingID: listingID, fileURLs: urls) }
     }
 
     func confirmCellularAndStart() {
+        guard state?.belongsToCurrentAccount() == true else { accountWillChange(); return }
         pendingCellularConfirmation = false
         guard var s = state else { return }
         s.status = .uploading
@@ -570,6 +588,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// existing parts (or one single PUT) may settle while paused; their receipts
     /// are retained, and no new parts or completion requests start until Resume.
     func pause() {
+        guard state?.belongsToCurrentAccount() == true else { accountWillChange(); return }
         simulateTimer?.invalidate()
         mutate { $0.status = .paused }
         partNextTry.removeAll()
@@ -580,6 +599,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// names it retired and acknowledges that exact ticket's cancellation.
     func resume() {
         guard var s = state, s.status != .done else { return }
+        guard s.belongsToCurrentAccount() else { accountWillChange(); return }
         // A Resume on a ticket the engine already gave up on is the user asking
         // for one more full try at it (Start over sits right next to it), so
         // it gets a fresh round budget. A Resume on an ordinary failure just
@@ -612,6 +632,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// Nothing on this phone is deleted.
     func startOver() {
         guard let s = state, s.canStartOver, let retiredID = s.assetID else { return }
+        guard s.belongsToCurrentAccount() else { accountWillChange(); return }
         guard FileStore.fileSize(s.fileURL) > 0 else {
             // Nothing left to send. Leave `.failed` for a moment so the
             // failure below is a real transition — that is what resolves an
@@ -639,6 +660,7 @@ final class UploadManager: NSObject, ObservableObject {
 
         var fresh = State(filePath: s.filePath, bytesTotal: s.bytesTotal,
                           mode: Config.useLiveBackend ? "pending" : "simulate")
+        fresh.ownerID = s.ownerID
         fresh.listingID = s.listingID
         fresh.listingLocalID = s.listingLocalID
         fresh.role = s.role
@@ -658,7 +680,21 @@ final class UploadManager: NSObject, ObservableObject {
         simulateTimer?.invalidate()
         let assetID = state?.assetID
         let isMultipart = (state?.mode == "multipart")
-        backgroundSession.getAllTasks { $0.forEach { $0.cancel() } }
+        backgroundSession.getAllTasks { [weak self] tasks in
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                // Enumeration can finish after a replacement account has
+                // started a new transfer. Preserve only that current ticket.
+                let currentAssetID = self.state?.assetID
+                for task in tasks {
+                    if let currentAssetID,
+                       let description = task.taskDescription,
+                       description == "single:\(currentAssetID)" ||
+                        description.hasPrefix("part:\(currentAssetID):") { continue }
+                    task.cancel()
+                }
+            }
+        }
         inFlightBytes.removeAll()
         partNextTry.removeAll()
         isRequestingTicket = false
@@ -674,6 +710,19 @@ final class UploadManager: NSObject, ObservableObject {
         _ = persistState(nil)
         // Resolve any awaiting upload() as a failure (cancel is a failed publish).
         onUploadFailed?(nil)
+    }
+
+    /// A former account's transfer and UI state cannot be controlled by its
+    /// replacement login. Cancelling never deletes the source video or photos.
+    func accountWillChange() {
+        photoBatchTask?.cancel()
+        photoBatchTask = nil
+        cancel()
+        photoProgress = nil
+        pendingCellularConfirmation = false
+        lastFailureMessage = nil
+        onUploadComplete = nil
+        onUploadFailed = nil
     }
 
     /// Drop a finished/failed record without touching background tasks for it
@@ -694,6 +743,7 @@ final class UploadManager: NSObject, ObservableObject {
     // MARK: - Dispatch
 
     private func startOrResume() {
+        guard state?.belongsToCurrentAccount() == true else { accountWillChange(); return }
         guard Config.useLiveBackend else { runSimulate(); return }
         reconcileAndResume()
     }
@@ -744,6 +794,7 @@ final class UploadManager: NSObject, ObservableObject {
 
     private func onNetworkRegained() {
         guard let s = state else { return }
+        guard s.belongsToCurrentAccount() else { accountWillChange(); return }
         switch s.status {
         case .uploading:
             startOrResume()
@@ -1427,6 +1478,7 @@ final class UploadManager: NSObject, ObservableObject {
         await withTaskGroup(of: (String?, Bool).self) { group in
             var iterator = fileURLs.makeIterator()
             func addNext() {
+                guard !Task.isCancelled else { return }
                 guard let fileURL = iterator.next() else { return }
                 group.addTask { [weak self] in
                     guard let self else { return (nil, false) }
@@ -1443,8 +1495,10 @@ final class UploadManager: NSObject, ObservableObject {
             }
             for _ in 0..<min(maxConcurrent, fileURLs.count) { addNext() }
             while let (assetID, ok) = await group.next() {
+                guard !Task.isCancelled else { group.cancelAll(); break }
                 if let assetID { completedIDs.append(assetID) }
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
                     if ok { self.photoProgress?.completed += 1 }
                     else  { self.photoProgress?.failed += 1 }
                 }
@@ -1453,7 +1507,9 @@ final class UploadManager: NSObject, ObservableObject {
         }
 
         let ids = completedIDs
+        guard !Task.isCancelled else { return }
         await MainActor.run {
+            guard !Task.isCancelled else { return }
             NotificationCenter.default.post(name: Self.photosDidCompleteNotification, object: self,
                                             userInfo: ["assetIDs": ids, "listingID": listingID])
         }
@@ -1570,7 +1626,7 @@ final class UploadManager: NSObject, ObservableObject {
 // MARK: - Codable (tolerant: older persisted state decodes with defaults)
 extension UploadManager.State {
     enum CodingKeys: String, CodingKey {
-        case id, filePath, bytesTotal, bytesSent, status, mode, assetID, storageKey,
+        case id, ownerID, filePath, bytesTotal, bytesSent, status, mode, assetID, storageKey,
              uploadID, partSize, partCount, parts, sha256, retryCount, listingID, role, metadata,
              contentType, listingLocalID, putURL, putURLIssuedAt, singlePutDone,
              failureMessage, terminalError, transportVersion, ticketKey,
@@ -1581,6 +1637,7 @@ extension UploadManager.State {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id          = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        ownerID     = try c.decodeIfPresent(String.self, forKey: .ownerID)
         filePath    = try c.decode(String.self, forKey: .filePath)
         bytesTotal  = try c.decodeIfPresent(Int64.self, forKey: .bytesTotal) ?? 0
         bytesSent   = try c.decodeIfPresent(Int64.self, forKey: .bytesSent) ?? 0
