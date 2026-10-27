@@ -116,6 +116,6 @@ The `durable_object` policy does not accept `max_instances`; the closed Worker
 only addresses the two fixed CPU atoms instead. It stops idle containers; there
 is no always-on fleet minimum.
 
-Large selected masters use a separate `prepare_image` lease on the same two CPU slots. Pillow12.3.0 decodes only single-frame JPEG/PNG/WebP≤50MiB/100MP, bakes EXIF orientation, converts validated embedded ICC to sRGB, removes private EXIF, flattens any transparency onwhite, and produces a q97 JPEG≤2048px/8MiB. Exact original bytes and exportmaster remain untouched. Edge records master→derivative lineage and admits measured output before a single signed PUT; no browser-uploadedalias is accepted as proof. Malformed profiles/animation/expired capabilities fail with private workingcopy cleanup.
+Large selected masters use a separate `prepare_image` lease on the same two CPU slots. Pillow13.0.0 decodes only single-frame JPEG/PNG/WebP≤50MiB/100MP, bakes EXIF orientation, converts validated embedded ICC to sRGB, removes private EXIF, flattens any transparency onwhite, and produces a q97 JPEG≤2048px/8MiB. Exact original bytes and exportmaster remain untouched. Edge records master→derivative lineage and admits measured output before a single signed PUT; no browser-uploadedalias is accepted as proof. Malformed profiles/animation/expired capabilities fail with private workingcopy cleanup.
 
 Install production Python dependency from `requirements.txt` in an isolated venv before local tests, or use the exact Docker image.
