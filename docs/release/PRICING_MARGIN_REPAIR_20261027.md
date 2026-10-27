@@ -1,11 +1,15 @@
 # Dormant launch pricing and serving budget — 27 October 2026
 
-This is a source-only repair on `codex/pricing-margin-repair-20261027`. No App
-Store Connect product or price, hosted database, or active retail flag changed.
+The pricing repair began as source-only on `codex/pricing-margin-repair-20261027`.
+No hosted database or active retail flag has changed. The later draft App Store
+Connect consumable setup is recorded below; it is not approved for sale.
 The four monthly customer prices remain Pro $29.99, Max $49.99, Ultra $99.99,
 and three-seat Team $249.99. Each extra Team seat is $50/month through nine
-seats. The existing, uncreated `com.rendprop.app.credits.100` ID is retained,
-with a new proposed USA price of **$39.99** for 100 nonexpiring credits.
+seats. The `com.rendprop.app.credits.100` consumable was created in App Store
+Connect on 27 October 2026 (Apple IAP ID `6827716217`) at the exact USA price
+of **$39.99** for 100 nonexpiring credits. Its product, availability, price,
+and draft en-US metadata were read back; it has no review screenshot or sale
+approval, and its server catalog remains inactive.
 The service-only entitlement writer now checks product ID against the sold
 tier, so the historical `pro.monthly` $99 SKU can grant only Ultra and the
 historical `starter.monthly` $49 SKU can grant only Max.
