@@ -12,7 +12,7 @@ insert into apple_serving_schedules(product_id,storefront,currency,price_milliun
 set local role service_role;
 do $$declare f record;r jsonb;begin select * into f from guest_fixture;
  perform pg_temp.ok(not org_has_verified_retail_guest(f.u,f.o),'unpaid anonymous guest denied');
- perform apply_apple_entitlement_v2(f.o,f.u,'synthetic-guest-original','synthetic-guest-tx','com.rendprop.app.pro.monthly','pro','Production','active',f.e,true,'SUBSCRIBED',f.t,f.s,f.s,f.s);
+ perform apply_apple_entitlement_v2(f.o,f.u,'synthetic-guest-original','synthetic-guest-tx','com.rendprop.app.pro.monthly','ultra','Production','active',f.e,true,'SUBSCRIBED',f.t,f.s,f.s,f.s);
  perform pg_temp.ok(not org_has_verified_retail_guest(f.u,f.o),'signed but unfunded guest denied');
  r:=fund_verified_retail_apple_transaction(f.u,f.o,'synthetic-guest-original','synthetic-guest-tx','com.rendprop.app.pro.monthly',49000,'USD','USA',null,null,f.t,f.e,f.s,repeat('a',64));
  perform pg_temp.ok((r->>'funded')::boolean,'verified retail funds through atomic buyer binding');
@@ -105,7 +105,7 @@ do $$declare f record;r jsonb;begin select * into f from guest_fixture;
 reset role;
 -- Accepted refund revocation remains possible after buyer removal.
 set local role service_role;
-select apply_apple_entitlement_v2(o,'de100001-0000-4000-8000-000000000002','synthetic-guest-original','synthetic-guest-tx','com.rendprop.app.pro.monthly','pro','Production','refunded',e,false,'REFUND',t,s+interval '10 seconds',s+interval '10 seconds',s+interval '10 seconds')from guest_fixture;
+select apply_apple_entitlement_v2(o,'de100001-0000-4000-8000-000000000002','synthetic-guest-original','synthetic-guest-tx','com.rendprop.app.pro.monthly','ultra','Production','refunded',e,false,'REFUND',t,s+interval '10 seconds',s+interval '10 seconds',s+interval '10 seconds')from guest_fixture;
 do $$declare f record;r jsonb;begin select * into f from guest_fixture;
  r:=fund_verified_retail_apple_transaction(f.u,f.o,'synthetic-guest-original','synthetic-guest-tx','com.rendprop.app.pro.monthly',49000,'USD','USA',null,null,f.t,f.e,f.s+interval '10 seconds',repeat('c',64));
  perform pg_temp.ok((select revoked_at is not null from serving_funding where org_id=f.o),'refund revokes historical grant without buyer reauthorization');end$$;

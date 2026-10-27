@@ -197,7 +197,7 @@ try:
  query('race-org',f"insert into orgs(id,name,plan,plan_source)values('{org}','Chronology race','free',null);")
  def contender(n):
   age=1000-n*50
-  return query('race-'+str(n),f"set role service_role;select apply_apple_entitlement_v2('{org}',null,'{original}','race-tx-{n}','com.rendprop.app.pro.monthly','pro','Production','active',now()+interval '{n+1} days',true,'DID_RENEW',date_trunc('hour',now())-interval '{age} seconds',date_trunc('hour',now())-interval '{age-10} seconds',null,null);")
+  return query('race-'+str(n),f"set role service_role;select apply_apple_entitlement_v2('{org}',null,'{original}','race-tx-{n}','com.rendprop.app.pro.monthly','ultra','Production','active',now()+interval '{n+1} days',true,'DID_RENEW',date_trunc('hour',now())-interval '{age} seconds',date_trunc('hour',now())-interval '{age-10} seconds',null,null);")
  with ThreadPoolExecutor(max_workers=8)as pool:list(pool.map(contender,range(8)))
  assert query('race-newest',f"select last_transaction_id from apple_subscriptions where original_transaction_id='{original}';").strip()=='race-tx-7'
  receipt['concurrentReceipts']=8

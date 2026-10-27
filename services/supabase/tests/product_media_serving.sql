@@ -14,7 +14,7 @@ do $$declare k text;a uuid;o uuid;l uuid;prior_plan text;prior_source text;prior
  insert into listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic media fixture');
  update orgs set plan=prior_plan,plan_source=prior_source,plan_expires_at=prior_expires,trial_ends_at=prior_trial_ends where id=o;
  if k='paid'then
-  perform public.apply_apple_entitlement_v2(o,a,'product-media-paid-original','product-media-paid-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()+interval'1 second',now()+interval'1 second',now()+interval'1 second');
+  perform public.apply_apple_entitlement_v2(o,a,'product-media-paid-original','product-media-paid-transaction','com.rendprop.app.starter.monthly','max','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()+interval'1 second',now()+interval'1 second',now()+interval'1 second');
  elsif k='trial'then
   insert into subscription_trial_grants(actor_id,identity_sha256,org_id,original_transaction_id,funding_id,starts_at,ends_at,walkthrough_cap,photo_cap,listing_cap,upload_budget_bytes,max_video_seconds,evidence_sha256)
    values(a,repeat('c',64),o,'product-media-trial',gen_random_uuid(),now(),now()+interval'6 days',1,5,1,1048576,90,repeat('a',64));

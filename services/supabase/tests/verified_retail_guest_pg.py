@@ -115,7 +115,7 @@ try:
     fixture=(SQL / "tests/verified_retail_guest.sql").read_text()
     setup=fixture.split('set local role service_role;',1)[0]
     run("race-setup",[*psql,"-Atq"],setup.replace("temporary table","table")+"set local role service_role;"+"""
-     select apply_apple_entitlement_v2(o,u,'synthetic-guest-original','synthetic-guest-tx','com.rendprop.app.pro.monthly','pro','Production','active',e,true,'SUBSCRIBED',t,s,s,s)from guest_fixture;
+     select apply_apple_entitlement_v2(o,u,'synthetic-guest-original','synthetic-guest-tx','com.rendprop.app.pro.monthly','ultra','Production','active',e,true,'SUBSCRIBED',t,s,s,s)from guest_fixture;
      reset role;commit;
     """)
     command="select fund_verified_retail_apple_transaction(u,o,'synthetic-guest-original','synthetic-guest-tx','com.rendprop.app.pro.monthly',49000,'USD','USA',null,null,t,e,s,repeat('a',64))from guest_fixture;"

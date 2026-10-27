@@ -92,10 +92,10 @@ begin
 
   perform public.apply_apple_entitlement_v2(apple_org,actor,
     'limited-trial-original','limited-trial-intro-transaction',
-    'com.rendprop.app.starter.monthly','starter','Production','active',
+    'com.rendprop.app.starter.monthly','max','Production','active',
     now()+interval '7 days',true,'SUBSCRIBED',now(),now(),now(),now());
   intro:=public.org_entitlement(apple_org);
-  perform pg_temp.trial_ok(intro.plan='starter' and intro.price_cents=4900
+  perform pg_temp.trial_ok(intro.plan='max' and intro.price_cents=4999
     and intro.renders_per_month=0 and intro.photo_edits_per_month=5
     and intro.reels_per_month=0 and intro.aerials_per_month=0
     and intro.topaz_per_month=0 and intro.cogs_ceiling_cents=500,
@@ -266,7 +266,7 @@ update public.apple_subscriptions set
 where org_id=(select org from trial_oneoff_fixture);
 update public.orgs set plan_expires_at=now()-interval '1 minute'
 where id=(select org from trial_oneoff_fixture);
-select pg_temp.trial_ok((select (public.org_entitlement(org)).plan='starter'
+select pg_temp.trial_ok((select (public.org_entitlement(org)).plan='max'
   and (public.org_entitlement(org)).photo_edits_per_month=0
   and (public.org_entitlement(org)).renders_per_month=0
   and (public.org_entitlement(org)).cogs_ceiling_cents=0
@@ -309,7 +309,7 @@ update public.apple_subscriptions set status='grace',
 where org_id=(select org from trial_oneoff_fixture);
 update public.orgs set plan_expires_at=now()+interval '27 days'
 where id=(select org from trial_oneoff_fixture);
-select pg_temp.trial_ok((select (public.org_entitlement(org)).plan='starter'
+select pg_temp.trial_ok((select (public.org_entitlement(org)).plan='max'
   and (public.org_entitlement(org)).photo_edits_per_month=0
   and (public.org_entitlement(org)).renders_per_month=0
   and (public.org_entitlement(org)).cogs_ceiling_cents=0
@@ -351,11 +351,11 @@ do $$declare actor uuid;apple_org uuid;second_listing uuid;paid public.plan_enti
   update public.orgs set plan_expires_at=now()+interval '29 days'
   where id=apple_org;
   paid:=public.org_entitlement(apple_org);
-  perform pg_temp.trial_ok(paid.plan='starter' and paid.renders_per_month=4 and paid.photo_edits_per_month=100
+  perform pg_temp.trial_ok(paid.plan='max' and paid.renders_per_month=4 and paid.photo_edits_per_month=100
     and paid.reels_per_month=30 and paid.aerials_per_month=2
     and paid.cogs_ceiling_cents>=2032
     and public.plan_serving_ceiling(apple_org)->>'kind'='retail',
-    'paid renewal restores Starter allowance without changing SKU or account');
+    'paid renewal restores Max allowance without changing SKU or account');
   -- A previously bound introductory original transaction may remain active
   -- even though the org snapshot and current signed term are now paid.
   insert into public.apple_subscriptions(
@@ -363,7 +363,7 @@ do $$declare actor uuid;apple_org uuid;second_listing uuid;paid public.plan_enti
     expires_at,auto_renew,last_transaction_id,transaction_purchased_at,
     transaction_signed_at)
   values('limited-trial-stale-original',apple_org,actor,
-    'com.rendprop.app.starter.monthly','starter','Production','active',
+    'com.rendprop.app.starter.monthly','max','Production','active',
     now()+interval '7 days',false,'limited-trial-stale-intro',now(),now());
   paid:=public.org_entitlement(apple_org);
   perform pg_temp.trial_ok(paid.photo_edits_per_month=100

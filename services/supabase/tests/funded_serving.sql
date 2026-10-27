@@ -120,7 +120,7 @@ begin
  insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
  values('com.rendprop.app.starter.monthly','USA','USD',49000,4165,1,t-interval '1 day',t+interval '20 days',components,200,components,7,pool,repeat('c',64));
  e:=t+interval '1 month';
- perform apply_apple_entitlement_v2(o,u,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly','starter','Production','active',e,true,'DID_RENEW',t,s,s,s);
+ perform apply_apple_entitlement_v2(o,u,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly','max','Production','active',e,true,'DID_RENEW',t,s,s,s);
  r:=fund_verified_apple_transaction(o,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly',null,'USD','USA',null,null,t,e,s,repeat('a',64));
  perform pg_temp.fcheck(not(r->>'funded')::boolean and r->>'reason'='unsupported_payment_facts','missing trusted amount cannot mint retail funding');
  r:=fund_verified_apple_transaction(o,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly',49000,'EUR','USA',null,null,t,e,s,repeat('a',64));
@@ -132,19 +132,19 @@ begin
  perform pg_temp.fcheck((r->>'replay')::boolean and(select count(*)=1 from serving_funding where org_id=o),'receipt restore retains same original budget');
  r:=fund_verified_apple_transaction(o,'synthetic-paid-original','stale-other-tx','com.rendprop.app.starter.monthly',49000,'USD','USA',null,null,t,e,s,repeat('a',64));
  perform pg_temp.fcheck(r->>'reason'='stale_or_unbound','stale notification never replenishes');
- perform apply_apple_entitlement_v2(o,u,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly','starter','Production','refunded',e,true,'REFUND',t,s,now()-interval '20 seconds',s);
+ perform apply_apple_entitlement_v2(o,u,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly','max','Production','refunded',e,true,'REFUND',t,s,now()-interval '20 seconds',s);
  r:=fund_verified_apple_transaction(o,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly',49000,'USD','USA',null,null,t,e,s,repeat('b',64));
  perform pg_temp.fcheck(r->>'reason'='revoked'and(select revoked_at is not null from serving_funding where id=funding),'accepted refund closes money admission');
- perform apply_apple_entitlement_v2(o,u,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly','starter','Production','active',e,true,'REFUND_REVERSED',t,s,now()-interval '10 seconds',s);
+ perform apply_apple_entitlement_v2(o,u,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly','max','Production','active',e,true,'REFUND_REVERSED',t,s,now()-interval '10 seconds',s);
  r:=fund_verified_apple_transaction(o,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly',49000,'USD','USA',null,null,t,e,s,repeat('c',64));
  perform pg_temp.fcheck((r->>'funded')::boolean and(select revoked_at is null and reactivation_evidence_sha256=repeat('c',64)from serving_funding where id=funding)and(select sum(hold_cents)=100 from serving_cost_reservations where funding_id=funding),'refund reversal restores remaining funds without erasing uncertain invoices');
  t2:=t+interval '1 second';
- perform apply_apple_entitlement_v2(o,u,'synthetic-paid-original','synthetic-unpaid-new-tx','com.rendprop.app.starter.monthly','starter','Production','active',t2+interval '7 days',true,'SUBSCRIBED',t2,now()-interval '5 seconds',now()-interval '5 seconds',s);
+ perform apply_apple_entitlement_v2(o,u,'synthetic-paid-original','synthetic-unpaid-new-tx','com.rendprop.app.starter.monthly','max','Production','active',t2+interval '7 days',true,'SUBSCRIBED',t2,now()-interval '5 seconds',now()-interval '5 seconds',s);
  r:=fund_verified_apple_transaction(o,'synthetic-paid-original','synthetic-unpaid-new-tx','com.rendprop.app.starter.monthly',0,'USD','USA',null,null,t2,t2+interval '7 days',now()-interval '5 seconds',repeat('a',64));
  perform pg_temp.fcheck(r->>'reason'='trial_purchase_reservation_required'and(select revoked_at is null from serving_funding where id=funding),'invalid zero-price offer cannot revoke previous valid paid funds');
  perform prepare_subscription_trial_purchase(u,trial,'com.rendprop.app.starter.monthly');
  t:=now();s:=now();e:=t+interval '7 days';
- perform apply_apple_entitlement_v2(trial,u,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly','starter','Production','active',e,true,'SUBSCRIBED',t,s,s,s);
+ perform apply_apple_entitlement_v2(trial,u,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly','max','Production','active',e,true,'SUBSCRIBED',t,s,s,s);
  r:=fund_reserved_subscription_trial(u,trial,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',t,e,s,repeat('a',64));
  perform pg_temp.fcheck((r->>'funded')::boolean and(r->>'total_budget_cents')::int=200 and(r->>'provider_budget_cents')::int=170,'trial uses inclusive committed sponsor cash, not zero retail proceeds');
  r:=fund_reserved_subscription_trial(u,trial,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',t,e,s,repeat('a',64));
