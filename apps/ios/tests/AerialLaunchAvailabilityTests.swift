@@ -38,10 +38,11 @@ import Foundation
         check(aerial.sessionCalls == 0 && aerial.postBoundaryCalls == 0 && aerial.phase == .form, "legacy aerial tap cannot ask for session or reach dispatch")
         for cap in [2, 4, 8, 2_147_483_647] {
             for shots in [30, 60, 150] {
-                let allowance = PlanAllowances(renders: 4, photoEdits: 100, reels: shots, aerials: cap, topaz: 0, seats: 1)
+                let allowance = PlanAllowances(credits: 100, renders: 4, photoEdits: 100, reels: shots, aerials: cap, topaz: 0, seats: 1)
                 check(allowance.aerials == cap, "internal future and saved-result entitlement is retained")
                 check(!allowance.benefitLines.contains { $0.lowercased().contains("aerial") }, "paid plan benefits cannot include aerial generation")
-                check(allowance.benefitLines.contains("\(shots) AI video shots a month"), "other paid benefits remain available")
+                check(allowance.benefitLines.first == "\(allowance.credits) monthly AI credits after the trial", "paid benefits lead with monthly credits")
+                check(!allowance.benefitLines.contains { $0.contains("\(shots) AI video shots") }, "anti-abuse shot cap is not marketed as a separate allowance")
             }
         }
         print("PASS: \(checks) actual scoped opening and disabled legacy Aerial assertions; no UI/network/Apple")

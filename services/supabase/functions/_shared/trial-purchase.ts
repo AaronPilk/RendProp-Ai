@@ -1,6 +1,6 @@
 import { assert, HttpError } from "./http.ts";
 import type { AppleTransaction } from "./applejws.ts";
-const products = ["com.rendprop.app.starter.monthly","com.rendprop.app.starter.annual","com.rendprop.app.pro.monthly","com.rendprop.app.pro.annual","com.rendprop.app.team.monthly"];
+const products = ["com.rendprop.app.pro29.monthly","com.rendprop.app.starter.monthly","com.rendprop.app.starter.annual","com.rendprop.app.pro.monthly","com.rendprop.app.pro.annual","com.rendprop.app.team.monthly"];
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 export type HeldTrialPurchase = { reservation_id:string; actor_id:string; app_account_token:string; org_id:string; product_id:string; held_at:string; trial_offer:{enabled:true;walkthroughs:1;photo_edits:number;published_listings:1;max_days:number;max_video_seconds:number;upload_budget_bytes:number} };
 const unavailable = "Your trial funding reservation could not be verified. Please retry before purchasing.";

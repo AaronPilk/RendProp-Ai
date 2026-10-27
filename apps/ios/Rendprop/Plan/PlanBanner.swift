@@ -286,8 +286,8 @@ struct PlanBanner: View {
 
     static func appleIntroState(plan: String?, photoEdits: Int, ends: Date) -> PlanState {
         let name = (plan ?? "").lowercased()
-        let title = ["starter", "solo", "pro", "team"].contains(name)
-            ? "\(name == "solo" ? "Starter" : name.capitalized) free week" : "Your free week"
+        let title = ["pro", "max", "ultra", "team"].contains(name)
+            ? "\(name.capitalized) free week" : "Your free week"
         return PlanState(kind: .trial, title: title,
             detail: "\(SpaceType.makeFreeWeekLine(photoEdits: photoEdits)) during this week. Video and aerial generation start after the first paid renewal. Ends \(ends.formatted(date: .abbreviated, time: .omitted)).")
     }
@@ -355,10 +355,16 @@ struct PlanBanner: View {
         switch (plan ?? "").lowercased() {
         case "pro":
             return PlanState(kind: .paid, title: "Pro", detail: paidDetail(allowances, fallback: RendpropPlan.pro))
+        case "max":
+            return PlanState(kind: .paid, title: "Max", detail: paidDetail(allowances, fallback: RendpropPlan.max))
+        case "ultra":
+            return PlanState(kind: .paid, title: "Ultra", detail: paidDetail(allowances, fallback: RendpropPlan.ultra))
         case "team":
-            return PlanState(kind: .paid, title: "Team", detail: "Your whole workspace, on the Team plan.")
+            return PlanState(kind: .paid, title: "Team", detail: paidDetail(allowances, fallback: RendpropPlan.team))
+        case "legacy_pro":
+            return PlanState(kind: .paid, title: "Legacy Pro", detail: legacyPaidDetail(allowances))
         case "starter", "solo":
-            return PlanState(kind: .paid, title: "Starter", detail: paidDetail(allowances, fallback: RendpropPlan.starter))
+            return PlanState(kind: .paid, title: "Legacy Starter", detail: legacyPaidDetail(allowances))
         case "free":
             return ended
         case "trial":
@@ -386,13 +392,18 @@ struct PlanBanner: View {
         }
     }
 
-    /// "10 tours a month, 200 photo edits, 12 reel clips." — from the server's
-    /// numbers when known, else the plan's literals in Products.swift.
+    /// Credits are the primary creative meter for paid retail plans. Actual
+    /// spendable balance is shown by Plan & usage, after ledger funding.
     static func paidDetail(_ allowances: Allowances?, fallback plan: RendpropPlan) -> String {
-        let a = plan.allowances
-        let renders = allowances?.renders ?? a.renders
-        let edits = allowances?.photoEdits ?? a.photoEdits
-        let clips = allowances?.reels ?? a.reels
+        "\(plan.allowances.credits) AI credits per paid month. Check Plan & usage for your available balance."
+    }
+
+    /// Manual historical plans retain their independent recorded allowances.
+    static func legacyPaidDetail(_ allowances: Allowances?) -> String {
+        guard let allowances else { return "Your existing plan and workspace allowances remain active." }
+        let renders = allowances.renders
+        let edits = allowances.photoEdits
+        let clips = allowances.reels
         let tourNoun = renders == 1 ? "tour" : "tours"
         let editNoun = edits == 1 ? "edit" : "edits"
         let clipNoun = clips == 1 ? "clip" : "clips"

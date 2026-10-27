@@ -145,7 +145,7 @@ Deno.test("DID_CHANGE_RENEWAL_PREF does NOT downgrade today", () => {
     "derive",
     NOW,
   );
-  assertEquals(e.plan, "pro");
+  assertEquals(e.plan, "ultra");
   assertEquals(e.product_id, "com.rendprop.app.pro.monthly");
   assertEquals(e.status, "active");
   assertEquals(e.expires_at, FUTURE);
@@ -164,7 +164,7 @@ Deno.test("DID_CHANGE_RENEWAL_STATUS (auto-renew off) keeps the plan and records
   );
   assertEquals(e.status, "active");
   assertEquals(e.auto_renew, false);
-  assertEquals(e.plan, "pro");
+  assertEquals(e.plan, "ultra");
 });
 
 Deno.test("REFUND_REVERSED re-grants: Apple took the refund back", () => {
@@ -172,7 +172,7 @@ Deno.test("REFUND_REVERSED re-grants: Apple took the refund back", () => {
   // transaction Apple sends with a reversal no longer carries a revocationDate.
   const e = computeEntitlement(facts({ type: "REFUND_REVERSED" }), "derive", NOW);
   assertEquals(e.status, "active");
-  assertEquals(e.plan, "pro");
+  assertEquals(e.plan, "ultra");
 });
 
 Deno.test("REFUND_DECLINED changes nothing — the customer never lost the plan", () => {
@@ -274,7 +274,7 @@ Deno.test("PRICE_INCREASE never moves a plan by itself", () => {
     NOW,
   );
   assertEquals(e.status, "active");
-  assertEquals(e.plan, "pro");
+  assertEquals(e.plan, "ultra");
 });
 
 Deno.test("a product this build does not sell maps to no plan at all", () => {

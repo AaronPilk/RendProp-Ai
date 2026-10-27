@@ -29,7 +29,10 @@ enum DirectUploader {static func sha256Hex(_ data:Data)->String{SHA256.hash(data
 extension Notification.Name {static let rendpropPlanChanged=Notification.Name("fixture.plan")}
 struct TrialUsageSummary {enum Status {case active,exhausted,expired};let status:Status}
 struct SubscriptionBillingContext {enum TrialPresentationError:Error {case invalidResponse};let orgID:UUID;var originalTransactionIDs:[String]?}
-enum RendpropPlan:String,CaseIterable {case starter,pro,team;var monthlyProductID:String{"com.rendprop.app."+rawValue+".monthly"};var annualProductID:String{"com.rendprop.app."+rawValue+".annual"}}
+enum RendpropPlan:String,CaseIterable {case pro,max,ultra,team
+ var monthlyProductID:String{switch self{case .pro:return "com.rendprop.app.pro29.monthly";case .max:return "com.rendprop.app.starter.monthly";case .ultra:return "com.rendprop.app.pro.monthly";case .team:return "com.rendprop.app.team.monthly"}}
+ var annualProductID:String?{switch self{case .pro:return nil;case .max:return "com.rendprop.app.starter.annual";case .ultra:return "com.rendprop.app.pro.annual";case .team:return "com.rendprop.app.team.annual"}}
+}
 @MainActor final class Transaction {let id:UInt64;let originalID:UInt64=71;let productID:String;let appAccountToken:UUID?;var expirationDate:Date?=Date().addingTimeInterval(86400);var revocationDate:Date?;var finishes=0;var onFinish:(()->Void)?
  init(_ id:UInt64=1,product:String="com.rendprop.app.pro.monthly",owner:UUID?){self.id=id;productID=product;appAccountToken=owner}
  func finish()async{finishes+=1;onFinish?()} }

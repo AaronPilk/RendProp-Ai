@@ -304,12 +304,29 @@ Deno.test("retire_after in the past drops the step; today and later keep it", ()
 });
 
 Deno.test("a step above the caller's plan is dropped; an unknown plan reads as free", () => {
-  const proOnly = step({ provider: "worldlabs", model: "marble-1.1", min_plan: "pro" });
-  assertEquals(orderSteps([proOnly], { plan: "pro" }, NO_HEALTH, NOW).length, 1);
-  assertEquals(orderSteps([proOnly], { plan: "team" }, NO_HEALTH, NOW).length, 1);
-  assertEquals(orderSteps([proOnly], { plan: "starter" }, NO_HEALTH, NOW).length, 0);
-  assertEquals(orderSteps([proOnly], { plan: "solo" }, NO_HEALTH, NOW).length, 0);
-  assertEquals(orderSteps([proOnly], { plan: "nonsense" }, NO_HEALTH, NOW).length, 0);
+  const oldProOnly = step({ provider: "worldlabs", model: "marble-1.1", min_plan: "ultra" });
+  assertEquals(orderSteps([oldProOnly], { plan: "pro" }, NO_HEALTH, NOW).length, 0);
+  assertEquals(orderSteps([oldProOnly], { plan: "max" }, NO_HEALTH, NOW).length, 0);
+  assertEquals(orderSteps([oldProOnly], { plan: "legacy_pro" }, NO_HEALTH, NOW).length, 1);
+  assertEquals(orderSteps([oldProOnly], { plan: "ultra" }, NO_HEALTH, NOW).length, 1);
+  assertEquals(orderSteps([oldProOnly], { plan: "team" }, NO_HEALTH, NOW).length, 1);
+  assertEquals(orderSteps([oldProOnly], { plan: "nonsense" }, NO_HEALTH, NOW).length, 0);
+});
+
+Deno.test("four retail tiers and preserved manual Pro keep their route ordering", () => {
+  const oldStarterOnly = step({ min_plan: "starter" });
+  const proOnly = step({ min_plan: "pro" });
+  const maxOnly = step({ min_plan: "max" });
+  const ultraOnly = step({ min_plan: "ultra" });
+  assertEquals(orderSteps([oldStarterOnly], { plan: "pro" }, NO_HEALTH, NOW).length, 0);
+  assertEquals(orderSteps([oldStarterOnly], { plan: "starter" }, NO_HEALTH, NOW).length, 1);
+  assertEquals(orderSteps([oldStarterOnly], { plan: "solo" }, NO_HEALTH, NOW).length, 1);
+  assertEquals(orderSteps([oldStarterOnly], { plan: "max" }, NO_HEALTH, NOW).length, 1);
+  assertEquals(orderSteps([proOnly, maxOnly, ultraOnly], { plan: "pro" }, NO_HEALTH, NOW).length, 1);
+  assertEquals(orderSteps([proOnly, maxOnly, ultraOnly], { plan: "max" }, NO_HEALTH, NOW).length, 2);
+  assertEquals(orderSteps([proOnly, maxOnly, ultraOnly], { plan: "legacy_pro" }, NO_HEALTH, NOW).length, 3);
+  assertEquals(orderSteps([proOnly, maxOnly, ultraOnly], { plan: "ultra" }, NO_HEALTH, NOW).length, 3);
+  assertEquals(orderSteps([proOnly, maxOnly, ultraOnly], { plan: "team" }, NO_HEALTH, NOW).length, 3);
 });
 
 // ── 7. the ledger records the RESELLER, not the upstream family ────────────

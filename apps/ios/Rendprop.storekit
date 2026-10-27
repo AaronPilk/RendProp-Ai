@@ -12,6 +12,32 @@
         {
           "adHocOffers": [],
           "codeOffers": [],
+          "displayPrice": "29.99",
+          "familyShareable": false,
+          "groupNumber": 4,
+          "internalID": "7A2B3C4D",
+          "introductoryOffer": {
+            "internalID": "7A2B3C4E",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "40 monthly AI credits after the limited 7-day trial. One seat.",
+              "displayName": "Pro Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.pro29.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Pro $29.99 Monthly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
           "displayPrice": "249.00",
           "familyShareable": false,
           "groupNumber": 1,
@@ -24,7 +50,7 @@
           },
           "localizations": [
             {
-              "description": "25 tours, 400 photo edits, 2 seats a month.",
+              "description": "500 monthly AI credits and 3 seats after the limited 7-day trial.",
               "displayName": "Team Monthly",
               "locale": "en_US"
             }
@@ -50,7 +76,7 @@
           },
           "localizations": [
             {
-              "description": "25 tours, 400 photo edits, 2 seats a month.",
+              "description": "Legacy annual Team subscription with 3 base seats.",
               "displayName": "Team Yearly",
               "locale": "en_US"
             }
@@ -76,14 +102,14 @@
           },
           "localizations": [
             {
-              "description": "10 tours, 200 photo edits, 12 reel clips a month.",
-              "displayName": "Pro Monthly",
+              "description": "220 monthly AI credits after the limited 7-day trial. One seat.",
+              "displayName": "Ultra Monthly",
               "locale": "en_US"
             }
           ],
           "productID": "com.rendprop.app.pro.monthly",
           "recurringSubscriptionPeriod": "P1M",
-          "referenceName": "Pro Monthly",
+          "referenceName": "Ultra Monthly (legacy Pro ID)",
           "subscriptionGroupID": "5D3A9F21",
           "type": "RecurringSubscription"
         },
@@ -102,14 +128,14 @@
           },
           "localizations": [
             {
-              "description": "10 tours, 200 photo edits, 12 reel clips a month.",
-              "displayName": "Pro Yearly",
+              "description": "Legacy annual Ultra subscription.",
+              "displayName": "Ultra Yearly",
               "locale": "en_US"
             }
           ],
           "productID": "com.rendprop.app.pro.annual",
           "recurringSubscriptionPeriod": "P1Y",
-          "referenceName": "Pro Yearly",
+          "referenceName": "Ultra Yearly (legacy Pro ID)",
           "subscriptionGroupID": "5D3A9F21",
           "type": "RecurringSubscription"
         },
@@ -128,14 +154,14 @@
           },
           "localizations": [
             {
-              "description": "4 tours, 100 photo edits, 6 reel clips a month.",
-              "displayName": "Starter Monthly",
+              "description": "100 monthly AI credits after the limited 7-day trial. One seat.",
+              "displayName": "Max Monthly",
               "locale": "en_US"
             }
           ],
           "productID": "com.rendprop.app.starter.monthly",
           "recurringSubscriptionPeriod": "P1M",
-          "referenceName": "Starter Monthly",
+          "referenceName": "Max Monthly (legacy Starter ID)",
           "subscriptionGroupID": "5D3A9F21",
           "type": "RecurringSubscription"
         },
@@ -154,14 +180,14 @@
           },
           "localizations": [
             {
-              "description": "4 tours, 100 photo edits, 6 reel clips a month.",
-              "displayName": "Starter Yearly",
+              "description": "Legacy annual Max subscription.",
+              "displayName": "Max Yearly",
               "locale": "en_US"
             }
           ],
           "productID": "com.rendprop.app.starter.annual",
           "recurringSubscriptionPeriod": "P1Y",
-          "referenceName": "Starter Yearly",
+          "referenceName": "Max Yearly (legacy Starter ID)",
           "subscriptionGroupID": "5D3A9F21",
           "type": "RecurringSubscription"
         }

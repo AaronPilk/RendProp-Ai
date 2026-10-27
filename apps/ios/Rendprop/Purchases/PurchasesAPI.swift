@@ -18,7 +18,7 @@ import Foundation
 
 /// What `POST /me/entitlement` answers. Wire keys are snake_case.
 struct EntitlementSync: Codable, Hashable, Sendable {
-    /// Effective plan the server just wrote: free | trial | starter | pro | team.
+    /// Effective plan the server just wrote, including retail and legacy tiers.
     let plan: String
     /// Where the plan came from: "apple" | "manual" | "trial".
     let source: String?

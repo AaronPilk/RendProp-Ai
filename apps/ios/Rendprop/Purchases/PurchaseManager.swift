@@ -76,7 +76,7 @@ final class PurchaseManager: ObservableObject {
     /// account, products not yet approved) — the paywall says so plainly.
     @Published private(set) var products: [Product] = []
 
-    /// The plan the SERVER last confirmed ("starter" | "pro" | "team"). A
+    /// The plan the SERVER last confirmed (including legacy/manual tiers). A
     /// verified Apple transaction still awaiting Rendprop fulfilment does not
     /// mark its plan active here. nil = nothing active that we know of.
     @Published private(set) var activePlan: String?

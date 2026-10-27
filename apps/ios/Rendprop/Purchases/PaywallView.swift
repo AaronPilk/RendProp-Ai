@@ -25,7 +25,7 @@ struct PaywallView: View {
     @ObservedObject private var auth = AuthStore.shared
 
     @State private var period: BillingPeriod = .monthly
-    @State private var selectedPlan: RendpropPlan = .pro
+    @State private var selectedPlan: RendpropPlan = .max
 
     var body: some View {
         NavigationStack {
@@ -266,8 +266,8 @@ struct PaywallView: View {
 
     /// What one card offers while the picker is on `period`.
     ///
-    /// A plan doesn't have to sell both periods. Team has no yearly product at
-    /// launch (`RendpropProducts.notSoldAtLaunch`), so on the Yearly tab its
+    /// A plan doesn't have to sell both periods. Annual products are not sold
+    /// at launch (`RendpropProducts.notSoldAtLaunch`), so on the Yearly tab its
     /// card falls back to the monthly product: a real price, "Billed every
     /// month.", and a small "Monthly only" note — never an empty card, and
     /// never a Subscribe button pointed at a product that isn't for sale.
@@ -284,7 +284,10 @@ struct PaywallView: View {
         guard let sold = plan.soldPeriod(for: period) else {
             return PlanOffer(product: nil, period: period, note: nil)
         }
-        return PlanOffer(product: purchases.product(for: plan.productID(for: sold)),
+        guard let productID = plan.productID(for: sold) else {
+            return PlanOffer(product: nil, period: sold, note: nil)
+        }
+        return PlanOffer(product: purchases.product(for: productID),
                          period: sold,
                          note: sold == period ? nil : sold.onlyNote)
     }
@@ -578,7 +581,7 @@ private struct SelectedPlanDetails: View {
                     .font(.rpCaption).foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Photo edits, reels and other AI tools share your monthly AI allowance. Each tool also has a usage limit. See Plan & usage for what remains.")
+            Text("After the trial, AI tools use monthly credits. Each tool also has a usage limit. See Plan & usage for your available balance and limits.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
             DisclosureGroup("How video allowances work") {

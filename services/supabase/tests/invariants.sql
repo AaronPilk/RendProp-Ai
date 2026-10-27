@@ -175,25 +175,29 @@ from listings
 where (lat is not null and lat <> round(lat::numeric, 3))
    or (lng is not null and lng <> round(lng::numeric, 3));
 
--- ── Plan coherence: enforced must equal published (pricing.html) ─────────────
--- Paid sizes include the reviewed multi-photo recipe allowances: prices unchanged,
--- 4/10/25 renders,100/200/400 edits,30/60/150 generated shots,2/4/8 aerials,
--- Team2 seats +2 Topaz; trial0 renders/5 edits/no generated video/500c, Free0 AI/0c. The
+-- ── Plan coherence: enforced feature ceilings and catalog targets ────────────
+-- Pro/Max/Ultra/Team cap cloud renders at 2/4/10/25 and carry 1/1/1/3 seats.
+-- These per-tool caps sit behind the separately granted monthly credit wallet.
+-- Legacy Starter/solo/manual Pro keep their original service limits. Trial has
+-- 0 renders/5 edits/no generated video/500c; Free has 0 AI/0c. The
 -- single-location trial override lives in plan_entitlement_overrides and is
 -- asserted in the 0044 section at the end of this file.
 
 insert into _inv(name, pass, note)
-select 'render caps match paid plans and limited signup trial/free (4/10/25; trial 0; free 0)',
+select 'render caps match four retail plans, legacy grants and limited trial/free',
        plan_render_cap('solo') = 4 and plan_render_cap('starter') = 4
-       and plan_render_cap('pro') = 10 and plan_render_cap('team') = 25
+       and plan_render_cap('legacy_pro') = 10
+       and plan_render_cap('pro') = 2 and plan_render_cap('max') = 4
+       and plan_render_cap('ultra') = 10 and plan_render_cap('team') = 25
        and plan_render_cap('trial') = 0 and plan_render_cap('free') = 0,
-       format('solo=%s starter=%s pro=%s team=%s trial=%s free=%s',
-              plan_render_cap('solo'), plan_render_cap('starter'), plan_render_cap('pro'),
-              plan_render_cap('team'), plan_render_cap('trial'), plan_render_cap('free'));
+       format('solo=%s starter=%s legacy_pro=%s pro=%s max=%s ultra=%s team=%s trial=%s free=%s',
+              plan_render_cap('solo'), plan_render_cap('starter'), plan_render_cap('legacy_pro'),
+              plan_render_cap('pro'),plan_render_cap('max'),plan_render_cap('ultra'),
+              plan_render_cap('team'),plan_render_cap('trial'),plan_render_cap('free'));
 
 insert into _inv(name, pass, note)
 select 'plan_entitlements match current paid/trial/free catalog for every metered feature',
-       count(*) = 6 and coalesce(bool_and(ok), false),
+       count(*) = 9 and coalesce(bool_and(ok), false),
        coalesce(string_agg(plan, ', ') filter (where not ok), '')
 from (
   select x.plan,
@@ -205,21 +209,26 @@ from (
                  ('free',    0,   0, 0,  0, 0, 1,    0,     0),
                  ('starter', 4, 100,30,  2, 0, 1, 2032,  4900),
                  ('solo',    4, 100,30,  2, 0, 1, 2032,  4900),
-                 ('pro',    10, 200,60,  4, 0, 1, 4157,  9900),
-                 ('team',   25, 400,150, 8, 2, 2,10532, 24900))
+                 ('legacy_pro',10,200,60,4,0,1,4157,9900),
+                 ('pro',     2,  50,15,  1, 0, 1, 1200,  2999),
+                 ('max',     4, 100,30,  2, 0, 1, 2032,  4999),
+                 ('ultra',  10, 200,60,  4, 0, 1, 4157,  9999),
+                 ('team',   25, 400,150, 8, 2, 3,10532, 24999))
            as x(plan, renders, edits, reels, aerials, topaz, seats, cogs, price)
     left join plan_entitlements e on x.plan = e.plan
 ) s;
 
 insert into _inv(name, pass, note)
 select 'every shipped plan has an entitlement row',
-       count(*) = 6, format('%s of 6', count(*))
-from plan_entitlements where plan in ('trial','free','starter','solo','pro','team');
+       count(*) = 9, format('%s of 9', count(*))
+from plan_entitlements where plan in ('trial','free','starter','solo','legacy_pro','pro','max','ultra','team');
 
 insert into _inv(name, pass, note)
-select 'orgs.plan accepts every shipped plan (trial/free/solo/starter/pro/team)',
+select 'orgs.plan accepts every shipped plan including legacy and four retail tiers',
        pg_get_constraintdef(oid) like '%trial%' and pg_get_constraintdef(oid) like '%solo%'
-       and pg_get_constraintdef(oid) like '%starter%' and pg_get_constraintdef(oid) like '%team%',
+       and pg_get_constraintdef(oid) like '%starter%' and pg_get_constraintdef(oid) like '%legacy_pro%'
+       and pg_get_constraintdef(oid) like '%max%' and pg_get_constraintdef(oid) like '%ultra%'
+       and pg_get_constraintdef(oid) like '%team%',
        pg_get_constraintdef(oid)
 from pg_constraint
 where conrelid = 'public.orgs'::regclass and conname = 'orgs_plan_check';
@@ -1202,9 +1211,9 @@ begin
 
   set role authenticated; select count(*) into n from plan_entitlements; reset role;
   set role authenticated;
-  select array_agg(plan order by plan)=array['brokerage','free','pro','solo','starter','team','trial'] into b from plan_entitlements;
+  select array_agg(plan order by plan)=array['brokerage','free','legacy_pro','max','pro','solo','starter','team','trial','ultra'] into b from plan_entitlements;
   reset role;
-  insert into _inv(name, pass, note) values ('an admin reads plan_entitlements', n = 7 and b, n::text || ' exact known plans including brokerage');
+  insert into _inv(name, pass, note) values ('an admin reads plan_entitlements', n = 10 and b, n::text || ' exact known plans including brokerage');
 
   set role authenticated; select is_admin() into b; reset role;
   insert into _inv(name, pass, note) values ('is_admin() is true for an allowlisted owner', b is true, b::text);
@@ -1295,16 +1304,16 @@ from ai_routes
 where enabled and retire_after is not null and retire_after < current_date;
 
 insert into _inv(name, pass, note)
-select 'plan_routing_policy covers all six plans with a valid policy',
-       count(*) = 6, format('%s of 6: %s', count(*), string_agg(plan || '=' || policy, ', ' order by plan))
+select 'plan_routing_policy covers all retail and legacy plans with a valid policy',
+       count(*) = 9, format('%s of 9: %s', count(*), string_agg(plan || '=' || policy, ', ' order by plan))
 from plan_routing_policy
-where plan in ('free','trial','starter','solo','pro','team') and policy in ('best','cheapest');
+where plan in ('free','trial','starter','solo','legacy_pro','pro','max','ultra','team') and policy in ('best','cheapest');
 
 -- The contract's own split: the tiers that pay nothing or little route cheapest.
 insert into _inv(name, pass, note)
-select 'free/trial/starter route cheapest; solo/pro/team route best',
+select 'free/trial/starter/Pro/Max route cheapest; solo/legacy Pro/Ultra/Team route best',
        coalesce(bool_and(
-         case when plan in ('free','trial','starter') then policy = 'cheapest'
+         case when plan in ('free','trial','starter','pro','max') then policy = 'cheapest'
               else policy = 'best' end), false),
        string_agg(plan || '=' || policy, ', ' order by plan)
 from plan_routing_policy;
@@ -1472,7 +1481,7 @@ select 'every ai_routes row carries a legal privacy_tier and min_plan',
        count(*) = 0, coalesce(string_agg(task || '/' || model, ', '), 'all valid')
 from ai_routes
 where privacy_tier not in ('no_retention','retained_30d','trains_by_default')
-   or min_plan not in ('free','trial','starter','solo','pro','team');
+   or min_plan not in ('free','trial','starter','solo','legacy_pro','pro','max','ultra','team','brokerage');
 
 -- ── 0030: ai_routes.params ──────────────────────────────────────────────────
 --
@@ -1853,7 +1862,7 @@ begin
   select count(*) into n from plan_routing_policy;
   reset role;
   insert into _inv(name, pass, note)
-    values ('a tenant CAN read plan_routing_policy', n = 6, n::text);
+    values ('a tenant CAN read plan_routing_policy', n = 9, n::text);
 
   perform set_config('request.jwt.claims', '', true);
   delete from provider_health where provider = '_inv';
@@ -2214,7 +2223,7 @@ begin
     values ('a paid single-location org reads the plain paid row (paid plans are not industry-aware)',
             (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
              e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
-              is not distinct from ('pro', 10, 200,60, 4, 0, 1, 4157, 9900),
+              is not distinct from ('pro', 2, 50,15, 1, 0, 1, 1200, 2999),
             e::text);
 
   -- (b) the column is a real enum now.
@@ -2620,7 +2629,7 @@ end $tel$;
 --
 -- Two workspaces, because the two halves ask different questions:
 --   oBrk   the brokerage being reported on. Three memberships are inserted
---          DIRECTLY, not through the invite path: `team` is 2 seats (0044 §1)
+  --          DIRECTLY, not through the invite path: `team` is now 3 seats
 --          and there is no brokerage tier yet — the exact gap 0048's header
 --          declines to close inside a schema migration. The seat cap is enforced
 --          by the RPCs, not by a constraint, so a direct insert is the honest
@@ -2729,7 +2738,7 @@ begin
 
   insert into _inv(name, pass, note)
     values ('brokerage_overview reports seats used/allowed/pending and who published nothing',
-            (r->'seats'->>'allowed')::integer = 2
+            (r->'seats'->>'allowed')::integer = 3
               and (r->'seats'->>'used')::integer = 3
               and (r->'seats'->>'pending')::integer = 0
               and (r->'totals'->>'members')::bigint = 3
@@ -2775,7 +2784,7 @@ begin
                    coalesce(msg2, 'NO ERROR'), coalesce(msg3, 'NO ERROR')));
 
   -- ── (e) seat arithmetic, through the real functions only ──────────────────
-  -- oSeat is on `team` = 2 seats, and its owner already holds one.
+  -- oSeat has its own explicit two-seat fixture, and its owner holds one.
   r := create_org_invites_bulk(
          oSeat, uSeat,
          array['Inv-Brk-Join@Example.com', 'not an email', 'inv-brk-seat@example.com'], 'agent');

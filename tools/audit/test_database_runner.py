@@ -30,7 +30,7 @@ from unittest.mock import patch
 COUNT = 271
 REQUIRED = [
     'all three explicit Astra writing seats keep their 0030/0034 paid-plan gates',
-    'no gpt-6-astra row is reachable on the free or trial tier',
+    'no gpt-6-astra row is reachable on the free, trial or new Pro tier',
     'plan_entitlements match current paid/trial/free catalog for every metered feature',
     'org_entitlement on a fitness trial org is the single-location free week (0/5/0/0/0, 1 seat, 500¢)',
 ]

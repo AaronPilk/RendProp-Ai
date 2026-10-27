@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TESTS = ROOT / 'services/supabase/tests'
 LABELS = (
     'all three explicit Astra writing seats keep their 0030/0034 paid-plan gates',
-    'no gpt-6-astra row is reachable on the free or trial tier',
+    'no gpt-6-astra row is reachable on the free, trial or new Pro tier',
 )
 
 
@@ -52,8 +52,11 @@ def require_contract(sql):
     # the catalog query so a source-only expectation drift is detected.
     assert re.search(r"\('starter',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)", matrix), 'starter rework'
     assert re.search(r"\('solo',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)", matrix), 'solo alias'
-    assert re.search(r"\('pro',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9900\)", matrix), 'pro rework'
-    assert re.search(r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*2,\s*10532,\s*24900\)", matrix), 'team rework'
+    assert re.search(r"\('legacy_pro',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9900\)", matrix), 'legacy Pro preservation'
+    assert re.search(r"\('pro',\s*2,\s*50,\s*15,\s*1,\s*0,\s*1,\s*1200,\s*2999\)", matrix), 'new Pro'
+    assert re.search(r"\('max',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4999\)", matrix), 'Max'
+    assert re.search(r"\('ultra',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9999\)", matrix), 'Ultra'
+    assert re.search(r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*3,\s*10532,\s*24999\)", matrix), 'Team base seats'
     assert re.search(r"\('trial',\s*0,\s*5,\s*0,\s*0,\s*0,\s*null::integer,\s*500\)", sql), 'single-location trial override'
     assert "'_inv-fit-000002'" in sql
     assert "new worker job exceeds the introductory zero-render cap (RP402)" in sql
@@ -116,11 +119,11 @@ class DatabaseInvariantSourceTests(unittest.TestCase):
             require_contract(mutant)
 
     def test_pre_0044_paid_expectation_negative_control_is_rejected(self):
-        # The 2026-09-01 sizes (8/150/8, 25/300/20, 80/600/40, 3 seats) must not
-        # be able to come back into the expectation matrix unnoticed.
-        for old, new in ((r"\('starter',\s*4,\s*100,\s*30", "('starter', 8, 150, 8"),
-                         (r"\('pro',\s*10,\s*200,\s*60", "('pro', 25, 300, 20"),
-                         (r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*2", "('team', 80, 600, 40, 15, 2, 3")):
+        # Old sizes must not quietly replace the four-tier expectation matrix.
+        for old, new in ((r"\('pro',\s*2,\s*50,\s*15", "('pro', 10, 200, 60"),
+                         (r"\('max',\s*4,\s*100,\s*30", "('max', 8, 150, 8"),
+                         (r"\('ultra',\s*10,\s*200,\s*60", "('ultra', 25, 300, 20"),
+                         (r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*3", "('team', 80, 600, 40, 15, 2, 3")):
             with self.subTest(plan=new):
                 mutant = re.sub(old, new, self.invariants, count=1)
                 self.assertNotEqual(mutant, self.invariants)
@@ -144,9 +147,15 @@ class DatabaseInvariantSourceTests(unittest.TestCase):
              "('starter', 4, 100, 6, 2, 0, 1, 1200, 4900)"),
             (r"\('solo',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)",
              "('solo', 4, 100, 6, 2, 0, 1, 1200, 4900)"),
-            (r"\('pro',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9900\)",
-             "('pro', 10, 200, 12, 4, 0, 1, 2400, 9900)"),
-            (r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*2,\s*10532,\s*24900\)",
+            (r"\('legacy_pro',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9900\)",
+             "('legacy_pro', 10, 200, 12, 4, 0, 1, 2400, 9900)"),
+            (r"\('pro',\s*2,\s*50,\s*15,\s*1,\s*0,\s*1,\s*1200,\s*2999\)",
+             "('pro', 2, 50, 6, 1, 0, 1, 1200, 2999)"),
+            (r"\('max',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4999\)",
+             "('max', 4, 100, 6, 2, 0, 1, 1200, 4999)"),
+            (r"\('ultra',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9999\)",
+             "('ultra', 10, 200, 12, 4, 0, 1, 2400, 9999)"),
+            (r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*3,\s*10532,\s*24999\)",
              "('team', 25, 400, 25, 8, 2, 2, 6000, 24900)"),
         ):
             with self.subTest(previous=previous):
@@ -163,14 +172,14 @@ class DatabaseInvariantSourceTests(unittest.TestCase):
         self.assertIn("current_setting('listen_addresses') <> ''", self.negative)
         self.assertIn("^/tmp/rendprop-db-audit-[^/]+/cluster$", self.negative)
         self.assertIn("set min_plan = 'free'", self.negative)
-        self.assertIn("set min_plan = 'pro', position = 17", self.negative)
+        self.assertIn("set min_plan = 'ultra', position = 17", self.negative)
         self.assertIn('rollback;', self.negative)
         self.assertEqual(self.negative.count("if changed <> 1"), 2)
 
     def test_paid_gate_cannot_substitute_three_arbitrary_rows(self):
         self.assertIn('count(*) = 3', self.gates)
         for task, plan in [('copy.shotlist', 'starter'), ('copy.reel_script', 'starter'),
-                           ('copy.agent_reel', 'pro')]:
+                           ('copy.agent_reel', 'ultra')]:
             self.assertRegex(self.gates,
                 re.escape(f"where task = '{task}' and position = 1 and provider = 'openai'")
                 + r"\s+and " + re.escape(f"min_plan = '{plan}') = 1"))

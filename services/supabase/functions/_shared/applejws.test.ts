@@ -370,7 +370,7 @@ Deno.test("a valid chain verifies and the payload decodes", async () => {
   assertEquals(tx.revocationDate, null);
   assert(tx.expiresDate !== null, "expiresDate must decode");
   assert(Date.parse(tx.expiresDate!) > Date.now(), "expiresDate must be in the future");
-  assertEquals(productToPlan(tx.productId), "pro");
+  assertEquals(productToPlan(tx.productId), "ultra");
 });
 
 Deno.test("renewal info decodes, including the grace-period window", async () => {
@@ -577,10 +577,11 @@ Deno.test("a transaction for another bundle id decodes, so the caller can refuse
 });
 
 Deno.test("product ids map to plans, and anything else maps to null", () => {
-  assertEquals(productToPlan("com.rendprop.app.starter.monthly"), "starter");
-  assertEquals(productToPlan("com.rendprop.app.starter.annual"), "starter");
-  assertEquals(productToPlan("com.rendprop.app.pro.monthly"), "pro");
-  assertEquals(productToPlan("com.rendprop.app.pro.annual"), "pro");
+  assertEquals(productToPlan("com.rendprop.app.pro29.monthly"), "pro");
+  assertEquals(productToPlan("com.rendprop.app.starter.monthly"), "max");
+  assertEquals(productToPlan("com.rendprop.app.starter.annual"), "max");
+  assertEquals(productToPlan("com.rendprop.app.pro.monthly"), "ultra");
+  assertEquals(productToPlan("com.rendprop.app.pro.annual"), "ultra");
   assertEquals(productToPlan("com.rendprop.app.team.monthly"), "team");
   assertEquals(productToPlan("com.rendprop.app.team.annual"), "team");
   // `solo` is a legacy alias of starter and is never sold; `trial` and `free`
@@ -1041,7 +1042,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
           notification_uuid: "chronology-pending", payload: {
             transaction: decodeTransaction(transactionPayload({ purchaseDate: purchase, signedDate: signed })),
             notification: { signedDate: event }, renewal: { signedDate: new Date(event).toISOString() },
-            entitlement: { original_transaction_id: "2000000700000000", transaction_id: "2000000700000001", product_id: "com.rendprop.app.pro.monthly", plan: "pro", environment: "Production", status: "active", expires_at: new Date(now + 86400_000).toISOString(), auto_renew: false, notification_type: "DID_RENEW" },
+            entitlement: { original_transaction_id: "2000000700000000", transaction_id: "2000000700000001", product_id: "com.rendprop.app.pro.monthly", plan: "ultra", environment: "Production", status: "active", expires_at: new Date(now + 86400_000).toISOString(), auto_renew: false, notification_type: "DID_RENEW" },
           },
         }] : [], error: null }),
       };

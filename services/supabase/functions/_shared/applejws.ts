@@ -716,22 +716,25 @@ export function deriveEntitlement(
 
 // ── Products → plans ────────────────────────────────────────────────────────
 //
-// docs/LAUNCH-CONTRACT.md § "Plans and product IDs". All six products live in
+// All retail products live in
 // ONE subscription group (`rendprop_plans`) so Apple manages the upgrade or
 // downgrade; the trial is an INTRODUCTORY OFFER on each product, not a product
-// of its own, and `free` is the lapsed floor with no product at all. `solo` is
-// a legacy alias of starter and is deliberately absent — it is never sold.
+// of its own, and `free` is the lapsed floor with no product at all. The
+// original $49 Starter and $99 Pro identifiers now grant Max and Ultra. They
+// stay known so preexisting subscriptions can renew and restore. `solo` is a
+// legacy database-only alias and is never an Apple product.
 
 const PRODUCT_TO_PLAN: Readonly<Record<string, AppleSoldPlan>> = Object.freeze({
-  "com.rendprop.app.starter.monthly": "starter",
-  "com.rendprop.app.starter.annual": "starter",
-  "com.rendprop.app.pro.monthly": "pro",
-  "com.rendprop.app.pro.annual": "pro",
+  "com.rendprop.app.pro29.monthly": "pro",
+  "com.rendprop.app.starter.monthly": "max",
+  "com.rendprop.app.starter.annual": "max",
+  "com.rendprop.app.pro.monthly": "ultra",
+  "com.rendprop.app.pro.annual": "ultra",
   "com.rendprop.app.team.monthly": "team",
   "com.rendprop.app.team.annual": "team",
 });
 
-export type AppleSoldPlan = "starter" | "pro" | "team";
+export type AppleSoldPlan = "pro" | "max" | "ultra" | "team";
 
 /** The plan a product id grants, or null when the product is not one of ours. */
 export function productToPlan(productId: string | null | undefined): AppleSoldPlan | null {

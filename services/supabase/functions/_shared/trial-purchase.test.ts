@@ -13,6 +13,13 @@ Deno.test("trial prepare requires explicit authenticated buyer/token/org and ech
  for(const patch of [{actor_id:"foreign"},{app_account_token:"foreign"},{actor_id:undefined},{app_account_token:undefined},{org_id:"foreign"},{product_id:"unknown"}])await assertRejects(()=>prepareTrialPurchase(admin,actor,org,{...body(),...patch}),HttpError);
  assertEquals(calls,1);
 });
+Deno.test("new Pro SKU can reserve and recover its own exact seven-day trial",async()=>{
+ const pro="com.rendprop.app.pro29.monthly",data={...receipt(),product_id:pro};
+ const prepare={rpc:(name:string,args:unknown)=>{assertEquals(name,"prepare_subscription_trial_purchase");assertEquals(args,{p_actor:actor,p_org:org,p_product:pro});return Promise.resolve({data,error:null});}};
+ assertEquals(await prepareTrialPurchase(prepare,actor,org,{...body(),product_id:pro}),data);
+ const recover={rpc:(name:string,args:unknown)=>{assertEquals(name,"subscription_trial_reserved_workspace");assertEquals(args,{p_actor:actor,p_product:pro});return Promise.resolve({data:org,error:null});}};
+ assertEquals(await reservedTrialWorkspace(recover,{...tx(),productId:pro}),org);
+});
 Deno.test("trial held and prepare preserve each exact five-to-twenty photo reservation without new authority",async()=>{
  for(const cap of [5,6,20]){
   const data=receipt();data.trial_offer.photo_edits=cap;const calls:string[]=[];

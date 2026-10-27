@@ -77,7 +77,7 @@ controls=[
  ('home-open-uses-legacy-flag','guard feature != .aerial || LaunchFeatureAvailability.canCreateOpening else { return }','guard feature != .aerial || LaunchFeatureAvailability.canGenerateAerial else { return }','Home opening starts a listing when none exists'),
  ('home-route-uses-legacy-flag','guard feature != .aerial || LaunchFeatureAvailability.canCreateOpening else { return }','guard feature != .aerial || LaunchFeatureAvailability.canGenerateAerial else { return }','direct opening route keeps its exact listing'),
  ('aerial-tap-unfenced','guard LaunchFeatureAvailability.canGenerateAerial,\n              phase != .generating','guard phase != .generating','legacy aerial tap cannot ask for session or reach dispatch'),
- ('paid-benefit-aerial','"High-resolution AI photo edits",','"High-resolution AI photo edits", "2 aerial intros",','paid plan benefits cannot include aerial generation'),
+ ('paid-benefit-aerial','"Use credits across eligible AI tools",','"Use credits across eligible AI tools", "2 aerial intros",','paid plan benefits cannot include aerial generation'),
 ]
 runs=[]
 for label in ['positive']+[c[0] for c in controls]:
