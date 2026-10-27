@@ -96,8 +96,12 @@ class CatalogCopyTests(unittest.TestCase):
             with self.assertRaisesRegex(catalog_copy.CopyError, "requires"):
                 catalog_copy.run(client, "apply", out=io.StringIO())
             self.assertFalse(client.writes)
+            with self.assertRaisesRegex(catalog_copy.CopyError, "credit-activation"):
+                catalog_copy.run(client, "apply", catalog_copy.EXPECTED_APP_ID,
+                                 "version", out=io.StringIO())
+            self.assertFalse(client.writes)
             self.assertEqual(catalog_copy.run(client, "apply", catalog_copy.EXPECTED_APP_ID,
-                                              "version", out=io.StringIO()), 0)
+                                              "version", True, out=io.StringIO()), 0)
             self.assertEqual(len(client.writes), 1)
             self.assertEqual(client.resources[client.writes[0][0]]["attributes"]["name"],
                              "Pro Monthly")
@@ -109,7 +113,8 @@ class CatalogCopyTests(unittest.TestCase):
         with patch.object(catalog_copy, "plan", return_value=snapshot):
             with self.assertRaisesRegex(catalog_copy.CopyError, "did not confirm"):
                 catalog_copy.run(PatchClient(honor_patch=False), "apply",
-                                 catalog_copy.EXPECTED_APP_ID, "version", out=io.StringIO())
+                                 catalog_copy.EXPECTED_APP_ID, "version", True,
+                                 out=io.StringIO())
 
     def test_real_phone_review_png_may_use_apple_supported_native_size(self):
         with tempfile.TemporaryDirectory() as directory:

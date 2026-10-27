@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Reconcile only Rendprop's 1.0.5 subscription and review copy.
 
-`plan` uses authenticated GETs. `apply` patches changed en-US subscription
+`plan` uses authenticated GETs. After the funded monthly catalog is active,
+`apply` patches changed en-US subscription
 localizations, the 1.0.5 listing, and its App Review notes, then reads each
 resource back. It never changes products, prices, offers, availability, a
 build, screenshots, review staging, or release state.
@@ -205,7 +206,8 @@ def plan(client):
     return app["id"], version["id"], changes, evidence
 
 
-def run(client, action, confirm_app_id=None, confirm_version_id=None, out=None):
+def run(client, action, confirm_app_id=None, confirm_version_id=None,
+        confirm_credit_activation=False, out=None):
     out = out or sys.stdout
     app_id, version_id, changes, evidence = plan(client)
     out.write("App %s, iOS version %s (%s)\n" % (app_id, VERSION, version_id))
@@ -225,6 +227,9 @@ def run(client, action, confirm_app_id=None, confirm_version_id=None, out=None):
     if confirm_app_id != app_id or confirm_version_id != version_id:
         raise CopyError("Apply requires --confirm-app-id %s and --confirm-version-id %s" %
                         (app_id, version_id))
+    if not confirm_credit_activation:
+        raise CopyError("Apply requires --confirm-credit-activation after a live readback "
+                        "of active monthly credit catalog, funded schedules and serving policy")
     for change in pending:
         kind, identifier, attrs = change["kind"], change["id"], change["attrs"]
         path = "/v1/%s/%s" % (kind, identifier)
@@ -243,10 +248,13 @@ def main(argv=None):
     parser.add_argument("action", choices=("plan", "apply"))
     parser.add_argument("--confirm-app-id")
     parser.add_argument("--confirm-version-id")
+    parser.add_argument("--confirm-credit-activation", action="store_true",
+                        help="operator confirms a fresh live readback of funded retail credit activation")
     args = parser.parse_args(argv)
     try:
         client = asc.Client(asc.load_credentials(), verbose=False)
-        return run(client, args.action, args.confirm_app_id, args.confirm_version_id)
+        return run(client, args.action, args.confirm_app_id, args.confirm_version_id,
+                   args.confirm_credit_activation)
     except (CopyError, asc.AscError) as exc:
         print("FAILED: %s" % exc, file=sys.stderr)
         return 1
