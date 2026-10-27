@@ -20,7 +20,12 @@ const onlyFixed=args.includes('--only-fixed');
 const omitOldAwait=args.includes('--fault=omit-old-await');
 assert(args.every(argument=>argument==='--only-fixed'||argument==='--fault=omit-old-await'),"Unknown resume test option");
 assert(!(onlyFixed&&omitOldAwait),"Historical omission control cannot select the fixed-only suite");
-const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["baseline", "sequential", "clock-baseline", "cadence-baseline", "fixed", "late-frames"];
+// Run the shipping exporter immediately after runner admission, before the
+// deliberately slow/held historical controls accumulate encoder work. Its
+// original-audio case is the most timing-sensitive, so exercise it first.
+// Both fixed cases still use the production RecordingClock and every MP4/AAC
+// oracle; no quality bound or refusal path changes.
+const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["fixed", "baseline", "sequential", "clock-baseline", "cadence-baseline", "late-frames"];
 // Two one-second notifications leave a clear regression beyond the unchanged
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
@@ -275,7 +280,7 @@ document.querySelector("#run").onclick=async()=>{
     // path, retaining the same two-second video span and three-second timeline.
     // Every other variant keeps the complete four-second source at 2x, including
     // the fixed/cadence/late-frame audio, timing, transition and cleanup oracles.
-    for (const narrated of [true, false]) {
+    for (const narrated of variant === "fixed" ? [false, true] : [true, false]) {
       await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated, variant === "clock-baseline"); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant });
       // Optional evidence only: expensive native tracing and scheduling
       // observers require --diagnostics. Product clock traces and all export
