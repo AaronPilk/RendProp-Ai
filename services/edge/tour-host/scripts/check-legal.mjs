@@ -62,9 +62,16 @@ expect(t.includes("optional paid AI Aerial opening") && t.includes("eligible pai
 expect(t.includes("not captured drone footage or a 3D representation") && t.includes("quality is not guaranteed")
   && t.includes("previously saved aerial clips remain accessible") && !/New aerial creation is Coming soon/i.test(t),
   "Terms disclose generated footage limits and retained saved clips without stale availability claims");
-expect(p.includes("source assessment, generation and finished-clip checks") && p.includes("reviewed original front exterior photo or its prepared crop")
-  && p.includes("OpenAI and Anthropic") && p.includes("older free-form Aerial generator remains closed"),
-  "Privacy explains the separate Aerial processor scope and source/clip checks");
+expect(p.includes("source assessment, generation and finished-clip checks")
+  && p.includes("OpenAI or Anthropic checks that prepared image for an exterior")
+  && p.includes("Kie receives it to generate the opening")
+  && p.includes("OpenAI or Anthropic checks the prepared image against sampled frames")
+  && p.includes("current quote names the exact processors")
+  && p.includes("older free-form Aerial generator remains closed"),
+  "Privacy explains the route-specific Aerial processor sequence and source/clip checks");
+expect(t.includes("Aerial quote names Kie") && t.includes("which of OpenAI or Anthropic checks the source")
+  && t.includes("which checks the generated clip"),
+  "Terms identify each Aerial processing stage without fixing one provider across requests");
 expect(p.includes("14 days") && p.includes("two months") && p.includes("does not state how long fetched input photos"), "Kie retention separates documented output/log lifetimes from unknown input retention");
 expect(t.includes("do not expressly rule out AI model training") && p.includes("do not expressly rule out AI model training"), "Kie improvement license disclosed without claiming training or a no-training guarantee");
 expect(p.includes("withdraw permission for future requests") && p.includes("already accepted work may finish"), "Withdrawal stops future authority without promising recall");

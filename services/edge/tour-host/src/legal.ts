@@ -185,6 +185,8 @@ provider-held copies and limited retained records are explained in our Privacy P
 photos and camera-motion instructions can be sent to Kie (kie.ai), Rendprop shows its processing
 terms and asks you to allow it. An Aerial opening also asks you to allow the listed processors for
 source assessment, generation and finished-clip checks before the selected media is sent.
+The current Aerial quote names Kie, which of OpenAI or Anthropic checks the source, and which
+checks the generated clip; the exact list can differ between requests.
 Kie's terms permit submitted content to be used to operate and
 improve its services and do not expressly rule out AI model training. You can decline, or turn off
 future AI processing in Settings. Withdrawal cannot recall work a provider already accepted.</p>
@@ -375,10 +377,12 @@ provider, including for fallback or quality checks. The primary Rendprop databas
 in the United States. Cloud delivery and processing providers may operate in other locations.
 Rendprop does not send your media or buyer inquiries for advertising.</p>
 <p>For an optional Aerial opening, the app identifies the current processors for source assessment,
-generation and finished-clip checks before asking for separate permission. This can include Kie,
-OpenAI and Anthropic. The reviewed original front exterior photo or its prepared crop, plus frames
-from the generated clip, may be sent to the listed processors for the requested checks. The older
-free-form Aerial generator remains closed; previously saved clips remain accessible.</p>
+generation and finished-clip checks before asking for separate permission. The original front
+exterior photo is prepared into the crop you reviewed. OpenAI or Anthropic checks that prepared
+image for an exterior; Kie receives it to generate the opening; and OpenAI or Anthropic checks
+the prepared image against sampled frames from the generated clip. The current quote names the
+exact processors, which can include Kie, OpenAI and Anthropic. The older free-form Aerial
+generator remains closed; previously saved clips remain accessible.</p>
 <p>Provider copies can remain after a result is saved in Rendprop. Google's Gemini terms
 distinguish paid and unpaid processing; unpaid inputs may be used to improve Google's
 products, while paid-service terms provide different protections. Bria's video results do
