@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Verify the installed CI toolchain, then create one owned headless kernel.
 
-No renderer oracle, timeout or automatic retry is changed. This is intended for
-an ephemeral GitHub runner; it never opens Simulator or launches the app.
+Only a timed-out CoreSimulator inventory is retried while a hosted runner warms
+up. Renderer oracles and all other setup commands remain fail-closed.
 """
 import argparse
 import hashlib
@@ -19,6 +19,8 @@ XCODE_VERSION = 'Xcode 26.4.1\nBuild version 17E202'
 SDK = str(DEVELOPER / 'Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.4.sdk')
 RUNTIME = 'com.apple.CoreSimulator.SimRuntime.iOS-26-4'
 DEVICE_TYPE = 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro'
+INVENTORY_MAX_ATTEMPTS = 3
+INVENTORY_RETRY_DELAY_SECONDS = 5
 
 
 def require(condition, message):
@@ -31,7 +33,8 @@ def decoded(value):
 
 
 def prepare(out, run_id, attempt, github_env, *, execute=subprocess.run,
-            developer_exists=lambda: DEVELOPER.is_dir(), architecture=platform.machine):
+            developer_exists=lambda: DEVELOPER.is_dir(), architecture=platform.machine,
+            sleep=time.sleep):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     github_env = Path(github_env)
@@ -40,7 +43,9 @@ def prepare(out, run_id, attempt, github_env, *, execute=subprocess.run,
     receipt = {'passed': False, 'scope': 'CI setup only; no UIKit render result',
                'sourceSHA256': source_sha, 'commands': [], 'createdDevice': None,
                'environmentPublished': False, 'SimulatorUIOpened': False,
-               'AppLaunched': False, 'retries': 0, 'commandDeadlineSeconds': 30}
+               'AppLaunched': False, 'retries': 0, 'commandDeadlineSeconds': 30,
+               'runtimeInventoryMaxAttempts': INVENTORY_MAX_ATTEMPTS,
+               'runtimeInventoryRetryDelaySeconds': INVENTORY_RETRY_DELAY_SECONDS}
     # Explicit per-command selection happens only after the directory check.
     command_env = dict(os.environ)
     command_env['DEVELOPER_DIR'] = str(DEVELOPER)
@@ -77,7 +82,24 @@ def prepare(out, run_id, attempt, github_env, *, execute=subprocess.run,
         require(version == XCODE_VERSION, 'Pinned Xcode version/build mismatch')
         sdk = command('sdk-path', ['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path']).strip()
         require(sdk == SDK, 'Pinned simulator SDK path mismatch')
-        inventory = json.loads(command('runtime-inventory', ['xcrun', 'simctl', 'list', '-j']))
+        # A fresh hosted Mac can need more than one 30-second window to start
+        # CoreSimulator. Retry only its timeout; a bad exit or malformed/wrong
+        # inventory is a real setup failure and must not be retried or accepted.
+        for inventory_attempt in range(1, INVENTORY_MAX_ATTEMPTS + 1):
+            receipt['runtimeInventoryAttempts'] = inventory_attempt
+            try:
+                inventory_raw = command('runtime-inventory' if inventory_attempt == 1
+                                        else 'runtime-inventory-attempt-' + str(inventory_attempt),
+                                        ['xcrun', 'simctl', 'list', '-j'])
+                break
+            except subprocess.TimeoutExpired as error:
+                if inventory_attempt == INVENTORY_MAX_ATTEMPTS:
+                    raise RuntimeError('CoreSimulator inventory timed out after '
+                                       + str(INVENTORY_MAX_ATTEMPTS)
+                                       + ' bounded 30-second attempts; see inventory logs') from error
+                receipt['retries'] += 1
+                sleep(INVENTORY_RETRY_DELAY_SECONDS)
+        inventory = json.loads(inventory_raw)
         require(type(inventory) is dict and type(inventory.get('runtimes')) is list
                 and type(inventory.get('devicetypes')) is list, 'Invalid runtime/type inventory')
         matching = [r for r in inventory['runtimes'] if type(r) is dict and r.get('identifier') == RUNTIME]
