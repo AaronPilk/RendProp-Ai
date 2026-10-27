@@ -33,8 +33,30 @@ def expiry(value):
 
 
 def validate_task(task):
+    if task.get("composition_profile") in {"aerial-opening-input-v1", "aerial-opening-qualify-cfr24"}:
+        from aerial_processing import validate_task as validate_aerial
+        validate_aerial(task)
+        uuid_value(task["job_id"])
+        uuid_value(task["lease_token"])
+        expiry(task["expires_at"])
+        uuid_value(task["output"]["asset_id"])
+        if task["composition_profile"] == "aerial-opening-qualify-cfr24":
+            uuid_value(task["output"]["poster_asset_id"])
+        return
     if task.get("action") == "prepare_photo_quality":
         validate_photo_task(task)
+        return
+    if task.get("source_mode") == "photo_motion_v1" or task.get("composition_profile") == "photo-motion-v2-cfr24":
+        from photo_motion_profile import validate_photo_motion_task, validate_photo_audio_task
+        uuid_value(task["job_id"])
+        uuid_value(task["lease_token"])
+        expiry(task["expires_at"])
+        if task.get("action") == "inspect_audio":
+            validate_photo_audio_task(task)
+        else:
+            validate_photo_motion_task(task)
+            for key in {"asset_id", "poster_asset_id"}:
+                uuid_value(task["output"][key])
         return
     uuid_value(task["job_id"])
     uuid_value(task["lease_token"])
@@ -201,7 +223,15 @@ def render(task, hosts, work_root="/work"):
         raise QualityError("insufficient_private_work_disk")
     directory = Path(tempfile.mkdtemp(prefix="render-", dir=work_root))
     try:
-        result = prepare_photo_quality(task, directory, hosts) if task["action"] == "prepare_photo_quality" else inspect_audio(task, directory, hosts) if task["action"] == "inspect_audio" else prepare_image(task, directory, hosts) if task["action"] == "prepare_image" else extract(task, directory, hosts) if task["action"] == "extract_frames" else compose_task(task, directory, hosts)
+        if task.get("source_mode") == "photo_motion_v1":
+            if task["action"] == "inspect_audio":
+                from photo_motion_profile import checked_producer
+                result = {**inspect_audio(task, directory, hosts), "source_mode":"photo_motion_v1", "composition_profile":task["composition_profile"], "producer_identity":checked_producer(task)}
+            else:
+                from photo_motion_profile import render_photo_motion_task
+                result = render_photo_motion_task(task, directory, hosts)
+        else:
+            result = prepare_photo_quality(task, directory, hosts) if task["action"] == "prepare_photo_quality" else inspect_audio(task, directory, hosts) if task["action"] == "inspect_audio" else prepare_image(task, directory, hosts) if task["action"] == "prepare_image" else extract(task, directory, hosts) if task["action"] == "extract_frames" else compose_task(task, directory, hosts)
         return {"result": result, "directory": directory}
     except BaseException:
         shutil.rmtree(directory, ignore_errors=True)
