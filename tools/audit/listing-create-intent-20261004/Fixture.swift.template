@@ -5,6 +5,7 @@ import CryptoKit
 enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/fixture/" + path) } }
 enum FixtureError: Error { case lostReceipt, timeout }
 __WIRE__
+__WARNING__
 __CREATE__
 __ERROR__
 

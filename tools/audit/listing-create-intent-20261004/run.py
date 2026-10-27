@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Replay and in-flight facts intent proof from captured production Swift."""
 from pathlib import Path
-import argparse, hashlib, json, re, subprocess, tempfile
+import argparse, hashlib, json, re, subprocess, tempfile, os
 
 ROOT = Path(__file__).resolve().parents[3]
 SYNC = ROOT / "apps/ios/Rendprop/Networking/WorkspaceSync.swift"
@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--expect-regression", action="store_true")
     parser.add_argument("--inject-fault", choices=["revive-replay-intent", "drop-replay-base", "retain-consumed-address", "drop-archive-restore"])
     args = parser.parse_args()
-    out = args.output_dir or Path(tempfile.mkdtemp(prefix="rendprop-listing-create-intent-", dir="/tmp"))
+    out = args.output_dir or Path(tempfile.mkdtemp(prefix="rendprop-listing-create-intent-", dir=os.environ.get("RUNNER_TEMP")))
     out.mkdir(parents=True, exist_ok=True)
     models = [ROOT / "apps/ios/Rendprop/Models" / n for n in ["Listing.swift", "ListingClientContact.swift", "Money.swift"]]
     captured = {p: p.read_bytes() for p in [SYNC, APP, *models]}
@@ -33,6 +33,7 @@ def main():
     captured_harness = {p: p.read_bytes() for p in [Path(__file__).resolve(), template]}
     source = captured[SYNC].decode()
     bodies = {"__WIRE__": block(source, "enum ListingWireDetails"),
+              "__WARNING__": block(source, "enum ListingCreateWarning"),
               "__CREATE__": block(source, "@MainActor enum CloudDraftCreation"),
               "__ERROR__": block(source, "enum CloudSyncError:"),
               "__IS_IN_WORKSPACE__": block(captured[APP].decode(), "    func isInSelectedWorkspace(_ listing: Listing)"),
