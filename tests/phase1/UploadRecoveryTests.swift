@@ -223,6 +223,36 @@ import Foundation
         check(signOutManager.state == nil && persistedAfterSignOut == nil && signOutManager.photoProgress == nil,
               "Sign-out retires the queued upload and its presentation")
         check(try Data(contentsOf: file) == bytes, "Account cleanup preserves the owner's original file")
+
+        // Two members can write the same org's listing. A queued abort from A
+        // must not inherit B's bearer after A signs out; A→B→A must not revive it.
+        let originalActor = AuthStore.shared.userID!
+        let originalRevision = AuthStore.shared.syncSessionRevision
+        let originalOrg = WorkspaceContext.selectedOrgID
+        var multipart = UploadManager.State(filePath: "original.jpg", bytesTotal: Int64(bytes.count),
+                                            status: .uploading, mode: "multipart", assetID: RecoveryAPI().oldID)
+        multipart.ownerID = originalActor
+        let switchedAPI = RecoveryAPI(); switchedAPI.abortable = true
+        let switchedManager = UploadManager(api: switchedAPI, session: URLSession(configuration: .ephemeral),
+                                            recovering: multipart, persistState: { _ in true })
+        switchedManager.accountWillChange()
+        AuthStore.shared.userID = "33333333-3333-4333-8333-333333333333"
+        AuthStore.shared.syncSessionRevision += 1
+        check(WorkspaceContext.selectedOrgID == originalOrg, "Account-switch abort case stays within the same org")
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        check(switchedAPI.cancels == 0, "Same-org account switch cannot abort the former owner's multipart upload")
+        AuthStore.shared.userID = originalActor
+        AuthStore.shared.syncSessionRevision += 1
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        check(switchedAPI.cancels == 0, "Returning to the original account cannot revive the retired abort")
+
+        let sameOwnerAPI = RecoveryAPI(); sameOwnerAPI.abortable = true
+        let sameOwnerManager = UploadManager(api: sameOwnerAPI, session: URLSession(configuration: .ephemeral),
+                                             recovering: multipart, persistState: { _ in true })
+        sameOwnerManager.cancel()
+        await until("Current owner can still abort an explicit cancellation") { sameOwnerAPI.cancels == 1 }
+        check(AuthStore.shared.syncSessionRevision == originalRevision + 2,
+              "Abort tests changed only fixture identity and restored the current account")
         var resuming = persisted
         resuming.prepareForExplicitResume()
         check(resuming.assetID == persisted.assetID && resuming.uploadID == persisted.uploadID &&

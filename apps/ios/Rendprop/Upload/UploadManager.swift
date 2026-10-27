@@ -238,6 +238,9 @@ final class UploadManager: NSObject, ObservableObject {
     // Mock by default; LiveAPIClient when Config.useLiveBackend.
     private var api: APIClient = Config.makeAPIClient()
     private var persistState: (State?) -> Bool = UploadStore.save
+    /// Retires fire-and-forget cleanup from every prior account session, even
+    /// when the same account signs in again before a queued task can run.
+    private var accountBoundaryRevision: UInt64 = 0
 
     private lazy var backgroundSession: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: "com.rendprop.upload")
@@ -655,7 +658,10 @@ final class UploadManager: NSObject, ObservableObject {
         reconcileRounds = 0
         DirectUploader.cleanSlices(for: retiredID)
         if Config.useLiveBackend {
-            Task { [weak self] in try? await self?.api.abortUpload(assetID: retiredID) }
+            let boundary = accountBoundaryRevision
+            Task { @MainActor [weak self] in
+                await self?.abortUploadIfCurrent(assetID: retiredID, ownerID: s.ownerID, boundary: boundary)
+            }
         }
 
         var fresh = State(filePath: s.filePath, bytesTotal: s.bytesTotal,
@@ -679,6 +685,7 @@ final class UploadManager: NSObject, ObservableObject {
     func cancel() {
         simulateTimer?.invalidate()
         let assetID = state?.assetID
+        let ownerID = state?.ownerID
         let isMultipart = (state?.mode == "multipart")
         backgroundSession.getAllTasks { [weak self] tasks in
             DispatchQueue.main.async { [weak self] in
@@ -704,7 +711,10 @@ final class UploadManager: NSObject, ObservableObject {
         if let assetID { DirectUploader.cleanSlices(for: assetID) }
         // Best-effort: tear down the server-side R2 multipart session.
         if Config.useLiveBackend, let assetID, isMultipart {
-            Task { [weak self] in try? await self?.api.abortUpload(assetID: assetID) }
+            let boundary = accountBoundaryRevision
+            Task { @MainActor [weak self] in
+                await self?.abortUploadIfCurrent(assetID: assetID, ownerID: ownerID, boundary: boundary)
+            }
         }
         state = nil
         _ = persistState(nil)
@@ -715,6 +725,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// A former account's transfer and UI state cannot be controlled by its
     /// replacement login. Cancelling never deletes the source video or photos.
     func accountWillChange() {
+        accountBoundaryRevision &+= 1
         photoBatchTask?.cancel()
         photoBatchTask = nil
         cancel()
@@ -723,6 +734,19 @@ final class UploadManager: NSObject, ObservableObject {
         lastFailureMessage = nil
         onUploadComplete = nil
         onUploadFailed = nil
+    }
+
+    /// A queued cleanup may outlive sign-out and run under the next account's
+    /// bearer. The server intentionally permits same-org writers to abort an
+    /// asset, so bind this request to the initiating owner and session first.
+    @MainActor
+    private func abortUploadIfCurrent(assetID: String, ownerID: String?, boundary: UInt64) async {
+        guard boundary == accountBoundaryRevision else { return }
+        if Config.enableAuth {
+            guard let ownerID, AuthStore.shared.userID == ownerID,
+                  AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == ownerID else { return }
+        }
+        try? await api.abortUpload(assetID: assetID)
     }
 
     /// Drop a finished/failed record without touching background tasks for it
