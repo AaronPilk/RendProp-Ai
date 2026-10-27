@@ -340,7 +340,7 @@ private struct ListingToolboxGrid: View {
             // Main tools keep four paired rows. The optional re-render action
             // follows the grid so an existing walkthrough never leaves an orphan.
             ListingToolLinkTile(
-                card: ListingToolCard(title: "Aerial intro", sub: sample ? createFirst : "Front of home · opening only",
+                card: ListingToolCard(title: "Aerial intro", sub: sample ? createFirst : "Saved clips · eligible paid opening",
                     icon: "airplane.departure", gradient: RPGradient.aerial, dimmed: sample),
                 disabled: sample, accessibilityID: "detail.aerialOpening",
                 destination: { AnyView(AerialOpeningScreen(listing: destinationListing())) }

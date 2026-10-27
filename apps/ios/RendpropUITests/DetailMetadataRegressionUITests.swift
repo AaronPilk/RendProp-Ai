@@ -96,6 +96,9 @@ final class DetailMetadataRegressionUITests: XCTestCase {
     func testAerialIntroReturnKeepsVideoToolReachable() {
         launch("rich")
         openLink("detail.aerialOpening", title: "Aerial intro")
+        XCTAssertTrue(app.buttons["aerialOpening.done"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.buttons["aerialOpening.retryAccess"].exists,
+            "A local-only listing with no server identity cannot retry /me or start a paid opening")
         back(from: "Aerial intro")
         let video = app.buttons["detail.reelStudio"]
         scrollTo(video); video.tap()
@@ -112,7 +115,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertTrue(photos.label.contains("3 photos"), photos.label)
         let aerial = app.buttons["detail.aerialOpening"]
         scrollTo(aerial)
-        XCTAssertTrue(aerial.isEnabled && aerial.label.contains("Front of home · opening only"), aerial.label)
+        XCTAssertTrue(aerial.isEnabled && aerial.label.contains("Saved clips · eligible paid opening"), aerial.label)
         let rerender = app.buttons["detail.rerenderTour"]
         scrollTo(rerender)
         XCTAssertTrue(rerender.isEnabled)

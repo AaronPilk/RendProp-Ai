@@ -771,7 +771,7 @@ function landingPage(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Rendprop — Property Photos, Videos &amp; Websites for iPhone</title>
-<meta name="description" content="Start with property photos, review optional AI edits, create a listing or social video, and publish a property website. Recorded walkthroughs are optional. Aerial intros are Coming soon.">
+<meta name="description" content="Create listing and social videos from property photos, then publish a property website. An optional paid AI Aerial opening uses a reviewed original front exterior photo, subject to allowance, capacity and processor permission.">
 <meta name="theme-color" content="#0e0d14">
 <style>
   :root { --accent:#7c3aed; --accent2:#9b6dff; --bg:#faf9fc; --ink:#1c192d; --dim:rgba(28,25,45,.6); --card:#fff; }
@@ -803,7 +803,9 @@ function landingPage(): string {
   <h1>Win the listing.<br>Skip the film crew.</h1>
   <p class="sub">Start with landscape property photos, review optional AI edits, create a listing video or a
   vertical social video, then review and publish your property website. Recorded walkthroughs are optional
-  and separate. Aerial intros are Coming soon; new aerial creation is not available or included in any plan.</p>
+  and separate. An optional paid AI Aerial opening starts from a reviewed original front exterior photo.
+  Creation requires an eligible Aerial allowance, available processing capacity and separate permission for
+  the listed processors. Results vary; review the clip before use. The older free-form Aerial generator remains closed.</p>
   <div>
     <a class="pill" href="${appStoreUrl("site")}">Download on the App Store</a>
     <a class="soon" href="https://studio.rendprop.com/">Open Studio</a>

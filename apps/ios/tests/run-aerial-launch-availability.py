@@ -30,7 +30,7 @@ for needle in preserved:
  assert digest==expected_preserved[needle],f'accepted/saved aerial operation changed: {needle}'
  preserved_hashes[needle]=digest
 toolbox=block(fly,'private struct ListingToolboxGrid:')
-assert 'ListingToolCard(title: "Aerial intro", sub: sample ? createFirst : "Front of home · opening only"' in toolbox
+assert 'ListingToolCard(title: "Aerial intro", sub: sample ? createFirst : "Saved clips · eligible paid opening"' in toolbox
 assert 'detail.aerialOpening' in toolbox and 'AerialOpeningScreen(listing: destinationListing())' in toolbox
 assert 'featureButton(.aerial)' in block(app,'private var featureGrid:')
 assert 'LaunchFeatureAvailability.canCreateOpening' in block(app,'private func open(_ feature:')

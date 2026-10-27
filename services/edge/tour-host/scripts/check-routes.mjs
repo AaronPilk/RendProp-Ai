@@ -467,6 +467,44 @@ async function main() {
     "[/ fallback] Studio stays discoverable if the static homepage is unavailable");
   ok("Studio is discoverable from the homepage, public navigation and apex redirect");
 
+  // Static Assets serve the public homepage; the Worker renders a fallback if
+  // those assets are unavailable. Keep both public claims aligned with the
+  // scoped paid opening, without reopening the older free-form generator.
+  const homepage = readFileSync(join(ROOT, "public", "index.html"), "utf8");
+  const fallback = await get(worker, "/");
+  expect(fallback.status === 200, "[/ fallback] landing remains available");
+  for (const [label, html] of [["homepage", homepage], ["Worker fallback", fallback.body]]) {
+    expect(/optional paid AI Aerial opening/i.test(html), `[${label}] names the optional paid opening`);
+    expect(/reviewed original front exterior photo/i.test(html), `[${label}] requires the reviewed original exterior`);
+    expect(/eligible Aerial allowance/i.test(html), `[${label}] states the allowance gate`);
+    expect(/available (?:processing )?capacity/i.test(html), `[${label}] states the capacity gate`);
+    expect(/separate (?:permission|processor permission)/i.test(html), `[${label}] states separate processor permission`);
+    expect(/older free-form Aerial generator remains closed/i.test(html), `[${label}] leaves the legacy generator closed`);
+    expect(/Results vary; review/i.test(html), `[${label}] requires review without a quality promise`);
+    expect(!/Aerial[^<.]{0,100}Coming soon/i.test(html), `[${label}] has no obsolete Coming soon claim`);
+  }
+  const aerialCard = homepage.match(/<a class="ind reveal"[^>]*href="\/features#aerials"[\s\S]*?<\/a>/)?.[0] || "";
+  expect(/AI Aerial opening/i.test(aerialCard) && /eligible Aerial allowance/i.test(aerialCard)
+    && /available capacity/i.test(aerialCard) && /separate processor permission/i.test(aerialCard)
+    && /Results vary; review before use/i.test(aerialCard),
+    "[homepage card] visible opening claim includes admission and review limits");
+  const meta = (kind, name) => homepage.match(new RegExp(`<meta ${kind}="${name}" content="([^"]*)">`))?.[1] || "";
+  for (const description of [meta("name", "description"), meta("property", "og:description"), meta("name", "twitter:description")]) {
+    expect(/paid.*Aerial opening/i.test(description) && /front exterior photo/i.test(description)
+      && /allowance/i.test(description) && /capacity/i.test(description) && /processor permission/i.test(description),
+      "[homepage SEO] social and search descriptions qualify the paid front-exterior opening");
+  }
+  const graph = assertValidJsonLd("homepage", homepage, ["SoftwareApplication", "FAQPage"]);
+  const app = graph?.["@graph"]?.find((node) => node["@type"] === "SoftwareApplication");
+  const faq = graph?.["@graph"]?.find((node) => node["@type"] === "FAQPage");
+  expect(app?.featureList?.some((feature) => /paid AI Aerial opening.*eligible allowance.*available capacity.*separate processor permission/i.test(feature)),
+    "[homepage JSON-LD] application feature has the same opening gates");
+  expect(faq?.mainEntity?.some((question) => /older free-form Aerial generator remains closed/i.test(question.acceptedAnswer?.text || "")),
+    "[homepage JSON-LD] FAQ keeps the legacy generator closed");
+  expect(faq?.mainEntity?.some((question) => /Results vary and quality is not guaranteed/i.test(question.acceptedAnswer?.text || "")),
+    "[homepage JSON-LD] FAQ promises no result quality");
+  ok("static homepage, SEO and Worker fallback describe the scoped paid Aerial opening");
+
   // ---- canonical origin: https + apex ---------------------------------------
   // Live on 2026-09-05, http://rendprop.com/terms answered 200 over plain HTTP
   // and https://www.rendprop.com/ was a Cloudflare 525. The Worker's own paths
@@ -624,7 +662,7 @@ async function main() {
     "[/terms] §6 must identify Apple as the purchase-term authority");
   expect(!/Starter, Pro and Team, each\s+billed monthly\./.test(terms.body),
     "[/terms] must not promise the superseded monthly-only launch line-up");
-  expect(terms.body.includes("Effective October 16, 2026"), "[/terms] proposed notice revision date");
+  expect(terms.body.includes("Effective October 27, 2026"), "[/terms] proposed notice revision date");
   ok("terms separate Rendprop usage details from Apple purchase terms");
 
   // ── safeUrl scheme allowlist (audit P1 re-open) ──────────────────────────

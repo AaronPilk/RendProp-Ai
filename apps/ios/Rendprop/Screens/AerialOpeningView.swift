@@ -22,6 +22,20 @@ enum AerialOpeningPhase: Equatable {
     }
 }
 
+/// A screen hint derived from the current workspace's server-issued /me
+/// allowance. The opening service and database still decide admission.
+enum AerialOpeningCreationAccess: Equatable {
+    case checking, available, planRequired, allowanceUsed, activationPending, unavailable
+
+    static func resolve(monthlyCap: Int?, remaining: Int?, activationAvailable: Bool?, activationPending: Bool) -> Self {
+        if activationPending { return .activationPending }
+        guard let monthlyCap, monthlyCap >= 0, let remaining, remaining >= 0 else { return .unavailable }
+        guard monthlyCap > 0 else { return .planRequired }
+        guard activationAvailable == true else { return .unavailable }
+        return remaining > 0 ? .available : .allowanceUsed
+    }
+}
+
 struct AerialOpeningPhotoChoice: Identifiable, Equatable {
     enum Eligibility: Equatable {
         case unchecked, checking, eligible
@@ -51,8 +65,11 @@ struct AerialOpeningPresentation: Equatable {
     var opening: AerialOpeningPreview?
     var includeOpening = false
     var orderedVideoPhotos: [AerialOpeningPhotoChoice] = []
-    /// Off until the actual typed service, quote and catalogue are integrated.
-    var dispatchAvailable = false
+    /// /me is a workspace-scoped presentation hint. The typed service and
+    /// database still verify the quote, allowance and serving budget.
+    var creationAccess: AerialOpeningCreationAccess = .checking
+    var dispatchAvailable: Bool { creationAccess == .available }
+    var showsFooter: Bool { dispatchAvailable || (phase != .choosing && phase != .stopped) }
     var hasSavedOpenings = false
     var canStopSavedRequest = false
     var quoteReady = false
@@ -103,6 +120,8 @@ struct AerialOpeningActions {
     var setIncluded: ((Bool) -> Void)?
     var chooseAnother: (() -> Void)?
     var openSaved: (() -> Void)?
+    var viewPlans: (() -> Void)?
+    var retryAccess: (() -> Void)?
     var close: (() -> Void)?
 }
 
@@ -110,21 +129,21 @@ struct AerialOpeningActions {
 /// into paid work. The service still validates its durable quote and identity.
 enum AerialOpeningInteraction {
     static func choosePhoto(_ id: String, state: AerialOpeningPresentation, actions: AerialOpeningActions) {
-        guard state.phase.allowsPhotoChanges, state.photos.contains(where: { $0.id == id }) else { return }
+        guard state.dispatchAvailable, state.phase.allowsPhotoChanges, state.photos.contains(where: { $0.id == id }) else { return }
         actions.choosePhoto?(id)
     }
     static func chooseAspect(_ aspect: String, state: AerialOpeningPresentation, actions: AerialOpeningActions) {
-        guard state.phase.allowsPhotoChanges, ["16:9", "9:16"].contains(aspect) else { return }
+        guard state.dispatchAvailable, state.phase.allowsPhotoChanges, ["16:9", "9:16"].contains(aspect) else { return }
         actions.chooseAspect?(aspect)
     }
     static func changeCrop(_ crop: AerialOpeningReviewedCrop, state: AerialOpeningPresentation, actions: AerialOpeningActions) {
-        guard state.phase.allowsPhotoChanges, let photo = state.selectedPhoto,
+        guard state.dispatchAvailable, state.phase.allowsPhotoChanges, let photo = state.selectedPhoto,
               crop.sourceWidth == photo.sourceWidth, crop.sourceHeight == photo.sourceHeight,
               crop.isValid(aspect: state.aspect) else { return }
         actions.changeCrop?(crop)
     }
     static func addPhoto(state: AerialOpeningPresentation, actions: AerialOpeningActions) {
-        guard state.phase.allowsPhotoChanges else { return }
+        guard state.dispatchAvailable, state.phase.allowsPhotoChanges else { return }
         actions.addPhoto?()
     }
     static func checkPhoto(state: AerialOpeningPresentation, actions: AerialOpeningActions) {
@@ -181,9 +200,11 @@ struct AerialOpeningView: View {
         .navigationTitle("Aerial intro")
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            AerialOpeningFooter(state: state, actions: actions)
-                .padding(.horizontal, 20).padding(.vertical, 12)
-                .background(.bar)
+            if state.showsFooter {
+                AerialOpeningFooter(state: state, actions: actions)
+                    .padding(.horizontal, 20).padding(.vertical, 12)
+                    .background(.bar)
+            }
         }
     }
 }
@@ -206,11 +227,12 @@ struct AerialOpeningContent: View {
                     .accessibilityIdentifier("aerialOpening.saved")
             }
             status
+            if !state.dispatchAvailable && (state.phase == .choosing || state.phase == .stopped) { creationAccessCard }
             if let progress = state.generationProgress {
                 NativeGenerationProgressView(progress: progress).padding(16).modifier(RendpropContentSurface())
             }
             if let opening = state.opening { openingCard(opening) }
-            if state.phase != .ready || state.opening == nil {
+            if state.dispatchAvailable && (state.phase != .ready || state.opening == nil) {
                 photoChooser
                 if state.selectedPhoto != nil { framing }
             }
@@ -232,13 +254,15 @@ struct AerialOpeningContent: View {
         return VStack(alignment: .leading, spacing: 14) {
             Text(listingTitle).font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .lineLimit(2)
-            Label(state.opening == nil ? "Start outside" : "Your opening", systemImage: state.opening == nil ? "house" : "airplane.departure")
+            Label(state.opening == nil ? (state.dispatchAvailable ? "Start outside" : "Aerial intro") : "Your opening", systemImage: state.opening == nil ? "house" : "airplane.departure")
                 .font(.rpTitle).foregroundStyle(Theme.ink)
                 .accessibilityAddTraits(.isHeader)
-            Text(state.opening == nil ? "Choose the front of this home for one AI opening shot." : "Review the opening and choose whether it starts your video.")
+            Text(state.opening != nil ? "Review the opening and choose whether it starts your video." :
+                state.dispatchAvailable ? "Choose the front of this home for one AI opening shot." :
+                "Review this workspace's Aerial access and any saved openings below.")
                 .font(.rpBody).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
-            if state.opening == nil { guideLayout {
+            if state.opening == nil && state.dispatchAvailable { guideLayout {
                 Image(systemName: "house.fill")
                     .font(.system(size: 32, weight: .regular))
                     .foregroundStyle(Theme.accent)
@@ -254,6 +278,56 @@ struct AerialOpeningContent: View {
                 }
             } }
         }
+    }
+
+    @ViewBuilder private var creationAccessCard: some View {
+        let title: String = switch state.creationAccess {
+        case .checking: "Checking Aerial access"
+        case .planRequired: "Aerial intros need an eligible plan"
+        case .allowanceUsed: "Aerial allowance used"
+        case .activationPending: ServingActivationSummary.pendingTitle
+        case .unavailable: "Aerial access unavailable"
+        case .available: ""
+        }
+        let detail: String = switch state.creationAccess {
+        case .checking: "Checking this workspace's allowance. Saved openings remain available."
+        case .planRequired: "This workspace has no Aerial allowance. Choose a plan to make a new opening; saved openings remain available."
+        case .allowanceUsed: "This workspace has used its included Aerial intros for this month. Saved openings remain available."
+        case .activationPending: ServingActivationSummary.pendingExplanation
+        case .unavailable: "We couldn't verify this workspace's Aerial allowance. Try again. Saved openings remain available."
+        case .available: ""
+        }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                if state.creationAccess == .checking {
+                    ProgressView().tint(Theme.accent).accessibilityLabel("Checking access")
+                } else {
+                    Image(systemName: state.creationAccess == .unavailable ? "wifi.exclamationmark" : "info.circle")
+                        .font(.title3).foregroundStyle(Theme.accent).accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title).font(.rpHeadline).foregroundStyle(Theme.ink).accessibilityAddTraits(.isHeader)
+                    Text(detail).font(.rpBody).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if state.creationAccess == .planRequired || state.creationAccess == .allowanceUsed {
+                if let viewPlans = actions.viewPlans {
+                    Button("View plans", action: viewPlans)
+                        .buttonStyle(RendpropPillButtonStyle(prominent: true))
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("aerialOpening.viewPlans")
+                }
+            } else if state.creationAccess == .unavailable, let retryAccess = actions.retryAccess {
+                Button("Try again", action: retryAccess)
+                    .buttonStyle(RendpropPillButtonStyle())
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("aerialOpening.retryAccess")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18).modifier(RendpropContentSurface())
+        .accessibilityIdentifier("aerialOpening.creationAccess")
     }
 
     @ViewBuilder private var status: some View {
@@ -285,7 +359,9 @@ struct AerialOpeningContent: View {
         case .review:
             statusCard("Review the opening", detail: "Check that it still shows your home before using it.", symbol: "play.rectangle")
         case .stopped:
-            statusCard("Stopped", detail: "Your saved work is kept. Choose a photo when you’re ready to continue.", symbol: "pause.circle")
+            statusCard("Stopped", detail: state.dispatchAvailable
+                ? "Your saved work is kept. Choose a photo when you’re ready to continue."
+                : "Your saved work is kept. Check Aerial access below before starting another opening.", symbol: "pause.circle")
         case .needsAttention(let message):
             statusCard("Opening needs attention", detail: message, symbol: "exclamationmark.circle")
         }
@@ -539,7 +615,9 @@ struct AerialOpeningFooter: View {
         VStack(spacing: 8) {
             switch state.phase {
             case .choosing, .stopped:
-                action("Prepare this photo", symbol: "checkmark.shield", enabled: state.canCheckPhoto && actions.checkPhoto != nil, id: "check", perform: { AerialOpeningInteraction.checkPhoto(state: state, actions: actions) })
+                if state.dispatchAvailable {
+                    action("Prepare this photo", symbol: "checkmark.shield", enabled: state.canCheckPhoto && actions.checkPhoto != nil, id: "check", perform: { AerialOpeningInteraction.checkPhoto(state: state, actions: actions) })
+                }
             case .checkingPhoto, .generating:
                 action("Stop", symbol: "stop.circle", enabled: actions.stop != nil, id: "stop", perform: { AerialOpeningInteraction.stop(state: state, actions: actions) })
             case .stopping:
@@ -551,9 +629,13 @@ struct AerialOpeningFooter: View {
                 if let stop = actions.stop { Button("Don't use this opening", action: stop).buttonStyle(RendpropPillButtonStyle()) }
             case .ready:
                 action("Done", symbol: "checkmark", enabled: true, id: "done", perform: actions.close ?? { dismiss() })
-                if let chooseAnother = actions.chooseAnother { Button("Choose another exterior", action: chooseAnother).buttonStyle(RendpropPillButtonStyle()) }
+                if state.dispatchAvailable, let chooseAnother = actions.chooseAnother { Button("Choose another exterior", action: chooseAnother).buttonStyle(RendpropPillButtonStyle()) }
             case .needsAttention:
-                action("Check saved request", symbol: "arrow.clockwise", enabled: actions.checkStatus != nil, id: "checkStatus", perform: actions.checkStatus)
+                if let checkStatus = actions.checkStatus {
+                    action("Check saved request", symbol: "arrow.clockwise", enabled: true, id: "checkStatus", perform: checkStatus)
+                } else {
+                    action("Done", symbol: "checkmark", enabled: true, id: "done", perform: actions.close ?? { dismiss() })
+                }
                 if state.canStopSavedRequest, let stop = actions.stop {
                     Button("Stop saved request", action: stop).buttonStyle(RendpropPillButtonStyle())
                         .accessibilityIdentifier("aerialOpening.stopSaved")
@@ -674,6 +756,7 @@ private struct AerialOpeningFramingPreview: View {
     @Published var state = AerialOpeningPresentation()
     @Published private(set) var catalogueEntries: [AerialOpeningCatalogue.Entry] = []
     var catalogueContext: PropertyVideoJobContext? { context }
+    var canCheckSavedRequest: Bool { saved?.dispatched == true && (try? requireCurrent()) != nil }
     private let listing: Listing
     private weak var model: AppModel?
     private var context: PropertyVideoJobContext?
@@ -686,10 +769,11 @@ private struct AerialOpeningFramingPreview: View {
     private var task: Task<Void, Never>?
     private var accepted: PropertyVideoAcceptedOpening?
     private var preparationID: UUID?
+    private var accessRequestID = 0
     init(listing: Listing) { self.listing = listing }
 
     func load(model: AppModel, expectedOperationID: UUID? = nil) async {
-        guard context == nil else { return }
+        guard context == nil else { await refreshCreationAccess(); return }
         self.model = model
         do {
             guard !listing.isSample, let actor = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
@@ -711,7 +795,6 @@ private struct AerialOpeningFramingPreview: View {
             state.photos = originals.enumerated().map { number, original in
                 .init(id: original.photoID, title: "Photo \(number + 1)", url: original.url, sourceWidth: original.width, sourceHeight: original.height)
             }
-            state.dispatchAvailable = true
             if let context, let pending = try AerialOpeningStore.load(context) {
                 guard pending.physicalOrgID == physical, expectedOperationID == nil || pending.manifest.operationID == expectedOperationID else { throw PropertyVideoJobStore.Failure.invalidReceipt }
                 saved = pending; state.generationProgress = pending.dispatched ? pending.generationProgress() : nil
@@ -722,11 +805,38 @@ private struct AerialOpeningFramingPreview: View {
                         state.selectedPhotoID = nil
                         await loadAccepted()
                     } else { await refresh() }
+                    await refreshCreationAccess()
                     return
                 }
             }
             await loadAccepted()
+            await refreshCreationAccess()
         } catch { fail(error) }
+    }
+    func refreshCreationAccess() async {
+        guard let api = model?.api else { return }
+        accessRequestID += 1
+        let requestID = accessRequestID
+        state.creationAccess = .checking
+        do {
+            try requireCurrent()
+            let usage = try await api.me()
+            try requireCurrent()
+            guard requestID == accessRequestID else { return }
+            let access = AerialOpeningCreationAccess.resolve(
+                monthlyCap: usage.entitlements?.aerialsPerMonth,
+                remaining: usage.entitlements?.remaining("aerials"),
+                activationAvailable: usage.servingActivation?.available,
+                activationPending: usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true)
+            if access != .available && state.phase == .costReview { resetQuote() }
+            state.creationAccess = access
+        } catch is CancellationError {
+            return
+        } catch {
+            guard requestID == accessRequestID else { return }
+            if (try? requireCurrent()) == nil { fail(error) }
+            else { state.creationAccess = .unavailable }
+        }
     }
     private func requireCurrent() throws {
         try Task.checkCancellation()
@@ -994,7 +1104,7 @@ private struct AerialOpeningFramingPreview: View {
         state.phase = saved?.dispatched == true && saved?.status?.isTerminal != true && saved?.notAdmittedCancelled != true
             ? .needsAttention(error.localizedDescription) : .stopped
         if (try? requireCurrent()) == nil {
-            state.dispatchAvailable = false; state.photos = []; state.opening = nil; state.quotedDisclosure = nil; state.hasSavedOpenings = false; catalogueEntries = []; state.canStopSavedRequest = false
+            accessRequestID += 1; state.creationAccess = .unavailable; state.photos = []; state.opening = nil; state.quotedDisclosure = nil; state.hasSavedOpenings = false; catalogueEntries = []; state.canStopSavedRequest = false
             state.generationProgress = nil
             state.phase = .needsAttention("Your account or workspace changed. Reopen this home's aerial intro to continue.")
         }
@@ -1015,12 +1125,13 @@ private struct AerialOpeningFramingPreview: View {
             }
         } catch { fail(error) }
     }
-    func disappear() { polling?.cancel() }
+    func disappear() { polling?.cancel(); accessRequestID += 1 }
 }
 
 struct AerialOpeningScreen: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var auth = AuthStore.shared
     let listing: Listing
     let isPresentedModally: Bool
@@ -1039,8 +1150,10 @@ struct AerialOpeningScreen: View {
             choosePhoto: controller.choose, chooseAspect: controller.aspect, changeCrop: controller.crop, addPhoto: { showPhotos = true },
             checkPhoto: controller.prepare, makeOpening: controller.make,
             setProcessorAllowed: { controller.state.processorAllowed = $0 }, stop: controller.stop,
-            checkStatus: { Task { await controller.refresh() } }, review: controller.accept,
-            setIncluded: controller.setIncluded, chooseAnother: controller.chooseAnother, openSaved: { showSaved = true }, close: { dismiss() }), isPresentedModally: isPresentedModally)
+            checkStatus: controller.canCheckSavedRequest ? { Task { await controller.refresh() } } : nil, review: controller.accept,
+            setIncluded: controller.setIncluded, chooseAnother: controller.chooseAnother, openSaved: { showSaved = true },
+            viewPlans: { PaywallRouter.shared.present(reason: controller.state.creationAccess == .allowanceUsed ? .quota(feature: "aerials") : .featureLocked("Aerial intro")) },
+            retryAccess: { Task { await controller.refreshCreationAccess() } }, close: { dismiss() }), isPresentedModally: isPresentedModally)
             .sheet(isPresented: $showSaved) {
                 if let context = controller.catalogueContext {
                     AerialOpeningAcceptedPicker(entries: controller.catalogueEntries, context: context, requireCurrent: controller.verifyCatalogueContext) { entry, url in controller.chooseAccepted(entry, preview: url) }
@@ -1055,7 +1168,10 @@ struct AerialOpeningScreen: View {
             .task { await controller.load(model: model, expectedOperationID: expectedOperationID) }
             .onChange(of: auth.syncSessionRevision) { _ in controller.identityChanged() }
             .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in controller.identityChanged() }
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropPlanChanged)) { _ in Task { await controller.refreshCreationAccess() } }
+            .onChange(of: scenePhase) { phase in if phase == .active { Task { await controller.refreshCreationAccess() } } }
             .onDisappear { controller.disappear() }
+            .paywallHost(managesLifecycle: false)
     }
 }
 
