@@ -32,7 +32,9 @@ app, fly, form, wall = [src[n] for n in ['RendpropApp.swift','Screens/Flythrough
 app_routes = block(app, 'struct RendpropApp: App')
 assert app.count('demoSection') == 2
 assert '.id("\\(workspaceAuth.userID' not in app
-assert '.task { await model.load(); Analytics.start' in app
+analytics_task = block(app, '// First-party analytics only:')
+assert analytics_task.index('await model.load()') < analytics_task.index('Analytics.start(api: model.api as? AnalyticsAPI)')
+assert analytics_task.index('Analytics.start(api: model.api as? AnalyticsAPI)') < analytics_task.index('await CreditWalletStore.shared.recoverAfterSignIn()')
 assert 'await model.load()' in block(src['Team/TeamView.swift'], 'private func join()')
 assert 'cellularApproved: cellularApproved' in block(app, 'func publishExisting(')
 assert 'cellularApproved: cellularApproved' in block(app, 'func publishTour(')
