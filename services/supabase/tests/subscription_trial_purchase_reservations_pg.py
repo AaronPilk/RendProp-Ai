@@ -114,7 +114,7 @@ try:
     bodies=[json.loads(output.strip())for _,output in outcomes]
     assert bodies[0]==bodies[1] and bodies[0]["app_account_token"]==actor
     receipt["sameHoldRace"]={"replayed":2,"oneImmutableCommitment":True}
-    run("accepted-race-chronology",[*psql,"-q"],f"""set role service_role;select apply_apple_entitlement_v2('{org}','{actor}','cash-race-original','cash-race-tx','{product}','starter','Production','active',now()+interval '7 days',true,'SUBSCRIBED',now(),now(),now(),now());""")
+    run("accepted-race-chronology",[*psql,"-q"],f"""set role service_role;select apply_apple_entitlement_v2('{org}','{actor}','cash-race-original','cash-race-tx','{product}','max','Production','active',now()+interval '7 days',true,'SUBSCRIBED',now(),now(),now(),now());""")
     convert=f"select fund_reserved_subscription_trial('{actor}',org_id,original_transaction_id,last_transaction_id,product_id,0,'USD','USA',1,'FREE_TRIAL',transaction_purchased_at,expires_at,transaction_signed_at,repeat('e',64))from apple_subscriptions where original_transaction_id='cash-race-original';"
     outcomes=race("convert-versus-new-hold",[convert,f"select prepare_subscription_trial_purchase('{loser_actor}','{loser_org}','{product}');"])
     assert outcomes[0][0]==0 and outcomes[1][0]==3 and 'RP402'in outcomes[1][1],outcomes
