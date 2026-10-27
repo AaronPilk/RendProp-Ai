@@ -4,7 +4,7 @@
  * This transport boundary does not grant scope or relax saved recipe checks. */
 import {adminClient} from '../_shared/supabase.ts';
 import {assert,throwRpc} from '../_shared/http.ts';
-export const AERIAL_COMPOSITE_RPCS=['property_video_aerial_operation','property_video_aerial_scope','property_video_aerial_admit','property_video_aerial_cancel','property_video_aerial_worker_read','property_video_aerial_cpu_output'] as const;
+export const AERIAL_COMPOSITE_RPCS=['property_video_aerial_operation','property_video_aerial_scope','property_video_aerial_admit','property_video_aerial_admit_credit','property_video_aerial_cancel','property_video_aerial_worker_read','property_video_aerial_cpu_output'] as const;
 export type AerialCompositeRPC=typeof AERIAL_COMPOSITE_RPCS[number];
 export type AerialCompositeRow=Record<string,any>&{id:string;actor_id:string;operation_id:string;org_id:string;library_org_id:string;listing_id:string;manifest_sha256:string;manifest:Record<string,unknown>;consent:Record<string,unknown>};
 const UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;

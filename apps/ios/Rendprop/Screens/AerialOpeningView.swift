@@ -25,9 +25,14 @@ enum AerialOpeningPhase: Equatable {
 /// A screen hint derived from the current workspace's server-issued /me
 /// allowance. The opening service and database still decide admission.
 enum AerialOpeningCreationAccess: Equatable {
-    case checking, available, planRequired, allowanceUsed, activationPending, unavailable
+    case checking, available, planRequired, allowanceUsed, creditsRequired, activationPending, unavailable
 
-    static func resolve(monthlyCap: Int?, remaining: Int?, activationAvailable: Bool?, activationPending: Bool) -> Self {
+    static func resolve(monthlyCap: Int?, remaining: Int?, activationAvailable: Bool?, activationPending: Bool,
+                        wallet: CreditWalletSnapshot? = nil) -> Self {
+        if let wallet, wallet.fundingMode != .included {
+            guard let quote = wallet.aerialQuote, quote.credits == 20 else { return .unavailable }
+            return wallet.balance.totalAvailable >= quote.credits ? .available : .creditsRequired
+        }
         if activationPending { return .activationPending }
         guard let monthlyCap, monthlyCap >= 0, let remaining, remaining >= 0 else { return .unavailable }
         guard monthlyCap > 0 else { return .planRequired }
@@ -74,6 +79,8 @@ struct AerialOpeningPresentation: Equatable {
     var canStopSavedRequest = false
     var quoteReady = false
     var quotedDisclosure: String?
+    var quotedCredits: Int?
+    var availableCredits: Int?
     var processorAllowed = false
     var quotedPhotoID: String?
     var aspect = "16:9"
@@ -121,6 +128,7 @@ struct AerialOpeningActions {
     var chooseAnother: (() -> Void)?
     var openSaved: (() -> Void)?
     var viewPlans: (() -> Void)?
+    var viewCredits: (() -> Void)?
     var retryAccess: (() -> Void)?
     var close: (() -> Void)?
 }
@@ -285,6 +293,7 @@ struct AerialOpeningContent: View {
         case .checking: "Checking Aerial access"
         case .planRequired: "Aerial intros need an eligible plan"
         case .allowanceUsed: "Aerial allowance used"
+        case .creditsRequired: "Add credits for this opening"
         case .activationPending: ServingActivationSummary.pendingTitle
         case .unavailable: "Aerial access unavailable"
         case .available: ""
@@ -293,6 +302,7 @@ struct AerialOpeningContent: View {
         case .checking: "Checking this workspace's allowance. Saved openings remain available."
         case .planRequired: "This workspace has no Aerial allowance. Choose a plan to make a new opening; saved openings remain available."
         case .allowanceUsed: "This workspace has used its included Aerial intros for this month. Saved openings remain available."
+        case .creditsRequired: "A 1080p aerial opening uses 20 credits. Your saved openings remain available."
         case .activationPending: ServingActivationSummary.pendingExplanation
         case .unavailable: "We couldn't verify this workspace's Aerial allowance. Try again. Saved openings remain available."
         case .available: ""
@@ -318,6 +328,11 @@ struct AerialOpeningContent: View {
                         .frame(minHeight: 44)
                         .accessibilityIdentifier("aerialOpening.viewPlans")
                 }
+            } else if state.creationAccess == .creditsRequired, let viewCredits = actions.viewCredits {
+                Button("View credits", action: viewCredits)
+                    .buttonStyle(RendpropPillButtonStyle(prominent: true))
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("aerialOpening.viewCredits")
             } else if state.creationAccess == .unavailable, let retryAccess = actions.retryAccess {
                 Button("Try again", action: retryAccess)
                     .buttonStyle(RendpropPillButtonStyle())
@@ -340,6 +355,11 @@ struct AerialOpeningContent: View {
             VStack(alignment: .leading, spacing: 10) {
                 Label(state.selectedPhoto?.eligibility == .eligible ? "Original photo ready" : "Review exterior photo", systemImage: "checkmark.shield")
                     .font(.rpHeadline).foregroundStyle(Theme.ink)
+                if let credits = state.quotedCredits, let available = state.availableCredits {
+                    Text("\(credits) credits for this opening · \(available) available")
+                        .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let disclosure = state.quotedDisclosure {
                     Text(disclosure).font(.rpCaption).foregroundStyle(Theme.inkDim)
                         .fixedSize(horizontal: false, vertical: true)
@@ -822,12 +842,21 @@ private struct AerialOpeningFramingPreview: View {
             try requireCurrent()
             let usage = try await api.me()
             try requireCurrent()
+            var wallet: CreditWalletSnapshot?
+            if let creditContext = try? CreditWalletContext.capture() {
+                await CreditWalletStore.shared.load(context: creditContext, refreshProduct: false)
+                if CreditWalletStore.shared.snapshotContext == creditContext {
+                    wallet = CreditWalletStore.shared.snapshot
+                }
+                try requireCurrent()
+            }
             guard requestID == accessRequestID else { return }
             let access = AerialOpeningCreationAccess.resolve(
                 monthlyCap: usage.entitlements?.aerialsPerMonth,
                 remaining: usage.entitlements?.remaining("aerials"),
                 activationAvailable: usage.servingActivation?.available,
-                activationPending: usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true)
+                activationPending: usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true,
+                wallet: wallet)
             if access != .available && state.phase == .costReview { resetQuote() }
             state.creationAccess = access
         } catch is CancellationError {
@@ -863,6 +892,7 @@ private struct AerialOpeningFramingPreview: View {
     private func resetQuote() {
         state.generationProgress = nil
         state.phase = .choosing; state.processorAllowed = false; state.quoteReady = false; state.quotedDisclosure = nil
+        state.quotedCredits = nil; state.availableCredits = nil
         state.quotedPhotoID = nil; state.quotedCrop = nil; state.quotedAspect = nil
         state.availabilityMessage = nil
     }
@@ -884,7 +914,19 @@ private struct AerialOpeningFramingPreview: View {
                 let reply = try await AerialOpeningService.quote(manifest, context: context)
                 try requireCurrent()
                 guard preparationID == operation else { return }
-                let journal = AerialOpeningJournal(context: context, physicalOrgID: physical, manifest: manifest, quote: reply.quote, disclosure: reply.disclosure, sourcePhotoID: original.photoID)
+                var journal = AerialOpeningJournal(context: context, physicalOrgID: physical, manifest: manifest, quote: reply.quote, disclosure: reply.disclosure, sourcePhotoID: original.photoID)
+                if let creditContext = try? CreditWalletContext.capture(),
+                   CreditWalletStore.shared.snapshotContext == creditContext,
+                   let wallet = CreditWalletStore.shared.snapshot,
+                   wallet.fundingMode != .included {
+                    guard let quote = wallet.aerialQuote,
+                          wallet.balance.totalAvailable >= quote.credits else {
+                        throw CloudSyncError.invalidResponse
+                    }
+                    journal.creditAuthorization = try AerialCreditAuthorization(quote: quote, environment: wallet.environment)
+                    state.quotedCredits = quote.credits
+                    state.availableCredits = wallet.balance.totalAvailable
+                }
                 try AerialOpeningStore.save(journal); saved = journal
                 if let index = state.photos.firstIndex(where: { $0.id == original.photoID }) { state.photos[index].eligibility = .eligible }
                 state.quotedPhotoID = original.photoID; state.quotedCrop = crop; state.quotedAspect = aspect
@@ -1140,6 +1182,7 @@ struct AerialOpeningScreen: View {
     @StateObject private var controller: AerialOpeningController
     @State private var showPhotos = false
     @State private var showSaved = false
+    @State private var showCredits = false
     init(listing: Listing, isPresentedModally: Bool = false, expectedOperationID: UUID? = nil) {
         self.listing = listing
         self.isPresentedModally = isPresentedModally
@@ -1154,11 +1197,15 @@ struct AerialOpeningScreen: View {
             checkStatus: controller.canCheckSavedRequest ? { Task { await controller.refresh() } } : nil, review: controller.accept,
             setIncluded: controller.setIncluded, chooseAnother: controller.chooseAnother, openSaved: { showSaved = true },
             viewPlans: { PaywallRouter.shared.present(reason: controller.state.creationAccess == .allowanceUsed ? .quota(feature: "aerials") : .featureLocked("Aerial intro")) },
+            viewCredits: { showCredits = true },
             retryAccess: { Task { await controller.refreshCreationAccess() } }, close: { dismiss() }), isPresentedModally: isPresentedModally)
             .sheet(isPresented: $showSaved) {
                 if let context = controller.catalogueContext {
                     AerialOpeningAcceptedPicker(entries: controller.catalogueEntries, context: context, requireCurrent: controller.verifyCatalogueContext) { entry, url in controller.chooseAccepted(entry, preview: url) }
                 }
+            }
+            .sheet(isPresented: $showCredits, onDismiss: { Task { await controller.refreshCreationAccess() } }) {
+                NavigationStack { CreditWalletView() }
             }
             .sheet(isPresented: $showPhotos, onDismiss: { Task { await controller.reloadPhotos() } }) {
                 NavigationStack {

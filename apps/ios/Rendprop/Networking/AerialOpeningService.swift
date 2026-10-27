@@ -168,6 +168,7 @@ struct AerialOpeningJournal: Codable, Equatable {
     let quote: AerialOpeningQuote
     let disclosure: String
     let sourcePhotoID: String
+    var creditAuthorization: AerialCreditAuthorization? = nil
     var dispatched = false
     var stopRequested = false
     var notAdmittedCancelled: Bool? = nil
@@ -221,7 +222,10 @@ enum AerialOpeningStore {
         let bytes = try Data(contentsOf: url)
         guard bytes.count <= 262144 else { throw PropertyVideoJobStore.Failure.invalidReceipt }
         let saved = try JSONDecoder().decode(AerialOpeningJournal.self, from: bytes)
-        guard saved.context == context, saved.manifest.isValid else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+        guard saved.context == context, saved.manifest.isValid,
+              saved.creditAuthorization?.isValid != false,
+              saved.creditAuthorization == nil || saved.manifest.profile != "kie-kling3-4k-aerial-opening-v1"
+        else { throw PropertyVideoJobStore.Failure.invalidReceipt }
         return saved
     }
     static func save(_ saved: AerialOpeningJournal) throws {
@@ -292,7 +296,8 @@ enum AerialOpeningStore {
         struct Body: Encodable { let manifest: AerialOpeningManifest; let quote: AerialOpeningQuote; let consent: AerialOpeningConsent }
         let data = try await PropertyVideoJobHTTP.data("POST", context: saved.context, segments: ["aerial-openings"],
             body: JSONEncoder().encode(Body(manifest: saved.manifest, quote: saved.quote, consent: saved.quote.processorConsent)),
-            idempotencyKey: "aerial-opening:" + saved.manifest.operationID.uuidString.lowercased())
+            idempotencyKey: "aerial-opening:" + saved.manifest.operationID.uuidString.lowercased(),
+            aerialCredit: saved.creditAuthorization)
         return try decodeStatus(data, saved: saved)
     }
     static func refresh(_ saved: AerialOpeningJournal) async throws -> AerialOpeningStatus? {

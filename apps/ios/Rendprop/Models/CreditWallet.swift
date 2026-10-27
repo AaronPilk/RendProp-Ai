@@ -77,6 +77,7 @@ struct CreditWalletSnapshot: Decodable, Equatable {
 
     var declutterQuote: Quote? { quotes.first { $0.operation == "photo.declutter" } }
     var stageQuote: Quote? { quotes.first { $0.operation == "photo.stage" } }
+    var aerialQuote: Quote? { quotes.first { $0.operation == "aerial.opening" } }
 
     func checked(for context: CreditWalletContext, environment expectedEnvironment: String) throws -> Self {
         guard orgID == context.servingOrgID, environment == expectedEnvironment,
@@ -88,13 +89,31 @@ struct CreditWalletSnapshot: Decodable, Equatable {
               quotes.count <= 10,
               quotes.allSatisfy({ $0.credits > 0 && $0.credits <= 1_000 &&
                   (($0.operation == "photo.declutter" && $0.tariffVersion == "photo-declutter-v1") ||
-                   ($0.operation == "photo.stage" && $0.tariffVersion == "photo-stage-v1")) }),
+                   ($0.operation == "photo.stage" && $0.tariffVersion == "photo-stage-v1") ||
+                   ($0.operation == "aerial.opening" && $0.tariffVersion == "aerial-opening-v1" && $0.credits == 20)) }),
               Set(quotes.map(\.operation)).count == quotes.count,
               fundingMode == .included || declutterQuote != nil else {
             throw CloudSyncError.invalidResponse
         }
         return self
     }
+}
+
+struct AerialCreditAuthorization: Codable, Equatable, Hashable, Sendable {
+    let tariffVersion: String
+    let environment: String
+    let credits: Int
+    init(quote: CreditWalletSnapshot.Quote, environment: String) throws {
+        guard quote.operation == "aerial.opening", quote.tariffVersion == "aerial-opening-v1",
+              quote.credits == 20, ["Production", "Sandbox"].contains(environment) else {
+            throw CloudSyncError.invalidResponse
+        }
+        tariffVersion = quote.tariffVersion
+        self.environment = environment
+        credits = quote.credits
+    }
+    var isValid: Bool { tariffVersion == "aerial-opening-v1" && credits == 20 &&
+        ["Production", "Sandbox"].contains(environment) }
 }
 
 struct StageCreditAuthorization: Hashable, Sendable {

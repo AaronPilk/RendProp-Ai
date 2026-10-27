@@ -297,7 +297,7 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
             from: await data(method, context: context, segments: segments, body: body, idempotencyKey: idempotencyKey, paid: paid))
     }
     static func data(_ method: String, context: PropertyVideoJobContext, segments: [String],
-                     body: Data? = nil, idempotencyKey: String? = nil, query: [URLQueryItem] = [], paid: PropertyVideoPaidAuthorization? = nil, preparationPermission: (@MainActor () throws -> Void)? = nil) async throws -> Data {
+                     body: Data? = nil, idempotencyKey: String? = nil, query: [URLQueryItem] = [], paid: PropertyVideoPaidAuthorization? = nil, aerialCredit: AerialCreditAuthorization? = nil, preparationPermission: (@MainActor () throws -> Void)? = nil) async throws -> Data {
         guard context.hasCurrentIdentity, var url = Config.apiBaseURL else { throw PropertyVideoJobStore.Failure.identityChanged }
         let revision = AuthStore.shared.syncSessionRevision, consent = AIConsent.shared.revocationRevision
         let processorEpoch = PropertyVideoProcessorConsent.shared.revision
@@ -308,6 +308,11 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
             if let paid {
                 if case .processor = paid, PropertyVideoProcessorConsent.shared.revision != processorEpoch { throw PropertyVideoProcessorFailure.permissionRequired }
                 _ = try paid.headers(context: context)
+            }
+            if let aerialCredit {
+                guard aerialCredit.isValid, segments == ["aerial-openings"], method == "POST" else {
+                    throw PropertyVideoJobStore.Failure.invalidReceipt
+                }
             }
         }
         url.appendPathComponent("property-video-jobs")
@@ -327,6 +332,10 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue(context.orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         if let paid { for (key, value) in try paid.headers(context: context) { request.setValue(value, forHTTPHeaderField: key) } }
+        if let aerialCredit {
+            request.setValue(aerialCredit.tariffVersion, forHTTPHeaderField: "X-Rendprop-Credit-Tariff")
+            request.setValue(aerialCredit.environment, forHTTPHeaderField: "X-Rendprop-Credit-Environment")
+        }
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }

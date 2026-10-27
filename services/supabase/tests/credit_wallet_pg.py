@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prove credit purchase, refund, downgrade and hold invariants in local PostgreSQL."""
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import shutil
@@ -79,12 +80,59 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         team_results = [json.loads(line) for line in team_output.splitlines()
                          if line.startswith("{") and '"assertions"' in line]
         assert len(team_results) == 1 and team_results[0]["passed"] is True, team_output
+        aerial_output = run("dormant aerial credit fixture", [*psql, "-Atq", "-f", SQL / "tests/credit_aerial_opening.sql"])
+        aerial_results = [json.loads(line) for line in aerial_output.splitlines()
+                          if line.startswith("{") and '"assertions"' in line]
+        assert len(aerial_results) == 1 and aerial_results[0]["passed"] is True, aerial_output
+        # Two real database sessions race the same operation key. The durable
+        # aerial advisory fence must return one job and one wallet allocation.
+        concurrent_op = "a0777777-7777-4777-8777-777777777777"
+        seed = json.loads(run("read synthetic aerial seed", [*psql, "-Atq", "-c",
+            "select jsonb_build_object('manifest',manifest,'quote',quote,'consent',consent) "
+            "from public.property_video_aerial_openings "
+            "where operation_id='a0444444-4444-4444-8444-444444444444';"]).strip())
+        def json_sql(value):
+            return "'" + json.dumps(value, separators=(",", ":")).replace("'", "''") + "'::jsonb"
+        race_sql = f"""begin; set role service_role; select pg_sleep(0.1);
+          with source as (
+            select jsonb_set({json_sql(seed['manifest'])},'{{operation_id}}',
+              to_jsonb('{concurrent_op}'::uuid)) as new_manifest
+          )
+          select (public.property_video_aerial_admit_credit(
+            'a0111111-1111-4111-8111-111111111111',new_manifest,
+            jsonb_set({json_sql(seed['quote'])},'{{manifest_sha256}}',
+              to_jsonb(encode(sha256(convert_to(new_manifest::text,'UTF8')),'hex'))),
+            {json_sql(seed['consent'])},'Production','aerial-opening-v1')).id from source;
+          commit;"""
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            raced = list(workers.map(lambda _: run("concurrent aerial admit", [*psql, "-Atq", "-c", race_sql]), range(2)))
+        ids = [[line for line in output.splitlines() if line.strip().count("-") == 4][-1].strip()
+               for output in raced]
+        assert ids[0] == ids[1], f"Concurrent aerial job identities differ: {ids}"
+        race_check = run("concurrent aerial wallet check", [*psql, "-Atq", "-c", f"""
+          select count(*)=1 and min(state)='reserved' from public.credit_holds
+            where request_key='aerial-opening:{concurrent_op}';
+          select count(*)=1 from public.property_video_aerial_openings where operation_id='{concurrent_op}';
+          set role service_role;
+          select (public.credit_wallet_state('a0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Production')->>'total_available')::integer=60;
+        """])
+        assert [line.strip() for line in race_check.splitlines() if line.strip()] == ["t", "t", "t"], race_check
+        downgrade_output = run("paid-to-Free aerial credit recovery", [*psql, "-Atq", "-f", SQL / "tests/credit_aerial_downgrade.sql"])
+        downgrade_results = [json.loads(line) for line in downgrade_output.splitlines()
+                             if line.startswith("{") and '"assertions"' in line]
+        assert len(downgrade_results) == 1 and downgrade_results[0]["passed"] is True, downgrade_output
+        uncertain_output = run("cancel and late KIE acceptance", [*psql, "-Atq", "-f", SQL / "tests/credit_aerial_uncertain.sql"])
+        uncertain_results = [json.loads(line) for line in uncertain_output.splitlines()
+                             if line.startswith("{") and '"assertions"' in line]
+        assert len(uncertain_results) == 1 and uncertain_results[0]["passed"] is True, uncertain_output
         print(json.dumps({"passed": True,
                           "assertions": results[0]["assertions"] + photo_results[0]["assertions"]
                           + trial_results[0]["assertions"] + combined_results[0]["assertions"]
                           + sandbox_results[0]["assertions"] + stage_results[0]["assertions"]
                           + recovery_results[0]["assertions"]
-                          + team_results[0]["assertions"],
+                          + aerial_results[0]["assertions"]
+                          + team_results[0]["assertions"] + downgrade_results[0]["assertions"]
+                          + uncertain_results[0]["assertions"] + 4,
                           "migrations": len(migrations), "scope": "disposable PostgreSQL"}))
     finally:
         if started:
