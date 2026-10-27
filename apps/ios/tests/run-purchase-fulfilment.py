@@ -50,6 +50,7 @@ struct LiveAPIClient {static func serverError(status:Int,data:Data)->APIError{.s
 """
 interfaces+=block(auth,'static func jwtSubject(')+'\n}\n'
 base=interfaces+block(api,'enum APIError:')+'\n'+block(b,'enum RecordedTrialPresentation {')+'\n'+block(b,'struct ServingActivationSummary:')+'\n'+block(a,'struct EntitlementSync:')+'\n'+block(a,'private final class TrialPurchaseRedirectPolicy:').replace('private ','',1)+'\n'+block(a,'@MainActor private enum PurchasesRequest').replace('private enum','enum')+'\n'+block(b,'enum PurchaseWorkspaceBindingStore')+'\n'
+base+=block(products,'struct TeamSeatVariant:')+'\n'
 base+='enum RendpropProducts {\n'+block(products,'static func plan(for')+'\n'+block(products,'static func planName(for')+'\n}\n'
 def program(source):
  result=base+block(source,'enum PurchaseFulfilmentRecovery')+'\n'+block(source,'enum PurchaseFulfilmentRefusals')+'\n'
