@@ -75,7 +75,7 @@ async function captureAudioOutputDevice(tab){
   assert(device,"Audio output must belong to a known browser device");
   device.audioOutput=await verifyTestAudioOutput(tab,audioOutput);
 }
-async function closeDevice(tab){await captureAudioOutputDevice(tab);await captureMediaTiming();await tab.close();}
+async function closeDevice(tab){await captureAudioOutputDevice(tab);await captureMediaTiming();await tab.context().close();}
 async function saveExportDiagnostics(label,path,probe){await captureMediaTiming();receipt.exportProbes.push({label,path,ffprobe:probe});await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));}
 
 const pro=async tab=>{await tab.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();await expect(tab.getByRole("button",{name:"Pro view",exact:true})).toBeVisible();await tab.getByRole("button",{name:"Pro view",exact:true}).click();};
@@ -145,6 +145,10 @@ try {
   await expect.poll(async () => (await page.evaluate(() => window.cloudFixture.snapshot())).documents["edit:20000000-0000-4000-8000-000000000002"]?.payload.draft?.title).toBe("Office to phone edit");
   const first = await page.evaluate(() => window.cloudFixture.snapshot()); assert.equal(first.tickets, 1); assert.equal(first.assets[0].uploaded, true);
   receipt.checks.push("Import automatically uploads the exact source and CAS-saves edit plus source asset reference");
+  // The saved document is the handoff evidence. Retire this whole browser
+  // context before opening its replacement so its editor, preview and media
+  // decoder cannot compete with a later guarded export on a small runner.
+  await closeDevice(page);
   const second = await device(first); page = second;
   await expect(second.getByLabel("Title overlay", { exact: true })).toHaveValue("Office to phone edit");
   await expect(second.getByRole("button", { name: /Select clip 1:/ })).toBeVisible();

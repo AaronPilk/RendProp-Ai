@@ -1394,6 +1394,21 @@ jobs:
       - name: Require bounded recorded media runner readiness
         timeout-minutes: 4
         run: node tools/ci/media-runner-ready.mjs --output "$RUNNER_TEMP/studio-media-export-readiness.json"
+      # Run the real editor export while the admitted runner is still fresh.
+      # The later historical fault controls deliberately consume encoder and
+      # virtual-audio capacity; they retain all of their existing assertions.
+      - name: Studio cloud editor, conversation and finishing exports
+        working-directory: apps/studio
+        timeout-minutes: 10
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          node tests/cloud-editor-browser.mjs
+          node tests/conversation-browser.mjs
+          node tests/finishing-audio-probe-controls.mjs
+          node tests/finishing-browser.mjs
       - name: Studio waits for advancing audio before recording content
         working-directory: apps/studio
         timeout-minutes: 3
@@ -1429,7 +1444,7 @@ jobs:
                      for event in receipt['failureSnapshot']['events'])
           print('Omitted readiness reaches the intended pre-content timing assertion')
           PY
-      - name: Studio MP4 export, AAC narration and continuous agent audio
+      - name: Studio MP4 resume, AAC narration and timing controls
         working-directory: apps/studio
         timeout-minutes: 10
         shell: bash
@@ -1530,10 +1545,6 @@ jobs:
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
           print('Late optional-track control reaches its encoded narration-onset assertion')
           PYCONTROL
-          node tests/cloud-editor-browser.mjs
-          node tests/conversation-browser.mjs
-          node tests/finishing-audio-probe-controls.mjs
-          node tests/finishing-browser.mjs
           # Bind every healthy and fault invocation to the production output transport.
           python3 - "$RUNNER_TEMP" <<'PYAUDIOOUTPUT'
           import hashlib, json, sys
