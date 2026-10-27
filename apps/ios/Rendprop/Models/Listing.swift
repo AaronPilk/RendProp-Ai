@@ -684,15 +684,15 @@ enum SpaceType: String, CaseIterable, Identifiable {
                 ? "Capture, edit and deliver listing media. Each client's page shows their contact details, and their inquiries stay organized in your account."
                 : "Be your own crew. Capture and polish photos, create tours, social media content, virtual staging, and a shareable property site - all from your phone."
         case .venue:
-            return "Walk the room once. Get a cinematic tour, polished photos and a link planners share before they've booked a visit."
+            return "Start with venue photos. Make a video from them or add an optional walkthrough, then share a page planners can explore."
         case .restaurant:
-            return "Walk it once. Get a cinematic tour, mouth-watering photos and a link guests share — in minutes, from your phone."
+            return "Start with restaurant photos. Make a video from them or add an optional walkthrough, then share a page guests can explore."
         case .retail:
-            return "One walkthrough becomes a cinematic tour, polished photos and a link shoppers can scroll before they visit."
+            return "Start with store photos. Make a video from them or add an optional walkthrough, then share a page shoppers can explore."
         case .fitness:
-            return "Walk the floor once. Get a cinematic tour, polished photos and a link that sells the space before the first class."
+            return "Start with studio photos. Make a video from them or add an optional walkthrough, then share a page members can explore."
         case .other:
-            return "One walkthrough becomes a cinematic tour, polished photos and a link customers can scroll — in minutes, from your phone."
+            return "Start with photos of your space. Make a video from them or add an optional walkthrough, then share a page customers can explore."
         }
     }
 
@@ -711,12 +711,12 @@ enum SpaceType: String, CaseIterable, Identifiable {
     /// One line of flavor under the empty-state headline, per industry.
     var emptyStateLine: String {
         switch self {
-        case .realEstate: return "Walk through with your phone.\nWe turn it into a stunning video tour."
-        case .venue:      return "Walk the space with your phone.\nCouples and planners tour it before they ever call."
-        case .restaurant: return "Walk the room with your phone.\nGuests feel the vibe before they book a table."
-        case .retail:     return "Walk the aisles with your phone.\nShoppers see the store before they visit."
-        case .fitness:    return "Walk the floor with your phone.\nMembers tour the gym before their first visit."
-        case .other:      return "Walk through with your phone.\nCustomers tour your space before they arrive."
+        case .realEstate: return "Start with property photos.\nA recorded walkthrough is optional."
+        case .venue:      return "Start with venue photos.\nA recorded walkthrough is optional."
+        case .restaurant: return "Start with restaurant photos.\nA recorded walkthrough is optional."
+        case .retail:     return "Start with store photos.\nA recorded walkthrough is optional."
+        case .fitness:    return "Start with studio photos.\nA recorded walkthrough is optional."
+        case .other:      return "Start with photos of your space.\nA recorded walkthrough is optional."
         }
     }
 

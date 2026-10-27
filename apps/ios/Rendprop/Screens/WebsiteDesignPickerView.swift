@@ -111,7 +111,7 @@ struct WebsiteDesignPickerView: View {
                 .disabled(!isCurrent || isLoading || purchases.isBusy)
             } else {
                 Text(currentListing.serverShareURL == nil
-                    ? "Luxury purchases are being prepared. Classic is included; live previews become available after your website is published."
+                    ? "Luxury purchases are being prepared. Classic is included with paid access; live previews become available after your website is published."
                     : "Luxury purchases are being prepared. You can preview both designs now; your included website stays available.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
@@ -182,12 +182,12 @@ private struct WebsiteDesignIntroduction: View {
             Text("Choose your website’s look")
                 .font(.title2.weight(.bold)).foregroundStyle(Theme.ink)
                 .accessibilityAddTraits(.isHeader)
-            Text("Classic is included. Every design has video, photos, location and contact pages.")
+            Text("Classic is included with paid access. Every design has video, photos, location and contact pages.")
                 .font(.subheadline).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if !previewAvailable {
                 Label {
-                    Text("Live previews are available after you publish your included website. These samples don’t publish your draft.")
+                    Text("Live previews are available after you publish your website. These samples don’t publish your draft.")
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
                     Image(systemName: "eye.slash").foregroundStyle(Theme.accent)
@@ -260,7 +260,7 @@ private struct WebsiteDesignCard: View {
         .disabled(!previewEnabled)
         .accessibilityLabel("Preview \(design.title)")
         .accessibilityHint(previewEnabled ? "Opens this property’s website in the selected design without changing it."
-                           : "Publish the included website first. This does not publish a draft.")
+                           : "Publish your website with paid access first. This does not publish a draft.")
     }
 
     private var selectionAction: some View {
