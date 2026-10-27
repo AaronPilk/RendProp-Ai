@@ -1119,7 +1119,10 @@ jobs:
           assert.equal(banners.length, 1); assert.equal(navs.length, 1);
           const banner = banners[0], nav = navs[0];
           assert(banner.position === 'sticky' && banner.top === 0 && banner.bottom === 74 && banner.height === 74, 'actual74px sticky preview banner');
-          assert(nav.position === 'relative' && nav.height === 56 && nav.top === -2 && nav.bottom === 54, 'actual56px relative navigation');
+          // A relative nav scrolls with the page, so its absolute viewport top
+          // depends on the browser's final scroll position. Its size, position
+          // mode and relationship to the focused main are the stable witness.
+          assert(nav.position === 'relative' && nav.height === 56 && Number.isFinite(nav.top) && Number.isFinite(nav.bottom) && Math.abs(nav.bottom - nav.top - nav.height) < 0.5 && nav.bottom <= g.top, 'actual56px relative navigation precedes the focused main');
           console.log('Exact preview-offset omission witnessed: focused main72, sticky banner74, no runtime errors.');
           NODE
           node services/edge/tour-host/scripts/check-property-video-browser.mjs
