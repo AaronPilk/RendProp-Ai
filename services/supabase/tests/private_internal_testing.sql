@@ -43,7 +43,9 @@ insert into orgs(id,name,plan,plan_source)select empty_org,'Empty preserved work
 insert into memberships(user_id,org_id,role)select benef,empty_org,'owner'from private_fixture;
 insert into user_workspace_state(user_id,active_org_id)select benef,empty_org from private_fixture;
 update orgs set plan='team',plan_source='manual'where id in(select host_org from private_fixture union select retail_org from private_fixture);
-update orgs set plan='trial',plan_source='trial',trial_ends_at=now()-interval '1 day'where id=(select private_org from private_fixture);
+-- The private listing predates the expired trial under review. Its historical
+-- failed video jobs were admitted during a separate synthetic paid period.
+update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days'where id=(select private_org from private_fixture);
 update profiles set is_admin=true where id=(select host from private_fixture);
 insert into memberships(user_id,org_id,role)select benef,host_org,'agent'from private_fixture;
 insert into memberships(user_id,org_id,role)select foreign_user,host_org,'admin'from private_fixture;
@@ -52,8 +54,12 @@ insert into listings(id,org_id,agent_id,address)select host_listing,host_org,hos
 insert into capture_assets(id,listing_id,kind,storage_key,uploaded)select asset,private_listing,'video','synthetic/private-capture.mp4',true from private_fixture;
 insert into leads(org_id,listing_id,name)select host_org,host_listing,'Synthetic host inquiry'from private_fixture
  union all select private_org,private_listing,'Synthetic own inquiry'from private_fixture;
+update orgs set plan='pro',plan_source='manual',trial_ends_at=null
+ where id=(select private_org from private_fixture);
 insert into render_jobs(listing_id,capture_asset_id,status,source)select private_listing,asset,'failed','worker'from private_fixture cross join generate_series(1,25);
 insert into render_jobs(id,listing_id,capture_asset_id,status,source)select job,private_listing,asset,'failed','app'from private_fixture;
+update orgs set plan='trial',plan_source='trial',trial_ends_at=now()-interval '1 day'
+ where id=(select private_org from private_fixture);
 update private_fixture f set raw_private=to_jsonb(o),raw_profile=to_jsonb(p)from orgs o,profiles p where o.id=f.private_org and p.id=f.benef;
 select pg_temp.private_ok('service-only tables deny client DML '||r||' '||t,not has_table_privilege(r,t,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'))from unnest(array['anon','authenticated'])r cross join unnest(array['private_internal_testing_hosts','private_internal_testing_sponsorships'])t;
 select pg_temp.private_ok('service-only tables have RLS and no policies '||t,(select relrowsecurity from pg_class where oid=t::regclass)and not exists(select 1 from pg_policy where polrelid=t::regclass))from unnest(array['private_internal_testing_hosts','private_internal_testing_sponsorships'])t;
