@@ -112,6 +112,14 @@ begin
   if current_setting('role',true) is distinct from 'service_role' then
     raise insufficient_privilege;
   end if;
+  -- Match the chronology writer's chain lock before testing the effective
+  -- transaction, then let the original wallet RPC take its wallet lock.
+  -- This prevents a concurrent upgrade from making a reversal stale between
+  -- our check and the original RPC's restore branch.
+  if p_original is not null and length(p_original) between 1 and 200 then
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(p_original,72451));
+  end if;
   -- A late refund reversal for an older, superseded transaction must not
   -- restore credits after the buyer has changed plans.
   if p_event='reversed' then
