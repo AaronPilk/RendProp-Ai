@@ -188,14 +188,15 @@ def plan(client):
     local = _one([row for row in client.get_all(
         "/v1/appStoreVersions/%s/appStoreVersionLocalizations" % version["id"])
         if row.get("attributes", {}).get("locale") == "en-US"], "version en-US localization")
-    listing = {"description": _copy_file("description", 4000),
+    copy_variant = "" if team_variants_dormant else "_team_seats"
+    listing = {"description": _copy_file("description" + copy_variant, 4000),
                "promotionalText": _copy_file("promotional_text", 170),
                "whatsNew": _copy_file("release_notes", 4000)}
     changes.append(_change("appStoreVersionLocalizations", local, listing))
     detail = client.get_optional("/v1/appStoreVersions/%s/appStoreReviewDetail" % version["id"])
     if not detail or not (detail.get("data") or {}).get("id"):
         raise CopyError("Version 1.0.5 App Review detail is missing")
-    notes = _copy_file("review_notes", 4000)
+    notes = _copy_file("review_notes" + copy_variant, 4000)
     if team_variants_dormant and "Team 4-9-seat products are not offered" not in notes:
         raise CopyError("Review notes must disclose dormant Team 4-9-seat products")
     if not team_variants_dormant and (

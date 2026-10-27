@@ -23,12 +23,17 @@ product names, real prices. It is only ever seen by App Review; it is not a mark
 screenshot and must not join the nine-frame store screenshot plan in `docs/appstore/screenshots/`.
 
 The file is **`docs/appstore/iap-review/paywall.png`**. That exact path is what
-`tools/asc/asc.py` reads (`IAP_SCREENSHOT`), and the same PNG is offered to every
-sold subscription. Existing approved Max, Ultra and Team subscriptions already
+`tools/asc/asc.py` reads (`IAP_SCREENSHOT`), and it is offered to the four base
+monthly subscriptions. Existing approved Max, Ultra and Team subscriptions already
 have review images; the current four-plan release specifically needs a fresh
 image for new Pro. The six additional Team-seat products need their own
 review images if they are opened for sale; a base four-plan image would not
-show their selectable options. Annual products remain excluded.
+show their selectable options. Save native TestFlight captures as `team4.png`
+through `team9.png` beside `paywall.png`, each with the matching More Team seats
+row selected, its Apple-localized price, purchase action and disclosure visible.
+`asc.py review plan/apply --include-team-seats` validates all seven images
+before any review write and uploads each file only to its matching product.
+Annual products remain excluded.
 
 ```bash
 python3 tools/asc/asc.py review apply --skip-product com.rendprop.app.team.annual
@@ -123,6 +128,12 @@ produces a file that drops into the same place:
    until then, Max/Ultra/Team can still display their old whole-dollar prices.
    Check the exact final amounts with StoreKit before using the image for
    review. The new Pro product is already scheduled at $29.99.
+8. If Team 4–9 is sold in this build, stay on the monthly paywall and select
+   each **More Team seats** capsule. Confirm the seat count, credits, localized
+   price and purchase action for that selection, then capture the phone's
+   original PNG as `team4.png`, `team5.png`, …, `team9.png` in this directory.
+   Confirm $299.99, $349.99, $399.99, $449.99, $499.99 and $549.99 in the
+   U.S. storefront. A base Team screenshot does not prove those six choices.
 
 Apple requires a screenshot of the actual subscription purchase UI for its
 review field and accepts any screenshot size supported by this iPhone app.

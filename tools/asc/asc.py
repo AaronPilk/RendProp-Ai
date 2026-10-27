@@ -263,6 +263,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 METADATA_DIR = REPO_ROOT / "docs" / "appstore" / "metadata" / PRIMARY_LOCALE
 SCREENSHOT_DIR = REPO_ROOT / "docs" / "appstore" / "screenshots" / "6.9"
 IAP_SCREENSHOT = REPO_ROOT / "docs" / "appstore" / "iap-review" / "paywall.png"
+
+
+def iap_review_screenshot_for_product(product_id):
+    """Each sold Team-seat variant needs its own visible StoreKit selection."""
+    for seats in range(4, 10):
+        if product_id == "com.rendprop.app.team%d.monthly" % seats:
+            return IAP_SCREENSHOT.with_name("team%d.png" % seats)
+    return IAP_SCREENSHOT
 # An IAP review screenshot is not a marketing screenshot set. Apple accepts
 # any screenshot size supported by the iPhone app; the phone's native PNG must
 # not be resized just to satisfy the automated 6.9-inch store-shot recipe.
@@ -3086,7 +3094,8 @@ def ensure_iap_review_screenshot(client, subscription_id, product_id, plan, out)
     current = client.get_optional(
         "/v1/subscriptions/%s/appStoreReviewScreenshot" % subscription_id
     )
-    checksum = md5_of(IAP_SCREENSHOT)
+    screenshot = iap_review_screenshot_for_product(product_id)
+    checksum = md5_of(screenshot)
     if current and (current.get("data") or {}).get("id"):
         attrs = attributes_of(current["data"])
         state = (attrs.get("assetDeliveryState") or {}).get("state")
@@ -3104,8 +3113,8 @@ def ensure_iap_review_screenshot(client, subscription_id, product_id, plan, out)
             "data": {
                 "type": "subscriptionAppStoreReviewScreenshots",
                 "attributes": {
-                    "fileName": IAP_SCREENSHOT.name,
-                    "fileSize": IAP_SCREENSHOT.stat().st_size,
+                    "fileName": screenshot.name,
+                    "fileSize": screenshot.stat().st_size,
                 },
                 "relationships": {"subscription": relationship("subscriptions", subscription_id)},
             }
@@ -3116,7 +3125,7 @@ def ensure_iap_review_screenshot(client, subscription_id, product_id, plan, out)
             body,
             "/v1/subscriptionAppStoreReviewScreenshots",
             "/v1/subscriptionAppStoreReviewScreenshots/%s",
-            IAP_SCREENSHOT,
+            screenshot,
             out,
         )
 
@@ -3339,9 +3348,11 @@ def cmd_review(client, args, out):
         return cmd_review_stage(client, args, out)
     if getattr(args, "action", None) == "send":
         return cmd_review_send(client, args, out)
-    screenshot_issue = iap_review_screenshot_issue()
-    if screenshot_issue:
-        raise AscError(screenshot_issue + " No App Store review writes were made.")
+    for spec in active_subscriptions(args):
+        screenshot_issue = iap_review_screenshot_issue(
+            iap_review_screenshot_for_product(spec["productId"]))
+        if screenshot_issue:
+            raise AscError(screenshot_issue + " No App Store review writes were made.")
     plan = Plan(dry_run=args.dry_run, out=out)
     app = require_app(client)
     out.write("App: %s (id %s)\n" % (attributes_of(app).get("name"), app["id"]))
@@ -3358,16 +3369,18 @@ def cmd_review(client, args, out):
         )
 
     notes = None
-    if REVIEW_NOTES_FILE.is_file():
-        notes = REVIEW_NOTES_FILE.read_text(encoding="utf-8").strip()
+    review_notes_file = (REVIEW_NOTES_FILE.with_name("review_notes_team_seats.txt")
+                         if getattr(args, "include_team_seats", False) else REVIEW_NOTES_FILE)
+    if review_notes_file.is_file():
+        notes = review_notes_file.read_text(encoding="utf-8").strip()
         if len(notes) > 4000:
             raise AscError(
                 "%s is %d characters; App Review notes allow 4000."
-                % (REVIEW_NOTES_FILE, len(notes))
+                % (review_notes_file, len(notes))
             )
-        out.write("Review notes: %s (%d characters)\n" % (REVIEW_NOTES_FILE.name, len(notes)))
+        out.write("Review notes: %s (%d characters)\n" % (review_notes_file.name, len(notes)))
     else:
-        out.write("Review notes: %s not present, skipping.\n" % REVIEW_NOTES_FILE)
+        out.write("Review notes: %s not present, skipping.\n" % review_notes_file)
 
     out.write("\nApp Review details\n")
     version_id = ensure_app_store_version(client, app["id"], plan)

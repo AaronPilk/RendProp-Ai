@@ -19,8 +19,9 @@ Review notes. It never changes prices, products, territories, offers, builds,
 screenshots, staging or release type. Run `plan` again immediately before
 applying because Apple state can change.
 
-The candidate copy promises 60/120/250/600 monthly credits, plus 100 credits
-for each extra Team seat through nine seats. **Do not apply it while the
+The candidate copy promises 60/120/250/600 monthly credits; the Team-seat
+launch variant adds 100 credits for each extra seat through nine seats.
+**Do not apply it while the
 deployed monthly credit catalog or combined serving policy is disabled.**
 First verify the deployed `credit_monthly_catalog`,
 `team_paid_seat_variants`, `credit_combined_budget`, exact USA/USD funding
@@ -28,6 +29,15 @@ schedules and a sandbox purchase/renewal against the signed product. The
 native paywall and the review notes must agree on whether Team 4-9 is sold.
 The script refuses review notes that say those variants are unavailable if
 the native allowlist has opened them, and vice versa.
+When Team 4-9 is opened in `Products.swift`, the script automatically switches
+to `description_team_seats.txt` and `review_notes_team_seats.txt`. Those staged
+files explain the $50/100-credit increase per added seat and the 4-9-seat
+StoreKit picker. Inspect the resulting plan and review notes before applying.
+Use the narrow `catalog_copy.py` apply for the final listing update: the broad
+`asc.py metadata apply` still reads the dormant `description.txt` and would
+overwrite the Team-seat launch description. `asc.py review apply
+--include-team-seats` reads the Team-seat review notes and the seven
+product-specific review screenshots.
 
 After that readback and the final source/build alignment, the explicit
 write command is:

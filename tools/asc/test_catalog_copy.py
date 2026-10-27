@@ -65,6 +65,8 @@ class CatalogCopyTests(unittest.TestCase):
         self.assertEqual(specs[-1]["description"], "1,200 AI credits monthly; 9 seats.")
         self.assertIn("Max ($49.99, 120 credits", catalog_copy._copy_file("description", 4000))
         self.assertIn("four monthly products", catalog_copy._copy_file("review_notes", 4000))
+        self.assertIn("Each additional Team seat adds $50", catalog_copy._copy_file("description_team_seats", 4000))
+        self.assertIn("Each additional Team seat adds $50", catalog_copy._copy_file("review_notes_team_seats", 4000))
 
     def test_price_and_trial_require_exact_usa_terms(self):
         spec = catalog_copy.specs()[0]
@@ -127,6 +129,14 @@ class CatalogCopyTests(unittest.TestCase):
             self.assertIsNone(asc.iap_review_screenshot_issue(image))
             image.write_bytes(png_header(800, 800))
             self.assertIn("native supported iPhone", asc.iap_review_screenshot_issue(image))
+
+    def test_team_review_images_are_product_specific(self):
+        self.assertEqual(asc.iap_review_screenshot_for_product("com.rendprop.app.pro29.monthly").name,
+                         "paywall.png")
+        for seats in range(4, 10):
+            product_id = "com.rendprop.app.team%d.monthly" % seats
+            self.assertEqual(asc.iap_review_screenshot_for_product(product_id).name,
+                             "team%d.png" % seats)
 
 
 if __name__ == "__main__":
