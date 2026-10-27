@@ -2,7 +2,7 @@
 
 Owner-operated release tooling lives here:
 
-1. **`asc.py`** — creates Rendprop's six subscription products and fills in the
+1. **`asc.py`** — reconciles Rendprop's subscription products and fills in the
    App Store listing, using the App Store Connect REST API.
 2. **`bridge-600-archive-upload.sh`** — archives the iOS app and uploads the
    build to TestFlight.
@@ -12,9 +12,28 @@ Owner-operated release tooling lives here:
 The scripts run on a Mac with Python 3.9+ and `openssl` installed; archives also
 need Xcode and XcodeGen. The Python utility uses the standard library only.
 
-## Release target caution
+## Current release target and catalog gate (27 October 2026)
 
-Updated 10 October 2026: `asc.py` targets **1.0.4** and selects only that exact
+`asc.py` targets editable version **1.0.5**. The proposed monthly catalog is
+Pro $29.99 (`pro29.monthly`), Max $49.99 (the existing `starter.monthly`
+identifier), Ultra $99.99 (the existing `pro.monthly` identifier), and the
+three-seat Team $249.99 (`team.monthly`). Annual identifiers remain mapped for
+restores but withdrawn from sale. Apple's currently approved monthly products
+still charge $49.00, $99.00, and $249.00; `pro29.monthly` is absent. A monthly
+launch price must match exactly. `subscriptions plan` and `subscriptions apply`
+now **refuse before any Apple write** while an existing monthly price differs;
+the owner must choose a price-change schedule and whether existing subscribers
+keep their current price. The broad bridge is therefore intentionally blocked.
+
+The 100-credit consumable and six Team extra-seat SKUs are not managed by
+`asc.py`. They are separately gated and must not be inferred from a green
+subscription status. The monthly credit catalog and introductory trial funding
+also remain inactive; status cannot establish their activation. No App Review
+submission is authorized by a passing local check alone.
+
+## Historical release target caution
+
+On 10 October 2026, `asc.py` targeted **1.0.4** and selected only that exact
 editable version; it no longer falls back to another draft. `--build` selects a
 build, not an App Store version. Review the actual target version ID and build
 marketing version before writing. The broad apply bridge can change prices,

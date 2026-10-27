@@ -51,7 +51,7 @@ TEAM_ID = "5F5C5G25Y6"
 APP_NAME = "Rendprop"
 APP_NAME_FALLBACK = "Rendprop: AI Property Tours"
 PRIMARY_LOCALE = "en-US"
-VERSION_STRING = "1.0.4"
+VERSION_STRING = "1.0.5"
 COPYRIGHT = "2026 Rendprop"
 PLATFORM = "IOS"
 
@@ -86,9 +86,9 @@ SUBSCRIPTION_GROUP_REFERENCE_NAME = "rendprop_plans"
 SUBSCRIPTION_GROUP_DISPLAY_NAME = "Rendprop Plans"
 
 REVIEW_NOTE = (
-    "Unlocks the monthly allowance shown in Settings → Plan & usage "
-    "(tour renders, AI photo edits, reel clips, aerial intros). The paywall is "
-    "Settings → Plan & usage → Upgrade plan."
+    "Monthly plans include the Declutter credits shown in Settings → Plan & usage "
+    "after the introductory week. Other AI tools have separate plan limits. "
+    "The paywall is Settings → Plan & usage → Upgrade plan."
 )
 
 # groupLevel: 1 is the highest-value tier. Apple uses the level to decide whether
@@ -102,10 +102,10 @@ SUBSCRIPTIONS = [
         "productId": "com.rendprop.app.team.monthly",
         "name": "Team Monthly",
         "period": "ONE_MONTH",
-        "usd": "249.00",
+        "usd": "249.99",
         "groupLevel": 1,
         "displayName": "Team Monthly",
-        "description": "25 tours, 400 edits, 25 reel clips, 2 seats.",
+        "description": "1,000 Declutter credits monthly; 3 seats.",
     },
     {
         "productId": "com.rendprop.app.team.annual",
@@ -118,12 +118,12 @@ SUBSCRIPTIONS = [
     },
     {
         "productId": "com.rendprop.app.pro.monthly",
-        "name": "Pro Monthly",
+        "name": "Ultra Monthly",
         "period": "ONE_MONTH",
-        "usd": "99.00",
+        "usd": "99.99",
         "groupLevel": 2,
-        "displayName": "Pro Monthly",
-        "description": "10 tours, 200 edits, 12 reel clips a month.",
+        "displayName": "Ultra Monthly",
+        "description": "440 Declutter credits monthly; 1 seat.",
     },
     {
         "productId": "com.rendprop.app.pro.annual",
@@ -136,12 +136,21 @@ SUBSCRIPTIONS = [
     },
     {
         "productId": "com.rendprop.app.starter.monthly",
-        "name": "Starter Monthly",
+        "name": "Max Monthly",
         "period": "ONE_MONTH",
-        "usd": "49.00",
+        "usd": "49.99",
         "groupLevel": 3,
-        "displayName": "Starter Monthly",
-        "description": "4 tours, 100 edits, 6 reel clips a month.",
+        "displayName": "Max Monthly",
+        "description": "200 Declutter credits monthly; 1 seat.",
+    },
+    {
+        "productId": "com.rendprop.app.pro29.monthly",
+        "name": "Pro Monthly",
+        "period": "ONE_MONTH",
+        "usd": "29.99",
+        "groupLevel": 4,
+        "displayName": "Pro Monthly",
+        "description": "80 Declutter credits monthly; 1 seat.",
     },
     {
         "productId": "com.rendprop.app.starter.annual",
@@ -675,6 +684,7 @@ class Plan(object):
         # Products this run refused to price because no acceptable price point
         # exists. Surfaced in the summary so it can never pass unnoticed.
         self.price_skipped = []
+        self.existing_price_mismatches = []
 
     def note(self, message):
         self.out.write("  = %s\n" % message)
@@ -1284,12 +1294,25 @@ def ensure_subscription_price(client, subscription_id, spec, territories, plan):
     # (one base price, equalized to all 175 territories). Availability stays
     # USA-only; prices in unavailable territories are dormant.
     territories = sorted(set(list(territories or LAUNCH_TERRITORIES)) | set(all_territory_ids(client)))
-    prices = client.get_all(
+    prices, included = client.get_all_included(
         "/v1/subscriptions/%s/prices" % subscription_id,
         params={"include": "subscriptionPricePoint,territory", "limit": 200},
     )
     already = priced_territories(prices)
     missing = [t for t in territories if t not in already]
+    if USA_TERRITORY in already:
+        actual = price_amounts(prices, included).get(USA_TERRITORY)
+        exact = actual is not None and same_amount(actual, spec["usd"])
+        if not exact and spec["period"] == "ONE_MONTH":
+            plan.existing_price_mismatches.append((spec["productId"], actual, spec["usd"]))
+            plan.out.write(
+                "  !! EXISTING PRICE MISMATCH: %s is USD %s; target is USD %s.\n"
+                "  !! Refusing to treat this product as launch-ready or schedule a\n"
+                "  !! price change implicitly. Review the subscriber-preservation\n"
+                "  !! choice and schedule the exact price separately in Apple.\n"
+                % (spec["productId"], actual or "unknown", spec["usd"])
+            )
+            return False
     if prices and not missing:
         plan.note("%s is priced in all %d territories (sold in %s)"
                   % (spec["productId"], len(territories), ",".join(LAUNCH_TERRITORIES)))
@@ -1322,7 +1345,8 @@ def ensure_subscription_price(client, subscription_id, spec, territories, plan):
     # price is the irreversible-ish step - once it exists the product is
     # sellable - so a bad substitute must never be written just because it was
     # the closest thing on offer.
-    if not exact and not price_is_acceptable(spec["usd"], amount):
+    if not exact and (spec["period"] == "ONE_MONTH" or
+                      not price_is_acceptable(spec["usd"], amount)):
         gap = price_gap(spec["usd"], amount)
         plan.price_skipped.append({
             "productId": spec["productId"],
@@ -1333,7 +1357,8 @@ def ensure_subscription_price(client, subscription_id, spec, territories, plan):
         plan.out.write(
             "  !! NOT PRICING %s.\n"
             "  !! Intended USD %s; the nearest point Apple offers is USD %s, which is\n"
-            "  !! %.1f%% away - past the %.0f%% tolerance this tool will accept.\n"
+            "  !! %.1f%% away. Monthly launch prices must match exactly; legacy\n"
+            "  !! annual prices have a %.0f%% tolerance.\n"
             "  !! Leaving the product unpriced is the safe outcome: an unpriced\n"
             "  !! subscription cannot be sold, a wrongly priced one can.\n"
             "  !!\n"
@@ -1722,6 +1747,38 @@ def cmd_subscriptions(client, args, out):
     app = require_app(client)
     out.write("App: %s (id %s)\n" % (attributes_of(app).get("name"), app["id"]))
 
+    # These are existing, approved SKUs. Updating their price means choosing
+    # what happens to current subscribers, and Apple can notify or seek their
+    # consent. Never let the broad apply bridge silently change storefront
+    # metadata or create another product before that choice is made.
+    group = find_group(client, app["id"])
+    mismatches = []
+    if group is not None:
+        existing = {
+            attributes_of(row).get("productId"): row
+            for row in client.get_all("/v1/subscriptionGroups/%s/subscriptions" % group["id"])
+        }
+        for spec in active_subscriptions(args):
+            if spec["period"] != "ONE_MONTH":
+                continue
+            row = existing.get(spec["productId"])
+            if row is None:
+                continue
+            prices, included = client.get_all_included(
+                "/v1/subscriptions/%s/prices" % row["id"],
+                params={"include": "subscriptionPricePoint,territory", "limit": 200},
+            )
+            amounts = price_amounts(prices, included)
+            if USA_TERRITORY in amounts and not same_amount(amounts[USA_TERRITORY], spec["usd"]):
+                mismatches.append((spec["productId"], amounts[USA_TERRITORY], spec["usd"]))
+    if mismatches:
+        raise AscError(
+            "Existing monthly prices differ from the release catalog. No writes were made.\n"
+            + "\n".join("  %s: current USD %s; target USD %s" % row for row in mismatches)
+            + "\nSchedule the exact price in App Store Connect after choosing whether "
+              "existing subscribers keep their current price. Run `status` to inspect all gaps."
+        )
+
     out.write("\nApp Store Server Notifications\n")
     ensure_notification_urls(client, app, plan)
 
@@ -1749,7 +1806,8 @@ def cmd_subscriptions(client, args, out):
             # meaningless - and Apple may well refuse an introductory offer on an
             # unpriced product, which would abort a run over a product this tool
             # has already decided to leave alone.
-            plan.note("no free trial for %s while it has no price" % spec["productId"])
+            plan.note("trial setup skipped for %s while its price is not launch-ready"
+                      % spec["productId"])
             continue
         ensure_introductory_offer(client, subscription_id, spec, plan, territories)
 
@@ -3881,7 +3939,8 @@ def cmd_status(client, args, out):
                 price_text = "NONE"
             elif usa_amount is None:
                 price_text = "%d price(s), amount ?" % len(prices)
-            elif price_is_acceptable(spec["usd"], usa_amount):
+            elif (same_amount(spec["usd"], usa_amount) if spec["period"] == "ONE_MONTH"
+                  else price_is_acceptable(spec["usd"], usa_amount)):
                 price_text = "%s" % usa_amount
             else:
                 wrong_price = True
@@ -3950,7 +4009,9 @@ def cmd_status(client, args, out):
                 "priceUsd": usa_amount,
                 "priceMatchesContract": (
                     None if usa_amount is None
-                    else bool(price_is_acceptable(spec["usd"], usa_amount))),
+                    else bool(same_amount(spec["usd"], usa_amount)
+                              if spec["period"] == "ONE_MONTH"
+                              else price_is_acceptable(spec["usd"], usa_amount))),
                 "introductoryOffers": len(offers),
                 "localizations": len(locs),
                 "reviewScreenshot": bool(shot),
@@ -3966,19 +4027,24 @@ def cmd_status(client, args, out):
         if mispriced:
             out.write("\n")
             out.write("  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
-            out.write("  !! WRONG PRICE - on sale at an amount docs/LAUNCH-CONTRACT.md does\n")
-            out.write("  !! not agree with. Customers are charged what is below, not what\n")
-            out.write("  !! the contract says.\n")
+            out.write("  !! WRONG PRICE - current Apple price differs from the launch catalog.\n")
+            out.write("  !! Customers are charged Apple's current price, shown below.\n")
             for spec, amount in mispriced:
                 out.write("  !!   %-34s USD %s, should be USD %s\n"
                           % (spec["productId"], amount, spec["usd"]))
             out.write("  !!\n")
-            out.write("  !! Take it off sale:\n")
-            for spec, _amount in mispriced:
-                out.write("  !!   python3 tools/asc/asc.py subscriptions unprice %s\n"
-                          % spec["productId"])
-            out.write("  !! Apple's yearly USD points stop at 1000.00. Request higher ones\n")
-            out.write("  !! before repricing: %s\n" % HIGHER_PRICE_POINTS_REQUEST_URL)
+            if any(spec["period"] == "ONE_MONTH" for spec, _ in mispriced):
+                out.write("  !! For monthly plans, schedule the exact new price in App Store\n")
+                out.write("  !! Connect and choose whether existing subscribers keep their\n")
+                out.write("  !! current price. This tool will not make that choice implicitly.\n")
+            annual = [spec for spec, _ in mispriced if spec["period"] == "ONE_YEAR"]
+            if annual:
+                out.write("  !! Withdraw any incorrectly priced annual plan that is on sale:\n")
+                for spec in annual:
+                    out.write("  !!   python3 tools/asc/asc.py subscriptions unprice %s\n"
+                              % spec["productId"])
+                out.write("  !! Request higher yearly price points if needed: %s\n"
+                          % HIGHER_PRICE_POINTS_REQUEST_URL)
             out.write("  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
             for spec, amount in mispriced:
                 missing.append("%s is priced USD %s, not the agreed USD %s"
@@ -4051,6 +4117,12 @@ def cmd_status(client, args, out):
 
 def summarise(plan, out, label):
     out.write("\n")
+    if plan.existing_price_mismatches:
+        out.write("EXISTING PRICE MISMATCH - launch requires a separate Apple price schedule:\n")
+        for product_id, actual, target in plan.existing_price_mismatches:
+            out.write("  - %s  current USD %s, target USD %s\n"
+                      % (product_id, actual or "unknown", target))
+        out.write("  Review whether existing subscribers keep their current price.\n\n")
     if plan.price_skipped:
         out.write("UNPRICED - these products were NOT priced and cannot be sold:\n")
         for item in plan.price_skipped:
