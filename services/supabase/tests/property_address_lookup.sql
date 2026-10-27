@@ -13,8 +13,9 @@ select pg_temp.ok(not has_function_privilege('anon','public.public_property_addr
   and has_function_privilege('service_role','public.public_property_address_lookup(text)','execute'),
   'public RPC execute is service role only');
 select pg_temp.ok(not has_function_privilege('anon','public.property_address_descriptor(text)','execute')
-  and not has_function_privilege('authenticated','public.property_address_descriptor(text)','execute'),
-  'descriptor helper is not a public RPC');
+  and has_function_privilege('authenticated','public.property_address_descriptor(text)','execute')
+  and has_function_privilege('service_role','public.property_address_descriptor(text)','execute'),
+  'only listing writers and service role can execute descriptor helper');
 select pg_temp.ok(public.property_address_descriptor('Élan / </script> & Suite #2')='elan-script-suite-2',
   'NFKD, combining marks and punctuation match the host');
 select pg_temp.ok(public.property_address_descriptor('  123 Main St, Charlotte, NC  ')='123-main-st-charlotte-nc',
@@ -32,7 +33,7 @@ insert into auth.users(id,email,is_anonymous)values
 create temporary table af as select
  (select org_id from public.memberships where user_id='ad100000-0000-4000-8000-000000000001'limit 1) org_one,
  (select org_id from public.memberships where user_id='ad100000-0000-4000-8000-000000000002'limit 1) org_two;
-grant select on af to service_role;
+grant select on af to service_role,authenticated;
 select pg_temp.ok((select org_one is not null and org_two is not null and org_one<>org_two from af),
   'synthetic owners have distinct workspaces');
 -- Seed the homes lawfully, then restore the original Free state so the
@@ -40,6 +41,21 @@ select pg_temp.ok((select org_one is not null and org_two is not null and org_on
 create temporary table address_org_before as select id,plan,plan_source,plan_expires_at,trial_ends_at
   from public.orgs where id in(select org_one from af union select org_two from af);
 update public.orgs set plan='starter',plan_source='manual' where id in(select org_one from af union select org_two from af);
+-- The descriptor expression index evaluates with the listing writer's role.
+-- Exercise the normal authenticated insert policy, then remove this extra row
+-- before the resolver's publication assertions below.
+select set_config('request.jwt.claim.sub','ad100000-0000-4000-8000-000000000001',true);
+set local role authenticated;
+insert into public.listings(id,org_id,agent_id,space_type,address,status)values
+ ('ad200000-0000-4000-8000-000000000004',(select org_one from af),'ad100000-0000-4000-8000-000000000001',
+  'real_estate','88 Authenticated Index Lane','draft');
+reset role;
+select pg_temp.ok((select count(*)=1 from public.listings
+  where id='ad200000-0000-4000-8000-000000000004'
+    and public.property_address_descriptor(address)='88-authenticated-index-lane'),
+  'authenticated listing insert maintains the address expression index under RLS');
+delete from public.listings where id='ad200000-0000-4000-8000-000000000004';
+select set_config('request.jwt.claim.sub','',true);
 insert into public.listings(id,org_id,agent_id,space_type,address,status)values
  ('ad200000-0000-4000-8000-000000000001',(select org_one from af),'ad100000-0000-4000-8000-000000000001','real_estate','123 Main St','ready'),
  ('ad200000-0000-4000-8000-000000000002',(select org_two from af),'ad100000-0000-4000-8000-000000000002','real_estate','55 Other Road','ready'),
