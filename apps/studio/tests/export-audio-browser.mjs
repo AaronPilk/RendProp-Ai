@@ -108,9 +108,12 @@ try{
    tracks:[...tracks].map(([track,audio])=>({contextId:contexts.get(audio),kind:track.kind,readyState:track.readyState,muted:track.muted,enabled:track.enabled}))});
  });
  receipt.passiveRuntime={node:process.version,browser:browser.version(),platform:process.platform,architecture:process.arch};
- page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(15000);
+ const freshPage=async()=>{
+  await page?.close();
+  page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(15000);
+ };
  const run=async(name,config,{refused=false,silentAudio=false,cancelled=false}={})=>{
-  await page.goto(`${origin}/tests/export-audio-fixture.html`);await verifyTestAudioOutput(page,audioOutput);await page.getByLabel("Synthetic source").setInputFiles(silentAudio?silent:tone);
+  await freshPage();await page.goto(`${origin}/tests/export-audio-fixture.html`);await verifyTestAudioOutput(page,audioOutput);await page.getByLabel("Synthetic source").setInputFiles(silentAudio?silent:tone);
   await page.evaluate(config=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,playResolutionDelayMs:0,...config},config);
   await page.getByRole("button",{name:"Export fixture",exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result)).not.toBeNull();
   const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,audioOutput:await verifyTestAudioOutput(page,audioOutput),ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error,cause:result.cause};receipt.cases.push(record);record.passive=await page.evaluate(()=>window.audioExportPassive());
@@ -160,23 +163,20 @@ try{
   assert.fail("Late buffered clock-origin negative control unexpectedly passed");
  }
  if(!alignmentOnly){
+ await run("silent-video",{},{silentAudio:true});receipt.checks.push("A genuinely silent video stays exportable without fabricating or dropping sound");
  await run("normal-speed-stall",{stall:true});receipt.checks.push("A real100ms video stall preserves uninterrupted normal-speed original audio with exact trim/duration");
  await run("delayed-buffered-start",{playResolutionDelayMs:120});receipt.checks.push("A delayed play-promise delivery preserves buffered speech, original pitch and exact duration without misclassifying a constant startup phase as media loss");
  await run("split-segments",{split:true});receipt.checks.push("Adjacent trimmed source segments export once without overlapping sound or a cut gap");
  await run("double-speed-pitch",{speed:2});receipt.checks.push("Media fallback retains2x duration and original880Hz pitch");
- await run("double-speed-stall",{speed:2,stall:true},{refused:true});
  await run("double-speed-transient-waiting",{speed:2,hiccup:true});receipt.checks.push("A transient waiting notification without measurable audio loss keeps the 2x media-audio export continuous at its original pitch; a real 100 ms stall is still refused");
  await run("decode-failure",{decodeFailure:true});
- await run("decode-failure-stall",{decodeFailure:true,stall:true},{refused:true});receipt.checks.push("Unsupported decoding preserves source audio; speed-adjusted and unsupported audio stalls refuse download");
- await run("cancel-before-audio-start",{cancelAfterBuffer:true},{cancelled:true});receipt.checks.push("Cancellation before scheduled audio start preserves its abort reason and produces no download");
- await run("silent-video",{},{silentAudio:true});receipt.checks.push("A genuinely silent video stays exportable without fabricating or dropping sound");
  }
  if(!originalOnly){
   const marker=join(artifacts,"original-opening-marker.mp4");
   execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","color=c=green:s=640x360:r=30:d=3","-f","lavfi","-i","aevalsrc=if(between(t\\,0.5\\,0.65)\\,0.25*sin(2*PI*990*t)\\,0.25*sin(2*PI*880*t)):s=48000:d=3","-c:v","libx264","-pix_fmt","yuv420p","-c:a","aac","-shortest",marker]);
   const toneAt=(pcm,hz,start,end)=>{const first=Math.round(start*48000),count=Math.round((end-start)*48000);assert(first>=0&&first+count<=pcm.length/4,"Fixed PCM window must exist");let real=0,imaginary=0;for(let i=0;i<count;i++){const sample=pcm.readFloatLE((first+i)*4);assert(Number.isFinite(sample));real+=sample*Math.cos(2*Math.PI*hz*i/48000);imaginary+=sample*Math.sin(2*Math.PI*hz*i/48000);}return 2*Math.hypot(real,imaginary)/count;};
   for(const mix of ["opening","offset-fade"]){
-   await page.goto(`${origin}/tests/export-audio-fixture.html`);await verifyTestAudioOutput(page,audioOutput);await page.getByLabel("Synthetic source").setInputFiles(marker);
+   await freshPage();await page.goto(`${origin}/tests/export-audio-fixture.html`);await verifyTestAudioOutput(page,audioOutput);await page.getByLabel("Synthetic source").setInputFiles(marker);
    await page.evaluate(mix=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,playResolutionDelayMs:250,mix},mix);
    await page.getByRole("button",{name:"Export fixture",exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result)).not.toBeNull();
    const result=await page.evaluate(()=>window.audioExportFixture.result),row={name:"alignment-"+mix,ok:result.ok,error:result.error,cause:result.cause,playEvidence:result.playEvidence,playHoldEvidence:result.playHoldEvidence,gainEvidence:result.gainEvidence,sourceEvidence:result.sourceEvidence,gainPreparation:await page.evaluate(()=>globalThis.audioGainPreparationEvidence??null)};receipt.cases.push(row);
@@ -216,6 +216,14 @@ try{
    }
    receipt.checks.push(`Saved optional-track onset/tail/trim and original opening/ducking/music${mix} remain aligned under250ms native-play promise delivery delay`);
   }
+ }
+ if(!alignmentOnly){
+  // Deliberately destructive playback/cancellation controls run after every
+  // healthy output oracle. Each case still uses the real browser exporter and
+  // a fresh page, so earlier AudioContexts cannot burden later recordings.
+  await run("double-speed-stall",{speed:2,stall:true},{refused:true});
+  await run("decode-failure-stall",{decodeFailure:true,stall:true},{refused:true});receipt.checks.push("Unsupported decoding preserves source audio; speed-adjusted and unsupported audio stalls refuse download");
+  await run("cancel-before-audio-start",{cancelAfterBuffer:true},{cancelled:true});receipt.checks.push("Cancellation before scheduled audio start preserves its abort reason and produces no download");
  }
  assert.deepEqual(receipt.errors,[]);assert.deepEqual(receipt.externalRequests,[]);receipt.sourceBoundAtEnd=JSON.stringify(await hashes())===JSON.stringify(receipt.sourceHashes);assert(receipt.sourceBoundAtEnd);receipt.status="passed";
 }catch(error){receipt.status="failed";receipt.failure=String(error.stack??error);process.exitCode=1;}
