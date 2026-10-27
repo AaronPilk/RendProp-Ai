@@ -14,10 +14,17 @@ const {server,origin,load,retained}=await premiumPreview();const {renderTourPage
 // The pushed parent of the initial handoff commit is available in a full clone.
 // Classic and MLS rendering must remain identical across the luxury redesign.
 const PRESENTATION_BASELINE='6fc7485a1aae7b8354fd7c21ff2a01e71c3e1376';
+// The later shared navigation fix moved this custom property from <html> to
+// <body>. Permit exactly that separately committed change while keeping the
+// Classic/MLS comparison against the pre-redesign presentation baseline.
+const OFFSET_BEFORE="document.documentElement.style.setProperty('--listing-nav-offset',(Math.ceil(Math.max(navHeight,previewHeight))+16)+'px');";
+const OFFSET_AFTER="document.body.style.setProperty('--listing-nav-offset',(Math.ceil(Math.max(navHeight,previewHeight))+16)+'px');";
+const oldListingPlayer=execFileSync('git',['show',PRESENTATION_BASELINE+':services/edge/tour-host/src/listing-player.ts'],{cwd:ROOT,encoding:'utf8'});
+check(oldListingPlayer.includes(OFFSET_BEFORE)&&readFileSync(join(ROOT,'src/listing-player.ts'),'utf8')===oldListingPlayer.replace(OFFSET_BEFORE,OFFSET_AFTER),'shared listing-player differs from pre-redesign baseline only by the verified navigation offset fix');
 const baseline=join(output,'baseline-esm');mkdirSync(baseline,{recursive:true});writeFileSync(join(baseline,'package.json'),'{"type":"module"}');
 for(const f of readdirSync(join(ROOT,'src')).filter(n=>n.endsWith('.ts'))){const s=execFileSync('git',['show',PRESENTATION_BASELINE+':services/edge/tour-host/src/'+f],{cwd:ROOT,encoding:'utf8',stdio:['ignore','pipe','pipe']});const js=ts.transpileModule(s,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText.replace(/(\bfrom\s*["'])(\.\.?\/[^"']+?)(["'])/g,(_,a,b,c)=>a+b+'.js'+c);writeFileSync(join(baseline,f.replace(/\.ts$/,'.js')),js)}
 const before=await import(pathToFileURL(join(baseline,'player.js'))),oldDesign=await import(pathToFileURL(join(baseline,'property-design.js')));
-for(const t of[retained.tour,buildDemoTour()])for(const page of['home','gallery','location','contact'])for(const unbranded of[false,true]){const opts={origin,page,unbranded};const after=renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(PROPERTY_DESIGN_CSS,'__PAID_CSS__');const prior=before.renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(oldDesign.PROPERTY_DESIGN_CSS,'__PAID_CSS__');check(after===prior,`Classic/MLS markup+scripts+shared CSS exact: ${t.slug}/${page}/${unbranded}`)}
+for(const t of[retained.tour,buildDemoTour()])for(const page of['home','gallery','location','contact'])for(const unbranded of[false,true]){const opts={origin,page,unbranded};const after=renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(PROPERTY_DESIGN_CSS,'__PAID_CSS__');const prior=before.renderTourPage({...t,website_theme:'basic'},'/closed-api','','',opts).replace(oldDesign.PROPERTY_DESIGN_CSS,'__PAID_CSS__');assert.equal(prior.split(OFFSET_BEFORE).length-1,1,'historical Classic/MLS HTML contains exactly one shared navigation offset');check(after===prior.replace(OFFSET_BEFORE,OFFSET_AFTER),`Classic/MLS markup+scripts+shared CSS exact, apart from verified navigation offset fix: ${t.slug}/${page}/${unbranded}`)}
 for(const file of['property-site.ts','property-video.ts']){const old=execFileSync('git',['show',PRESENTATION_BASELINE+':services/edge/tour-host/src/'+file],{cwd:ROOT});check(old.equals(readFileSync(join(ROOT,'src',file))),file+' byte-exact handoff parent')}
 const browser=await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});
 try{
