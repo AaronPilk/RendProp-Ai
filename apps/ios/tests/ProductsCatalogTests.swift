@@ -36,7 +36,8 @@ enum SpaceType: Equatable {
         precondition(RendpropProducts.plan(fromPlanName: "legacy_pro") == .ultra)
         precondition(RendpropPlan.allCases.map(\.allowances.credits) == [80, 200, 440, 1000])
         for plan in RendpropPlan.allCases {
-            precondition(plan.benefits.first == "\(plan.allowances.credits) monthly Declutter credits after the trial")
+            precondition(plan.benefits.first ==
+                         "\(plan.allowances.credits) monthly credits for eligible photo edits after the trial")
         }
         precondition(RendpropPlan.team.allowances.seats == 3)
         precondition(RendpropProducts.notSoldAtLaunch.count == 9)
