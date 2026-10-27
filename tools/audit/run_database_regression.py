@@ -117,6 +117,10 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20261027171200_credit_intent_immutable_amount.sql",
     "20261027173000_dormant_combined_credit_budget.sql",
     "20261027180000_team_paid_seat_variants.sql",
+    # The dormant aerial tariff and fair-charge journal add immutable columns
+    # and tables and replace exact predecessor functions only once.
+    "20261027183000_credit_aerial_opening.sql",
+    "20261027184000_aerial_fair_charge.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -169,6 +173,8 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261027171200_credit_intent_immutable_amount.sql": ("b8d0ad6a132af98d45e3b9d90034c41ae5b70608b2e2a05e06a1bd197bd47a8e", "column \"credits\" of relation \"credit_purchase_intents\" already exists"),
     "20261027173000_dormant_combined_credit_budget.sql": ("b9846c5a5544344915709fda8cf541dd08531dbf8a0633d00500daa55e34d843", "column \"price_milliunits\" of relation \"credit_monthly_events\" already exists"),
     "20261027180000_team_paid_seat_variants.sql": ("9a54cb1f857e81064e513d517c2e75d9a136e346d0b849cda58e7c25f7f27550", "relation \"team_paid_seat_variants\" already exists"),
+    "20261027183000_credit_aerial_opening.sql": ("dbb0adb83dd45bf937fd194399e00f595f39b3778eaf48abddc96a557a8e4110", "column \"credit_hold_id\" of relation \"app_video_cost_reservations\" already exists"),
+    "20261027184000_aerial_fair_charge.sql": ("f2499878ec4609dccc526128e6814d3909d041e0d8024d190909e665be9be273", "relation \"credit_aerial_failure_budget\" already exists"),
 }
 
 
