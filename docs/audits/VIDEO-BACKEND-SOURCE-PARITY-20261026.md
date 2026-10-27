@@ -1,29 +1,35 @@
 # Video backend source parity — October 26, 2026
 
-This is a **source-only** recovery in `codex/video-backend-parity-20261026`. It does not deploy functions, run paid video generations, apply SQL, or establish phone acceptance.
+This is a **source-only** recovery on `codex/video-backend-parity-20261026`. It does not deploy functions, apply SQL, run paid generations, or establish device acceptance. Keep this branch separate from Claude's luxury-site work.
 
-## Compared with live Supabase
+## Live function bundles
 
-| Function | Live version | Source result |
+| Function | Live version | Recovered source |
 | --- | ---: | --- |
-| `property-video-jobs` | 34 | Its deployed entrypoint, internal modules, and KIE adapter changes were restored. The aerial and explicit Photo Motion routes are present. |
-| `property-video-plan` | 11 | Its deployed source-custody guard and entrypoint were restored. |
-| `listings` | 62 | Its deployed fresh-read listing create and accepted-photo publication selection guard were restored. |
+| `property-video-jobs` | 34 | Deployed entrypoint and job modules, including aerial opening, explicit Photo Motion, source custody, and accepted photo selection. |
+| `property-video-plan` | 11 | Deployed planner entrypoint and source-custody guard. |
+| `listings` | 62 | Deployed fresh-read listing creation and accepted-photo publication selection. |
+| `property-video-worker` | 32 | Deployed entrypoint, engine, aerial worker, accepted-result retention, and Photo Motion/KIE prompt support. |
 
-The deployed bundles were read from the RendProp Supabase project `ymgqpbnjpztwjsyvceld` with `get_edge_function`. The jobs source came from the existing local CLI staging bundle at `/Users/pilksclaes/Rendprop AI/.tmp/jobs33-normal-cli-stage/supabase/functions`; each copied source file was checked against the live bundle before use. The plan and listings changes came directly from their live bundles. Of 100 distinct files represented in those three bundles, this branch matches all except the following intentionally newer shared sources:
+The bundles were read from the RendProp Supabase project `ymgqpbnjpztwjsyvceld` with `get_edge_function`. The worker bundle has 84 source files; 75 now match this branch's text hashes. The other nine are intentionally retained from newer source: jobs v34's `aerial-rpc.ts`, `aerial-public.ts`, `input.ts`, `runtime.ts`, `_shared/providers/kie.ts`, and `_shared/r2.ts`; plan v11's `_shared/providers/openai.ts`; the later restrictive `_shared/entitlements.ts`; and the later KIE-capable `property-video-worker/provider-diagnostic.ts`. These variants type-check together and preserve the newer trial and diagnostic controls. The jobs source also came from the existing local CLI staging bundle, with copied files checked against the live bundle.
 
-- `_shared/entitlements.ts`: retain the later, restrictive trial policy; the v34 jobs bundle contains the older, broader fallback.
-- `_shared/r2.ts`: retain the newer jobs/listings variant; the v11 plan bundle contains an older variant.
-- `_shared/providers/openai.ts`: retain the newer plan variant; the v34 jobs bundle contains an older variant.
+The worker restoration includes the already-paid KIE retention path. It does not authorize a new generation, substitute media, or accept a result for publication by itself. Existing source-extraction test fixtures were updated to compile the new Photo Motion and registered-prompt dependencies instead of testing an obsolete snippet.
 
-The source changes are not a deployment package. Live `property-video-worker` is version 32 and differs from this repository, including its entrypoint, engine, aerial worker and retention code. Several live-applied SQL migrations for Photo Motion, aerial openings, prompt profiles, and recovery are absent from this branch's migration source, including `20261021222704`, `20261022223052`, `20261023200943`, and `20261024000646`. Reconcile the worker and those migrations before attempting to reproduce production or redeploy this backend from GitHub.
+## Applied SQL recovered
+
+For the 24 applied migrations dated October 21–24, 2026, all local files now match the live `supabase_migrations.schema_migrations.statements[1]` MD5 exactly. This branch adds the 23 files absent from GitHub; `20261023202520_photo_publication_internal_scope_validation_20261023.sql` was already present and already matched. This includes the explicit Photo Motion, 12% timeline, durable aerial opening, 1080p aerial route, prompt registry, and recovery-controller SQL. The migration files were recovered read-only and were **not** applied.
+
+Earlier migration history is still divergent. Among the October 14–20 applied rows, 26 live migration versions have different local timestamps; 23 have the same SQL bytes under another filename. Three are not byte-identical: `photo_input_legacy_9mb`, `freeze_property_attempt_liability`, and `conservative_pipeline_cost_binding`. The last differs only by a trailing newline; the liability guard has a substantive earlier-source difference. Do not claim that a fresh database or `supabase db push` will replay the entire live history from this branch until that older version map and the concurrent October 26 trial/address migrations are reconciled. This recovery was deliberately limited to the missing October 21–24 video/aerial files rather than adding duplicate historical migrations that might execute twice.
 
 ## Verification
 
-- `deno check` passed for all three entrypoints.
+- `deno check` passed for the jobs, planner, worker, listings, and `ai-video` entrypoints.
+- Worker suite: 90 passed, 6 intentionally ignored.
+- Job suite: 75 passed.
+- `ai-video` suite: 614 passed.
 - 109 focused video jobs, planner, listings, publication, and consent fixture tests passed.
 - 48 trial funding, purchase, and video attestation tests passed.
 - 5 new Photo Motion input tests passed, covering the 2/3/3-second timeline, frozen directions, exact master identity, and refusal of an AI override or unaccepted aerial opening.
-- `git diff --check` passed.
+- All 24 October 21–24 migration MD5 values match the live statements; staged changes passed `git diff --check`.
 
 No paid generation, live mutation, TestFlight build, or deployment was performed for this parity work.
