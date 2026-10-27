@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 from PIL import Image, ImageCms
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'container'))
-from prepare_image import normalize, prepare_image, MAX_OUTPUT_BYTES
+from prepare_image import normalize, normalize_full_resolution, prepare_image, MAX_OUTPUT_BYTES
 from renderer import render, validate_task, upload_prepared
 from http_adapter import Runtime
 
@@ -23,6 +23,24 @@ def task(source):
          'output':{'asset_id':JOB,'key':'prepared/owned.jpg'},'expires_at':(datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=1)).isoformat()}
 
 class ActualPreparation(unittest.TestCase):
+ def test_png_exif_orientation_is_baked_and_private_metadata_removed(self):
+  with tempfile.TemporaryDirectory() as root:
+   source=Path(root)/'original.png';prepared=Path(root)/'prepared.jpg';full=Path(root)/'full.png'
+   image=Image.new('RGB',(8,4),'red');image.paste('blue',(4,0,8,4))
+   exif=Image.Exif();exif[274]=6;exif[270]='Private PNG metadata'
+   image.save(source,'PNG',exif=exif)
+   original=hashlib.sha256(source.read_bytes()).hexdigest()
+   self.assertEqual(normalize(source,prepared)['source_width'],4)
+   self.assertEqual(normalize_full_resolution(source,full),{'width':4,'height':8})
+   for output in (prepared,full):
+    with Image.open(output) as result:
+     result.load()
+     self.assertEqual(result.size,(4,8))
+     self.assertFalse(result.getexif())
+     self.assertGreater(result.getpixel((2,1))[0],240)
+     self.assertGreater(result.getpixel((2,6))[2],240)
+   self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(),original)
+
  def test_4k_exif_rotated_colors_and_original_hash_unchanged(self):
   with tempfile.TemporaryDirectory() as root:
    source,target=Path(root)/'original.jpg',Path(root)/'prepared.jpg'
