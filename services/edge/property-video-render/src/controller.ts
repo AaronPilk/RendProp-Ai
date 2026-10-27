@@ -1,13 +1,30 @@
+import type{AerialWorkKind}from'./aerial-processing';
+import type {AerialOpeningTask} from '../../../supabase/functions/_shared/aerial-opening-contract.ts';
 /** Pure controller helpers shared by the actual Worker and executable tests. */
+import type {TemporalProducerBinding,TemporalAttestation} from './temporal-envelope';
 import type {WorkerAction, ComposeAction, ExtractAction, PrepareImageAction, InspectAudioAction} from '../../../supabase/functions/property-video-jobs/contracts.ts';
+import type {PhotoMotionTask,PhotoMotionProducer} from './photo-motion';
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export type {PrepareImageAction};
-export type CPUAction = ComposeAction | ExtractAction | PrepareImageAction | InspectAudioAction;
+export type CPUAction = ComposeAction | PhotoMotionTask | ExtractAction | PrepareImageAction | InspectAudioAction;
 export interface Capability {url: string; method: 'GET'|'PUT'; bytes: number;headers?:Record<string,string>}
 export interface EgressProps {capabilities: Capability[]; expiresAt: number}
+export interface PhotoMotionStartup {
+  begunAt:number;
+  deadline:number;
+  stage:'claimed'|'lease'|'start'|'inactivity'|'egress'|'ready'|'process'|'execute'|'accepted'|'stop';
+  executeIssued:boolean;
+  startIssued:boolean;
+  nativePending?:true;
+  /** Fulfilled destroy acknowledgement, saved atomically with pending removal. */
+  nativeStopAcknowledgedAt?:number;
+  uncertain?:true;
+  held?:true;
+}
 export interface SlotState {
   jobID: string;
+  workKind?:AerialWorkKind;
   slot: 'slot-0'|'slot-1';
   token: string;
   task?: CPUAction;
@@ -17,6 +34,16 @@ export interface SlotState {
   outputs?: Record<string, unknown>;
   startedAt?: number;
   heartbeatAt?: number;
+  temporalProducer?: TemporalProducerBinding;
+  temporalAttestation?: TemporalAttestation;
+  temporalRawResult?: Record<string,unknown>;
+  temporalHold?: true;
+  photoMotionImage?: string;
+  photoMotionStartedAt?: number;
+  photoMotionProducer?: PhotoMotionProducer;
+  photoMotionStartup?: PhotoMotionStartup;
+  /** Validated completed output is durable before an un-cancelable stop. */
+  photoMotionTerminal?: {stoppedAt?:number};
 }
 
 export function mediaURL(raw: string, hosts: Set<string>): string {
@@ -31,7 +58,7 @@ export function capabilities(task: CPUAction, hosts: Set<string>): EgressProps {
   const expiresAt = Date.parse(task.expires_at);
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw Error('stale_cpu_lease');
   if (!UUID.test(task.job_id) || !UUID.test(task.lease_token)) throw Error('invalid_cpu_identity');
-  const inputs = task.action === 'prepare_image' || task.action === 'inspect_audio' ? [task.source] : task.action === 'extract_frames' ? [task.clip] : [...task.sources, ...(task.narration ? [task.narration] : []), ...(task.music ? [task.music] : [])];
+  const inputs = task.action==='compose'&&'clip'in task?[task.clip]:task.action === 'prepare_image' || task.action === 'inspect_audio' ? [task.source] : task.action === 'extract_frames' ? [task.clip] : [...task.sources, ...(('opening'in task&&task.composition_profile==='photo-motion-v2-opening-cfr24')?[((task as unknown as {opening:AerialOpeningTask}).opening).media]:[]), ...(task.narration ? [task.narration] : []), ...(task.music ? [task.music] : [])];
   return {expiresAt, capabilities: inputs.map(item => {
     if (!Number.isSafeInteger(item.bytes) || item.bytes < 1 || item.bytes > 128*1024*1024) throw Error('bounded_media_required');
     if (task.action === 'inspect_audio' && item.bytes > 20*1024*1024) throw Error('bounded_narration_required');
