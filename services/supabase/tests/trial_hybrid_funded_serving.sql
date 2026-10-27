@@ -177,6 +177,9 @@ select pg_temp.hybrid_ok((select funding_id is not null and request_limit=1000
  and storage_limit=1342177280 and used_requests=0 from public.media_delivery_budgets
  where org_id='e4200000-0000-4000-8000-000000000001'),
  'signed conversion atomically creates one finite photo media budget');
+select pg_temp.hybrid_ok((select allocated_org_cents=0 from public.media_account_reserves
+ where receipt_ref='synthetic-trial-media-account'),
+ 'funded trial media charges its sponsor slice, not account cash twice');
 select pg_temp.hybrid_ok((public.media_storage_reserve(
  'e4200000-0000-4000-8000-000000000001','uploads',
  'uploads/e4200000-0000-4000-8000-000000000001/e4300000-0000-4000-8000-000000000001/photo.jpg',1024)->>'reserved')='true',

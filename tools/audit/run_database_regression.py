@@ -54,7 +54,7 @@ REFLECTION_FIXTURES = (
     ("build58_db_controls.sql", '{"suite": "build58_db_controls", "assertions": 52}', 52),
     ("property_address_lookup.sql", '"assertions": 25', 25),
     ("trial_full_window_admission.sql", '"assertions": 11', 11),
-    ("trial_hybrid_funded_serving.sql", '"assertions": 42', 42),
+    ("trial_hybrid_funded_serving.sql", '"assertions": 43', 43),
 )
 
 # These already-shipped transactional Studio migrations intentionally create
