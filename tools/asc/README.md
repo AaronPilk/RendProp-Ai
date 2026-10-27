@@ -22,8 +22,9 @@ restores but withdrawn from sale. Apple's currently approved monthly products
 still charge $49.00, $99.00, and $249.00; `pro29.monthly` is absent. A monthly
 launch price must match exactly. `subscriptions plan` and `subscriptions apply`
 now **refuse before any Apple write** while an existing monthly price differs;
-the owner must choose a price-change schedule and whether existing subscribers
-keep their current price. The broad bridge is therefore intentionally blocked.
+the separate [exact-price scheduling tool](SUBSCRIPTION-REPRICE.md) plans
+future USA increases while keeping existing subscribers at their current price.
+The broad bridge remains intentionally blocked until those prices are live.
 
 The 100-credit consumable and six Team extra-seat SKUs are not managed by
 the default `asc.py` run. The Team 4–9-seat subscriptions have an explicit,
@@ -186,6 +187,8 @@ target before resuming a partial run.
 ```bash
 python3 tools/asc/asc.py app
 python3 tools/asc/asc.py subscriptions plan       # or: apply
+python3 tools/asc/subscription_reprice.py plan --effective-date YYYY-MM-DD
+python3 tools/asc/credit_pack_iap.py plan
 python3 tools/asc/asc.py metadata plan            # or: apply
 python3 tools/asc/asc.py screenshots apply
 python3 tools/asc/asc.py screenshots apply --dir docs/appstore/screenshots/6.9-framed --replace

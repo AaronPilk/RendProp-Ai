@@ -28,9 +28,11 @@ python3 tools/asc/asc.py subscriptions plan --include-team-seats
 ```
 
 `subscriptions plan` can stop immediately on the existing $49/$99/$249
-monthly-price mismatch. Resolve those existing-subscription price schedules
-first, including the decision about preserving current subscribers. Only then
-review the explicit `subscriptions apply --include-team-seats` plan. That
+monthly-price mismatch. [Schedule the exact .99 increases separately](SUBSCRIPTION-REPRICE.md)
+while preserving existing subscribers' current prices, or explicitly skip the
+three mismatched IDs to inspect the dormant-seat products before those prices
+take effect. Only then review the explicit `subscriptions apply
+--include-team-seats` plan. That
 command can create and price the six Apple subscriptions, localize them, set
 USA availability and a one-week introductory offer; it also reconciles the
 four base monthly products. **Do not run it as part of the ordinary release
