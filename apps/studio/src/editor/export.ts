@@ -383,7 +383,10 @@ export async function exportLocalVideo(options: {
         if (audio && audio.state !== "running") throw new Error("Audio stopped before recording could start. No download was created.");
         // A canvas track can retain timestamps from its creation. Open it only
         // after readiness, so pre-content preparation cannot become a video prefix.
-        stream = canvas.captureStream(30);
+        // Drive capture from completed paints. Chromium's periodic canvas
+        // sampler can record a stale transition frame for several intervals
+        // even while the media clock and paint loop keep advancing.
+        stream = canvas.captureStream(0);
         if (destination)
           for (const track of destination.stream.getAudioTracks())
             stream.addTrack(track);
@@ -538,6 +541,7 @@ export async function exportLocalVideo(options: {
         if (paintBucket !== lastPaintedBucket || elapsed >= duration) {
           drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore + elapsed, localTime: elapsed, previous: hasPrevious ? previous : undefined});
           await overlays.paint(canvas, elapsedBefore + elapsed);
+          (stream!.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined)?.requestFrame?.();
           lastPaintedBucket = paintBucket;
         }
         if (now - lastProgressAt > 150) {
