@@ -29,18 +29,20 @@ const DESIGN_CSS = `
      actual listing components. Local system faces only, the property's own
      media only, no tracking, no theme media. Classic markup is untouched. */
   $P { font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased; line-height:1.6; --grad-text:linear-gradient(var(--ink),var(--ink)); --card:var(--premium-paper); --lux-ease:cubic-bezier(.23,1,.32,1); --lux-ease-io:cubic-bezier(.77,0,.175,1); --lux-radius:0px; --lux-radius-s:0px; --lux-nav-h:52px; --listing-nav-offset:96px; background:var(--bg); color:var(--ink); }
-  $P .lp-wrap { max-width:1240px; padding-inline:clamp(22px,5vw,64px); }
+  $P .lp-wrap { max-width:1240px; padding-inline:var(--lux-gutter); }
+  $P { --lux-gutter:clamp(22px,5vw,72px); }
   /* The opening tucks under the floating navigation with a negative margin; the
      main landmark itself must keep its top below that chrome for Skip to content. */
   $P #property-content { display:flow-root; }
   $P :is(a,button,summary,input,textarea):focus-visible { outline:2px solid var(--accent); outline-offset:4px; border-radius:6px; }
   $P ::selection { background:var(--accent-soft); color:var(--ink); }
-  $P .lp-sec { padding:clamp(72px,9vw,136px) 0; border-top:0; }
+  $P .lp-sec { padding:clamp(64px,8vw,128px) 0; border-top:0; }
   $P .lp-sec + .lp-sec { border-top:1px solid var(--premium-line); }
   $P .lp-eyebrow { gap:12px; margin-bottom:22px; color:var(--accent-3); font:600 11px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; letter-spacing:.22em; text-transform:uppercase; }
   $P .lp-eyebrow::before { width:28px; height:1px; border-radius:0; background:currentColor; opacity:.7; }
   $P .lp-h,$P .property-page-head h1,$P .panel h2,$P .property-location-copy address,$P .lp-stat .v,$P .property-hero-title,$P .property-hero-price { font-family:var(--lux-serif); font-weight:400; letter-spacing:-.025em; }
-  $P .lp-h { font-size:clamp(36px,4.6vw,60px); line-height:1.04; margin:0 0 28px; max-width:18ch; text-wrap:balance; }
+  $P .lp-h { font-size:clamp(34px,4.2vw,58px); line-height:1.04; margin:0 0 26px; max-width:18ch; text-wrap:balance; }
+  $P .lp-tag { max-width:56ch; line-height:1.6; }
   $P .lp-tag { font-size:15px; color:var(--ink-dim); margin-top:8px; }
   $P .lp-fine { color:var(--ink-dim); }
   $P .lp-prose { color:var(--ink-dim); }
@@ -151,9 +153,8 @@ const DESIGN_CSS = `
   $P #overview .lp-eyebrow { display:none; }
   $P #overview .lp-h { margin-top:clamp(56px,8vw,96px); }
   $P .lp-price { margin-top:8px; font-family:var(--lux-serif); font-weight:400; font-size:clamp(24px,2.4vw,34px); }
-  $P .lp-stats { display:flex; flex-wrap:wrap; gap:0; margin:0; border:0; border-bottom:1px solid var(--premium-line); }
-  $P .lp-stat { flex:1 1 0; min-width:120px; padding:clamp(34px,4vw,56px) 16px; border:0; border-radius:0; box-shadow:none; background:transparent; text-align:center; }
-  $P .lp-stat + .lp-stat { border-left:1px solid var(--premium-line); }
+  $P .lp-stats { display:flex; flex-wrap:wrap; gap:0; margin:0; border:0; border-bottom:1px solid var(--premium-line); overflow:hidden; }
+  $P .lp-stat { flex:1 1 0; min-width:120px; padding:clamp(30px,3.6vw,52px) 16px; border:0; border-radius:0; box-shadow:-1px -1px 0 0 var(--premium-line); background:transparent; text-align:center; }
   $P .lp-stat .v { display:block; font-size:clamp(34px,3.6vw,56px); line-height:1.05; color:var(--ink); font-variant-numeric:lining-nums; }
   $P .lp-stat .k { display:block; margin-top:12px; color:var(--ink-dim); font:500 11px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; letter-spacing:.18em; text-transform:uppercase; }
   $P .lp-soldtag { color:var(--on-accent); background:var(--lux-fill); }
@@ -168,13 +169,30 @@ const DESIGN_CSS = `
 
   /* ─────────────── Gallery: large, calm, in published order ─────────────── */
   $P .lp-gal { gap:clamp(14px,2vw,28px); grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; }
-  $P #gallery .lp-wrap > .lp-gal > .lp-gcell:first-child { grid-column:1/-1; }
-  $P #gallery .lp-wrap > .lp-gal > .lp-gcell:first-child img { aspect-ratio:16/9; }
+  /* The flat gallery (Home preview and an unlabelled Gallery page) is a six-track grid. */
+  $P #gallery .lp-wrap > .lp-gal { grid-template-columns:repeat(6,minmax(0,1fr)); }
+  /* Lead photo full width, then rows of three. A final row of two shares the
+     width; a final single photo takes the full width at the lead's proportion.
+     Every rule below carries the same two structural pseudo-classes so the
+     tablet and phone layouts can replace it without !important. */
+  $P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(n):nth-last-of-type(n) { grid-column:span 2; }
+  $P #gallery .lp-wrap > .lp-gal > .lp-gcell:first-child:nth-last-of-type(n) { grid-column:1/-1; }
+  $P #gallery .lp-wrap > .lp-gal > .lp-gcell:first-child:nth-last-of-type(n) img { aspect-ratio:16/9; }
+  /* Editorial cycle after the lead: three photographs, then two wider ones,
+     repeating. Short last rows widen so the grid always closes cleanly. The
+     viewer always opens the complete photograph. */
+  $P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+5):nth-last-of-type(n),$P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+6):nth-last-of-type(n) { grid-column:span 3; }
+  $P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+5):nth-last-of-type(n) img,$P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+6):nth-last-of-type(n) img { aspect-ratio:3/2; }
+  $P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+2):nth-last-of-type(2),$P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+3):last-of-type { grid-column:span 3; }
+  $P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+2):nth-last-of-type(2) img,$P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+3):last-of-type img { aspect-ratio:3/2; }
+  $P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+2):last-of-type,$P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+5):last-of-type { grid-column:1/-1; }
+  $P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+2):last-of-type img,$P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(5n+5):last-of-type img { aspect-ratio:16/9; }
   $P .lp-gcell { border:0; padding:0; box-shadow:none; background:transparent; border-radius:0; overflow:visible; aspect-ratio:auto; }
   $P .lp-gcell img { display:block; width:100%; aspect-ratio:4/3; height:auto; object-fit:cover; border-radius:var(--lux-radius); background:var(--accent-soft); transform:none; transition:transform .6s var(--lux-ease),filter .6s ease; }
   $P .property-photo { display:block; overflow:hidden; border-radius:var(--lux-radius); }
   $P .lp-gcell figcaption { position:static; padding:12px 0 0; background:none; color:var(--ink-dim); font-size:12px; font-weight:400; letter-spacing:.04em; }
-  $P #gallery .lp-tag { margin-top:-10px; margin-bottom:22px; }
+  $P #gallery .lp-tag { margin-top:-8px; margin-bottom:26px; }
+  $P .property-page-count { margin-top:10px; color:var(--ink-dim); font:500 11px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; letter-spacing:.18em; text-transform:uppercase; }
   $P #gallery p:has(> .lp-btn) { margin-top:36px; text-align:center; }
   $P #gallery .lp-btn { margin-top:0; }
   $P .lp-mediadate { color:var(--ink-dim); font-size:12px; }
@@ -335,6 +353,13 @@ const DESIGN_CSS = `
   }
 
   /* ─────────────── Tablet ─────────────── */
+  @media(min-width:760px) and (max-width:1023px) {
+    $P .lp-stat { flex-basis:25%; min-width:0; }
+    $P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(n):nth-last-of-type(n) { grid-column:span 3; }
+    $P #gallery .lp-wrap > .lp-gal > .lp-gcell:first-child:nth-last-of-type(n),$P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(even):last-of-type { grid-column:1/-1; }
+    $P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(even):last-of-type img { aspect-ratio:16/9; }
+    $P #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(odd):nth-child(n+2):last-of-type img { aspect-ratio:4/3; }
+  }
   @media(max-width:900px) {
     $P .listing-cover,$P .listing-cover.property-video-hero { min-height:clamp(600px,100svh,900px); }
     $P .listing-cover .property-hero-title { font-size:clamp(44px,8.6vw,72px); }
@@ -372,14 +397,23 @@ const DESIGN_CSS = `
     $P .lp-sec { padding:56px 0; }
     $P .lp-h { font-size:clamp(32px,9vw,44px); margin-bottom:22px; }
     $P .property-story-spread { grid-template-columns:minmax(0,1fr); gap:28px; }
-    $P .lp-gal { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
-    /* Signature phones: one generous column, so every editorial row is full. */
-    $S .lp-gal { grid-template-columns:minmax(0,1fr); gap:20px; }
-    $P #gallery .lp-wrap > .lp-gal > .lp-gcell:first-child img { aspect-ratio:4/3; }
+    $P .lp-gal { gap:10px; }
+    /* Coastal phones: two columns; a lone last photo widens. Signature phones:
+       one generous column, so every editorial row is full. */
+    $C #gallery .lp-wrap > .lp-gal { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    $C #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(n):nth-last-of-type(n) { grid-column:span 1; }
+    $C #gallery .lp-wrap > .lp-gal > .lp-gcell:first-child:nth-last-of-type(n),$C #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(even):last-of-type { grid-column:1/-1; }
+    $C #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(n):nth-last-of-type(n) img { aspect-ratio:4/3; }
+    $C #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(even):last-of-type img { aspect-ratio:16/9; }
+    $S .lp-gal { gap:20px; grid-template-columns:minmax(0,1fr); }
+    $S #gallery .lp-wrap > .lp-gal { grid-template-columns:minmax(0,1fr); }
+    $S #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(n):nth-last-of-type(n) { grid-column:auto; }
+    $S #gallery .lp-wrap > .lp-gal > .lp-gcell:nth-child(n):nth-last-of-type(n) img { aspect-ratio:4/3; }
     $P .lp-gcell figcaption { padding-top:8px; font-size:11px; }
     $P .lp-stat { min-width:0; flex-basis:50%; padding:22px 8px; }
-    $P .lp-stat:nth-child(odd) { border-left:0; }
-    $P .lp-stat:nth-child(n+3) { border-top:1px solid var(--premium-line); }
+    /* An odd last figure takes the full row; exactly three sit three across. */
+    $P .lp-stat:nth-child(odd):last-child { flex-basis:100%; }
+    $P .lp-stat:first-child:nth-last-child(3),$P .lp-stat:first-child:nth-last-child(3) ~ .lp-stat { flex-basis:33.333%; }
     $P .lp-stat .v { font-size:30px; }
     $P .lp-stat .k { margin-top:8px; font-size:10px; letter-spacing:.14em; }
     $P .property-location-card { grid-template-columns:minmax(0,1fr); }
@@ -470,7 +504,7 @@ const DESIGN_CSS = `
 
   /* ═══════════ Signature Estate: an architectural dark opening, then ivory
      editorial spreads. Sharp corners, hairlines, brass only as a whisper. ═══ */
-  $S { --bg:#f5f1e9; --premium-paper:#fbf8f1; --ink:#1c201d; --ink-dim:#5f645d; --accent:#7a5f31; --accent-3:#7a5f31; --accent-soft:#ece5d4; --premium-line:rgba(28,32,29,.12); --premium-line-strong:rgba(28,32,29,.3); --lux-fill:#1d2320; --lux-fill-hover:#2c342f; --on-accent:#f5f1e9; --hero-bg:#141816; --hero-accent:#d9c493; --hero-cta:#f3ecdc; --hero-cta-ink:#1d2320; --lux-serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif; --lux-radius:0px; --lux-radius-s:4px; }
+  $S { --bg:#f5f1e9; --premium-paper:#fbf8f1; --premium-glass:rgba(251,248,241,.86); --ink:#1c201d; --ink-dim:#5f645d; --accent:#7a5f31; --accent-3:#7a5f31; --accent-soft:#ece5d4; --premium-line:rgba(28,32,29,.12); --premium-line-strong:rgba(28,32,29,.3); --lux-fill:#1d2320; --lux-fill-hover:#2c342f; --on-accent:#f5f1e9; --hero-bg:#141816; --hero-accent:#d9c493; --hero-cta:#f3ecdc; --hero-cta-ink:#1d2320; --lux-serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif; --lux-radius:0px; --lux-radius-s:4px; }
   $S .listing-cover .property-hero-price { color:var(--hero-accent); }
   $S #gallery { background:#efe9dc; }
   $S #gallery + .lp-sec,$S #story + #gallery { border-top:0; }
@@ -482,7 +516,7 @@ const DESIGN_CSS = `
 
   /* ═══════════ Coastal Luxe: sunlit sand, sea glass and open space. The opening
      is a framed panel beside the identity; everything is softly rounded. ═══ */
-  $C { --bg:#f8f7f2; --premium-paper:#ffffff; --ink:#10302c; --ink-dim:#57716b; --accent:#1f6b60; --accent-3:#1f6b60; --accent-soft:#e4efe9; --premium-line:rgba(16,48,44,.12); --premium-line-strong:rgba(16,48,44,.3); --lux-fill:#124a42; --lux-fill-hover:#0d3b35; --on-accent:#f3f8f5; --hero-bg:#10302c; --hero-accent:#bfe3d6; --hero-cta:#f3f8f5; --hero-cta-ink:#124a42; --lux-serif:"Hoefler Text",Baskerville,"Baskerville Old Face","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif; --lux-radius:24px; --lux-radius-s:14px; }
+  $C { --bg:#f8f7f2; --premium-paper:#ffffff; --premium-glass:rgba(255,255,255,.86); --ink:#10302c; --ink-dim:#57716b; --accent:#1f6b60; --accent-3:#1f6b60; --accent-soft:#e4efe9; --premium-line:rgba(16,48,44,.12); --premium-line-strong:rgba(16,48,44,.3); --lux-fill:#124a42; --lux-fill-hover:#0d3b35; --on-accent:#f3f8f5; --hero-bg:#10302c; --hero-accent:#bfe3d6; --hero-cta:#f3f8f5; --hero-cta-ink:#124a42; --lux-serif:"Hoefler Text",Baskerville,"Baskerville Old Face","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif; --lux-radius:24px; --lux-radius-s:14px; }
   $C .lp-h,$C .property-hero-title,$C .property-page-head h1,$C .panel h2 { letter-spacing:-.02em; }
   $C #listing-nav { border-radius:999px; }
   $C .lp-sec + .lp-sec { border-top:0; }
@@ -552,6 +586,289 @@ const DESIGN_CSS = `
   }
   @media(max-width:359px) {
     $C .property-hero-media,$C .property-video-hero .property-hero-media { aspect-ratio:16/9; }
+  }
+
+  /* ═══════════ v2: the whole site, finished ═══════════ */
+  /* Sub-page heads: the page title is the heading; the section keeps a quiet
+     sub-heading instead of repeating the same words at display size. */
+  $P.property-page-location #location .lp-eyebrow,$P.property-page-gallery #gallery .lp-eyebrow { display:none; }
+  $P.property-page-location #location .lp-h,$P.property-page-gallery #gallery .lp-h { font-size:clamp(24px,2.4vw,32px); margin-bottom:18px; }
+  $P.property-page-gallery #gallery { padding-top:clamp(28px,4vw,56px); }
+  $P.property-page-location #location { padding-top:clamp(28px,4vw,56px); }
+  $P .property-page-head .lp-wrap { display:flex; flex-direction:column; align-items:flex-start; }
+  $P .property-page-head h1 { max-width:14ch; text-wrap:balance; }
+  $P .property-page-head p { max-width:60ch; }
+
+  /* Location: the address card reads as one object; the map side draws a
+     calm radial field around the pin instead of a dotted texture. */
+  @media(min-width:760px) { $P .property-location-card { grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr); } }
+  $P .property-location-copy { display:flex; flex-direction:column; justify-content:center; }
+  $P .property-location-copy address { font-style:normal; }
+  $P .property-location-copy .lp-fine { margin-top:16px; }
+  $P .property-location-visual { min-height:320px; background-color:var(--accent-soft); background-image:radial-gradient(circle at 50% 50%,transparent 0 52px,var(--premium-line) 52px 53px,transparent 53px 118px,var(--premium-line) 118px 119px,transparent 119px 184px,var(--premium-line) 184px 185px,transparent 185px); }
+  $P .property-location-visual span { width:72px; height:72px; }
+  $P .property-location-visual svg { width:32px; height:32px; }
+  $P .lp-commute { margin-top:36px; }
+  $P #property-nearby .lp-eyebrow { display:flex; }
+  $P #property-nearby .lp-h { font-size:clamp(28px,3vw,40px); }
+  $P #property-nearby-status { margin-top:0; }
+  $P .property-nearby-list li { display:flex; flex-direction:column; gap:4px; padding:16px 0; }
+  $P .property-nearby-list a { font-size:16px; text-decoration:none; }
+  $P .property-nearby-list span { margin:0; }
+  $P .property-nearby-legend { margin-top:14px; }
+  $P #property-nearby > .lp-wrap > .lp-fine { margin-top:28px; }
+  @media(min-width:1000px) { $P #property-nearby .lp-wrap { column-gap:64px; } }
+
+  /* Contact: a single column when there is no form (previews and sold
+     listings); the agent panel and the enquiry side by side otherwise. */
+  $P #endcard .panel { max-width:1240px; row-gap:28px; }
+  $P #endcard .panel:not(:has(form)) { grid-template-columns:minmax(0,1fr); max-width:720px; }
+  $P #endcard .panel:not(:has(form)) > :not(.agent) { grid-column:1; }
+  $P #endcard .agent { gap:18px; }
+  $P #endcard .agent .avatar { width:96px; height:96px; flex-basis:96px; }
+  $P #endcard .agent .who .nm { font-size:clamp(28px,2.6vw,34px); }
+  $P #endcard .agent .who .bk { font-size:14px; }
+  $P #endcard .agent .social { margin-top:10px; }
+  $P #endcard .agent .social a { min-height:44px; min-width:44px; padding:0 2px; }
+  $P #endcard .property-preview-note { margin-top:0; font-size:15px; }
+  $P .panel .sub { max-width:48ch; line-height:1.6; }
+  $P #leadform { display:grid; grid-template-columns:1fr 1fr; column-gap:16px; }
+  $P #leadform > * { grid-column:1/-1; }
+  $P #leadform > .field:has(input[name=name]),$P #leadform > .field:has(input[name=phone]) { grid-column:auto; }
+  $P .field { margin-bottom:16px; }
+  $P .field .lbl { font-weight:600; }
+  $P .field input,$P .field textarea { font-size:16px; line-height:1.4; }
+  $P .field textarea { min-height:132px; }
+  $P #leadform > button,$P .cta { width:100%; min-height:54px; margin-top:4px; font-size:15px; }
+  $P .privacy { margin-top:14px; font-size:12.5px; line-height:1.6; }
+  $P #endcard .disclosure { font-size:12.5px; line-height:1.6; }
+
+  /* Photo viewer: one calm dark stage, capsule controls, serif counter. */
+  $P #property-photo-modal { width:min(1400px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); padding:14px 18px 18px; border:0; border-radius:22px; background:#0d100f; color:#fff; }
+  $P #property-photo-modal::backdrop { background:rgba(5,7,6,.92); }
+  $P .property-photo-head { align-items:center; min-height:44px; }
+  $P #property-photo-title { min-width:0; margin:0; color:rgba(255,255,255,.8); font-family:var(--lux-serif); font-size:16px; line-height:1.4; letter-spacing:.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  $P #property-photo-close { flex:none; white-space:nowrap; min-height:44px; padding:10px 18px; border:1px solid rgba(255,255,255,.25); border-radius:999px; background:rgba(255,255,255,.06); color:#fff; font:500 13px/1.3 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; }
+  $P #property-photo-full { max-height:calc(100dvh - 190px); margin:12px 0 10px; border-radius:10px; background:#0d100f; }
+  $P #property-photo-status { color:rgba(255,255,255,.7); font-size:13px; }
+  $P .property-photo-nav { gap:14px; margin-bottom:4px; }
+  $P .property-photo-nav button { min-width:112px; min-height:46px; padding:10px 18px; border:1px solid rgba(255,255,255,.25); border-radius:999px; background:rgba(255,255,255,.06); color:#fff; font-size:13px; }
+  $P #property-photo-count { color:#fff; font-family:var(--lux-serif); font-size:17px; letter-spacing:.02em; }
+  $P #property-photo-modal a { color:#e9e1cf; font-size:13px; }
+  @media(hover:hover) and (pointer:fine) { $P #property-photo-close:hover,$P .property-photo-nav button:not(:disabled):hover { background:rgba(255,255,255,.14); border-color:rgba(255,255,255,.5); } }
+
+  /* Colophon: the residence, its pages and its listing contact, in one quiet
+     band above the attribution. Built only from the published listing. */
+  $P .property-colophon { padding:clamp(56px,7vw,104px) 0; border-top:1px solid var(--premium-line); background:var(--premium-paper); }
+  $P .property-colophon-grid { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,.7fr) minmax(0,1fr); gap:40px clamp(32px,5vw,80px); align-items:start; }
+  $P .property-colophon .lp-eyebrow { margin-bottom:14px; }
+  $P .property-colophon-address { margin:0; font-family:var(--lux-serif); font-size:clamp(26px,2.6vw,38px); line-height:1.12; letter-spacing:-.02em; text-wrap:balance; }
+  $P .property-colophon-price { margin:10px 0 0; color:var(--ink-dim); font-size:16px; }
+  $P .property-colophon-nav { display:flex; flex-direction:column; gap:2px; }
+  $P .property-colophon-nav a { display:inline-flex; align-items:center; min-height:40px; color:var(--ink); font-size:15px; text-decoration:none; }
+  $P .property-colophon-nav a[aria-current=page] { color:var(--accent-3); }
+  $P .property-colophon-name { margin:0; font-family:var(--lux-serif); font-size:22px; line-height:1.2; }
+  $P .property-colophon-company { margin:4px 0 0; color:var(--ink-dim); font-size:14px; }
+  $P .property-colophon-link { display:inline-flex; align-items:center; min-height:40px; margin-right:16px; color:var(--ink); font-size:15px; text-decoration:none; border-bottom:1px solid var(--premium-line-strong); }
+  @media(hover:hover) and (pointer:fine) { $P .property-colophon-nav a:hover,$P .property-colophon-link:hover { color:var(--accent-3); } }
+
+  /* App band and attribution: compact, hairline, aligned to the grid. */
+  $P #getapp { padding:clamp(40px,5vw,64px) 0; border-top:1px solid var(--premium-line); background:var(--bg); }
+  $P #getapp .lp-wrap { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); gap:12px clamp(32px,5vw,80px); align-items:center; }
+  $P #getapp .lp-eyebrow { grid-column:1; margin-bottom:12px; }
+  $P #getapp .lp-h { grid-column:1; font-size:clamp(24px,2.4vw,32px); margin-bottom:10px; }
+  $P #getapp .lp-tag { grid-column:1; margin-top:0; font-size:15px; }
+  $P #getapp .lp-btn { grid-column:2; grid-row:1/4; justify-self:end; margin:0; }
+  $P #getapp .lp-btn-ghost { grid-column:2; grid-row:4; justify-self:end; margin:0; }
+  $P #getapp .lp-fine { grid-column:1/-1; margin-top:12px; }
+  $P .lp-foot { padding:clamp(36px,4vw,56px) 0 calc(40px + env(safe-area-inset-bottom)); border-top:1px solid var(--premium-line); background:var(--bg); }
+  $P .lp-foot .lp-eyebrow { margin-bottom:14px; }
+  $P .lp-partners { gap:0; border-top:1px solid var(--premium-line); border-bottom:1px solid var(--premium-line); }
+  $P .lp-partner { gap:4px; padding:18px 0; border:0; border-radius:0; background:transparent; transform:none; }
+  $P .lp-partner + .lp-partner { border-top:1px solid var(--premium-line); }
+  $P .lp-partner .nm { font-size:15px; }
+  $P .lp-partner .tg { font-size:13px; }
+  $P .lp-foot .lp-fine { margin-top:14px; }
+  $P .lp-madeby,$P .lp-legal { margin-top:22px; font-size:13px; color:var(--ink-dim); }
+  $P .lp-madeby a,$P .lp-legal a { color:var(--ink); text-decoration:none; }
+  $P .lp-madeby b { font-weight:600; }
+  @media(min-width:760px) {
+    $P .lp-partners { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); }
+    $P .lp-partner + .lp-partner { border-top:0; border-left:1px solid var(--premium-line); padding-left:24px; }
+    $P .lp-foot .lp-wrap { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:32px; align-items:end; }
+    $P .lp-foot .lp-wrap > :is(.lp-eyebrow,.lp-partners,.lp-fine) { grid-column:1/-1; }
+  }
+
+
+  /* Navigation brand: the street name, serif, centred on wide screens only. */
+  $P #listing-nav .listing-nav-brand { display:none; }
+  @media(min-width:1180px) {
+    $P .listing-nav-inner { position:relative; }
+    $P #listing-nav .listing-nav-brand { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); display:inline-flex; align-items:center; max-width:30%; min-height:44px; padding:0 14px; border-radius:999px; color:var(--ink); font-family:var(--lux-serif); font-size:17px; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:none; }
+    $P #listing-nav .listing-nav-brand:active { transform:translate(-50%,-50%) scale(.98); }
+  }
+
+  /* Presented by: the public agent card as a labelled grid. */
+  $P #endcard .agent.agent-premium { gap:22px; }
+  $P #endcard .agent-premium .who { display:flex; flex-direction:column; width:100%; }
+  $P #endcard .agent-premium .agent-eyebrow { order:-1; margin-bottom:10px; }
+  $P #endcard .agent-premium .bk-k { display:block; color:var(--ink-dim); font:600 10.5px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; letter-spacing:.18em; text-transform:uppercase; }
+  $P #endcard .agent-premium .bk-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px 20px; margin-top:18px; padding-top:18px; border-top:1px solid var(--premium-line); }
+  $P #endcard .agent-premium .bk-item { display:flex; flex-direction:column; gap:4px; min-width:0; }
+  $P #endcard .agent-premium .bk-v { color:var(--ink); font-size:14px; line-height:1.45; overflow-wrap:anywhere; text-decoration:none; }
+  $P #endcard .agent-premium a.bk-v { display:inline-flex; align-items:center; min-height:44px; min-width:44px; border-bottom:1px solid var(--premium-line-strong); width:fit-content; }
+  $P #endcard .agent-premium .social { margin-top:16px; padding-top:14px; border-top:1px solid var(--premium-line); }
+  $P #endcard .agent-premium .more { align-self:flex-start; margin-top:8px; }
+  $P #endcard .agent-premium .social,$P #endcard .agent-premium .bk-grid { align-self:stretch; }
+  @media(hover:hover) and (pointer:fine) { $P #endcard .agent-premium a.bk-v:hover { color:var(--accent-3); border-color:var(--accent-3); } }
+
+  /* Closing band: the property's own cover photograph, darkened, behind the
+     address, the page links and the listing contact. */
+  $P .property-colophon-pictured { position:relative; isolation:isolate; overflow:hidden; color:#fff; background:var(--hero-bg); border-top:0; }
+  $P .property-colophon-backdrop { position:absolute; inset:0; z-index:-2; width:100%; height:100%; object-fit:cover; object-position:center; filter:saturate(.85); }
+  $P .property-colophon-pictured::before { content:""; position:absolute; inset:0; z-index:-1; background:linear-gradient(180deg,rgba(8,12,11,.72),rgba(8,12,11,.82)); }
+  $P .property-colophon-pictured { padding:clamp(72px,9vw,128px) 0; }
+  $P .property-colophon-pictured .lp-eyebrow { color:var(--hero-accent); }
+  $P .property-colophon-pictured .property-colophon-price,$P .property-colophon-pictured .property-colophon-company { color:rgba(255,255,255,.72); }
+  $P .property-colophon-pictured .property-colophon-nav a,$P .property-colophon-pictured .property-colophon-link,$P .property-colophon-pictured .property-colophon-name { color:#fff; }
+  $P .property-colophon-pictured .property-colophon-nav a[aria-current=page] { color:var(--hero-accent); }
+  $P .property-colophon-pictured .property-colophon-link { border-bottom-color:rgba(255,255,255,.4); }
+  @media(hover:hover) and (pointer:fine) { $P .property-colophon-pictured .property-colophon-nav a:hover,$P .property-colophon-pictured .property-colophon-link:hover { color:var(--hero-accent); } }
+  @media(prefers-contrast:more) { $P .property-colophon-pictured::before { background:rgba(8,12,11,.92); } }
+
+  /* Location visual: quiet contour lines around the pin. */
+  $P .property-location-visual { background-color:var(--accent-soft); background-image:repeating-radial-gradient(circle at 62% 40%,transparent 0 22px,var(--premium-line) 22px 23px),repeating-radial-gradient(circle at 18% 90%,transparent 0 30px,var(--premium-line) 30px 31px); }
+  $P .property-location-visual span { position:relative; }
+  $P .property-location-visual span::before { content:""; position:absolute; inset:-12px; border-radius:50%; border:1px solid var(--accent-3); opacity:.35; }
+
+  /* ═══════════ Navigation and control system (one rhythm everywhere) ═══════
+     One bar height, one control height (44px inside a 7px frame), one type
+     size, one gap. Left: pages. Centre: the street. Right: the film as the
+     single filled control, every other action an outlined capsule of the same
+     size. Translucent paper over the opening; opaque under Reduce Transparency,
+     high contrast and forced colours. */
+  $P { --lux-nav-h:58px; --lux-ctl:44px; --lux-gap:6px; }
+  $P #listing-nav { top:12px; width:calc(100% - 32px); max-width:1280px; margin:12px auto 0; border:1px solid var(--premium-line); border-radius:999px; background:var(--premium-glass); box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 10px 30px -18px rgba(20,24,20,.35); backdrop-filter:blur(22px) saturate(1.4); -webkit-backdrop-filter:blur(22px) saturate(1.4); }
+  $P .listing-nav-inner { display:flex; align-items:center; justify-content:space-between; gap:var(--lux-gap); min-height:var(--lux-nav-h); padding:7px; }
+  $P .listing-nav-links,$P .listing-nav-actions { display:flex; align-items:center; gap:var(--lux-gap); }
+  $P #listing-nav :is(a,button,summary) { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:var(--lux-ctl); min-width:var(--lux-ctl); margin:0; padding:0 15px; border:1px solid transparent; border-radius:999px; color:var(--ink); background:transparent; font:500 13px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; letter-spacing:.01em; white-space:nowrap; text-decoration:none; cursor:pointer; transition:background-color .16s ease,color .16s ease,border-color .16s ease,transform .16s var(--lux-ease); }
+  $P #listing-nav .listing-nav-links a { color:var(--ink-dim); }
+  $P #listing-nav .listing-nav-links a[aria-current=page] { color:var(--ink); background:var(--accent-soft); border-color:transparent; }
+  $P #listing-nav :is(.property-primary-play,.watch-button) { color:var(--on-accent); background:var(--lux-fill); border-color:var(--lux-fill); font-weight:600; }
+  $P #listing-nav :is(.walkthrough-secondary,.property-page-menu summary),$P #listing-nav #share { color:var(--ink); border-color:var(--premium-line-strong); background:transparent; font-weight:500; }
+  $P #listing-nav .listing-backtop { color:var(--ink-dim); border-color:transparent; }
+  $P #listing-nav #share { gap:6px; }
+  $P #listing-nav #share svg { width:14px; height:14px; }
+  $P #listing-nav :is(a,button,summary):active { transform:scale(.97); }
+  $P .property-page-menu summary { list-style:none; }
+  $P .property-page-menu summary::-webkit-details-marker { display:none; }
+  $P .property-page-menu summary svg { width:11px; height:11px; opacity:.7; }
+  $P .property-page-menu[open] summary { background:var(--accent-soft); border-color:transparent; }
+  $P .property-page-menu-links { top:calc(100% + 8px); left:0; width:228px; padding:6px; border:1px solid var(--premium-line); border-radius:18px; background:var(--premium-paper); box-shadow:0 24px 56px -20px rgba(20,24,20,.4); }
+  $P .property-page-menu-links a { justify-content:flex-start; min-height:44px; padding:0 14px; border-radius:12px; }
+  $P .property-page-menu-links a[aria-current=page] { background:var(--accent-soft); }
+  @media(hover:hover) and (pointer:fine) {
+    $P #listing-nav .listing-nav-links a:hover { color:var(--ink); background:var(--accent-soft); }
+    $P #listing-nav :is(.walkthrough-secondary,.property-page-menu summary):hover,$P #listing-nav #share:hover { background:var(--accent-soft); border-color:transparent; }
+    $P #listing-nav .listing-backtop:hover { color:var(--ink); background:var(--accent-soft); }
+    $P #listing-nav :is(.property-primary-play,.watch-button):hover { background:var(--lux-fill-hover); border-color:var(--lux-fill-hover); }
+  }
+  @media(prefers-reduced-transparency:reduce),(prefers-contrast:more) {
+    $P #listing-nav { background:var(--premium-paper); backdrop-filter:none; -webkit-backdrop-filter:none; }
+  }
+  @media(forced-colors:active) { $P #listing-nav :is(.walkthrough-secondary,.property-page-menu summary),$P #listing-nav #share { border-color:ButtonText; } }
+  /* Compact bars (phones and narrow tablets) keep the same control size. */
+  @media(max-width:900px) {
+    $P #listing-nav { width:calc(100% - 24px); top:10px; margin-top:10px; }
+    $P .listing-nav-inner { display:flex; padding:6px; min-height:56px; }
+    $P .listing-nav-links { display:none; }
+    $P .property-page-menu { display:block; position:relative; }
+    $P .listing-nav-actions { flex:1; justify-content:flex-end; gap:var(--lux-gap); width:auto; }
+    $P #listing-nav .listing-nav-actions > :is(a,button) { padding:0 13px; font-size:12.5px; }
+    $P #listing-nav .listing-nav-actions > .listing-backtop { display:none; }
+    $P .property-page-menu summary { padding:0 12px 0 14px; }
+  }
+  @media(max-width:600px) {
+    $P { --lux-nav-h:56px; --lux-ctl:44px; --listing-nav-offset:88px; }
+    $P #listing-nav { width:calc(100% - 20px); border-radius:999px; }
+    $P #listing-nav .listing-nav-actions > :is(a,button) { padding:0 12px; }
+    $P #listing-nav #share .share-lbl { display:none; }
+    $P #listing-nav #share { width:var(--lux-ctl); padding:0; }
+  }
+
+  /* Hero controls: identical capsules, one height, balanced widths. */
+  $P .listing-cover .listing-cover-actions { gap:10px; margin-top:28px; }
+  $P .listing-cover :is(.property-hero-link,.listing-cover-actions button) { min-height:50px; min-width:168px; padding:0 24px; border:1px solid rgba(255,255,255,.6); background:rgba(14,20,18,.3); font:500 14px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; letter-spacing:.01em; }
+  $P .listing-cover .listing-cover-actions .property-hero-contact { font-weight:600; }
+  $P .listing-cover .listing-media-label { margin-top:18px; font-size:12px; line-height:1.5; }
+  $S .listing-cover .listing-media-label { color:rgba(255,255,255,.72); }
+  $P .listing-cover .listing-media-label + .listing-media-label { margin-top:3px; }
+  $P .listing-cover .property-recorded-option { margin-top:8px; }
+  $P .listing-cover .property-recorded-option summary { min-height:44px; padding:0 14px; border:1px solid rgba(255,255,255,.28); border-radius:999px; font-size:12.5px; color:rgba(255,255,255,.9); }
+  @media(min-width:601px) { $C .listing-cover .property-recorded-option summary { color:var(--ink); border-color:var(--premium-line-strong); } }
+  @media(max-width:600px) { $C .listing-cover .property-recorded-option summary { color:var(--ink); border-color:var(--premium-line-strong); } }
+  $P .listing-cover .property-recorded-option summary::before { font-size:15px; opacity:.9; }
+  $P .listing-cover .property-recorded-option p { padding:10px 0 8px; }
+  $P .listing-cover .property-recorded-option button { min-height:44px; padding:0 18px; }
+  @media(max-width:600px) {
+    $P .listing-cover .listing-cover-actions { gap:8px; margin-top:20px; }
+    $P .listing-cover :is(.property-hero-link,.listing-cover-actions button) { flex:1 1 calc(50% - 4px); min-width:0; min-height:48px; padding:0 14px; font-size:13px; }
+    $P .listing-cover .listing-cover-actions .property-hero-contact { flex-basis:100%; }
+    $P .listing-cover .listing-media-label { margin-top:14px; font-size:11.5px; }
+    $P .listing-cover .property-recorded-option { margin-top:6px; }
+    $P .listing-cover .property-recorded-option summary { min-height:44px; padding:0 12px; font-size:12px; }
+  }
+  /* Very small phones: a taller opening keeps the play target clear of the
+     identity; the two actions share one row. */
+  @media(max-width:374px) {
+    $S .listing-cover,$S .listing-cover.property-video-hero { min-height:max(680px,calc(100svh - var(--lux-chrome,0px))); }
+    $S .listing-cover .property-hero-title { font-size:clamp(34px,10.5vw,40px); }
+    $S .listing-cover .property-hero-copy .lp-eyebrow { margin-bottom:10px; }
+    $S .listing-cover .listing-cover-actions { margin-top:16px; }
+    $S .listing-cover .listing-cover-actions .property-hero-contact { flex-basis:calc(50% - 4px); }
+    $S .listing-cover :is(.property-hero-link,.listing-cover-actions button) { padding:0 10px; font-size:12.5px; }
+    $S .listing-cover .listing-media-label { margin-top:12px; font-size:11px; }
+    $S .property-video-hero .property-video-stage.property-film .property-video-play { top:22%; }
+    $S .property-video-hero .property-video-stage.property-film #property-video-status { top:calc(22% - 14px); }
+  }
+  /* Coastal between phone and desktop: the split stays (short landscape
+     screens need identity and panel side by side) with balanced columns, a
+     taller panel and a smaller display size so nothing stacks awkwardly. */
+  @media(min-width:601px) and (max-width:900px) {
+    $C .listing-cover,$C .listing-cover.property-video-hero { grid-template-columns:minmax(0,1fr) minmax(0,1.05fr); gap:clamp(24px,4vw,40px); width:calc(100% - 48px); margin-top:16px; }
+    $C .listing-cover .property-hero-copy { padding:8px 0; }
+    $C .listing-cover .property-hero-title { font-size:clamp(34px,5.2vw,46px); }
+    $C .listing-cover .property-hero-locality { margin-top:12px; font-size:12px; }
+    $C .listing-cover .property-hero-price { margin-top:10px; font-size:22px; }
+    $C .listing-cover .listing-cover-actions { gap:8px; margin-top:18px; }
+    $C .listing-cover :is(.property-hero-link,.listing-cover-actions button) { min-height:46px; min-width:0; padding:0 18px; font-size:13px; }
+    $C .property-hero-media,$C .property-video-hero .property-hero-media { aspect-ratio:4/3; align-self:center; border-radius:24px; }
+    $C .property-video-hero .property-video-stage.property-film .property-film-play-mark { width:64px; height:64px; }
+  }
+  /* Large screens: generous but bounded. */
+  @media(min-width:1600px) {
+    $P { --lux-gutter:72px; }
+    $P .lp-wrap,$P #listing-nav,$P #endcard .panel { max-width:1320px; }
+    $P .listing-cover .property-hero-title { font-size:clamp(72px,5.2vw,112px); }
+    $C .listing-cover,$C .listing-cover.property-video-hero { max-width:1520px; }
+  }
+  @media(min-width:1024px) and (max-width:1199px) {
+    $P .lp-h { font-size:clamp(34px,4vw,48px); }
+  }
+  @media(max-width:759px) {
+    $P .property-colophon-grid { grid-template-columns:minmax(0,1fr); gap:32px; }
+    $P .property-colophon-pictured { padding:56px 0; }
+    $P #endcard .agent-premium .bk-grid { grid-template-columns:minmax(0,1fr); gap:12px; }
+    $P .property-colophon-nav { flex-direction:row; flex-wrap:wrap; gap:4px 20px; }
+    $P #getapp .lp-wrap { grid-template-columns:minmax(0,1fr); }
+    $P #getapp .lp-btn,$P #getapp .lp-btn-ghost { grid-column:1; grid-row:auto; justify-self:start; margin-top:8px; }
+    $P #leadform { grid-template-columns:minmax(0,1fr); }
+    $P #leadform > * { grid-column:1; }
+    $P .property-location-visual { min-height:200px; }
+    $P .property-page-head .lp-wrap { align-items:stretch; }
+    $P #property-photo-modal { width:calc(100vw - 12px); max-height:calc(100dvh - 12px); padding:10px 12px 14px; border-radius:16px; }
+    $P #property-photo-full { max-height:calc(100dvh - 180px); }
+    $P .property-photo-nav button { min-width:0; flex:1; }
   }
 `;
 
