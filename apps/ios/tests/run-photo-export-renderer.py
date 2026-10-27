@@ -192,11 +192,15 @@ try:
             snapshot = json.loads(command('simulator-boot-timeout-state', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 30).stdout)['devices']
             assert any(d['udid'] == device['udid'] and d['state'] == 'Booted' for rows in snapshot.values() for d in rows), 'Simulator boot timed out before the selected device started'
         try:
-            command('simulator-bootstatus', ['xcrun', 'simctl', 'bootstatus', device['udid'], '-b'], 180)
+            # Fresh hosted runtimes can finish data migration just past 180s.
+            command('simulator-bootstatus', ['xcrun', 'simctl', 'bootstatus', device['udid'], '-b'], 240)
         except subprocess.TimeoutExpired:
             # Cold CI runtimes can still be migrating device data. Preserve
             # the first timeout and permit exactly one bounded readiness wait.
-            command('simulator-cold-boot-state', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 30)
+            try:
+                command('simulator-cold-boot-state', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 30, check=False)
+            except Exception as diagnostic_error:
+                receipt['cold_boot_state_diagnostic_failure'] = f'{type(diagnostic_error).__name__}: {diagnostic_error}'
             receipt['cold_boot_retry'] = True
             command('simulator-bootstatus-retry', ['xcrun', 'simctl', 'bootstatus', device['udid'], '-b'], 180)
     for name, (text, reason) in variants.items():

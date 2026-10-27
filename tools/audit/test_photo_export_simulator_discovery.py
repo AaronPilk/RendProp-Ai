@@ -135,6 +135,72 @@ def execute_case(spec, helper_source, destination):
             'commandEvents': receipt['commands']}
 
 
+def exercise_boot_readiness(source_text):
+    """Execute the runner's actual cold-boot branch with bounded fake commands."""
+    module = ast.parse(source_text)
+    branches = [node for top in module.body if isinstance(top, ast.Try)
+                for node in top.body if isinstance(node, ast.If)
+                and ast.unparse(node.test) == "device['state'] != 'Booted'"]
+    need(len(branches) == 1, 'Actual cold-boot branch extraction missing')
+    branch = compile(ast.Module(body=branches, type_ignores=[]), str(SOURCE), 'exec')
+    cases = [
+        ('cold-migration-after-old-limit', 'Shutdown', ['ok', 'ready-after-183s'],
+         ['simulator-boot', 'simulator-bootstatus'], None),
+        ('diagnostic-timeout-then-ready', 'Shutdown', ['ok', 'timeout', 'timeout', 'ok'],
+         ['simulator-boot', 'simulator-bootstatus', 'simulator-cold-boot-state', 'simulator-bootstatus-retry'], None),
+        ('diagnostic-nonzero-then-ready', 'Shutdown', ['ok', 'timeout', 'nonzero', 'ok'],
+         ['simulator-boot', 'simulator-bootstatus', 'simulator-cold-boot-state', 'simulator-bootstatus-retry'], None),
+        ('retry-timeout-refused', 'Shutdown', ['ok', 'timeout', 'timeout', 'timeout'],
+         ['simulator-boot', 'simulator-bootstatus', 'simulator-cold-boot-state', 'simulator-bootstatus-retry'], 'TimeoutExpired'),
+        ('readiness-error-refused', 'Shutdown', ['ok', 'error'],
+         ['simulator-boot', 'simulator-bootstatus'], 'RuntimeError'),
+        ('already-booted', 'Booted', [], [], None),
+    ]
+    rows = []
+    for name, state, outcomes, expected_names, expected_failure in cases:
+        calls = []
+        receipt = {}
+        def run_command(command_name, argv, timeout, check=True):
+            index = len(calls)
+            need(index < len(outcomes), f'{name}: unexpected extra simulator command')
+            calls.append({'name': command_name, 'argv': argv, 'timeout': timeout, 'check': check})
+            outcome = outcomes[index]
+            if outcome == 'ready-after-183s' and timeout < 183:
+                raise subprocess.TimeoutExpired(argv, timeout, output=b'still-migrating')
+            if outcome == 'timeout':
+                raise subprocess.TimeoutExpired(argv, timeout, output=b'partial-boot-output')
+            if outcome == 'error':
+                raise RuntimeError('readiness unavailable')
+            return subprocess.CompletedProcess(argv, 1 if outcome == 'nonzero' else 0, '', '')
+        caught = None
+        try:
+            exec(branch, {'device': device(ONE, state), 'command': run_command,
+                          'subprocess': subprocess, 'receipt': receipt, 'json': json})
+        except Exception as error:
+            caught = type(error).__name__
+        need([call['name'] for call in calls] == expected_names, f'{name}: wrong boot/readiness sequence')
+        need([call['timeout'] for call in calls] ==
+             [{'simulator-boot': 60, 'simulator-bootstatus': 240,
+               'simulator-cold-boot-state': 30, 'simulator-bootstatus-retry': 180}[item]
+              for item in expected_names], f'{name}: cold boot is not bounded as expected')
+        need(all(call['argv'] == (['xcrun', 'simctl', 'list', 'devices', 'available', '-j']
+                 if call['name'] == 'simulator-cold-boot-state'
+                 else ['xcrun', 'simctl', 'boot' if call['name'] == 'simulator-boot' else 'bootstatus', ONE]
+                 + ([] if call['name'] == 'simulator-boot' else ['-b']))
+                 for call in calls), f'{name}: command used the wrong simulator or operation')
+        need(all(call['check'] is (call['name'] != 'simulator-cold-boot-state') for call in calls),
+             f'{name}: diagnostic must not gate readiness')
+        need(caught == expected_failure, f'{name}: expected {expected_failure}, got {caught}')
+        if 'simulator-bootstatus-retry' in expected_names:
+            need(receipt.get('cold_boot_retry') is True, f'{name}: retry must be recorded')
+        if name == 'diagnostic-timeout-then-ready':
+            need('TimeoutExpired' in receipt.get('cold_boot_state_diagnostic_failure', ''),
+                 f'{name}: timed-out diagnostic must be recorded')
+        rows.append({'name': name, 'passed': True, 'expectedFailure': expected_failure,
+                     'commands': calls, 'caught': caught, 'receipt': receipt})
+    return rows
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--out', type=Path)
@@ -142,9 +208,11 @@ def main():
     out = args.out or Path(tempfile.mkdtemp(prefix='rendprop-sim-discovery-controls-', dir=os.environ.get('RUNNER_TEMP')))
     out.mkdir(parents=True, exist_ok=True)
     before = SOURCE.read_bytes()
-    generated = extracted(before.decode())
+    source_text = before.decode()
+    generated = extracted(source_text)
     (out / 'actual-extracted-helper.py').write_text(generated)
     rows = [execute_case(spec, generated, out / spec['name']) for spec in CASES]
+    boot_rows = exercise_boot_readiness(source_text)
     controls = [
         ('removed-completion-deadline', generated.replace('if clock() >= deadline:', 'if False:'), 'late-initial-result'),
         ('retry-nontimeout-errors', generated.replace('except subprocess.TimeoutExpired:', 'except Exception:'), 'other-exception-is-terminal'),
@@ -169,10 +237,12 @@ def main():
               'positives': sum(not row['expectedFailure'] for row in rows),
               'refusalCases': sum(bool(row['expectedFailure']) for row in rows),
               'guardRemovals': len(mutant_rows), 'cases': rows, 'controls': mutant_rows,
+              'bootReadinessCases': boot_rows,
               'realSubprocesses': 0, 'realSimulatorCalls': 0, 'networkCalls': 0,
               'UIKitRenderingOrPhysicalCameraClaimed': False}
     (out / 'receipt.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({key: result[key] for key in ['passed', 'positives', 'refusalCases', 'guardRemovals']}))
+    print(f'Boot readiness scenarios: {len(boot_rows)} passed')
 
 
 if __name__ == '__main__':
