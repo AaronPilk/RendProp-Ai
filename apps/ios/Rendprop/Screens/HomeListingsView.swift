@@ -409,9 +409,9 @@ struct HomeListingsView: View {
             HStack(spacing: 8) {
                 emptyStep("1", "Photos")
                 stepArrow
-                emptyStep("2", "Review")
+                emptyStep("2", "Video")
                 stepArrow
-                emptyStep("3", "Share")
+                emptyStep("3", "Publish")
             }
             .padding(.top, 4)
             Text("Add a \(noun) first. Every photo and video is saved to it.")
