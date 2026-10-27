@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 photo_lifecycle_test_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-photo_lifecycle_test_dir="$(mktemp -d)"
+photo_lifecycle_test_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/rendprop-photo-lifecycle.XXXXXX")"
 trap 'rm -rf "$photo_lifecycle_test_dir"' EXIT
 python3 - "$photo_lifecycle_test_root/apps/ios/Rendprop/Photos/PhotoEditService.swift" "$photo_lifecycle_test_dir/ServiceLifecycle.swift" <<'PY'
 import pathlib,sys
 source=pathlib.Path(sys.argv[1]).read_text()
-def block(anchor):
-    start=source.index(anchor); opening=source.index('{',start); depth=0
-    for position in range(opening,len(source)):
-        if source[position]=='{': depth+=1
-        elif source[position]=='}':
+def block(anchor,text=source):
+    start=text.index(anchor); opening=text.index('{',start); depth=0
+    for position in range(opening,len(text)):
+        if text[position]=='{': depth+=1
+        elif text[position]=='}':
             depth-=1
-            if depth==0: return source[start:position+1]
+            if depth==0: return text[start:position+1]
     raise AssertionError('Unclosed actual lifecycle method')
 api_source=pathlib.Path(sys.argv[1]).parents[1].joinpath('Networking/APIClient.swift').read_text()
 api_error=api_source[api_source.index('enum APIError:'):api_source.index('// MARK: - Admin console models')]
-header='import Foundation\n'+api_error+'''
+detail_source=pathlib.Path(sys.argv[1]).parents[1].joinpath('Screens/FlythroughDetailView.swift').read_text()
+saved_review=block('    static func requiresSavedPhotoCheck(',detail_source)
+recovery_lines=[line for line in source.splitlines() if 'private static var recoveryInProgress =' in line]
+assert len(recovery_lines)==1
+header='import Foundation\n'+api_error+'\nextension AIFailure {\n'+saved_review+'\n}\n'+'''
 @MainActor final class PhotoEditService {
+@RECOVERY_LINE@
 private let model:AppModel
 private let listing:Listing
 private let owner=AuthStore.shared.userID
@@ -28,10 +33,10 @@ private let process:(EnhancedPhoto) async throws -> Void
 init(model:AppModel,listing:Listing,process:@escaping (EnhancedPhoto) async throws -> Void) {
 self.model=model;self.listing=listing;self.process=process
 }
-func edit(_ photo:EnhancedPhoto,edit:String,style:String?,prompt:String?,batch:Bool,stagingReferenceID:String?=nil,progress:((PhotoWorkQueue.Phase) -> Void)?=nil) async throws {
+func edit(_ photo:EnhancedPhoto,edit:String,style:String?,prompt:String?,batch:Bool,stagingReferenceID:String?=nil,declutterApproval:DeclutterGenerationApproval?=nil,progress:((PhotoWorkQueue.Phase) -> Void)?=nil) async throws {
 try requireUnsentWork(); try await process(photo); try requireIdentity()
 }
-'''
+'''.replace('@RECOVERY_LINE@',recovery_lines[0])
 methods=[block(anchor) for anchor in ['    var identityIsCurrent: Bool {','    private func requireIdentity()', '    private var consentIsCurrent: Bool {', '    private func requireUnsentWork()', '    func start(title:', '    private func notify(']]
 pathlib.Path(sys.argv[2]).write_text(header+'\n'.join(methods)+'\n}\n')
 PY

@@ -3,6 +3,7 @@ import Foundation
 // Platform/network/image boundaries are deterministic doubles. The runner
 // injects the actual service identity, start, cleanup and notification methods.
 struct EnhancedPhoto { let id: String }
+struct DeclutterGenerationApproval {}
 struct Listing { let id: UUID; var cloudUnavailable: Bool? = nil }
 enum SpaceType { case realEstate }
 enum CloudSyncError: Error { case identityChanged }
