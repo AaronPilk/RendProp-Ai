@@ -1,0 +1,12 @@
+FROM python:3.13-slim-bookworm@sha256:73aa5faee130c60da030e105ec971ccf57473fbd22ce73bd6fc9ba99a40b838d
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates fonts-liberation2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 renderer
+WORKDIR /app
+COPY requirements.photo-motion.txt /app/requirements.txt
+RUN pip install --no-cache-dir --disable-pip-version-check -r /app/requirements.txt
+COPY container/ /app/
+RUN mkdir -p /work && chown renderer:renderer /work
+USER 10001:10001
+EXPOSE 8080
+CMD ["python3", "photo_motion_http_adapter.py"]

@@ -1,0 +1,29 @@
+{
+  "candidate_pillow13": {
+    "canonical_sha256": "9bcb716c198063b3eb8c0b092a1b6887160960360b001ba71db7017e6925c4d7",
+    "canonicalization": "UTF-8 sorted relative path + NUL + lowercase file SHA-256 + newline",
+    "files": {
+      ".dockerignore": "a9915e77562509f05a0f0c35321b2542eac2216fd1770f8852c3be77504b2ad4",
+      "Dockerfile.photo-motion": "3da33404c7801e6928470e66116812e3d1c6faa9b263114b8387e4f2a0afe29c",
+      "container/aerial_opening_profile.py": "286f1a612b00629d99db883303df002d335a8a25d6db1dd8faf296da0959c496",
+      "container/aerial_processing.py": "cf6e6328f0d163b3e81e496df6de8f5ed5f4a24251aa30aa572833c006cba1e7",
+      "container/capabilities.py": "cf28afda6596aaa1bfab3f69748a1c021c5dcfd1cd2ba9519695c53469c39de8",
+      "container/compose.py": "9dc1f12fdadc9f9ec3eebcd40824328751502f7d7a6eb607071b4ab5ddef3284",
+      "container/http_adapter.py": "db0199b2afa28f06670cfad92779047a32b93090be35c00038e99f1bfa1b0c80",
+      "container/motion_qc.py": "5d2440b962e97a7cfb11351342050356fe3104610738fb2efc2204f006433614",
+      "container/music_catalog.py": "593acbf241f54bca13bb505efba59fe8ff23d1a1271e3e740afde0edbc8fc295",
+      "container/photo_motion.py": "44232996dc6896a9f5882c08b637e7c6c881566540811332b3f4b59c2bb6afe9",
+      "container/photo_motion_http_adapter.py": "738d3b8bf330e2042fb900ca437e7e180aded8790726cb050b43ae78e29f2f26",
+      "container/photo_motion_profile.py": "9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9",
+      "container/photo_quality.py": "53529bcd53b5f4232e7559e85fbb4dab17205fc440e882384f861cc247cb7f91",
+      "container/prepare_image.py": "5d6b275d8a7d5dfc35258fd0942652ba39d95fa15640c99c8eb6f703b5dc60f8",
+      "container/presentation.py": "d82c43f9288e20182d6edfbaa8e43287130fb806fc6b4016f67b274961cec432",
+      "container/process_deadline.py": "e0e9b6bf337de5cea4cb263c9e3870023c6c10409819be592034aa21b5d29239",
+      "container/renderer.py": "853f9301035c4fd5787f2a59e67c9aa186dfb071ef18af0b88e6794e3419627d",
+      "container/smooth_finish.py": "7252dd8b255f77a05f99ee03caacb7acd226e69e63d1be7ff841a0848189841d",
+      "requirements.photo-motion.txt": "bde7dc17734287f950a6f5aeb756de7d7a9aab19fc8296d1a7066386803c8efd"
+    },
+    "image_digest": null,
+    "renderer_profile_sha256": "9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9"
+  }
+}
