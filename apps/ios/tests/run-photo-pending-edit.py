@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import pathlib,tempfile,subprocess,json,hashlib
+import pathlib,tempfile,subprocess,json,hashlib,os
 repo=pathlib.Path(__file__).resolve().parents[3]
 source=(repo/'apps/ios/Rendprop/Networking/APIClient.swift').read_text()
 start=source.index('struct AIPhotoEditRequest:');opening=source.index('{',start);depth=0
@@ -8,10 +8,17 @@ for at in range(opening,len(source)):
  elif source[at]=='}':
   depth-=1
   if depth==0:end=at+1;break
-with tempfile.TemporaryDirectory(prefix='rendprop-photo-pending-')as temp:
+with tempfile.TemporaryDirectory(prefix='rendprop-photo-pending-',dir=os.environ.get('RUNNER_TEMP'))as temp:
  p=pathlib.Path(temp);(p/'Request.swift').write_text('import Foundation\n'+source[start:end])
  helper=repo/'apps/ios/Rendprop/Photos/PhotoPendingEdit.swift';actual=helper.read_text()
- variants=[('actual',actual,0),('fresh-request-on-replay',actual.replace('return Saved(request: entry.request, url: url)','return Saved(request: proposed, url: url)'),1),('accept-mutated-saved-body',actual.replace('try fingerprint(entry.request, identity: identity) == digest,','true,'),1)]
+ replay='return try read(url, directory: directory, expected: identity)'
+ fingerprint='try fingerprint(entry.request, identity: expected, parentVersion: entry.parentVersion, stagingReferenceID: entry.stagingReferenceID) == entry.fingerprint,'
+ assert actual.count(replay)==1 and actual.count(fingerprint)==1
+ fresh='''let saved = try read(url, directory: directory, expected: identity)
+            var fresh = proposed; fresh.idempotencyKey = UUID().uuidString
+            return Saved(request: fresh, url: saved.url, identity: saved.identity,
+                         parentVersion: saved.parentVersion, stagingReferenceID: saved.stagingReferenceID)'''
+ variants=[('actual',actual,0),('fresh-request-on-replay',actual.replace(replay,fresh,1),1),('accept-mutated-saved-body',actual.replace(fingerprint,'true,',1),1)]
  for name,text,negative in variants:
   (p/'Pending.swift').write_text(text)
   subprocess.run(['xcrun','swiftc','-parse-as-library',str(p/'Request.swift'),str(p/'Pending.swift'),str(repo/'apps/ios/tests/PhotoPendingEditTests.swift'),'-o',str(p/'tests')],check=True)
