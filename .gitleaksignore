@@ -137,3 +137,24 @@ f8f30f58f7a4ad42109c02e62f689c9379931d55:services/supabase/tests/property_video_
 # is an authentication credential. Keep every other file/rule/fingerprint active.
 791022e0e4c450edc8a0a662d4d41a572a4eb861:apps/ios/tests/PropertyVideoProcessorTests.swift:generic-api-key:14
 2209a45f017b298414823476ec78f6a123263926:services/supabase/functions/property-video-worker/kie-profile-actions.test.ts:generic-api-key:38
+
+# Exact historical false positives reviewed 2026-10-27. The two photo-publication
+# findings are the same fixed UUID request identifier in an offline fixture with
+# in-memory storage and no network calls; neither is an authentication token.
+b11b492bde5697d3d32c858c0d3d09e3dea2e409:services/supabase/functions/_shared/photo-publication.fixture.ts:generic-api-key:15
+76c326cb915ec8181fe5c5818b3c70e41a48f9cd:services/supabase/functions/_shared/photo-publication.fixture.ts:generic-api-key:15
+# Public floor-measurement schema field name, not a private key or credential.
+a660afc2b6d624fff565e0f87d9f2c3a46fd39a0:apps/ios/Rendprop/Models/Listing.swift:generic-api-key:1299
+# The Apple diagnostics test creates an ephemeral key with WebCrypto at runtime;
+# this line formats that generated key as PEM and stores no private key bytes.
+54a7b72f0f034783e999bd5b76e33a68b2199e47:services/supabase/functions/me/apple-code-diagnostics.test.ts:private-key:8
+
+# Exact findings introduced with the accepted-publication source pins. The
+# fixture is the same fixed offline request UUID reviewed above. The four JSON
+# values are SHA-256 source-file digests, each recomputed from the cited source
+# at this commit; none is an API credential. No path-wide exclusions are used.
+3ca6670b69201cb57b45c00256dc321892595388:services/supabase/functions/_shared/photo-publication.fixture.ts:generic-api-key:15
+3ca6670b69201cb57b45c00256dc321892595388:tools/release/accepted-photo-publication-worker16-overlay/OVERLAY-SOURCE-PINS-v2.json:generic-api-key:133
+3ca6670b69201cb57b45c00256dc321892595388:tools/release/accepted-photo-publication-worker16-overlay/OVERLAY-SOURCE-PINS-v2.json:generic-api-key:145
+3ca6670b69201cb57b45c00256dc321892595388:tools/release/accepted-photo-publication-worker16-overlay/OVERLAY-SOURCE-PINS-v2.json:generic-api-key:147
+3ca6670b69201cb57b45c00256dc321892595388:tools/release/accepted-photo-publication-worker16-overlay/OVERLAY-SOURCE-PINS-v2.json:generic-api-key:165
