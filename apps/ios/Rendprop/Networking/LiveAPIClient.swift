@@ -1109,6 +1109,17 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
         var prepared = makeRequest(url: url(["ai-photo-v2"]), method: "POST", json: body, idempotency: .key(key))
         prepared.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         prepared.setValue("retained-operation-v1", forHTTPHeaderField: "x-rendprop-photo-quality-protocol")
+        if let tariff = request.declutterCreditTariffVersion {
+            guard request.edit == "declutter", tariff == "photo-declutter-v1",
+                  let environment = request.declutterCreditEnvironment,
+                  ["Production", "Sandbox"].contains(environment) else {
+                throw CloudSyncError.invalidResponse
+            }
+            prepared.setValue(tariff, forHTTPHeaderField: "X-Rendprop-Credit-Tariff")
+            prepared.setValue(environment, forHTTPHeaderField: "X-Rendprop-Credit-Environment")
+        } else if request.declutterCreditEnvironment != nil {
+            throw CloudSyncError.invalidResponse
+        }
         let data = try await execute(prepared, session: aiSession, beforeSend: { try requireUnsentPermission() })
         // Work already sent may finish after consent is withdrawn; retain its
         // result only for the exact account/library, then fence the next photo.

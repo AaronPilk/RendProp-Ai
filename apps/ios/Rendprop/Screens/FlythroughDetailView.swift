@@ -6034,7 +6034,7 @@ struct PhotoStudioView: View {
             }
         }
         .sheet(item: $declutterReview) { review in
-            PhotoDeclutterReviewSheet(review: review) { targets, approvals in
+            PhotoDeclutterReviewSheet(review: review) { targets, approvals, credit in
                 declutterReview = nil
                 guard review.isCurrent else { return }
                 guard !targets.isEmpty else {
@@ -6043,7 +6043,7 @@ struct PhotoStudioView: View {
                     return
                 }
                 startPhotoWork(PendingBatchEdit(edit: "declutter", style: nil, title: "Declutter", multiple: targets.count > 1),
-                    targets: targets, prompt: nil, declutterApprovals: approvals)
+                    targets: targets, prompt: nil, declutterApprovals: approvals, declutterCredit: credit)
             }
         }
         .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
@@ -6621,7 +6621,8 @@ struct PhotoStudioView: View {
     }
 
     private func startPhotoWork(_ pending: PendingBatchEdit, targets: [EnhancedPhoto], prompt: String?,
-                                stagingReferenceID: String? = nil, declutterApprovals: [String: DeclutterGenerationApproval]? = nil) {
+                                stagingReferenceID: String? = nil, declutterApprovals: [String: DeclutterGenerationApproval]? = nil,
+                                declutterCredit: DeclutterCreditAuthorization? = nil) {
         guard !isProcessing, AIConsent.shared.isGranted else { return }
         if pending.edit == "declutter", declutterApprovals == nil {
             declutterReview = PhotoDeclutterReviewModel(model: model, listing: listing, photos: targets, space: space)
@@ -6630,7 +6631,7 @@ struct PhotoStudioView: View {
         let service = PhotoEditService(model: model, listing: listing, space: space)
         if service.start(title: pending.title, photos: targets, edit: pending.edit,
                          style: pending.style, prompt: prompt, stagingReferenceID: stagingReferenceID,
-                         declutterApprovals: declutterApprovals) {
+                         declutterApprovals: declutterApprovals, declutterCredit: declutterCredit) {
             batchNote = nil; batchEdit = nil; batchSelection.removeAll()
             Haptics.selection()
         }
@@ -8271,10 +8272,10 @@ struct PhotoCompareView: View {
             }
         }
         .sheet(item: $singleDeclutterReview, onDismiss: finishSinglePhotoSetup) { review in
-            PhotoDeclutterReviewSheet(review: review) { photos, approvals in
+            PhotoDeclutterReviewSheet(review: review) { photos, approvals, credit in
                 singleDeclutterReview = nil
                 guard review.isCurrent, !photos.isEmpty else { clearSinglePhotoEdit(); return }
-                startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvals)
+                startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvals, declutterCredit: credit)
             }
         }
         .sheet(item: $singleCustomPhoto, onDismiss: finishSinglePhotoSetup) { source in
@@ -8510,7 +8511,8 @@ struct PhotoCompareView: View {
     }
 
     private func startSinglePhotoWork(_ action: PhotoReviewEdit, prompt: String?, stagingReferenceID: String? = nil,
-                                     declutterApprovals: [String: DeclutterGenerationApproval]? = nil) {
+                                     declutterApprovals: [String: DeclutterGenerationApproval]? = nil,
+                                     declutterCredit: DeclutterCreditAuthorization? = nil) {
         guard let source = editOriginal, let context = editContext, context.isCurrent,
               imageContext?.isCurrent == true, AIConsent.shared.isGranted,
               editConsentRevision == AIConsent.shared.revocationRevision,
@@ -8524,7 +8526,7 @@ struct PhotoCompareView: View {
             space: listing.isSample ? SpaceType.current : listing.spaceType)
         if service.start(title: action.title, photos: [source], edit: action.edit,
                          style: action.style, prompt: prompt, stagingReferenceID: stagingReferenceID,
-                         declutterApprovals: declutterApprovals) {
+                         declutterApprovals: declutterApprovals, declutterCredit: declutterCredit) {
             singleEditJobID = photoJobs.visibleJob?.id
             Haptics.selection()
         }

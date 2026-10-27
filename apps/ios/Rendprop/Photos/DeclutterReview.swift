@@ -146,13 +146,37 @@ import ImageIO
 
 struct PhotoDeclutterReviewSheet: View {
     @ObservedObject var review: PhotoDeclutterReviewModel
-    let onConfirm: ([EnhancedPhoto], [String: DeclutterGenerationApproval]) -> Void
+    let onConfirm: ([EnhancedPhoto], [String: DeclutterGenerationApproval], DeclutterCreditAuthorization?) -> Void
+    @ObservedObject private var wallet = CreditWalletStore.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AccessibilityFocusState private var resultsFocused: Bool
     @State private var confirming = false
     @State private var error: String?
+    @State private var walletContext: CreditWalletContext?
+    @State private var showCredits = false
+
+    private var visibleWallet: CreditWalletSnapshot? {
+        guard let walletContext, walletContext.isCurrent,
+              wallet.snapshotContext == walletContext else { return nil }
+        return wallet.snapshot
+    }
+    private var selectedIDs: Set<String> { Set(review.items.filter(\.selected).map(\.id)) }
+    private var quotedCredits: Int? {
+        guard let visibleWallet, let quote = visibleWallet.declutterQuote else { return nil }
+        return quote.credits * review.selectedCount
+    }
+    private var canGenerate: Bool {
+        guard review.selectedCount > 0 else { return true }
+        guard let visibleWallet else { return false }
+        switch visibleWallet.fundingMode {
+        case .included: return true
+        case .creditPrimary, .topupOnly:
+            guard let quotedCredits else { return false }
+            return visibleWallet.balance.totalAvailable >= quotedCredits
+        }
+    }
 
     private var checkTitle: String { review.items.count == 1 ? "Check this photo" : "Check \(review.items.count) photos" }
     private var checkingTitle: String {
@@ -169,7 +193,7 @@ struct PhotoDeclutterReviewSheet: View {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text(review.analyzing ? "Looking for clutter" : "Check before you edit")
                                     .font(.rpTitle).foregroundStyle(Theme.ink)
-                                Text("We’ll check for visible movable clutter. This has a small AI processing cost. No image edit starts until you choose Generate.")
+                                Text("We’ll check for visible movable clutter. No image edit starts until you choose Generate.")
                                     .font(.rpBody).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -183,8 +207,7 @@ struct PhotoDeclutterReviewSheet: View {
                             group("Needs declutter", decision: .needed, symbol: "wand.and.stars")
                             group("Already clear", decision: .unnecessary, symbol: "checkmark.circle")
                             group("Needs review", decision: .uncertain, symbol: "questionmark.circle")
-                            Text("Recorded analysis cost bound: $\(String(format: "%.3f", review.costBoundCents / 100)). This is a processing bound, not a supplier invoice. Only the photos you confirm will start paid image edits.")
-                                .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
+                            creditSummary
                         }
                         if let message = error ?? review.failure {
                             Label(message, systemImage: "exclamationmark.circle")
@@ -208,7 +231,78 @@ struct PhotoDeclutterReviewSheet: View {
                     resultsFocused = true
                 }
             }
-        }.onDisappear { review.cancel() }
+        }
+        .task {
+            guard let context = try? CreditWalletContext.capture() else { return }
+            walletContext = context
+            await wallet.load(context: context)
+        }
+        .sheet(isPresented: $showCredits) { NavigationStack { CreditWalletView() } }
+        .onDisappear { review.cancel() }
+    }
+
+    @ViewBuilder private var creditSummary: some View {
+        if review.selectedCount == 0 {
+            Text("No image edits selected. Continue without using credits.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        } else if let visibleWallet {
+            switch visibleWallet.fundingMode {
+            case .included:
+                Text("These edits use your current plan's included allowance. Only confirmed photos will start.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            case .creditPrimary, .topupOnly:
+                if let quotedCredits {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("\(quotedCredits) credits for \(review.selectedCount) \(review.selectedCount == 1 ? "photo" : "photos") · \(visibleWallet.balance.totalAvailable) available")
+                            .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                        if visibleWallet.balance.totalAvailable < quotedCredits {
+                            Text("Add credits before starting these edits.")
+                                .font(.rpCaption).foregroundStyle(Theme.warn)
+                            Button("View credits") { showCredits = true }
+                                .buttonStyle(RendpropPillButtonStyle(selected: false, compact: true, horizontalPadding: 16))
+                        }
+                    }
+                } else {
+                    Text("The credit cost is unavailable. Try again before starting an edit.")
+                        .font(.rpCaption).foregroundStyle(Theme.warn)
+                }
+            }
+        } else {
+            Text("Loading the credit cost for these edits…")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }
+    }
+
+    @MainActor private func creditAuthorization(for originalSelection: Set<String>) async throws -> DeclutterCreditAuthorization? {
+        guard !originalSelection.isEmpty else { return nil }
+        guard let context = walletContext, context.isCurrent, review.isCurrent,
+              let shown = visibleWallet else { throw CreditQuoteIssue.unavailable }
+        let shownQuote = shown.declutterQuote
+        await wallet.load(context: context, refreshProduct: false)
+        guard context.isCurrent, review.isCurrent, selectedIDs == originalSelection,
+              let current = visibleWallet else { throw CreditQuoteIssue.unavailable }
+        guard current.fundingMode == shown.fundingMode,
+              current.declutterQuote == shownQuote else { throw CreditQuoteIssue.changed }
+        switch current.fundingMode {
+        case .included: return nil
+        case .creditPrimary, .topupOnly:
+            guard let quote = current.declutterQuote else { throw CreditQuoteIssue.unavailable }
+            guard current.balance.totalAvailable >= quote.credits * originalSelection.count else {
+                throw CreditQuoteIssue.insufficient
+            }
+            return try DeclutterCreditAuthorization(quote: quote, environment: current.environment)
+        }
+    }
+
+    private enum CreditQuoteIssue: Error {
+        case unavailable, changed, insufficient
+        var message: String {
+            switch self {
+            case .unavailable: return "The credit cost is unavailable. Try again before editing."
+            case .changed: return "Your plan or credit cost changed. Review the updated amount and tap Generate again."
+            case .insufficient: return "There are not enough credits for these edits. Add credits or select fewer photos."
+            }
+        }
     }
 
     private var selectedPhotos: some View {
@@ -241,8 +335,18 @@ struct PhotoDeclutterReviewSheet: View {
                     confirming = true
                     Task { @MainActor in
                         defer { confirming = false }
-                        do { let confirmed = try await review.confirm(); onConfirm(confirmed.photos, confirmed.approvals); dismiss() }
-                        catch { self.error = "The reviewed photos or account changed. Reopen this review before editing." }
+                        do {
+                            let selection = selectedIDs
+                            let credit = try await creditAuthorization(for: selection)
+                            let confirmed = try await review.confirm()
+                            guard Set(confirmed.photos.map(\.id)) == selection else { throw CreditQuoteIssue.changed }
+                            onConfirm(confirmed.photos, confirmed.approvals, credit)
+                            dismiss()
+                        } catch let issue as CreditQuoteIssue {
+                            self.error = issue.message
+                        } catch {
+                            self.error = "The reviewed photos or account changed. Reopen this review before editing."
+                        }
                     }
                 } label: {
                     HStack(spacing: 8) {
@@ -251,7 +355,7 @@ struct PhotoDeclutterReviewSheet: View {
                             .font(.rpBody.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
                     }.frame(maxWidth: .infinity, minHeight: 28)
                 }
-                .modifier(RendpropActionAppearance()).disabled(confirming || !review.isCurrent)
+                .modifier(RendpropActionAppearance()).disabled(confirming || !review.isCurrent || !canGenerate)
                 .accessibilityIdentifier("declutter.review.confirm")
             } else if review.analyzing {
                 VStack(alignment: .leading, spacing: 8) {

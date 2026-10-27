@@ -38,8 +38,12 @@ final class PhotoEditService {
 
     func edit(_ p: EnhancedPhoto, edit: String, style: String?, prompt: String?, batch: Bool,
               stagingReferenceID: String? = nil, declutterApproval: DeclutterGenerationApproval? = nil,
+              declutterCredit: DeclutterCreditAuthorization? = nil,
               progress: ((PhotoWorkQueue.Phase) -> Void)? = nil) async throws {
         try requireUnsentWork()
+        guard declutterCredit == nil || (edit == "declutter" && declutterApproval != nil) else {
+            throw CloudSyncError.invalidResponse
+        }
         progress?(.preparing)
         let api = model.api
         let directory = EnhancedPhoto.directory(for: listing.id)
@@ -88,6 +92,8 @@ final class PhotoEditService {
         request.listingServerID = serverID
         request.label = PhotoStudioView.provenanceLabel(edit: edit, style: style, space: space)
         request.originalAssetID = originalAssetID
+        request.declutterCreditTariffVersion = declutterCredit?.tariffVersion
+        request.declutterCreditEnvironment = declutterCredit?.environment
         var pending: PhotoPendingEdit.Saved?
         if let owner, let workspace {
             pending = try PhotoPendingEdit.begin(request,
@@ -248,8 +254,10 @@ final class PhotoEditService {
     }
 
     func start(title: String, photos: [EnhancedPhoto], edit: String, style: String?, prompt: String?,
-               stagingReferenceID: String? = nil, declutterApprovals: [String: DeclutterGenerationApproval]? = nil) -> Bool {
+               stagingReferenceID: String? = nil, declutterApprovals: [String: DeclutterGenerationApproval]? = nil,
+               declutterCredit: DeclutterCreditAuthorization? = nil) -> Bool {
         guard consentIsCurrent, !Self.recoveryInProgress else { return false }
+        guard declutterCredit == nil || (edit == "declutter" && declutterApprovals != nil) else { return false }
         if let declutterApprovals {
             guard edit == "declutter", photos.allSatisfy({ declutterApprovals[$0.id] != nil }) else { return false }
         }
@@ -272,7 +280,8 @@ final class PhotoEditService {
                 guard let photo = byID[id] else { throw PhotoVersionHistory.Failure.missingImage }
                 guard let jobID = queue.visibleJob?.id else { throw CloudSyncError.identityChanged }
                 try await self.edit(photo, edit: edit, style: style, prompt: prompt, batch: photos.count > 1,
-                                    stagingReferenceID: stagingReferenceID, declutterApproval: declutterApprovals?[id], progress: { phase in
+                                    stagingReferenceID: stagingReferenceID, declutterApproval: declutterApprovals?[id],
+                                    declutterCredit: declutterCredit, progress: { phase in
                     queue.report(phase, jobID: jobID, photoID: id)
                 })
             }, completion: { result in

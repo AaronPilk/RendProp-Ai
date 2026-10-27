@@ -895,6 +895,12 @@ struct SettingsView: View {
 
         var body: some View {
             Group {
+                NavigationLink {
+                    CreditWalletView()
+                } label: {
+                    Label("Credits & extra usage", systemImage: "sparkles.rectangle.stack")
+                }
+                .accessibilityIdentifier("settings.credits")
                 Button {
                     PaywallRouter.shared.present(reason: .upgrade)
                 } label: {

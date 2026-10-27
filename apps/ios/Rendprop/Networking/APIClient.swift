@@ -309,6 +309,10 @@ struct AIPhotoEditRequest: Sendable, Hashable, Codable {
     var originalAssetID: String? = nil
     /// One UUID per paid attempt, retained through a lost answer or quality pause.
     var idempotencyKey: String? = nil
+    /// The exact customer quote accepted in Declutter review. Persisted with
+    /// this request so a recovery/retry cannot silently select a new tariff.
+    var declutterCreditTariffVersion: String? = nil
+    var declutterCreditEnvironment: String? = nil
 }
 
 /// The result of one `/ai-photo` edit: the image plus its compliance envelope.

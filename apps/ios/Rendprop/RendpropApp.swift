@@ -3632,7 +3632,11 @@ struct RendpropApp: App {
             // MARK: - analytics additions (P3)
             // First-party analytics only: our own /events route, no third-party
             // SDK, no IDFA, no ATT prompt. `start` is idempotent.
-            .task { await model.load(); Analytics.start(api: model.api as? AnalyticsAPI) }
+            .task {
+                await model.load()
+                Analytics.start(api: model.api as? AnalyticsAPI)
+                await CreditWalletStore.shared.recoverAfterSignIn()
+            }
 #if SPATIAL_CAPTURE_LAB
             .task { SpatialUploadCoordinator.shared.reconnect() }
 #endif
@@ -3665,12 +3669,14 @@ struct RendpropApp: App {
             }
             .onChange(of: analyticsAuth.syncSessionRevision) { _ in
                 ReelWorkQueue.shared.reconcileIdentity()
+                Task { await CreditWalletStore.shared.recoverAfterSignIn() }
             }
             .onChange(of: reelConsent.isGranted) { _ in
                 ReelWorkQueue.shared.reconcileIdentity()
             }
             .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
                 ReelWorkQueue.shared.reconcileIdentity()
+                Task { await CreditWalletStore.shared.recoverAfterSignIn() }
             }
             // Universal Links. `onContinueUserActivity` is the https path (a
             // tap in Messages, Mail, Safari); `onOpenURL` catches the
@@ -3706,6 +3712,7 @@ struct RendpropApp: App {
             .task {
                 push.start()
                 WebsiteUpgradeStore.shared.start()
+                CreditWalletStore.shared.start()
             }
             // The one root sheet slot. The permission pre-prompt is presented
             // from HERE so that EVERY publish path reaches it, not just the

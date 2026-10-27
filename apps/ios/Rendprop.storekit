@@ -1,7 +1,23 @@
 {
   "identifier": "A1B2C3D4",
   "nonRenewingSubscriptions": [],
-  "products": [],
+  "products": [
+    {
+      "displayPrice": "29.99",
+      "familyShareable": false,
+      "internalID": "7C0E0100",
+      "localizations": [
+        {
+          "description": "100 nonexpiring credits for AI work in one Rendprop workspace.",
+          "displayName": "100 Rendprop Credits",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.rendprop.app.credits.100",
+      "referenceName": "100 Rendprop Credits",
+      "type": "Consumable"
+    }
+  ],
   "settings": {},
   "subscriptionGroups": [
     {
