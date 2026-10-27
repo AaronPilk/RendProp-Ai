@@ -80,6 +80,18 @@ insert into public.apple_subscriptions(original_transaction_id,org_id,user_id,
   'starter','Production','active',now()+interval '29 days',true,'fixture-max-tx',
   now()-interval '1 day',now()-interval '1 day'+interval '1 minute');
 
+insert into auth.users(id,email,is_anonymous) values
+ ('71111111-1111-4111-8111-111111111111','assessment-team-owner@example.invalid',false),
+ ('81111111-1111-4111-8111-111111111111','assessment-team-agent@example.invalid',false);
+insert into public.orgs(id,name,plan,plan_source) values
+ ('7aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Assessment Team','team','manual'),
+ ('8aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Agent private library','free',null);
+insert into public.memberships(user_id,org_id,role) values
+ ('71111111-1111-4111-8111-111111111111',
+  '7aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','owner'),
+ ('81111111-1111-4111-8111-111111111111',
+  '8aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','owner');
+
 set local role service_role;
 do $$
 declare actor uuid:='31111111-1111-4111-8111-111111111111';
@@ -89,7 +101,26 @@ declare actor uuid:='31111111-1111-4111-8111-111111111111';
  trial_actor uuid:='41111111-1111-4111-8111-111111111111';
  trial_org uuid:='4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
  max_org uuid:='5aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+ team_owner uuid:='71111111-1111-4111-8111-111111111111';
+ team_agent uuid:='81111111-1111-4111-8111-111111111111';
+ team_org uuid:='7aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+ agent_library uuid:='8aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 begin
+ result:=public.create_org_invite(team_owner,team_org,null,'agent',repeat('f',64));
+ result:=public.accept_org_invite(team_agent,repeat('f',64));
+ perform pg_temp.photo_ok(public.library_actor_billing_org(team_agent,agent_library)=team_org and
+   public.library_financial_actor(team_agent,agent_library),
+   'Team agent may edit private library against shared owner-funded billing org');
+ result:=public.photo_declutter_assessment_admit(team_agent,agent_library,
+   'assessment-team-agent-0001',repeat('c',64));
+ perform pg_temp.photo_ok(result->>'tier'='team_legacy' and
+   (select billing_org_id=team_org from public.photo_declutter_assessment_admissions
+     where request_key='assessment-team-agent-0001'),
+   'Team agent consumes the shared assessment quota through private library');
+ perform pg_temp.photo_refuses(format(
+   'select public.credit_purchase_intent_create(%L,%L,%L)',team_agent,agent_library,
+   'com.rendprop.app.credits.100'),
+   'RP403:','Team agent cannot buy an invisible credit pack into a private library');
  perform pg_temp.photo_ok(public.credit_primary_subscription(org,'Production')=false,
    'Free top-up is opt-in, not an invented paid subscription');
  result:=public.serving_operation_begin(actor,org,key,'/ai-photo',repeat('a',64));

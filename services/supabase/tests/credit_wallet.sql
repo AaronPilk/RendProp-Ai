@@ -21,6 +21,11 @@ create function pg_temp.credit_backdate_intent(p_intent uuid) returns void
 language sql security definer set search_path='' as $$
   update public.credit_purchase_intents set created_at=now()-interval '3 days' where id=p_intent
 $$;
+create function pg_temp.credit_reprice_product(p_active boolean,p_credits integer) returns void
+language sql security definer set search_path='' as $$
+  update public.credit_products set active=p_active,credits=p_credits
+    where product_id='com.rendprop.app.credits.100'
+$$;
 
 select pg_temp.credit_ok(not has_function_privilege('authenticated',
   'public.credit_purchase_grant(uuid,uuid,uuid,text,text,text,timestamptz,timestamptz,uuid)',
@@ -110,6 +115,10 @@ begin
     (select count(*)=1 from public.credit_grants where environment='Production' and
       source='topup' and reference='tx-first'),
     'exact receipt replay cannot double credit');
+  perform pg_temp.credit_refuses(format(
+    'select public.credit_purchase_grant(%L,%L,%L,%L,%L,%L,now(),now(),%L)',
+    actor,org,first_intent,sku,'Production','tx-token-reused',first_token),
+    'RP409:','a signed intent token cannot mint a second purchase');
   perform pg_temp.credit_refuses(format(
     'select public.credit_purchase_grant(%L,%L,%L,%L,%L,%L,now(),now(),%L)',
     actor,other_org,first_intent,sku,'Production','tx-first',first_token),
@@ -224,12 +233,14 @@ begin
   perform pg_temp.credit_refuses(format(
     'select public.credit_purchase_intent_create(%L,%L,%L)',actor,org,sku),
     'RP403:','former admin cannot prepare another credit purchase');
+  perform pg_temp.credit_reprice_product(false,250);
   r:=public.credit_purchase_grant(actor,org,role_intent,sku,
     'Production','tx-approved-after-role-change',now(),now(),role_token);
   perform pg_temp.credit_ok(r->>'credits_granted'='100' and r->>'org_id'=org::text and
     (select count(*)=1 from public.credit_grants where source='topup' and
       reference='tx-approved-after-role-change' and org_id=org),
-    'Ask-to-Buy settles to original org after preparer loses admin role');
+    'Ask-to-Buy settles original org and 100-credit quote after role loss and product retirement');
+  perform pg_temp.credit_reprice_product(true,100);
   perform pg_temp.credit_refuses(format(
     'select public.credit_purchase_grant(%L,%L,%L,%L,%L,%L,now(),now(),%L)',
     stranger,org,role_intent,sku,'Production','tx-role-hijack',role_token),

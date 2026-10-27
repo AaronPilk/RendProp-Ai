@@ -55,8 +55,12 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         photo_results = [json.loads(line) for line in photo_output.splitlines()
                          if line.startswith("{") and '"assertions"' in line]
         assert len(photo_results) == 1 and photo_results[0]["passed"] is True, photo_output
+        trial_output = run("trial activation readiness fixture", [*psql, "-Atq", "-f", SQL / "tests/trial_activation_readiness.sql"])
+        trial_results = [json.loads(line) for line in trial_output.splitlines()
+                         if line.startswith("{") and '"assertions"' in line]
+        assert len(trial_results) == 1 and trial_results[0]["passed"] is True, trial_output
         print(json.dumps({"passed": True,
-                          "assertions": results[0]["assertions"] + photo_results[0]["assertions"],
+                          "assertions": results[0]["assertions"] + photo_results[0]["assertions"] + trial_results[0]["assertions"],
                           "migrations": len(migrations), "scope": "disposable PostgreSQL"}))
     finally:
         if started:
