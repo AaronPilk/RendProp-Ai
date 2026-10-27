@@ -59,7 +59,8 @@ class LiveStateMigrationPolicyTests(unittest.TestCase):
         self.assertLessEqual(set(GUARDED_ONE_SHOT_MIGRATIONS), names)
         self.assertFalse(set(GUARDED_ONE_SHOT_MIGRATIONS) & {path.name for path in live_state})
         self.assertTrue(all(not replayable_migration(name) for name in GUARDED_ONE_SHOT_MIGRATIONS))
-        self.assertEqual(sum(replayable_migration(path.name) for path in schema), 164)
+        # The forward-only address reservation migration adds one fresh replay.
+        self.assertEqual(sum(replayable_migration(path.name) for path in schema), 165)
         for digest, refusal in GUARDED_ONE_SHOT_MIGRATIONS.values():
             self.assertEqual(len(digest), 64)
             self.assertTrue(refusal)

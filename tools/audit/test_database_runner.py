@@ -125,13 +125,21 @@ class RunnerCase(unittest.TestCase):
                 output, rc = scenario.get('reflection', {}).get(sqlfile, (marker + '\n', 0))
             elif sqlfile == 'build58_db_controls.sql':
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"suite": "build58_db_controls", "assertions": 52}\n', 0))
+            elif sqlfile == 'property_address_lookup.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"suite": "property_address_lookup", "assertions": 25}\n', 0))
+            elif sqlfile == 'property_address_reservations_assert.sql':
+                output, rc = scenario.get('address_cutover', ('address reservation database checks passed\n', 0))
             elif sqlfile == 'negative_astra_paid_gates.sql':
                 output, rc = scenario.get('paid', (PAID_MARKER + '\n', 0))
             elif sqlfile in subject.GUARDED_ONE_SHOT_MIGRATIONS:
-                guarded_counts[sqlfile] = guarded_counts.get(sqlfile, 0) + 1
-                if guarded_counts[sqlfile] == 3:
-                    output, rc = scenario.get('guarded_refusal',
-                                              (subject.GUARDED_ONE_SHOT_MIGRATIONS[sqlfile][1], 3))
+                # The address cutover proves the live ledger order in its own
+                # disposable database. It must not consume one of the three
+                # apply/historical/refusal attempts in the main audit fixture.
+                if 'rendprop_address_cutover' not in command:
+                    guarded_counts[sqlfile] = guarded_counts.get(sqlfile, 0) + 1
+                    if guarded_counts[sqlfile] == 3:
+                        output, rc = scenario.get('guarded_refusal',
+                                                  (subject.GUARDED_ONE_SHOT_MIGRATIONS[sqlfile][1], 3))
             elif sqlfile in ('worker_publish_transaction.sql', 'negative_upload_publication.sql'):
                 count = publication_counts.get(sqlfile, 0) + 1
                 publication_counts[sqlfile] = count
@@ -224,6 +232,21 @@ class CoreRegressionTests(RunnerCase):
 
 
 class InventoryTests(RunnerCase):
+    def test_address_cutover_runs_in_live_order_and_requires_completion(self):
+        result = self.invoke()
+        self.assertIsNone(result.failure)
+        self.assertTrue(result.receipt['addressCutoverFixture']['passed'])
+        names = [row['name'] for row in result.receipt['commands']]
+        cutover = [
+            'address-cutover-setup',
+            'address-cutover-apply-20261026175227_public_property_address_lookup',
+            'address-cutover-apply-20261027032646_property_address_index_writer_execute',
+            'address-cutover-apply-20261027040000_property_address_reservations',
+            'address-cutover-assert',
+        ]
+        self.assertEqual([names.index(name) for name in cutover], sorted(names.index(name) for name in cutover))
+        self.rejected(address_cutover=('missing fixture marker\n', 0))
+
     def test_exact_guarded_migrations_apply_on_both_fresh_paths_then_refuse(self):
         result = self.invoke()
         self.assertIsNone(result.failure)
@@ -263,7 +286,7 @@ class InventoryTests(RunnerCase):
             {'phase': phase, 'fixture': filename, 'assertions': count,
              'rolledBack': True, 'database': database}
             for phase, database in [('initial', 'rendprop_audit'), ('replayed', 'rendprop_replay')]
-            for filename, count in [('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52)]])
+            for filename, count in [('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25)]])
         commands = {row['name']: row for row in result.receipt['commands']}
         self.assertIn('replay-20261002225458_video_erase_direct_bria', commands)
         for phase in ('initial', 'replayed'):
@@ -271,7 +294,7 @@ class InventoryTests(RunnerCase):
                 self.assertIn('reflection-' + phase + '-' + stem, commands)
 
     def test_reflection_missing_completion_marker_rejects(self):
-        for filename in ('video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql'):
+        for filename in ('video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql', 'property_address_lookup.sql'):
             with self.subTest(fixture=filename):
                 self.rejected(reflection={filename: ('ROLLBACK without acceptance marker\n', 0)})
 
