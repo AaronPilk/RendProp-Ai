@@ -92,7 +92,7 @@ Deno.test("funded guest reader failure stops before dispatch", () => denied({ an
 // Only their nonauthorization dependencies are fixture boundaries. Removing the
 // identity call from any source guard lets a free anonymous caller hit a meter.
 const routeSpecs = [
-  { route: "ai-photo", guard: "guardEdit", functions: ["requireEditorRole", "guardEdit"] },
+  { route: "ai-photo", guard: "guardEdit", functions: ["requireEditorRole", "photoCreditQuote", "guardEdit"] },
   { route: "ai-photo", guard: "guardHelper", functions: ["requireEditorRole", "guardHelper"] },
   { route: "ai-video", guard: "guardGenerate", functions: ["capFor", "meterKeyFor", "labelFor", "guardGenerate"] },
   { route: "ai-video", guard: "guardDriftCheck", functions: ["guardDriftCheck"] },
@@ -110,7 +110,8 @@ async function guardModule(spec: typeof routeSpecs[number], omitIdentity = false
   assert(source.includes(`${spec.guard}(user, req`), `Actual handler must pass its Auth-validated user to ${spec.guard}`);
   let functions = spec.functions.map((name) => functionSource(source, name)).join("\n");
   if (omitIdentity) functions = functions.replaceAll("await assertPaidAiIdentity(user, orgId);", "");
-  const constants = [...source.matchAll(/^const ([A-Z][A-Z0-9_]+) = ([0-9 *]+);/gm)].map((m) => m[0]).join("\n");
+  const constants = [...source.matchAll(/^const ([A-Z][A-Z0-9_]+) = ([0-9 *]+);|^const (?:DECLUTTER|STAGE)_CREDIT_TARIFF=.*;$/gm)]
+    .map((m) => m[0]).join("\n");
   const program = `
     import {adminClient,orgForUser,contentOrgForUser,preferredOrg,assertPaidAiIdentity,type PaidAiCaller} from ${JSON.stringify(new URL("./supabase.ts", import.meta.url).href)};
     import {requireLibraryWrite,libraryBillingOrg,requireContentWrite} from ${JSON.stringify(new URL("./library-access.ts",import.meta.url).href)};

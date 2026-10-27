@@ -38,7 +38,12 @@ async function fixture(feature: Feature, oldRefund = false) {
       .replace("refundRateReceipt(charge.burstReceipt)", `refundRateLimit(charge.burstKey, ${feature.guard === "guardHelper" ? "HELP_WINDOW_SECONDS" : feature.endpoint === "ai-photo" ? "EDIT_WINDOW_SECONDS" : feature.endpoint === "ai-voice" ? "TTS_WINDOW_SECONDS" : "BURST_WINDOW_SECONDS"}, 1)`);
     assert(refund.includes("refundRateLimit("), "Compile the old refund transport control");
   }
-  const constants = source.split("\n").filter((line) => /^const (?:EDIT_|HELP_|TTS_|BURST_|MONTH_SECONDS)/.test(line)).join("\n");
+  const constants = source.split("\n").filter((line) => /^const (?:EDIT_|HELP_|TTS_|BURST_|MONTH_SECONDS|DECLUTTER_CREDIT_TARIFF|STAGE_CREDIT_TARIFF)/.test(line)).join("\n");
+  const quoteStart = source.indexOf("function photoCreditQuote(");
+  const photoQuote = feature.endpoint === "ai-photo"
+    ? source.slice(quoteStart, source.indexOf("\n}\n", quoteStart) + 3)
+    : "";
+  assert(feature.endpoint !== "ai-photo" || photoQuote.startsWith("function photoCreditQuote("), "Compile actual photo credit quote");
   const module = await import(`data:application/typescript;base64,${btoa(unescape(encodeURIComponent(`
     import {HttpError} from ${JSON.stringify(new URL("../_shared/http.ts", import.meta.url).href)};
     import {requiredIdempotencyKey} from ${JSON.stringify(new URL("../_shared/idempotency.ts", import.meta.url).href)};
@@ -53,6 +58,7 @@ async function fixture(feature: Feature, oldRefund = false) {
     const quotaError=()=>new HttpError(402,"Synthetic allowance exhausted");
     const assertPaidAiIdentity=async()=>{};
     const adminClient=()=>({from(){const q:any={select(){return q;},eq(){return q;},maybeSingle:async()=>({data:{role:authority.role},error:null})};return q;}});
+    ${photoQuote}
     ${guard}
     ${refund}
     export const run=${feature.guard},giveBack=${feature.refund};

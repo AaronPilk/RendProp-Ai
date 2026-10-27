@@ -80,6 +80,14 @@ async function loadGuard(endpoint: string, name: string, mutant = false) {
     ? source.match(/const REEL_MAX_PER_WINDOW[^;]*;/)?.[0]
     : "";
   assert(endpoint !== "ai-video" || reelBurst, "Production reel burst constant missing");
+  const photoQuote = endpoint === "ai-photo"
+    ? source.slice(source.indexOf("function photoCreditQuote("), source.indexOf("\n}\n", source.indexOf("function photoCreditQuote(")) + 3)
+    : "";
+  assert(endpoint !== "ai-photo" || photoQuote.startsWith("function photoCreditQuote("), "Production photo credit quote missing");
+  const photoTariffs = endpoint === "ai-photo"
+    ? source.match(/^const (?:DECLUTTER|STAGE)_CREDIT_TARIFF=.*;$/gm)?.join("\n")
+    : "";
+  assert(endpoint !== "ai-photo" || photoTariffs?.includes("STAGE_CREDIT_TARIFF"), "Production photo tariffs missing");
   const fixture = `
     import {HttpError} from ${
     JSON.stringify(new URL("./http.ts", import.meta.url).href)
@@ -90,6 +98,8 @@ async function loadGuard(endpoint: string, name: string, mutant = false) {
     type EditCharge=any;type Charge=any;type GenerateCharge=any;type GenKind=any;
     const EDIT_MAX_PER_WINDOW=40,EDIT_WINDOW_SECONDS=300,GEN_MAX_PER_WINDOW=12,GEN_WINDOW_SECONDS=300,BURST_MAX_PER_WINDOW=10,BURST_WINDOW_SECONDS=300,TTS_MAX_PER_WINDOW=20,TTS_WINDOW_SECONDS=300,MONTH_SECONDS=2592000;
     ${reelBurst}
+    ${photoTariffs}
+    ${photoQuote}
     export const calls:string[]=[];const seen=new Set<string>();
     const orgForUser=async(..._args:any[])=>"synthetic-org";
     const contentOrgForUser=orgForUser;
