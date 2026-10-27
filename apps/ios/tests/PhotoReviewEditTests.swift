@@ -22,6 +22,13 @@ struct Listing { var id: UUID; var cloudUnavailable: Bool? = nil; var isSample =
 struct EnhancedPhoto {
     let id: String; let originalURL: URL; let enhancedURL: URL
 }
+struct DeclutterGenerationApproval { let sourceVersionID: String }
+@MainActor final class PhotoDeclutterReviewModel {
+    let photos: [EnhancedPhoto]
+    var cancelled = false
+    init(model: AppModel, listing: Listing, photos: [EnhancedPhoto], space: SpaceType) { self.photos = photos }
+    func cancel() { cancelled = true }
+}
 struct PendingBatchEdit { let edit: String; let style: String?; let title: String; let multiple: Bool }
 struct PhotoStagingSetup { let pending: PendingBatchEdit; let targets: [EnhancedPhoto]; let references: [EnhancedPhoto] }
 @MainActor final class PhotoWorkQueue {
@@ -31,18 +38,26 @@ struct PhotoStagingSetup { let pending: PendingBatchEdit; let targets: [Enhanced
     var visibleJob: Job?
 }
 @MainActor final class PhotoEditService {
-    struct Call { let listing: UUID; let photos: [EnhancedPhoto]; let edit: String; let style: String?; let prompt: String?; let reference: String? }
+    struct Call { let listing: UUID; let photos: [EnhancedPhoto]; let edit: String; let style: String?; let prompt: String?; let reference: String?; let approvalIDs: Set<String> }
     static var calls: [Call] = []
     let listing: Listing
     init(model: AppModel, listing: Listing, space: SpaceType) { self.listing = listing }
-    func start(title: String, photos: [EnhancedPhoto], edit: String, style: String?, prompt: String?, stagingReferenceID: String?) -> Bool {
+    func start(title: String, photos: [EnhancedPhoto], edit: String, style: String?, prompt: String?, stagingReferenceID: String?, declutterApprovals: [String: DeclutterGenerationApproval]?) -> Bool {
         guard PhotoWorkQueue.shared.visibleJob?.running != true else { return false }
-        Self.calls.append(.init(listing: listing.id, photos: photos, edit: edit, style: style, prompt: prompt, reference: stagingReferenceID))
+        if edit == "declutter" {
+            guard let declutterApprovals, Set(declutterApprovals.keys) == Set(photos.map(\.id)),
+                  declutterApprovals.allSatisfy({ $0.key == $0.value.sourceVersionID }) else { return false }
+        }
+        Self.calls.append(.init(listing: listing.id, photos: photos, edit: edit, style: style, prompt: prompt, reference: stagingReferenceID, approvalIDs: Set(declutterApprovals?.keys.map { $0 } ?? [])))
         PhotoWorkQueue.shared.visibleJob = .init(); return true
     }
 }
 enum Haptics { static func selection() {} }
-struct AIFailure { var fullMessage: String; init(_ error: Error) { fullMessage = error.localizedDescription } }
+struct AIFailure {
+    var fullMessage: String
+    init(_ error: Error) { fullMessage = error.localizedDescription }
+    static func requiresSavedPhotoCheck(_ error: Error) -> Bool { error is URLError }
+}
 __ENUM__
 __CONTEXT__
 @MainActor final class Harness {
@@ -52,6 +67,7 @@ __CONTEXT__
     var editOriginal: EnhancedPhoto?; var editConsentRevision: UInt64?
     var selectionWorkID: UUID?; var selectionError: String?; var showEditActions = false
     var pendingEdit: PhotoReviewEdit?; var singleStagingSetup: PhotoStagingSetup?; var singleCustomPhoto: EnhancedPhoto?
+    var singleDeclutterReview: PhotoDeclutterReviewModel?
     var singleEditJobID: UUID?; var editConnection = FeatureSessionAction()
     var photoJobs = PhotoWorkQueue.shared; var chosen: EnhancedPhoto?
     init(_ photo: EnhancedPhoto, _ model: AppModel) { self.photo = photo; self.viewed = photo; self.model = model }
@@ -75,6 +91,7 @@ __METHODS__
         let stage = try PhotoVersionHistory.saveEdit(jpeg: Data("saved furniture".utf8), id: "stage", parentID: "room", sourceID: "room", edit: "stage", style: "modern", disclosure: "Virtual staging", provenanceID: "real-receipt", provenanceRecorded: true, directory: dir)
         let stageURL = dir.appendingPathComponent(stage.imageFile)
         let photo = EnhancedPhoto(id: stage.id, originalURL: dir.appendingPathComponent("orig-room.jpg"), enhancedURL: stageURL)
+        let approvedDeclutter = ["room-original": DeclutterGenerationApproval(sourceVersionID: "room-original")]
         let model = AppModel(); model.listings = [.init(id: id)]
         let beforeOpen = try PhotoVersionHistory.load(directory: dir)
         let subject = Harness(photo, model); subject.openSinglePhotoEdit()
@@ -87,6 +104,13 @@ __METHODS__
         check(originalIndex.versions["room-original"]?.originalVerified == true, "retained capture registration remains explicit")
         for action in [PhotoReviewEdit.declutter, .twilight, .sky, .lawn] {
             reset(); let h = Harness(photo, model); h.openSinglePhotoEdit(); h.pendingEdit = action; h.continueSinglePhotoEdit(); await settle()
+            if action == .declutter {
+                check(PhotoEditService.calls.isEmpty && h.singleDeclutterReview?.photos.map(\.id) == ["room-original"],
+                      "declutter opens an exact Original assessment before any paid image edit")
+                h.singleDeclutterReview = nil
+                h.startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvedDeclutter)
+                check(PhotoEditService.calls.first?.approvalIDs == Set(["room-original"]), "confirmed declutter carries the exact Original approval")
+            }
             check(PhotoEditService.calls.count == 1 && PhotoEditService.calls[0].photos.count == 1, "one action dispatches exactly one photo, never bulk")
             check(PhotoEditService.calls[0].photos[0].id == "room-original" && PhotoEditService.calls[0].edit == action.edit, "selected operation uses exact retained Original id")
             check(PhotoEditService.calls[0].listing == id && h.singleEditJobID == PhotoWorkQueue.shared.visibleJob?.id, "one-photo progress binds the actual started job")
@@ -108,21 +132,27 @@ __METHODS__
         reset(); AIConsent.shared.isGranted = false; let declined = Harness(photo, model); declined.openSinglePhotoEdit(); declined.pendingEdit = .declutter; declined.continueSinglePhotoEdit(); await settle()
         check(PhotoEditService.calls.isEmpty, "declined AI consent cannot dispatch")
         check(declined.editContext == nil, "declined consent releases family navigation fence")
+        reset(); let abandoned = Harness(photo, model); abandoned.openSinglePhotoEdit(); abandoned.editConsentRevision = AIConsent.shared.revocationRevision
+        abandoned.startSinglePhotoWork(.declutter, prompt: nil)
+        let abandonedReview = abandoned.singleDeclutterReview!
+        abandoned.clearSinglePhotoEdit()
+        check(abandonedReview.cancelled && abandoned.singleDeclutterReview == nil && PhotoEditService.calls.isEmpty,
+              "dismissing declutter review cancels unsent assessment without a paid edit")
         reset(); let stale = Harness(photo, model); stale.openSinglePhotoEdit(); stale.editConsentRevision = AIConsent.shared.revocationRevision
         AuthStore.shared.userID = "different-owner"; stale.imageContext = NativeMediaExportContext(); stale.startSinglePhotoWork(.declutter, prompt: nil)
-        check(PhotoEditService.calls.isEmpty, "actor change cannot dispatch from retained sheet")
+        check(PhotoEditService.calls.isEmpty && stale.singleDeclutterReview == nil, "actor change cannot dispatch from retained sheet")
         AuthStore.shared.userID = "owner"
         reset(); let revoked = Harness(photo, model); revoked.openSinglePhotoEdit(); revoked.editConsentRevision = AIConsent.shared.revocationRevision
         AIConsent.shared.revocationRevision += 1; revoked.startSinglePhotoWork(.declutter, prompt: nil)
-        check(PhotoEditService.calls.isEmpty, "revoked and regranted consent cannot revive old action")
+        check(PhotoEditService.calls.isEmpty && revoked.singleDeclutterReview == nil, "revoked and regranted consent cannot revive old action")
         reset(); let waiting = Harness(photo, model); waiting.openSinglePhotoEdit(); waiting.pendingEdit = .declutter; AIConsent.shared.suspend = true; waiting.continueSinglePhotoEdit(); await settle()
         AuthStore.shared.syncSessionRevision += 1; AIConsent.shared.waiting?.resume(returning: true); AIConsent.shared.waiting = nil; await settle()
-        check(PhotoEditService.calls.isEmpty, "session revision changed while awaiting consent cannot dispatch")
+        check(PhotoEditService.calls.isEmpty && waiting.singleDeclutterReview == nil, "session revision changed while awaiting consent cannot dispatch")
         reset(); let busy = Harness(photo, model); PhotoWorkQueue.shared.visibleJob = .init(); busy.openSinglePhotoEdit()
         check(!busy.showEditActions, "another active photo job blocks one-photo entry")
         reset(); let missingHome = Harness(photo, model); model.listings = []; missingHome.openSinglePhotoEdit()
         check(!missingHome.showEditActions, "removed home cannot open paid choices"); model.listings = [.init(id: id)]
-        reset(); let ready = Harness(photo, model); ready.openSinglePhotoEdit(); ready.editConsentRevision = AIConsent.shared.revocationRevision; ready.startSinglePhotoWork(.declutter, prompt: nil)
+        reset(); let ready = Harness(photo, model); ready.openSinglePhotoEdit(); ready.editConsentRevision = AIConsent.shared.revocationRevision; ready.startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvedDeclutter)
         let ownJob = ready.singleEditJobID!
         ready.receiveSinglePhotoWork(.init(running: false, done: 1))
         check(ready.chosen == nil && ready.singleEditJobID == ownJob, "another job cannot replace this photo review")
@@ -131,7 +161,7 @@ __METHODS__
         check(ready.chosen?.id == newOutput.id && ready.singleEditJobID == nil, "only matching successful job opens saved new family version")
         check(newOutput.effects == ["declutter"] && newOutput.sourceID == "room-original" && newOutput.parentID == stage.id, "new edit records Original input and separate saved concurrency parent")
         check((try? Data(contentsOf: photo.originalURL)) == original && (try? Data(contentsOf: stageURL)) == Data("saved furniture".utf8), "new edit never overwrites Original or earlier staged result")
-        reset(); let failure = Harness(photo, model); failure.openSinglePhotoEdit(); failure.editConsentRevision = AIConsent.shared.revocationRevision; failure.startSinglePhotoWork(.declutter, prompt: nil)
+        reset(); let failure = Harness(photo, model); failure.openSinglePhotoEdit(); failure.editConsentRevision = AIConsent.shared.revocationRevision; failure.startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvedDeclutter)
         let beforeFailure = PhotoEditService.calls.count
         failure.receiveSinglePhotoWork(.init(id: failure.singleEditJobID!, running: false, failures: [.init(error: PhotoVersionHistory.Failure.reviewRequired)]))
         check(failure.selectionError != nil && PhotoEditService.calls.count == beforeFailure && failure.chosen == nil, "failure is visible without retry or replacing review")

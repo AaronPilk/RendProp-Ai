@@ -25,6 +25,9 @@ sheet = block(source, 'private struct PhotoReviewEditSheet: View {')
 for required in ['SecondaryButton(title: "Edit"', '.accessibilityLabel("Edit original photo")', 'action: openSinglePhotoEdit',
                  '.onReceive(photoJobs.$job) { receiveSinglePhotoWork($0) }',
                  '.sheet(isPresented: $showEditActions, onDismiss: continueSinglePhotoEdit)',
+                 '.sheet(item: $singleDeclutterReview, onDismiss: finishSinglePhotoSetup)',
+                 'guard review.isCurrent, !photos.isEmpty else { clearSinglePhotoEdit(); return }',
+                 'startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvals)',
                  '.aiConsentGate()', 'job.phase?.title', 'photoVersion.edit.progress',
                  'startSinglePhotoWork(.stage(setup.pending.style ?? "modern")',
                  'startSinglePhotoWork(.custom, prompt: prompt)', 'clearSinglePhotoEdit()']:
@@ -52,7 +55,9 @@ variants = [
     ('unverified-source', methods, history.replace('&& $0.originalVerified && $0.imageFile == file', '&& true && $0.imageFile == file'), 'unverified earlier source cannot become Original'),
     ('stale-start', methods.replace('let context = editContext, context.isCurrent,', 'let context = editContext, true,'), history, 'actor change cannot dispatch from retained sheet'),
     ('revoked-regrant', methods.replace('editConsentRevision == AIConsent.shared.revocationRevision,', 'true,'), history, 'revoked and regranted consent cannot revive old action'),
+    ('declutter-review-bypassed', methods.replace('if action == .declutter, declutterApprovals == nil {', 'if false {'), history, 'declutter opens an exact Original assessment before any paid image edit'),
     ('wrong-job', methods.replace('job.id == singleEditJobID,', 'true,'), history, 'another job cannot replace this photo review'),
+    ('drop-review-cancel', methods.replace('singleDeclutterReview?.cancel(); singleDeclutterReview = nil', 'singleDeclutterReview = nil'), history, 'dismissing declutter review cancels unsent assessment without a paid edit'),
     ('drop-edit-cleanup', methods.replace('        editContext = nil', '        // retained stale edit context'), history, 'dismissing choices releases family navigation fence'),
 ]
 results = []
