@@ -65,3 +65,21 @@ Deno.test("free trial dispatches no grant RPC and database outage is recoverable
     org, paid), HttpError);
   assertEquals(error.status, 503);
 });
+
+Deno.test("active paid catalog refuses acknowledgement when exact funding or Team capacity is unavailable", async () => {
+  for (const reason of ["paid_funding_unavailable", "variant_not_funded"]) {
+    const error = await assertRejects(() => applyVerifiedMonthlyCredits(
+      () => Promise.resolve({ data: { granted: false, reason }, error: null }),
+      org, paid), HttpError);
+    assertEquals(error.status, 503);
+  }
+  // A dormant catalog and test-only Sandbox transaction do not promise a
+  // Production monthly grant. Their ordinary no-grant outcome stays valid.
+  assertEquals(await applyVerifiedMonthlyCredits(
+    () => Promise.resolve({ data: { granted: false, reason: "not_configured" }, error: null }),
+    org, paid), { granted: false, reason: "not_configured" });
+  assertEquals(await applyVerifiedMonthlyCredits(
+    () => Promise.resolve({ data: { granted: false, reason: "paid_funding_unavailable" }, error: null }),
+    org, { ...paid, environment: "Sandbox" }),
+    { granted: false, reason: "paid_funding_unavailable" });
+});

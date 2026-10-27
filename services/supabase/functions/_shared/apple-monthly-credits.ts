@@ -59,5 +59,17 @@ export async function applyVerifiedMonthlyCredits(
       "Your subscription is recorded, but its monthly credits could not be synchronized. Restore the purchase to retry.",
       "upstream");
   }
+  // An active catalog may still refuse a paid period when the exact attested
+  // schedule cannot cover the promised credit liability or Team seats. Do not
+  // acknowledge the Apple event as processed: a corrected schedule must be
+  // able to replay the same signed transaction and mint the missing grant.
+  const refusal = typeof data === "object" && data !== null
+    ? (data as Record<string, unknown>).reason : null;
+  if (tx.environment === "Production" && event !== "refunded" &&
+      (refusal === "paid_funding_unavailable" || refusal === "variant_not_funded")) {
+    throw new HttpError(503,
+      "Your subscription is recorded, but its monthly credits could not be activated. Restore the purchase to retry.",
+      "upstream");
+  }
   return data;
 }
