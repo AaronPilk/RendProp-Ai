@@ -117,10 +117,10 @@ enum RendpropPlan: String, CaseIterable, Identifiable, Sendable {
     /// a server ledger grant. This is catalog copy, not spendable balance.
     var allowances: PlanAllowances {
         switch self {
-        case .pro:   return PlanAllowances(credits: 80,   renders: 2,  photoEdits: 50,  reels: 15,  aerials: 1, topaz: 0, seats: 1)
-        case .max:   return PlanAllowances(credits: 200,  renders: 4,  photoEdits: 100, reels: 30,  aerials: 2, topaz: 0, seats: 1)
-        case .ultra: return PlanAllowances(credits: 440,  renders: 10, photoEdits: 200, reels: 60,  aerials: 4, topaz: 0, seats: 1)
-        case .team:  return PlanAllowances(credits: 1000, renders: 25, photoEdits: 400, reels: 150, aerials: 8, topaz: 2, seats: 3)
+        case .pro:   return PlanAllowances(credits: 60,  renders: 2,  photoEdits: 50,  reels: 15,  aerials: 1, topaz: 0, seats: 1)
+        case .max:   return PlanAllowances(credits: 120, renders: 4,  photoEdits: 100, reels: 30,  aerials: 2, topaz: 0, seats: 1)
+        case .ultra: return PlanAllowances(credits: 250, renders: 10, photoEdits: 200, reels: 60,  aerials: 4, topaz: 0, seats: 1)
+        case .team:  return PlanAllowances(credits: 600, renders: 25, photoEdits: 400, reels: 150, aerials: 8, topaz: 2, seats: 3)
         }
     }
 
@@ -217,12 +217,12 @@ struct TeamSeatVariant: Hashable, Sendable {
     let monthlyCredits: Int
 
     static let all: [Self] = [
-        .init(productID: "com.rendprop.app.team4.monthly", seats: 4, monthlyCredits: 1100),
-        .init(productID: "com.rendprop.app.team5.monthly", seats: 5, monthlyCredits: 1200),
-        .init(productID: "com.rendprop.app.team6.monthly", seats: 6, monthlyCredits: 1300),
-        .init(productID: "com.rendprop.app.team7.monthly", seats: 7, monthlyCredits: 1400),
-        .init(productID: "com.rendprop.app.team8.monthly", seats: 8, monthlyCredits: 1500),
-        .init(productID: "com.rendprop.app.team9.monthly", seats: 9, monthlyCredits: 1600),
+        .init(productID: "com.rendprop.app.team4.monthly", seats: 4, monthlyCredits: 700),
+        .init(productID: "com.rendprop.app.team5.monthly", seats: 5, monthlyCredits: 800),
+        .init(productID: "com.rendprop.app.team6.monthly", seats: 6, monthlyCredits: 900),
+        .init(productID: "com.rendprop.app.team7.monthly", seats: 7, monthlyCredits: 1000),
+        .init(productID: "com.rendprop.app.team8.monthly", seats: 8, monthlyCredits: 1100),
+        .init(productID: "com.rendprop.app.team9.monthly", seats: 9, monthlyCredits: 1200),
     ]
 
     static func forProduct(_ productID: String) -> Self? {

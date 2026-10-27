@@ -339,6 +339,8 @@ async function handleNotify(req: Request): Promise<Response> {
         p_environment: tx.environment, p_transaction: tx.transactionId,
         p_purchased_at: tx.purchaseDate, p_signed_at: tx.signedDate,
         p_account_token: token,
+        p_price_milliunits: tx.priceMilliunits, p_currency: tx.currency,
+        p_storefront: tx.storefront,
       });
       if (error && /RP(?:400|403|409):/.test(error.message)) {
         return acknowledge("pending", { ok: true, applied: false, pending: true, reason: "purchase_intent_required" });

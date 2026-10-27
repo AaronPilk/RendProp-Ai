@@ -49,10 +49,24 @@ insert into public.credit_monthly_events(environment,transaction_id,
 select 'Production','aerial-paid-tx','aerial-paid-chain',
  'a0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.pro29.monthly',
  'paid',start_at+interval '1 minute',29990,start_at,end_at from paid_window;
+insert into public.apple_serving_schedules(product_id,storefront,currency,
+ price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,
+ reserve_components,trial_reserve_components,evidence_sha256) values
+ ('com.rendprop.app.pro29.monthly','USA','USD',29990,2099,1,
+  now()-interval '2 days',now()+interval '1 day',
+  '{"storage":20,"delivery":20,"compute":10,"email":5,"support":25,"retention":10,"uncertainty":10}',
+  '{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}',repeat('d',64));
+insert into public.serving_funding(org_id,source,collection_ref,net_receipts_cents,
+ starts_at,ends_at,retention_ends_at,service_months,recurring_reserve_cents,
+ reserve_components,evidence_sha256,apple_original_transaction_id)
+select 'a0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','retail','apple:aerial-paid-tx',
+ 2099,start_at,end_at,end_at+interval '90 days',1,100,
+ '{"storage":20,"delivery":20,"compute":10,"email":5,"support":25,"retention":10,"uncertainty":10}',
+ repeat('d',64),'aerial-paid-chain' from paid_window;
 insert into public.credit_grants(org_id,environment,source,reference,
  product_id,granted_credits,remaining_credits,starts_at,expires_at)
 select 'a0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Production','monthly',
- 'apple:aerial-paid-tx','com.rendprop.app.pro29.monthly',80,80,start_at,end_at
+ 'apple:aerial-paid-tx','com.rendprop.app.pro29.monthly',60,60,start_at,end_at
  from paid_window;
 create temporary table downgrade_seed(manifest jsonb,quote jsonb,consent jsonb);
 insert into downgrade_seed
@@ -105,7 +119,7 @@ begin
    'a0111111-1111-4111-8111-111111111111',org,
    'aerial-opening:'||j.operation_id,'aerial_assessment','succeeded',null);
  insert into downgrade_job values(j.id,'a0999999-9999-4999-8999-999999999999');
- perform pg_temp.downgrade_ok((select remaining_credits=60 from public.credit_grants
+ perform pg_temp.downgrade_ok((select remaining_credits=40 from public.credit_grants
    where reference='apple:aerial-paid-tx') and
    (select state='reserved' from public.credit_holds
      where request_key='aerial-opening:a0888888-8888-4888-8888-888888888888'),

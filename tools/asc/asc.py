@@ -106,7 +106,7 @@ SUBSCRIPTIONS = [
         "usd": "249.99",
         "groupLevel": 1,
         "displayName": "Team Monthly",
-        "description": "1,000 AI credits monthly; 3 seats.",
+        "description": "600 AI credits monthly; 3 seats.",
     },
     {
         "productId": "com.rendprop.app.team.annual",
@@ -124,7 +124,7 @@ SUBSCRIPTIONS = [
         "usd": "99.99",
         "groupLevel": 2,
         "displayName": "Ultra Monthly",
-        "description": "440 AI credits monthly; 1 seat.",
+        "description": "250 AI credits monthly; 1 seat.",
     },
     {
         "productId": "com.rendprop.app.pro.annual",
@@ -142,7 +142,7 @@ SUBSCRIPTIONS = [
         "usd": "49.99",
         "groupLevel": 3,
         "displayName": "Max Monthly",
-        "description": "200 AI credits monthly; 1 seat.",
+        "description": "120 AI credits monthly; 1 seat.",
     },
     {
         "productId": "com.rendprop.app.pro29.monthly",
@@ -154,7 +154,7 @@ SUBSCRIPTIONS = [
         "usd": "29.99",
         "groupLevel": 4,
         "displayName": "Pro Monthly",
-        "description": "80 AI credits monthly; 1 seat.",
+        "description": "60 AI credits monthly; 1 seat.",
     },
     {
         "productId": "com.rendprop.app.starter.annual",
@@ -181,7 +181,7 @@ TEAM_SEAT_SUBSCRIPTIONS = [
         "groupLevel": 1,
         "displayName": "Team %d Seats Monthly" % seats,
         "description": "%s AI credits monthly; %d seats."
-                       % (format(1000 + 100 * (seats - 3), ","), seats),
+                       % (format(600 + 100 * (seats - 3), ","), seats),
     }
     for seats in range(4, 10)
 ]

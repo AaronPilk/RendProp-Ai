@@ -37,7 +37,7 @@ Deno.test("device and notification paths call the same environment-bound RPC", a
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const rpc = (name: string, args: Record<string, unknown>) => {
     calls.push({ name, args });
-    return Promise.resolve({ data: { granted: true, credits: 440 }, error: null });
+    return Promise.resolve({ data: { granted: true, credits: 250 }, error: null });
   };
   await applyVerifiedMonthlyCredits(rpc, org, paid);
   await applyVerifiedMonthlyCredits(rpc, org, { ...paid, environment: "Sandbox" },

@@ -56,12 +56,12 @@ insert into public.apple_serving_schedules(product_id,storefront,currency,
   reserve_components,trial_reserve_components,evidence_sha256) values
   ('com.rendprop.app.team4.monthly','USA','USD',299990,20000,1,
    now()-interval '6 days',now()+interval '1 day',
-   '{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}',
+   '{"storage":115,"delivery":120,"compute":60,"email":30,"support":160,"retention":55,"uncertainty":60}',
    '{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}',
    repeat('a',64)),
   ('com.rendprop.app.team5.monthly','USA','USD',349990,23000,1,
    now()-interval '2 days',now()+interval '1 day',
-   '{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}',
+   '{"storage":130,"delivery":140,"compute":70,"email":35,"support":195,"retention":60,"uncertainty":70}',
    '{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}',
    repeat('b',64));
 insert into public.serving_funding(org_id,source,collection_ref,net_receipts_cents,
@@ -69,7 +69,7 @@ insert into public.serving_funding(org_id,source,collection_ref,net_receipts_cen
   reserve_components,evidence_sha256,apple_original_transaction_id) values
   ('4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','retail','apple:team-four',20000,
    now()-interval '5 days',now()+interval '25 days',now()+interval '25 days',
-   1,0,'{}',repeat('a',64),'team-chain');
+   1,600,'{"storage":115,"delivery":120,"compute":60,"email":30,"support":160,"retention":55,"uncertainty":60}',repeat('a',64),'team-chain');
 
 select pg_temp.monthly_ok(public.org_seats_allowed('4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')=4
   and (select seats=4 and price_cents=29999 from public.team_current_paid_variant(
@@ -87,9 +87,9 @@ begin
    'Production','team-chain','team-four',now()-interval '5 days',
    now()+interval '25 days',299990,now()-interval '5 days'+interval '1 minute',
    now()-interval '5 days'+interval '1 minute','paid');
- perform pg_temp.monthly_ok(r->>'credits'='1100' and
-   (public.credit_wallet_state(org,'Production')->>'monthly_available')::int=1100,
-   'four-seat paid term mints exactly 1100 credits');
+ perform pg_temp.monthly_ok(r->>'credits'='700' and
+   (public.credit_wallet_state(org,'Production')->>'monthly_available')::int=700,
+   'four-seat paid term mints exactly 700 credits');
 end$$;
 reset role;
 
@@ -109,7 +109,7 @@ insert into public.serving_funding(org_id,source,collection_ref,net_receipts_cen
   reserve_components,evidence_sha256,apple_original_transaction_id) values
   ('4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','retail','apple:team-five',23000,
    now()-interval '1 day',now()+interval '29 days',now()+interval '29 days',
-   1,0,'{}',repeat('b',64),'team-chain');
+   1,700,'{"storage":130,"delivery":140,"compute":70,"email":35,"support":195,"retention":60,"uncertainty":70}',repeat('b',64),'team-chain');
 select pg_temp.monthly_ok(public.org_seats_allowed('4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')=5,
   'five-seat upgrade uses current signed transaction, not the old four-seat term');
 set local role service_role;
@@ -120,9 +120,9 @@ begin
    'Production','team-chain','team-five',now()-interval '1 day',
    now()+interval '29 days',349990,now()-interval '1 day'+interval '1 minute',
    now()-interval '1 day'+interval '1 minute','paid');
- perform pg_temp.monthly_ok(r->>'credits'='1200' and
-   (public.credit_wallet_state(org,'Production')->>'monthly_available')::int=1200,
-   'upgrade starts new paid period and closes old unspent 1100-credit grant');
+ perform pg_temp.monthly_ok(r->>'credits'='800' and
+   (public.credit_wallet_state(org,'Production')->>'monthly_available')::int=800,
+   'upgrade starts new paid period and closes old unspent 700-credit grant');
  perform pg_temp.monthly_ok((select count(*)=1 from public.credit_grants
      where reference='apple:team-four' and revoked_at is not null),
    'superseded credit grant is revoked exactly once');
@@ -131,14 +131,14 @@ begin
    now()+interval '25 days',299990,now()-interval '5 days'+interval '1 minute',
    now(),'reversed');
  perform pg_temp.monthly_ok(r->>'reason'='not_current_paid_period' and
-   (public.credit_wallet_state(org,'Production')->>'monthly_available')::int=1200,
+   (public.credit_wallet_state(org,'Production')->>'monthly_available')::int=800,
    'late refund reversal cannot resurrect a superseded allowance');
  r:=public.credit_verified_monthly_apply(org,'com.rendprop.app.team5.monthly',
    'Production','team-chain','team-five',now()-interval '1 day',
    now()+interval '29 days',349990,now()-interval '1 day'+interval '1 minute',
    now(),'paid');
  perform pg_temp.monthly_ok(r->>'replay'='true' and
-   (public.credit_wallet_state(org,'Production')->>'monthly_available')::int=1200,
+   (public.credit_wallet_state(org,'Production')->>'monthly_available')::int=800,
    'notification replay does not double-grant upgrade credits');
 end$$;
 reset role;

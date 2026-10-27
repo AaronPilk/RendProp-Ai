@@ -6,15 +6,15 @@ the same Apple group and level, with one current product per workspace:
 
 | Seats | Product ID | US monthly price | Monthly credits |
 | ---: | --- | ---: | ---: |
-| 4 | `com.rendprop.app.team4.monthly` | $299.99 | 1,100 |
-| 5 | `com.rendprop.app.team5.monthly` | $349.99 | 1,200 |
-| 6 | `com.rendprop.app.team6.monthly` | $399.99 | 1,300 |
-| 7 | `com.rendprop.app.team7.monthly` | $449.99 | 1,400 |
-| 8 | `com.rendprop.app.team8.monthly` | $499.99 | 1,500 |
-| 9 | `com.rendprop.app.team9.monthly` | $549.99 | 1,600 |
+| 4 | `com.rendprop.app.team4.monthly` | $299.99 | 700 |
+| 5 | `com.rendprop.app.team5.monthly` | $349.99 | 800 |
+| 6 | `com.rendprop.app.team6.monthly` | $399.99 | 900 |
+| 7 | `com.rendprop.app.team7.monthly` | $449.99 | 1,000 |
+| 8 | `com.rendprop.app.team8.monthly` | $499.99 | 1,100 |
+| 9 | `com.rendprop.app.team9.monthly` | $549.99 | 1,200 |
 
-These exact prices and credits match
-`services/supabase/migrations/20261027180000_team_paid_seat_variants.sql`.
+These exact prices and credits match the forward repair in
+`services/supabase/migrations/20261027190441_pricing_margin_repair.sql`.
 The Apple definitions are in `asc.py` and `Rendprop.storekit`, but normal ASC
 commands **exclude all six**. The app also excludes them from `RendpropProducts.all`,
 and the server funding/catalog rows are inactive. StoreKit fixtures prove only

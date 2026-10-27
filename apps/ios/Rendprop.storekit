@@ -3,7 +3,7 @@
   "nonRenewingSubscriptions": [],
   "products": [
     {
-      "displayPrice": "29.99",
+      "displayPrice": "39.99",
       "familyShareable": false,
       "internalID": "7C0E0100",
       "localizations": [
@@ -40,7 +40,7 @@
           },
           "localizations": [
             {
-              "description": "80 AI credits monthly; 1 seat.",
+              "description": "60 AI credits monthly; 1 seat.",
               "displayName": "Pro Monthly",
               "locale": "en_US"
             }
@@ -66,7 +66,7 @@
           },
           "localizations": [
             {
-              "description": "1,000 AI credits monthly; 3 seats.",
+              "description": "600 AI credits monthly; 3 seats.",
               "displayName": "Team Monthly",
               "locale": "en_US"
             }
@@ -92,7 +92,7 @@
           },
           "localizations": [
             {
-              "description": "1,100 AI credits monthly; 4 seats.",
+              "description": "700 AI credits monthly; 4 seats.",
               "displayName": "Team 4 Seats Monthly",
               "locale": "en_US"
             }
@@ -118,7 +118,7 @@
           },
           "localizations": [
             {
-              "description": "1,200 AI credits monthly; 5 seats.",
+              "description": "800 AI credits monthly; 5 seats.",
               "displayName": "Team 5 Seats Monthly",
               "locale": "en_US"
             }
@@ -144,7 +144,7 @@
           },
           "localizations": [
             {
-              "description": "1,300 AI credits monthly; 6 seats.",
+              "description": "900 AI credits monthly; 6 seats.",
               "displayName": "Team 6 Seats Monthly",
               "locale": "en_US"
             }
@@ -170,7 +170,7 @@
           },
           "localizations": [
             {
-              "description": "1,400 AI credits monthly; 7 seats.",
+              "description": "1,000 AI credits monthly; 7 seats.",
               "displayName": "Team 7 Seats Monthly",
               "locale": "en_US"
             }
@@ -196,7 +196,7 @@
           },
           "localizations": [
             {
-              "description": "1,500 AI credits monthly; 8 seats.",
+              "description": "1,100 AI credits monthly; 8 seats.",
               "displayName": "Team 8 Seats Monthly",
               "locale": "en_US"
             }
@@ -222,7 +222,7 @@
           },
           "localizations": [
             {
-              "description": "1,600 AI credits monthly; 9 seats.",
+              "description": "1,200 AI credits monthly; 9 seats.",
               "displayName": "Team 9 Seats Monthly",
               "locale": "en_US"
             }
@@ -274,7 +274,7 @@
           },
           "localizations": [
             {
-              "description": "440 AI credits monthly; 1 seat.",
+              "description": "250 AI credits monthly; 1 seat.",
               "displayName": "Ultra Monthly",
               "locale": "en_US"
             }
@@ -326,7 +326,7 @@
           },
           "localizations": [
             {
-              "description": "200 AI credits monthly; 1 seat.",
+              "description": "120 AI credits monthly; 1 seat.",
               "displayName": "Max Monthly",
               "locale": "en_US"
             }

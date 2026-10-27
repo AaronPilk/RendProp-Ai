@@ -23,14 +23,16 @@ Declutter 10 credits / 50 cents; Stage 15 credits / 75 cents
 (`services/supabase/migrations/20261027182000_credit_photo_stage.sql:39-75`).
 That fence may refuse a route before supplier dispatch if its conservative
 quote does not fit; it must not be bypassed to make an edit appear available.
-The local StoreKit test file has 100 credits at $29.99; that implies $3.00
-gross per Declutter and $4.50 per Stage from purchased credits, before Apple
-commission, tax, hosting, and any other cost. This is not evidence of the live
-App Store price or realized margin. Monthly grant sizes are Pro 80, Max 200,
-Ultra 440, Team 1,000 (`apps/ios/Rendprop/Purchases/Products.swift:116-123`),
-which place $4/$10/$22/$50 of supplier exposure at the 5-cent maximum before
-the combined subscription ceiling. Unused monthly credits do not imply a
-provider bill; actual cost is the settled ledger.
+The repaired local StoreKit test file has a dormant 100-credit pack at $39.99;
+that implies $4.00 gross per Declutter and $6.00 per Stage from purchased
+credits, before Apple commission, tax, hosting, and any other cost. This is not
+evidence of the live App Store price or realized margin. Proposed monthly
+grants are Pro 60, Max 120, Ultra 250, Team 600, with 100 more per paid Team
+seat (`apps/ios/Rendprop/Purchases/Products.swift`). They put $3/$6/$12.50/$30
+of supplier exposure at the 5-cent maximum before the combined subscription
+ceiling. Unused monthly credits do not imply a provider bill; actual cost is
+the settled ledger. See [the margin repair](release/PRICING_MARGIN_REPAIR_20261027.md)
+for the full operating reserve and noncredit media budget.
 
 For current Aerial intro, KIE generation alone is quoted at 45 cents for a
 five-second 1080p Pro or Omni reference opening, or $1.675 on the old 4K

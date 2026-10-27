@@ -1,6 +1,12 @@
 -- Disposable proof: a Free member can spend purchased credits on one bounded
 -- Declutter, while supplier journal, idempotency and no-dispatch release hold.
 begin;
+-- This fixture tests purchase authorization after explicit local activation;
+-- the migration keeps the real pack dormant.
+update public.credit_products set active=true,
+  verified_net_proceeds_floor_cents=2799,
+  proceeds_evidence_sha256=repeat('a',64)
+  where product_id='com.rendprop.app.credits.100';
 create temporary table credit_photo_checks(n integer not null default 0);
 insert into credit_photo_checks default values;
 grant all on credit_photo_checks to service_role;

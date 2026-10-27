@@ -78,7 +78,7 @@ class LaunchCatalogParityTests(unittest.TestCase):
         local = {s["productID"]: s for group in fixture["subscriptionGroups"]
                  for s in group["subscriptions"]}
         server = (asc.REPO_ROOT / "services/supabase/migrations"
-                  / "20261027180000_team_paid_seat_variants.sql").read_text()
+                  / "20261027190441_pricing_margin_repair.sql").read_text()
         self.assertEqual(len(asc.TEAM_SEAT_SUBSCRIPTIONS), 6)
         self.assertEqual(len(asc.active_subscriptions(SimpleNamespace())), 7,
                          "ordinary ASC commands must leave Team variants dormant")
@@ -87,7 +87,7 @@ class LaunchCatalogParityTests(unittest.TestCase):
         for seats, spec in enumerate(asc.TEAM_SEAT_SUBSCRIPTIONS, start=4):
             product_id = f"com.rendprop.app.team{seats}.monthly"
             cents = 24999 + 5000 * (seats - 3)
-            credits = 1000 + 100 * (seats - 3)
+            credits = 600 + 100 * (seats - 3)
             with self.subTest(seats=seats):
                 self.assertEqual(spec["productId"], product_id)
                 self.assertEqual(spec["groupLevel"], 1)
@@ -101,7 +101,8 @@ class LaunchCatalogParityTests(unittest.TestCase):
                                  spec["displayName"])
                 self.assertEqual(local[product_id]["localizations"][0]["description"],
                                  spec["description"])
-                self.assertIn(f"('{product_id}',{seats},{credits},{cents},false)", server)
+                self.assertIn("monthly_credits=600+100*(seats-3)", server)
+                self.assertIn("600+100*(seats-3)", server)
 
     def test_obsolete_review_image_is_rejected_before_any_apple_access(self):
         self.assertIn(

@@ -162,6 +162,8 @@ export async function creditsRoute(
       p_product: tx.productId, p_environment: tx.environment,
       p_transaction: tx.transactionId, p_purchased_at: tx.purchaseDate,
       p_signed_at: tx.signedDate, p_account_token: tx.appAccountToken,
+      p_price_milliunits: tx.priceMilliunits, p_currency: tx.currency,
+      p_storefront: tx.storefront,
     });
     rpcError(error, "Credit purchase could not be recorded. Please retry.");
     assert(data && typeof data.org_id === "string" && UUID.test(data.org_id) &&

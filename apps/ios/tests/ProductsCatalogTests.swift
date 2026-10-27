@@ -34,7 +34,7 @@ enum SpaceType: Equatable {
         precondition(RendpropProducts.plan(fromPlanName: "starter") == .max)
         precondition(RendpropProducts.plan(fromPlanName: "solo") == .max)
         precondition(RendpropProducts.plan(fromPlanName: "legacy_pro") == .ultra)
-        precondition(RendpropPlan.allCases.map(\.allowances.credits) == [80, 200, 440, 1000])
+        precondition(RendpropPlan.allCases.map(\.allowances.credits) == [60, 120, 250, 600])
         for plan in RendpropPlan.allCases {
             precondition(plan.benefits.first ==
                          "\(plan.allowances.credits) monthly credits for eligible photo edits after the trial")
@@ -42,7 +42,7 @@ enum SpaceType: Equatable {
         precondition(RendpropPlan.team.allowances.seats == 3)
         precondition(RendpropProducts.notSoldAtLaunch.count == 9)
         precondition(TeamSeatVariant.all.map(\.seats) == [4, 5, 6, 7, 8, 9])
-        precondition(TeamSeatVariant.all.map(\.monthlyCredits) == [1100, 1200, 1300, 1400, 1500, 1600])
+        precondition(TeamSeatVariant.all.map(\.monthlyCredits) == [700, 800, 900, 1000, 1100, 1200])
         for variant in TeamSeatVariant.all {
             precondition(RendpropProducts.plan(for: variant.productID) == .team)
             precondition(RendpropProducts.period(for: variant.productID) == .monthly)

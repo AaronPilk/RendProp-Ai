@@ -62,10 +62,10 @@ groups and refuses a collision before making any Apple write.
    without repricing the existing three. Read back each exact USA price and
    introductory offer.
 2. Run `credit_pack_iap.py status` and `plan`. Its guarded `apply` can create
-   the **100-credit $29.99 consumable** with USA-only availability, a single
+   the **100-credit $39.99 consumable** with USA-only availability, a single
    exact price, and en-US metadata. It never substitutes a nearby price tier.
    Do not run its `apply` until the contribution-margin audit accepts the
-   $29.99/100-credit economics. An IAP review screenshot, a verified Sandbox
+   $39.99/100-credit economics. An IAP review screenshot, a verified Sandbox
    purchase/grant/refund, and inclusion with the first app submission remain
    separate requirements.
 3. Wait for the existing subscriptions' future .99 prices to become effective,

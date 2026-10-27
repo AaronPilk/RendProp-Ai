@@ -14,15 +14,24 @@ begin begin execute q;exception when others then
 select pg_temp.combined_ok((select value->'enabled'='false'::jsonb
   from public.app_config where key='credit_combined_budget'),
   'new shared margin authority is dormant by migration');
+select pg_temp.combined_ok((select count(*)=10 and bool_and(
+    c.credits=p.credits and
+    floor(floor(p.target_us_price_cents::numeric*0.70)*0.25)>=
+      p.credits*5+p.storage_cents+p.delivery_cents+p.compute_cents+
+      p.email_cents+p.support_cents+p.retention_cents+
+      p.uncertainty_cents+p.noncredit_media_floor_cents)
+  from public.credit_monthly_margin_policy p
+  join public.credit_monthly_catalog c using(product_id)),
+  'all ten fixed-price monthly SKUs reserve credits, operations, and noncredit media inside 25% of Apple net');
 insert into auth.users(id,email,is_anonymous) values
  ('91111111-1111-4111-8111-111111111111','combined-fixture@example.invalid',false);
 create temporary table combined_cases(org_id uuid,sku text,plan text,price bigint,
   monthly_credits integer,expected_budget integer,expected_noncredit integer);
 insert into combined_cases values
- ('91aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.pro29.monthly','pro',29990,80,894,494),
- ('92aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.starter.monthly','starter',49990,200,1524,524),
- ('93aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.pro.monthly','pro',99990,440,3099,899),
- ('94aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.team.monthly','team',249990,1000,7824,2824);
+ ('91aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.pro29.monthly','pro',29990,60,424,124),
+ ('92aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.starter.monthly','max',49990,120,724,124),
+ ('93aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.pro.monthly','ultra',99990,250,1499,249),
+ ('94aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.team.monthly','team',249990,600,3874,874);
 grant select on combined_cases to service_role;
 insert into public.orgs(id,name,plan,plan_source,apple_product_id,plan_expires_at)
 select org_id,'Combined supplier fixture',plan,'apple',sku,now()+interval '29 days'
@@ -43,6 +52,31 @@ insert into public.credit_monthly_events(environment,transaction_id,
 select 'Production','combined-tx-'||org_id,'combined-chain-'||org_id,
  org_id,sku,'paid',now()-interval '1 day'+interval '1 minute',price,
  now()-interval '1 day',now()+interval '29 days' from combined_cases;
+insert into public.apple_serving_schedules(product_id,storefront,currency,
+ price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,
+ reserve_components,trial_reserve_components,evidence_sha256)
+select c.sku,'USA','USD',c.price,floor(c.price::numeric/10*0.70)::bigint,
+ 1,now()-interval '2 days',now()+interval '1 day',
+ jsonb_build_object('storage',p.storage_cents,'delivery',p.delivery_cents,
+   'compute',p.compute_cents,'email',p.email_cents,'support',p.support_cents,
+   'retention',p.retention_cents,'uncertainty',p.uncertainty_cents),
+ '{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}'::jsonb,
+ encode(sha256(convert_to(c.org_id::text,'UTF8')),'hex')
+from combined_cases c join public.credit_monthly_margin_policy p on p.product_id=c.sku;
+insert into public.serving_funding(org_id,source,collection_ref,net_receipts_cents,
+ starts_at,ends_at,retention_ends_at,service_months,recurring_reserve_cents,
+ reserve_components,evidence_sha256,apple_original_transaction_id)
+select c.org_id,'retail','apple:combined-tx-'||c.org_id,
+ floor(c.price::numeric/10*0.70)::bigint,now()-interval '1 day',
+ now()+interval '29 days',now()+interval '119 days',1,
+ p.storage_cents+p.delivery_cents+p.compute_cents+p.email_cents+
+ p.support_cents+p.retention_cents+p.uncertainty_cents,
+ jsonb_build_object('storage',p.storage_cents,'delivery',p.delivery_cents,
+   'compute',p.compute_cents,'email',p.email_cents,'support',p.support_cents,
+   'retention',p.retention_cents,'uncertainty',p.uncertainty_cents),
+ encode(sha256(convert_to(c.org_id::text,'UTF8')),'hex'),
+ 'combined-chain-'||c.org_id
+from combined_cases c join public.credit_monthly_margin_policy p on p.product_id=c.sku;
 update public.credit_monthly_catalog set active=true
  where product_id in(select sku from combined_cases);
 insert into public.credit_grants(org_id,environment,source,reference,
@@ -73,19 +107,32 @@ do $$declare c record;s jsonb;e jsonb;begin
  end loop;
  e:=public.plan_serving_ceiling((select org_id from combined_cases
    where sku='com.rendprop.app.pro.monthly'));
- perform pg_temp.combined_ok(e->>'allowance_policy'='credit-combined-v1' and
-   (e->>'ceiling_cents')::integer=899 and
+ perform pg_temp.combined_ok(e->>'allowance_policy'='credit-combined-v2' and
+   (e->>'ceiling_cents')::integer=249 and
    public.credit_primary_subscription((select org_id from combined_cases
      where sku='com.rendprop.app.pro.monthly'),'Production'),
-   'active Ultra period exposes only noncredit headroom while all 440 credits remain funded');
+   'active Ultra period exposes only noncredit headroom while all 250 credits remain funded');
  perform pg_temp.combined_refuses(format(
-   'select public.library_serving_envelope_admit(%L,%L,900,%L)',
+   'select public.library_serving_envelope_admit(%L,%L,250,%L)',
    (select org_id from combined_cases where sku='com.rendprop.app.pro.monthly'),
    (select org_id from combined_cases where sku='com.rendprop.app.pro.monthly'),
    'combined-over'),
    'RP402:','noncredit tool cannot spend the monthly credit ring-fence');
 end$$;
 reset role;
+update public.serving_funding set revoked_at=now(),revocation_kind='operator'
+  where org_id=(select org_id from combined_cases
+    where sku='com.rendprop.app.pro.monthly');
+set local role service_role;
+select pg_temp.combined_refuses(format(
+  'select public.plan_serving_ceiling(%L)',
+  (select org_id from combined_cases where sku='com.rendprop.app.pro.monthly')),
+  'RP503: Current paid credit funding is unavailable',
+  'a minted monthly liability cannot fall back to the old larger noncredit ceiling if cash is revoked');
+reset role;
+update public.serving_funding set revoked_at=null,revocation_kind=null
+  where org_id=(select org_id from combined_cases
+    where sku='com.rendprop.app.pro.monthly');
 insert into public.credit_grants(org_id,environment,source,reference,
  product_id,granted_credits,remaining_credits,expires_at)
 select org_id,'Production','topup','separate-paid-topup',
@@ -94,7 +141,7 @@ select org_id,'Production','topup','separate-paid-topup',
 set local role service_role;
 select pg_temp.combined_ok(
  (public.credit_combined_budget_state((select org_id from combined_cases
-   where sku='com.rendprop.app.starter.monthly'))->>'monthly_credit_face_cents')::integer=1000,
+   where sku='com.rendprop.app.starter.monthly'))->>'monthly_credit_face_cents')::integer=600,
  'independent purchased top-ups do not consume subscription credit reserve');
 do $$declare actor uuid:='91111111-1111-4111-8111-111111111111';
  org uuid:='92aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -112,13 +159,13 @@ do $$declare actor uuid:='91111111-1111-4111-8111-111111111111';
    jsonb_build_object('request_key',key,'stage','photo.declutter:0','actor_id',actor));
  result:=public.credit_combined_budget_state(org);
  if (result->>'linked_credit_ledger_cents')::numeric<>25 or
-   (public.plan_serving_ceiling(org)->>'ceiling_cents')::numeric<>549 or
+   (public.plan_serving_ceiling(org)->>'ceiling_cents')::numeric<>149 or
    public.org_month_spend_cents(org)<>0 then
    raise exception 'COMBINED DIAGNOSTIC: state %, plan %, spend %',result,
      public.plan_serving_ceiling(org),public.org_month_spend_cents(org);
  end if;
  perform pg_temp.combined_ok((result->>'linked_credit_ledger_cents')::numeric=25 and
-   (public.plan_serving_ceiling(org)->>'ceiling_cents')::numeric=549 and
+   (public.plan_serving_ceiling(org)->>'ceiling_cents')::numeric=149 and
    public.org_month_spend_cents(org)=0,
    'settled credit supplier cost is counted once, outside noncredit early spend');
  insert into public.cost_ledger(org_id,feature,provider,model,total_cents,meta)
@@ -134,7 +181,7 @@ reset role;
 insert into public.credit_grants(org_id,environment,source,reference,
  product_id,granted_credits,remaining_credits,starts_at,expires_at)
 select org_id,'Production','monthly','apple:overlap-seat-upgrade',
- sku,1000,1000,now()-interval '1 day',now()+interval '29 days'
+ sku,600,600,now()-interval '1 day',now()+interval '29 days'
 from combined_cases where sku='com.rendprop.app.team.monthly';
 set local role service_role;
 select pg_temp.combined_refuses(format(

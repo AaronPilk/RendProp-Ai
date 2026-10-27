@@ -27,7 +27,7 @@ REVIEW_NOTE = (
 )
 LOCALE = "en-US"
 BASE_TERRITORY = "USA"
-CUSTOMER_PRICE = Decimal("29.99")
+CUSTOMER_PRICE = Decimal("39.99")
 _DRAFT = "PREPARE_FOR_SUBMISSION"
 
 
@@ -120,7 +120,7 @@ def read_us_price(client, product_id):
     """None if unpriced; otherwise verify the entire USA manual schedule.
 
     Multiple USA entries could represent a scheduled change, which this initial
-    product tool must not overwrite or silently count as a stable $29.99 price.
+    product tool must not overwrite or silently count as a stable $39.99 price.
     """
     response = client.get_optional(
         "/v2/inAppPurchases/%s/iapPriceSchedule" % product_id)
@@ -181,7 +181,7 @@ def find_exact_price_point(client, product_id):
             exact.append(point)
     if len(exact) != 1:
         raise CreditPackError(
-            "Apple offers %d exact USA $29.99 price points; refusing any substitute"
+            "Apple offers %d exact USA $39.99 price points; refusing any substitute"
             % len(exact))
     return exact[0]["id"]
 
@@ -261,7 +261,7 @@ def inspect(client, app_id):
     if product is None:
         return {"product": None, "steps": [
             "Create the 100-credit CONSUMABLE under this app.",
-            "Then configure USA-only availability and exact USD 29.99 pricing.",
+            "Then configure USA-only availability and exact USD 39.99 pricing.",
             "Then create a draft IAP version and en-US localization.",
             "Review screenshot and first-IAP submission remain separate.",
         ]}
@@ -272,7 +272,7 @@ def inspect(client, app_id):
     if availability is not None and availability != (False, [BASE_TERRITORY]):
         raise CreditPackError("Existing availability differs from USA-only; inspect manually")
     if price is not None and price != CUSTOMER_PRICE:
-        raise CreditPackError("Existing USA customer price is $%s, not $29.99" % price)
+        raise CreditPackError("Existing USA customer price is $%s, not $39.99" % price)
     if not draft and versions:
         raise CreditPackError("No editable IAP version; inspect existing versions manually")
     localization = read_localization(client, draft["id"]) if draft else None
@@ -283,7 +283,7 @@ def inspect(client, app_id):
     if availability is None:
         steps.append("Create USA-only territory availability.")
     if price is None:
-        steps.append("Select Apple's exact USA $29.99 price point, then create its price schedule.")
+        steps.append("Select Apple's exact USA $39.99 price point, then create its price schedule.")
     if draft is None:
         steps.append("Create a draft IAP version.")
     if localization is None:
@@ -317,7 +317,7 @@ def apply(client, app_id):
         client.post("/v1/inAppPurchasePriceSchedules",
                     price_schedule_create_body(product_id, point_id))
         if read_us_price(client, product_id) != CUSTOMER_PRICE:
-            raise CreditPackError("Exact $29.99 price did not read back")
+            raise CreditPackError("Exact $39.99 price did not read back")
     state = inspect(client, app_id)
     if state["version"] is None:
         client.post("/v1/inAppPurchaseVersions", version_create_body(product_id))

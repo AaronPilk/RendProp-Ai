@@ -2,9 +2,12 @@
 
 `credit_pack_iap.py` prepares only `com.rendprop.app.credits.100`, a consumable
 for 100 nonexpiring workspace credits at an **exact United States customer price
-of USD 29.99**. It does not derive a price from the number of credits and never
+of USD 39.99**. It does not derive a price from the number of credits and never
 substitutes a nearby Apple price point. Its product ID, amount, quantity, and
 display name match `apps/ios/Rendprop.storekit` and the credit-wallet allowlist.
+The server pack remains inactive until signed USA/USD $39.99 purchase and
+funding checks pass. The [margin model](../../docs/release/PRICING_MARGIN_REPAIR_20261027.md)
+reserves the full $5 supplier face and $1.90 for other serving costs.
 The localized description is 42 characters, within Apple's 45-character limit.
 
 The script uses the existing private `asc.Client` credentials. Its three modes:
@@ -31,7 +34,7 @@ The exact API sequence, from Apple's App Store Connect OpenAPI **4.5.1**:
 | --- | --- | --- |
 | App/product | `GET /v1/apps?filter[bundleId]=com.rendprop.app`; `GET /v1/apps/{appId}/inAppPurchasesV2?filter[productId]=...` | `POST /v2/inAppPurchases`, type `inAppPurchases`, attributes `name`, `productId`, `inAppPurchaseType=CONSUMABLE`, `reviewNote`, relationship `app` |
 | Territory | `GET /v2/inAppPurchases/{id}/inAppPurchaseAvailability`; `GET /v1/inAppPurchaseAvailabilities/{id}/availableTerritories` | `POST /v1/inAppPurchaseAvailabilities`, `availableInNewTerritories=false`, `availableTerritories=[USA]` |
-| Price | `GET /v2/inAppPurchases/{id}/iapPriceSchedule`; `GET /v1/inAppPurchasePriceSchedules/{id}/manualPrices`; `GET /v2/inAppPurchases/{id}/pricePoints?filter[territory]=USA` | `POST /v1/inAppPurchasePriceSchedules`, `baseTerritory=USA`, one inline `inAppPurchasePrices` reference `${...}`, `startDate=null`, exact `inAppPurchasePricePoint` ID for `customerPrice=29.99` |
+| Price | `GET /v2/inAppPurchases/{id}/iapPriceSchedule`; `GET /v1/inAppPurchasePriceSchedules/{id}/manualPrices`; `GET /v2/inAppPurchases/{id}/pricePoints?filter[territory]=USA` | `POST /v1/inAppPurchasePriceSchedules`, `baseTerritory=USA`, one inline `inAppPurchasePrices` reference `${...}`, `startDate=null`, exact `inAppPurchasePricePoint` ID for `customerPrice=39.99` |
 | Version/metadata | `GET /v2/inAppPurchases/{id}/versions`; `GET /v1/inAppPurchaseVersions/{versionId}/localizations` | `POST /v1/inAppPurchaseVersions`, then `POST /v2/inAppPurchaseLocalizations`, related to the **version**, locale `en-US` |
 
 The **remaining release steps are outside this tool**: provide an in-app

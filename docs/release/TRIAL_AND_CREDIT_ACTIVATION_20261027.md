@@ -40,7 +40,7 @@ media-delivery bounds. Only then admit the funded pool and enable
 
 ## Paid monthly credits
 
-Pro80 / Max200 / Ultra440 / Team1000 and a 10-credit Declutter quote are
+Pro60 / Max120 / Ultra250 / Team600 and a 10-credit Declutter quote are
 controlled TestFlight candidates, not activated retail allowances. Signed
 paid transaction, renewal, refund and product-period replay tests must pass.
 The server's monthly catalog then needs a reviewed activation, and the native
@@ -49,23 +49,28 @@ No introductory, grace, refunded or Sandbox transaction may create Production
 monthly credit grants. Purchased top-ups are nonexpiring and remain usable
 after downgrade; they are bound to the original org and Apple transaction.
 
-The dormant `credit_combined_budget` policy makes the total subscription
-supplier ceiling **45% of conservative 70% Apple net proceeds, less 50 cents
-for hosting**, using only the signed USA/USD price for the current exact paid
-term. It reserves the full 5-cent supplier face of every monthly credit up
-front, then limits video, aerial, assessments and other noncredit costs to the
-remainder. Linked credit supplier receipts are counted once. Purchased top-up
-supplier liability is independent because those credits have separate cash
-proceeds. The policy also requires an explicit `activated_from` timestamp:
+The dormant `credit-combined-v2` policy caps **all serving costs at 25% of
+conservative Apple net proceeds**, using the lesser of the signed USA/USD
+price after a 30% fee and the exact attested funding floor for the current paid
+term. It removes seven explicit hosting, delivery, compute, email, support,
+retention and uncertainty reserves first, then protects the full 5-cent
+supplier face of every monthly credit. Video, aerial, assessments and other
+noncredit supplier work use only the positive remainder. Linked credit supplier
+receipts are counted once. Purchased top-up supplier liability is independent
+because those credits have separate cash proceeds. The policy requires an
+explicit `activated_from` timestamp:
 paid periods that began before it remain on their legacy allowance until
 renewal. Activating only the monthly catalog cannot mint Production grants;
 the matching combined policy and date must be deliberately enabled after
 final economics QA.
 
-At candidate prices/grants the combined ceilings are Pro $8.94, Max $15.24,
-Ultra $30.99 and Team $78.24. The monthly-credit reserves are $4/$10/$22/$50,
-leaving only $4.94/$5.24/$8.99/$28.24 for all other supplier work, including
-assessments. This deliberately guarantees the monthly credits remain usable,
-but the remaining video/aerial headroom may not support advertised quotas.
-Keep the catalog and combined policy dormant until signed-period and renewal
-tests, full-use supplier stress, and every marketed creative quote pass.
+At the minimum funded operating reserve, the Pro/Max/Ultra/Team 3 supplier
+ceilings are $4.24/$7.24/$14.99/$38.74. Their monthly-credit supplier faces
+are $3/$6/$12.50/$30, leaving $1.24/$1.24/$2.49/$8.74 for noncredit media.
+The precise price, reserve components and added-seat ladder are in
+[the pricing margin repair](PRICING_MARGIN_REPAIR_20261027.md). This bounds
+spending but does not prove realized margin without actual invoices and
+serving limits. Keep the catalog and combined policy dormant until signed-period
+and renewal tests, full-use supplier stress, and every marketed creative quote
+pass. The 100-credit top-up also stays dormant until its $39.99 Apple price and
+signed proceeds are verified.

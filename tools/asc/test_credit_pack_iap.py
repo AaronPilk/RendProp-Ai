@@ -13,7 +13,7 @@ import credit_pack_iap as pack
 APP_ID = "rendprop-app-id"
 IAP_ID = "credit-iap-id"
 VERSION_ID = "credit-version-id"
-POINT_ID = "usa-2999-point"
+POINT_ID = "usa-3999-point"
 
 
 def row(kind, identifier, **attrs):
@@ -27,7 +27,7 @@ class FakeClient:
         self.availability = None
         self.price = None
         self.empty_schedule = False
-        self.price_point = "29.99"
+        self.price_point = "39.99"
         self.version = None
         self.localization = None
 
@@ -115,7 +115,7 @@ class FakeClient:
             assert body["included"][0]["id"] == handle
             assert body["included"][0]["relationships"]["inAppPurchasePricePoint"] == \
                 pack.relationship("inAppPurchasePricePoints", POINT_ID)
-            self.price = "29.99"
+            self.price = "39.99"
         elif path == "/v1/inAppPurchaseVersions":
             assert data["relationships"]["inAppPurchase"] == \
                 pack.relationship("inAppPurchases", IAP_ID)
@@ -140,7 +140,7 @@ class CreditPackTests(unittest.TestCase):
         output = io.StringIO()
         self.assertEqual(pack.main(["plan"], client=client, out=output), 0)
         self.assertIn("absent", output.getvalue())
-        self.assertIn("USD 29.99", output.getvalue())
+        self.assertIn("USD 39.99", output.getvalue())
         self.assertFalse(any(call[0] == "POST" for call in client.calls))
 
     def test_apply_requires_exact_product_confirmation_even_with_fake_client(self):
@@ -152,7 +152,7 @@ class CreditPackTests(unittest.TestCase):
     def test_full_apply_is_idempotent_and_exact(self):
         client = FakeClient()
         state = pack.apply(client, APP_ID)
-        self.assertEqual(str(state["price"]), "29.99")
+        self.assertEqual(str(state["price"]), "39.99")
         self.assertEqual(state["availability"], (False, ["USA"]))
         self.assertEqual(state["localization"]["attributes"]["locale"], "en-US")
         paths = [call[1] for call in client.calls if call[0] == "POST"]
@@ -207,9 +207,9 @@ class CreditPackTests(unittest.TestCase):
                                      productId=pack.PRODUCT_ID,
                                      inAppPurchaseType="CONSUMABLE")
                 client.availability = (False, ["USA"])
-                client.price = "29.99"
+                client.price = "39.99"
                 if override == "price":
-                    client.price = "19.99"
+                    client.price = "29.99"
                 else:
                     client.availability = (True, ["USA", "CAN"])
                 with self.assertRaises(pack.CreditPackError):
@@ -222,7 +222,7 @@ class CreditPackTests(unittest.TestCase):
                              productId=pack.PRODUCT_ID,
                              inAppPurchaseType="CONSUMABLE")
         client.availability = (False, ["USA"])
-        client.price = "29.99"
+        client.price = "39.99"
         client.version = row("inAppPurchaseVersions", VERSION_ID,
                              state="PREPARE_FOR_SUBMISSION")
         client.localization = row("inAppPurchaseLocalizations", "localization-id",
