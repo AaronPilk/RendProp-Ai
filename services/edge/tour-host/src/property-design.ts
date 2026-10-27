@@ -300,7 +300,11 @@ const DESIGN_CSS = `
   @media(prefers-reduced-motion:reduce) {
     $P *,$P *::before,$P *::after { transition:none!important; animation:none!important; scroll-behavior:auto!important; }
     $P .listing-cover .property-hero-copy,$P .listing-cover .property-hero-copy > * { opacity:1!important; transform:none!important; }
-    $P .listing-cover:has(.property-film.is-playing) .property-hero-copy { opacity:0!important; }
+  }
+  /* Signature keeps copy off the desktop film; Coastal and Signature phones
+     keep their identity beside or below the playing frame. */
+  @media(prefers-reduced-motion:reduce) and (min-width:601px) {
+    $S .listing-cover:has(.property-film.is-playing) .property-hero-copy { opacity:0!important; }
   }
   @media(prefers-reduced-transparency:reduce) {
     $P #listing-nav { background:var(--premium-paper); backdrop-filter:none; -webkit-backdrop-filter:none; }
