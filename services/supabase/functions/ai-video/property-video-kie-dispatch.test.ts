@@ -19,6 +19,7 @@ Deno.env.set("KIE_API_KEY",FIXTURE_KIE_KEY);
 const FUNCTIONS=new URL("../",import.meta.url);
 const INDEX=new URL("ai-video/index.ts",FUNCTIONS),QUALITY=new URL("ai-video/property-video-quality.ts",FUNCTIONS);
 const KIE_MODULE=new URL("_shared/property-video-kie.ts",FUNCTIONS),FRAMING=new URL("ai-video/reel-framing.ts",FUNCTIONS);
+const REGISTRY=new URL("_shared/property-video-prompt-registry.ts",FUNCTIONS);
 const IDENTITY_MODULE=new URL("_shared/property-video-kie-identity.ts",FUNCTIONS);
 const {KIE_PROPERTY_IDENTITY:KIE,KIE_PROPERTY_PROFILE}=await import(KIE_MODULE.href);
 const {resetRouterCache}=await import(new URL("_shared/router.ts",FUNCTIONS).href);
@@ -36,19 +37,21 @@ const once=(text:string,before:string,after:string)=>{assertEquals(text.split(be
 const sha=async(value:string|Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new Uint8Array(typeof value==="string"?new TextEncoder().encode(value):value))),b=>b.toString(16).padStart(2,"0")).join("");
 const INDEX_SOURCE=await Deno.readTextFile(INDEX),QUALITY_SOURCE=await Deno.readTextFile(QUALITY);
 const KIE_SOURCE=await Deno.readTextFile(KIE_MODULE),FRAMING_SOURCE=await Deno.readTextFile(FRAMING),IDENTITY_SOURCE=await Deno.readTextFile(IDENTITY_MODULE);
+const REGISTRY_SOURCE=await Deno.readTextFile(REGISTRY);
 const SIGNATURE="export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Promise<Response> {";
 /** Compiles the actual handler prelude + reel-clip route. `quality` swaps in a
  * compiled property-video-quality.ts variant; `kie` a compiled
  * _shared/property-video-kie.ts (for index.ts and the quality module alike);
  * `framing` a compiled reel-framing.ts (defect controls only). */
-async function compileRoute(indexSource=INDEX_SOURCE,quality?:string,o:{kie?:string;framing?:string;identity?:string}={}){
+async function compileRoute(indexSource=INDEX_SOURCE,quality?:string,o:{kie?:string;framing?:string;identity?:string;registry?:string}={}){
  const shared:Record<string,string>={},kieText=o.kie??(o.identity?KIE_SOURCE:undefined);
  if(kieText)shared[KIE_MODULE.href]=enc(absolute(kieText,KIE_MODULE,o.identity?{[IDENTITY_MODULE.href]:enc(o.identity)}:{}));
  if(o.framing)shared[FRAMING.href]=enc(absolute(o.framing,FRAMING));
+ if(kieText||o.framing||o.registry)shared[REGISTRY.href]=enc(absolute(o.registry??REGISTRY_SOURCE,REGISTRY,shared));
  const qualityText=quality??(kieText?QUALITY_SOURCE:undefined);
  const overrides:Record<string,string>={...shared,...(qualityText?{[QUALITY.href]:enc(absolute(qualityText,QUALITY,shared))}:{})};
  const imports=(indexSource.match(/^import [\s\S]*?;\n/gm)??[]).map(s=>absolute(s,INDEX,overrides)).join("");
- const helpers=[between(indexSource,"const SPACE_TYPES =","interface DroneBody"),fn(indexSource,"cleanPrompt"),fn(indexSource,"legacyVideoStep"),fn(indexSource,"durationNeeds"),
+ const helpers=[between(indexSource,"const SPACE_TYPES =","interface DroneBody"),fn(indexSource,"cleanPrompt"),fn(indexSource,"legacyVideoStep"),fn(indexSource,"durationNeeds"),fn(indexSource,"buildKieRegisteredPrompt"),
   indexSource.match(/^const ADVERTISED_SECONDS[\s\S]*?\n};\n/m)![0],indexSource.match(/^const MAX_IMAGE_B64_CHARS = [^;]+;/m)![0],
   indexSource.match(/^const ALLOWED_IMAGE_MIMES = [^;]+;/m)![0],indexSource.match(/^const MODEL_I2V = [^;]+;/m)![0]].join("\n");
  const prelude=between(indexSource,SIGNATURE,'    if (req.method === "GET" && seg.length === 1 && seg[0] === "operation")').replace(SIGNATURE,"return async function handleAiVideo(req:Request,worker?:any):Promise<Response> {");
@@ -345,19 +348,19 @@ Deno.test("FAL steady-v2 and v1 dispatch is byte-identical to base: resolver rou
  }
 });
 
-Deno.test("compiled defect controls: each Kie dispatch guard is load-bearing",async()=>{
+Deno.test("Kie dispatch mutation controls preserve pre-spend identity fences and later checks",async()=>{
  const bad=IDENTITY();bad.unit_cents=9;
- // 1. Pre-money identity check removed: a changed identity is charged and held before any refusal.
+ // 1. The registered prompt now independently rejects a changed identity before money.
  const noScope=await compileRoute(once(INDEX_SOURCE,'if(savedQualityProfile==="kie-kling3-4k-steady-v1")assertKiePropertyDispatchScope(','if(false)assertKiePropertyDispatchScope('));
- reset();await quiet(()=>run(worker({identity:bad}),dispatchRequest(),noScope));assert(state.charges===1&&state.rpcs.some(x=>/reserve/.test(x.name)),"control exposes spend before the identity refusal");
+ reset();const noScopeResult=await quiet(()=>run(worker({identity:bad}),dispatchRequest(),noScope));assertEquals(noScopeResult.status,503);noSpend();
  // 2. Dispatch re-read removed (the admission-time row compared instead): drift after the hold reaches the vendor.
  const stale=await compileRoute(once(INDEX_SOURCE,"samePinnedKieDispatch(await readPinnedRoute(KIE_PROPERTY_ROUTE_ID),step,",`samePinnedKieDispatch(${JSON.stringify(KIE_ROW)},step,`));
  reset({pinned:[KIE_ROW,{...KIE_ROW,unit_cents:9}]});await quiet(()=>run(worker(),dispatchRequest(),stale));assertEquals(state.posts.length,1,"control exposes a POST after drift");
  // 3. Steady prompt branch removed: Kie would build the v1 canvas prompt. The prompt pin now refuses
  //    that before any spend; with the pin removed as well, the canvas prompt would be sent.
- const promptSource=once(INDEX_SOURCE,' || savedQualityProfile==="kie-kling3-4k-steady-v1" && worker?.targetAspect',"");
+ const promptSource=once(INDEX_SOURCE,'savedQualityProfile==="kie-kling3-4k-steady-v1" && worker?.targetAspect',"false");
  reset();const refused=await quiet(async()=>run(worker(),dispatchRequest(),await compileRoute(promptSource)));assertEquals([refused.status,state.posts.length,state.charges],[503,0,0]);
- const prompt=await compileRoute(once(promptSource,"KIE_PROPERTY_IDENTITY.prompt_scene_nouns.includes(SCENE_NOUN[space])&&await kiePropertyPromptPinned(reelText,shotMotion)","true"));
+ const prompt=await compileRoute(once(promptSource,"KIE_PROPERTY_IDENTITY.prompt_scene_nouns.includes(SCENE_NOUN[space])&&await registeredPropertyPromptPinned(worker?.qualityIdentity,reelText,shotMotion)","true"));
  reset();await run(worker(),dispatchRequest(),prompt);assertNotEquals(state.posts[0].input.prompt,buildSteadyPropertyReelPrompt("home","side_glide","16:9"));
  // 4. Pinned params omitted from the recipe: no exact 4K input, so nothing is sent.
  const params=await compileRoute(once(INDEX_SOURCE,'savedQualityProfile==="kie-kling3-4k-steady-v1"?paramsOf(steps[0])??{}:{}',"{}"));
@@ -372,9 +375,9 @@ Deno.test("compiled defect controls: each Kie dispatch guard is load-bearing",as
  // 7. Capability window changed: the exact 7200 s source URL is pinned.
  const ttl=await compileRoute(INDEX_SOURCE,once(QUALITY_SOURCE,"KIE_PROPERTY_SOURCE_URL_SECONDS=7200","KIE_PROPERTY_SOURCE_URL_SECONDS=600"));
  reset();await run(worker(),dispatchRequest(),ttl);assertEquals(state.signs.at(-1)?.seconds,600);
- // 8. Frozen identity comparison removed from the scope helper: a changed identity reaches the hold.
- const scope=await compileRoute(INDEX_SOURCE,once(QUALITY_SOURCE,"assert(scope&&sameKiePropertyIdentity(scope.qualityIdentity),","assert(scope,"));
- reset();await quiet(()=>run(worker({identity:bad}),dispatchRequest(),scope));assert(state.rpcs.some(x=>/reserve/.test(x.name)),"control exposes a held changed identity");
+ // 8. The prompt registry still refuses before money when the scope helper loses its guard.
+ const scope=await compileRoute(INDEX_SOURCE,once(QUALITY_SOURCE,"assert(scope&&!!registeredPropertyPromptIdentity(scope.qualityIdentity),","assert(scope,"));
+ reset();const noScopeGuard=await quiet(()=>run(worker({identity:bad}),dispatchRequest(),scope));assertEquals(noScopeGuard.status,503);noSpend();
  console.log("KIE_DISPATCH_COMPILED_CONTROLS=8");
 });
 
@@ -386,10 +389,6 @@ async function captured<T>(f:()=>Promise<T>){
  for(const k of Object.keys(saved) as (keyof typeof saved)[])console[k]=(...args:unknown[])=>{lines.push(args);};
  try{return{value:await f(),lines};}finally{Object.assign(console,saved);}
 }
-const OLD_STRINGIFY_COMPARISON=`const v = value as Record<string, unknown>, keys = Object.keys(KIE_PROPERTY_IDENTITY).sort();
-  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(v).sort().join(",") !== keys.join(",")) return false;
-  return keys.every((key) => JSON.stringify(v[key]) === JSON.stringify((KIE_PROPERTY_IDENTITY as Record<string, unknown>)[key]));`;
-
 Deno.test("the job's frozen identity read back from jsonb (sorted keys), reversed or canonical dispatches identically",async()=>{
  assertEquals(Object.keys(IDENTITY().prompt_template_sha256),["push_in","pull_back","side_glide","fly_through"],"fixture is in true jsonb order");
  const posts:unknown[]=[];
@@ -399,9 +398,9 @@ Deno.test("the job's frozen identity read back from jsonb (sorted keys), reverse
  assertEquals(posts[1],posts[0]);assertEquals(posts[2],posts[0]);
  // Defect control (the pre-fix comparison): nested values compared with JSON.stringify refuse every
  // identity PostgREST returns, before any spend, while the canonical order alone would have passed.
- const old=await compileRoute(INDEX_SOURCE,undefined,{kie:once(KIE_SOURCE,"return kiePropertyIdentityConsistent() && sameJsonValue(value, KIE_PROPERTY_IDENTITY);",OLD_STRINGIFY_COMPARISON)});
+ const old=await compileRoute(INDEX_SOURCE,undefined,{registry:once(REGISTRY_SOURCE,"sameJsonValue(identity,entry.identity)","JSON.stringify(identity)===JSON.stringify(entry.identity)")});
  reset();const refused=await run(worker({identity:IDENTITY()}),dispatchRequest(),old);
- assertEquals(refused.status,409,"control: a jsonb-ordered frozen identity is refused by the stringify comparison");noSpend();assertEquals(state.charges,0);
+ assertEquals(refused.status,503,"control: a jsonb-ordered frozen identity is refused by the stringify comparison");noSpend();assertEquals(state.charges,0);
  reset();assertEquals((await run(worker({identity:CANONICAL_IDENTITY()}),dispatchRequest(),old)).status,202,"control: only the canonical order passed the old comparison");
 });
 
@@ -428,7 +427,7 @@ Deno.test("prompt pin: a changed steady template or an unpinned scene noun is re
  // FAL steady-v2 shares the template but has no Kie pin: unchanged, it still dispatches.
  reset();assertEquals((await run(worker({profile:"fal-kling3-4k-steady-v2",identity:undefined}),dispatchRequest(),changedTemplate)).status,202);
  // Defect control: the pre-money pin removed: the changed prompt is charged, held and POSTed.
- const unpinned=await compileRoute(once(INDEX_SOURCE,"KIE_PROPERTY_IDENTITY.prompt_scene_nouns.includes(SCENE_NOUN[space])&&await kiePropertyPromptPinned(reelText,shotMotion)","true"),undefined,{framing:mutatedFraming});
+ const unpinned=await compileRoute(once(INDEX_SOURCE,"KIE_PROPERTY_IDENTITY.prompt_scene_nouns.includes(SCENE_NOUN[space])&&await registeredPropertyPromptPinned(worker?.qualityIdentity,reelText,shotMotion)","true"),undefined,{framing:mutatedFraming});
  reset();const leaked=await run(worker(),dispatchRequest(),unpinned);
  assertEquals([leaked.status,state.charges,state.posts.length],[202,1,1],"control: the changed template reaches the vendor");assert(String(state.posts[0].input.prompt).includes("Maintain a very slow constant speed"));
  assert(state.rpcs.some(x=>x.name==="app_video_cost_reserve_v2"),"control: and is held");

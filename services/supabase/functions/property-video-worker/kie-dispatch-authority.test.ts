@@ -38,7 +38,7 @@ const SIGNATURE="export async function handleAiVideo(req:Request,worker?:AiVideo
 type Route={make:(stub:unknown)=>(req:Request,worker?:unknown)=>Promise<Response>};
 async function compileRoute(indexSource=INDEX_SOURCE):Promise<Route>{
  const imports=(indexSource.match(/^import [\s\S]*?;\n/gm)??[]).map(s=>absolute(s,INDEX)).join("");
- const helpers=[between(indexSource,"const SPACE_TYPES =","interface DroneBody"),fn(indexSource,"cleanPrompt"),fn(indexSource,"legacyVideoStep"),fn(indexSource,"durationNeeds"),
+ const helpers=[between(indexSource,"const SPACE_TYPES =","interface DroneBody"),fn(indexSource,"cleanPrompt"),fn(indexSource,"legacyVideoStep"),fn(indexSource,"durationNeeds"),fn(indexSource,"buildKieRegisteredPrompt"),
   indexSource.match(/^const ADVERTISED_SECONDS[\s\S]*?\n};\n/m)![0],indexSource.match(/^const MAX_IMAGE_B64_CHARS = [^;]+;/m)![0],
   indexSource.match(/^const ALLOWED_IMAGE_MIMES = [^;]+;/m)![0],indexSource.match(/^const MODEL_I2V = [^;]+;/m)![0]].join("\n");
  const prelude=between(indexSource,SIGNATURE,'    if (req.method === "GET" && seg.length === 1 && seg[0] === "operation")').replace(SIGNATURE,"return async function handleAiVideo(req:Request,worker?:any):Promise<Response> {");
@@ -138,6 +138,7 @@ type Engine={dispatch:(ctx:unknown)=>Promise<void>;aiScope:(ctx:unknown)=>Promis
 async function compileEngine(source=ENGINE_DISPATCH):Promise<Engine>{
  return await import("data:application/typescript,"+encodeURIComponent(`
 import{assert}from ${JSON.stringify(new URL("../_shared/http.ts",import.meta.url).href)};
+import{PHOTO_MOTION_MODE}from ${JSON.stringify(new URL("../_shared/photo-motion.ts",import.meta.url).href)};
 type AiVideoWorkerScope=any;
 const f=()=>globalThis.__kieAuthorityWorker();
 const handleAiVideo=async(req,worker)=>{const response=await f().route(req,worker);f().http.push(response.status);f().bodies.push(await response.clone().json());return response;};

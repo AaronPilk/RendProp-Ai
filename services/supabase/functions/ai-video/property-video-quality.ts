@@ -1,3 +1,4 @@
+import {registeredPropertyPromptIdentity,propertyPromptIdentityForExtra} from "../_shared/property-video-prompt-registry.ts";
 import {assert,HttpError,throwRpc} from "../_shared/http.ts";
 import {adminClient} from "../_shared/supabase.ts";
 import {paramsOf,resolveRoute,type ChainStep,type RouteContext,type RouteStep} from "../_shared/router.ts";
@@ -105,7 +106,7 @@ export function kiePropertyPricedBasis(count:number){
  * be the canonical Kie identity, and the worker request the one closed recipe. */
 export function assertKiePropertyDispatchScope(scope:{qualityIdentity?:unknown;targetAspect?:string}|undefined,request:{aspect:unknown;seconds:number;framing:unknown;presetVersion:unknown;customPrompt:unknown;assetId:unknown;sourceAssetId:unknown}):"16:9"|"9:16"{
  assert(kiePropertyProfileReady(),503,KIE_PROFILE_UNAVAILABLE);
- assert(scope&&sameKiePropertyIdentity(scope.qualityIdentity),409,"The saved native-4K video identity is unavailable. No generation was sent.");
+ assert(scope&&!!registeredPropertyPromptIdentity(scope.qualityIdentity),409,"The saved native-4K video identity is unavailable. No generation was sent.");
  const aspect=request.aspect;
  assert((aspect==="16:9"||aspect==="9:16")&&scope.targetAspect===aspect&&request.seconds===KIE_PROPERTY_IDENTITY.seconds&&request.framing==="preserve_photo"
   &&request.presetVersion===1&&!request.customPrompt&&!request.assetId&&typeof request.sourceAssetId==="string",409,"The saved native-4K clip request is incomplete. No generation was sent.");
@@ -122,7 +123,7 @@ const pinnedStepFacts=(s:RouteStep)=>{const c=s as Partial<ChainStep>;return{rou
  * that re-read: any difference is a definite pre-dispatch refusal. */
 export function samePinnedKieDispatch(freshRow:unknown,reserved:RouteStep,frozenIdentity:unknown,now:Date=new Date()):boolean{
  const k=KIE_PROPERTY_IDENTITY,fresh=kiePropertyRouteStep(freshRow,now);
- return fresh!==null&&sameKiePropertyIdentity(frozenIdentity)&&reserved.route_id===k.route_id&&reserved.task==="video.reel_clip"&&reserved.provider===k.provider
+ return fresh!==null&&!!registeredPropertyPromptIdentity(frozenIdentity)&&reserved.route_id===k.route_id&&reserved.task==="video.reel_clip"&&reserved.provider===k.provider
   &&reserved.model===k.model&&reserved.unit===k.unit&&reserved.unit_cents===k.unit_cents&&reserved.privacy_tier===k.privacy_tier&&reserved.enabled===true
   &&sameJsonValue(paramsOf(reserved),{kie_mode:k.mode,sound:k.sound})&&sameJsonValue(pinnedStepFacts(fresh),pinnedStepFacts(reserved));
 }
@@ -130,10 +131,10 @@ const KIE_INPUT_KEYS="aspect,extra,framing,image_url,prompt,resolution,seconds,t
 const KIE_EXTRA_KEYS="kie_mode,property_video_quality_profile,property_video_target_aspect,sound";
 /** True only for the exact reserved Kie GenerateInput shape (no extra fields). */
 export function kiePropertyInputExact(input:GenerateInput):boolean{
- const e=input.extra,aspect=input.aspect;
+ const e=input.extra,aspect=input.aspect,entry=propertyPromptIdentityForExtra(e);
  return kiePropertyProfileReady()&&Object.keys(input).sort().join(",")===KIE_INPUT_KEYS&&input.task==="video.reel_clip"&&typeof input.prompt==="string"&&input.prompt.length>0
   &&typeof input.image_url==="string"&&input.seconds===KIE_PROPERTY_IDENTITY.seconds&&input.resolution==="1080p"&&input.framing==="preserve_photo"
-  &&(aspect==="16:9"||aspect==="9:16")&&!!e&&Object.keys(e).sort().join(",")===KIE_EXTRA_KEYS&&e.kie_mode===KIE_PROPERTY_IDENTITY.mode
+  &&(aspect==="16:9"||aspect==="9:16")&&!!e&&!!entry&&Object.keys(e).sort().join(",")===(entry.version==='v1'?KIE_EXTRA_KEYS:"kie_mode,property_video_prompt_profile,property_video_quality_profile,property_video_target_aspect,sound")&&e.kie_mode===KIE_PROPERTY_IDENTITY.mode
   &&e.sound===KIE_PROPERTY_IDENTITY.sound&&e.property_video_target_aspect===aspect&&e.property_video_quality_profile===PROPERTY_VIDEO_KIE_PROFILE;
 }
 /** Vendor-only source capability, bounded by the same two-hour processing

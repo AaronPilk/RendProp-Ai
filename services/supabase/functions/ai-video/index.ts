@@ -1,3 +1,4 @@
+import {buildRegisteredPropertyPrompt,registeredPropertyPromptPinned,propertyPromptExtraForIdentity} from "../_shared/property-video-prompt-registry.ts";
 import { requireLibraryWrite, libraryBillingOrg, listingLibraryScope } from "../_shared/library-access.ts";
 import { fundingContext, fundedAttempt, completeFundingOperation, FundingAdmissionError, textAttemptQuote, routeCatalogQuote, ceilingVerifiedQuote, visionInputTokenBound, unlimitedSponsored, type FundingContext } from "../_shared/funded-serving.ts";
 import { beginDriftCheck, finishDriftCheck } from "./drift-funding.ts";
@@ -1121,6 +1122,9 @@ export async function propertyVideoRecipeQuote(actor:string,org:string,listing:s
 /** kieDispatchAuthority: the worker's per-dispatch Kie supplier authority (SQL
  * property_video_kie_dispatch_authority for this job, lease and attempt). The
  * native-4K Kie profile refuses without it; no other profile ever calls it. */
+function buildKieRegisteredPrompt(identity:unknown,noun:unknown,motion:unknown,aspect:unknown):string{
+ try{return buildRegisteredPropertyPrompt(identity,noun,motion,aspect);}catch{throw new HttpError(503,"The reviewed native-4K camera prompt is unavailable. No generation was sent.");}
+}
 export interface AiVideoWorkerScope {user:PaidAiCaller;listing:string;targetAspect?:'16:9'|'9:16';qualityProfile?:PropertyVideoQualityProfile;qualityIdentity?:unknown;accepted?:(receipt:{request_id:string;status_url:string;response_url:string;model_id:string;seconds:number})=>Promise<void>;authorize:()=>Promise<void>;kieDispatchAuthority?:()=>Promise<unknown>;provenance:(args:ProvenanceArgs)=>Promise<ProvenanceResult>}
 export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Promise<Response> {
   if (req.method === "OPTIONS") return handleOptions();
@@ -1544,7 +1548,9 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         assert(body.aspect === "9:16" || body.aspect === "16:9", 400, "Choose portrait or landscape.");
         assert(secs === 5, 400, "These camera presets use five-second shots.");
       }
-      const reelText = savedQualityProfile===PROPERTY_VIDEO_STEADY_PROFILE && worker?.targetAspect || savedQualityProfile==="kie-kling3-4k-steady-v1" && worker?.targetAspect
+      const reelText = savedQualityProfile==="kie-kling3-4k-steady-v1" && worker?.targetAspect
+        ? buildKieRegisteredPrompt(worker.qualityIdentity,SCENE_NOUN[space],shotMotion,worker.targetAspect)
+        : savedQualityProfile===PROPERTY_VIDEO_STEADY_PROFILE && worker?.targetAspect
         ? buildSteadyPropertyReelPrompt(SCENE_NOUN[space],shotMotion as typeof REEL_PRESETS[number],worker.targetAspect)
         : presetVersion === 1
         ? framing === "preserve_photo"
@@ -1562,7 +1568,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       // configured provider secret, before any storage read, allowance or hold.
       // An unset secret is our account, not this recipe: 402 (resumable pause).
       if(savedQualityProfile==="kie-kling3-4k-steady-v1"){
-        assert(KIE_PROPERTY_IDENTITY.prompt_scene_nouns.includes(SCENE_NOUN[space])&&await kiePropertyPromptPinned(reelText,shotMotion),503,
+        assert(KIE_PROPERTY_IDENTITY.prompt_scene_nouns.includes(SCENE_NOUN[space])&&await registeredPropertyPromptPinned(worker?.qualityIdentity,reelText,shotMotion),503,
           "The reviewed native-4K camera prompt is unavailable. No generation was sent.");
         if(!Deno.env.get("KIE_API_KEY")?.trim()){console.error("ai-video reel submit refused before dispatch",{provider:"kie",reason:"provider_not_configured"});throw new HttpError(402,KIE_VENDOR_NOT_READY,"upstream");}
         // Require the closed authority capability before any work. Its consuming
@@ -1625,7 +1631,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         resolution: "1080p",
         ...(reelAspect ? { aspect: reelAspect } : {}),
         ...(framing ? { framing } : {}),
-        ...((ownerQaStep?.model === "kling-3.0/video" || ownerQaStep?.provider === "fal" && paramsOf(ownerQaStep)?.owner_motion_profile === OWNER_RAIL_MOTION_PROFILE || worker?.targetAspect) ? { extra: { ...(ownerQaStep?paramsOf(ownerQaStep)??{}:savedQualityProfile==="kie-kling3-4k-steady-v1"?paramsOf(steps[0])??{}:{}), ...(worker?.targetAspect?{property_video_target_aspect:worker.targetAspect}:{}),...(isPropertyVideoQualityProfile(savedQualityProfile)?{property_video_quality_profile:savedQualityProfile}:{}) } } : {}),
+        ...((ownerQaStep?.model === "kling-3.0/video" || ownerQaStep?.provider === "fal" && paramsOf(ownerQaStep)?.owner_motion_profile === OWNER_RAIL_MOTION_PROFILE || worker?.targetAspect) ? { extra: { ...(ownerQaStep?paramsOf(ownerQaStep)??{}:savedQualityProfile==="kie-kling3-4k-steady-v1"?paramsOf(steps[0])??{}:{}), ...(worker?.targetAspect?{property_video_target_aspect:worker.targetAspect}:{}),...(isPropertyVideoQualityProfile(savedQualityProfile)?{property_video_quality_profile:savedQualityProfile}:{}),...(savedQualityProfile==="kie-kling3-4k-steady-v1"?propertyPromptExtraForIdentity(worker?.qualityIdentity):{}) } } : {}),
       };
       // A priced hold precedes one POST. Definitive refusal releases it;
       // transport ambiguity retains it without another provider attempt.
@@ -2140,7 +2146,7 @@ if(import.meta.main)Deno.serve(req=>handleAiVideo(req));
 /** Exact accounting authority for an expired, authenticated accepted receipt.
  * Pure on the first check; a held acceptance may settle its original key only
  * after the route has freshly verified current listing/library permission. */
-async function paidRoutedReceiptMatches(job: RouterJobToken, settleHeld = false): Promise<boolean> {
+async function paidRoutedReceiptMatches(job: RouterJobToken, settleHeld = false, settledOnly = false): Promise<boolean> {
   const feature = job.k === "video.reel_clip" ? "reel"
     : job.k === "video.aerial" || job.k === "video.aerial_no_photo" ? "aerial"
     : job.k === "video.upscale_4k" || job.k === "video.upscale_1080p60" ? "drone_render" : null;
@@ -2166,7 +2172,9 @@ async function paidRoutedReceiptMatches(job: RouterJobToken, settleHeld = false)
   // Settlement can fail after validated acceptance while both priced holds
   // remain durable. Only a newer signed receipt binds that exact admission key;
   // never infer an old unsettled request by timestamps, FIFO or provider URL.
+  if (settledOnly && (Number(row.total_cents) !== KIE_PROPERTY_IDENTITY.attempt_cents || Number(row.hold_cents) < KIE_PROPERTY_IDENTITY.attempt_cents)) return false;
   if (row.provider_request_id === null && row.cost_ledger_id === null && row.settled_at === null) {
+    if (settledOnly) return false; // Retention never settles a hold or admits new spend.
     if (!job.a || allowance.data.listing_id !== (job.l ?? null) || !/^[a-f0-9]{64}$/.test(row.input_sha256 ?? "") ||
         !Number.isFinite(Number(row.total_cents)) || Number(row.total_cents) <= 0 ||
         !Number.isFinite(Number(row.hold_cents)) || Number(row.hold_cents) < Number(row.total_cents)) return false;
@@ -2206,8 +2214,31 @@ async function paidRoutedReceiptMatches(job: RouterJobToken, settleHeld = false)
   const paid = ledger.data;
   return !!paid && paid.id === row.cost_ledger_id && paid.org_id === job.o &&
     paid.feature === feature && paid.provider === job.p && paid.model === job.m && Number(paid.total_cents) > 0 &&
+    (!settledOnly || Number(paid.total_cents) === KIE_PROPERTY_IDENTITY.attempt_cents) &&
     paid.meta?.app_video_reservation_id === row.id && paid.meta?.request_id === job.i && paid.meta?.billing_org_id === job.o &&
     (!job.a || (paid.meta?.request_key === job.a && paid.meta?.stage === feature));
+}
+
+/** Internal retention only: the caller has consumed one exact server-owned directive.
+ * Signature, exact accepted receipt/payment and CURRENT listing authority still run;
+ * no active worker scope is fabricated and no hold is settled or new job submitted. */
+export async function retainAcceptedKieReceipt(scope:{actor:string;org:string;library:string;listing:string;attempt:string;requestKey:string;providerRequest:string;statusUrl:string}):Promise<{status:'retained'|'pending'|'failed';asset_key?:string}>{
+ const url=new URL(scope.statusUrl);
+ const raw=url.searchParams.get('job')??'';
+ const routed=await verifyJobTokenForRecovery(raw,{orgId:scope.org,userId:scope.actor},job=>paidRoutedReceiptMatches(job,false,true));
+ assert(routed&&routed.p==='kie'&&routed.m===KIE_PROPERTY_IDENTITY.model&&routed.k==='video.reel_clip'
+  &&routed.o===scope.org&&routed.usr===scope.actor&&routed.l===scope.listing&&routed.a===scope.requestKey
+  &&scope.requestKey==='bgvideo:'+scope.attempt&&routed.i===scope.providerRequest,403,'The accepted video receipt differs from its retained scope.');
+ assert(await paidRoutedReceiptMatches(routed,false,true),409,'Only an already settled accepted video can be retained.');
+ const contentOrg=await routedContentOrg(scope.actor,scope.library,routed);
+ assert(contentOrg===scope.org,403,'The accepted video no longer belongs to this listing.');
+ const response=await routedStatus(contentOrg,routed);assert(response.status===200,503,'The accepted result could not be retained.');
+ const value=await response.json();
+ if(value.status==='processing')return{status:'pending'};
+ if(value.status==='failed')return{status:'failed'};
+ assert(value.status==='completed'&&value.persisted===true&&typeof value.asset_key==='string',503,'The accepted result has no verified private object.');
+ // Never expose signed download capabilities or imply quality/composition acceptance.
+ return{status:'retained',asset_key:value.asset_key};
 }
 
 async function routedContentOrg(actor: string, preferred: string | undefined, job: RouterJobToken): Promise<string> {

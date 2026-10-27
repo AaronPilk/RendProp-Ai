@@ -24,6 +24,7 @@ let actionState:any;
 (globalThis as any).__kieActionFixture=()=>actionState;
 const actionPrefix=`
 import{KIE_PROPERTY_PROFILE}from ${href('../_shared/property-video-kie.ts')};
+import{isPhotoMotion}from ${href('../_shared/photo-motion.ts')};
 type WorkerAction=any;type ComposeAction=any;
 const PROPERTY_VIDEO_STEADY_PROFILE=${JSON.stringify(PROPERTY_VIDEO_STEADY_PROFILE)};
 const f=()=>globalThis.__kieActionFixture();
@@ -75,7 +76,7 @@ Deno.test('compose sends steady-v2-cfr24 for Kie and FAL steady only; historical
  const steadyLine=once(actionSource,'const steady=j.quality_profile===PROPERTY_VIDEO_STEADY_PROFILE||j.quality_profile===KIE_PROPERTY_PROFILE;');
  const falOnly=await load(actionPrefix+actionSource.replace(steadyLine,'const steady=j.quality_profile===PROPERTY_VIDEO_STEADY_PROFILE;'));
  await assertRejects(()=>kieComposesExactlyLikeSteady(falOnly),Error,undefined,'control: Kie silently composed at 30 fps');
- const noProfile=await load(actionPrefix+actionSource.replace(once(actionSource,"...(steady?{composition_profile:'steady-v2-cfr24' as const}:{}),"),''));
+ const noProfile=await load(actionPrefix+actionSource.replace(once(actionSource,"steady?{composition_profile:'steady-v2-cfr24' as const}:{}"),"{}"));
  await assertRejects(()=>kieComposesExactlyLikeSteady(noProfile),Error,undefined,'control: composition profile omitted');
 });
 Deno.test('inspect_audio narration limit for Kie equals FAL steady (24 fps, 6/4-frame joins); historical profiles keep 30 fps math',async()=>{
@@ -88,7 +89,7 @@ Deno.test('inspect_audio narration limit for Kie equals FAL steady (24 fps, 6/4-
 
 // ---- finish (index.ts) --------------------------------------------------------
 const indexUrl=new URL('./index.ts',import.meta.url),indexSource=await Deno.readTextFile(indexUrl);
-const REAL_IMPORTS=new Set(['../_shared/http.ts','../_shared/property-video-kie.ts','../property-video-jobs/input.ts']);
+const REAL_IMPORTS=new Set(['../_shared/http.ts','../_shared/property-video-kie.ts','../_shared/photo-motion.ts','../property-video-jobs/input.ts']);
 async function loadIndex(source:string){
  let imports=0;
  const code=source.replace(/^import\s*\{([^}]*)\}\s*from\s*(['"])([^'"]+)\2;?/gm,(_m,names:string,_q:string,path:string)=>{imports++;return REAL_IMPORTS.has(path)?`import{${names}}from${JSON.stringify(new URL(path,indexUrl).href)};`:`const{${names}}=globalThis.__kieFinishStubs;`;});
