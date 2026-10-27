@@ -74,8 +74,8 @@ import {
   KIE_PROPERTY_MODEL,
   KIE_PROPERTY_PROFILE,
   kiePropertyIdentityConsistent,
-  kiePropertyPromptPinned,
 } from "../property-video-kie.ts";
+import { propertyPromptIdentityForExtra, registeredPropertyAnyPromptPinned } from "../property-video-prompt-registry.ts";
 
 import {aerialOpeningKieRequest,AERIAL_OMNI_REFERENCE_MODEL} from "../aerial-kie.ts";
 
@@ -368,8 +368,10 @@ export const kieAdapter: ProviderAdapter = {
     if (input.extra?.property_video_quality_profile === KIE_PROPERTY_PROFILE) {
       // Fully validated before the key is read or a request exists.
       const request = kiePropertyRequest(step, input);
-      // Only the exact reviewed steady prompt the frozen identity pins.
-      if (!await kiePropertyPromptPinned(request.input.prompt)) throw propertyRefusal("prompt");
+      // The saved profile chooses a complete registered identity; no caller
+      // supplied prompt or unregistered revision can widen the wire.
+      const registered = propertyPromptIdentityForExtra(input.extra);
+      if (!registered || !await registeredPropertyAnyPromptPinned(registered.identity, request.input.prompt)) throw propertyRefusal("prompt");
       const data = await kieCall<{ taskId?: unknown }>(
         `${KIE_BASE}/api/v1/jobs/createTask`,
         { method: "POST", headers: kieHeaders(true), body: JSON.stringify(request) },

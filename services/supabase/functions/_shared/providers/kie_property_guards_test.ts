@@ -17,6 +17,7 @@ import { ProviderError } from "./common.ts";
 import { asHttpError, runChain } from "./chain.ts";
 import { HttpError } from "../http.ts";
 import { KIE_PROPERTY_IDENTITY, KIE_PROPERTY_PROFILE, KIE_PROPERTY_ROUTE_ID } from "../property-video-kie.ts";
+import { buildRegisteredPropertyPrompt, GENTLE_PUSH_IN_PROMPT_PROFILE, KIE_GENTLE_PROMPT_IDENTITY } from "../property-video-prompt-registry.ts";
 import { submitReservedVideo, VideoDispatchUnconfirmed } from "../../ai-video/cost-reservation.ts";
 import { buildPhotoPreservingReelPrompt, buildPropertyCanvasReelPrompt, buildSteadyPropertyReelPrompt } from "../../ai-video/reel-framing.ts";
 import { buildReelPrompt } from "../../ai-video/motion.ts";
@@ -185,10 +186,38 @@ const promptPinOracle: Oracle = async (kie) => {
 
 Deno.test("property submit sends only the pinned reviewed prompt (4 motions x 6 nouns x 2 canvases); anything else is refused before the key or any request", async () => {
   await proves("prompt pin", promptPinOracle, [
-    ["if (!await kiePropertyPromptPinned(request.input.prompt)) throw propertyRefusal(\"prompt\");", "", /PIN refuse/],
-    ["if (!await kiePropertyPromptPinned(request.input.prompt)) throw propertyRefusal(\"prompt\");",
-      "kieHeaders(true);\n      if (!await kiePropertyPromptPinned(request.input.prompt)) throw propertyRefusal(\"prompt\");", /PIN refuse/],
+    ["if (!registered || !await registeredPropertyAnyPromptPinned(registered.identity, request.input.prompt)) throw propertyRefusal(\"prompt\");", "", /PIN refuse/],
+    ["if (!registered || !await registeredPropertyAnyPromptPinned(registered.identity, request.input.prompt)) throw propertyRefusal(\"prompt\");",
+      "kieHeaders(true);\n      if (!registered || !await registeredPropertyAnyPromptPinned(registered.identity, request.input.prompt)) throw propertyRefusal(\"prompt\");", /PIN refuse/],
   ]);
+});
+
+Deno.test("registered v2 gentle push-in dispatches its exact prompt; missing, mismatched and unknown revision markers refuse before key or fetch", async () => {
+  const v2Prompt = buildRegisteredPropertyPrompt(KIE_GENTLE_PROMPT_IDENTITY, "home", "push_in", "9:16");
+  const v1Prompt = buildSteadyPropertyReelPrompt("home", "push_in", "9:16");
+  const input = (prompt: string, revision?: string): GenerateInput => {
+    const value = propertyInput("9:16", prompt);
+    if (revision !== undefined) value.extra = { ...value.extra, property_video_prompt_profile: revision };
+    return value;
+  };
+  await offline(acceptedWith("registered-v2-push-in"), async (calls) => {
+    await realKie.kieAdapter.submit(propertyStep, input(v2Prompt, GENTLE_PUSH_IN_PROMPT_PROFILE));
+    assertEquals(calls.map((call) => [call.url, call.method, call.body]),
+      [[CREATE_TASK, "POST", propertyWire(v2Prompt)]], "v2 uses the exact closed property wire");
+  });
+  await offline(NO_HTTP, async (calls) => {
+    const changed = v2Prompt.slice(0, 1) + (v2Prompt[1] === "x" ? "y" : "x") + v2Prompt.slice(2);
+    for (const [label, invalid] of [
+      ["missing marker", input(v2Prompt)],
+      ["v1 prompt under v2 marker", input(v1Prompt, GENTLE_PUSH_IN_PROMPT_PROFILE)],
+      ["unknown marker", input(v2Prompt, "unregistered-v3")],
+      ["changed v2 prompt", input(changed, GENTLE_PUSH_IN_PROMPT_PROFILE)],
+    ] as const) {
+      const error = await assertRejects(() => realKie.kieAdapter.submit(propertyStep, invalid), ProviderError, undefined, label);
+      assertEquals([error.error_class, error.status, error.dispatch_rejected], ["validation", 400, true], `${label}: pre-dispatch refusal`);
+    }
+    assertEquals(calls, [], "no rejected prompt reads the key or reaches Kie");
+  }, null);
 });
 
 // ── 2. Missing KIE_API_KEY: definite on the property path only ──────────────

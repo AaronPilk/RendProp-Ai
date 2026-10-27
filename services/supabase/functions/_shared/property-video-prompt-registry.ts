@@ -40,7 +40,7 @@ export function buildRegisteredPropertyPrompt(identity:unknown,sceneNoun:unknown
  if(registered.version==='v1'||motion!=='push_in')return original;
  return replaceOnce(replaceOnce(original,V1_CAMERA,V2_CAMERA),V1_FRAMING,V2_FRAMING);
 }
-/** Future adapter guard for one complete frozen identity; this does not widen the active v1 guard. */
+/** Adapter guard for one complete frozen identity and an exact saved prompt. */
 export async function registeredPropertyPromptPinned(identity:unknown,prompt:unknown,motion:unknown):Promise<boolean>{
  const registered=registeredPropertyPromptIdentity(identity);
  if(!registered||typeof prompt!=='string'||prompt.length===0||prompt.length>8000||typeof motion!=='string'||!(MOTIONS as readonly string[]).includes(motion))return false;

@@ -14,7 +14,9 @@ export function aerialCompositeValue(name:AerialCompositeRPC,value:unknown,args:
  let row=value;
  if(Array.isArray(row)){assert(row.length<=1,503,'Saved aerial work returned more than one row.');row=row.length===0?null:row[0];}
  const absent=row===null||(object(row)&&Object.keys(row).length>0&&Object.values(row).every(v=>v===null));
- if(absent){assert(name==='property_video_aerial_operation',503,'Saved aerial work could not be read.');return null;}
+ // The worker probes aerial work before ordinary jobs. No aerial row is a
+ // normal result for that probe, not an ordinary-video failure.
+ if(absent){assert(name==='property_video_aerial_operation'||name==='property_video_aerial_worker_read',503,'Saved aerial work could not be read.');return null;}
  assert(object(row)&&['id','actor_id','operation_id','org_id','library_org_id','listing_id'].every(k=>typeof row[k]==='string'&&UUID.test(row[k]as string))&&typeof row.manifest_sha256==='string'&&/^[a-f0-9]{64}$/.test(row.manifest_sha256)&&typeof row.state==='string'&&object(row.manifest)&&object(row.consent),503,'Saved aerial work returned an invalid row.');
  const r=row as AerialCompositeRow;
  assert(r.manifest.operation_id===r.operation_id&&r.manifest.listing_id===r.listing_id,409,'The saved aerial operation identity changed.');
@@ -23,8 +25,8 @@ export function aerialCompositeValue(name:AerialCompositeRPC,value:unknown,args:
  // authority for canonical library mapping; do not replace it with an ID guess.
  return r;
 }
-export function aerialCompositeRpc(name:'property_video_aerial_operation',args:Record<string,unknown>):Promise<AerialCompositeRow|null>;
-export function aerialCompositeRpc(name:Exclude<AerialCompositeRPC,'property_video_aerial_operation'>,args:Record<string,unknown>):Promise<AerialCompositeRow>;
+export function aerialCompositeRpc(name:'property_video_aerial_operation'|'property_video_aerial_worker_read',args:Record<string,unknown>):Promise<AerialCompositeRow|null>;
+export function aerialCompositeRpc(name:Exclude<AerialCompositeRPC,'property_video_aerial_operation'|'property_video_aerial_worker_read'>,args:Record<string,unknown>):Promise<AerialCompositeRow>;
 export async function aerialCompositeRpc(name:AerialCompositeRPC,args:Record<string,unknown>):Promise<AerialCompositeRow|null>{
  assert(AERIAL_COMPOSITE_RPCS.includes(name),500,'Use the exact aerial composite RPC.');
  const{data,error}=await adminClient().rpc(name,args);if(error)throwRpc(error.message);return aerialCompositeValue(name,data,args);
