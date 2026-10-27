@@ -79,15 +79,16 @@ try:
  for phase in ['after','replayed']:
   if phase=='replayed':query('replay-fix',TARGET.read_text())
   result=query('team-'+phase,(SQL/'tests/team_readiness.sql').read_text())
-  assert '\n34\n' in result and result.count('|t')==34
+  assert '\n35\n' in result and result.count('|t')==35
  owner,one,two=[f'd0100102-0000-4000-8000-{n:012d}' for n in [1,2,3]]
  query('race-users',"insert into auth.users(id,email,is_anonymous) values "+','.join(f"('{u}','race-{n}@fixture.invalid',false)" for n,u in enumerate([owner,one,two]))+';')
  org=query('race-org',f"select org_id from memberships where user_id='{owner}';").strip()
  query('race-plan',f"update orgs set plan='team' where id='{org}';")
+ query('race-preseed',f"set role service_role; select create_org_invite('{owner}','{org}','race-preseed@fixture.invalid','agent','{'e'*64}');")
  calls=[f"select create_org_invite('{owner}','{org}','race-{n}@fixture.invalid','agent','{str(n)*64}');" for n in [1,2]]
  values=race('last-seat-race',calls,org)
  assert sorted(v['exit'] for v in values)==[0,3] and any('RP402:' in v['output'] for v in values)
- token=query('race-token',f"select token_hash from org_invites where org_id='{org}' and accepted_at is null and revoked_at is null;").strip()
+ token=query('race-token',f"select token_hash from org_invites where org_id='{org}' and email in ('race-1@fixture.invalid','race-2@fixture.invalid') and accepted_at is null and revoked_at is null;").strip()
  values2=race('same-invite-race',[f"select accept_org_invite('{u}','{token}');" for u in [one,two]],org)
  assert sorted(v['exit'] for v in values2)==[0,3] and any('RP404:' in v['output'] for v in values2)
  assert query('race-final',f"select count(*) from memberships where org_id='{org}';select count(*) from org_invites where org_id='{org}' and accepted_at is not null;").strip()=='2\n1'
@@ -111,7 +112,7 @@ try:
  output=run('handler-false-confirmation-control',deno+['--filter','valid invite code survives enqueue failure',baseline/'team/handler.test.ts'],expected=1)
  assert re.search(r'0 passed \| 3 failed',output) and 'AssertionError' in output
  assert all(hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest for name,digest in hashes.items()),'Source changed during verification'
- receipt.update(passed=True,sqlAssertions=34,handlerTests=HANDLER_TESTS,realConnectionRaces=2,baselineSQLDetected=True,handlerFalseConfirmationDetected=True)
+ receipt.update(passed=True,sqlAssertions=35,handlerTests=HANDLER_TESTS,realConnectionRaces=2,baselineSQLDetected=True,handlerFalseConfirmationDetected=True)
 finally:
  if started and (DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
