@@ -65,7 +65,7 @@ struct ReviewSubmitView: View {
     private var isRendering: Bool { model.renderCoordinator.isRunning(listing.id) }
 
     /// The AI tiers need the plan's Topaz allowance. Unknown (signed out / not
-    /// loaded) counts as locked — Smooth is always included.
+    /// loaded) counts as locked; Smooth rendering remains on-device.
     private var aiTiersLocked: Bool {
         guard Config.useLiveBackend else { return false }
         guard let entitlements else { return true }
@@ -73,9 +73,9 @@ struct ReviewSubmitView: View {
     }
 
     private var lockReason: String {
-        if Config.enableAuth && !auth.isSignedIn { return "Not connected yet — Smooth is always included." }
+        if Config.enableAuth && !auth.isSignedIn { return "Not connected yet — Smooth rendering runs on your phone. Publishing requires paid access." }
         if entitlements == nil {
-            return entitlementsChecked ? "Couldn't check your plan right now — Smooth is always included."
+            return entitlementsChecked ? "Couldn't check your plan right now — Smooth rendering runs on your phone. Publishing requires paid access."
                                        : "Checking your plan…"
         }
         return "AI tiers are a Team plan add-on."
@@ -384,7 +384,7 @@ struct ReviewSubmitView: View {
         } else {
             VStack(spacing: 10) {
                 PrimaryButton(title: "Create my tour", systemImage: "sparkles") { start() }
-                Text("Renders right on your phone. Your first listing publishes free once you\u{2019}re connected; a plan adds more listings and AI tools.")
+                Text("Renders right on your phone. Publishing a video or website requires paid access.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)

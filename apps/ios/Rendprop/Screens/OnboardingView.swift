@@ -85,11 +85,9 @@ struct OnboardingView: View {
                         withAnimation { choosingType = true }
                     }
                 }
-                // App Store 2.3.1 / 3.1: no price, no purchase invitation, and
-                // no promise the plan gates contradict. It states the two facts
-                // that are true on every plan: capture + on-device rendering are
-                // free, and the cloud AI tools are metered.
-                Text("Filming and rendering your tour are free.\nCloud AI tools use your monthly allowance.")
+                // The introductory week needs a verified Apple subscription;
+                // server publication follows the current paid gate.
+                Text("An eligible free week starts after your Apple subscription is verified.\nPublishing a video or website requires paid access.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)

@@ -4783,8 +4783,8 @@ struct HomeDashboardView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     step(1, "Add the \(noun)", "Give it a name or address. Everything you make is saved to it.")
-                    step(2, "Film it", "Walk it at a steady, normal pace on the 0.5× wide lens — or upload a clip.")
-                    step(3, "Share it", "One link or QR code. \(customer.capitalized) scroll it, and their questions land in Leads.")
+                    step(2, "Start with photos", "Add photos, review optional AI edits, then make a video from the photos you choose. A recorded walkthrough is optional.")
+                    step(3, "Publish and share", "Check your gallery, video and contact details, then publish your page. Share its link and follow up in Leads.")
                 }
             }
             .card()

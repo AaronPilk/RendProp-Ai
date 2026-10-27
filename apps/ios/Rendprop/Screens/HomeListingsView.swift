@@ -110,7 +110,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
         case .sharing: return [
             ("Review your listing", "Check the main photo, gallery versions, property details, contact card and disclosures before publishing."),
             ("Choose the right link", SpaceType.current == .realEstate ? "Share the branded link with clients or social followers. Use the unbranded link only where your MLS permits virtual-tour links." : "Share the published tour with your customers or social followers. Review its details, contact information and disclosures first."),
-            ("Explore or watch", "The public page opens with the main photo and details. Visitors choose the fly-through, then either scroll to explore or play the video.")]
+            ("Explore or watch", "The public page opens with the main photo and details. Visitors can play the selected listing video; a recorded walkthrough is optional.")]
         case .leads: return [
             ("Open Leads", "Inquiries from published listings appear in Leads. Open an inquiry to see its contact information."),
             ("Contact the person", "Tap the phone number to call or the email address to compose an email. Check the listing so you follow up with the right client."),
@@ -407,9 +407,9 @@ struct HomeListingsView: View {
                 .foregroundStyle(Color.white.opacity(0.88))
                 .multilineTextAlignment(.center)
             HStack(spacing: 8) {
-                emptyStep("1", "Film")
+                emptyStep("1", "Photos")
                 stepArrow
-                emptyStep("2", "Enhance")
+                emptyStep("2", "Review")
                 stepArrow
                 emptyStep("3", "Share")
             }

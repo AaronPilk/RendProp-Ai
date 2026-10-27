@@ -1031,7 +1031,7 @@ struct SettingsView: View {
             Text("The included trial usage is used up. Your saved work remains available under your workspace's access and retention terms. Apple keeps the renewal date you confirmed.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
         } else {
-            Text("Using your walkthrough does not use your photo credits or first listing. Each counter is checked separately when you start new work.")
+            Text("Listing and photo edit allowances are tracked separately. Video and website publishing begin after payment.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
         }
     }
