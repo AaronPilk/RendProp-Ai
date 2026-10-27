@@ -146,7 +146,10 @@ SUBSCRIPTIONS = [
     },
     {
         "productId": "com.rendprop.app.pro29.monthly",
-        "name": "Pro Monthly",
+        # Internal reference names must be unique even when the retired
+        # product is still present. Apple's old pro.monthly SKU already owns
+        # "Pro Monthly" internally; customers still see the localization below.
+        "name": "Rendprop Pro Monthly",
         "period": "ONE_MONTH",
         "usd": "29.99",
         "groupLevel": 4,
@@ -1799,6 +1802,47 @@ def cmd_subscriptions_unprice(client, args, out):
     return 1
 
 
+def preflight_subscription_internal_names(client, app_id, specs):
+    """Fail before any write if a planned internal reference name is taken.
+
+    Apple returns ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE for a subscription
+    `name` already owned by another product, even when its localized display
+    name is different. Scan every group in the app, including withdrawn SKUs;
+    the internal reference name is not the customer-facing localization.
+    """
+    existing_by_name = {}
+    for group in client.get_all("/v1/apps/%s/subscriptionGroups" % app_id):
+        for row in client.get_all(
+                "/v1/subscriptionGroups/%s/subscriptions" % group["id"]):
+            attrs = attributes_of(row)
+            name = attrs.get("name")
+            product_id = attrs.get("productId")
+            if name and product_id:
+                key = name.casefold()
+                previous = existing_by_name.get(key)
+                if previous and previous != product_id:
+                    raise AscError(
+                        "Apple already has multiple subscriptions named %r (%s, %s)"
+                        % (name, previous, product_id))
+                existing_by_name[key] = product_id
+
+    planned_by_name = {}
+    for spec in specs:
+        product_id = spec["productId"]
+        name = spec["name"]
+        if not isinstance(name, str) or not name.strip() or len(name) > 64:
+            raise AscError("Invalid internal reference name for %s" % product_id)
+        key = name.casefold()
+        previous = planned_by_name.get(key) or existing_by_name.get(key)
+        if previous and previous != product_id:
+            raise AscError(
+                "Internal subscription name %r for %s is already used by %s. "
+                "Choose a unique internal name; keep the customer-facing "
+                "displayName unchanged. No Apple writes were made."
+                % (name, product_id, previous))
+        planned_by_name[key] = product_id
+
+
 def cmd_subscriptions(client, args, out):
     if getattr(args, "action", None) == "unprice":
         return cmd_subscriptions_unprice(client, args, out)
@@ -1837,6 +1881,9 @@ def cmd_subscriptions(client, args, out):
             + "\nSchedule the exact price in App Store Connect after choosing whether "
               "existing subscribers keep their current price. Run `status` to inspect all gaps."
         )
+
+    specs = active_subscriptions(args)
+    preflight_subscription_internal_names(client, app["id"], specs)
 
     out.write("\nApp Store Server Notifications\n")
     ensure_notification_urls(client, app, plan)

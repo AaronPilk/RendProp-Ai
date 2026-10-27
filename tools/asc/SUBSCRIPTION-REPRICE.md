@@ -40,6 +40,12 @@ product response before treating the .99 amount as live.
 
 The rest of the catalog has separate, explicit paths:
 
+The new Pro product uses internal reference name **Rendprop Pro Monthly**.
+Apple's legacy `pro.monthly` product already owns internal name **Pro Monthly**;
+the customer-facing localized name for the new product remains **Pro Monthly**.
+The subscription planner reads existing names across the app's subscription
+groups and refuses a collision before making any Apple write.
+
 1. Run the read-only command below to inspect creation of the missing Pro
    $29.99 SKU while leaving the three existing prices untouched:
 

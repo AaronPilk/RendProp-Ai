@@ -1148,6 +1148,20 @@ class FakeAsc(object):
         data = payload["data"]
         attributes = dict(data.get("attributes") or {})
 
+        if kind == "subscriptions":
+            # Apple's live 409 for the new Pro SKU: the old pro.monthly still
+            # owns "Pro Monthly" as its internal reference name, even though
+            # its customer-facing localization is now Ultra Monthly.
+            for row in self.store.get("subscriptions", {}).values():
+                if row["attributes"].get("name", "").casefold() == \
+                        attributes.get("name", "").casefold():
+                    return 409, {"errors": [{
+                        "code": "ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE",
+                        "title": "Duplicate subscription name",
+                        "detail": "The name is already in use.",
+                        "status": "409",
+                    }]}
+
         # App Store Connect rejects a price whose price point belongs to a
         # different territory than the request. This is provable from the id
         # encoding, so the fake enforces it: it is the failure mode that produced
@@ -1572,6 +1586,44 @@ class SubscriptionPlanTests(unittest.TestCase):
             self.assertEqual(attributes["groupLevel"], spec["groupLevel"])
             self.assertIs(attributes["familySharable"], False)
             self.assertEqual(attributes["reviewNote"], asc.REVIEW_NOTE)
+
+    def test_new_pro_internal_name_differs_from_legacy_but_display_stays_pro(self):
+        spec = next(s for s in asc.SUBSCRIPTIONS
+                    if s["productId"] == "com.rendprop.app.pro29.monthly")
+        self.assertEqual(spec["name"], "Rendprop Pro Monthly")
+        self.assertEqual(spec["displayName"], "Pro Monthly")
+
+    def test_duplicate_internal_name_is_rejected_before_apple_writes(self):
+        fake = FakeAsc()
+        self.run_subscriptions(fake)
+        pro_id = next(row_id for row_id, row in fake.store["subscriptions"].items()
+                      if row["attributes"]["productId"] ==
+                      "com.rendprop.app.pro29.monthly")
+        del fake.store["subscriptions"][pro_id]
+        legacy = next(row for row in fake.store["subscriptions"].values()
+                      if row["attributes"]["productId"] ==
+                      "com.rendprop.app.pro.monthly")
+        legacy["attributes"]["name"] = "Pro Monthly"
+        fake.writes.clear()
+        original = asc.SUBSCRIPTIONS
+        asc.SUBSCRIPTIONS = [dict(spec, name="Pro Monthly")
+                             if spec["productId"] == "com.rendprop.app.pro29.monthly"
+                             else spec for spec in original]
+        try:
+            with self.assertRaisesRegex(asc.AscError, "already used by"):
+                self.run_subscriptions(fake)
+        finally:
+            asc.SUBSCRIPTIONS = original
+        self.assertEqual(fake.writes, [])
+
+        # The corrected internal name can then create the new product while
+        # retaining the public Pro Monthly localization.
+        code, _output = self.run_subscriptions(fake)
+        self.assertEqual(code, 0)
+        created = next(row for row in fake.store["subscriptions"].values()
+                       if row["attributes"]["productId"] ==
+                       "com.rendprop.app.pro29.monthly")
+        self.assertEqual(created["attributes"]["name"], "Rendprop Pro Monthly")
 
     def test_introductory_offers_are_one_week_free_trials(self):
         fake = FakeAsc()
