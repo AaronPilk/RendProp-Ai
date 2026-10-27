@@ -44,11 +44,18 @@ async function inspect(value: string) {
   return raw;
 }
 
-Deno.test("real signer corrects stripped internal HTTP base and ignores forwarded headers without changing receipt", async () => {
+Deno.test("real signer corrects stripped internal HTTP base and ignores forwarded headers without changing receipt claims", async () => {
   const req = internalRequest("reel-clip");
   const raw = await inspect(await routerStatusUrl(req, "ai-video", "video.reel_clip", ref, owner, origin));
   const prior = new URL(await routerStatusUrl(req, "ai-video", "video.reel_clip", ref, owner));
-  assertEquals(extractJobToken(prior.searchParams), raw); // URL base never changes MAC, payload or expiry.
+  const priorRaw = extractJobToken(prior.searchParams);
+  assert(priorRaw);
+  const publicToken = await decodeJobToken(raw), internalToken = await decodeJobToken(priorRaw);
+  assert(publicToken && internalToken); // Both MACs verify independently.
+  const { exp: publicExpiry, ...publicClaims } = publicToken;
+  const { exp: internalExpiry, ...internalClaims } = internalToken;
+  assertEquals(internalClaims, publicClaims); // URL base cannot change receipt identity.
+  assert(publicExpiry > Date.now() / 1000 && internalExpiry > Date.now() / 1000); // Fresh signs can cross a second.
   assertEquals(prior.origin, "http://internal-edge.invalid"); // Other callers keep existing opt-in behavior.
 });
 
