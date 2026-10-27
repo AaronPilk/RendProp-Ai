@@ -96,13 +96,62 @@ select pg_temp.pm_admit_ok((select
   (public.credit_photo_motion_quote(
     'b0111111-1111-4111-8111-111111111111',manifest,'Production')->>'credits')::integer=8
   from pm_admission_manifest),'one-photo supplier maximum rounds to eight credits');
+select pg_temp.pm_admit_ok((select
+  public.credit_photo_motion_quote(
+    'b0111111-1111-4111-8111-111111111111',manifest,'Production')->>'quote_sha256'
+  is distinct from public.credit_photo_motion_quote(
+    'b0111111-1111-4111-8111-111111111111',manifest,'Sandbox')->>'quote_sha256'
+  from pm_admission_manifest),
+  'Sandbox approval cannot authorize the same recipe against Production credits');
+select pg_temp.pm_admit_ok((select
+  public.credit_photo_motion_quote(
+    'b0111111-1111-4111-8111-111111111111',manifest,'Production')->>'quote_sha256'
+  is distinct from public.credit_photo_motion_quote(
+    'b0111111-1111-4111-8111-111111111111',
+    jsonb_set(manifest,'{operation_id}',
+      '"b0555555-5555-4555-8555-555555555555"'::jsonb),
+    'Production')->>'quote_sha256'
+  from pm_admission_manifest),
+  'same-price changed recipe requires a new approval digest');
 select pg_temp.pm_admit_ok((select public.credit_photo_motion_applicable(
   'b0111111-1111-4111-8111-111111111111',
   'b0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Production')),
   'free account with verified top-up wallet uses credit route');
+select pg_temp.pm_admit_refuses($sql$select public.property_video_job_admit_photo_motion(
+  'b0111111-1111-4111-8111-111111111111',manifest)
+  from pm_admission_manifest$sql$,
+  'RP409: Photo Motion credit quote changed before admission',
+  'direct create cannot bypass the exact displayed quote');
+select pg_temp.pm_admit_refuses($sql$select public.property_video_job_admit_photo_motion_quoted(
+  'b0111111-1111-4111-8111-111111111111',manifest,
+  public.credit_photo_motion_quote(
+    'b0111111-1111-4111-8111-111111111111',manifest,'Sandbox')->>'quote_sha256')
+  from pm_admission_manifest$sql$,
+  'RP409: Photo Motion credit quote changed before admission',
+  'a Sandbox approval cannot create a Production hold');
+select pg_temp.pm_admit_ok(not exists(select 1 from public.credit_holds
+  where operation='video.photo_motion'),
+  'mismatched preflight hashes create no customer hold');
+reset role;
+update public.app_config set value=jsonb_set(value,'{enabled}','false'::jsonb)
+  where key='credit_photo_motion';
+set local role service_role;
+select pg_temp.pm_admit_refuses($sql$select public.property_video_job_admit_photo_motion_quoted(
+  'b0111111-1111-4111-8111-111111111111',manifest,
+  public.credit_photo_motion_quote(
+    'b0111111-1111-4111-8111-111111111111',manifest,'Production')->>'quote_sha256')
+  from pm_admission_manifest$sql$,
+  'RP409: Photo Motion credit route changed before admission',
+  'a switch from credits to plan cannot use a saved credit approval');
+reset role;
+update public.app_config set value=jsonb_set(value,'{enabled}','true'::jsonb)
+  where key='credit_photo_motion';
+set local role service_role;
 select pg_temp.pm_admit_ok((select
-  (public.property_video_job_admit_photo_motion(
-    'b0111111-1111-4111-8111-111111111111',manifest)->>'accepted')::boolean
+  (public.property_video_job_admit_photo_motion_quoted(
+    'b0111111-1111-4111-8111-111111111111',manifest,
+    public.credit_photo_motion_quote(
+      'b0111111-1111-4111-8111-111111111111',manifest,'Production')->>'quote_sha256')->>'accepted')::boolean
   from pm_admission_manifest),'exact saved Photo Motion job is admitted');
 select pg_temp.pm_admit_ok((select count(*)=1 and min(credits)=8
   from public.credit_holds where operation='video.photo_motion'),
@@ -159,8 +208,10 @@ update pm_admission_manifest set manifest=jsonb_set(manifest,
   '{operation_id}','"b0555555-5555-4555-8555-555555555555"'::jsonb);
 set local role service_role;
 select pg_temp.pm_admit_ok((select
-  (public.property_video_job_admit_photo_motion(
-    'b0111111-1111-4111-8111-111111111111',manifest)->>'accepted')::boolean
+  (public.property_video_job_admit_photo_motion_quoted(
+    'b0111111-1111-4111-8111-111111111111',manifest,
+    public.credit_photo_motion_quote(
+      'b0111111-1111-4111-8111-111111111111',manifest,'Production')->>'quote_sha256')->>'accepted')::boolean
   from pm_admission_manifest),'a second immutable credit job can use refunded top-up');
 reset role;
 update public.property_video_jobs set state='composing',compose_attempts=1,
@@ -205,8 +256,10 @@ update pm_admission_manifest set manifest=jsonb_set(manifest,
   '{operation_id}','"b0999999-9999-4999-8999-999999999999"'::jsonb);
 set local role service_role;
 select pg_temp.pm_admit_ok((select
-  (public.property_video_job_admit_photo_motion(
-    'b0111111-1111-4111-8111-111111111111',manifest)->>'accepted')::boolean
+  (public.property_video_job_admit_photo_motion_quoted(
+    'b0111111-1111-4111-8111-111111111111',manifest,
+    public.credit_photo_motion_quote(
+      'b0111111-1111-4111-8111-111111111111',manifest,'Production')->>'quote_sha256')->>'accepted')::boolean
   from pm_admission_manifest),'successful credit job is admitted once');
 reset role;
 update public.property_video_jobs set state='composing',compose_attempts=1,
@@ -301,8 +354,10 @@ select pg_temp.pm_admit_ok((select
   from pm_admission_manifest),
   'zero-balance Review still quotes the exact video charge for top-up');
 select pg_temp.pm_admit_ok((select
-  public.property_video_job_admit_photo_motion(
-    'b0111111-1111-4111-8111-111111111111',manifest)
+  public.property_video_job_admit_photo_motion_quoted(
+    'b0111111-1111-4111-8111-111111111111',manifest,
+    public.credit_photo_motion_quote(
+      'b0111111-1111-4111-8111-111111111111',manifest,'Production')->>'quote_sha256')
     @> '{"accepted":false,"operation_closed":false}'::jsonb
   from pm_admission_manifest),
   'depleted wallet refuses but leaves same frozen operation retryable');

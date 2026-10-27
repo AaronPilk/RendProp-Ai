@@ -18,7 +18,7 @@ const manifest={source_mode:'photo_motion_v1',composition_profile:'photo-motion-
   aspect:'16:9',sources,allow_original_photo_fallback:false};
 const manifestHash='a'.repeat(64),quoteHash='b'.repeat(64);
 type Case={balance?:number;mode?:'credits'|'plan';header?:string|null;oldJob?:boolean;
-  changedSource?:boolean;admissionLowBalance?:boolean};
+  changedSource?:boolean;admissionLowBalance?:boolean;admissionQuoteChanged?:boolean};
 async function call(path:string,options:Case={}){
   const seen:string[]=[];const oldFetch=globalThis.fetch;let quoteCalls=0;
   const credit=options.mode!=='plan';
@@ -55,9 +55,14 @@ async function call(path:string,options:Case={}){
           affordable:balance>=8,environment:'Production',
           manifest_sha256:manifestHash,quote_sha256:quoteHash,
         }:{mode:'plan',active:false});}
-        if(name==='property_video_job_admit_photo_motion'&&options.admissionLowBalance)
+        if(name==='property_video_job_admit_photo_motion_quoted')
+          assertEquals(args.p_quote_sha256,options.header??null);
+        if(name==='property_video_job_admit_photo_motion_quoted'&&options.admissionQuoteChanged)
+          return response({message:'RP409: Photo Motion credit quote changed before admission'},400);
+        if(name==='property_video_job_admit_photo_motion_quoted'&&options.admissionLowBalance)
           return response({accepted:false,operation_closed:false,message:'RP402: Add credits before starting Photo Motion'});
-        if(name==='property_video_job_admit_photo_motion')return response({accepted:true,job:{
+        if(name==='property_video_job_admit_photo_motion_quoted'||
+           name==='property_video_job_admit_photo_motion')return response({accepted:true,job:{
           id:job,operation_id:operation,actor_id:actor,org_id:org,library_org_id:org,
           listing_id:listing,source_count:3,manifest:args.p_manifest,
           manifest_sha256:manifestHash,state:'queued',quality_profile:'photo-motion-v2-cfr24',
@@ -96,7 +101,7 @@ Deno.test('Review quote exposes credits and balance, never supplier cost or a jo
   assertEquals(r.body.credits,8);assertEquals(r.body.available_credits,10);
   assertEquals(r.body.affordable,true);assertEquals(r.body.manifest_sha256,manifestHash);
   assert(!('maximum_supplier_cents' in r.body));
-  assert(!r.seen.includes('property_video_job_admit_photo_motion'));
+  assert(!r.seen.includes('property_video_job_admit_photo_motion_quoted'));
 });
 Deno.test('low wallet still shows exact Review charge and final Make does not admit',async()=>{
   const q=await call('/credit-quote',{balance:1});
@@ -104,17 +109,17 @@ Deno.test('low wallet still shows exact Review charge and final Make does not ad
   const final=await call('',{balance:1,header:quoteHash});
   assertEquals(final.status,402);assertEquals(final.body.code,'credit_balance_low');
   assertEquals(final.body.operation_closed,false);
-  assert(!final.seen.includes('property_video_job_admit_photo_motion'));
+  assert(!final.seen.includes('property_video_job_admit_photo_motion_quoted'));
 });
 Deno.test('final Make needs the displayed exact SHA and preserves plan path',async()=>{
   const absent=await call('');assertEquals(absent.status,409);
   assertEquals(absent.body.code,'credit_quote_changed');
   assertEquals(absent.body.admission_attempted,false);
   const changed=await call('',{header:'0'.repeat(64)});assertEquals(changed.status,409);
-  assert(!changed.seen.includes('property_video_job_admit_photo_motion'));
+  assert(!changed.seen.includes('property_video_job_admit_photo_motion_quoted'));
   const accepted=await call('',{header:quoteHash});assertEquals(accepted.status,202);
   assertEquals(accepted.body.manifest_sha256,manifestHash);
-  assert(accepted.seen.includes('property_video_job_admit_photo_motion'));
+  assert(accepted.seen.includes('property_video_job_admit_photo_motion_quoted'));
   const plan=await call('',{mode:'plan'});assertEquals(plan.status,202);
   const changedRoute=await call('',{mode:'plan',header:quoteHash});
   assertEquals(changedRoute.status,409);
@@ -132,6 +137,13 @@ Deno.test('wallet race after final preflight returns a retryable refreshed charg
   assertEquals(race.body.credits,8);assertEquals(race.body.available_credits,0);
   assertEquals(race.body.manifest_sha256,manifestHash);
   assertEquals(race.seen.filter(s=>s==='credit_photo_motion_review_quote').length,2);
+});
+Deno.test('atomic admission route change reopens Review without starting a job',async()=>{
+  const race=await call('',{header:quoteHash,admissionQuoteChanged:true});
+  assertEquals(race.status,409);assertEquals(race.body.code,'credit_quote_changed');
+  assertEquals(race.body.operation_closed,false);
+  assertEquals(race.body.admission_attempted,false);
+  assert(race.seen.includes('property_video_job_admit_photo_motion_quoted'));
 });
 Deno.test('changed source refuses before quoting or billing',async()=>{
   const r=await call('/credit-quote',{changedSource:true});
