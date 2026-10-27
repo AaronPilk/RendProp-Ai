@@ -54,8 +54,15 @@ assert toolbox.count('FloorPlanView(') == 1 and '#else' in toolbox
 home_grid = block(app, 'private var featureGrid:')
 assert 'comingSoonTile("Floor plans & measurements"' in home_grid and home_grid.count('featureButton(.floorPlan)') == 1
 assert '#if SPATIAL_CAPTURE_LAB' in home_grid and '#else' in home_grid and '3dFloorPlan' not in home_grid
-assert 'PrimaryButton(title: "Add photos", systemImage: "photo.stack") { showReelPhotos = true }' in block(fly, 'private var photoPickerGrid:')
-assert '.accessibilityIdentifier("reel.addPhotos")' in block(fly, 'private var photoPickerGrid:')
+photos_card = block(fly, 'private var stepPhotosCard:')
+assert 'photoPickerGrid' in photos_card
+assert 'Button { showReelPhotos = true } label:' in photos_card
+assert 'Label("Manage photos", systemImage: "photo.on.rectangle")' in photos_card
+assert '.buttonStyle(RendpropPillButtonStyle(compact: true))' in photos_card
+photo_grid = block(fly, 'private var photoPickerGrid:')
+assert 'Button(empty.action)' in photo_grid
+assert 'if empty == .noMatching { photoOrientationFilter = nil } else { showReelPhotos = true }' in photo_grid
+assert '.accessibilityIdentifier("video.photos.empty.recovery")' in photo_grid
 refresh_photos = block(fly, 'private func refreshVideoPhotos()')
 assert 'refreshedPhotos = try EnhancedPhoto.loadForListing(listingID: listing.id)' in refresh_photos
 assert 'refreshedPhotos = []' in refresh_photos and 'savedPhotoError = ' in refresh_photos
@@ -142,6 +149,7 @@ for anchor in ['func showLoading()', 'func showFailure()', 'func stop()', 'func 
     actual += block(player,anchor)+'\n'
 actual+='}\n'
 actual += '\n' + block(src['Networking/WorkspaceSync.swift'], 'enum CloudSyncError:')
+actual += '\n' + block(src['Networking/WorkspaceSync.swift'], 'enum ListingCreateWarning {')
 actual += '\n' + block(src['Networking/WorkspaceSync.swift'], 'struct CloudMediaPage:')
 actual += '\nenum CloudListingMerge {\n' + block(src['Networking/WorkspaceSync.swift'], 'static func date(') + '\n' + block(src['Networking/WorkspaceSync.swift'], 'static func validateMedia(') + '\n}\n'
 actual += block(src['Screens/CloudMediaView.swift'], 'enum CloudFloorPlanLink {')
