@@ -279,7 +279,11 @@ struct PhotoVersionHistoryTests {
         for kind in PhotoVersionHistory.LibraryKind.allCases {
             let visible = hiddenIndex.libraryVersions(kind)
             check(visible.allSatisfy { $0.familyID == "bedroom" }, "every library excludes the whole hidden living-room family")
-            check(visible.count == (kind == .original ? 0 : kind == .latest ? 1 : 2), "hidden family exclusion retains every remaining saved choice")
+            let expectedCount = kind == .original ? 0 : (kind == .latest || kind == .enhanced ? 1 : 2)
+            check(visible.count == expectedCount, "hidden family exclusion retains every remaining saved choice")
+            if kind == .enhanced {
+                check(visible.map(\.id) == ["bedroom"], "Enhanced keeps the remaining phone enhancement without folding in clean or staged edits")
+            }
         }
         let beforeHiddenReject = try Data(contentsOf: libraryIndexURL)
         rejected("hidden clean version cannot be selected from an old compare sheet") { try PhotoVersionHistory.selectForPublication(id: "living-clean-2", directory: libraryDir) }
