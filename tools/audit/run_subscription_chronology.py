@@ -109,18 +109,28 @@ try:
  for p,s in migrations:
   if p.name>CUTOVER.name:query('migration-'+p.stem,s)
  receipt['replayMode']='chronology and cutover replayed at their historical schema points; final fixtures include every later migration'
- # The chronology expansion/cutover must not change product allowances. The
- # later owner-authorized79 migration deliberately changes exactly these
- # cells; every other original field/row must remain byte-equivalent JSON.
+ # The chronology expansion/cutover must not change product allowances. Later
+ # reviewed policy migrations change the pinned cells below, including the
+ # four-tier catalog. Preserve the old Pro row as legacy_pro exactly.
  expected_matrix=json.loads(before_matrix)
  paid={'starter':(30,2032),'solo':(30,2032),'pro':(60,4157),'team':(150,10532)}
  for row in expected_matrix:
   if row['plan']in paid:row['reels_per_month'],row['cogs_ceiling_cents']=paid[row['plan']]
   elif row['plan']=='trial':row.update(renders_per_month=0,reels_per_month=0,photo_edits_per_month=5,aerials_per_month=0,topaz_per_month=0,cogs_ceiling_cents=500)
   elif row['plan']=='free':row.update(renders_per_month=0,photo_edits_per_month=0,cogs_ceiling_cents=0)
+ legacy_pro=next(row.copy() for row in expected_matrix if row['plan']=='pro')
+ legacy_pro['plan']='legacy_pro'
+ next(row for row in expected_matrix if row['plan']=='pro').update(renders_per_month=2,photo_edits_per_month=50,reels_per_month=15,aerials_per_month=1,topaz_per_month=0,seats=1,cogs_ceiling_cents=1200,price_cents=2999)
+ next(row for row in expected_matrix if row['plan']=='team').update(seats=3,price_cents=24999)
+ expected_matrix.extend([
+  legacy_pro,
+  {'plan':'max','renders_per_month':4,'photo_edits_per_month':100,'reels_per_month':30,'aerials_per_month':2,'topaz_per_month':0,'seats':1,'cogs_ceiling_cents':2032,'price_cents':4999},
+  {'plan':'ultra','renders_per_month':10,'photo_edits_per_month':200,'reels_per_month':60,'aerials_per_month':4,'topaz_per_month':0,'seats':1,'cogs_ceiling_cents':4157,'price_cents':9999},
+ ])
+ expected_matrix.sort(key=lambda row:row['plan'])
  assert json.loads(query('allowance-matrix-after',matrix))==expected_matrix
  receipt['historicalChronologyAllowancesPreserved']=True
- receipt['laterReviewedPolicyDelta']={'migrations':['20261014200302_property_video_recipe_allowances.sql','20261026165813_limit_intro_trial_creative_spend.sql'],'paid':paid,'trial':{'renders':0,'reels':0,'photos':5,'aerials':0,'topaz':0,'ceiling_cents':500},'free':{'renders':0,'photos':0,'ceiling_cents':0},'everyOtherOriginalCellPreserved':True}
+ receipt['laterReviewedPolicyDelta']={'migrations':['20261014200302_property_video_recipe_allowances.sql','20261026165813_limit_intro_trial_creative_spend.sql','20261027050000_four_tier_retail_plans.sql'],'paid':paid,'trial':{'renders':0,'reels':0,'photos':5,'aerials':0,'topaz':0,'ceiling_cents':500},'free':{'renders':0,'photos':0,'ceiling_cents':0},'legacyProExact':True,'newPlans':{'pro':2999,'max':4999,'ultra':9999,'team':24999},'everyOtherOriginalCellPreserved':True}
  for phase in ['fresh','replayed']:
   checks=query('chronology-'+phase,(SQL/'tests/subscription_chronology.sql').read_text())
   count=checks.count('|t');assert count>=25,count
