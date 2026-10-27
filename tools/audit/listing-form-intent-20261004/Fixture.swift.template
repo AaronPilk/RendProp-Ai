@@ -2,6 +2,12 @@ __HARNESS__
 // Primitive UI stubs. Form, edit-sheet init/save, AppModel.modify, DTO map and
 // facts intent are extracted from product source; no SwiftUI or phone I/O runs.
 struct CLLocationCoordinate2D { var latitude: Double; var longitude: Double }
+@propertyWrapper struct State<Value> {
+    var wrappedValue: Value
+    init(wrappedValue: Value) { self.wrappedValue = wrappedValue }
+    init(initialValue: Value) { wrappedValue = initialValue }
+}
+enum NearbyPlacesSearch { static let currentContext = "synthetic-form-context" }
 __UNIT_ADDRESS__
 __FORM__
 enum Haptics { static func success() {} }
@@ -14,6 +20,7 @@ enum Haptics { static func success() {} }
     private let ownerID: String?
     private let sessionRevision: UInt64
     private let workspaceID: UUID?
+    @State private var researchContext: String
     var dismissed = false
     func dismiss() { dismissed = true }
 __SHEET_INIT__
