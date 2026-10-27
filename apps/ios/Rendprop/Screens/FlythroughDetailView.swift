@@ -11929,7 +11929,7 @@ struct ReelStudioView: View {
         if ttsInFlight { return "Making your voice…" }
         return nil
     }
-    private var canGenerate: Bool { openingSelectionIsResolved && !photoMotionTimingRestorePending && (!photoMotion || (!listing.isSample && selectedExtras.isEmpty && reelTransition == .cut && !bigCaptionsOn && selected.allSatisfy { photoMotionKey($0) != nil })) && narrationPreparationMessage == nil && (work.serverJob == nil || work.serverJob?.reply?.isTerminal == true) && VideoSelectionCapacity.canCreate(photoCount: selected.count, totalCount: totalSelected) && pendingRequest == nil && unreadablePendingContext == nil && pendingBatch == nil && !unreadableBatch }
+    private var canGenerate: Bool { selectedExtras.isEmpty && openingSelectionIsResolved && !photoMotionTimingRestorePending && (!photoMotion || (!listing.isSample && reelTransition == .cut && !bigCaptionsOn && selected.allSatisfy { photoMotionKey($0) != nil })) && narrationPreparationMessage == nil && (work.serverJob == nil || work.serverJob?.reply?.isTerminal == true) && VideoSelectionCapacity.canCreate(photoCount: selected.count, totalCount: totalSelected) && pendingRequest == nil && unreadablePendingContext == nil && pendingBatch == nil && !unreadableBatch }
     /// The app-owned job continues when this sheet is dismissed. Only the
     /// explicit Cancel action or a captured permission change stops it.
     private var isWorking: Bool { work.running || work.isServerRendering || phase == .generating || phase == .stitching }
@@ -13220,40 +13220,15 @@ struct ReelStudioView: View {
         }
     }
 
-    /// Ready-made clips (the aerial intro) that lead the reel — toggleable.
+    /// Older locally saved aerial clips cannot use the legacy direct reel path.
+    /// Accepted openings above still lead Photo motion through the server job.
     private var clipsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("CLIPS").font(.rpKicker).foregroundStyle(Theme.inkDim)
-            ForEach(extraClipURLs, id: \.self) { url in
-                let on = selectedExtras.contains(url)
-                Button {
-                    if let i = selectedExtras.firstIndex(of: url) {
-                        selectedExtras.remove(at: i)
-                    } else {
-                        selectedExtras.append(url)
-                    }
-                    Haptics.selection()
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "airplane.departure")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(Color.white)
-                            .frame(width: 40, height: 40)
-                            .background(RPGradient.aerial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Aerial intro").font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
-                            Text("Opens the video · AI-generated").font(.rpCaption).foregroundStyle(Theme.inkDim)
-                        }
-                        Spacer()
-                        Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 20))
-                            .foregroundStyle(on ? Theme.accent : Theme.inkDim)
-                    }
-                    .padding(10)
-                    .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-                .buttonStyle(ScalePressStyle())
-            }
+            Label("Saved aerial clip", systemImage: "airplane.departure")
+                .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+            Text("Older clips on this phone cannot be added through AI camera right now. To start a new video with an accepted aerial opening, choose Opening clip · first above and use Photo motion. Your saved clip remains available in Aerial intro.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
@@ -13262,6 +13237,7 @@ struct ReelStudioView: View {
     private var generateTitle: String {
         if let narrationPreparationMessage { return narrationPreparationMessage }
         if canGenerate { return "Make my video" }
+        if !selectedExtras.isEmpty { return "Use the saved opening above" }
         if includeAcceptedOpening, acceptedOpening != nil, !photoMotion { return "Choose Photo motion or turn opening off" }
         if photoMotion, reelTransition != .cut { return "Choose Cut first" }
         if photoMotion, bigCaptionsOn { return "Turn off AI picture labels" }
@@ -13271,7 +13247,6 @@ struct ReelStudioView: View {
         if selected.count > VideoSelectionCapacity.maximumPhotos || totalSelected > VideoSelectionCapacity.maximumClips {
             return "Pick \(VideoSelectionCapacity.maximumPhotos) photos at most"
         }
-        if !selectedExtras.isEmpty { return "Pick 1 more photo" }
         return "Pick 2 photos first"
     }
 
@@ -15321,7 +15296,7 @@ struct ReelStudioView: View {
 
     private func generateWithSession() {
         let model = self.model, auth = self.auth
-        guard phase == .setup, canGenerate else { return }
+        guard phase == .setup, canGenerate, selectedExtras.isEmpty else { return }
         if !photoMotion { do { try requirePreparedProcessor() } catch { savedPhotoError = error.localizedDescription; return } }
         let frozenPhotoMotion = photoMotion
         let frozenPhotoProfile = photoMotionProfile

@@ -1,6 +1,8 @@
 // AI processor permission (v1/v2), the owner-only quality-test grant header and the
-// published-disclosure route through the ACTUAL property-video-jobs handler and the
-// actual whole-recipe quote (including the pinned native-4K Kie row). Only the
+// published-disclosure route through the actual property-video-jobs handler and the
+// actual whole-recipe quote (including the pinned native-4K Kie row). The new
+// supplier-funding preflight is isolated in this historical permission fixture;
+// handler.test.ts runs the unmodified handler to prove the FAL-only refusal.
 // Auth/PostgREST/R2 transports are closed fixtures. The property_video_job_admit_v2
 // answer applies the same permission rule as SQL (20261016110000), so a removed
 // TypeScript fast path still meets the database refusal. No provider or network.
@@ -9,7 +11,12 @@ const id=(i:number)=>`f7000000-0000-4000-8000-${String(i).padStart(12,'0')}`;con
 for(const[k,v]of Object.entries({SUPABASE_URL:'https://jobs-db.fixture.invalid',SUPABASE_ANON_KEY:'public-fixture',SUPABASE_SERVICE_ROLE_KEY:'service-fixture',CLOUDFLARE_ACCOUNT_ID:'a'.repeat(32),R2_ACCESS_KEY_ID:'inert-fixture',R2_SECRET_ACCESS_KEY:'inert-fixture'}))Deno.env.set(k,v);
 const{handler:realHandler}=await import('./index.ts');const{variedJobInput}=await import('./variety.ts');const{jobInput}=await import('./input.ts');
 const{KIE_PROPERTY_IDENTITY:KIE,KIE_PROPERTY_PROFILE:KIE_PROFILE}=await import('../_shared/property-video-kie.ts');
-let handler=realHandler;
+const handlerURL=new URL('./index.ts',import.meta.url);
+const legacyHandlerText=(await Deno.readTextFile(handlerURL))
+ .replace("import{admitFundedReelRecipe}from'../ai-video/reel-provider-admission.ts';","const admitFundedReelRecipe=async()=>{};")
+ .replace(/from'([^']+)'/g,(_all,path:string)=>`from'${new URL(path,handlerURL).href}'`);
+const{handler:legacyContractHandler}=await import('data:application/typescript,'+encodeURIComponent(legacyHandlerText));
+let handler=legacyContractHandler;
 const V1='property-video-jobs-v1',V2='property-video-jobs-v2',REVISION='processors-2026-10-16.1',STALE='processors-2026-10-01.0';
 const CONTRACT={token:V2,disclosure_revision:REVISION,processors:['kie','anthropic'],profiles:[KIE_PROFILE]};
 const sources=Array.from({length:3},(_,i)=>({photo_id:'selected-'+i,photo_asset_id:id(100+i),photo_version_id:'exact-staged-'+i,photo_provenance_id:null,motion:'push_in'}));
@@ -198,7 +205,7 @@ Deno.test('browser preflight allows the permission, disclosure and quality-test 
 });
 
 Deno.test('compiled defect controls: each new permission guard is load-bearing',async()=>{
- const url=new URL('./index.ts',import.meta.url),source=(await Deno.readTextFile(url)).replace(/from'([^']+)'/g,(_a,path)=>`from'${new URL(path,url).href}'`);
+ const source=legacyHandlerText;
  const compiled=async(before:string,after:string)=>{assertEquals(source.split(before).length,2,'exact actual guard: '+before);return(await import('data:application/typescript,'+encodeURIComponent(source.replace(before,()=>after)))).handler;};
  const fails=(oracle:()=>void,label:string)=>{let caught=false;try{oracle();}catch{caught=true;}assert(caught,'control: '+label);};
  try{
@@ -218,6 +225,6 @@ Deno.test('compiled defect controls: each new permission guard is load-bearing',
   handler=await compiled('const grant=qualityTestGrant(req);','const grant=null;');
   const ignored=await invoke('','POST',body,{grantHeader:grant,consent:V2,disclosure:REVISION});
   assertEquals(named(ignored,'property_video_quality_profile_for'),[]);assertEquals(admits(ignored)[0].args.p_test_grant,null);
- }finally{handler=realHandler;}
+ }finally{handler=legacyContractHandler;}
  console.log('PROCESSOR_CONSENT_COMPILED_CONTROLS=4');
 });

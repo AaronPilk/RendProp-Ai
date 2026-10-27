@@ -136,6 +136,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {ownerQaReelStep as actualOwnerQaReelStep,prepareOwnerQaReelInput} from ${
     JSON.stringify(new URL("./owner-reel-qa.ts", import.meta.url).href)
   };
+    import {admitFundedReelSteps as actualAdmitFundedReelSteps} from ${JSON.stringify(new URL("./reel-provider-admission.ts", import.meta.url).href)};
     import {OWNER_RAIL_MOTION_PROFILE} from ${JSON.stringify(new URL("../_shared/property-motion-profile.ts", import.meta.url).href)};
     import {parseReelFraming,reelFramingSteps,buildPhotoPreservingReelPrompt,buildPropertyCanvasReelPrompt,buildSteadyPropertyReelPrompt} from ${
     JSON.stringify(new URL("./reel-framing.ts", import.meta.url).href)
@@ -183,6 +184,10 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     const refundGenerateCharge=async(..._a:any[])=>{state.refunds++;};
     const routerEnabled=async()=>state.options.routerOn??false;
     const resolveChain=async(task:any,_context:any,legacy:any)=>[state.options.badRoute?{...legacy,model:"unknown-tariff-model"}:state.options.routerOn?{...legacy,route_id:"live-shaped-route",model:task.startsWith("video.upscale_")?"topaz/upscale/video":legacy.model,unit_cents:task==="video.upscale_1080p60"?4:8}:legacy,{...legacy,route_id:"eligible-second",provider:"other",model:"second-model"}];
+    const resolveRoute=async(task:any,context:any)=>resolveChain(task,context,legacyVideoStep(task,MODEL_I2V,"second",APP_AI_UNIT_CENTS.seedance_per_s,["i2v","1080p","5s","16:9","9:16"]));
+    const admitFundedReelSteps=(steps:any,seconds:number)=>state.options.realReelAdmission
+      ?actualAdmitFundedReelSteps(steps,seconds,{kieKey:()=>state.options.kieKey??"offline-synthetic-kie-key",kieCredits:async()=>state.options.kieCredits??1000})
+      :Promise.resolve(steps);
     import {asHttpError} from ${JSON.stringify(new URL("../_shared/providers/chain.ts", import.meta.url).href)};
     const runChain=async(_task:any,steps:any[],callback:any)=>{state.steps.push(steps);try{return {step:steps[0],value:await callback(steps[0])};}catch(error){throw asHttpError(error);}};
     import {ProviderError} from ${JSON.stringify(new URL("../_shared/providers/common.ts", import.meta.url).href)};
@@ -721,6 +726,17 @@ Deno.test("Aerial grants require strict current truth, and outages or revoked sc
 });
 Deno.test("Coming-soon Aerial does not gate ordinary Reel or source-video tools",async()=>{
   const f=await fixture();for(const route of ["drone","reel-clip"]as const){f.reset({ordinary:true});assertEquals((await f.handler(req(route))).status,202);assertEquals(f.state.posts.length,1);}
+});
+Deno.test("live-style FAL reel routes refuse without a funded KIE choice before any hold or provider POST",async()=>{
+ const f=await fixture();
+ for(const routerOn of[false,true]){
+  f.reset({ordinary:true,routerOn,realReelAdmission:true});
+  const response=await f.handler(req("reel-clip",`unfunded-fal-${routerOn}`));
+  assertEquals(response.status,503);
+  assertEquals(f.state.posts.length,0);
+  assertEquals(f.state.holds.size,0);
+  assertEquals(f.state.refunds,1);
+ }
 });
 Deno.test("compiled omitted Aerial launch gate is caught before any ordinary paid dispatch",async()=>{
   const mutant=await fixture(false,false,false,false,true);

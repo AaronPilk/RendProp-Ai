@@ -245,6 +245,7 @@ import { OWNER_RAIL_MOTION_PROFILE } from "../_shared/property-motion-profile.ts
 import {PROPERTY_VIDEO_QUALITY_PROFILE,PROPERTY_VIDEO_STEADY_PROFILE,isPropertyVideoQualityProfile,currentPropertyVideoQualityProfile,propertyVideoQualityProfile,propertyVideoQualitySteps,assertKiePropertyDispatchScope,kiePropertyExtra,kiePropertyPricedBasis,kiePropertyProviderInput,readPinnedRoute,samePinnedKieDispatch,type PropertyVideoQualityProfile} from "./property-video-quality.ts";
 import {KIE_PROPERTY_IDENTITY,KIE_PROPERTY_ROUTE_ID,kiePropertyPromptPinned} from "../_shared/property-video-kie.ts";
 import { buildPhotoPreservingReelPrompt, buildPropertyCanvasReelPrompt,buildSteadyPropertyReelPrompt, parseReelFraming, reelFramingSteps } from "./reel-framing.ts";
+import { admitFundedReelSteps } from "./reel-provider-admission.ts";
 import { probeMP4Video } from "./mp4video.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
 import {
@@ -1594,9 +1595,8 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       const charge = await guardGenerate(user, req, "reel", undefined, undefined, body.listing_id ?? reelListingId ?? undefined); // validated — charge, then submit
       const { orgId, plan } = charge;
 
-      // ROUTER (flag-gated). With the flag off this resolves to the one legacy
-      // step — fal Seedance — and the adapter rebuilds the payload below byte
-      // for byte (asserted by providers_test.ts).
+      // A route or secret does not prove that a video supplier has funds. The
+      // legacy FAL fallback is deliberately unavailable for new reel clips.
       const task = "video.reel_clip";
       const routerOn = await routerEnabled();
       const reelAspect = body.aspect === "16:9" || body.aspect === "9:16" ? body.aspect : null;
@@ -1604,7 +1604,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       let candidateSteps:RouteStep[];
       try{ownerQaStep = savedQualityProfile==="legacy"?await ownerQaReelStep({ actorId: user.id, orgId,
         listingId: body.listing_id ?? reelListingId, seconds: secs, framing, aspect: reelAspect }):null;
-      candidateSteps = isPropertyVideoQualityProfile(savedQualityProfile)?await propertyVideoQualitySteps(plan,undefined,savedQualityProfile):ownerQaStep ? [ownerQaStep] : await resolveChain(
+      candidateSteps = isPropertyVideoQualityProfile(savedQualityProfile)?await propertyVideoQualitySteps(plan,undefined,savedQualityProfile):ownerQaStep ? [ownerQaStep] : await resolveRoute(
         task,
         {
           plan,
@@ -1613,12 +1613,11 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
           needs: ["i2v", "1080p", ...durationNeeds(task, secs), ...(!framing && reelAspect ? [reelAspect] : [])],
           carries_customer_media: true,
         },
-        legacyVideoStep(task, MODEL_I2V, "second", APP_AI_UNIT_CENTS.seedance_per_s, ["i2v", "1080p", "5s", "16:9", "9:16"]),
       );
       }catch(error){await refundGenerateCharge(charge);throw error;}
       let steps: RouteStep[];
       try {
-        steps = reelFramingSteps(candidateSteps, framing);
+        steps = await admitFundedReelSteps(reelFramingSteps(candidateSteps, framing), secs);
       } catch (error) {
         await refundGenerateCharge(charge);
         throw error;

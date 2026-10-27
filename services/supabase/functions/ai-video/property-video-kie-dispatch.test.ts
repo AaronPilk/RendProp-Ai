@@ -61,6 +61,8 @@ type ReelBody=any;type AiVideoWorkerScope=any;
 ${helpers}
 export function make(stub:any){
  const {getUser,userClient,adminClient,headObject,presignGet,guardGenerate,refundGenerateCharge,routerEnabled,ownerQaReelStep,resolveChain,adapterFor,submitEnvelope,assertVideoReceiptSigningReady,recordProvenance,retainVideoSubmission,resolvePublicAsset,listingSpaceType,contentOrgForUser,putBytes}=stub;
+ const admitFundedReelSteps=async(steps:any)=>steps;
+ const resolveRoute=(task:any,context:any)=>resolveChain(task,context,{route_id:"synthetic-fal",task,provider:"fal",model:"fal-ai/bytedance/seedance/v1/pro/fast/image-to-video",unit:"second",unit_cents:4.86,capabilities:["i2v","1080p","5s"],enabled:true});
  ${prelude}
 ${route}
     throw new HttpError(404,"Closed fixture route");

@@ -143,6 +143,8 @@ async function routingFixture() {
       const routerEnabled=async()=>false;
       const ownerQaReelStep=async(args:any)=>{events.push("server_grant");return await realOwnerQaReelStep(args,database,now);};
       const resolveChain=async(_task:any,context:any,legacy:any)=>{events.push("normal_chain");return [{...legacy,context}];};
+      const resolveRoute=async(task:any,context:any)=>resolveChain(task,context,legacyVideoStep(task,MODEL_I2V,"second",APP_AI_UNIT_CENTS.seedance_per_s,["i2v","1080p","5s","16:9","9:16"]));
+      const admitFundedReelSteps=async(steps:any)=>steps;
       const durationNeeds=()=>["5s"];
       const legacyVideoStep=(task:string,model:string,unit:string,unit_cents:number,capabilities:string[])=>({task,model,unit,unit_cents,capabilities,provider:"fal"});
       ${fragment}
