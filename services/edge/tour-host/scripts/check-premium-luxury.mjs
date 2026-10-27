@@ -55,20 +55,23 @@ try{
  // reachable. The film stays unattached; no lead or provider request is made.
  const layoutTour=buildDemoTour();
  layoutTour.listing_video={url:'/local-fixture/synthetic-listing-8s.mp4',poster_url:'/assets/demo-poster.webp',duration_s:8,width:1920,height:1080,disclosure:'Synthetic photo-based film.',branding_policy:'unbranded'};
- for(const [theme,width,height] of [['signature-estate',320,568],['coastal-luxe',320,568],['coastal-luxe',768,600],['signature-estate',601,600],['coastal-luxe',601,600]]){
-  const context=await browser.newContext({viewport:{width,height},reducedMotion:'reduce'});
+ for(const [theme,width,height] of [['signature-estate',320,568],['coastal-luxe',320,568],['signature-estate',360,640],['coastal-luxe',360,640],['coastal-luxe',768,600],['signature-estate',601,600],['signature-estate',768,600],['signature-estate',900,600],['signature-estate',844,390],['coastal-luxe',601,600]]){
+  const context=await browser.newContext({viewport:{width,height},isMobile:true,hasTouch:true,reducedMotion:'reduce'});
   await context.route('**/*',route=>{const u=new URL(route.request().url());return u.origin===origin||u.protocol==='data:'?route.continue():route.abort()});
   await context.route(origin+'/property/layout-probe',route=>route.fulfill({status:200,contentType:'text/html',body:renderTourPage({...layoutTour,website_theme:theme},'/closed-api','','',{origin,publicBase:'/property'})}));
   const p=await context.newPage();await p.goto(origin+'/property/layout-probe',{waitUntil:'networkidle'});
   const geometry=await p.evaluate(()=>{
    const rect=s=>document.querySelector(s)?.getBoundingClientRect();
-   const play=document.querySelector('#property-video-play'),playBox=play.getBoundingClientRect(),menu=document.querySelector('.property-page-menu');
+   const play=document.querySelector('#property-video-play'),playBox=play.getBoundingClientRect(),menu=document.querySelector('.property-page-menu'),summary=menu.querySelector('summary'),navPrimary=document.querySelector('#listing-nav .property-primary-play');
    const hit=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&e.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))};
-   return{playBottom:playBox.bottom,playLowerHit:play.contains(document.elementFromPoint(playBox.left+playBox.width/2,playBox.bottom-5)),eyebrowTop:rect('.property-hero-copy .lp-eyebrow')?.top,titleTop:rect('.property-hero-title')?.top,priceBottom:rect('.property-hero-price')?.bottom,actionsBottom:rect('.listing-cover-actions')?.bottom,menuVisible:menu&&getComputedStyle(menu).display!=='none'&&hit(menu.querySelector('summary')),pageLinksHidden:getComputedStyle(document.querySelector('.listing-nav-links')).display==='none',navActionsHit:[...document.querySelectorAll('#listing-nav .listing-nav-actions > a,#listing-nav .listing-nav-actions > button')].filter(e=>getComputedStyle(e).display!=='none').every(hit),overflow:document.documentElement.scrollWidth>innerWidth};
+   const navActions=[...document.querySelectorAll('#listing-nav .listing-nav-actions > a,#listing-nav .listing-nav-actions > button')].filter(e=>getComputedStyle(e).display!=='none');
+   return{playBottom:playBox.bottom,playCenterHit:hit(play),playLowerHit:play.contains(document.elementFromPoint(playBox.left+playBox.width/2,playBox.bottom-5)),eyebrowTop:rect('.property-hero-copy .lp-eyebrow')?.top,titleTop:rect('.property-hero-title')?.top,priceBottom:rect('.property-hero-price')?.bottom,actionsBottom:rect('.listing-cover-actions')?.bottom,menuVisible:getComputedStyle(menu).display!=='none'&&hit(summary),menuRight:summary.getBoundingClientRect().right,navPrimaryLeft:navPrimary.getBoundingClientRect().left,pageLinksHidden:getComputedStyle(document.querySelector('.listing-nav-links')).display==='none',navActionsHit:navActions.every(hit),navTargets44:navActions.every(e=>{const r=e.getBoundingClientRect();return r.width>=44&&r.height>=44}),overflow:document.documentElement.scrollWidth>innerWidth};
   });
   const tag=`${theme}-${width}x${height}-published-layout`;measurements.push({tag,...geometry});
   check(!geometry.overflow,tag+' has no horizontal overflow');
   if(theme==='signature-estate'&&width===320)check(geometry.playLowerHit&&geometry.eyebrowTop>=geometry.playBottom+4&&geometry.titleTop>=geometry.playBottom+4,tag+' Play stays fully tappable and clear of the property identity');
+  if(theme==='signature-estate'&&width>=601)check(geometry.playCenterHit&&geometry.playLowerHit,tag+' film Play is not covered by the identity at compact landscape widths');
+  if(width<=374)check(geometry.menuVisible&&geometry.pageLinksHidden&&geometry.navActionsHit&&geometry.navTargets44&&geometry.navPrimaryLeft>=geometry.menuRight+2,tag+' 44px navigation actions do not overlap the Pages menu');
   if(theme==='coastal-luxe'&&(width===320||width===601||width===768))check(geometry.titleTop>=0&&geometry.priceBottom<height-8&&geometry.actionsBottom<height-8,tag+' identity, price and enquiry action fit the first screen');
   if(width>=601){check(geometry.menuVisible&&geometry.pageLinksHidden&&geometry.navActionsHit,tag+' compact navigation keeps every visible action independently hittable');await p.locator('.property-page-menu summary').click();check(await p.locator('.property-page-menu-links a[href*="page=contact"]').evaluate(e=>{const r=e.getBoundingClientRect();return e.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))}),tag+' Contact is reachable through the compact page menu');}
   await context.close();
