@@ -5,8 +5,9 @@ import FoundationNetworking
 #endif
 
 /// Asks the public host for the current branded link of an already-published
-/// slug. The host alone can prove that an address path is unique and allowed to
-/// be discovered. A failed or malformed lookup keeps the existing token link.
+/// slug. The host alone can prove whether a bare address is claimed or a dated
+/// address link belongs to this publication. A failed or malformed lookup keeps
+/// the existing token link.
 enum PublicShareLinkResolver {
     /// A tap never waits for the lookup. Until a verified address link arrives,
     /// the already-published token link is immediately usable. A result from a
@@ -39,13 +40,16 @@ enum PublicShareLinkResolver {
         do {
             let (data, response) = try await fetch(request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  http.url == endpoint,
                   data.count <= 2048,
                   let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   object.count == 2,
                   let proof = object["address_only"] as? NSNumber,
-                  CFGetTypeID(proof) == CFBooleanGetTypeID(), proof.boolValue,
+                  CFGetTypeID(proof) == CFBooleanGetTypeID(),
                   let raw = object["url"] as? String,
-                  let verified = URL(string: raw), validAddressOnlyURL(verified) else { return fallbackURL }
+                  let verified = URL(string: raw),
+                  proof.boolValue ? validAddressOnlyURL(verified) : validDatedAddressURL(verified, slug: slug)
+            else { return fallbackURL }
             return verified
         } catch {
             return fallbackURL
@@ -56,24 +60,55 @@ enum PublicShareLinkResolver {
         guard url.scheme?.lowercased() == "https",
               ["rendprop.com", "www.rendprop.com"].contains((url.host ?? "").lowercased()),
               url.user == nil, url.password == nil,
-              url.port == nil || url.port == 443 else { return nil }
-        let parts = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
-        guard (parts.count == 2 && ["f", "property"].contains(parts[0])) ||
-                (parts.count == 3 && parts[0] == "property"),
-              let slug = parts.last, validSlug(slug) else { return nil }
-        return slug
+              url.port == nil || url.port == 443,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.query == nil, components.fragment == nil,
+              components.percentEncodedPath == url.path else { return nil }
+        let parts = url.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard parts.first == "" else { return nil }
+        if parts.count == 3, ["f", "property"].contains(parts[1]), validSlug(parts[2]) {
+            return parts[2]
+        }
+        if parts.count == 4, parts[1] == "property", validAddressPart(parts[2]) {
+            let tail = parts[3]
+            if validSlug(tail) { return tail } // Legacy address + token URL.
+            let dated = tail.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+            if dated.count == 2, validDatePart(dated[0]), validSlug(dated[1]) {
+                return dated[1]
+            }
+        }
+        return nil
     }
 
     private static func validAddressOnlyURL(_ url: URL) -> Bool {
+        guard validBrandedResponseURL(url) else { return false }
+        let parts = url.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        return parts.count == 3 && parts[0] == "" && parts[1] == "property" && validAddressPart(parts[2])
+    }
+
+    private static func validDatedAddressURL(_ url: URL, slug: String) -> Bool {
+        guard validBrandedResponseURL(url) else { return false }
+        let parts = url.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 4, parts[0] == "", parts[1] == "property", validAddressPart(parts[2]) else { return false }
+        let dated = parts[3].split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        return dated.count == 2 && validDatePart(dated[0]) && dated[1] == slug
+    }
+
+    private static func validBrandedResponseURL(_ url: URL) -> Bool {
         guard url.scheme == "https", url.host == "rendprop.com",
               url.user == nil, url.password == nil, url.port == nil,
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.query == nil, components.fragment == nil,
               components.percentEncodedPath == url.path else { return false }
-        let parts = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
-        guard parts.first == "property", parts.count == 2,
-              parts[1].range(of: "^[a-z0-9][a-z0-9-]{0,119}$", options: .regularExpression) != nil else { return false }
-        return true
+        return url.absoluteString == "https://rendprop.com\(url.path)"
+    }
+
+    private static func validAddressPart(_ address: String) -> Bool {
+        address.range(of: "^[a-z0-9](?:[a-z0-9-]{0,118}[a-z0-9])?$", options: .regularExpression) != nil
+    }
+
+    private static func validDatePart(_ date: String) -> Bool {
+        date.range(of: "^[0-9]{8}$", options: .regularExpression) != nil
     }
 
     private static func validSlug(_ slug: String) -> Bool {
