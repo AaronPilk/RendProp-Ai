@@ -41,40 +41,75 @@ test("three consecutive eligible samples pass only after two fixed intervals", a
   assert.equal(result.samples.length, 3);
   assert.deepEqual(f.sleeps, [5_000, 5_000]);
   assert.equal(result.elapsedMilliseconds, 10_000);
-  assert.equal(result.originalDeadlineMonotonicMilliseconds, 300_000);
+  assert.equal(result.originalDeadlineMonotonicMilliseconds, 600_000);
   assert.deepEqual(result.samples.map(s => s.consecutiveValidEligibleSamples), [1, 2, 3]);
   assert.equal(result.mediaTestInvocations, 0);
 });
 
 test("transient overload resets the streak rather than extending the original deadline", async () => {
-  const f = fake({ sequence: [sample(), sample({ loadavg: [9, 1, 1] }), sample({ loadavg: [8, 4, 2] })] });
+  const f = fake({ sequence: [sample(), sample({ loadavg: [9, 1, 1] }), sample({ loadavg: [5, 4, 2] })] });
   const result = await assessReadiness(f.readiness);
   assert.equal(result.passed, true);
   assert.deepEqual(result.samples.map(s => s.consecutiveValidEligibleSamples), [1, 0, 1, 2, 3]);
   assert.equal(result.elapsedMilliseconds, 20_000);
-  assert.equal(result.originalDeadlineMonotonicMilliseconds, 300_000);
+  assert.equal(result.originalDeadlineMonotonicMilliseconds, 600_000);
 });
 
-test("sustained overload past the old cutoff passes only after three eligible samples", async () => {
+test("a late quiet window after the old cutoff needs three eligible samples", async () => {
+  // A runner that settles just after the former 300-second cutoff still
+  // needs three consecutive samples within the new fixed deadline.
   const busy = sample({ loadavg: [9, 1, 1] });
-  const f = fake({ sequence: [...Array.from({ length: 37 }, () => busy), sample()] });
+  const quiet = sample({ loadavg: [4.5, 1, 1] });
+  const f = fake({ sequence: [
+    ...Array.from({ length: 38 }, () => busy), quiet, quiet,
+    ...Array.from({ length: 18 }, () => busy), quiet, quiet, quiet,
+  ] });
   const result = await assessReadiness(f.readiness);
   assert.equal(result.passed, true);
   assert.equal(result.reason, "THREE_CONSECUTIVE_ELIGIBLE_SAMPLES");
-  assert.equal(result.originalDeadlineMonotonicMilliseconds, 300_000);
-  assert.equal(result.elapsedMilliseconds, 195_000);
-  assert.equal(result.samples.length, 40);
-  assert(result.samples.slice(0, 37).every(entry => entry.busy === true));
+  assert.equal(result.originalDeadlineMonotonicMilliseconds, 600_000);
+  assert.equal(result.elapsedMilliseconds, 300_000);
+  assert.equal(result.samples.length, 61);
+  assert.deepEqual(result.samples.slice(38, 41).map(entry => entry.consecutiveValidEligibleSamples), [1, 2, 0]);
   assert.deepEqual(result.samples.slice(-3).map(entry => entry.consecutiveValidEligibleSamples), [1, 2, 3]);
   assert(result.samples.slice(-3).every(entry => entry.oneMinuteLoadPerCPU <= POLICY.maximumOneMinuteLoadPerCPU));
 });
 
+test("two late eligible samples followed by renewed load still refuse admission", async () => {
+  const busy = sample({ loadavg: [9, 1, 1] });
+  const quiet = sample({ loadavg: [4.5, 1, 1] });
+  const f = fake({ sequence: [...Array.from({ length: 58 }, () => busy), quiet, quiet, busy] });
+  const result = await assessReadiness(f.readiness);
+  assert.equal(result.passed, false);
+  assert.equal(result.reason, "ORIGINAL_DEADLINE_REACHED");
+  assert.equal(result.elapsedMilliseconds, 600_000);
+  assert.equal(result.samples.length, 120);
+  assert.deepEqual(result.samples.slice(58, 61).map(entry => entry.consecutiveValidEligibleSamples), [1, 2, 0]);
+  assert.equal(result.mediaTestInvocations, 0);
+});
+
 test("the fixed load boundary is inclusive and scales only with valid CPU count", async () => {
-  assert.equal((await assessReadiness(fake({ sequence: [sample({ cpus: 6, loadavg: [16, 0, 0] })] }).readiness)).passed, true);
-  const f = fake({ sequence: [sample({ loadavg: [8.000001, 0, 0] })] });
+  assert.equal((await assessReadiness(fake({ sequence: [sample({ cpus: 6, loadavg: [10, 0, 0] })] }).readiness)).passed, true);
+  assert.equal((await assessReadiness(fake({ sequence: [sample({ loadavg: [5, 0, 0] })] }).readiness)).passed, true);
+  const f = fake({ sequence: [sample({ loadavg: [5.000001, 0, 0] })] });
   const result = await assessReadiness(f.readiness);
   assert.equal(result.passed, false);
   assert.equal(result.busy, true);
+});
+
+test("the exact-head MP4 host load that old admission accepted cannot enter capture", async () => {
+  // CI 40590178847 admitted at this load; its encoded MP4 then missed 655 ms
+  // of transition frames and failed the unchanged pixel oracle.
+  const observedLoad = 6.6767578125;
+  assert(observedLoad / 3 <= 8 / 3);
+  assert(observedLoad / 3 > POLICY.maximumOneMinuteLoadPerCPU);
+  const f = fake({ sequence: [sample({ loadavg: [observedLoad, 23.00244140625, 16.38037109375] })] });
+  const result = await assessReadiness(f.readiness);
+  assert.equal(result.passed, false);
+  assert.equal(result.reason, "ORIGINAL_DEADLINE_REACHED");
+  assert.equal(result.busy, true);
+  assert.equal(result.samples.length, 120);
+  assert.equal(result.mediaTestInvocations, 0);
 });
 
 test("permanent overload fails at the absolute original deadline with a bounded sample count", async () => {
@@ -82,17 +117,17 @@ test("permanent overload fails at the absolute original deadline with a bounded 
   const result = await assessReadiness(f.readiness);
   assert.equal(result.passed, false);
   assert.equal(result.reason, "ORIGINAL_DEADLINE_REACHED");
-  assert.equal(result.originalDeadlineMonotonicMilliseconds, 301_234);
-  assert.equal(result.elapsedMilliseconds, 300_000);
+  assert.equal(result.originalDeadlineMonotonicMilliseconds, 601_234);
+  assert.equal(result.elapsedMilliseconds, 600_000);
   assert.equal(result.deadlineReached, true);
   assert.equal(result.busy, true);
-  assert(result.samples.length <= 61);
-  assert.equal(f.sleeps.reduce((a, b) => a + b, 0), 300_000);
+  assert(result.samples.length <= 121);
+  assert.equal(f.sleeps.reduce((a, b) => a + b, 0), 600_000);
   assert(f.sleeps.every(value => value > 0 && value <= 5_000));
 });
 
 test("a third healthy sample completing at the deadline cannot pass", async () => {
-  const f = fake({ onSample: ({ index, time }) => index === 2 ? 300_000 : time });
+  const f = fake({ onSample: ({ index, time }) => index === 2 ? 600_000 : time });
   const result = await assessReadiness(f.readiness);
   assert.equal(result.samples.length, 3);
   assert.equal(result.samples.at(-1).valid, true);
@@ -103,32 +138,32 @@ test("a third healthy sample completing at the deadline cannot pass", async () =
 });
 
 test("a late timer fails before another sample and does not reset the deadline", async () => {
-  const f = fake({ onSleep: () => 320_000 });
+  const f = fake({ onSleep: () => 620_000 });
   const result = await assessReadiness(f.readiness);
   assert.equal(f.calls(), 1);
   assert.equal(result.passed, false);
   assert.equal(result.reason, "ORIGINAL_DEADLINE_REACHED");
-  assert.equal(result.originalDeadlineMonotonicMilliseconds, 300_000);
+  assert.equal(result.originalDeadlineMonotonicMilliseconds, 600_000);
 });
 
 test("remaining time bounds the last requested delay", async () => {
   const f = fake({ sequence: [sample({ loadavg: [9, 0, 0] })],
-    onSample: ({ index, time }) => index === 0 ? 298_999 : time });
+    onSample: ({ index, time }) => index === 0 ? 598_999 : time });
   const result = await assessReadiness(f.readiness);
   assert.equal(result.passed, false);
   assert.deepEqual(f.sleeps, [1_001]);
   assert.equal(result.reason, "ORIGINAL_DEADLINE_REACHED");
 });
 
-test("slow or anomalous clock progress cannot exceed the immutable 61-sample bound", async () => {
+test("slow or anomalous clock progress cannot exceed the immutable 121-sample bound", async () => {
   const f = fake({ sequence: [sample({ loadavg: [9, 0, 0] })], onSleep: ({ time }) => time + 1 });
   const result = await assessReadiness(f.readiness);
   assert.equal(result.reason, "MAXIMUM_SAMPLE_COUNT_REACHED");
   assert.equal(result.passed, false);
-  assert.equal(f.calls(), 61);
-  assert.equal(result.samples.length, 61);
-  assert.equal(f.sleeps.length, 60);
-  assert.equal(result.originalDeadlineMonotonicMilliseconds, 300_000);
+  assert.equal(f.calls(), 121);
+  assert.equal(result.samples.length, 121);
+  assert.equal(f.sleeps.length, 120);
+  assert.equal(result.originalDeadlineMonotonicMilliseconds, 600_000);
 });
 
 test("a stalled monotonic clock fails after the first requested interval", async () => {
@@ -215,10 +250,10 @@ test("policy is frozen and environment or extra injected options do not weaken i
     const f = fake({ sequence: [sample({ loadavg: [9, 0, 0] })] });
     const result = await assessReadiness({ ...f.readiness, policy: { maximumOneMinuteLoadPerCPU: 999999 } });
     assert.equal(result.passed, false);
-    assert.equal(result.policy.maximumOneMinuteLoadPerCPU, 8 / 3);
-    assert.equal(result.policy.totalMilliseconds, 300_000);
+    assert.equal(result.policy.maximumOneMinuteLoadPerCPU, 5 / 3);
+    assert.equal(result.policy.totalMilliseconds, 600_000);
     assert.equal(result.policy.requiredConsecutiveSamples, 3);
-    assert.equal(result.policy.maximumSamples, 61);
+    assert.equal(result.policy.maximumSamples, 121);
   } finally {
     if (previous === undefined) delete process.env.MEDIA_RUNNER_MAX_LOAD;
     else process.env.MEDIA_RUNNER_MAX_LOAD = previous;

@@ -10,11 +10,13 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
 export const POLICY = Object.freeze({
-  totalMilliseconds: 300_000,
+  totalMilliseconds: 600_000,
   sampleIntervalMilliseconds: 5_000,
   requiredConsecutiveSamples: 3,
-  maximumSamples: 61,
-  maximumOneMinuteLoadPerCPU: 8 / 3,
+  maximumSamples: 121,
+  // Keep spare CPU for real-time Canvas/MediaRecorder capture: an admitted
+  // three-CPU runner near seven total load lost encoded transition frames.
+  maximumOneMinuteLoadPerCPU: 5 / 3,
   supportedPlatform: "darwin",
 });
 
