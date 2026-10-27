@@ -84,7 +84,10 @@ enum FileStore {
 struct CLLocationCoordinate2D { var latitude: Double; var longitude: Double }
 typealias Coordinate = CLLocationCoordinate2D
 struct CaptureAsset { var localURL: URL; var motionSidecarURL: URL? }
-enum Config { static let useLiveBackend = true }
+enum Config {
+    static let useLiveBackend = true
+    static let isOfflineAccountFixture = false // The live-account path must require a workspace.
+}
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID(uuidString: "22222222-2222-4222-8222-222222222222") }
 @MainActor final class WorkspaceStore {
     static let shared = WorkspaceStore()
