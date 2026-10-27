@@ -40,6 +40,7 @@
         }
 
         let framing = NarrationFixture()
+        framing.acknowledgedFramingKey = framing.framingSelectionKey
         VideoPhotoFramingReader.control.reset(block: true)
         framing.generate()
         await until { VideoPhotoFramingReader.control.reads > 0 }
@@ -49,6 +50,7 @@
         check(framing.connection.calls == 0 && framing.snapshotSpy.count == 0, "busy after framing cannot enter session")
 
         let reconnect = NarrationFixture()
+        reconnect.acknowledgedFramingKey = reconnect.framingSelectionKey
         reconnect.connection.deferred = true
         VideoPhotoFramingReader.control.reset()
         reconnect.generate()

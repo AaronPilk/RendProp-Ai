@@ -45,7 +45,9 @@ insert into public.cost_ledger(job_id,org_id,feature,provider,model,units,unit_c
 insert into public.cost_ledger(job_id,org_id,feature,provider,model,units,unit_cost_cents,total_cents,meta,idempotency_key)select 'b1000000-0000-4000-8000-000000000021',org1,'qc','anthropic','claude-haiku',2,.5,1,jsonb_build_object('verdict','pass'),'legacy-history-unlinked' from h;
 """
 SNAPSHOT="""select jsonb_build_object('ledger',(select coalesce(string_agg(md5(row_to_json(l)::text),','order by l.id),'')from public.cost_ledger l),'ledger_rows',(select count(*)from public.cost_ledger),
- 'holds',(select coalesce(string_agg(md5(row_to_json(r)::text),','order by r.id),'')from public.serving_cost_reservations r),'hold_rows',(select count(*)from public.serving_cost_reservations),
+ -- Later credit migrations append nullable funding columns. Compare the exact
+ -- predecessor financial row, not its later JSON schema shape.
+ 'holds',(select coalesce(string_agg(md5((to_jsonb(r)-'credit_hold_id'-'credit_environment')::text),','order by r.id),'')from public.serving_cost_reservations r),'hold_rows',(select count(*)from public.serving_cost_reservations),
  'linked',(select count(*)from public.serving_cost_reservations where ledger_id is not null),
  'ceiling_one',(select public.serving_ceiling_spent_cents(org_id,null,null)from public.memberships where user_id='b1000000-0000-4000-8000-000000000001'),
  'ceiling_two',(select public.serving_ceiling_spent_cents(org_id,null,null)from public.memberships where user_id='b1000000-0000-4000-8000-000000000002'))"""
@@ -155,7 +157,12 @@ def main():
   run('own-replay-after-controls',psql+['-f',own]);assert catalog('after-final-replay')==after and shape('shape-after-final-replay')==shape_first and q('history-after-controls',SNAPSHOT)==history_before,'Final own replay must be a no-op'
   # ── remaining chronology, then the actual pipeline cases ─────────────────
   for i,m in enumerate((m for m in partition_fresh_migrations(migrations)[0] if m.name>own.name),own_index+1):run('migration-'+str(i).zfill(3),psql+['-f',m])
-  assert q('history-final',SNAPSHOT)==history_before,'Later migrations must not rewrite seeded financial history'
+  history_final=q('history-final',SNAPSHOT)
+  assert history_final==history_before,'Later migrations must not rewrite seeded financial history'
+  assert q('history-new-credit-columns',"select count(*) from public.serving_cost_reservations where actor_id in ('b1000000-0000-4000-8000-000000000001','b1000000-0000-4000-8000-000000000002') and (credit_hold_id is not null or credit_environment is not null)")==0,'Later migrations must not fund legacy holds with credits'
+  tampered=q('history-hold-tamper-control',"begin; update public.serving_cost_reservations set hold_cents=hold_cents+1 where actor_id='b1000000-0000-4000-8000-000000000001';"+SNAPSHOT+";rollback;")
+  assert tampered!=history_final and tampered['holds']!=history_final['holds'],'Financial history snapshot must reject altered hold amounts'
+  assert q('history-after-tamper-rollback',SNAPSHOT)==history_final,'Financial history control must roll back'
   write(out/'fixture.json',{'psql':psql,'env':env})
   env['PIPELINE_COST_PG_FIXTURE']=str(out/'fixture.json');env['PIPELINE_COST_CASE_EVIDENCE']=str(out/'positive-cases.json')
   positive=run('actual-pipeline-and-sql',[sys.executable,'-B','-u',ROOT/'services/supabase/tests/pipeline_cost_binding_cases.py','-v'],limit=120)

@@ -59,8 +59,9 @@ body += '\n@MainActor final class ReelPresentationHarness {\nlet job: ReelWorkJo
 assert '@ObservedObject private var work: ReelWorkJob' in reel_view
 assert '@State private var workTask' not in reel_view
 assert 'workTask?.cancel()' not in cleanup and 'endBackgroundHold()' not in cleanup
-assert screen.count('work.start(identityIsCurrent:') == 5
-assert screen.count('identityIsCurrent: { [model, id = listing.id] in') == 5
+assert screen.count('work.start(identityIsCurrent:') == 6
+assert screen.count('identityIsCurrent: { [model, id = listing.id] in') == 6
+assert 'work.start(identityIsCurrent: { [model, id = listing.id] in\n            model.listings.contains { $0.id == id && $0.cloudUnavailable != true }' in screen
 assert 'work.isPresented = true' in reel_view
 assert 'try requireCurrent()\n                let wasPlanned' in screen
 assert 'resumeBatch: true' in screen and 'work.afterCurrentOperation { continueSavedBatch(saved) }' in screen

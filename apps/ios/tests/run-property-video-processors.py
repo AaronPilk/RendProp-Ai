@@ -12,13 +12,20 @@ def block(s,anchor):
     start=s.index(anchor);o=s.index('{',start);depth=1;e=o+1
     while depth:depth+=(s[e]=='{')-(s[e]=='}');e+=1
     return s[start:e]
-rels=['apps/ios/Rendprop/Render/VideoAspectChoice.swift','apps/ios/Rendprop/Render/VideoMusicContract.swift','apps/ios/Rendprop/Render/VideoMusicCatalog.swift','apps/ios/Rendprop/Models/ListingVideo.swift','apps/ios/Rendprop/Render/PropertyVideoProcessorConsent.swift','apps/ios/Rendprop/Render/PropertyVideoJob.swift','apps/ios/Rendprop/Render/PropertyVideoAdmission.swift','apps/ios/Rendprop/Networking/PropertyVideoJobsAPI.swift','apps/ios/Rendprop/Networking/PropertyVideoJobCancellation.swift','apps/ios/Rendprop/Render/PropertyVideoJobRunner.swift','apps/ios/tests/PropertyVideoProcessorTests.swift','packages/client-contracts/property-video-processor-disclosure.json',str(Path(__file__).relative_to(ROOT)), 'apps/ios/Rendprop/Screens/FlythroughDetailView.swift','apps/ios/Rendprop/RendpropApp.swift']
+rels=['apps/ios/Rendprop/Render/VideoAspectChoice.swift','apps/ios/Rendprop/Render/VideoMusicContract.swift','apps/ios/Rendprop/Render/VideoMusicCatalog.swift','apps/ios/Rendprop/Models/ListingVideo.swift','apps/ios/Rendprop/Render/PropertyVideoProcessorConsent.swift','apps/ios/Rendprop/Render/PropertyVideoJob.swift','apps/ios/Rendprop/Render/PropertyVideoAdmission.swift','apps/ios/Rendprop/Networking/PropertyVideoJobsAPI.swift','apps/ios/Rendprop/Networking/PropertyVideoJobCancellation.swift','apps/ios/Rendprop/Render/PropertyVideoJobRunner.swift','apps/ios/tests/PropertyVideoProcessorTests.swift','packages/client-contracts/property-video-processor-disclosure.json',str(Path(__file__).relative_to(ROOT)), 'apps/ios/Rendprop/Screens/FlythroughDetailView.swift','apps/ios/Rendprop/RendpropApp.swift','apps/ios/Rendprop/Models/PublishedListingVideoState.swift','apps/ios/Rendprop/Models/CreditWallet.swift']
 hashes={r:sha(ROOT/r) for r in rels};floor();(out/'tmp').mkdir()
 # Original-master upload belongs to the photo-motion source gate. Keep this
 # processor proof's compiled API surface focused on job admission and recovery.
 network=(ROOT/rels[7]).read_text()
 network=network.replace(block(network,'enum PropertyVideoOriginalMaster {'),'')
 source='\n'.join(network if i==7 else (ROOT/r).read_text() for i,r in enumerate(rels[:9]))
+# These unrelated selected-download and aerial-credit signatures are part of
+# the current transport source. Compile their actual value/validation bodies;
+# close only the enclosing types that this processor-permission test never runs.
+source+='\nenum PublishedListingVideoState { enum StateError: Error { case invalid } }\n'
+source+=block((ROOT/rels[15]).read_text(),'struct SelectedListingVideoDownload:')+'\n'
+source+='\nstruct CreditWalletSnapshot { struct Quote { let operation: String; let tariffVersion: String; let credits: Int } }\nenum CloudSyncError: Error { case invalidResponse }\n'
+source+=block((ROOT/rels[16]).read_text(),'struct AerialCreditAuthorization:')+'\n'
 runner=(ROOT/rels[9]).read_text().replace('import UIKit','').replace('import AVFoundation','')
 ready=block(runner,'    private func retainReady(')
 runner=runner.replace(ready,'    private func retainReady(_ saved: PropertyVideoSavedJob, watch: Watch) async throws { throw PropertyVideoJobStore.Failure.invalidReceipt }')

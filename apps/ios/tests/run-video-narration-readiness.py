@@ -39,7 +39,7 @@ def block(s, anchor):
     return s[start:end]
 
 
-anchors = ['private var totalSelected:', 'private var narrationPreparationMessage:',
+anchors = ['private var aiCameraAvailable:', 'private var totalSelected:', 'private var narrationPreparationMessage:',
            'private var canGenerate:', 'private var generateTitle:',
            'private var makeButton:', '@ViewBuilder private var scriptLengthNote:',
            'private func recordTapped()', 'private func beginTake()',
@@ -47,8 +47,8 @@ anchors = ['private var totalSelected:', 'private var narrationPreparationMessag
 parts = [block(view, x) for x in anchors]
 parts += [block(view, 'nonisolated private static func wholeSeconds(')]
 entry = block(view, 'private func generateWithSession()')
-entry = entry[:entry.index('        let chosen =')]
-assert 'guard phase == .setup, canGenerate else { return }' in entry
+entry = entry[:entry.index('        if photoMotion, let saved =')]
+assert 'guard phase == .setup, canGenerate, selectedExtras.isEmpty else { return }' in entry
 snapshot_lines = [line.strip() for line in block(view, 'private func generateWithSession()').splitlines()
                   if line.strip().startswith('let voiceover: Voiceover?') or line.strip().startswith('let captionStyle: CaptionStyle')]
 assert len(snapshot_lines) == 2
@@ -150,6 +150,8 @@ struct RendpropActionAppearance {}
 @MainActor final class AIConsent { static let shared = AIConsent(); var revocationRevision: UInt64 = 1 }
 struct ClosedReply { var isTerminal = false }
 struct ClosedServerJob { var reply: ClosedReply? }
+enum ClosedPhotoMotionQuoteMode { case credits, plan }
+struct ClosedPhotoMotionQuote { let mode: ClosedPhotoMotionQuoteMode; let credits: Int? = nil; let affordable: Bool? = true; let canMake: Bool = true }
 @MainActor final class ClosedWork { var serverJob: ClosedServerJob?; var isPresented = true; var isContextCurrent = true }
 @MainActor final class ClosedConnection {
  var calls = 0; var cancellations = 0; var deferred = false; var action: (() -> Void)?
@@ -193,7 +195,7 @@ enum VideoPhotoFramingReader {
  @FixtureState var scriptInFlight = false
  @FixtureState var ttsInFlight = false
  @FixtureState var voiceMode = VoiceMode.off
- @FixtureState var photoMotion = false
+ @FixtureState var photoMotion = true
  @FixtureState var photoMotionTimingRestorePending = false
  @FixtureState var includeAcceptedOpening = false
  @FixtureState var acceptedOpening: ClosedOpening?
@@ -212,6 +214,8 @@ enum VideoPhotoFramingReader {
  @FixtureState var unreadablePendingContext: Bool?
  @FixtureState var pendingBatch: Bool?
  @FixtureState var unreadableBatch = false
+ @FixtureState var refreshingPhotoMotionQuote = false
+ @FixtureState var showPhotoMotionWallet = false
  @FixtureState var checkingFraming = false
  @FixtureState var portrait = false
  @FixtureState var framingAssessments: [VideoPhotoFramingAssessment] = []
@@ -225,6 +229,7 @@ enum VideoPhotoFramingReader {
  @FixtureState var reelSeconds = 10
  @FixtureState var catalogueLoads = 0
  let model = "closed-model"; let auth = ClosedAuth(); let work = ClosedWork(); let recorder = ClosedRecorder(); let listing = ClosedListing()
+ let currentPhotoMotionQuote: ClosedPhotoMotionQuote? = .init(mode: .plan)
  let connection = ClosedConnection(); let snapshotSpy = SnapshotSpy()
  let musicPreview = ClosedPlayer()
  @FixtureState var player: ClosedPlayer?
@@ -256,7 +261,7 @@ variants = [
     ('missing-shared-readiness', 'narrationPreparationMessage == nil && (work.serverJob', '(work.serverJob', 'busy state blocks readiness'),
     ('missing-first-entry-guard', 'guard phase == .setup, canGenerate, !checkingFraming else', 'guard phase == .setup, !checkingFraming else', 'busy tap cannot start framing'),
     ('missing-after-framing-guard', 'guard work.isPresented, phase == .setup, canGenerate, framingSelectionKey', 'guard work.isPresented, phase == .setup, framingSelectionKey', 'busy after framing cannot enter session'),
-    ('missing-session-entry-guard', 'guard phase == .setup, canGenerate else', 'guard phase == .setup else', 'busy session callback cannot freeze audio'),
+    ('missing-session-entry-guard', 'guard phase == .setup, canGenerate, selectedExtras.isEmpty else', 'guard phase == .setup, selectedExtras.isEmpty else', 'busy session callback cannot freeze audio'),
     ('missing-permission-marker', 'requestingVoicePermission = true', '// missing permission marker', 'permission await blocks creation'),
     ('missing-permission-retirement', 'defer {\n                if voicePermissionID == permissionID {\n                    voicePermissionID = nil; requestingVoicePermission = false\n                }\n            }', '// missing permission retirement', 'denied permission releases readiness'),
     ('missing-permission-presentation-fence', 'voicePermissionID == permissionID, work.isPresented,', 'voicePermissionID == permissionID,', 'departed permission callback cannot start microphone'),

@@ -33,7 +33,7 @@ private let process:(EnhancedPhoto) async throws -> Void
 init(model:AppModel,listing:Listing,process:@escaping (EnhancedPhoto) async throws -> Void) {
 self.model=model;self.listing=listing;self.process=process
 }
-func edit(_ photo:EnhancedPhoto,edit:String,style:String?,prompt:String?,batch:Bool,stagingReferenceID:String?=nil,declutterApproval:DeclutterGenerationApproval?=nil,progress:((PhotoWorkQueue.Phase) -> Void)?=nil) async throws {
+func edit(_ photo:EnhancedPhoto,edit:String,style:String?,prompt:String?,batch:Bool,stagingReferenceID:String?=nil,declutterApproval:DeclutterGenerationApproval?=nil,declutterCredit:DeclutterCreditAuthorization?=nil,stageCredit:StageCreditAuthorization?=nil,progress:((PhotoWorkQueue.Phase) -> Void)?=nil) async throws {
 try requireUnsentWork(); try await process(photo); try requireIdentity()
 }
 '''.replace('@RECOVERY_LINE@',recovery_lines[0])
