@@ -147,8 +147,8 @@ struct PlanAllowances: Hashable, Sendable {
 
     var benefitLines: [String] {
         [
-            "\(credits) monthly Declutter credits after the trial",
-            "Other AI tools have separate plan limits",
+            "\(credits) monthly credits for eligible photo edits after the trial",
+            "See the credit cost before eligible AI edits",
             "Create and share tours",
             "\(seatsPhrase) in one workspace",
         ]

@@ -638,7 +638,7 @@ private struct SelectedPlanDetails: View {
         guard let variant else { return plan.benefits }
         return [
             "\(variant.monthlyCredits) monthly AI credits after the trial",
-            "Use credits across eligible AI tools",
+            "See the credit cost before eligible AI edits",
             "Create and share tours",
             "\(variant.seats) seats in one workspace",
         ]
@@ -652,7 +652,7 @@ private struct SelectedPlanDetails: View {
                     .font(.rpCaption).foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("After the trial, Declutter uses monthly credits. Other AI tools have separate plan limits. See Plan & usage for your balance and limits.")
+            Text("Credits apply to eligible photo edits when a quote appears before you start. Other tools use plan limits or a separate purchase. See Plan & usage for your balance and limits.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
             DisclosureGroup("How video allowances work") {

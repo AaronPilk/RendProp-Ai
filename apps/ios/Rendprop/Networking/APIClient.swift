@@ -313,6 +313,10 @@ struct AIPhotoEditRequest: Sendable, Hashable, Codable {
     /// this request so a recovery/retry cannot silently select a new tariff.
     var declutterCreditTariffVersion: String? = nil
     var declutterCreditEnvironment: String? = nil
+    /// The distinct staging quote accepted before dispatch. Keeping the
+    /// Declutter keys above preserves already-saved pending edit recovery.
+    var stageCreditTariffVersion: String? = nil
+    var stageCreditEnvironment: String? = nil
 }
 
 /// The result of one `/ai-photo` edit: the image plus its compliance envelope.

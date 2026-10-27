@@ -76,6 +76,7 @@ struct CreditWalletSnapshot: Decodable, Equatable {
     }
 
     var declutterQuote: Quote? { quotes.first { $0.operation == "photo.declutter" } }
+    var stageQuote: Quote? { quotes.first { $0.operation == "photo.stage" } }
 
     func checked(for context: CreditWalletContext, environment expectedEnvironment: String) throws -> Self {
         guard orgID == context.servingOrgID, environment == expectedEnvironment,
@@ -85,13 +86,27 @@ struct CreditWalletSnapshot: Decodable, Equatable {
               products.allSatisfy({ RendpropCreditProduct.quantities[$0.productID] == $0.credits }),
               Set(products.map(\.productID)).count == products.count,
               quotes.count <= 10,
-              quotes.allSatisfy({ $0.operation == "photo.declutter" && $0.credits > 0 && $0.credits <= 1_000 &&
-                  $0.tariffVersion == "photo-declutter-v1" }),
+              quotes.allSatisfy({ $0.credits > 0 && $0.credits <= 1_000 &&
+                  (($0.operation == "photo.declutter" && $0.tariffVersion == "photo-declutter-v1") ||
+                   ($0.operation == "photo.stage" && $0.tariffVersion == "photo-stage-v1")) }),
               Set(quotes.map(\.operation)).count == quotes.count,
               fundingMode == .included || declutterQuote != nil else {
             throw CloudSyncError.invalidResponse
         }
         return self
+    }
+}
+
+struct StageCreditAuthorization: Hashable, Sendable {
+    let tariffVersion: String
+    let environment: String
+    init(quote: CreditWalletSnapshot.Quote, environment: String) throws {
+        guard quote.operation == "photo.stage", quote.tariffVersion == "photo-stage-v1",
+              quote.credits > 0, ["Production", "Sandbox"].contains(environment) else {
+            throw CloudSyncError.invalidResponse
+        }
+        tariffVersion = quote.tariffVersion
+        self.environment = environment
     }
 }
 

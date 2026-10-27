@@ -64,7 +64,7 @@ struct CreditWalletView: View {
             Text("Make more with credits")
                 .font(.title2.weight(.bold)).foregroundStyle(Theme.ink)
                 .accessibilityAddTraits(.isHeader)
-            Text("Your workspace shares one balance. Declutter shows its credit cost before you start an edit.")
+            Text("Your workspace shares one balance. Eligible AI edits show their credit cost before you start.")
                 .font(.subheadline).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
         }

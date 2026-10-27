@@ -164,6 +164,15 @@ interface EditCharge {
 }
 
 const DECLUTTER_CREDIT_TARIFF="photo-declutter-v1";
+// Stage uses the same bounded photo supplier journal, but a distinct immutable
+// customer quote. Its catalog row remains inactive until the matching client
+// and retail funding are available in App Store Connect.
+const STAGE_CREDIT_TARIFF="photo-stage-v1";
+function photoCreditQuote(edit:string|undefined):{operation:string;version:string}|null {
+  if(edit==="declutter")return {operation:"photo.declutter",version:DECLUTTER_CREDIT_TARIFF};
+  if(edit==="stage")return {operation:"photo.stage",version:STAGE_CREDIT_TARIFF};
+  return null;
+}
 
 async function finishEditCredit(charge:EditCharge,state:"settled"|"released"):Promise<void>{
   if(!charge.credit)return;
@@ -192,18 +201,19 @@ async function guardEdit(user: PaidAiCaller, req: Request, listingId?: string, e
   const billingOrgId = await libraryBillingOrg(adminClient(), orgId, user.id);
   const quote=req.headers.get("x-rendprop-credit-tariff");
   const environment=req.headers.get("x-rendprop-credit-environment")??"Production";
+  const creditQuote=photoCreditQuote(edit);
   if(environment!=="Production"&&environment!=="Sandbox")
     throw new HttpError(400,"Choose a valid App Store credit environment.");
-  if(quote!==null && (edit!=="declutter" || quote!==DECLUTTER_CREDIT_TARIFF))
-    throw new HttpError(400,"Choose the current Declutter credit quote before using credits.");
-  const primaryResult=edit==="declutter"
+  if(quote!==null && (!creditQuote || quote!==creditQuote.version))
+    throw new HttpError(400,"Choose the current photo credit quote before using credits.");
+  const primaryResult=creditQuote
     ?await adminClient().rpc("credit_primary_subscription",{p_org:billingOrgId,p_environment:environment})
     :{data:false,error:null};
   if(primaryResult.error||typeof primaryResult.data!=="boolean")
     throw new HttpError(503,"The current credit plan could not be verified. Please retry.","upstream");
   if(primaryResult.data && quote===null)
-    throw new HttpError(402,"Review the Declutter credit quote before starting this edit.","credit_quote_required",
-      {operation:"photo.declutter",tariff_version:DECLUTTER_CREDIT_TARIFF});
+    throw new HttpError(402,"Review the photo credit quote before starting this edit.","credit_quote_required",
+      {operation:creditQuote!.operation,tariff_version:creditQuote!.version});
   const creditMode=quote!==null;
   if(!creditMode && monthlyCap<=0)throw quotaError("AI photo edit",0,0,ent.plan);
   const burstKey = `aiphoto:${billingOrgId}`;
@@ -216,13 +226,13 @@ async function guardEdit(user: PaidAiCaller, req: Request, listingId?: string, e
     let held;
     try{held=await adminClient().rpc("credit_wallet_reserve",{
       p_actor:user.id,p_org:billingOrgId,p_environment:environment,p_key:requestKey,
-      p_operation:"photo.declutter",p_version:DECLUTTER_CREDIT_TARIFF,
+      p_operation:creditQuote!.operation,p_version:creditQuote!.version,
     });}
     catch{await refundRateReceipt(burst.receipt);throw new HttpError(503,"Credits could not be reserved safely. Please retry.","upstream");}
     if(held.error){await refundRateReceipt(burst.receipt);throwRpc(held.error.message);}
     if(held.data?.reserved!==true||!Number.isInteger(held.data?.credits)||held.data.credits<=0){
       await refundRateReceipt(burst.receipt);
-      throw new HttpError(503,"The Declutter credit reservation could not be verified.","upstream");
+      throw new HttpError(503,"The photo credit reservation could not be verified.","upstream");
     }
     return {orgId,plan:ent.plan,monthlyKey,burstKey,burstReceipt:burst.receipt,
       credit:{actorId:user.id,orgId:billingOrgId,requestKey,environment}};

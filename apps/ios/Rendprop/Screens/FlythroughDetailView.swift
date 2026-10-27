@@ -5054,18 +5054,74 @@ private struct PendingBatchEdit: Identifiable, Equatable {
 
 private struct PhotoStagingSetupView: View {
     let setup: PhotoStagingSetup
-    let apply: (String?, String?) -> Void
+    let apply: (String?, String?, StageCreditAuthorization?) -> Void
+    @ObservedObject private var wallet = CreditWalletStore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var referenceID = ""
     @State private var brief = ""
     @State private var sameRoomConfirmed = false
+    @State private var walletContext: CreditWalletContext?
+    @State private var walletLoading = true
+    @State private var confirming = false
+    @State private var creditError: String?
+    @State private var showCredits = false
     private var reference: EnhancedPhoto? { setup.references.first { $0.id == referenceID } }
+    private var visibleWallet: CreditWalletSnapshot? {
+        guard let walletContext, walletContext.isCurrent,
+              wallet.snapshotContext == walletContext else { return nil }
+        return wallet.snapshot
+    }
+    private var stageCreditCost: Int? {
+        guard let visibleWallet, let quote = visibleWallet.stageQuote else { return nil }
+        return quote.credits * setup.targets.count
+    }
+    private var canStage: Bool {
+        guard setup.isCurrent, !confirming, referenceID.isEmpty || sameRoomConfirmed,
+              let visibleWallet else { return false }
+        switch visibleWallet.fundingMode {
+        case .included: return true
+        case .creditPrimary, .topupOnly:
+            guard let stageCreditCost else { return false }
+            return visibleWallet.balance.totalAvailable >= stageCreditCost
+        }
+    }
+
+    @MainActor private func checkedCredit() async throws -> StageCreditAuthorization? {
+        guard setup.isCurrent, let context = walletContext, context.isCurrent,
+              let shown = visibleWallet else { throw CloudSyncError.invalidResponse }
+        let shownQuote = shown.stageQuote
+        await wallet.load(context: context, refreshProduct: false)
+        guard setup.isCurrent, context.isCurrent, let current = visibleWallet,
+              current.fundingMode == shown.fundingMode,
+              current.stageQuote == shownQuote else { throw CloudSyncError.invalidResponse }
+        switch current.fundingMode {
+        case .included: return nil
+        case .creditPrimary, .topupOnly:
+            guard let quote = current.stageQuote,
+                  current.balance.totalAvailable >= quote.credits * setup.targets.count else {
+                throw CloudSyncError.invalidResponse
+            }
+            return try StageCreditAuthorization(quote: quote, environment: current.environment)
+        }
+    }
+
+    @MainActor private func loadWallet() async {
+        walletLoading = true
+        creditError = nil
+        defer { walletLoading = false }
+        guard let context = try? CreditWalletContext.capture() else {
+            creditError = "Sign in to check the Staging cost for this workspace."
+            return
+        }
+        walletContext = context
+        await wallet.load(context: context)
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Staging · \((setup.pending.style ?? "modern").capitalized)") {
-                    Text("\(setup.targets.count) selected photo\(setup.targets.count == 1 ? "" : "s"). Each photo is a separate edit and counts against your plan.")
+                    Text("\(setup.targets.count) selected photo\(setup.targets.count == 1 ? "" : "s"). Each photo is a separate edit.")
                     TextField("Furnishing brief (optional)", text: $brief, axis: .vertical)
                         .lineLimit(2...4).onChange(of: brief) { value in
                             if value.count > 600 { brief = String(value.prefix(600)) }
@@ -5087,12 +5143,56 @@ private struct PhotoStagingSetupView: View {
                     }
                     Text("Same-room photo references are not available yet. Use the same furnishing brief for each view, then compare every output; matching furniture is not guaranteed.").font(.caption)
                 }
+                Section("Before you stage") {
+                    if let visibleWallet {
+                        switch visibleWallet.fundingMode {
+                        case .included:
+                            Text("These edits use your current plan's included photo allowance.")
+                        case .creditPrimary, .topupOnly:
+                            if let stageCreditCost {
+                                Text("\(stageCreditCost) credits for \(setup.targets.count) staged photo\(setup.targets.count == 1 ? "" : "s") · \(visibleWallet.balance.totalAvailable) available")
+                                    .fontWeight(.semibold)
+                                if visibleWallet.balance.totalAvailable < stageCreditCost {
+                                    Button("View credits") { showCredits = true }
+                                }
+                            } else {
+                                Text("The Staging credit cost is unavailable. Try again before editing.")
+                            }
+                        }
+                    } else if walletLoading {
+                        Text("Loading your plan and credit cost…")
+                    } else {
+                        Text("Your plan and Staging cost are unavailable right now.")
+                        Button("Try again") { Task { await loadWallet() } }
+                    }
+                    if let creditError {
+                        Label(creditError, systemImage: "exclamationmark.circle")
+                            .foregroundStyle(Theme.warn)
+                    }
+                }
                 Section {
                     Button("Stage \(setup.targets.count) photo\(setup.targets.count == 1 ? "" : "s")") {
-                        guard setup.isCurrent, referenceID.isEmpty || sameRoomConfirmed else { return }
-                        dismiss()
-                        apply(referenceID.isEmpty ? nil : referenceID, brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : brief)
-                    }.disabled(!setup.isCurrent || (!referenceID.isEmpty && !sameRoomConfirmed))
+                        guard canStage else { return }
+                        confirming = true
+                        Task { @MainActor in
+                            defer { confirming = false }
+                            do {
+                                let credit = try await checkedCredit()
+                                guard setup.isCurrent, referenceID.isEmpty || sameRoomConfirmed else {
+                                    throw CloudSyncError.invalidResponse
+                                }
+                                apply(referenceID.isEmpty ? nil : referenceID,
+                                      brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : brief,
+                                      credit)
+                                dismiss()
+                            } catch {
+                                creditError = "Your plan or credit cost changed. Review the updated amount and try again."
+                            }
+                        }
+                    }
+                        .frame(maxWidth: .infinity)
+                        .modifier(RendpropActionAppearance())
+                        .disabled(!canStage)
                         .accessibilityIdentifier("photoStage.apply")
                     if !setup.isCurrent { Text("Your account or workspace changed. Reopen Staging.").foregroundStyle(.orange) }
                 }
@@ -5100,6 +5200,8 @@ private struct PhotoStagingSetupView: View {
             .navigationTitle("Stage selected photos").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
+        .task { await loadWallet() }
+        .sheet(isPresented: $showCredits) { NavigationStack { CreditWalletView() } }
     }
 }
 
@@ -6024,12 +6126,12 @@ struct PhotoStudioView: View {
                              galleryPhotos: entry == .photos ? galleryFamilyPhotos : [])
         }
         .sheet(item: $stagingSetup) { setup in
-            PhotoStagingSetupView(setup: setup) { referenceID, brief in
+            PhotoStagingSetupView(setup: setup) { referenceID, brief, credit in
                 stagingSetup = nil
                 connection.run {
                     guard setup.isCurrent else { return }
                     startPhotoWork(setup.pending, targets: setup.targets, prompt: brief,
-                                   stagingReferenceID: referenceID)
+                                   stagingReferenceID: referenceID, stageCredit: credit)
                 }
             }
         }
@@ -6622,7 +6724,8 @@ struct PhotoStudioView: View {
 
     private func startPhotoWork(_ pending: PendingBatchEdit, targets: [EnhancedPhoto], prompt: String?,
                                 stagingReferenceID: String? = nil, declutterApprovals: [String: DeclutterGenerationApproval]? = nil,
-                                declutterCredit: DeclutterCreditAuthorization? = nil) {
+                                declutterCredit: DeclutterCreditAuthorization? = nil,
+                                stageCredit: StageCreditAuthorization? = nil) {
         guard !isProcessing, AIConsent.shared.isGranted else { return }
         if pending.edit == "declutter", declutterApprovals == nil {
             declutterReview = PhotoDeclutterReviewModel(model: model, listing: listing, photos: targets, space: space)
@@ -6631,7 +6734,8 @@ struct PhotoStudioView: View {
         let service = PhotoEditService(model: model, listing: listing, space: space)
         if service.start(title: pending.title, photos: targets, edit: pending.edit,
                          style: pending.style, prompt: prompt, stagingReferenceID: stagingReferenceID,
-                         declutterApprovals: declutterApprovals, declutterCredit: declutterCredit) {
+                         declutterApprovals: declutterApprovals, declutterCredit: declutterCredit,
+                         stageCredit: stageCredit) {
             batchNote = nil; batchEdit = nil; batchSelection.removeAll()
             Haptics.selection()
         }
@@ -8264,11 +8368,11 @@ struct PhotoCompareView: View {
             }
         }
         .sheet(item: $singleStagingSetup, onDismiss: finishSinglePhotoSetup) { setup in
-            PhotoStagingSetupView(setup: setup) { referenceID, brief in
+            PhotoStagingSetupView(setup: setup) { referenceID, brief, credit in
                 singleStagingSetup = nil
                 guard setup.isCurrent else { return }
                 startSinglePhotoWork(.stage(setup.pending.style ?? "modern"), prompt: brief,
-                                     stagingReferenceID: referenceID)
+                                     stagingReferenceID: referenceID, stageCredit: credit)
             }
         }
         .sheet(item: $singleDeclutterReview, onDismiss: finishSinglePhotoSetup) { review in
@@ -8512,7 +8616,8 @@ struct PhotoCompareView: View {
 
     private func startSinglePhotoWork(_ action: PhotoReviewEdit, prompt: String?, stagingReferenceID: String? = nil,
                                      declutterApprovals: [String: DeclutterGenerationApproval]? = nil,
-                                     declutterCredit: DeclutterCreditAuthorization? = nil) {
+                                     declutterCredit: DeclutterCreditAuthorization? = nil,
+                                     stageCredit: StageCreditAuthorization? = nil) {
         guard let source = editOriginal, let context = editContext, context.isCurrent,
               imageContext?.isCurrent == true, AIConsent.shared.isGranted,
               editConsentRevision == AIConsent.shared.revocationRevision,
@@ -8526,7 +8631,8 @@ struct PhotoCompareView: View {
             space: listing.isSample ? SpaceType.current : listing.spaceType)
         if service.start(title: action.title, photos: [source], edit: action.edit,
                          style: action.style, prompt: prompt, stagingReferenceID: stagingReferenceID,
-                         declutterApprovals: declutterApprovals, declutterCredit: declutterCredit) {
+                         declutterApprovals: declutterApprovals, declutterCredit: declutterCredit,
+                         stageCredit: stageCredit) {
             singleEditJobID = photoJobs.visibleJob?.id
             Haptics.selection()
         }

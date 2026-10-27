@@ -1112,12 +1112,23 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
         if let tariff = request.declutterCreditTariffVersion {
             guard request.edit == "declutter", tariff == "photo-declutter-v1",
                   let environment = request.declutterCreditEnvironment,
-                  ["Production", "Sandbox"].contains(environment) else {
+                  ["Production", "Sandbox"].contains(environment),
+                  request.stageCreditTariffVersion == nil, request.stageCreditEnvironment == nil else {
                 throw CloudSyncError.invalidResponse
             }
             prepared.setValue(tariff, forHTTPHeaderField: "X-Rendprop-Credit-Tariff")
             prepared.setValue(environment, forHTTPHeaderField: "X-Rendprop-Credit-Environment")
         } else if request.declutterCreditEnvironment != nil {
+            throw CloudSyncError.invalidResponse
+        } else if let tariff = request.stageCreditTariffVersion {
+            guard request.edit == "stage", tariff == "photo-stage-v1",
+                  let environment = request.stageCreditEnvironment,
+                  ["Production", "Sandbox"].contains(environment) else {
+                throw CloudSyncError.invalidResponse
+            }
+            prepared.setValue(tariff, forHTTPHeaderField: "X-Rendprop-Credit-Tariff")
+            prepared.setValue(environment, forHTTPHeaderField: "X-Rendprop-Credit-Environment")
+        } else if request.stageCreditEnvironment != nil {
             throw CloudSyncError.invalidResponse
         }
         let data = try await execute(prepared, session: aiSession, beforeSend: { try requireUnsentPermission() })

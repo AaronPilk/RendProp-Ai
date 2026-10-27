@@ -65,10 +65,16 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         assert len(combined_results) == 1 and combined_results[0]["passed"] is True, combined_output
         sandbox_output = run("signed Sandbox intro fixture", [*psql, "-Atq", "-f", SQL / "tests/sandbox_intro_trial.sql"])
         sandbox_results = [json.loads(line) for line in sandbox_output.splitlines()
-                           if line.startswith("{") and '"assertions"' in line]
+                          if line.startswith("{") and '"assertions"' in line]
         assert len(sandbox_results) == 1 and sandbox_results[0]["passed"] is True, sandbox_output
+        stage_output = run("stage credit fixture", [*psql, "-Atq", "-f", SQL / "tests/credit_photo_stage.sql"])
+        stage_results = [json.loads(line) for line in stage_output.splitlines()
+                         if line.startswith("{") and '"assertions"' in line]
+        assert len(stage_results) == 1 and stage_results[0]["passed"] is True, stage_output
         print(json.dumps({"passed": True,
-                          "assertions": results[0]["assertions"] + photo_results[0]["assertions"] + trial_results[0]["assertions"] + combined_results[0]["assertions"] + sandbox_results[0]["assertions"],
+                          "assertions": results[0]["assertions"] + photo_results[0]["assertions"]
+                          + trial_results[0]["assertions"] + combined_results[0]["assertions"]
+                          + sandbox_results[0]["assertions"] + stage_results[0]["assertions"],
                           "migrations": len(migrations), "scope": "disposable PostgreSQL"}))
     finally:
         if started:
