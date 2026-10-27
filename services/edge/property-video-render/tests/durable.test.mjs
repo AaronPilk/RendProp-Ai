@@ -92,6 +92,7 @@ try {
     const requested=[];let inspections=0;
     const inspectEnv={...disabled,CPU:{getByName(slot){requested.push(slot);return{
       async diagnostic(){inspections++;return slot==='slot-0'?{phase:'execute',error_name:'Other',reason:'http_refusal',http_status:403,timestamp:123}:null;},
+      async temporalAttestations(){return [];},
       async wake(){throw Error('diagnostic woke work');}
     };}}};
     for(const authorization of [undefined,'Bearer wrong-trigger']){

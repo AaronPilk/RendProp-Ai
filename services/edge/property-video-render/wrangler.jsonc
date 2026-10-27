@@ -5,19 +5,76 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-14",
   "workers_dev": true,
-  "containers": [{
-    "class_name": "PropertyVideoCPU",
-    "scheduling_policy": "durable_object",
-    "images": {"cpu": {"dockerfile": "./Dockerfile"}}
-  }],
-  "durable_objects": {"bindings": [{"name": "CPU", "class_name": "PropertyVideoCPU"}]},
-  "exports": {"PropertyVideoCPU": {"type": "durable-object", "storage": "sqlite"}},
-  "triggers": {"crons": ["* * * * *"]},
+  "containers": [
+    {
+      "class_name": "PropertyVideoCPU",
+      "images": {
+        "cpu": {
+          "image": "registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-cpu@sha256:4452a0488ae786dff4e607d11e4711af5a2d59e4d6d26f168d9063db039774bc"
+        }
+      },
+      "name": "rendprop-property-video-render-propertyvideocpu",
+      "scheduling_policy": "durable_object"
+    },
+    {
+      "class_name": "PhotoMotionCPU",
+      "images": {
+        "cpu": {
+          "image": "registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186"
+        }
+      },
+      "name": "rendprop-property-video-render-photomotioncpu",
+      "scheduling_policy": "durable_object",
+      "ssh": {
+        "enabled": false
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "PropertyVideoCPU",
+        "name": "CPU"
+      },
+      {
+        "class_name": "PhotoMotionCPU",
+        "name": "PHOTO_MOTION_CPU"
+      }
+    ]
+  },
+  "exports": {
+    "PhotoMotionCPU": {
+      "container": "rendprop-property-video-render-photomotioncpu",
+      "storage": "sqlite",
+      "type": "durable-object"
+    },
+    "PropertyVideoCPU": {
+      "storage": "sqlite",
+      "type": "durable-object"
+    }
+  },
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
   "vars": {
     "ENABLED": "false",
     "EDGE_WORKER_URL": "https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1/property-video-worker",
-    "MEDIA_HOSTS": "ymgqpbnjpztwjsyvceld.supabase.co,9c332c75b96cc642621dad5d86d4bf18.r2.cloudflarestorage.com"
+    "MEDIA_HOSTS": "ymgqpbnjpztwjsyvceld.supabase.co,9c332c75b96cc642621dad5d86d4bf18.r2.cloudflarestorage.com",
+    "CPU_TEMPORAL_PRODUCER_IMAGE_URI": "registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-cpu@sha256:4452a0488ae786dff4e607d11e4711af5a2d59e4d6d26f168d9063db039774bc",
+    "CPU_PHOTO_MOTION_IMAGE_URI": "registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186",
+    "CPU_PHOTO_MOTION_RENDERER_SHA256": "9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9"
   },
-  "observability": {"enabled": true, "logs": {"enabled": true, "invocation_logs": false}},
-  "limits": {"cpu_ms": 1000}
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false
+    }
+  },
+  "limits": {
+    "cpu_ms": 1000
+  },
+  "keep_vars": true
 }
