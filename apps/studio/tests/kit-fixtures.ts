@@ -11,7 +11,7 @@ export function signedURL(id: string, filename: string) {
   return { url: `https://${"a".repeat(32)}.r2.cloudflarestorage.com/rendprop-renders/renders/${org}/${id}/${filename}?${params}`, expiresAt: new Date(issued.getTime() + 599000).toISOString() };
 }
 export function kitFixture() {
-  const calls: { path: string; method: string }[] = [], listeners = new Set<() => void>(); let version = 1, currentUser = user;
+  const calls: { path: string; method: string }[] = [], listeners = new Set<() => void>(); let version = 1, currentUser = user, scopeGeneration = 1;
   const snapshot = () => ({ status: "signed-in", identityVersion: version, identity: { userId: currentUser, isAnonymous: false } });
   const photo = (id: string, asset: string, staged: boolean) => ({ id: asset, listingId: id, ...signedURL(id, `${asset}.png`), caption: staged ? "Virtually staged / AI-altered photo" : "Saved kitchen caption", isStaged: staged, isAltered: staged, originalUrl: staged && asset !== ids.missing ? signedURL(id, `${ids.original}.png`).url : staged ? null : signedURL(id, `${asset}.png`).url, sort: asset === ids.plain ? 0 : 1 });
   const media = (id: string): ListingMedia => ({ orgId: org, listingId: id, photos: id === listingA ? [photo(id, ids.plain, false), photo(id, ids.altered, true), photo(id, ids.missing, true)] : [], videos: [], nextOffset: null, unavailableCount: 0 });
@@ -22,8 +22,8 @@ export function kitFixture() {
     listingReadScope: async (physicalOrg: string, listingId: string, libraryOrg: string, signal?: AbortSignal) => {
       signal?.throwIfAborted();
       if (physicalOrg !== org || libraryOrg !== org || ![listingA, listingB].includes(listingId)) throw new Error("Fixture refuses another property scope");
-      const captured = version;
-      return () => { signal?.throwIfAborted(); if (version !== captured || currentUser !== user) throw new Error("Fixture account changed"); };
+      const captured = version, capturedScope = scopeGeneration;
+      return () => { signal?.throwIfAborted(); if (version !== captured || currentUser !== user) throw new Error("Fixture account changed"); if (scopeGeneration !== capturedScope) throw new Error("Fixture workspace read changed"); };
     },
     listListings: async () => structuredClone(listings), listMedia: async (_org: string, id: string) => media(id),
     api: async (path: string, options: { orgId: string; method?: string; signal?: AbortSignal }) => {
@@ -37,5 +37,5 @@ export function kitFixture() {
       throw new Error(`Unexpected fixture route ${path}`);
     },
   } as unknown as StudioServices;
-  return { services, calls, state, media, changeAccount: () => { currentUser = "40000000-0000-4000-8000-000000000009"; version++; listeners.forEach(listener => listener()); }, delayRead: () => { holdRead = true; }, releaseRead: () => releaseRead?.() };
+  return { services, calls, state, media, changeAccount: () => { currentUser = "40000000-0000-4000-8000-000000000009"; version++; listeners.forEach(listener => listener()); }, refreshWorkspace: () => { scopeGeneration++; }, delayRead: () => { holdRead = true; }, releaseRead: () => releaseRead?.() };
 }

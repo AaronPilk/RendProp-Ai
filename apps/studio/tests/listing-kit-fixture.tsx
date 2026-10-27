@@ -7,6 +7,8 @@ const fixture = kitFixture();
 Object.assign(window, { kitFixture: fixture });
 function Fixture() {
   const [selected, select] = useState(listingA);
-  return <main style={{ padding: "24px" }}><ListingWorkflow services={fixture.services} workspace={workspace} listings={listings} listingId={selected} onSelectListing={select} onChanged={() => {}} /></main>;
+  const [currentWorkspace, setCurrentWorkspace] = useState(workspace);
+  Object.assign(fixture, { reloadSameAccount: () => { fixture.refreshWorkspace(); setCurrentWorkspace({ ...workspace }); } });
+  return <main style={{ padding: "24px" }}><ListingWorkflow services={fixture.services} workspace={currentWorkspace} listings={listings} listingId={selected} onSelectListing={select} onChanged={() => {}} /></main>;
 }
 createRoot(document.getElementById("root")!).render(<Fixture />);

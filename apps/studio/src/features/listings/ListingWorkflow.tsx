@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Listing, ListingMedia, StudioPhoto, Workspace } from "../../data/contracts";
 import { decodeListings, scopedListingWorkspace } from "../../data/contracts";
@@ -69,6 +69,11 @@ export default function ListingWorkflow(props: Props) {
   const words=homeWords(props.workspace.org.spaceType);
   const canCreate = canEditListing(props.workspace);
   const listing = props.listings.find((item) => item.id === selected);
+  // A workspace refresh replaces the directory/read generation even when the
+  // account and listing IDs stay the same. Keep this derived scope stable
+  // between refreshes so public-link verification can reacquire that read.
+  const propertyWorkspace = useMemo(() => listing ? scopedListingWorkspace(props.workspace, listing) : null,
+    [props.workspace, listing]);
   const choose = (id: string) => {
     if (id !== selected && contactGuard.current?.canLeave() === false) return;
     if (props.onSelectListing?.(id) === false) return;
@@ -77,7 +82,7 @@ export default function ListingWorkflow(props: Props) {
   return <section className="listing-workflow" aria-label="Property workspace">
     <div className="lw-title"><div><p className="eyebrow">From your phone to your desk</p><h1>{words.collection}</h1><p>Your uploaded photos, walkthroughs, and published tours stay together in this listing library.</p></div><button className="primary" disabled={!canCreate} onClick={() => { if (contactGuard.current?.canLeave() !== false) setCreating(true); }}>＋ New property</button></div>
     <div className="lw-property-switch"><label htmlFor="property-workspace-select">Working on</label><select id="property-workspace-select" value={listing?.id ?? ""} onChange={(event) => choose(event.target.value)}><option value="" disabled>Choose a property</option>{props.listings.map((item) => <option key={item.id} value={item.id}>{item.address || item.tagline || "Untitled property"}</option>)}</select><span className="lw-sync-dot">Same account as your iPhone</span></div>
-    {creating ? <PropertyForm services={props.services} workspace={props.workspace} onNavigationGuard={contactGuardChanged} onSaved={(id) => { props.onChanged(); choose(id); }} onCancel={() => setCreating(false)} /> : listing ? <PropertyWorkspace key={`${props.workspace.user.id}:${props.workspace.org.id}:${listing.id}`} {...props} workspace={scopedListingWorkspace(props.workspace, listing)} listing={listing} onContactGuardChange={contactGuardChanged} /> : <div className="lw-empty"><h2>Start with a property</h2><p>Create it here or in the Rendprop iPhone app. Sign in to the same Apple account on both devices to pick up where you left off.</p><button className="primary" disabled={!canCreate} onClick={() => setCreating(true)}>Create your first property</button></div>}
+    {creating ? <PropertyForm services={props.services} workspace={props.workspace} onNavigationGuard={contactGuardChanged} onSaved={(id) => { props.onChanged(); choose(id); }} onCancel={() => setCreating(false)} /> : listing && propertyWorkspace ? <PropertyWorkspace key={`${props.workspace.user.id}:${props.workspace.org.id}:${listing.id}`} {...props} workspace={propertyWorkspace} listing={listing} onContactGuardChange={contactGuardChanged} /> : <div className="lw-empty"><h2>Start with a property</h2><p>Create it here or in the Rendprop iPhone app. Sign in to the same Apple account on both devices to pick up where you left off.</p><button className="primary" disabled={!canCreate} onClick={() => setCreating(true)}>Create your first property</button></div>}
   </section>;
 }
 
@@ -351,7 +356,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
       await Promise.all(Array.from({ length: Math.min(4, rows.length) }, worker));
     })().catch(() => { /* A stale or unavailable read keeps only the safe published token link. */ });
     return () => { controller.abort(); shareGuard.current = null; };
-  }, [services, workspace.user.id, workspace.org.id, workspace.libraryOrgId, listing.id, shareScope]);
+  }, [services, workspace, listing.id, shareScope]);
   const canUseShare = () => {
     const current = services.getSnapshot();
     if (current.status !== "signed-in" || current.identity?.userId !== workspace.user.id ||

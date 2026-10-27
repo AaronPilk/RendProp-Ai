@@ -72,6 +72,18 @@ try {
   await expect(page.getByRole("link", { name: "Open branded tour" })).toHaveAttribute("href", addressLink);
   await expect(page.getByRole("link", { name: "Open MLS tour" })).toHaveAttribute("href", `https://rendprop.com/u/${publicationSlug}`);
   receipt.checks.push("Actual published-tour and finish-listing UI show the same verified dated address link while MLS stays unbranded");
+  const beforeReload = addressLookups;
+  await page.evaluate(() => window.kitFixture.reloadSameAccount());
+  await expect.poll(() => addressLookups).toBeGreaterThan(beforeReload);
+  const qrPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download marketing QR" }).click();
+  const qrDownload = await qrPromise;
+  assert.equal(qrDownload.suggestedFilename(), `rendprop-branded-${publicationSlug}-qr.svg`);
+  const qrPath = join(artifacts, "refreshed-marketing-qr.svg");
+  await qrDownload.saveAs(qrPath);
+  assert.match(await readFile(qrPath, "utf8"), /<svg/);
+  await expect(page.getByRole("link", { name: "Open branded tour" })).toHaveAttribute("href", addressLink);
+  receipt.checks.push("Same-account workspace refresh invalidates the old read scope, reacquires the address proof and still downloads its marketing QR");
   await page.getByRole("tab", { name: "Details", exact: true }).click(); await page.getByLabel("Headline", { exact: true }).fill("Unsaved office headline must stay");
   await openKit(); await expect(page.getByLabel("Headline", { exact: true })).toHaveValue("Unsaved office headline must stay");
   await expect(page.getByRole("button", { name: "Download ZIP", exact: true })).toBeDisabled();
