@@ -65,6 +65,11 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         combined_results = [json.loads(line) for line in combined_output.splitlines()
                             if line.startswith("{") and '"assertions"' in line]
         assert len(combined_results) == 1 and combined_results[0]["passed"] is True, combined_output
+        motion_output = run("dormant Photo Motion credit quote fixture",
+                            [*psql, "-Atq", "-f", SQL / "tests/credit_photo_motion_quote_gate.sql"])
+        motion_results = [json.loads(line) for line in motion_output.splitlines()
+                          if line.startswith("{") and '"assertions"' in line]
+        assert len(motion_results) == 1 and motion_results[0]["passed"] is True, motion_output
         sandbox_output = run("signed Sandbox intro fixture", [*psql, "-Atq", "-f", SQL / "tests/sandbox_intro_trial.sql"])
         sandbox_results = [json.loads(line) for line in sandbox_output.splitlines()
                           if line.startswith("{") and '"assertions"' in line]
