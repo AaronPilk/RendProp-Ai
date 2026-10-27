@@ -672,7 +672,22 @@ jobs:
       - name: Install the locked browser for isolated UI fixtures
         run: npx playwright install --with-deps chromium
       - name: Install synthetic video and archive verification tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg unzip
+        timeout-minutes: 20
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1; then
+            encoders="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+            if grep -Eq '[[:space:]]libx264[[:space:]]' <<<"$encoders" &&
+               grep -Eq '[[:space:]]aac[[:space:]]' <<<"$encoders"; then
+              ffmpeg -version | sed -n '1p'
+              unzip -v | sed -n '1p'
+              exit 0
+            fi
+          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg unzip
+          encoders="$(ffmpeg -hide_banner -encoders 2>/dev/null)"
+          grep -Eq '[[:space:]]libx264[[:space:]]' <<<"$encoders"
+          grep -Eq '[[:space:]]aac[[:space:]]' <<<"$encoders"
       - name: Styled Studio accessibility and beginner entry points
         timeout-minutes: 5
         run: |
