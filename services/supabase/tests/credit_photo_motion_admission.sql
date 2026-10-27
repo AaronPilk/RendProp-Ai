@@ -313,5 +313,28 @@ select pg_temp.pm_admit_ok(not exists(select 1 from public.credit_holds
   and not exists(select 1 from public.property_video_refused_operations
   where operation_id='b0b00000-0000-4000-8000-000000000000'),
   'low balance cannot leave a partial hold or accepted job');
+reset role;
+-- Even when this same workspace owns a Production top-up, an authorized
+-- internal TestFlight account with no Sandbox credits must stay in Sandbox.
+update public.profiles set is_admin=true
+ where id='b0111111-1111-4111-8111-111111111111';
+update public.orgs set plan='team',plan_source='manual'
+ where id='b0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+insert into public.org_internal_testing_grants(org_id,owner_user_id,
+ unmetered_business_allowances) values(
+ 'b0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+ 'b0111111-1111-4111-8111-111111111111',true);
+set local role service_role;
+select pg_temp.pm_admit_ok((select public.credit_photo_motion_environment(
+  'b0111111-1111-4111-8111-111111111111',
+  'b0aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',manifest,39.3668)='Sandbox'
+  from pm_admission_manifest),
+  'exhausted QA wallet cannot silently fall through to Production credits');
+select pg_temp.pm_admit_ok((select
+  public.credit_photo_motion_review_quote(
+    'b0111111-1111-4111-8111-111111111111',manifest)
+      @> '{"mode":"credits","environment":"Sandbox","affordable":false,"available_credits":0}'::jsonb
+  from pm_admission_manifest),
+  'Review shows Sandbox zero balance instead of a Production debit');
 select jsonb_build_object('assertions',(select n from pm_admission_checks),'passed',true);
 rollback;

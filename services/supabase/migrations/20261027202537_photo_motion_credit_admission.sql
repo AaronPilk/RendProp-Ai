@@ -29,7 +29,7 @@ grant select on public.credit_photo_motion_quotes to service_role;
 create function public.credit_photo_motion_applicable(
   p_actor uuid,p_content_org uuid,p_environment text
 ) returns boolean language plpgsql stable security definer set search_path='' as $$
-declare policy jsonb;billing uuid;wallet jsonb;
+declare policy jsonb;billing uuid;
 begin
   if current_setting('role',true) is distinct from 'service_role' then
     raise insufficient_privilege;end if;
@@ -45,8 +45,9 @@ begin
   if p_environment='Sandbox' and
      (public.org_has_internal_testing_grant(billing) or
       public.org_has_private_internal_testing(billing)) then
-    wallet:=public.credit_wallet_state(billing,p_environment);
-    return (wallet->>'total_available')::integer>0;
+    -- Keep a recognized internal TestFlight workspace in Sandbox even when
+    -- its grant is empty. Falling through would silently spend Production.
+    return true;
   end if;
   if public.credit_primary_subscription(billing,p_environment) then return true;end if;
   -- A purchased pack remains the route after its last credit is used, so
