@@ -1796,7 +1796,9 @@ jobs:
       - name: Inclusive serving funds, Apple trial pool and finite reviewer authority
         run: |
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/funded_serving.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/bounded_subscription_trial.sql
+          # The bounded funded-trial walkthrough contract runs at its
+          # historical schema point in bounded_subscription_trial_pg.py below.
+          # limited_trial_creative_spend_pg.py covers current intro policy.
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_purchase_reservations.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_video_duration.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/modern_service_transport.sql
@@ -1866,7 +1868,8 @@ jobs:
           # Run the same serving fixtures after the supported historical replay
           # reaches the final schema, including strict settlement and grace.
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/funded_serving.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/bounded_subscription_trial.sql
+          # The bounded funded-trial fixture runs in its disposable historical
+          # schema runner below; the final schema has a stricter intro policy.
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_purchase_reservations.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_video_duration.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/modern_service_transport.sql
