@@ -333,10 +333,14 @@ def main():
             extra_env={'RENDER_FIXTURE_DIRECTORY': str(destination)}, expected='failure')
         assert 'HD dimensions missing' in rejected, 'Negative control failed for an unrelated reason'
         receipt['negativeControl'] = 'Actual legacy1280 output rejected by HD dimensions assertion'
-        legacy_receipt = destination / 'legacy-output.json'
-        run('legacy-timing-baseline', [mutant_bin, out / 'hd-input.mp4', legacy_receipt, 1280, 720],
-            extra_env={'RENDER_FIXTURE_DIRECTORY': str(destination)}, actual_export=(out / 'hd-input.mp4', destination))
-        legacy_output = Path(json.loads(legacy_receipt.read_text())['path'])
+        # The expected dimensions rejection happens after the native renderer
+        # has finished its export. Reuse that exact file for the baseline rather
+        # than running the mutant encoder a second time. A second macOS
+        # AVFoundation invocation occasionally completed with only one frame
+        # under CI load, obscuring the actual HD-vs-legacy comparison.
+        legacy_exports = _final_exports(out, destination)
+        assert len(legacy_exports) == 1, 'Expected one actual legacy export from the dimensions rejection'
+        legacy_output = destination / 'renders' / next(iter(legacy_exports))
         old_pts = verify(legacy_output, (1280, 720), 'legacy-timing-baseline', 45, False)
         hd = next(row for row in receipt['outputs'] if row['label'] == 'native-hd')
         assert old_pts == hd['framePTS'], 'HD policy must preserve actual frame timestamps'
