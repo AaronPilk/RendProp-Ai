@@ -39,6 +39,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -1252,24 +1253,35 @@ def priced_territories(prices):
     return found
 
 
-def price_amounts(prices, included):
-    """{territory: customerPrice} for a subscription's prices.
+def price_amounts(prices, included, today=None):
+    """{territory: current new-buyer customerPrice} for a subscription.
 
     The amount is an attribute of the price POINT, not of the price, so this
     needs `include=subscriptionPricePoint,territory` and the `included` array
     those come back in. A price whose point is not in `included` maps to None -
-    which reads as "unknown", never as "correct".
+    which reads as "unknown", never as "correct". Apple's prices may include
+    future schedules and preserved prices for existing subscribers. Neither is
+    today's storefront price for a new buyer. A change dated today is treated
+    as pending because its territory-specific effective hour is not proven by
+    this API response; read StoreKit before claiming that it has taken effect.
     """
+    today = today or datetime.now(timezone.utc).date().isoformat()
     points = {}
     for resource in included or []:
         if resource.get("type") == "subscriptionPricePoints" and resource.get("id"):
             points[resource["id"]] = attributes_of(resource).get("customerPrice")
     found = {}
+    current_dates = {}
     for price in prices:
         relationships = price.get("relationships") or {}
+        attrs = attributes_of(price)
         territory = ((relationships.get("territory") or {}).get("data") or {}).get("id")
         point_id = ((relationships.get("subscriptionPricePoint") or {}).get("data") or {}).get("id")
-        if territory:
+        start = attrs.get("startDate") or ""
+        if not territory or attrs.get("preserved") is True or (start and start >= today):
+            continue
+        if territory not in current_dates or start > current_dates[territory]:
+            current_dates[territory] = start
             found[territory] = points.get(point_id)
     return found
 

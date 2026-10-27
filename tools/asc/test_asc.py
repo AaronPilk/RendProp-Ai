@@ -2980,6 +2980,28 @@ class StatusPriceTests(unittest.TestCase):
         # A point that did not come back is unknown, never "correct".
         self.assertEqual(asc.price_amounts(prices, []), {"USA": None})
 
+    def test_future_and_preserved_prices_do_not_look_live_to_new_buyers(self):
+        def price(identifier, point, start=None, preserved=False):
+            return {"type": "subscriptionPrices", "id": identifier,
+                    "attributes": {"startDate": start, "preserved": preserved},
+                    "relationships": {
+                        "territory": {"data": {"type": "territories", "id": "USA"}},
+                        "subscriptionPricePoint": {"data": {
+                            "type": "subscriptionPricePoints", "id": point}}}}
+
+        included = [{"type": "subscriptionPricePoints", "id": point,
+                     "attributes": {"customerPrice": amount}}
+                    for point, amount in [("old", "49.00"), ("new", "49.99"),
+                                          ("legacy", "48.00")]]
+        prices = [price("base", "old"), price("scheduled", "new", "2026-10-29"),
+                  price("grandfathered", "legacy", "2026-09-01", True)]
+        self.assertEqual(asc.price_amounts(prices, included, today="2026-10-27"),
+                         {"USA": "49.00"})
+        self.assertEqual(asc.price_amounts(prices, included, today="2026-10-29"),
+                         {"USA": "49.00"})  # effective hour is not established
+        self.assertEqual(asc.price_amounts(prices, included, today="2026-10-30"),
+                         {"USA": "49.99"})
+
 
 class CategoryTests(unittest.TestCase):
     """Categories must be read with include=; without it Apple returns no ids.
