@@ -10,7 +10,9 @@ create temp table workspace_fixture(actor uuid,owner uuid,guest uuid,personal uu
 do $$declare u uuid:=gen_random_uuid();o uuid:=gen_random_uuid();g uuid:=gen_random_uuid();other uuid:=gen_random_uuid();a uuid;b uuid;go uuid;oo uuid;dead uuid;begin
  insert into auth.users(id,email,is_anonymous)values(u,'workspace-agent@fixture.invalid',false),(o,'workspace-owner@fixture.invalid',false),(g,null,true),(other,'workspace-other@fixture.invalid',false);
  select org_id into a from memberships where user_id=u;select org_id into b from memberships where user_id=o;select org_id into go from memberships where user_id=g;select org_id into oo from memberships where user_id=other;
- update orgs set plan='team',name='Fixture team'where id=b;
+ -- Both source listings must be admissible under the current listing gate.
+ update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days'where id=a;
+ update orgs set plan='team',plan_source='manual',name='Fixture team'where id=b;
  insert into memberships(user_id,org_id,role)values(u,b,'agent');
  -- Historical source assignment is tied to an explicit accepted invitation;
  -- a bare membership is not evidence that a private library may be mapped.
