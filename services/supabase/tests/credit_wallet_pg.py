@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
@@ -80,6 +81,64 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         team_results = [json.loads(line) for line in team_output.splitlines()
                          if line.startswith("{") and '"assertions"' in line]
         assert len(team_results) == 1 and team_results[0]["passed"] is True, team_output
+        # Race a signed Team5 -> Team3 snapshot against issuance of its last
+        # available invite. Both wait behind the same org row lock. Whichever
+        # wins, no newcomer can accept after the reduced paid term is current.
+        run("Team downgrade race seed", [*psql, "-Atq", "-f", SQL / "tests/team_downgrade_race_seed.sql"])
+        race_org = "5aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        locker = subprocess.Popen([*psql, "-Atq"], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True, env=ENV, cwd=ROOT)
+        try:
+            locker.stdin.write(f"begin; select id from public.orgs where id='{race_org}' for update;\n\\echo LOCKED\n")
+            locker.stdin.flush()
+            assert locker.stdout.readline().strip() == race_org
+            assert locker.stdout.readline().strip() == "LOCKED"
+            def call_race(sql):
+                return subprocess.run([*psql, "-Atq", "-c", sql], cwd=ROOT, env=ENV,
+                                      text=True, stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, timeout=30)
+            downgrade_sql = f"""begin;
+              update public.orgs set apple_product_id='com.rendprop.app.team.monthly'
+                where id='{race_org}';
+              update public.apple_subscriptions set product_id='com.rendprop.app.team.monthly',
+                last_transaction_id='race-team-three',transaction_purchased_at=now(),
+                transaction_signed_at=now() where original_transaction_id='race-team-chain';
+              commit;"""
+            invite_sql = f"""begin;set role service_role;
+              select public.create_org_invite('51111111-1111-4111-8111-111111111111',
+                '{race_org}','race-new@example.invalid','agent',repeat('f',64));
+              commit;"""
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                pending = [workers.submit(call_race, sql) for sql in (downgrade_sql, invite_sql)]
+                deadline = time.monotonic() + 8
+                while True:
+                    waiting = run("Team downgrade lock overlap", [*psql, "-Atq", "-c",
+                      "select count(*) from pg_stat_activity where datname='credit_wallet_test' "
+                      "and wait_event_type='Lock' and pid<>pg_backend_pid()"])
+                    if int(waiting.strip()) >= 2: break
+                    assert time.monotonic() < deadline, "Both Team seat mutations must overlap behind the org lock"
+                    time.sleep(.03)
+                locker.stdin.write("commit;\n"); locker.stdin.flush()
+                locker.stdin.close(); locker.wait(timeout=10)
+                downgrade, invitation = [future.result() for future in pending]
+            assert downgrade.returncode == 0, downgrade.stdout
+            if invitation.returncode != 0:
+                assert "RP402:" in invitation.stdout, invitation.stdout
+            status = run("Team downgrade race result", [*psql, "-Atq", "-c", f"""
+              select public.org_seats_allowed('{race_org}')=3;
+              select count(*)=4 from public.memberships where org_id='{race_org}';
+              select count(*)=1 from public.team_seat_status('{race_org}') where not seat_active;
+              select count(*)<=1 from public.org_invites where org_id='{race_org}'
+                and accepted_at is null and revoked_at is null;
+            """])
+            assert [line.strip() for line in status.splitlines() if line.strip()] == ["t"] * 4, status
+            if invitation.returncode == 0:
+                accepted = call_race("set role service_role;select public.accept_org_invite("
+                  "'51111111-1111-4111-8111-111111111115',repeat('f',64));")
+                assert accepted.returncode != 0 and "RP402:" in accepted.stdout, accepted.stdout
+        finally:
+            if locker.poll() is None: locker.kill(); locker.wait()
         aerial_output = run("dormant aerial credit fixture", [*psql, "-Atq", "-f", SQL / "tests/credit_aerial_opening.sql"])
         aerial_results = [json.loads(line) for line in aerial_output.splitlines()
                           if line.startswith("{") and '"assertions"' in line]
@@ -137,7 +196,7 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
                           + aerial_results[0]["assertions"]
                           + team_results[0]["assertions"] + downgrade_results[0]["assertions"]
                           + uncertain_results[0]["assertions"]
-                          + fair_results[0]["assertions"] + 4,
+                          + fair_results[0]["assertions"] + 9,
                           "migrations": len(migrations), "scope": "disposable PostgreSQL"}))
     finally:
         if started:
