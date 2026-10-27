@@ -256,7 +256,7 @@ class InventoryTests(RunnerCase):
         result = self.invoke()
         self.assertIsNone(result.failure)
         guarded = subject_module().GUARDED_ONE_SHOT_MIGRATIONS
-        self.assertEqual(len(guarded), 33)
+        self.assertEqual(len(guarded), 34)
         self.assertEqual(set(result.receipt['guardedOneShotRefusals']), set(guarded))
         commands = {row['name']: row for row in result.receipt['commands']}
         for filename in guarded:
