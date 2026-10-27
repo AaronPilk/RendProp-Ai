@@ -10,7 +10,12 @@ insert into auth.users(id,email,is_anonymous,email_confirmed_at)values
  ('f7100000-0000-4000-8000-000000000003','team-owner@fixture.invalid',false,now()),('f7100000-0000-4000-8000-000000000004','team-admin@fixture.invalid',false,now()),
  ('f7100000-0000-4000-8000-000000000005','foreign-owner@fixture.invalid',false,now()),('f7100000-0000-4000-8000-000000000006','co-owner@fixture.invalid',false,now());
 create temp table safety_fixture as select (select org_id from memberships where user_id='f7100000-0000-4000-8000-000000000001')named_org,(select org_id from memberships where user_id='f7100000-0000-4000-8000-000000000002')guest_org,(select org_id from memberships where user_id='f7100000-0000-4000-8000-000000000003')team,(select org_id from memberships where user_id='f7100000-0000-4000-8000-000000000005')foreign_org;
+-- Seed content that predates the current one-listing introductory policy under
+-- temporary paid authority, then restore the guest's original free terms.
+create temp table safety_guest_seed_plan as select id,plan,plan_source from orgs where id=(select guest_org from safety_fixture);
+update orgs set plan='starter',plan_source='manual'where id=(select guest_org from safety_fixture);
 insert into listings(id,org_id,agent_id,address)select 'f7100000-0000-4000-8000-000000000011',guest_org,'f7100000-0000-4000-8000-000000000002','Owned guest fixture'from safety_fixture;
+update orgs o set plan=s.plan,plan_source=s.plan_source from safety_guest_seed_plan s where o.id=s.id;
 insert into capture_assets(id,listing_id,kind,storage_key,uploaded,bytes)values('f7100000-0000-4000-8000-000000000012','f7100000-0000-4000-8000-000000000011','photo','uploads/owned-fixture.jpg',true,100);
 update orgs set plan='team',plan_source='manual'where id=(select team from safety_fixture);update plan_entitlements set seats=8 where plan='team';
 grant select on safety_fixture to service_role;

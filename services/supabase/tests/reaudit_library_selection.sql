@@ -18,7 +18,12 @@ select accept_org_invite('fa100000-0000-4000-8000-000000000004',repeat('92',32))
 reset role;
 insert into orgs(id,name)values('fa100000-0000-4000-8000-000000000090','Second legacy content library');
 insert into memberships(user_id,org_id,role)values('fa100000-0000-4000-8000-000000000002','fa100000-0000-4000-8000-000000000090','owner');
+-- Preserve a pre-policy listing without granting this legacy library paid
+-- authority during the directory and adoption assertions below.
+create temp table reaudit_legacy_seed_plan as select id,plan,plan_source from orgs where id='fa100000-0000-4000-8000-000000000090';
+update orgs set plan='starter',plan_source='manual'where id='fa100000-0000-4000-8000-000000000090';
 insert into listings(id,org_id,agent_id,address)values('fa100000-0000-4000-8000-000000000091','fa100000-0000-4000-8000-000000000090','fa100000-0000-4000-8000-000000000002','Preserved legacy listing');
+update orgs o set plan=s.plan,plan_source=s.plan_source from reaudit_legacy_seed_plan s where o.id=s.id;
 update user_workspace_state set active_org_id='fa100000-0000-4000-8000-000000000090'where user_id='fa100000-0000-4000-8000-000000000002';
 set local role service_role;
 select pg_temp.ok((workspace_directory('fa100000-0000-4000-8000-000000000002',null)->>'active_org_id')::uuid=(select child from reaudit_fixture),'bound non-switcher default aligns active with own');
