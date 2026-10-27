@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Actual current forward SQL candidate/source bounds; no provider/hosted writes."""
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 a=argparse.ArgumentParser();a.add_argument('--evidence-dir',type=Path);args=a.parse_args();OUT=args.evidence_dir or Path(tempfile.mkdtemp(prefix='photo-output-proof-'));OUT.mkdir(parents=True,exist_ok=True)
@@ -16,7 +17,7 @@ def run(name,cmd,body=None,refuses=None):
 try:
  run('initdb',[tool('initdb'),'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8']);run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k {SOCK} -p 55561 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  conn=['-h',SOCK,'-p','55561','-U','postgres'];run('createdb',[tool('createdb'),*conn,'photo_output']);PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','photo_output','-v','ON_ERROR_STOP=1'];run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ for m in partition_fresh_migrations(sorted((SQL/'migrations').glob('*.sql')))[0]:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
  for stage in ['fresh','replay']:
   if stage=='replay':run('replay-output-migration',[*PSQL,'-q','-1','-f',MIG])
   r[stage]=run(stage+'-actual-output-boundaries',[*PSQL,'-Atq','-f',FIX]).strip().splitlines()[-1]

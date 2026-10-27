@@ -4,6 +4,7 @@ No production connection, uploads, credentials, AI or new selection policy.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse,datetime,hashlib,json,os,shutil,subprocess,tempfile,time,uuid
 os.umask(0o077)
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -17,9 +18,10 @@ tool=lambda n:shutil.which(n,path=ENV['PATH'])
 assert all(tool(n)for n in ['initdb','pg_ctl','createdb','psql'])
 MIG=SQL/'migrations/20261015225447_listing_gallery_append_capacity.sql';FIX=SQL/'tests/listing_gallery_append_capacity.sql'
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'));assert MIG in MIGRATIONS
+SCHEMA_MIGRATIONS=partition_fresh_migrations(MIGRATIONS)[0]
 SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',FIX,Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in SOURCES}
-receipt={'passed':False,'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'migration_count':len(MIGRATIONS),'scope':'Actual disposable PostgreSQL/full current schema with synthetic metadata; source-only release proof','network_calls':0,'production_mutations':0,'provider_calls':0,'source_hashes':hashes(),'commands':[],'controls':[],'races':[]};started=False
+receipt={'passed':False,'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'migration_count':len(SCHEMA_MIGRATIONS),'scope':'Actual disposable PostgreSQL/full current schema with synthetic metadata; source-only release proof','network_calls':0,'production_mutations':0,'provider_calls':0,'source_hashes':hashes(),'commands':[],'controls':[],'races':[]};started=False
 SIGNATURE='public.append_listing_gallery(uuid,uuid,uuid,uuid[],boolean,text)'
 CATALOG="select coalesce(jsonb_agg(jsonb_build_object('signature',oid::regprocedure::text,'definition',pg_get_functiondef(oid),'owner',pg_get_userbyid(proowner),'acl',proacl,'security',prosecdef,'config',proconfig)order by oid::regprocedure::text),'[]')from pg_proc where pronamespace='public'::regnamespace and prokind='f';"
 def run(name,cmd,body=None,refuses=None):
@@ -58,7 +60,7 @@ try:
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','gallery_append_capacity_proof','-v','ON_ERROR_STOP=1']
  identity=query('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip();assert identity==str(DATA)+'|'
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for i,m in enumerate(MIGRATIONS):
+ for i,m in enumerate(SCHEMA_MIGRATIONS):
   if m==MIG:before=catalog('catalog-before')
   run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
   if m==MIG:
@@ -68,7 +70,7 @@ try:
    assert {k:v for k,v in old[key].items()if k!='definition'}=={k:v for k,v in new[key].items()if k!='definition'}
    run('replay-own-boundary',[*PSQL,'-q','-1','-f',MIG]);assert catalog('own-boundary-replayed')==boundary
    receipt['own_boundary']={'only_function_body_changed':key,'all_other_catalog_owner_ACL_security_config_exact':True,'migration_replay_catalog_exact':True}
-  if i%30==0:print('Applied',i+1,'of',len(MIGRATIONS),flush=True)
+  if i%30==0:print('Applied',i+1,'of',len(SCHEMA_MIGRATIONS),flush=True)
  after=catalog('current-head-catalog')
  for stage in ['fresh','replay']:
   out=run(stage,[*PSQL,'-Atq','-f',FIX]);values=[json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x];assert len(values)==1 and values[0]['passed']and values[0]['assertions']>=25

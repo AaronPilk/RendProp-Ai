@@ -9,6 +9,7 @@ dataset. Zero provider calls, zero network, no hosted database. Writes, under
 /admin/photo-feedback returns), report-30d.txt (a readable rendering), receipt.json and logs/.
 """
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse, datetime, hashlib, json, os, shutil, subprocess, tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -21,6 +22,7 @@ PORT = "55743"
 FIX = SQL / "tests/photo_feedback.sql"
 DEMO = SQL / "tests/fixtures/photo_feedback_report_demo.sql"
 MIGRATIONS = sorted((SQL / "migrations").glob("*.sql"))
+SCHEMA_MIGRATIONS = partition_fresh_migrations(MIGRATIONS)[0]
 ENV = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "TZ": "UTC", "PGOPTIONS": "-c statement_timeout=60000"}
 pg_config = shutil.which("pg_config", path=ENV["PATH"])
 if pg_config:
@@ -31,7 +33,7 @@ LOGS = OUT / "logs"
 LOGS.mkdir(exist_ok=True)
 DATA = Path(tempfile.mkdtemp(prefix="photo-feedback-demo-pg-", dir=OUT))
 SOCK = Path(tempfile.mkdtemp(prefix="photo-feedback-demo-sock-", dir="/tmp"))
-receipt = {"passed": False, "synthetic": True, "providerCalls": 0, "networkCalls": 0, "migrations": len(MIGRATIONS),
+receipt = {"passed": False, "synthetic": True, "providerCalls": 0, "networkCalls": 0, "migrations": len(SCHEMA_MIGRATIONS),
            "sources": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in [FIX, DEMO, Path(__file__).resolve()]}}
 started = False
 
@@ -106,7 +108,7 @@ try:
     run("createdb", [tool("createdb"), *conn, "photo_feedback_demo"])
     PSQL = [tool("psql"), "-X", "--no-password", *conn, "-d", "photo_feedback_demo", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap", [*PSQL, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for m in MIGRATIONS:
+    for m in SCHEMA_MIGRATIONS:
         run("apply-" + m.stem, [*PSQL, "-q", "-1", "-f", m])
     setup = FIX.read_text().split("-- BEGIN SETUP (reused verbatim by photo_feedback_pg.py for committed race fixtures)\n", 1)[1].split("-- END SETUP", 1)[0]
     setup = setup.replace("f8300000-", "f8600000-").replace("photo-feedback-", "photo-feedback-demo-")

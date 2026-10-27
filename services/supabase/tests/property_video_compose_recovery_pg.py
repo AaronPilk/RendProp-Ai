@@ -4,6 +4,7 @@ No production connection, media download, provider call or copied credentials.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile,uuid
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -37,7 +38,7 @@ try:
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
  # Ancestor replay is meaningful at its own boundary. On later wrappers the
  # same guarded migration must refuse, without replacing the current authority.
- for m in MIGRATIONS:
+ for m in partition_fresh_migrations(MIGRATIONS)[0]:
   run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
   if m==MIG:
    out=run('own-boundary-fresh',[*PSQL,'-Atq','-f',FIX]);receipt['ownBoundaryFresh']=next(json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x)

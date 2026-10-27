@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Socket-only real PG: authoritative owner usage, unchanged financial guards."""
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse,hashlib,json,os,shutil,subprocess,tempfile
 
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -35,7 +36,7 @@ try:
     conn=['-h',SOCK,'-p','55562','-U','postgres'];run('createdb',[TOOLS['createdb'],*conn,'owner_testing_media'])
     P=[TOOLS['psql'],'-X','--no-password',*conn,'-d','owner_testing_media','-v','ON_ERROR_STOP=1']
     run('bootstrap',[*P,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
-    for m in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+m.stem,[*P,'-q','-1','-f',m])
+    for m in partition_fresh_migrations(sorted((SQL/'migrations').glob('*.sql')))[0]:run('apply-'+m.stem,[*P,'-q','-1','-f',m])
     for name in ['fresh','replay']:
         if name=='replay':run('replay-migration',[*P,'-q','-1'],REPLAY)
         x=run(name,[*P,'-Atq'],FIXTURE)

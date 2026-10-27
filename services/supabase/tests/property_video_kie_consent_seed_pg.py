@@ -10,6 +10,7 @@ nothing. No provider, network, media or production value is involved; nothing
 here is operator activation of anything outside this throwaway database.
 """
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse,hashlib,json,os,re,shutil,subprocess,tempfile,time,sys,signal
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase';HANDOFF=ROOT/'docs/handoff'
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path,required=True);p.add_argument('--port',default='55791',help='socket port of the owned cluster (Unix socket in a private directory; no TCP listener)');a=p.parse_args()
@@ -117,8 +118,8 @@ try:
  CONN=['-h',SOCK,'-p',PORT,'-U','postgres'];run('createdb',[tool('createdb'),*CONN,'kie_seed']);PSQL=[tool('psql'),'-X','--no-password',*CONN,'-d','kie_seed','-v','ON_ERROR_STOP=1']
  assert sql('owned-cluster-identity',"select current_setting('data_directory'),current_setting('listen_addresses')").stdout.strip()==str(DATA)+'|'
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in MIGS:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
- r['migrationCount']=len(MIGS)
+ for m in partition_fresh_migrations(MIGS)[0]:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ r['migrationCount']=len(partition_fresh_migrations(MIGS)[0])
  before=state('baseline-state')
  check('migrations leave the selector OFF, the row OFF, no record and no contract',before['selector']=={'enabled':False,'profile':'fal-kling3-4k-v1'}and before['route_enabled']is False and before['record']is None and before['record_sha256']=='absent'and before['contract']is None,before)
  # Refusal 1: no published processor-permission contract.

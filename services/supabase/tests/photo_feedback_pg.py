@@ -12,6 +12,7 @@ the exact pre-migration boundary followed by a clean re-apply.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse, datetime, hashlib, json, os, re, shutil, signal, subprocess, sys, tempfile, time
 
@@ -33,6 +34,7 @@ FIX = SQL / "tests/photo_feedback.sql"
 ROLLBACK = SQL / "tests/fixtures/photo_output_feedback_rollback.sql"
 MIGRATIONS = sorted((SQL / "migrations").glob("*.sql"))
 assert MIG in MIGRATIONS, "Photo feedback migration missing"
+SCHEMA_MIGRATIONS = partition_fresh_migrations(MIGRATIONS)[0]
 # Existing photo-quality/gallery publication fixtures that must keep passing
 # on the same migrated cluster: (file, required database name, minimum count).
 EXISTING = [
@@ -72,7 +74,7 @@ assert all(tool(name) for name in ["initdb", "pg_ctl", "createdb", "psql"]), "Po
 DATA = Path(tempfile.mkdtemp(prefix="photo-feedback-owned-pg-", dir=OUT))
 SOCK = Path(tempfile.mkdtemp(prefix="photo-feedback-sock-", dir="/tmp"))
 hashes = lambda: {str(f.relative_to(ROOT)): hashlib.sha256(f.read_bytes()).hexdigest() for f in SOURCES}
-r = {"passed": False, "startedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(), "sourceHashes": hashes(), "migrationsApplied": len(MIGRATIONS),
+r = {"passed": False, "startedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(), "sourceHashes": hashes(), "migrationsApplied": len(SCHEMA_MIGRATIONS),
      "commands": [], "controls": [], "races": [], "existingFixtures": [], "networkCalls": 0, "providerCalls": 0,
      "runtime": {"platform": sys.platform, "python": sys.version, "postgresTools": {name: tool(name) for name in ["initdb", "pg_ctl", "createdb", "psql"]}, "port": PORT}}
 started = False
@@ -163,7 +165,7 @@ try:
     query = lambda name, text, refuses=None, db=DB: run(name, [*psql(db), "-Atq"], text, refuses)
     assert query("owned-cluster-identity", "select current_setting('data_directory'),current_setting('listen_addresses');").strip() == str(DATA) + "|"
     run("bootstrap", [*PSQL, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for migration in MIGRATIONS:
+    for migration in SCHEMA_MIGRATIONS:
         if migration == MIG:
             assert query("own-objects-absent", OWN_ABSENT).strip() == "t"
             # A pre-feature generation committed before the migration: it must
@@ -186,11 +188,12 @@ commit;""")
             assert query("boundary-evidence-after", EVIDENCE).strip() == evidence_before, "Historical evidence changed"
             assert query("boundary-unknown-recipe", "select count(*)=1 and bool_and(recipe_revision is null and prompt_sha256 is null)from photo_edit_evidence;").strip() == "t"
             r["boundary"] = {"foreignCatalogUnchanged": True, "historicalEvidenceByteIdentical": True, "historicalRecipeUnknown": True}
-    print("Fresh migration chain applied:", len(MIGRATIONS), flush=True)
+    print("Fresh migration chain applied:", len(SCHEMA_MIGRATIONS), flush=True)
+    final_boundary = json.loads(query("final-schema-foreign-catalog", CATALOG))
     for stage in ["fresh", "replay"]:
         if stage == "replay":
             run("replay-own", [*PSQL, "-q", "-1", "-f", MIG])
-            assert json.loads(query("after-replay-boundary", CATALOG)) == boundary
+            assert json.loads(query("after-replay-boundary", CATALOG)) == final_boundary
         result = fixture_result(run(stage + "-fixture", [*PSQL, "-Atq", "-f", FIX]), stage)
         assert result["assertions"] == EXPECTED_ASSERTIONS, (stage, result)
         r[stage] = result
@@ -267,7 +270,7 @@ commit;""")
         # Each foreign object is refused by the replay guard inside a transaction that is rolled back.
         run("replay-refuses-" + label, [*PSQL, "-q"], "begin;\n" + mutate + "\n\\i " + str(MIG) + "\n", refuses=needle)
         r["controls"].append({"name": label, "replayGuardRefused": True, "oracle": needle})
-    assert json.loads(query("after-guard-controls", CATALOG)) == boundary
+    assert json.loads(query("after-guard-controls", CATALOG)) == final_boundary
     # Real concurrent offline resends against committed outputs.
     setup = FIX.read_text().split("-- BEGIN SETUP (reused verbatim by photo_feedback_pg.py for committed race fixtures)\n", 1)[1].split("-- END SETUP", 1)[0]
     setup = setup.replace("f8300000-", "f8320000-").replace("photo-feedback-", "photo-feedback-race-")
@@ -321,7 +324,7 @@ commit;""")
     assert all(code == 0 for code, _ in replies) and query("race-signal-rows", "select count(*)from photo_output_signals where client_key='s-race-same-01';").strip() == "1"
     r["races"].append({"name": "duplicate-signals", "concurrentSessions": 6, "rows": 1})
     # Rollback: refuses to discard observations or a foreign helper unless
-    # confirmed; then returns the catalog to the exact pre-migration boundary.
+    # confirmed; then preserves all foreign final-schema objects.
     run("rollback-refuses-observations", [*PSQL, "-q", "-f", ROLLBACK], refuses="Rollback would discard")
     original = query("read-rollback-foreign", "select pg_get_functiondef('public.photo_feedback_state(uuid,uuid,uuid)'::regprocedure);")
     query("compile-rollback-foreign", original.replace("select*into c from public.photo_regression_cases where provenance_id=p_provenance;", "select*into c from public.photo_regression_cases where provenance_id=p_provenance and true;", 1))
@@ -332,9 +335,9 @@ commit;""")
     assert query("rollback-own-absent", OWN_ABSENT).strip() == "t"
     after_rollback = json.loads(query("rollback-catalog", CATALOG))
     for key in ["functions", "constraints", "columns", "relations", "triggers", "policies"]:
-        assert after_rollback[key] == boundary[key], ("rollback catalog", key)
+        assert after_rollback[key] == final_boundary[key], ("rollback catalog", key)
     assert json.loads(query("rollback-data-after", DATA_DIGEST)) == data_before, "Rollback touched evidence, provenance, operations, holds or ledger"
-    r["rollback"] = {"refusedWithObservations": True, "refusedForeignHelper": True, "catalogEqualsPreMigrationBoundary": True, "authorityDataUnchanged": True}
+    r["rollback"] = {"refusedWithObservations": True, "refusedForeignHelper": True, "foreignCatalogEqualsFinalSchema": True, "authorityDataUnchanged": True}
     run("reapply-after-rollback", [*PSQL, "-q", "-1", "-f", MIG])
     again = fixture_result(run("fixture-after-reapply", [*PSQL, "-Atq", "-f", FIX]), "reapplied")
     assert again["assertions"] == EXPECTED_ASSERTIONS
@@ -343,7 +346,7 @@ commit;""")
     r["passed"] = True
     print(json.dumps({"passed": True, "fresh": r["fresh"]["assertions"], "replay": r["replay"]["assertions"], "existingFixtures": len(r["existingFixtures"]),
                       "compiledControls": len(r["controls"]), "races": len(r["races"]), "rollback": r["rollback"], "reapplied": again["assertions"],
-                      "migrations": len(MIGRATIONS)}), flush=True)
+                      "migrations": len(SCHEMA_MIGRATIONS)}), flush=True)
 finally:
     cleanup_error = None
     if started or (DATA / "postmaster.pid").exists():

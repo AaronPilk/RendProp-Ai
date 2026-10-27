@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Actual socket-only PG point authority; external DATA supported, no hosted calls."""
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse, hashlib, json, os, shutil, subprocess, tempfile, time
 
 ROOT=Path(__file__).resolve().parents[3]; SQL=ROOT/'services/supabase'
@@ -80,7 +81,7 @@ try:
     conn=['-h',SOCK,'-p','55568','-U','postgres'];run('createdb',[TOOLS['createdb'],*conn,'photo_delivery'])
     P=[TOOLS['psql'],'-X','--no-password',*conn,'-d','photo_delivery','-v','ON_ERROR_STOP=1']
     run('bootstrap',P+['-q','-f',SQL/'tests/ci-bootstrap.sql'])
-    for m in MIGRATIONS:run('apply-'+m.stem,P+['-q','-1','-f',m])
+    for m in partition_fresh_migrations(MIGRATIONS)[0]:run('apply-'+m.stem,P+['-q','-1','-f',m])
     for name in ['fresh','replay']:
         if name=='replay':run('replay-migration',P+['-q','-1','-f',MIG])
         x=run(name,P+['-Atq'],fixture);proof=[json.loads(l)for l in x.stdout.splitlines()if l.startswith('{')and'assertions'in l]

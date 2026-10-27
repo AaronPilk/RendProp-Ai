@@ -2,6 +2,7 @@
 """Disposable actual PG funding/period/quota/hold proofs; no hosted mutation."""
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile,time
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -26,16 +27,26 @@ def race(name,commands):
   c=subprocess.run([*PSQL,'-Atq'],input=body,text=True,env=ENV,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=40)
   (OUT/f'{name}-{i}.log').write_text(c.stdout);return{'exit':c.returncode,'output':c.stdout,'elapsed':time.monotonic()-start}
  with ThreadPoolExecutor(max_workers=len(commands))as pool:return list(pool.map(call,enumerate(commands)))
-base=BASE.read_text();seed=base[base.index('insert into auth.users'):base.index('select pg_temp.ok((select bool_and')];fixture='begin;\n'+seed+'\n'+FIX.read_text()
+base=BASE.read_text();seed=base[base.index('insert into auth.users'):base.index('select pg_temp.ok((select bool_and')]
+# The shared video seed uses manual Starter authority to create its listing.
+# This proof then starts from Free so only its signed Apple receipt can grant
+# paid processing, preserving the manual-plan negative control below.
+fixture='begin;\n'+seed+"\nupdate orgs set plan='free',plan_source=null where id=(select org from bf);\n"+FIX.read_text()
 try:
  run('initdb',[tool('initdb'),'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
  run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k {SOCK} -p 55577 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  conn=['-h',SOCK,'-p','55577','-U','postgres'];run('createdb',[tool('createdb'),*conn,'paid_quality'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','paid_quality','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in MIGRATIONS:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ for m in partition_fresh_migrations(MIGRATIONS)[0]:
+  run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+  if m==MIG:
+   # The October 26 intro policy later replaces org_entitlement. Prove this
+   # migration's exact replay and changed-wrapper refusal at its own boundary.
+   run('replay-own-historical',[*PSQL,'-q','-1','-f',MIG])
+   run('clone-own-historical',[tool('createdb'),*conn,'-T','paid_quality','paid_quality_guard'])
+ HISTORICAL_PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','paid_quality_guard','-v','ON_ERROR_STOP=1']
  for stage in ['fresh','replay']:
-  if stage=='replay':run('replay-own-migration',[*PSQL,'-q','-1','-f',MIG])
   out=run(stage+'-actual-funding',[*PSQL,'-Atq'],fixture)
   rows=[json.loads(line)for line in out.splitlines()if line.startswith('{')and'assertions'in line];assert len(rows)==1 and rows[0]['passed'];r[stage]=rows[0]
  for label,signature,anchor,replacement,oracle in [
@@ -50,14 +61,14 @@ try:
   r['controls'].append({'name':label,'compiledActualSQL':True,'unsafeMutationDetected':True})
  # An unseen production wrapper cannot be overwritten even if its comment
  # happens to mention the helper name; the guard accepts exact source MD5s only.
- original=run('read-unseen-wrapper',[*PSQL,'-Atq','-c',"select pg_get_functiondef('public.plan_serving_ceiling(uuid)'::regprocedure)"])
+ original=run('read-unseen-wrapper',[*HISTORICAL_PSQL,'-Atq','-c',"select pg_get_functiondef('public.plan_serving_ceiling(uuid)'::regprocedure)"])
  assert original.count('declare b uuid;')==1
- run('compile-unseen-wrapper',[*PSQL,'-Atq'],original.replace('declare b uuid;','-- unforeseen edit mentioning paid_quality_processing_budget\ndeclare b uuid;',1))
- run('negative-unseen-wrapper',[*PSQL,'-q','-1','-f',MIG],refuses='Review changed plan_serving_ceiling')
- run('restore-unseen-wrapper',[*PSQL,'-Atq'],original);r['controls'].append({'name':'unseen-wrapper-overwrite','compiledActualSQL':True,'unsafeMutationDetected':True})
+ run('compile-unseen-wrapper',[*HISTORICAL_PSQL,'-Atq'],original.replace('declare b uuid;','-- unforeseen edit mentioning paid_quality_processing_budget\ndeclare b uuid;',1))
+ run('negative-unseen-wrapper',[*HISTORICAL_PSQL,'-q','-1','-f',MIG],refuses='Review changed plan_serving_ceiling')
+ run('restore-unseen-wrapper',[*HISTORICAL_PSQL,'-Atq'],original);r['controls'].append({'name':'unseen-wrapper-overwrite','compiledActualSQL':True,'unsafeMutationDetected':True})
  # Mixed actual video/serving writers share the last300c after a renewal.
  paid="set role service_role;select apply_apple_entitlement_v2((select org from bf),(select actor from bf),'race-paid-quality-original','race-paid-quality-transaction','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval'29 days',true,'DID_RENEW',now()-interval'1 day',now()-interval'30 seconds',now()-interval'30 seconds',now()-interval'30 seconds');reset role;"
- setup='begin;'+seed+paid+"update app_config set value=jsonb_set(value,'{enabled}','true')where key='paid_quality_processing';update app_config set value='{\"enabled\":true,\"profile\":\"fal-kling3-4k-v1\"}'where key='property_video_quality';update app_config set value='{\"mode\":\"ceiling\",\"free_published_listings\":1}'where key='serving_mode';set role service_role;select serving_cost_reserve((select actor from bf),(select org from bf),'paid-quality-race-existing','held','gemini','fixture',repeat('a',64),6200,'fixture');reset role;update serving_cost_reservations set created_at=now()-interval'2 days'where request_key='paid-quality-race-existing';insert into cost_ledger(org_id,feature,provider,model,total_cents,meta,created_at)values((select org from bf),'copy','openai','prior-term-race',6500,'{}',now()-interval'2 days');create table public.paid_quality_race_fixture as select *from bf;grant select on public.paid_quality_race_fixture to service_role;commit;"
+ setup='begin;'+seed+"update orgs set plan='free',plan_source=null where id=(select org from bf);"+paid+"update app_config set value=jsonb_set(value,'{enabled}','true')where key='paid_quality_processing';update app_config set value='{\"enabled\":true,\"profile\":\"fal-kling3-4k-v1\"}'where key='property_video_quality';update app_config set value='{\"mode\":\"ceiling\",\"free_published_listings\":1}'where key='serving_mode';set role service_role;select serving_cost_reserve((select actor from bf),(select org from bf),'paid-quality-race-existing','held','gemini','fixture',repeat('a',64),6200,'fixture');reset role;update serving_cost_reservations set created_at=now()-interval'2 days'where request_key='paid-quality-race-existing';insert into cost_ledger(org_id,feature,provider,model,total_cents,meta,created_at)values((select org from bf),'copy','openai','prior-term-race',6500,'{}',now()-interval'2 days');create table public.paid_quality_race_fixture as select *from bf;grant select on public.paid_quality_race_fixture to service_role;commit;"
  run('race-seed',[*PSQL,'-Atq'],setup)
  def reserve(i):
   actor="(select actor from paid_quality_race_fixture)";org="(select org from paid_quality_race_fixture)"

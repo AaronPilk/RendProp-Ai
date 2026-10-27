@@ -4,6 +4,7 @@ Consumes all current repository migrations; no live/network/provider calls.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -34,7 +35,7 @@ try:
  conn=['-h',SOCK,'-p','55589','-U','postgres'];run('createdb',[tool('createdb'),*conn,'static_repair_proof'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','static_repair_proof','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in MIGRATIONS:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ for m in partition_fresh_migrations(MIGRATIONS)[0]:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
  receipt['functionMD5s']=json.loads(run('function-hashes',[*PSQL,'-Atq','-c',"select json_object_agg(p.oid::regprocedure::text,md5(p.prosrc))from pg_proc p where p.oid in('public.property_video_compose_history_guard()'::regprocedure,'public.property_video_job_claim(uuid,text)'::regprocedure,'public.property_video_job_resume(uuid,uuid,numeric)'::regprocedure)"]))
  for stage in ['fresh','replay']:
   if stage=='replay':run('replay-external-candidate',[*PSQL,'-q','-f',CANDIDATE])

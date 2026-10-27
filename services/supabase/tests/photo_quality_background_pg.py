@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Actual local SQL cron/client judge race; no hosted funds/providers or schema delta."""
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 import argparse,datetime,hashlib,json,os,shutil,subprocess,tempfile,uuid
@@ -25,7 +26,7 @@ try:
  run('initdb',[tool('initdb'),'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8']);run('start',[tool('pg_ctl'),'-D',DATA,'-l',OUT/'postgres.log','-w','-o',f"-k {SOCK} -p 55557 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  conn=['-h',SOCK,'-p','55557','-U','postgres'];run('createdb',[tool('createdb'),*conn,'photo_background']);PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','photo_background','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for migration in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
+ for migration in partition_fresh_migrations(sorted((SQL/'migrations').glob('*.sql')))[0]:run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
  # Reuse canonical independent synthetic ownership/evidence/derivative helpers.
  # Keep every forward context/payment guard installed; do NOT replay old bases.
  fixture=(SQL/'tests/photo_quality_evidence.sql').read_text();anchor="select pg_temp.ok((select value->>'enabled'";assert fixture.count(anchor)==1

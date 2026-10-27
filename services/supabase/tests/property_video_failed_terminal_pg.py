@@ -4,6 +4,7 @@ No inherited credentials, network listener, supplier generation or hosted writes
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -36,7 +37,7 @@ try:
  conn=['-h',SOCK,'-p','55569','-U','postgres'];run('createdb',[tool('createdb'),*conn,'failed_video_slots'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','failed_video_slots','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ for m in partition_fresh_migrations(sorted((SQL/'migrations').glob('*.sql')))[0]:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
  # The migration intentionally changes exactly two state guards, not payment,
  # global-capacity, supplier receipt, retry, or source-visibility authority.
  original=(SQL/'migrations/20261014183851_background_property_videos.sql').read_text()

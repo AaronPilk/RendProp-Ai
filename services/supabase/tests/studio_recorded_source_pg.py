@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Actual isolated PostgreSQL source-classification guards and typed/recorded compatibility."""
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase';p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path);a=p.parse_args()
 OUT=a.evidence_dir or Path(tempfile.mkdtemp(prefix='studio-recorded-source-evidence-'));OUT.mkdir(parents=True,exist_ok=True)
@@ -16,7 +17,7 @@ def run(name,args,stdin=None,okay=True):
 try:
  run('initdb',[TOOLS['initdb'],'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8']);run('start',[TOOLS['pg_ctl'],'-D',DATA,'-l',OUT/'postgres.log','-w','-t','30','-o',f"-k {SOCK} -p 55561 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  conn=['-h',SOCK,'-p','55561','-U','postgres'];run('createdb',[TOOLS['createdb'],*conn,'studio_recorded']);P=[TOOLS['psql'],'-X','--no-password',*conn,'-d','studio_recorded','-v','ON_ERROR_STOP=1'];run('bootstrap',[*P,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+m.stem,[*P,'-q','-1','-f',m])
+ for m in partition_fresh_migrations(sorted((SQL/'migrations').glob('*.sql')))[0]:run('apply-'+m.stem,[*P,'-q','-1','-f',m])
  for name in ['fresh','replay']:
   if name=='replay':run('replay-migration',[*P,'-q','-1','-f',MIG])
   x=run(name,[*P,'-Atq'],fixture+'\nrollback;');proof=[json.loads(l)for l in x.stdout.splitlines()if l.startswith('{')and 'assertions'in l];assert len(proof)==1 and proof[0]['passed'];r[name]=proof[0]

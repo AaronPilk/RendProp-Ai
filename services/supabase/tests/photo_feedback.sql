@@ -38,6 +38,11 @@ create temp table f as select
  'f8300000-0000-4000-8000-000000000041'::uuid h1,'f8300000-0000-4000-8000-000000000042'::uuid h2,
  'f8300000-0000-4000-8000-000000000043'::uuid calib,'f8300000-0000-4000-8000-000000000044'::uuid reel;
 grant select on f to service_role,authenticated;
+-- The feedback contract exercises retained paid outputs across three listings.
+-- Give both synthetic libraries manual paid authority before the final-schema
+-- listing admission trigger sees their first draft.
+update orgs set plan='starter',plan_source='manual'
+where id in(select o from f union select o2 from f);
 insert into listings(id,org_id,agent_id,address)select l1,o,a,'Synthetic feedback property'from f;
 insert into listings(id,org_id,agent_id,address)select l2,o2,b,'Synthetic other-library property'from f;
 insert into listings(id,org_id,agent_id,address)select l3,o,a,'Synthetic second property'from f;

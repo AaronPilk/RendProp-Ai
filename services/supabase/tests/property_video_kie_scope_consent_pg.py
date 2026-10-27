@@ -5,6 +5,7 @@ independent of operator activation scripts, which require a later scoped review.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile,time,sys,signal
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -145,8 +146,8 @@ try:
  conn=['-h',SOCK,'-p',PORT,'-U','postgres'];run('createdb',[tool('createdb'),*conn,'kie_scope']);PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','kie_scope','-v','ON_ERROR_STOP=1']
  assert sql('owned-cluster-identity',"select current_setting('data_directory'),current_setting('listen_addresses')").stdout.strip()==str(DATA)+'|'
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in MIGS:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
- r['migrationCount']=len(MIGS);baseline=catalog('all-final-catalog')
+ for m in partition_fresh_migrations(MIGS)[0]:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ r['migrationCount']=len(partition_fresh_migrations(MIGS)[0]);baseline=catalog('all-final-catalog')
  one('review-helper-metadata',"select jsonb_build_object('helpers',(select jsonb_agg(jsonb_build_object('sig',p.oid::regprocedure::text,'body_md5',md5(p.prosrc),'owner',pg_get_userbyid(p.proowner),'security_definer',p.prosecdef,'volatility',p.provolatile,'config',p.proconfig,'acl',p.proacl::text,'result',pg_get_function_result(p.oid),'arguments',p.proargnames,'strict',p.proisstrict,'parallel',p.proparallel))from pg_proc p where p.pronamespace='public'::regnamespace and p.proname in('property_video_kie_test_grant_guard','property_video_kie_test_grant_use_guard','property_video_processor_consent_current','property_video_processor_consent_record','property_video_kie_test_grant_scope','property_video_quality_profile_for','property_video_job_admit_v2','property_video_kie_dispatch_authority')));")
  functional_output=sql('actual-scope-consent-fixture',prefix+ftext).stdout;functional_rows=[json.loads(l)for l in functional_output.splitlines()if l.startswith('{')and'assertions'in l];assert len(functional_rows)==1;functional=functional_rows[0];check('actual consent scope authority fixture',functional['passed'],functional);r['functional']=functional
  check('functional rollback preserves all finalcatalog',catalog('after-functional-catalog')==baseline)

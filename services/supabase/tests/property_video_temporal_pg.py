@@ -19,6 +19,7 @@ model, provider or network: Unix-socket PostgreSQL only.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -226,7 +227,7 @@ try:
  receipt['rollback']={'path':str(ROLLBACK.relative_to(ROOT)),'refusedChangedObject':True,'exactPredecessorCatalog':True,'rowsUntouched':True,'discardedVerdicts':1,'idempotent':True,'reapplied':True}
  run('drop-rollback-clone',[tool('dropdb'),*conn,'temporal_rollback_proof'])
  # ── remaining chronology, then the actual fixture ─────────────────────────────
- for m in MIGRATIONS[OWN_INDEX+1:]:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ for m in (m for m in partition_fresh_migrations(MIGRATIONS)[0] if m.name>MIG.name):run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
  head=catalog('catalog-head')
  for stage in ['fresh','replay']:
   out=run(stage+'-actual-temporal',[*PSQL,'-Atq'],fixture);rows=[json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x];assert len(rows)==1 and rows[0]['passed'];receipt[stage]=rows[0]

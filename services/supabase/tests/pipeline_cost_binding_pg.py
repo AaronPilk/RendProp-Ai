@@ -7,6 +7,7 @@ first apply, immediate own replay, refused unknown same-name objects, the remain
 migrations, then the actual closed-transport pipeline cases and the omission witness.
 """
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse,datetime,hashlib,json,os,re,shutil,signal,subprocess,sys,tempfile,time
 sys.dont_write_bytecode=True
 ROOT=Path(__file__).resolve().parents[3]
@@ -152,7 +153,7 @@ def main():
   r['replayControls']=controls
   run('own-replay-after-controls',psql+['-f',own]);assert catalog('after-final-replay')==after and shape('shape-after-final-replay')==shape_first and q('history-after-controls',SNAPSHOT)==history_before,'Final own replay must be a no-op'
   # ── remaining chronology, then the actual pipeline cases ─────────────────
-  for i,m in enumerate(migrations[own_index+1:],own_index+1):run('migration-'+str(i).zfill(3),psql+['-f',m])
+  for i,m in enumerate((m for m in partition_fresh_migrations(migrations)[0] if m.name>own.name),own_index+1):run('migration-'+str(i).zfill(3),psql+['-f',m])
   assert q('history-final',SNAPSHOT)==history_before,'Later migrations must not rewrite seeded financial history'
   write(out/'fixture.json',{'psql':psql,'env':env})
   env['PIPELINE_COST_PG_FIXTURE']=str(out/'fixture.json');env['PIPELINE_COST_CASE_EVIDENCE']=str(out/'positive-cases.json')

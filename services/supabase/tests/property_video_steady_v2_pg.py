@@ -2,6 +2,7 @@
 """Real disposable PG profile/funding/replay/role/concurrency proofs; no network."""
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile,time
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -49,7 +50,7 @@ try:
  final_catalog_query=catalog_query.replace(other_functions,'').replace(other_constraints,'').replace("'other_functions'","'all_functions'").replace("'other_constraints'","'all_constraints'")
  # Own migration must preserve its immediate predecessor's unrelated catalog.
  # Later additive migrations legitimately add other functions/constraints.
- for m in MIGRATIONS:
+ for m in partition_fresh_migrations(MIGRATIONS)[0]:
   if m==MIG:boundary=json.loads(run('before-own-boundary',[*PSQL,'-Atq','-c',catalog_query]).strip())
   run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
   if m==MIG:
@@ -60,7 +61,7 @@ try:
    r['immediateReplayCatalog']=own_full_boundary
  # Refusal/control restoration must preserve the complete final schema.
  final_boundary=json.loads(run('whole-final-boundary',[*PSQL,'-Atq','-c',final_catalog_query]).strip())
- r['boundaryPreservation']=actual;r['wholeFinalCatalog']=final_boundary;r['migrationCount']=len(MIGRATIONS)
+ r['boundaryPreservation']=actual;r['wholeFinalCatalog']=final_boundary;r['migrationCount']=len(partition_fresh_migrations(MIGRATIONS)[0])
  # A historic migration must refuse to overwrite a later Kie-aware profile.
  # Preserve its exact production signature/body guard and prove atomic refusal.
  late_refusal='Review changed steady-v2 dependency: public.property_video_quality_profile()'

@@ -2,6 +2,7 @@
 """Actual isolated PostgreSQL paid/direct-provenance proof. No hosted/provider IO."""
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -15,7 +16,7 @@ ERASURE=SQL/'tests/direct_property_video_erasure.sql'
 ERASE_MIGRATION,=list((SQL/'migrations').glob('*_direct_property_video_account_erasure_order.sql'))
 SOURCES=[*MIGRATIONS,FIX,ERASURE,SQL/'tests/ci-bootstrap.sql',SQL/'tests/app_video_submission_receipts.sql',SQL/'tests/account_deletion_integrity.sql',SQL/'tests/account_deletion_studio_inventory.sql',Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in SOURCES}
-receipt={'passed':False,'scope':'actual complete migration chain/roles/settlement/current source/immutable binding/concurrency, synthetic transport facts only','networkCalls':0,'providerCalls':0,'sourceHashes':hashes(),'migrationCount':len(MIGRATIONS),'commands':[],'controls':[],'races':[]};started=False
+receipt={'passed':False,'scope':'actual complete migration chain/roles/settlement/current source/immutable binding/concurrency, synthetic transport facts only','networkCalls':0,'providerCalls':0,'sourceHashes':hashes(),'migrationCount':len(partition_fresh_migrations(MIGRATIONS)[0]),'commands':[],'controls':[],'races':[]};started=False
 SIGNATURE='record_direct_property_video_source(uuid,uuid,text,uuid,uuid,uuid,text,text,text,text,text,text)'
 def run(name,cmd,body=None,refuses=None):
  r=subprocess.run([str(x)for x in cmd],input=body,text=True,env=ENV,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=180)
@@ -52,7 +53,7 @@ try:
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
  erasure_before=None
  catalog="select jsonb_build_object('owner',proowner,'security_definer',prosecdef,'config',proconfig,'acl',proacl)from pg_proc where oid='prepare_account_deletion(uuid,text,text)'::regprocedure"
- for m in MIGRATIONS:
+ for m in partition_fresh_migrations(MIGRATIONS)[0]:
   if m==ERASE_MIGRATION:erasure_before=run('erasure-catalog-before',[*PSQL,'-Atq','-c',catalog])
   run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
   if m==ERASE_MIGRATION:assert run('erasure-catalog-after',[*PSQL,'-Atq','-c',catalog])==erasure_before,'Canonical erasure authority metadata changed'

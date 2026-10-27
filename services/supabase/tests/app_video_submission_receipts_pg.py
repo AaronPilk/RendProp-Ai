@@ -4,6 +4,7 @@ No provider, hosted database, customer media, inherited auth or network listener
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -32,7 +33,7 @@ try:
  conn=['-h',SOCK,'-p','55587','-U','postgres'];run('createdb',[tool('createdb'),*conn,'submission_receipt_proof'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','submission_receipt_proof','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in MIGRATIONS:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ for m in partition_fresh_migrations(MIGRATIONS)[0]:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
  for stage in ['fresh','replay']:
   if stage=='replay':run('replay-own-migration',[*PSQL,'-q','-1','-f',CANDIDATE])
   out=run(stage+'-actual-submission',[*PSQL,'-Atq','-f',FIX]);rows=[json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x];assert len(rows)==1 and rows[0]['passed'];receipt[stage]=rows[0]

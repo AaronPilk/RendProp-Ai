@@ -18,6 +18,7 @@ Proves, against the live schema rather than hand-written fixtures:
     member-filtered read can never masquerade as whole-app accounting.
 """
 from pathlib import Path
+from run_database_regression import partition_fresh_migrations
 import argparse, datetime, hashlib, json, os, shutil, subprocess, sys, tempfile, time, signal
 
 os.umask(0o077)
@@ -124,9 +125,9 @@ try:
     run("createdb", [tool("createdb"), *conn, "cost_report"])
     PSQL = [tool("psql"), "-X", "--no-password", *conn, "-d", "cost_report", "-v", "ON_ERROR_STOP=1"]
     run("bootstrap", [*PSQL, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
-    for migration in MIGRATIONS:
+    for migration in partition_fresh_migrations(MIGRATIONS)[0]:
         run("apply-" + migration.stem, [*PSQL, "-q", "-1", "-f", migration])
-    r["migrationsApplied"] = len(MIGRATIONS)
+    r["migrationsApplied"] = len(partition_fresh_migrations(MIGRATIONS)[0])
 
     # ── Seed through the real triggers/RPCs (service role; no provider call) ──
     seed = f"""

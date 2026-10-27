@@ -2,6 +2,7 @@
 """Owned socket-only PG proof; no hosted account, media bytes or paid API calls."""
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse,datetime,hashlib,json,os,shutil,subprocess,tempfile,time,uuid
 os.umask(0o077)
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -14,9 +15,10 @@ ENV={'PATH':os.pathsep.join([os.environ.get('PATH','/usr/bin:/bin'),'/opt/homebr
 tool=lambda n:shutil.which(n,path=ENV['PATH'])
 assert all(tool(n)for n in ['initdb','pg_ctl','createdb','psql'])
 REMOVAL=SQL/'migrations/20261017110321_preserve_gallery_removal_projection_order.sql';MIG=SQL/'migrations/20261015225602_studio_explicit_listing_gallery.sql';FIX=SQL/'tests/studio_explicit_listing_gallery.sql';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'));assert MIG in MIGRATIONS and REMOVAL in MIGRATIONS
+SCHEMA_MIGRATIONS=partition_fresh_migrations(MIGRATIONS)[0]
 SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',FIX,SQL/'tests/listing_gallery_append_capacity.sql',Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in SOURCES}
-receipt={'passed':False,'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'scope':'Actual PostgreSQL roles/transactions/concurrency with synthetic metadata, no actual uploaded media or live authority','migration_count':len(MIGRATIONS),'source_hashes':hashes(),'production_mutations':0,'provider_calls':0,'commands':[],'controls':[],'races':[]};started=False
+receipt={'passed':False,'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'scope':'Actual PostgreSQL roles/transactions/concurrency with synthetic metadata, no actual uploaded media or live authority','migration_count':len(SCHEMA_MIGRATIONS),'source_hashes':hashes(),'production_mutations':0,'provider_calls':0,'commands':[],'controls':[],'races':[]};started=False
 CATALOG="select coalesce(jsonb_agg(jsonb_build_object('signature',oid::regprocedure::text,'definition',pg_get_functiondef(oid),'owner',pg_get_userbyid(proowner),'acl',proacl,'security',prosecdef,'config',proconfig)order by oid::regprocedure::text),'[]')from pg_proc where pronamespace='public'::regnamespace and prokind='f';"
 def guard():assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve internal3GiB reserve'
 def run(name,cmd,body=None,refuses=None):
@@ -55,7 +57,7 @@ try:
  conn=['-h',SOCK,'-p','55624','-U','postgres'];run('createdb',[tool('createdb'),*conn,'studio_explicit_gallery_proof']);PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','studio_explicit_gallery_proof','-v','ON_ERROR_STOP=1']
  assert query('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for i,m in enumerate(MIGRATIONS):
+ for i,m in enumerate(SCHEMA_MIGRATIONS):
   if m==MIG:before=catalog('before-own')
   if m==REMOVAL:before_removal=catalog('before-removal')
   run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
@@ -63,7 +65,7 @@ try:
    boundary=catalog('own-boundary');run('own-boundary-replay',[*PSQL,'-q','-1','-f',MIG]);assert catalog('own-boundary-replayed')==boundary
   if m==REMOVAL:
    removal_boundary=catalog('removal-boundary');run('removal-boundary-replay',[*PSQL,'-q','-1','-f',REMOVAL]);assert catalog('removal-boundary-replayed')==removal_boundary
-  if i%30==0:print('Applied',i+1,'of',len(MIGRATIONS),flush=True)
+  if i%30==0:print('Applied',i+1,'of',len(SCHEMA_MIGRATIONS),flush=True)
  after=catalog('current-catalog');old={x['signature']:x for x in before};new={x['signature']:x for x in boundary};changed=['reserve_upload_assets(uuid,jsonb)','settle_upload_reservation(uuid,boolean,uuid,jsonb)']
  assert {k:v for k,v in old.items()if k not in changed}=={k:v for k,v in new.items()if k in old and k not in changed}
  for k in changed:assert {a:b for a,b in old[k].items()if a!='definition'}=={a:b for a,b in new[k].items()if a!='definition'}

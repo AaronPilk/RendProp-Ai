@@ -16,6 +16,7 @@ provider, paid generation or credential is used.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,importlib.util,json,re,shutil,subprocess,tempfile,time,os,sys,signal
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -114,7 +115,7 @@ MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'));assert MIG in MIGRATIONS
 # Prove this migration at its own point; later migrations are applied afterwards
 # and must keep the same fixture and FAL regressions green (no md5/boundary
 # coupling to future patches, unlike a whole-history boundary).
-OWN=[m for m in MIGRATIONS if m.name<=MIG.name];LATER=[m for m in MIGRATIONS if m.name>MIG.name]
+OWN=[m for m in MIGRATIONS if m.name<=MIG.name];LATER=[m for m in partition_fresh_migrations(MIGRATIONS)[0] if m.name>MIG.name]
 SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',BASE,STEADY,V1,FIX,IDENTITY,PG_FIXTURE,ACTIVATION,ROLLBACK,VERIFY,ROUTE_OFF,INVARIANTS,ASTRA_GATES,CONTRACT,Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in SOURCES}
 T0=time.monotonic()
@@ -273,7 +274,7 @@ try:
  assert after['kie_route']=={'id':ROUTE,'task':'video.property_reel_clip_kie','position':1,'provider':'kie','model':'kling-3.0/video','unit':'second','unit_cents':33.5,'capabilities':['i2v','1080p','5s','native4k','preserve_photo'],
   'max_latency_s':1800,'min_plan':'free','same_model_as':'kling_3_pro','privacy_tier':'trains_by_default','enabled':False,'retire_after':None,'params':{'kie_mode':'4K','sound':False}},after['kie_route']
  after['kie_route']['note']=note
- r['migrationAnchors']={s:{'before':PAIRS[s][0],'after':PAIRS[s][1]}for s in SIGNATURES};r['boundaryPreservation']={'unchanged':before|{'target_bodies':None,'identity_function':None,'identity_column':None,'kie_route':None,'profile_constraint':None,'identity_comment':None},'after':after};r['migrationCount']=len(MIGRATIONS);r['laterMigrations']=[m.name for m in LATER]
+ r['migrationAnchors']={s:{'before':PAIRS[s][0],'after':PAIRS[s][1]}for s in SIGNATURES};r['boundaryPreservation']={'unchanged':before|{'target_bodies':None,'identity_function':None,'identity_column':None,'kie_route':None,'profile_constraint':None,'identity_comment':None},'after':after};r['migrationCount']=len(partition_fresh_migrations(MIGRATIONS)[0]);r['laterMigrations']=[m.name for m in LATER]
  # SQL identity == the canonical JSON file the TypeScript runtime imports.
  assert scalar('identity-equals-file',f"select property_video_quality_identity('{PROFILE}')={IDENTITY_SQL} and property_video_quality_identity('{PROFILE}')::text=({IDENTITY_SQL})::text")=='t'
  assert json.loads(scalar('identity-json',f"select property_video_quality_identity('{PROFILE}')"))==IDENTITY_JSON
@@ -495,7 +496,7 @@ try:
  record_set=lambda path,value:f"update app_config set value=jsonb_set(value,'{path}','{value}')where key='{RECORD_KEY}';"
  # (a) A separately migrated fresh database: bootstrap + every migration.
  run('createdb-inv-fresh',[tool('createdb'),*conn,'inv_fresh']);run('inv-fresh-bootstrap',[*psql_db('inv_fresh'),'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in MIGRATIONS:run('inv-fresh-apply-'+m.stem,[*psql_db('inv_fresh'),'-q','-1','-f',m])
+ for m in partition_fresh_migrations(MIGRATIONS)[0]:run('inv-fresh-apply-'+m.stem,[*psql_db('inv_fresh'),'-q','-1','-f',m])
  fresh_inv=invariants('fresh-migrated',copy_of('inv_fresh','inv_fresh_check'))
  assert fresh_inv['resellerNote']=='all reseller rows disabled + worst-case tier',fresh_inv
  # The read-only verification: its embedded expectations are the canonical JSON

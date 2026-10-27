@@ -5,6 +5,7 @@ Use already-installed PostgreSQL and Deno; this runner never installs, warms
 imports, reads application credentials or connects to an existing database.
 """
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 import argparse, datetime, hashlib, json, os, re, secrets, shutil, signal, subprocess, sys, tempfile, time
 
 os.umask(0o077)
@@ -143,7 +144,7 @@ def main(argv=None):
         port = str(55000 + secrets.randbelow(10000))
         psql = [str(pg['psql']), '-X', '--no-password', '-h', str(sock), '-p', port, '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-Atq']
         migrations = sorted((SQL/'migrations').glob('*.sql')); assert OWN in migrations, 'Binding migration required'
-        before, later = migration_stages(migrations, OWN)
+        before, later = migration_stages(partition_fresh_migrations(migrations)[0], OWN)
         sources = sorted(set([*migrations, SQL/'tests/ci-bootstrap.sql', FIX, *FIXTURES.iterdir(), Path(__file__).resolve(), *runtime_sources()]))
         assert all(p.is_file() and not p.is_symlink() for p in sources), 'Regular first-party sources required'
         def hashes(): return {str(p.relative_to(ROOT)): digest(p) for p in sources}

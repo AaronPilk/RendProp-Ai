@@ -4,6 +4,7 @@ No production connection, media download, provider call or copied credentials.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from fresh_schema_migrations import partition_fresh_migrations
 from threading import Barrier
 import argparse,hashlib,json,os,shutil,subprocess,tempfile,uuid
 ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
@@ -35,7 +36,7 @@ try:
  conn=['-h',SOCK,'-p','55586','-U','postgres'];run('createdb',[tool('createdb'),*conn,'missing_result_proof'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','missing_result_proof','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in MIGRATIONS:
+ for m in partition_fresh_migrations(MIGRATIONS)[0]:
   run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
   if m==MIG:
    run('replay-at-own-boundary',[*PSQL,'-q','-1','-f',MIG])
