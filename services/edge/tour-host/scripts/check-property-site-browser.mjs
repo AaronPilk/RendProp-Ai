@@ -333,7 +333,7 @@ try {
       const main=page.getByRole("main"),skip=page.getByRole("link",{name:"Skip to property content",exact:true});
       const chrome=await page.evaluate(()=>{
         const box=node=>{if(!node)return null;const rect=node.getBoundingClientRect(),style=getComputedStyle(node);return{height:rect.height,top:rect.top,bottom:rect.bottom,position:style.position,stickyTop:style.top};};
-        return{nav:box(document.getElementById("listing-nav")),banner:box(document.querySelector(".property-preview-banner")),offset:getComputedStyle(document.documentElement).getPropertyValue("--listing-nav-offset")};
+        return{nav:box(document.getElementById("listing-nav")),banner:box(document.querySelector(".property-preview-banner")),offset:getComputedStyle(document.body).getPropertyValue("--listing-nav-offset")};
       });
       measurements.push({tag,type:"scripted-skip-before",...chrome});
       check(preview ? chrome.nav.position==="relative" && chrome.banner?.position==="sticky" && chrome.banner.stickyTop==="0px" : chrome.nav.position==="sticky" && chrome.banner===null,tag+": preview banner and published navigation retain their actual separate positioning");
