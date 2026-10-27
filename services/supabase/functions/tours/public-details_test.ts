@@ -46,6 +46,7 @@ async function fixture(bypassFilter = false) {
     JSON.stringify(new URL("../_shared/http.ts", import.meta.url).href)
   };
     import {propertyPublicPresentation} from ${JSON.stringify(new URL("../_shared/property-public-presentation.ts", import.meta.url).href)};
+    import {propertyGalleryKey} from ${JSON.stringify(new URL("../_shared/property-cover.ts", import.meta.url).href)};
     import {publishedTourContext,publishedLocation} from ${JSON.stringify(new URL("./published-context.ts", import.meta.url).href)};
     import {handleOptions} from ${
     JSON.stringify(new URL("../_shared/cors.ts", import.meta.url).href)
