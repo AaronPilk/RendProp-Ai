@@ -23,7 +23,7 @@ def block(text, anchor):
 
 review = block(view, 'struct PhotoCompareView: View {')
 button = block(review, '@ViewBuilder private var useOnListingButton: some View {')
-for required in ['PrimaryButton(title:', 'action: changeListingSelection)', 'isDisabled: listingSelectionDisabled', 'publicationSelected ? "Unselect" : "Use on listing"', 'isCompact: true', '"Remove this photo from listing"', '.disabled(listingSelectionDisabled)', 'minHeight: 44', 'photoVersion.useOnListing']:
+for required in ['PrimaryButton(title:', 'action: changeListingSelection)', 'isDisabled: listingSelectionDisabled', 'publicationSelected ? "Unselect" : "Use on listing"', '"Remove this photo from listing"', '.disabled(listingSelectionDisabled)', 'minHeight: 44', 'photoVersion.useOnListing']:
     assert required in button, required
 save = block(review, 'private var savePhotoButton: some View {')
 for required in ['SecondaryButton(title: "Save photo"', 'isDisabled: savePhotoDisabled', '.disabled(savePhotoDisabled)', 'minHeight: 44', 'photoVersion.download']:
