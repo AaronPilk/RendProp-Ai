@@ -746,7 +746,13 @@ final class UploadManager: NSObject, ObservableObject {
             guard let ownerID, AuthStore.shared.userID == ownerID,
                   AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == ownerID else { return }
         }
-        try? await api.abortUpload(assetID: assetID)
+        try? await api.abortUpload(assetID: assetID, beforeSend: { [weak self] in
+            guard let self, boundary == self.accountBoundaryRevision else { throw CancellationError() }
+            if Config.enableAuth {
+                guard let ownerID, AuthStore.shared.userID == ownerID,
+                      AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == ownerID else { throw CancellationError() }
+            }
+        })
     }
 
     /// Drop a finished/failed record without touching background tasks for it
@@ -1389,7 +1395,7 @@ final class UploadManager: NSObject, ObservableObject {
                         for task in tasks where task.taskDescription == "single:\(id)" ||
                             task.taskDescription?.hasPrefix("part:\(id):") == true { task.cancel() }
                         try requireCurrent()
-                        try await self.api.abortUpload(assetID: id)
+                        try await self.api.abortUpload(assetID: id, beforeSend: { try requireCurrent() })
                     }, create: {
                         try requireCurrent()
                         return try await self.api.requestUpload(filename: snapshot.fileURL.lastPathComponent,

@@ -885,8 +885,12 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
     }
 
     func abortUpload(assetID: String) async throws {
+        try await abortUpload(assetID: assetID, beforeSend: {})
+    }
+
+    func abortUpload(assetID: String, beforeSend: @escaping @MainActor () throws -> Void) async throws {
         let data = try await execute(makeRequest(url: url(["uploads", assetID, "abort"]),
-                                                 method: "POST", json: [:]))
+                                                 method: "POST", json: [:]), beforeSend: beforeSend)
         // A 2xx alone does not authorize replacing the reservation. The explicit
         // acknowledgement also survives a lost reply and repeated cancellation.
         let receipt: UploadAbortReceipt = try decodeExact(data)

@@ -924,6 +924,9 @@ protocol APIClient: Sendable {
     /// POST /uploads/:asset_id/abort — tears down the in-flight R2 multipart
     /// session. Safe to call on cancel.
     func abortUpload(assetID: String) async throws
+    /// Recheck the initiating session at the wire boundary. A caller's check
+    /// before `await` alone cannot stop the next account's bearer being used.
+    func abortUpload(assetID: String, beforeSend: @escaping @MainActor () throws -> Void) async throws
     /// Renews only this existing reservation. Unlike POST /uploads, cannot
     /// allocate a second ticket if completion won a race with recovery.
     func renewUpload(assetID: String) async throws -> UploadTicket
@@ -2065,6 +2068,10 @@ enum AdminText {
 
 
 extension APIClient {
+    func abortUpload(assetID: String, beforeSend: @escaping @MainActor () throws -> Void) async throws {
+        try await beforeSend()
+        try await abortUpload(assetID: assetID)
+    }
     func exportAccountData() async throws -> Data {
         throw APIError.server(status: 501, code: "live_service_required", message: "Connect to Rendprop to download your account data.")
     }

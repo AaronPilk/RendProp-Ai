@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url';
 test('actual request executor never sends or retries a former account request as another account', () => {
   const file = new URL('../../apps/ios/Rendprop/Networking/LiveAPIClient.swift', import.meta.url);
   const source = readFileSync(file, 'utf8');
+  const abortStart = source.indexOf('func abortUpload(assetID: String, beforeSend:');
+  assert.ok(abortStart >= 0 && source.slice(abortStart, abortStart + 550).includes('beforeSend: beforeSend'),
+    'Upload abort must pass the initiating-session guard to the request executor');
   const start = source.indexOf('    @MainActor private func execute(');
   assert.ok(start >= 0);
   let end = source.indexOf('{', start), depth = 1;
@@ -50,6 +53,9 @@ enum CloudSyncError: Error { case identityChanged }
  let session = URLSession()
  let base = URL(string: "https://fixture.invalid")!
  func call(_ request: URLRequest) async throws -> Data { try await execute(request) }
+ func call(_ request: URLRequest, beforeSend: @escaping @MainActor () throws -> Void) async throws -> Data {
+  try await execute(request, beforeSend: beforeSend)
+ }
  static func serverError(status: Int, data: Data) -> APIError { .badResponse(status) }
 EXECUTOR
 }
@@ -89,6 +95,20 @@ EXECUTOR
   try await denied(queued, oldRequest)
   try check(queued.session.requests.isEmpty, "Already-assembled A request cannot be rebound to B on actor hop")
 
+  auth.reset(a); let lateAbort = LiveAPIClient(); auth.change(b)
+  do {
+   _ = try await lateAbort.call(request(), beforeSend: {
+    guard auth.userID == a.uuidString.lowercased() else { throw CloudSyncError.identityChanged }
+   })
+   throw NSError(domain: "Next account sent prior owner's abort", code: 1)
+  } catch CloudSyncError.identityChanged { checks += 1 }
+  try check(lateAbort.session.requests.isEmpty, "No remote abort request crossed owner boundary")
+  auth.reset(a); let allowedAbort = LiveAPIClient()
+  _ = try await allowedAbort.call(request(), beforeSend: {
+   guard auth.userID == a.uuidString.lowercased() else { throw CloudSyncError.identityChanged }
+  })
+  try check(allowedAbort.session.requests.count == 1, "Initiating owner can still send the abort")
+
   auth.reset(a); let initial = LiveAPIClient(); let initialRequest = request()
   auth.onToken = { auth.change(b) }
   try await denied(initial, initialRequest)
@@ -121,6 +141,7 @@ EXECUTOR
     ['missing-epoch-fences', body.replaceAll('guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }', '')],
     ['keep-stale-bearer', body.replace('request.setValue(token.map { "Bearer \\($0)" }, forHTTPHeaderField: "Authorization")', 'if let token { request.setValue("Bearer \\(token)", forHTTPHeaderField: "Authorization") }')],
     ['drop-forced-adoption-recovery', body.replace('signOut(preservingAdoption: true)', 'signOut()')],
+    ['drop-abort-wire-guard', body.replaceAll('try beforeSend?()', '')],
   ]) {
     const path = join(out, `${name}.swift`), binary = join(out, name);
     writeFileSync(path, scaffold.replace('EXECUTOR', implementation));
@@ -131,6 +152,7 @@ EXECUTOR
     assert.equal(result.status, name === 'actual' ? 0 : 1, result.stdout + result.stderr);
     if (name === 'keep-stale-bearer') assert.match(result.stdout, /Failed offline refresh removes inherited expired bearer before dispatch/);
     if (name === 'drop-forced-adoption-recovery') assert.match(result.stdout, /Second rejected bearer preserves pending guest adoption evidence/);
+    if (name === 'drop-abort-wire-guard') assert.match(result.stdout, /Next account sent prior owner's abort/);
     console.log(name + ': ' + result.stdout.trim());
   }
   console.log('Request-fence evidence: ' + out);

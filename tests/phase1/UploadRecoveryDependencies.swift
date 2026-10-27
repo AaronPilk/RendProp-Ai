@@ -9,7 +9,14 @@ protocol APIClient {
     func renewUpload(assetID: String) async throws -> UploadTicket
     func completeUpload(assetID: String, parts: [(number: Int, etag: String)]?, metadata: UploadMetadata) async throws
     func abortUpload(assetID: String) async throws
+    func abortUpload(assetID: String, beforeSend: @escaping @MainActor () throws -> Void) async throws
     func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL]
+}
+extension APIClient {
+    func abortUpload(assetID: String, beforeSend: @escaping @MainActor () throws -> Void) async throws {
+        try await beforeSend()
+        try await abortUpload(assetID: assetID)
+    }
 }
 enum Config {
     static let useLiveBackend = true

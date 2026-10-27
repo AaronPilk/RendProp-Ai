@@ -103,7 +103,13 @@ enum DirectUploader {
                                 if let browser { try requireBrowserTicket(renewed, contentType: browser.contentType, role: role, listingID: listingID, allowUnknown: record.photoContentType == nil) }
                                 return renewed
                             },
-                            cancel: { id in try await checkOwner(); try await api.abortUpload(assetID: id) }, create: create)
+                            cancel: { id in
+                                try await checkOwner()
+                                try await api.abortUpload(assetID: id, beforeSend: {
+                                    guard AuthStore.shared.syncSessionRevision == sessionRevision,
+                                          AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == owner else { throw CancellationError() }
+                                })
+                            }, create: create)
                         switch result {
                         case .complete(let id):
                             try await checkOwner(); try checkBody()
