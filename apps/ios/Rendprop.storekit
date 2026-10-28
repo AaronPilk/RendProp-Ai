@@ -16,6 +16,21 @@
       "productID": "com.rendprop.app.credits.100",
       "referenceName": "100 Rendprop Credits",
       "type": "Consumable"
+    },
+    {
+      "displayPrice": "25.00",
+      "familyShareable": false,
+      "internalID": "7C0E0101",
+      "localizations": [
+        {
+          "description": "Luxury design for one property. Plan hosting.",
+          "displayName": "Luxury Property Website",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.rendprop.app.website.premium.property",
+      "referenceName": "Luxury Property Website",
+      "type": "Consumable"
     }
   ],
   "settings": {},

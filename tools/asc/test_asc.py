@@ -64,7 +64,10 @@ class LaunchCatalogParityTests(unittest.TestCase):
     def test_credit_pack_local_quantity_price_and_identity_match_asc(self):
         fixture = json.loads((asc.REPO_ROOT / "apps/ios/Rendprop.storekit").read_text())
         products = {p["productID"]: p for p in fixture["products"]}
-        self.assertEqual(set(products), {credit_pack_iap.PRODUCT_ID})
+        self.assertEqual(set(products), {
+            credit_pack_iap.PRODUCT_ID,
+            "com.rendprop.app.website.premium.property",
+        })
         pack = products[credit_pack_iap.PRODUCT_ID]
         self.assertEqual(pack["type"], "Consumable")
         self.assertEqual(Decimal(pack["displayPrice"]), credit_pack_iap.CUSTOMER_PRICE)
@@ -72,6 +75,23 @@ class LaunchCatalogParityTests(unittest.TestCase):
                          credit_pack_iap.DISPLAY_NAME)
         self.assertEqual(pack["localizations"][0]["description"],
                          credit_pack_iap.DESCRIPTION)
+
+    def test_website_upgrade_local_product_matches_app_and_asc_contract(self):
+        fixture = json.loads((asc.REPO_ROOT / "apps/ios/Rendprop.storekit").read_text())
+        products = [p for p in fixture["products"]
+                    if p["productID"] == "com.rendprop.app.website.premium.property"]
+        self.assertEqual(len(products), 1)
+        upgrade = products[0]
+        self.assertEqual(upgrade["type"], "Consumable")
+        self.assertEqual(Decimal(upgrade["displayPrice"]), Decimal("25.00"))
+        self.assertFalse(upgrade["familyShareable"])
+        self.assertEqual(upgrade["localizations"], [{
+            "description": "Luxury design for one property. Plan hosting.",
+            "displayName": "Luxury Property Website",
+            "locale": "en_US",
+        }])
+        model = (asc.REPO_ROOT / "apps/ios/Rendprop/Models/WebsiteDesign.swift").read_text()
+        self.assertIn(f'static let id = "{upgrade["productID"]}"', model)
 
     def test_dormant_team_seat_variants_match_storekit_and_server_targets(self):
         fixture = json.loads((asc.REPO_ROOT / "apps/ios/Rendprop.storekit").read_text())
