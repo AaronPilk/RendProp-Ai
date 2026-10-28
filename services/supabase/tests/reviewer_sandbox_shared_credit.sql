@@ -326,9 +326,75 @@ begin
  perform pg_temp.review_refuse(format(
    'select public.serving_cost_reserve(%L,%L,''review-legacy-02'',''photo.initial:0'',''gemini'',''synthetic'',%L,1,''synthetic'')',
    actor,org,repeat('f',64)),'RP402');
- perform pg_temp.review_ok((select count(*)=0 from public.serving_cost_reservations
-   where org_id=org and request_key in('review-credit-02','review-legacy-02')),
-   'refused supplier attempts leave no dispatch journal');
+	 perform pg_temp.review_ok((select count(*)=0 from public.serving_cost_reservations
+	   where org_id=org and request_key in('review-credit-02','review-legacy-02')),
+	   'refused supplier attempts leave no dispatch journal');
+end$$;
+-- Reproduce the terminal functions' financial transition inside this
+-- rollback-only fixture: credits are refunded, but unresolved supplier risk is
+-- retained as video_failure / aerial_failure. Those rows remain part of the
+-- same nonrenewable reviewer sponsor cap, not a fresh failure allowance.
+reset role;
+update public.serving_cost_reservations set budget_source='video_failure'
+ where request_key='photomotion:ed400000-0000-4000-8000-000000000001'
+   and budget_source='credits' and credit_environment='Sandbox';
+update public.credit_photo_motion_failure_budget set
+ state='spent',spent_cents=maximum_cents,finished_at=now()
+ where operation_id='ed400000-0000-4000-8000-000000000001';
+set local role service_role;
+do $$
+declare actor uuid:='ed000000-0000-4000-8000-000000000001';
+ org uuid:='ed100000-0000-4000-8000-000000000001';
+begin
+ perform public.credit_wallet_finish(actor,org,'Sandbox',
+   'photomotion:ed400000-0000-4000-8000-000000000001','released');
+ perform pg_temp.review_ok((select count(*)=1 from public.serving_cost_reservations
+   where request_key='photomotion:ed400000-0000-4000-8000-000000000001'
+     and budget_source='video_failure' and ledger_id is null) and
+   (select count(*)=1 from public.credit_photo_motion_failure_budget
+     where operation_id='ed400000-0000-4000-8000-000000000001'
+       and state='spent') and
+   (select count(*)=1 from public.credit_holds
+     where org_id=org and request_key='photomotion:ed400000-0000-4000-8000-000000000001'
+       and state='released'),
+   'failed Photo Motion refunds credits but retains supplier risk');
+ perform pg_temp.review_ok(public.org_month_spend_cents(org)=450,
+   'refunded Photo Motion supplier risk still consumes the reviewer cap');
+ perform pg_temp.review_refuse(format(
+   'select public.credit_serving_cost_reserve(%L,%L,''review-credit-02'',''photo.declutter:0'',''gemini'',''synthetic'',%L,1,''synthetic'',%L,''review-credit-02'',''Sandbox'')',
+   actor,org,repeat('f',64),org),'RP402: Shared reviewer supplier budget');
+end$$;
+reset role;
+update public.serving_cost_reservations set budget_source='aerial_failure'
+ where request_key='aerial-opening:ed400000-0000-4000-8000-000000000002'
+   and budget_source='credits' and credit_environment='Sandbox';
+update public.credit_aerial_failure_budget set
+ state='spent',spent_cents=maximum_cents,finished_at=now()
+ where hold_id=(select id from public.credit_holds
+   where request_key='aerial-opening:ed400000-0000-4000-8000-000000000002');
+set local role service_role;
+do $$
+declare actor uuid:='ed000000-0000-4000-8000-000000000001';
+ org uuid:='ed100000-0000-4000-8000-000000000001';
+begin
+ perform public.credit_wallet_finish(actor,org,'Sandbox',
+   'aerial-opening:ed400000-0000-4000-8000-000000000002','released');
+ perform pg_temp.review_ok((select count(*)=5 from public.serving_cost_reservations
+   where request_key='aerial-opening:ed400000-0000-4000-8000-000000000002'
+     and budget_source='aerial_failure' and ledger_id is null) and
+   (select count(*)=1 from public.credit_aerial_failure_budget
+     where hold_id=(select id from public.credit_holds
+       where request_key='aerial-opening:ed400000-0000-4000-8000-000000000002')
+       and state='spent') and
+   (select count(*)=1 from public.credit_holds
+     where org_id=org and request_key='aerial-opening:ed400000-0000-4000-8000-000000000002'
+       and state='released'),
+   'failed aerial refunds credits but retains five supplier-risk stages');
+ perform pg_temp.review_ok(public.org_month_spend_cents(org)=450,
+   'refunded aerial supplier risk still consumes the reviewer cap');
+ perform pg_temp.review_refuse(format(
+   'select public.credit_serving_cost_reserve(%L,%L,''review-credit-02'',''photo.declutter:0'',''gemini'',''synthetic'',%L,1,''synthetic'',%L,''review-credit-02'',''Sandbox'')',
+   actor,org,repeat('f',64),org),'RP402: Shared reviewer supplier budget');
 end$$;
 -- Funded mode uses a different legacy lock path. It cannot silently turn on
 -- reviewer Sandbox credit spending until that ordering is independently safe.

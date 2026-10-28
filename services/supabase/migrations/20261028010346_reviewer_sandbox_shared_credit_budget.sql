@@ -142,6 +142,9 @@ grant execute on function public.org_entitlement(uuid),
 -- The common ceiling ledger already counts actual cost receipts, unresolved
 -- ceiling holds, and video holds. Include unresolved funded and Sandbox credit
 -- holds for this reviewer so every route sees one shared supplier balance.
+-- A failed aerial or Photo Motion job refunds customer credits but retains its
+-- supplier liability under a failure budget source. That liability must still
+-- count against this one nonrenewable sponsor commitment.
 alter function public.serving_ceiling_spent_cents(uuid,timestamptz,timestamptz)
  rename to serving_ceiling_spent_cents_before_reviewer_20261028;
 create function public.serving_ceiling_spent_cents(
@@ -163,7 +166,8 @@ begin
  where r.billing_org_id=b and r.ledger_id is null
    and r.state in('reserved','uncertain','succeeded')
    and ((r.budget_source='funding' and r.funding_id=f.id)
-      or (r.budget_source='credits' and r.credit_environment='Sandbox'));
+      or (r.budget_source in('credits','aerial_failure','video_failure')
+        and r.credit_environment='Sandbox'));
  return base+extra;
 end$$;
 revoke all on function public.serving_ceiling_spent_cents(uuid,timestamptz,timestamptz),

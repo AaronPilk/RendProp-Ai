@@ -56,7 +56,7 @@ REFLECTION_FIXTURES = (
     ("trial_full_window_admission.sql", '"assertions": 11', 11),
     ("trial_hybrid_funded_serving.sql", '"assertions": 43', 43),
     ("paid_media_budget_cap.sql", '"assertions": 19', 19),
-    ("reviewer_sandbox_shared_credit.sql", '"assertions": 36', 36),
+    ("reviewer_sandbox_shared_credit.sql", '"assertions": 42', 42),
 )
 
 # These already-shipped transactional Studio migrations intentionally create
@@ -209,7 +209,7 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261027232500_subscription_trial_hybrid_funded_serving.sql": ("6cd0c5bc46406c41bc2db21c5074bb5c843a532e2fe65b13496d78ed790fdb05", 'relation "subscription_trial_media_template" already exists'),
     "20261027234000_trial_shared_launch_budget_guard.sql": ("3497a2fd566e35d27ce0fe2061971425d675ce6b07e127481193a1c450a0c7f6", 'Review shared launch budget guard already installed'),
     "20261027234243_paid_media_budget_cap.sql": ("c6b2f52621a30231aaa716dda46733e7ec1d48d085fbd723122bd56be3e96c38", 'Review paid media budget cap already installed'),
-    "20261028010346_reviewer_sandbox_shared_credit_budget.sql": ("c135b8e7ae9fc2584e738270e39582e60e62e20049bb571a58a0c8c07f20fa03", "Review changed paid primary credit authority"),
+    "20261028010346_reviewer_sandbox_shared_credit_budget.sql": ("e48f600fa411ca5e6a1bd676a1c90554c7e42619a53f65bbbc362feaa336601c", "Review changed paid primary credit authority"),
 }
 
 
