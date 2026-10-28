@@ -123,7 +123,7 @@ final class PaywallShot: XCTestCase {
         step02Yearly(productsLoaded: productsLoaded)
         step03Legal(productsLoaded: productsLoaded)
         closePaywall()
-        XCTAssertTrue(productsLoaded, "No priced paywall was captured. See p01-paywall-EMPTY and the step notes.")
+        XCTAssertTrue(productsLoaded, "No review-safe paywall was captured. See p01-paywall-EMPTY and the step notes.")
     }
 
     // MARK: - StoreKit test environment
@@ -304,10 +304,13 @@ final class PaywallShot: XCTestCase {
 
     // MARK: - Paywall helpers
 
-    /// True once both the Pro and Max cards show real StoreKit prices.
+    /// True only when every launch plan shows the exact local StoreKit price
+    /// and the purchase screen does not say subscriptions are unavailable.
     ///
-    /// A card whose product did not load prints a bare dash. Checking only
-    /// any "/month" price missed a missing Pro product while Max was priced.
+    /// A card whose product did not load prints a bare dash. A live App Store
+    /// catalog can also leak into a CLI simulator run even after SKTestSession
+    /// initializes; checking only for "/month" previously accepted the wrong
+    /// $49.00/$99.00/$249.00 prices as a current fixture capture.
     /// The cards combine their children into accessibility labels.
     ///
     /// When the empty state ("Plans aren't available right now") shows up
@@ -316,15 +319,31 @@ final class PaywallShot: XCTestCase {
     private func waitForProducts() -> Bool {
         let deadline = Date().addingTimeInterval(productTimeout)
         var retries = 0
+        let expected = [
+            (id: "paywall.plan.pro", price: "$29.99/month"),
+            (id: "paywall.plan.max", price: "$49.99/month"),
+            (id: "paywall.plan.ultra", price: "$99.99/month"),
+            (id: "paywall.plan.team", price: "$249.99/month"),
+        ]
         repeat {
-            let pro = app.descendants(matching: .any)
-                .matching(identifier: "paywall.plan.pro").firstMatch
-            let max = app.descendants(matching: .any)
-                .matching(identifier: "paywall.plan.max").firstMatch
-            if pro.exists, max.exists,
-               pro.label.contains("/month"), max.label.contains("/month") {
-                note("Prices rendered: Pro \(String(pro.label.prefix(100))); Max \(String(max.label.prefix(100)))")
+            let labels = expected.map { item -> String in
+                let card = app.descendants(matching: .any)
+                    .matching(identifier: item.id).firstMatch
+                return card.exists ? card.label : "missing"
+            }
+            let pricesMatch = zip(expected, labels).allSatisfy { item, label in
+                label.contains(item.price)
+            }
+            let unavailable = app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS %@", "New paid subscriptions are temporarily unavailable")
+            ).firstMatch.exists
+            if pricesMatch && !unavailable {
+                note("Fixture prices rendered: \(labels.joined(separator: "; "))")
                 return true
+            }
+            if unavailable {
+                note("REJECTED: the purchase screen says new paid subscriptions are temporarily unavailable.")
+                break
             }
             if retries < 3, let retry = emptyStateRetryButton() {
                 retries += 1
@@ -334,12 +353,12 @@ final class PaywallShot: XCTestCase {
                 settle(2)
             }
         } while Date() < deadline
-        let pro = app.descendants(matching: .any)
-            .matching(identifier: "paywall.plan.pro").firstMatch
-        let max = app.descendants(matching: .any)
-            .matching(identifier: "paywall.plan.max").firstMatch
-        note("Incomplete catalog: Pro \(pro.exists ? String(pro.label.prefix(100)) : "missing"); "
-             + "Max \(max.exists ? String(max.label.prefix(100)) : "missing")")
+        let observed = expected.map { item -> String in
+            let card = app.descendants(matching: .any)
+                .matching(identifier: item.id).firstMatch
+            return "\(item.id): \(card.exists ? String(card.label.prefix(100)) : "missing")"
+        }
+        note("REJECTED: expected local StoreKit launch prices \(expected.map { $0.price }); observed \(observed.joined(separator: "; "))")
         return false
     }
 
