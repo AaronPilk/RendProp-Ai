@@ -58,6 +58,57 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         sandbox_pack_results = [json.loads(line) for line in sandbox_pack_output.splitlines()
                                 if line.startswith("{") and '"assertions"' in line]
         assert len(sandbox_pack_results) == 1 and sandbox_pack_results[0]["passed"] is True, sandbox_pack_output
+        # Two independent service sessions contend for the final Sandbox-only
+        # preparation slot. The actor/SKU advisory lock must admit one, not two.
+        cap_actor = "33eeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+        cap_org = "33dddddd-dddd-4ddd-8ddd-dddddddddddd"
+        cap_sku = "com.rendprop.app.credits.100"
+        run("Sandbox pack cap race seed", [*psql, "-Atq", "-c", f"""
+          insert into auth.users(id,email,is_anonymous) values
+            ('{cap_actor}','sandbox-cap-race@example.invalid',false);
+          insert into public.orgs(id,name,plan,plan_source) values
+            ('{cap_org}','Sandbox cap race','free',null);
+          insert into public.memberships(user_id,org_id,role) values
+            ('{cap_actor}','{cap_org}','owner');
+          insert into public.credit_pack_sandbox_test_authority
+            (actor_id,org_id,product_id,expires_at,evidence_sha256) values
+            ('{cap_actor}','{cap_org}','{cap_sku}',now()+interval '1 day',repeat('a',64));
+          set role service_role;
+          select public.credit_purchase_intent_create('{cap_actor}','{cap_org}','{cap_sku}','Sandbox');
+          reset role;
+          update public.credit_purchase_intents set created_at=now()-interval '2 minutes'
+            where actor_id='{cap_actor}';
+          set role service_role;
+          select public.credit_purchase_intent_create('{cap_actor}','{cap_org}','{cap_sku}','Sandbox');
+          reset role;
+          update public.credit_purchase_intents set created_at=now()-interval '2 minutes'
+            where actor_id='{cap_actor}';
+        """])
+        def prepare_final_sandbox_slot():
+            return subprocess.run([*psql, "-Atq", "-c", f"set role service_role;"
+              f"select public.credit_purchase_intent_create('{cap_actor}','{cap_org}','{cap_sku}','Sandbox');"],
+              cwd=ROOT, env=ENV, text=True, stdout=subprocess.PIPE,
+              stderr=subprocess.STDOUT, timeout=30)
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            attempts = [future.result() for future in
+                        (workers.submit(prepare_final_sandbox_slot) for _ in range(2))]
+        assert [result.returncode for result in attempts] == [0, 0], [a.stdout for a in attempts]
+        race_replies = [json.loads(result.stdout.strip()) for result in attempts]
+        assert sorted(reply["replay"] for reply in race_replies) == [False, True], race_replies
+        assert len({reply["intent_id"] for reply in race_replies}) == 1, race_replies
+        cap_state = run("Sandbox pack cap race result", [*psql, "-Atq", "-c", f"""
+          select count(*)=3 from public.credit_purchase_intents
+            where actor_id='{cap_actor}' and product_id='{cap_sku}'
+              and expected_environment='Sandbox' and sandbox_test_authority;
+          select count(*)=0 from public.credit_purchases where actor_id='{cap_actor}';
+        """])
+        assert [line.strip() for line in cap_state.splitlines() if line.strip()] == ["t", "t"], cap_state
+        run("close race intent without freeing its slot", [*psql, "-Atq", "-c", f"""
+          update public.credit_purchase_intents set state='abandoned'
+            where id='{race_replies[0]['intent_id']}';
+        """])
+        fourth = prepare_final_sandbox_slot()
+        assert fourth.returncode != 0 and "RP402: Sandbox test credit pack limit reached" in fourth.stdout, fourth.stdout
         photo_output = run("photo credit fixture", [*psql, "-Atq", "-f", SQL / "tests/credit_photo_spend.sql"])
         photo_results = [json.loads(line) for line in photo_output.splitlines()
                          if line.startswith("{") and '"assertions"' in line]

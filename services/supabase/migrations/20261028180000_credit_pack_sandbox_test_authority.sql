@@ -47,11 +47,22 @@ grant execute on function public.credit_sandbox_pack_authorized(uuid,uuid,text)
 alter table public.credit_purchase_intents
   add column expected_environment text not null default 'Production'
     check (expected_environment in ('Production','Sandbox'));
+-- A test intent consumes one of three lifetime preparation slots even if the
+-- client abandons it: Apple can still approve an already pending transaction.
+-- Keeping the marker on the intent also prevents a later authority renewal
+-- from silently resetting the issuance ceiling.
+alter table public.credit_purchase_intents
+  add column sandbox_test_authority boolean not null default false,
+  add constraint credit_intent_sandbox_test_exact check (
+    not sandbox_test_authority or
+    (expected_environment='Sandbox' and product_id='com.rendprop.app.credits.100'
+      and credits=100));
 
 create function public.credit_purchase_intent_create(
   p_actor uuid,p_org uuid,p_product text,p_environment text
 ) returns jsonb language plpgsql security definer set search_path='' as $$
-declare old public.credit_purchase_intents; iid uuid; token uuid; amount integer;
+declare old public.credit_purchase_intents; iid uuid; token uuid;
+  amount integer; retail_active boolean; test_authorized boolean:=false;
 begin
   if current_setting('role',true) is distinct from 'service_role' then
     raise insufficient_privilege; end if;
@@ -59,11 +70,20 @@ begin
      p_environment is null or p_environment not in ('Production','Sandbox') then
     raise exception 'RP400: A selected workspace, Apple environment and credit product are required'; end if;
   perform pg_advisory_xact_lock(hashtextextended('credit-intent:'||p_actor||':'||p_product,71001));
-  select credits into amount from public.credit_products
-    where product_id=p_product and
-      (active or (p_environment='Sandbox' and
-        public.credit_sandbox_pack_authorized(p_actor,p_org,p_product)));
+  select credits,active into amount,retail_active from public.credit_products
+    where product_id=p_product;
   if amount is null then raise exception 'RP400: This credit pack is unavailable'; end if;
+  if not retail_active then
+    if p_environment is distinct from 'Sandbox' then
+      raise exception 'RP400: This credit pack is unavailable'; end if;
+    -- Serialize a new preparation with operator revocation or expiry edits.
+    perform 1 from public.credit_pack_sandbox_test_authority a
+      where a.actor_id=p_actor and a.org_id=p_org and a.product_id=p_product
+      for update;
+    if not found or not public.credit_sandbox_pack_authorized(p_actor,p_org,p_product) then
+      raise exception 'RP400: This credit pack is unavailable'; end if;
+    test_authorized:=true;
+  end if;
   if not exists(select 1 from public.orgs o join public.memberships m on m.org_id=o.id
       where o.id=p_org and o.deleted_at is null and m.user_id=p_actor and m.role in('owner','admin')) then
     raise exception 'RP403: Only a current workspace owner or admin can buy credits'; end if;
@@ -79,8 +99,13 @@ begin
       'product_id',old.product_id,'credits',old.credits,
       'app_account_token',old.app_account_token,'created_at',old.created_at,'replay',true);
   end if;
-  insert into public.credit_purchase_intents(actor_id,org_id,product_id,credits,expected_environment)
-    values(p_actor,p_org,p_product,amount,p_environment)
+  if test_authorized and (select count(*) from public.credit_purchase_intents
+    where actor_id=p_actor and product_id=p_product
+      and expected_environment='Sandbox' and sandbox_test_authority) >= 3 then
+    raise exception 'RP402: Sandbox test credit pack limit reached'; end if;
+  insert into public.credit_purchase_intents(actor_id,org_id,product_id,credits,
+    expected_environment,sandbox_test_authority)
+    values(p_actor,p_org,p_product,amount,p_environment,test_authorized)
     returning id,app_account_token into iid,token;
   return jsonb_build_object('intent_id',iid,'org_id',p_org,
     'product_id',p_product,'credits',amount,'app_account_token',token,

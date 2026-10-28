@@ -139,6 +139,37 @@ create temporary table sandbox_late_purchase as
     '33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     'com.rendprop.app.credits.100','Sandbox') as r) prepared;
 reset role;
+-- A canceled StoreKit attempt still consumes a preparation slot. Apple may
+-- approve a transaction that was already pending, so abandoned intents cannot
+-- be excluded from the lifetime issuance ceiling.
+update public.credit_purchase_intents set created_at=now()-interval '2 minutes'
+  where id=(select intent_id from sandbox_late_purchase);
+set local role service_role;
+create temporary table sandbox_third_purchase as
+  select (r->>'intent_id')::uuid as intent_id,
+         (r->>'app_account_token')::uuid as app_account_token
+  from (select public.credit_purchase_intent_create(
+    '33111111-1111-4111-8111-111111111111',
+    '33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    'com.rendprop.app.credits.100','Sandbox') as r) prepared;
+select pg_temp.sandbox_ok((select count(*)=3 from public.credit_purchase_intents
+    where actor_id='33111111-1111-4111-8111-111111111111'
+      and expected_environment='Sandbox' and sandbox_test_authority),
+  'at most three Sandbox test intents can be prepared across workspaces');
+select pg_temp.sandbox_ok((public.credit_purchase_intent_create(
+    '33111111-1111-4111-8111-111111111111',
+    '33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    'com.rendprop.app.credits.100','Sandbox')->>'replay')='true',
+  'a one-minute network retry reuses its existing third intent at the cap');
+select public.credit_purchase_intent_abandon(
+  '33111111-1111-4111-8111-111111111111',
+  (select intent_id from sandbox_third_purchase),
+  '33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+select pg_temp.sandbox_refuses(
+  'select public.credit_purchase_intent_create(''33111111-1111-4111-8111-111111111111'',''33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'',''com.rendprop.app.credits.100'',''Sandbox'')',
+  'RP402: Sandbox test credit pack limit reached',
+  'an abandoned attempt cannot reopen an unlimited Sandbox offer');
+reset role;
 -- Even if retail proceeds are later evidenced and the public catalog opens,
 -- a previously prepared Sandbox intent cannot become a Production grant.
 update public.credit_products set active=true,
@@ -185,6 +216,71 @@ select pg_temp.sandbox_ok(
   (public.credit_wallet_state('33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Sandbox')
     ->>'topup_available')::int=200,
   'late signed Sandbox recovery honors its prepared intent without cash evidence');
+create temporary table sandbox_third_receipt as
+select public.credit_purchase_grant(
+    '33111111-1111-4111-8111-111111111111',
+    '33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    (select intent_id from sandbox_third_purchase),
+    'com.rendprop.app.credits.100','Sandbox','sandbox-third',now(),now(),
+    (select app_account_token from sandbox_third_purchase),
+    39990,'USD','USA') as result;
+select pg_temp.sandbox_ok((select result->>'credits_granted'='100'
+    from sandbox_third_receipt) and
+    (public.credit_wallet_state('33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Sandbox')
+      ->>'topup_available')::int=300,
+  'late Apple approval of an abandoned third intent stays within 300 credits');
+create temporary table sandbox_refund_receipt as
+  select public.credit_purchase_refund(
+    'Sandbox','sandbox-third',repeat('c',64),now()) as result;
+select pg_temp.sandbox_ok((select result->>'refunded'='true'
+    from sandbox_refund_receipt) and
+    (public.credit_wallet_state('33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Sandbox')
+      ->>'topup_available')::int=200,
+  'a refund revokes the third pack but does not create a new purchase slot');
+create temporary table sandbox_refund_replay as
+select public.credit_purchase_grant(
+    '33111111-1111-4111-8111-111111111111',
+    '33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    (select intent_id from sandbox_third_purchase),
+    'com.rendprop.app.credits.100','Sandbox','sandbox-third',now(),now(),
+    (select app_account_token from sandbox_third_purchase),
+    39990,'USD','USA') as result;
+select pg_temp.sandbox_ok((select result->>'credits_granted'='0'
+    from sandbox_refund_replay) and
+    (public.credit_wallet_state('33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Sandbox')
+      ->>'topup_available')::int=200,
+  'replayed refunded receipt cannot recreate credits');
+reset role;
+
+-- Neither a refreshed authority row nor a second authorized workspace may
+-- erase the actor/SKU lifetime cap.
+delete from public.credit_pack_sandbox_test_authority
+  where actor_id='33111111-1111-4111-8111-111111111111';
+insert into public.credit_pack_sandbox_test_authority
+  (actor_id,org_id,product_id,expires_at,evidence_sha256) values (
+  '33111111-1111-4111-8111-111111111111',
+  '33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  'com.rendprop.app.credits.100',now()+interval '1 day',repeat('d',64));
+set local role service_role;
+select pg_temp.sandbox_refuses(
+  'select public.credit_purchase_intent_create(''33111111-1111-4111-8111-111111111111'',''33aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'',''com.rendprop.app.credits.100'',''Sandbox'')',
+  'RP402: Sandbox test credit pack limit reached',
+  'reinserting operator authority cannot reset the lifetime pack limit');
+reset role;
+insert into public.orgs(id,name,plan,plan_source) values
+ ('33cccccc-cccc-4ccc-8ccc-cccccccccccc','Second authorized QA workspace','free',null);
+insert into public.memberships(user_id,org_id,role) values
+ ('33111111-1111-4111-8111-111111111111','33cccccc-cccc-4ccc-8ccc-cccccccccccc','owner');
+insert into public.credit_pack_sandbox_test_authority
+  (actor_id,org_id,product_id,expires_at,evidence_sha256) values (
+  '33111111-1111-4111-8111-111111111111',
+  '33cccccc-cccc-4ccc-8ccc-cccccccccccc',
+  'com.rendprop.app.credits.100',now()+interval '1 day',repeat('e',64));
+set local role service_role;
+select pg_temp.sandbox_refuses(
+  'select public.credit_purchase_intent_create(''33111111-1111-4111-8111-111111111111'',''33cccccc-cccc-4ccc-8ccc-cccccccccccc'',''com.rendprop.app.credits.100'',''Sandbox'')',
+  'RP402: Sandbox test credit pack limit reached',
+  'another authorized workspace does not reopen the same actor SKU');
 reset role;
 
 select pg_temp.sandbox_ok((select not active and
