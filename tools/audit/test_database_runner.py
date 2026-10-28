@@ -136,6 +136,8 @@ class RunnerCase(unittest.TestCase):
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 11}\n', 0))
             elif sqlfile == 'paid_media_budget_cap.sql':
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 19}\n', 0))
+            elif sqlfile == 'reviewer_sandbox_shared_credit.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 36}\n', 0))
             elif sqlfile == 'trial_hybrid_funded_serving.sql':
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 43}\n', 0))
             elif sqlfile == 'property_address_reservations_assert.sql':
@@ -262,7 +264,9 @@ class InventoryTests(RunnerCase):
         result = self.invoke()
         self.assertIsNone(result.failure)
         guarded = subject_module().GUARDED_ONE_SHOT_MIGRATIONS
-        self.assertEqual(len(guarded), 39)
+        reviewer_migration = '20261028010346_reviewer_sandbox_shared_credit_budget.sql'
+        self.assertEqual(len(guarded) - 1, 39)
+        self.assertIn(reviewer_migration, guarded)
         self.assertEqual(set(result.receipt['guardedOneShotRefusals']), set(guarded))
         commands = {row['name']: row for row in result.receipt['commands']}
         for filename in guarded:
@@ -297,7 +301,7 @@ class InventoryTests(RunnerCase):
             {'phase': phase, 'fixture': filename, 'assertions': count,
              'rolledBack': True, 'database': database}
             for phase, database in [('initial', 'rendprop_audit'), ('replayed', 'rendprop_replay')]
-            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25), ('trial_full_window_admission.sql', 11), ('trial_hybrid_funded_serving.sql', 43), ('paid_media_budget_cap.sql', 19)]])
+            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25), ('trial_full_window_admission.sql', 11), ('trial_hybrid_funded_serving.sql', 43), ('paid_media_budget_cap.sql', 19), ('reviewer_sandbox_shared_credit.sql', 36)]])
         commands = {row['name']: row for row in result.receipt['commands']}
         self.assertIn('replay-20261002225458_video_erase_direct_bria', commands)
         for phase in ('initial', 'replayed'):
@@ -305,7 +309,7 @@ class InventoryTests(RunnerCase):
                 self.assertIn('reflection-' + phase + '-' + stem, commands)
 
     def test_reflection_missing_completion_marker_rejects(self):
-        for filename in ('credit_paid_ceiling_funding_gate.sql', 'video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql', 'property_address_lookup.sql', 'trial_full_window_admission.sql', 'trial_hybrid_funded_serving.sql', 'paid_media_budget_cap.sql'):
+        for filename in ('credit_paid_ceiling_funding_gate.sql', 'video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql', 'property_address_lookup.sql', 'trial_full_window_admission.sql', 'trial_hybrid_funded_serving.sql', 'paid_media_budget_cap.sql', 'reviewer_sandbox_shared_credit.sql'):
             with self.subTest(fixture=filename):
                 self.rejected(reflection={filename: ('ROLLBACK without acceptance marker\n', 0)})
 
