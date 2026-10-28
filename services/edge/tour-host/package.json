@@ -21,8 +21,10 @@
     "check:unbranded": "node scripts/check-unbranded.mjs",
     "check:routes": "node scripts/check-routes.mjs",
     "check:assets": "node scripts/check-assets.mjs",
-    "predeploy": "npm run typecheck && npm test && node scripts/check-property-seo.mjs && node scripts/check-address-share-links.mjs && node scripts/check-address-only-canonical.mjs && npm run check:assets",
-    "check:thumbnails": "node scripts/check-media-thumbnails.mjs && node scripts/check-media-thumbnails-runtime.mjs && node scripts/check-media-thumbnails-codec.mjs"
+    "predeploy": "npm run typecheck && npm test && node scripts/check-property-seo.mjs && node scripts/check-address-share-links.mjs && node scripts/check-address-only-canonical.mjs && npm run check:assets && node scripts/check-blog-content.mjs",
+    "check:thumbnails": "node scripts/check-media-thumbnails.mjs && node scripts/check-media-thumbnails-runtime.mjs && node scripts/check-media-thumbnails-codec.mjs",
+    "build:blog": "node scripts/build-blog.mjs",
+    "check:blog": "node scripts/check-blog-content.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",
