@@ -8,8 +8,10 @@ Deno.test("iOS closes only the local aerial extra route and retains accepted ope
   assert(card.includes("Older clips on this phone cannot be added"));
   assert(studio.includes("private var canGenerate: Bool { (photoMotion || aiCameraAvailable) && selectedExtras.isEmpty"));
   assert(studio.includes("private var aiCameraAvailable: Bool { false }"), "Release must not offer unfunded AI camera");
-  assert(studio.includes(".disabled(!choice && !aiCameraAvailable)"));
-  assert(studio.includes("AI camera is temporarily unavailable. Photo motion is ready to use."));
+  assert(studio.includes("ForEach(aiCameraAvailable ? [true, false] : [true], id: \\.self)"),
+    "Do not render the disabled AI camera choice in this release");
+  assert(!studio.includes("AI camera is temporarily unavailable. Photo motion is ready to use."),
+    "Do not show an unavailable-feature caption below the active Photo motion choice");
   assert(studio.includes("if !photoMotion && !aiCameraAvailable { return \"AI camera temporarily unavailable\" }"));
   assert(studio.includes("guard phase == .setup, canGenerate, selectedExtras.isEmpty else { return }"));
   assert(studio.includes("private var chosenOpening: PropertyVideoAcceptedOpening?"));

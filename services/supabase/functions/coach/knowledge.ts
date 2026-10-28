@@ -39,7 +39,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "How Rendprop works",
     source: "description.txt",
     fact:
-      "Start a home with its address and details. Add landscape property photos, edit from Original if needed, review and select the versions, make and review a landscape property video, then Publish and share the website. Recording/importing a slow, steady walkthrough is optional. These are separate tools; one walkthrough does not automatically produce every asset. Photo reels use simulated AI camera motion or disclosed still-photo motion, not real drone footage or a measured 3D reconstruction. Publishing creates branded and unbranded property links; available branded contact forms send enquiries to the app.",
+      "Start a home with its address and details. Add landscape property photos, edit from Original if needed, review and select the versions, make and review a landscape property video, then Publish and share the website. Recording/importing a slow, steady walkthrough is optional. These are separate tools; one walkthrough does not automatically produce every asset. New Photo motion videos animate saved still photos with 12% movement; Automatic varies four directions in photo order. This is not real drone footage or a measured 3D reconstruction. Publishing creates branded and unbranded property links; available branded contact forms send enquiries to the app.",
   },
   {
     topic: "Signing in — what needs an account",

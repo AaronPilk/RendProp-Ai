@@ -12662,7 +12662,7 @@ struct ReelStudioView: View {
         if let choice = currentOpeningChoice, choice.included, !openingSelectionIsResolved {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Opening clip · needs attention", systemImage: "airplane.departure").font(.rpHeadline)
-                Text(!photoMotion ? "Use Photo motion to start with this opening, or turn the opening off for AI camera." : "Your saved opening must be checked before creating this video. You can also continue without it.")
+                Text(!photoMotion ? "Use Photo motion to start with this opening, or continue without it." : "Your saved opening must be checked before creating this video. You can also continue without it.")
                     .font(.rpBody).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
                 Button("Check opening again") { Task { await refreshAcceptedOpening() } }
                     .buttonStyle(RendpropPillButtonStyle()).accessibilityIdentifier("video.opening.retry")
@@ -12685,7 +12685,7 @@ struct ReelStudioView: View {
                         .font(.rpHeadline).fixedSize(horizontal: false, vertical: true)
                 }.tint(Theme.accent).accessibilityIdentifier("video.opening.included")
                 if includeAcceptedOpening && !photoMotion {
-                    Text("Use Photo motion to start with this opening, or turn the opening off for AI camera.")
+                    Text("Use Photo motion to start with this opening, or continue without it.")
                         .font(.rpBody).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
                 }
                 Text(String(format: "%.2f seconds before your photos. Their order, timing and movement stay unchanged.", opening.durationS))
@@ -13425,7 +13425,7 @@ struct ReelStudioView: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Saved aerial clip", systemImage: "airplane.departure")
                 .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
-            Text("Older clips on this phone cannot be added through AI camera right now. To start a new video with an accepted aerial opening, choose Opening clip · first above and use Photo motion. Your saved clip remains available in Aerial intro.")
+            Text("Older clips on this phone cannot be added to a new video right now. To start with an accepted aerial opening, choose Opening clip · first above and use Photo motion. Your saved clip remains available in Aerial intro.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
