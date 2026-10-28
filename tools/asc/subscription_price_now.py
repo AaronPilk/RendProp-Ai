@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""One-off, fail-closed advance of the three scheduled USA monthly prices.
+
+This tool is pinned to the live 2026-10-30 App Store Connect price rows observed
+on 2026-10-28. ``plan`` uses GETs only. ``apply`` requires two explicit flags,
+rechecks all three products before any write, deletes only the pinned future
+row for each product, then creates the same .99 price with ``startDate: null``.
+After every write it reads Apple back; an error stops without automatic retry.
+The operator must separately verify the real StoreKit prices on a TestFlight
+iPhone. No app version, review item, territory, or subscriber is submitted.
+
+Apple documents null startDate as immediately effective and deletion of a
+scheduled price change. It does not promise a particular propagation time.
+https://developer.apple.com/documentation/appstoreconnectapi/configuring-subscription-prices-across-territories
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+import sys
+
+import asc
+import subscription_reprice as scheduled
+
+
+EXPECTED_DATE = "2026-10-30"
+# Apple resource IDs are not credentials. Pinning them prevents this one-off
+# operation from touching a changed price phase or a different subscription.
+SNAPSHOT = {
+    "com.rendprop.app.starter.monthly": {
+        "subscription_id": "6808987088",
+        "old_price_id": "eyJhIjoiNjgwODk4NzA4OCIsImMiOiJVUyIsImQiOjAsInAiOiIwIn0",
+        "future_price_id": "eyJhIjoiNjgwODk4NzA4OCIsImMiOiJVUyIsImQiOjIwNzU2LCJwIjoiMCJ9",
+        "point_id": "eyJzIjoiNjgwODk4NzA4OCIsInQiOiJVU0EiLCJwIjoiMTAzMjcifQ",
+        "old_usd": "49.00", "target_usd": "49.99",
+    },
+    "com.rendprop.app.pro.monthly": {
+        "subscription_id": "6808987225",
+        "old_price_id": "eyJhIjoiNjgwODk4NzIyNSIsImMiOiJVUyIsImQiOjAsInAiOiIwIn0",
+        "future_price_id": "eyJhIjoiNjgwODk4NzIyNSIsImMiOiJVUyIsImQiOjIwNzU2LCJwIjoiMCJ9",
+        "point_id": "eyJzIjoiNjgwODk4NzIyNSIsInQiOiJVU0EiLCJwIjoiMTA0NzcifQ",
+        "old_usd": "99.00", "target_usd": "99.99",
+    },
+    "com.rendprop.app.team.monthly": {
+        "subscription_id": "6808983164",
+        "old_price_id": "eyJhIjoiNjgwODk4MzE2NCIsImMiOiJVUyIsImQiOjAsInAiOiIwIn0",
+        "future_price_id": "eyJhIjoiNjgwODk4MzE2NCIsImMiOiJVUyIsImQiOjIwNzU2LCJwIjoiMCJ9",
+        "point_id": "eyJzIjoiNjgwODk4MzE2NCIsInQiOiJVU0EiLCJwIjoiMTA2MDYifQ",
+        "old_usd": "249.00", "target_usd": "249.99",
+    },
+}
+
+
+class PriceNowError(Exception):
+    """A remote state mismatch or refused operation."""
+
+
+@dataclass(frozen=True)
+class Decision:
+    product_id: str
+    state: str  # scheduled, deleted, or applied
+
+
+def _related_id(row, name):
+    return ((((row or {}).get("relationships") or {}).get(name) or {})
+            .get("data") or {}).get("id")
+
+
+def _usa_prices(client, subscription_id):
+    prices, included = client.get_all_included(
+        "/v1/subscriptions/%s/prices" % subscription_id,
+        params={"include": "subscriptionPricePoint,territory", "limit": 200},
+    )
+    points = {row["id"]: scheduled._amount(asc.attributes_of(row).get("customerPrice"))
+              for row in included if row.get("type") == "subscriptionPricePoints"
+              and row.get("id")}
+    result = []
+    for price in prices:
+        if _related_id(price, "territory") != asc.USA_TERRITORY:
+            continue
+        attrs = asc.attributes_of(price)
+        point_id = _related_id(price, "subscriptionPricePoint")
+        if attrs.get("planType") != "UPFRONT" or point_id not in points:
+            raise PriceNowError("Unexpected USA plan type or missing price point")
+        result.append({"id": price.get("id"), "date": attrs.get("startDate"),
+                       "preserved": attrs.get("preserved"), "point_id": point_id,
+                       "usd": points[point_id]})
+    return result
+
+
+def _state(client, product_id, spec):
+    rows = _usa_prices(client, spec["subscription_id"])
+    old = [row for row in rows if row["id"] == spec["old_price_id"]]
+    if len(old) != 1 or old[0]["date"] is not None or \
+            old[0]["usd"] != Decimal(spec["old_usd"]):
+        raise PriceNowError("%s old USA price no longer matches snapshot" % product_id)
+    rest = [row for row in rows if row["id"] != spec["old_price_id"]]
+    if len(rest) > 1:
+        raise PriceNowError("%s has extra USA price rows" % product_id)
+    if not rest:
+        # A prior attempt may have deleted the future row but failed to POST.
+        # The pinned old row must still exist at its exact amount.
+        return "deleted"
+    row = rest[0]
+    if row["point_id"] != spec["point_id"] or \
+            row["usd"] != Decimal(spec["target_usd"]):
+        raise PriceNowError("%s target point/amount drift" % product_id)
+    if row["id"] == spec["future_price_id"] and \
+            row["date"] == EXPECTED_DATE and \
+            row["preserved"] is False and old[0]["preserved"] is True:
+        return "scheduled"
+    if row["id"] != spec["future_price_id"] and row["date"] is None and \
+            row["preserved"] is False and old[0]["preserved"] is True:
+        return "applied"
+    raise PriceNowError("%s price phase changed; inspect Apple before retry" % product_id)
+
+
+def _preflight(client, snapshot):
+    by_id = scheduled._subscription_rows(client)
+    decisions = []
+    if tuple(snapshot) != scheduled.EXISTING_MONTHLY_IDS:
+        raise PriceNowError("Snapshot must contain exactly the three existing USA plans")
+    for product_id, spec in snapshot.items():
+        sub = by_id.get(product_id)
+        if sub is None or sub.get("id") != spec["subscription_id"] or \
+                asc.attributes_of(sub).get("subscriptionPeriod") != "ONE_MONTH":
+            raise PriceNowError("%s subscription identity/period drift" % product_id)
+        if asc.price_point_territory({"id": spec["point_id"]}) != asc.USA_TERRITORY:
+            raise PriceNowError("%s target point is not USA" % product_id)
+        exact = scheduled._exact_point(client, sub["id"],
+                                       Decimal(spec["target_usd"]))
+        if exact != spec["point_id"]:
+            raise PriceNowError("%s exact USA point drift" % product_id)
+        decisions.append(Decision(product_id, _state(client, product_id, spec)))
+    return decisions
+
+
+def _create_body(spec):
+    return {"data": {"type": "subscriptionPrices", "attributes": {
+        "startDate": None, "preserveCurrentPrice": True, "planType": "UPFRONT"},
+        "relationships": {
+            "subscription": asc.relationship("subscriptions", spec["subscription_id"]),
+            "territory": asc.relationship("territories", asc.USA_TERRITORY),
+            "subscriptionPricePoint": asc.relationship(
+                "subscriptionPricePoints", spec["point_id"]),
+        }}}
+
+
+def run(client, action, confirm_live=False, confirm_preserve=False,
+        snapshot=SNAPSHOT, out=None):
+    out = out or sys.stdout
+    if action not in ("plan", "apply"):
+        raise PriceNowError("Use plan or apply")
+    if action == "apply" and not (confirm_live and confirm_preserve):
+        raise PriceNowError("Apply requires both live-reprice and subscriber-preservation flags")
+    decisions = _preflight(client, snapshot)
+    for item in decisions:
+        spec = snapshot[item.product_id]
+        out.write("%s: %s; USD %s -> %s; pinned %s future row\n" % (
+            item.product_id, item.state, spec["old_usd"], spec["target_usd"],
+            EXPECTED_DATE))
+    if action == "plan":
+        out.write("Read-only. No App Store Connect write made.\n")
+        return 0
+    for item in decisions:
+        product_id = item.product_id
+        spec = snapshot[product_id]
+        # Re-read immediately before each write; never rely on the first GET.
+        state = _state(client, product_id, spec)
+        if state != item.state:
+            raise PriceNowError("%s changed after preflight; no write" % product_id)
+        if state == "applied":
+            continue
+        if state == "scheduled":
+            client.request("DELETE", "/v1/subscriptionPrices/%s" %
+                           spec["future_price_id"], expect=(204,))
+            if _state(client, product_id, spec) != "deleted":
+                raise PriceNowError("%s scheduled-row deletion not confirmed" % product_id)
+        client.post("/v1/subscriptionPrices", _create_body(spec))
+        if _state(client, product_id, spec) != "applied":
+            raise PriceNowError("%s immediate .99 price not confirmed; inspect Apple" % product_id)
+        out.write("%s: Apple confirmed immediate .99 USA row; verify StoreKit.\n"
+                  % product_id)
+    out.write("Finished remote readback. Verify the real USA StoreKit prices before review.\n")
+    return 0
+
+
+def main(argv=None, out=None, client=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=("plan", "apply"))
+    parser.add_argument("--confirm-live-reprice", action="store_true")
+    parser.add_argument("--confirm-preserve-existing-prices", action="store_true")
+    parser.add_argument("--key-dir", type=Path, default=asc.DEFAULT_KEY_DIR)
+    parser.add_argument("--quiet", action="store_true")
+    args = parser.parse_args(argv)
+    out = out or sys.stdout
+    try:
+        if client is None:
+            client = asc.Client(asc.load_credentials(args.key_dir),
+                                verbose=not args.quiet, out=out)
+        return run(client, args.action, args.confirm_live_reprice,
+                   args.confirm_preserve_existing_prices, out=out)
+    except (PriceNowError, scheduled.RepriceError, asc.AscError) as exc:
+        out.write("FAILED: %s\n" % exc)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
