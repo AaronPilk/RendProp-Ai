@@ -306,12 +306,13 @@ try {
   await expect(fourth.getByRole("button",{name:"Export MP4",exact:true})).toBeEnabled();
   assert.equal((await fourth.evaluate(() => window.cloudFixture.snapshot())).tickets,agentSaved.tickets);
   await closeDevice(fourth);await second.bringToFront();
-  receipt.loadBeforeExport.push({export:"agent-continuous",...quickLoad()});
-  // Passive evidence around the one guarded export hosted CI refused (run
-  // 39055656587: timeline and audio froze at a render-quantum boundary for
-  // >=127 ms while the main thread kept sampling). The native webaudio trace
-  // shows whether the audio render thread stopped; the Node probe sleeps on
-  // Atomics.wait and shows whether the host stopped scheduling this process.
+  // Passive evidence around guarded exports hosted CI refused (runs
+  // 39055656587 and 40606827060). The native webaudio trace shows whether
+  // the audio render thread stopped; the Node probe shows whether the host
+  // stopped scheduling this process. A single retry is allowed only after the
+  // real RecordingClock refuses and the editor offers no download. Both
+  // attempts retain their traces, and the accepted file keeps every decoded
+  // duration, picture and PCM assertion below.
   // The page spin probe is deliberately NOT used here: it costs ~1/5 of a core
   // on a 3-vCPU runner that is already oversubscribed. Nothing here owns a
   // clock, threshold, timeout or oracle, or can turn a refusal into a download.
@@ -321,20 +322,48 @@ try {
   // default; the gate and its thresholds are identical either way.
   const traceAudioService = process.env.RENDPROP_TRACE_AUDIO_SERVICE === "1";
   receipt.nativeTraceDeviceId = timingDevices.find(entry => entry.tab === second)?.id ?? null;
-  const agentTrace = await startNativeTraceObserver({context: second.context(), page: second, artifacts, syncId: "cloud-editor-agent-export-before-click",
-    rawFileName: "native-trace-cloud-editor-agent-export.raw.private.json", sourceHashes: receipt.sourceHashes, limits: NATIVE_TRACE_EXPORT_LIMITS,
-    ...(traceAudioService ? {browser, extraCategories: ["audio"]} : {}),
-    onFacts: facts => {receipt.nativeTrace = facts;}});
-  const agentNodeProbe = startNodeSchedulingProbe();
-  receipt.schedulingProbe = {node: agentNodeProbe.facts, page: "not-used: spin probe would add load on an oversubscribed runner"};
-  try {
-    await second.getByRole("button",{name:"Export MP4",exact:true}).click();
-    await expect(second.getByRole("link",{name:/Download MP4/})).toBeVisible({timeout:20000});
-  } finally {
-    receipt.loadAfterExport = {export:"agent-continuous",...quickLoad()};
-    await agentTrace.finish();
-    receipt.schedulingProbe.node = await agentNodeProbe.stop();
+  const clockRefusalText="Audio and picture timing drifted during export. No download was created. Close other busy tabs and retry.";
+  const exportButton=second.getByRole("button",{name:"Export MP4",exact:true});
+  const downloadLink=second.getByRole("link",{name:/Download MP4/});
+  const anyEditorDownload=second.locator("a.rp-editor-download[download]");
+  receipt.agentExportAttempts=[];
+  let agentExportReady=false;
+  for(let attempt=1;attempt<=2;attempt++) {
+    const priorRefusals=await second.evaluate(()=>window.exportClockRefusals?.length??0);
+    const evidence={attempt,status:"running"};receipt.agentExportAttempts.push(evidence);
+    receipt.loadBeforeExport.push({export:"agent-continuous",attempt,...quickLoad()});
+    const agentTrace=await startNativeTraceObserver({context:second.context(),page:second,artifacts,
+      syncId:`cloud-editor-agent-export-${attempt}-before-click`,
+      rawFileName:`native-trace-cloud-editor-agent-export-${attempt}.raw.private.json`,
+      sourceHashes:receipt.sourceHashes,limits:NATIVE_TRACE_EXPORT_LIMITS,
+      ...(traceAudioService?{browser,extraCategories:["audio"]}:{}),
+      onFacts:facts=>{evidence.nativeTrace=facts;receipt.nativeTrace=facts;}});
+    const agentNodeProbe=startNodeSchedulingProbe();
+    receipt.schedulingProbe={node:agentNodeProbe.facts,page:"not-used: spin probe would add load on an oversubscribed runner"};
+    let failure;
+    try {
+      await exportButton.click();
+      await expect(downloadLink).toBeVisible({timeout:20000});
+      evidence.status="download-ready";agentExportReady=true;
+    } catch(error) {
+      failure=error;evidence.status="failed";
+    } finally {
+      receipt.loadAfterExport={export:"agent-continuous",attempt,...quickLoad()};
+      evidence.loadAfterExport=receipt.loadAfterExport;
+      await agentTrace.finish();
+      evidence.schedulingProbe=await agentNodeProbe.stop();
+      receipt.schedulingProbe.node=evidence.schedulingProbe;
+    }
+    if(agentExportReady)break;
+    const refusals=await second.evaluate(start=>(window.exportClockRefusals??[]).slice(start),priorRefusals);
+    evidence.clockRefusals=refusals;
+    if(attempt===2)throw failure;
+    if(!refusals.length||refusals.some(refusal=>refusal.message!==clockRefusalText)||await anyEditorDownload.count())throw failure;
+    await expect(second.getByText(clockRefusalText,{exact:true})).toBeVisible();
+    await expect(exportButton).toBeEnabled();
+    evidence.status="clock-refused";
   }
+  assert(agentExportReady,"Agent export did not produce a verified download after at most two guarded attempts");
   const agentDownload=second.waitForEvent("download");await second.getByRole("link",{name:/Download MP4/}).click();const agentExport=join(artifacts,"agent-continuous.mp4");await (await agentDownload).saveAs(agentExport);
   const agentProbe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_streams","-show_format","-of","json",agentExport],{encoding:"utf8"}));await saveExportDiagnostics("agent-continuous",agentExport,agentProbe);assert(Math.abs(Number(agentProbe.format.duration)-4)<.4);
   const agentPixel=time=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",agentExport,"-frames:v","1","-vf","format=rgb24,crop=1:1:100:300","-f","rawvideo","pipe:1"])];
