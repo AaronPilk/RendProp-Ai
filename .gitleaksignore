@@ -77,6 +77,11 @@ a326780c43f8ec458eaa42e2ccd62c2451f74af2:services/supabase/functions/_shared/mod
 # Offline synthetic media storage path; no authentication or capability.
 a326780c43f8ec458eaa42e2ccd62c2451f74af2:services/supabase/functions/ai-chapters/failure-recovery.test.ts:generic-api-key:29
 
+# Exact historical false positive: "hybrid-funded-001" is a synthetic
+# idempotency/request key inside the offline funded-trial SQL fixture. The
+# fixture creates its own test reservation; this value grants no access.
+49000562606016edc44d5a4b8767c85bcb508481:services/supabase/tests/trial_hybrid_funded_serving.sql:generic-api-key:201
+
 # Exact historical false positive: recomputed SHA-256 digest of the public
 # Supabase browser publishable configuration, not credential bytes. Current
 # receipt records algorithm/digest/source descriptors; all other scans remain.
