@@ -6,7 +6,11 @@ struct ClosedServerJob {
  struct Request { var isPhotoMotion=false;var photoMotionProfile:PhotoMotionContract.Profile = .current;var sources:[Source]=[] }
  var reply:Reply?;var request=Request()
 }
-enum PhotoMotionContract {enum Profile {case current,opening};enum Direction:String {case pushIn="push_in"}}
+enum PhotoMotionContract {
+ enum Profile {case current,opening}
+ enum Direction:String {case pushIn="push_in"}
+ static func isAutomaticSequence(_ sources:[ClosedServerJob.Source])->Bool{false}
+}
 @MainActor final class ReelWorkJob {
  enum Phase {case setup,done}
  var serverJob:ClosedServerJob?;var running=false;var isServerRendering=false;var paused=false;var isContextCurrent=true

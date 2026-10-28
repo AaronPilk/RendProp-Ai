@@ -78,7 +78,7 @@ func job(for listing:Listing)->ReelWorkJob{requested+=1;return ReelWorkJob(UUID(
 @MainActor final class ReviewStudioHarness {
 let listing:Listing;let photos:[EnhancedPhoto];let extraClipURLs:[URL]
 let work:ReelWorkJob;let reviewingExistingJob:Bool
-@State var photoMotion=false;@State var photoMotionProfile=PhotoMotionContract.Profile.current;@State var photoMotionDirection=PhotoMotionContract.Direction.pushIn
+@State var photoMotion=false;@State var photoMotionProfile=PhotoMotionContract.Profile.current;@State var photoMotionDirection=PhotoMotionContract.Direction.pushIn;@State var photoMotionAutomatic=true
 var lastReel:URL?;var parkedClips:String?;var reloads=0;var purposeRestores=0;var serverRestores=0
 '''+initializer+'''
 static func newestReel(for id:UUID)->URL?{URL(fileURLWithPath:"/unrelated-newest-file.mp4")}

@@ -43,6 +43,7 @@ anchors = ['private var aiCameraAvailable:', 'private var totalSelected:', 'priv
            'private var canGenerate:', 'private var generateTitle:',
            'private var makeButton:', '@ViewBuilder private var scriptLengthNote:',
            'private func recordTapped()', 'private func beginTake()',
+           'private func resolvedPhotoMotionDirection(at index:',
            'private var framingSelectionKey:', 'private func generate()']
 parts = [block(view, x) for x in anchors]
 parts += [block(view, 'nonisolated private static func wholeSeconds(')]
@@ -169,19 +170,25 @@ struct ClosedOpening { struct Reference { let visibleFrames = 0 }; let reference
 struct PhotoGeometryInput: Hashable { let id: String; let url: URL }
 enum ClosedTransition { case cut, fade }
 enum ClosedPhotoMotionProfile: String { case current; var endScale: Double { 1 } }
-enum ClosedPhotoMotionDirection: String { case pushIn = "push_in" }
+enum PhotoMotionContract {
+ enum Direction: String { case pushIn = "push_in", pullBack = "pull_back", slideLeft = "slide_left", slideRight = "slide_right" }
+ static func automaticDirection(at index: Int) -> Direction {
+  [.pushIn, .slideRight, .pullBack, .slideLeft][index % 4]
+ }
+}
 struct VideoPhotoFramingAssessment: Sendable { let isMajorCrop = false }
 final class FramingControl: @unchecked Sendable {
- private let lock = NSLock(); private var count = 0; private var blocked = false; private var gate = DispatchSemaphore(value: 0)
+ private let lock = NSLock(); private var count = 0; private var recordedDirections: [String] = []; private var blocked = false; private var gate = DispatchSemaphore(value: 0)
  var reads: Int { lock.lock(); defer { lock.unlock() }; return count }
- func reset(block: Bool = false) { lock.lock(); count = 0; blocked = block; gate = DispatchSemaphore(value: 0); lock.unlock() }
- func read() { lock.lock(); count += 1; let wait = blocked; let gate = self.gate; lock.unlock(); if wait { gate.wait() } }
+ var directions: [String] { lock.lock(); defer { lock.unlock() }; return recordedDirections }
+ func reset(block: Bool = false) { lock.lock(); count = 0; recordedDirections = []; blocked = block; gate = DispatchSemaphore(value: 0); lock.unlock() }
+ func read(direction: String) { lock.lock(); count += 1; recordedDirections.append(direction); let wait = blocked; let gate = self.gate; lock.unlock(); if wait { gate.wait() } }
  func release() { lock.lock(); blocked = false; let gate = self.gate; lock.unlock(); gate.signal(); gate.signal() }
 }
 enum VideoPhotoFramingReader {
  static let control = FramingControl()
  static func read(photoID: String, url: URL, aspect: Double, photoMotion: Bool = false,
-                  photoMotionScale: Double = 1, photoMotionDirection: String = "push_in") -> VideoPhotoFramingAssessment? { control.read(); return .init() }
+                  photoMotionScale: Double = 1, photoMotionDirection: String = "push_in") -> VideoPhotoFramingAssessment? { control.read(direction: photoMotionDirection); return .init() }
 }
 @MainActor struct NarrationFixture {
  enum Phase { case setup, generating }
@@ -203,7 +210,8 @@ enum VideoPhotoFramingReader {
  @FixtureState var reelTransition = ClosedTransition.cut
  @FixtureState var bigCaptionsOn = false
  @FixtureState var photoMotionProfile = ClosedPhotoMotionProfile.current
- @FixtureState var photoMotionDirection = ClosedPhotoMotionDirection.pushIn
+ @FixtureState var photoMotionDirection = PhotoMotionContract.Direction.pushIn
+ @FixtureState var photoMotionAutomatic = true
  @FixtureState var photoMotionDigests: [PhotoGeometryInput: String] = [:]
  @FixtureState var voiceover: Voiceover?
  @FixtureState var voiceError: String?

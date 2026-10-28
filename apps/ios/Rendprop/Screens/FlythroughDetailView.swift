@@ -11810,6 +11810,7 @@ struct ReelStudioView: View {
     @State private var photoMotion = true
     @State private var photoMotionProfile = PhotoMotionContract.Profile.current
     @State private var photoMotionDirection = PhotoMotionContract.Direction.pushIn
+    @State private var photoMotionAutomatic = true
     @State private var photoMotionFrames: [String: Int] = [:]
     @State private var photoMotionDigests: [PhotoGeometryInput: String] = [:]
     @State private var photoMotionTimingRestoreGeneration = UUID()
@@ -11872,6 +11873,9 @@ struct ReelStudioView: View {
     private func photoMotionFrameCount(_ id: String) -> Int { photoMotionKey(id).flatMap { photoMotionFrames[$0] } ?? 48 }
     private var selectedPhotoFrames: Int { selected.reduce(0) { $0 + photoMotionFrameCount($1) } }
     private var selectedPhotoMotionInputs: [PhotoGeometryInput] { selected.compactMap { id in reelPhotos.first(where: { $0.id == id }).map { PhotoGeometryInput(id: id, url: $0.enhancedURL) } } }
+    private func resolvedPhotoMotionDirection(at index: Int) -> PhotoMotionContract.Direction {
+        photoMotionAutomatic ? PhotoMotionContract.automaticDirection(at: index) : photoMotionDirection
+    }
     /// A quote belongs to one exact local Review. The final POST still uses the
     /// frozen server-quoted request; this key prevents a changed UI from
     /// presenting that old request as the agent's current choice.
@@ -11883,7 +11887,8 @@ struct ReelStudioView: View {
                 photoMotionDigests[input], photoMotionFrameCount(id)))
         }
         return String(reflecting: (sourceKeys, sourceChoice.rawValue, photoMotion, portrait,
-            photoMotionProfile.rawValue, photoMotionDirection.rawValue, chosenOpening,
+            photoMotionProfile.rawValue, photoMotionAutomatic,
+            selected.indices.map { resolvedPhotoMotionDirection(at: $0).rawValue }, chosenOpening,
             captionsOn, bigCaptionsOn, bigCaptionStyle.rawValue, reelTransition.rawValue,
             voiceMode, voiceMode == .off ? nil : voiceover, wordCaptionsOn, musicSelection,
             auth.userID, auth.syncSessionRevision, WorkspaceContext.selectedOrgID,
@@ -11997,6 +12002,8 @@ struct ReelStudioView: View {
         self._photoMotion = State(initialValue: restored.serverJob?.request.isPhotoMotion ?? (!listing.isSample && restored.configuration == nil && restored.phase == .setup))
         self._photoMotionProfile = State(initialValue: restored.serverJob?.request.photoMotionProfile == .opening ? .current : (restored.serverJob?.request.photoMotionProfile ?? .current))
         self._photoMotionDirection = State(initialValue: restored.serverJob?.request.sources.first.flatMap { PhotoMotionContract.Direction(rawValue: $0.motion) } ?? .pushIn)
+        self._photoMotionAutomatic = State(initialValue: restored.serverJob?.request.isPhotoMotion == true
+            ? PhotoMotionContract.isAutomaticSequence(restored.serverJob?.request.sources ?? []) : true)
         self.reviewingExistingJob = reviewingJob != nil
     }
 
@@ -12112,7 +12119,10 @@ struct ReelStudioView: View {
             guard let request else { return }
             photoMotion = request.isPhotoMotion
             if let profile = request.photoMotionProfile { photoMotionProfile = profile == .opening ? .current : profile }
-            if request.isPhotoMotion, let direction = request.sources.first.flatMap({ PhotoMotionContract.Direction(rawValue: $0.motion) }) { photoMotionDirection = direction }
+            if request.isPhotoMotion, let direction = request.sources.first.flatMap({ PhotoMotionContract.Direction(rawValue: $0.motion) }) {
+                photoMotionDirection = direction
+                photoMotionAutomatic = PhotoMotionContract.isAutomaticSequence(request.sources)
+            }
             if request.isPhotoMotion {
                 restorePhotoMotionTimings(request)
             }
@@ -12178,7 +12188,7 @@ struct ReelStudioView: View {
         // third-party video model. Agreed once per device; declining closes
         // the studio.
         .sheet(isPresented: $showFramingReview) {
-            VideoFramingReviewSheet(assessments: photoMotion ? framingAssessments : framingAssessments.filter(\.isMajorCrop), aspect: portrait ? 9.0/16.0 : 16.0/9.0, photoMotion: photoMotion, photoMotionScale: photoMotionProfile.endScale, photoMotionDirection: photoMotionDirection.rawValue, changePhotos: {
+            VideoFramingReviewSheet(assessments: photoMotion ? framingAssessments : framingAssessments.filter(\.isMajorCrop), aspect: portrait ? 9.0/16.0 : 16.0/9.0, photoMotion: photoMotion, photoMotionScale: photoMotionProfile.endScale, photoMotionDirections: selected.indices.map { resolvedPhotoMotionDirection(at: $0).rawValue }, changePhotos: {
                 showFramingReview = false
                 setupStep = .photos
             }) {
@@ -12194,7 +12204,8 @@ struct ReelStudioView: View {
             }
         }) { videoHelpSheet }
         .sheet(item: $framingPreviewPhoto) { photo in
-            VideoFramingPreviewSheet(url: photo.enhancedURL, aspect: portrait ? 9.0/16.0 : 16.0/9.0, photoMotion: photoMotion, photoMotionScale: photoMotionProfile.endScale, photoMotionDirection: photoMotionDirection.rawValue)
+            VideoFramingPreviewSheet(url: photo.enhancedURL, aspect: portrait ? 9.0/16.0 : 16.0/9.0, photoMotion: photoMotion, photoMotionScale: photoMotionProfile.endScale,
+                photoMotionDirection: resolvedPhotoMotionDirection(at: selected.firstIndex(of: photo.id) ?? 0).rawValue)
         }
         .sheet(isPresented: $showReelPhotos, onDismiss: { refreshVideoPhotos() }) {
             NavigationStack {
@@ -12839,7 +12850,7 @@ struct ReelStudioView: View {
         VStack(alignment: .leading, spacing: 20) {
             formatRow
             acceptedOpeningCard
-            Label(photoMotion ? "Photo motion · \(photoMotionDirection.title) · \(photoMotionProfile.percent)%" : (cameraMove?.title ?? "Automatic motion for each photo"), systemImage: photoMotion ? "photo" : "video")
+            Label(photoMotion ? "Photo motion · \(photoMotionAutomatic ? "Automatic" : photoMotionDirection.title) · \(photoMotionProfile.percent)%" : (cameraMove?.title ?? "Automatic motion for each photo"), systemImage: photoMotion ? "photo" : "video")
                 .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
             VStack(spacing: 12) {
                 ForEach(Array(selected.enumerated()), id: \.element) { order, id in
@@ -12854,7 +12865,8 @@ struct ReelStudioView: View {
                                     .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
                                     .fixedSize(horizontal: false, vertical: true)
                                 if photoMotion {
-                                    Text("\(photoMotionFrameCount(id) / 24) seconds").font(.rpBody).foregroundStyle(Theme.inkDim)
+                                    Text("\(photoMotionFrameCount(id) / 24) seconds · \(resolvedPhotoMotionDirection(at: order).title)")
+                                        .font(.rpBody).foregroundStyle(Theme.inkDim)
                                 }
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -13128,11 +13140,6 @@ struct ReelStudioView: View {
                     VStack(spacing: 10) { photoMotionModeChoices }
                 }
             }
-            if !aiCameraAvailable {
-                Text("AI camera is temporarily unavailable. Photo motion is ready to use.")
-                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             if let id = selected.first, let photo = reelPhotos.first(where: { $0.id == id }) {
                 HStack(spacing: 14) {
                     if !videoDynamicTypeSize.isAccessibilitySize {
@@ -13140,9 +13147,10 @@ struct ReelStudioView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous)).accessibilityHidden(true)
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        Label(photoMotion ? photoMotionDirection.title : "Camera movement", systemImage: photoMotion ? photoMotionDirection.symbol : "video")
+                        Label(photoMotion ? (photoMotionAutomatic ? "Automatic · \(resolvedPhotoMotionDirection(at: 0).title)" : photoMotionDirection.title) : "Camera movement",
+                              systemImage: photoMotion ? resolvedPhotoMotionDirection(at: 0).symbol : "video")
                             .font(.rpBody.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
-                        Text(photoMotion ? PhotoMotionPreviewFrame.caption(direction: photoMotionDirection.rawValue, percent: photoMotionProfile.percent) : "AI creates movement within each photo.")
+                        Text(photoMotion ? PhotoMotionPreviewFrame.caption(direction: resolvedPhotoMotionDirection(at: 0).rawValue, percent: photoMotionProfile.percent) : "AI creates movement within each photo.")
                             .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
                         Button { framingPreviewPhoto = photo } label: { Label("Preview framing", systemImage: "viewfinder") }
                             .font(.rpCaption.weight(.semibold)).buttonStyle(RendpropPillButtonStyle(compact: true, horizontalPadding: 12))
@@ -13155,7 +13163,7 @@ struct ReelStudioView: View {
     }
 
     @ViewBuilder private var photoMotionModeChoices: some View {
-        ForEach([true, false], id: \.self) { choice in
+        ForEach(aiCameraAvailable ? [true, false] : [true], id: \.self) { choice in
             Button {
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { photoMotion = choice }
                 acknowledgedFramingKey = nil
@@ -13177,19 +13185,35 @@ struct ReelStudioView: View {
     private var photoMotionDirectionChoices: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Direction").font(.rpBody.weight(.semibold))
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { photoMotionAutomatic = true }
+                acknowledgedFramingKey = nil
+            } label: {
+                Label("Automatic · varied for each photo", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.rpBody.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(RendpropPillButtonStyle(selected: photoMotionAutomatic, compact: true, horizontalPadding: 14))
+            .accessibilityAddTraits(photoMotionAutomatic ? .isSelected : [])
+            .accessibilityIdentifier("video.motion.direction.automatic")
             LazyVGrid(columns: [GridItem(.adaptive(minimum: videoDynamicTypeSize.isAccessibilitySize ? 260 : 140))], spacing: 10) {
                 ForEach(PhotoMotionContract.Direction.allCases, id: \.rawValue) { direction in
                     Button {
-                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { photoMotionDirection = direction }
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                            photoMotionDirection = direction
+                            photoMotionAutomatic = false
+                        }
                         acknowledgedFramingKey = nil
                     } label: {
                         Label(direction.title, systemImage: direction.symbol).font(.rpBody.weight(.semibold))
                             .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .buttonStyle(RendpropPillButtonStyle(selected: photoMotionDirection == direction, compact: true, horizontalPadding: 14))
-                    .accessibilityAddTraits(photoMotionDirection == direction ? .isSelected : [])
+                    .buttonStyle(RendpropPillButtonStyle(selected: !photoMotionAutomatic && photoMotionDirection == direction, compact: true, horizontalPadding: 14))
+                    .accessibilityAddTraits(!photoMotionAutomatic && photoMotionDirection == direction ? .isSelected : [])
                 }
             }
+            Text("Cycles through these four 12% movements in photo order. Consecutive photos use different directions.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -14863,7 +14887,13 @@ struct ReelStudioView: View {
                 restorePhotoMotionTimings(saved.request)
             }
             photoMotionProfile = .current
-            photoMotionDirection = .pushIn
+            if saved.request.isPhotoMotion {
+                photoMotionDirection = saved.request.sources.first.flatMap { PhotoMotionContract.Direction(rawValue: $0.motion) } ?? .pushIn
+                photoMotionAutomatic = PhotoMotionContract.isAutomaticSequence(saved.request.sources)
+            } else {
+                photoMotionDirection = .pushIn
+                photoMotionAutomatic = true
+            }
             pendingBatch?.clear(); pendingBatch = nil; work.serverJob = nil
         }
         player?.pause()
@@ -15461,7 +15491,10 @@ struct ReelStudioView: View {
     // MARK: Generate (sequential clips → on-device stitch)
 
     private var framingSelectionKey: String {
-        VideoFramingReviewPolicy.selectionKey(aspect: portrait ? "9:16" : "16:9", photoIDs: selected) + (photoMotion ? ":" + photoMotionProfile.rawValue + ":" + photoMotionDirection.rawValue : "")
+        let sources = selected.map { photoMotionKey($0) ?? "missing:\($0)" }
+        let motions = selected.indices.map { resolvedPhotoMotionDirection(at: $0).rawValue }
+        return VideoFramingReviewPolicy.selectionKey(aspect: portrait ? "9:16" : "16:9", photoIDs: sources) +
+            (photoMotion ? ":" + photoMotionProfile.rawValue + ":" + (photoMotionAutomatic ? "automatic" : "manual") + ":" + motions.joined(separator: ",") : "")
     }
 
     private func reviewSavedPhotoMotionQuote() {
@@ -15604,14 +15637,16 @@ struct ReelStudioView: View {
         checkingFraming = true
         let key = framingSelectionKey, actor = auth.userID, revision = auth.syncSessionRevision
         let org = WorkspaceContext.selectedOrgID, consent = AIConsent.shared.revocationRevision
-        let inputs = selected.compactMap { id in reelPhotos.first(where: { $0.id == id }).map { ($0.id, $0.enhancedURL) } }
+        let inputs = selected.enumerated().compactMap { index, id in
+            reelPhotos.first(where: { $0.id == id }).map { ($0.id, $0.enhancedURL, resolvedPhotoMotionDirection(at: index).rawValue) }
+        }
         let aspect = portrait ? 9.0 / 16.0 : 16.0 / 9.0, endPush = photoMotion
-        let endScale = photoMotionProfile.endScale, direction = photoMotionDirection.rawValue
+        let endScale = photoMotionProfile.endScale
         Task { @MainActor in
             defer { checkingFraming = false }
             let assessments = await Task.detached(priority: .utility) {
                 inputs.compactMap { input in
-                    autoreleasepool { VideoPhotoFramingReader.read(photoID: input.0, url: input.1, aspect: aspect, photoMotion: endPush, photoMotionScale: endScale, photoMotionDirection: direction) }
+                    autoreleasepool { VideoPhotoFramingReader.read(photoID: input.0, url: input.1, aspect: aspect, photoMotion: endPush, photoMotionScale: endScale, photoMotionDirection: input.2) }
                 }
             }.value
             guard work.isPresented, phase == .setup, canGenerate, framingSelectionKey == key,
@@ -15648,7 +15683,7 @@ struct ReelStudioView: View {
         let frozenPhotoProfile = photoMotionProfile
         let frozenOpening = chosenOpening
 
-        let frozenPhotoDirection = photoMotionDirection
+        let frozenPhotoDirections = selected.indices.map { resolvedPhotoMotionDirection(at: $0) }
         let frozenPhotoFrames = selected.map(photoMotionFrameCount)
         let frozenPhotoDigests = selected.map { id in reelPhotos.first(where: { $0.id == id }).flatMap { photoMotionDigests[PhotoGeometryInput(id: id, url: $0.enhancedURL)] } }
         if frozenPhotoMotion, voiceMode != .off, let voiceover, voiceover.duration > Double(frozenPhotoFrames.reduce(0,+) + (frozenOpening?.reference.visibleFrames ?? 0)) / 24 {
@@ -15771,6 +15806,7 @@ struct ReelStudioView: View {
                         }
                         let masters = choices.map(\.master)
                         guard let physicalOrgID, masters.count == frozenPhotoFrames.count,
+                              masters.count == frozenPhotoDirections.count,
                               zip(chosen, frozenPhotoDigests).allSatisfy({ DirectUploader.sha256(of: $0.enhancedURL) == $1 }) else { throw PropertyVideoJobStore.Failure.invalidReceipt }
                         let localVersions = chosen.map(\.savedVersion)
                         let catalogue = choices.allSatisfy(\.rawOriginal) ? [] :
@@ -15779,9 +15815,9 @@ struct ReelStudioView: View {
                         guard selected == chosen.map(\.id), chosen.map(\.savedVersion) == localVersions else { throw PropertyVideoJobStore.Failure.identityChanged }
                         sources = try choices.enumerated().map { index, choice in
                             if choice.rawOriginal {
-                                return try PhotoMotionContract.source(choice.master, visibleFrames: frozenPhotoFrames[index], motion: frozenPhotoDirection.rawValue)
+                                return try PhotoMotionContract.source(choice.master, visibleFrames: frozenPhotoFrames[index], motion: frozenPhotoDirections[index].rawValue)
                             }
-                            return try PropertyVideoPhotoCatalogue.resolve([choice.master], frames: [frozenPhotoFrames[index]], sources: catalogue, motion: frozenPhotoDirection.rawValue)[0]
+                            return try PropertyVideoPhotoCatalogue.resolve([choice.master], frames: [frozenPhotoFrames[index]], sources: catalogue, motion: frozenPhotoDirections[index].rawValue)[0]
                         }
                         shotLabels = sources.map { _ in nil }
                         scenePlanningNotice = nil

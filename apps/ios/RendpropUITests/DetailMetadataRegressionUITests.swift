@@ -167,7 +167,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["detail.photos"].isEnabled)
     }
 
-    private func openVideo(purpose: String, aiCamera: Bool = false) {
+    private func openVideo(purpose: String) {
         let video = app.buttons["detail.reelStudio"]
         scrollTo(video); video.tap()
         XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 15), app.debugDescription)
@@ -189,20 +189,6 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertTrue(choice.waitForExistence(timeout: 10), app.debugDescription)
         scrollTo(choice); XCTAssertTrue(choice.isHittable); choice.tap()
         XCTAssertTrue(choice.isSelected, app.debugDescription)
-        if aiCamera {
-            // The enclosing Movement style group supplies its identifier to
-            // child pills in SwiftUI's accessibility tree. Match the label.
-            let camera = app.buttons.matching(NSPredicate(format: "label == %@", "AI camera")).firstMatch
-            scrollTo(camera); camera.tap()
-            XCTAssertTrue(camera.isSelected, app.debugDescription)
-        }
-    }
-
-    private func openVideoOptions() {
-        let automatic = app.buttons["video.motion.automatic"]
-        XCTAssertTrue(automatic.waitForExistence(timeout: 5), app.debugDescription)
-        scrollTo(automatic)
-        XCTAssertTrue(automatic.isEnabled && automatic.isHittable, app.debugDescription)
     }
 
     private func closeVideo() {
@@ -248,12 +234,18 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         back(from: "Review & Submit")
     }
 
-    func testReelCameraPresetsAndPhotoZIPDeliveryChoice() {
+    func testReelPhotoMotionDirectionsAndPhotoZIPDeliveryChoice() {
         launch("rich")
-        openVideo(purpose: "social_media", aiCamera: true)
-        openVideoOptions()
-        for title in ["Fly-through", "Slow push-in", "Side glide", "Pull-back"] {
-            // The enclosing Optional group overrides child accessibility IDs.
+        openVideo(purpose: "social_media")
+        let photoMotion = app.buttons.matching(NSPredicate(format: "label == %@", "Photo motion")).firstMatch
+        scrollTo(photoMotion)
+        XCTAssertTrue(photoMotion.isSelected, app.debugDescription)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "AI camera")).count, 0,
+            "A disabled generation mode should not occupy a visible choice")
+        let automatic = app.buttons["video.motion.direction.automatic"]
+        scrollTo(automatic)
+        XCTAssertTrue(automatic.isSelected, "New Photo motion should vary directions by default")
+        for title in ["Push in", "Pull back", "Glide left", "Glide right"] {
             let buttons = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title))
             let button = buttons.firstMatch
             scrollTo(button)
@@ -261,8 +253,10 @@ final class DetailMetadataRegressionUITests: XCTestCase {
             XCTAssertTrue(button.exists && button.isEnabled, app.debugDescription)
             button.tap(); XCTAssertTrue(button.isSelected)
         }
+        scrollTo(automatic); automatic.tap()
+        XCTAssertTrue(automatic.isSelected, "Automatic can be selected after a manual direction")
         XCTAssertFalse(app.textFields["e.g. 'slow push-in, golden-hour feel'"].exists)
-        attach("build58-four-camera-presets")
+        attach("photo-motion-four-directions")
         closeVideo()
         openLink("detail.photos", title: "Photos")
         let all = app.buttons["photos.shareAll"]; revealActive(all); all.tap()

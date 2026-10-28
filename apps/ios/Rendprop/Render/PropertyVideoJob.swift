@@ -139,6 +139,18 @@ enum PhotoMotionContract {
         }
     }
     static let mode = "photo_motion_v1"
+    /// A fixed cycle keeps the same ordered saved photos on the same motions.
+    /// Adjacent shots differ, including when the sequence wraps after four.
+    private static let automaticPattern: [Direction] = [.pushIn, .slideRight, .pullBack, .slideLeft]
+    static func automaticDirection(at index: Int) -> Direction {
+        precondition(index >= 0)
+        return automaticPattern[index % automaticPattern.count]
+    }
+    static func isAutomaticSequence(_ sources: [PropertyVideoJobSource]) -> Bool {
+        sources.count >= 2 && sources.enumerated().allSatisfy { index, source in
+            source.motion == automaticDirection(at: index).rawValue
+        }
+    }
     enum Profile: String, CaseIterable, Sendable {
         case legacy = "photo-motion-v1-cfr24"
         case current = "photo-motion-v2-cfr24"

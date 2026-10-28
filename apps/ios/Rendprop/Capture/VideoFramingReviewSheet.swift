@@ -6,7 +6,7 @@ struct VideoFramingReviewSheet: View {
     let aspect: Double
     var photoMotion = false
     var photoMotionScale: Double = 1.02
-    var photoMotionDirection = "push_in"
+    var photoMotionDirections: [String] = []
     let changePhotos: () -> Void
     let proceed: () -> Void
     @Environment(\.dismiss) private var dismiss
@@ -30,7 +30,8 @@ struct VideoFramingReviewSheet: View {
                             TabView(selection: $page) {
                                 ForEach(Array(assessments.enumerated()), id: \.element.id) { index, row in
                                     FramingReviewPhoto(row: row, aspect: aspect, photoMotion: photoMotion,
-                                        endFrame: endFrame, photoMotionScale: photoMotionScale, photoMotionDirection: photoMotionDirection, previewHeight: min(400, max(200, geometry.size.height * 0.56)))
+                                        endFrame: endFrame, photoMotionScale: photoMotionScale,
+                                        photoMotionDirection: direction(at: index), previewHeight: min(400, max(200, geometry.size.height * 0.56)))
                                         .tag(index).padding(.horizontal, 1)
                                 }
                             }
@@ -41,7 +42,7 @@ struct VideoFramingReviewSheet: View {
                             if assessments.count > 1 { photoSelection }
                         }
                         Text(photoMotion
-                            ? "Check the start and end of each photo. " + PhotoMotionPreviewFrame.caption(direction: photoMotionDirection, percent: Int(((photoMotionScale - 1) * 100).rounded())) + " Your saved photos stay unchanged."
+                            ? "Check the start and end of each photo. " + PhotoMotionPreviewFrame.caption(direction: direction(at: page), percent: Int(((photoMotionScale - 1) * 100).rounded())) + " Your saved photos stay unchanged."
                             : "This is the estimated center crop. AI motion can change the final framing; review the finished video before publishing.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
                     }.padding(20).padding(.bottom, 16)
@@ -64,6 +65,11 @@ struct VideoFramingReviewSheet: View {
                 }
             }
         }
+    }
+
+    private func direction(at index: Int) -> String {
+        guard photoMotionDirections.indices.contains(index) else { return PhotoMotionContract.Direction.pushIn.rawValue }
+        return photoMotionDirections[index]
     }
 
     private var frameSelection: some View {

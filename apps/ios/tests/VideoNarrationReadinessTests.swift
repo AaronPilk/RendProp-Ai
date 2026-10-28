@@ -39,6 +39,15 @@
             check(f.snapshotSpy.count == 0, "busy session callback cannot freeze audio")
         }
 
+        let selection = NarrationFixture()
+        let automaticKey = selection.framingSelectionKey
+        selection.photoMotionAutomatic = false
+        check(selection.framingSelectionKey != automaticKey,
+            "switching Automatic to manual invalidates the acknowledged framing")
+        selection.photoMotionDirection = .slideRight
+        check(selection.framingSelectionKey != automaticKey,
+            "a different direction cannot reuse the Automatic framing acknowledgment")
+
         let framing = NarrationFixture()
         framing.acknowledgedFramingKey = framing.framingSelectionKey
         VideoPhotoFramingReader.control.reset(block: true)
@@ -55,6 +64,8 @@
         VideoPhotoFramingReader.control.reset()
         reconnect.generate()
         await until { reconnect.connection.calls == 1 && !reconnect.checkingFraming }
+        check(VideoPhotoFramingReader.control.directions == ["push_in", "slide_right"],
+            "automatic direction sends a distinct exact motion to each photo's framing assessment")
         reconnect.isTranscribing = true
         reconnect.connection.deliver()
         check(reconnect.snapshotSpy.count == 0, "reconnect callback rechecks narration before snapshot")
@@ -63,6 +74,16 @@
         reconnect.voiceover = .init(id: "finished-exact-take")
         reconnect.generateWithSession()
         check(reconnect.snapshotSpy.count == 1 && reconnect.snapshotSpy.voice?.id == "finished-exact-take", "settled take freezes exact completed audio")
+
+        let manual = NarrationFixture()
+        manual.photoMotionAutomatic = false
+        manual.photoMotionDirection = .slideLeft
+        manual.acknowledgedFramingKey = manual.framingSelectionKey
+        VideoPhotoFramingReader.control.reset()
+        manual.generate()
+        await until { manual.connection.calls == 1 && !manual.checkingFraming }
+        check(VideoPhotoFramingReader.control.directions == ["slide_left", "slide_left"],
+            "manual direction still applies the chosen motion to every photo")
 
         let failed = NarrationFixture()
         failed.voiceMode = .aiVoice

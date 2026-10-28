@@ -207,6 +207,48 @@ enum FileStore {static let documents=FileManager.default.temporaryDirectory.appe
         let motionSource = PropertyVideoJobSource(photoID: "motion-photo", photoAssetID: motionAsset,
             photoVersionID: "asset:" + motionAsset.uuidString.lowercased(), photoProvenanceID: nil,
             motion: "push_in", visibleFrames: 48, sourceSHA256: String(repeating: "a", count: 64), sourceBytes: 500_000)
+        for count in [2, 3, 5] {
+            let directions = (0..<count).map { PhotoMotionContract.automaticDirection(at: $0) }
+            check(directions == (0..<count).map { PhotoMotionContract.automaticDirection(at: $0) },
+                "automatic motion is deterministic for \(count) ordered photos")
+            check(zip(directions, directions.dropFirst()).allSatisfy { pair in pair.0 != pair.1 },
+                "automatic motion never repeats adjacent directions for \(count) photos")
+            if count == 5 { check(Set(directions.map(\.rawValue)).count == 4, "five photos exercise all four directions") }
+            let automaticSources = directions.enumerated().map { index, direction -> PropertyVideoJobSource in
+                let asset = UUID()
+                return PropertyVideoJobSource(photoID: "automatic-\(index)", photoAssetID: asset,
+                    photoVersionID: "asset:" + asset.uuidString.lowercased(), photoProvenanceID: nil,
+                    motion: direction.rawValue, visibleFrames: 48,
+                    sourceSHA256: String(repeating: "a", count: 64), sourceBytes: 500_000)
+            }
+            let automaticRequest = PropertyVideoJobRequest(operationID: UUID(), listingID: context.listingID,
+                expectedOrgID: context.orgID, purpose: "listing", aspect: "16:9", sources: automaticSources,
+                narrationResultID: nil, music: nil, allowOriginalPhotoFallback: false,
+                presentation: .init(transition: "cut", shotCaptionStyle: "off", spokenCaptions: false,
+                    titleCard: nil, shotLabels: Array(repeating: nil, count: count)),
+                sourceMode: PhotoMotionContract.mode, compositionProfile: PhotoMotionContract.Profile.current.rawValue)
+            check(automaticRequest.isValid && PhotoMotionContract.isAutomaticSequence(automaticRequest.sources),
+                "varied 12% directions make a valid frozen Photo motion request")
+            let decoded = try JSONDecoder().decode(PropertyVideoJobRequest.self, from: JSONEncoder().encode(automaticRequest))
+            check(decoded == automaticRequest && PhotoMotionContract.isAutomaticSequence(decoded.sources),
+                "the ordered automatic directions survive saved-job encoding")
+            let automaticContext = PropertyVideoJobContext(localListingID: UUID(), listingID: context.listingID,
+                actorID: context.actorID, orgID: context.orgID)
+            try PropertyVideoJobStore.start(.init(context: automaticContext, request: automaticRequest, createdAt: Date()),
+                documents: documents)
+            let reopened = try PropertyVideoJobStore.load(context: automaticContext, documents: documents)
+            check(reopened?.request == automaticRequest &&
+                  PhotoMotionContract.isAutomaticSequence(reopened?.request.sources ?? []),
+                "the durable saved job restores exact ordered automatic motion")
+            let manualSources = automaticSources.map { source in
+                PropertyVideoJobSource(photoID: source.photoID, photoAssetID: source.photoAssetID,
+                    photoVersionID: source.photoVersionID, photoProvenanceID: source.photoProvenanceID,
+                    motion: PhotoMotionContract.Direction.pushIn.rawValue, visibleFrames: source.visibleFrames,
+                    sourceSHA256: source.sourceSHA256, sourceBytes: source.sourceBytes)
+            }
+            check(!PhotoMotionContract.isAutomaticSequence(manualSources),
+                "manual push-in is not restored as automatic")
+        }
         let motionRequest = PropertyVideoJobRequest(operationID: UUID(), listingID: context.listingID,
             expectedOrgID: context.orgID, purpose: "listing", aspect: "16:9", sources: [motionSource],
             narrationResultID: nil, music: nil, allowOriginalPhotoFallback: false,
