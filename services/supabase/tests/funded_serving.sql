@@ -83,8 +83,10 @@ begin
  r:=record_apple_sandbox_receipt(review,u,'synthetic-review-original','synthetic-review-tx','com.rendprop.app.pro.monthly','active',now());
  perform pg_temp.fcheck(r->>'environment'='Sandbox'and r->>'plan'='pro'and(r->>'test_only')::boolean,'review Sandbox restore exposes funded test plan');
  perform pg_temp.fcheck((select plan='free'and plan_source='manual'from orgs where id=review)and not exists(select 1 from apple_subscriptions where org_id=review),'review receipt cannot mint retail entitlement');
- perform serving_cost_reserve(u,review,'review-paid-key','video','fal','synthetic',repeat('a',64),450,'synthetic');
- perform pg_temp.frefuse(format('select serving_cost_reserve(%L,%L,''review-exhausted'',''photo'',''gemini'',''synthetic'',%L,1,''synthetic'')',u,review,repeat('a',64)),'RP402');
+ -- Retail funded-mode behavior is exercised above. Reviewer supplier work is
+ -- ceiling-only so its Sandbox and legacy holds share one locked cash cap.
+ perform pg_temp.frefuse(format('select serving_cost_reserve(%L,%L,''review-paid-key'',''video'',''fal'',''synthetic'',%L,450,''synthetic'')',u,review,repeat('a',64)),'RP403: Reviewer serving requires ceiling mode');
+ perform pg_temp.fcheck(not exists(select 1 from serving_cost_reservations where org_id=review),'funded mode cannot create a reviewer supplier hold');
  perform revoke_serving_funding(review,'synthetic-review',repeat('b',64));
  perform pg_temp.fcheck(not org_has_app_review_funding(review)and effective_plan(review)='free','expired or revoked review loses features');
  perform pg_temp.frefuse(format('select provision_serving_funding(%L,''app_review'',''second-review-grant'',%L,0,500,%L,%L,1,%L,%L)',review,u,t,t+interval '7 days',zeros,repeat('a',64)),'RP403');
