@@ -95,9 +95,12 @@ commit;
 
 The template is intentionally non-runnable until every placeholder is replaced and independently reviewed. In particular, do not select a tariff or reserve amount merely to get an RPC to accept it. `p_starts_at` cannot be more than five minutes in the future; execute near submission, after the review timing problem is resolved. `retention_ends_at` equals the grant end for `app_review`, so this is only a seven-day media/retention authority.
 
-Read back under `service_role` immediately after commit and again before submission and during review:
+Read back immediately after commit and again before submission and during review. Run the entire block as `service_role` in a read-only transaction. `reviewer_sandbox_signed_credit` deliberately returns `false` when called as `postgres` or any other role, even if the reviewer is funded; a privileged operator's default role is not a valid access check.
 
 ```sql
+begin;
+set transaction read only;
+set local role service_role;
 select id, org_id, actor_id, source, collection_ref, sponsored_cents,
        starts_at, ends_at, retention_ends_at, recurring_reserve_cents,
        reserve_components, evidence_sha256, revoked_at
@@ -130,6 +133,7 @@ group by operation, state;
 select bucket, coalesce(sum(bytes), 0) retained_bytes
 from public.media_storage_receipts
 where org_id = '<ORG_UUID>'::uuid and deleted_at is null group by bucket;
+rollback;
 ```
 
 Require one funding/slice/media row, matching actor/org/window, 500 total sponsor cents, seven reserve keys, media budget tied to that funding and account receipt, fresh request/byte counters, and a ceiling period equal to the seven-day grant without a month-boundary refill. For credit routes, require `signed_reviewer_credit=true`, a current positive-price Apple-signed Sandbox period, an active monthly catalog, the corresponding Sandbox grant and tariff, and zero accidental Production grants. The signed period must be obtained through the exact deployed Edge purchase or restore path; never insert a grant manually for the live reviewer. Track legacy and credit supplier holds, video holds, credit holds, media counters, uncertain outcomes and physical storage receipts against the same commitment. `revoke_serving_funding(org, funding_ref, revocation_evidence_sha256)` ends new authority; it does not erase incurred or uncertain liabilities.
