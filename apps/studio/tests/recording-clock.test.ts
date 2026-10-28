@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AudioStartupClock, RecordingClock, MAX_RECORDING_DRIFT_SECONDS } from "../src/editor/recording-clock";
+import { AudioStartupClock, CaptureCadenceClock, RecordingClock, CAPTURE_DENSITY_WINDOW_MILLISECONDS, MAX_CAPTURE_GAP_MILLISECONDS, MAX_RECORDING_DRIFT_SECONDS, MAX_TRANSITION_CAPTURE_GAP_MILLISECONDS, MIN_CAPTURE_FRAMES_PER_WINDOW, MIN_TRANSITION_CAPTURE_FPS } from "../src/editor/recording-clock";
 
 test("audio startup does not admit the retained running-but-frozen readings", () => {
   const clock = new AudioStartupClock();
@@ -74,4 +74,72 @@ test("photo with narration rejects an interrupted audio clock", () => {
 test("muted photo needs no audio clock", () => {
   const clock = new RecordingClock();
   for (let frame = 1; frame < 200; frame++) clock.read(frame / 30, frame / 30);
+});
+
+test("capture cadence refuses a missing dissolve even when media and audio clocks agree", () => {
+  const clock = new CaptureCadenceClock(), recording = new RecordingClock();
+  clock.capture(8_748.3); // First request after resuming the recorder.
+  recording.read(.03, .03, .03);
+  recording.read(.28, .28, .28); // Clock drift alone cannot detect lost pictures.
+  assert.throws(() => clock.capture(8_999.3), error => {
+    assert(error instanceof Error);
+    assert.match(error.message, /Video frames were skipped.*No download was created/);
+    assert.deepEqual(error.cause, {gapMilliseconds: 251, maxGapMilliseconds: MAX_CAPTURE_GAP_MILLISECONDS});
+    return true;
+  });
+});
+test("capture cadence tolerates ordinary startup and frame jitter without an audio clock", () => {
+  const clock = new CaptureCadenceClock();
+  clock.capture(10_000); // Slow decode and audio readiness happened before capture.
+  for (const at of [10_033, 10_066, 10_112, 10_190, 10_339]) clock.capture(at);
+  assert.equal(MAX_CAPTURE_GAP_MILLISECONDS, 150);
+  const nextClip = new CaptureCadenceClock(); // Paused preparation is excluded.
+  nextClip.capture(14_000);
+  nextClip.capture(14_034);
+});
+test("capture cadence refuses repeated sub-threshold delays that make a 14 fps video", () => {
+  const clock = new CaptureCadenceClock();
+  assert.equal(CAPTURE_DENSITY_WINDOW_MILLISECONDS, 500);
+  assert.equal(MIN_CAPTURE_FRAMES_PER_WINDOW, 11);
+  for (let at = 0; at < 500; at += 72) clock.capture(at);
+  assert.throws(() => clock.capture(504), error => {
+    assert(error instanceof Error);
+    assert.match(error.message, /Video frames were skipped.*No download was created/);
+    assert.deepEqual(error.cause, {windowMilliseconds: 500, framesCaptured: 7, minFrames: 11});
+    return true;
+  });
+  const healthy = new CaptureCadenceClock();
+  for (let at = 0; at <= 1000; at += 33) healthy.capture(at);
+});
+test("short dissolve requires distinct painted frames, not merely a final endpoint", () => {
+  assert.equal(MAX_TRANSITION_CAPTURE_GAP_MILLISECONDS, 130);
+  assert.equal(MIN_TRANSITION_CAPTURE_FPS, 20);
+  const missed = new CaptureCadenceClock(280);
+  for (const at of [0, 75, 150, 225]) missed.capture(at, at);
+  assert.throws(() => missed.capture(300, 300), error => {
+    assert(error instanceof Error);
+    assert.match(error.message, /Video frames were skipped.*No download was created/);
+    assert.deepEqual(error.cause, {transitionMilliseconds: 280, framesCaptured: 4, minFrames: 6});
+    return true;
+  });
+  const healthy = new CaptureCadenceClock(280);
+  for (let at = 0; at <= 330; at += 33) healthy.capture(at, at);
+});
+test("a 140 ms gap inside a dissolve is refused before the transition ends", () => {
+  const clock = new CaptureCadenceClock(280);
+  clock.capture(1000, 0);
+  clock.capture(1033, 33);
+  assert.throws(() => clock.capture(1173, 173), error => {
+    assert(error instanceof Error);
+    assert.deepEqual(error.cause, {gapMilliseconds: 140, maxTransitionGapMilliseconds: 130});
+    return true;
+  });
+  assert.throws(() => new CaptureCadenceClock(280).capture(0), /transition clock could not be verified/);
+});
+test("capture cadence rejects invalid and reversed timestamps", () => {
+  for (const at of [NaN, Infinity, -1])
+    assert.throws(() => new CaptureCadenceClock().capture(at), /could not be verified/);
+  const clock = new CaptureCadenceClock();
+  clock.capture(100);
+  assert.throws(() => clock.capture(99), /moved backwards/);
 });
