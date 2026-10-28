@@ -630,14 +630,14 @@ struct SignInView: View {
     /// Called once this explicit account sign-in succeeds.
     var onSignedIn: () -> Void = {}
     var title: String = "Use Rendprop on your other devices"
-    var subtitle: String = "Sign in with Apple to connect your listings and saved work to your Rendprop account."
+    var subtitle: String = "Sign in to connect your listings and saved work to your Rendprop account."
 
     var dismissNote: String = "Your saved work stays on this phone."
     var requiresAccount = false
 
     static func requiredAccount() -> SignInView {
         SignInView(title: "Welcome to Rendprop",
-                   subtitle: "Create an account or sign in with Apple to continue. Your account keeps your listings, saved media and workspace connected.",
+                   subtitle: "Sign in with Apple to continue. Have a Rendprop account? You can also sign in with email.",
                    dismissNote: "Existing work on this phone stays saved while you sign in.",
                    requiresAccount: true)
     }
@@ -669,6 +669,7 @@ struct SignInView: View {
     @State private var isExchanging = false
     @State private var errorMessage: String?
     @State private var showQuickStart = false
+    @State private var showEmailSignIn = false
 
     var body: some View {
         VStack(spacing: 22) {
@@ -725,6 +726,17 @@ struct SignInView: View {
             .disabled(isExchanging)
             .accessibilityIdentifier("account.signInApple")
 
+            Button { showEmailSignIn = true } label: {
+                Label("Sign in with email", systemImage: "envelope.fill")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 50)
+            }
+            .modifier(RendpropActionAppearance(primary: false))
+            .padding(.horizontal)
+            .disabled(isExchanging)
+            .accessibilityHint("Use an existing Rendprop account.")
+            .accessibilityIdentifier("account.emailSignInOption")
+
             if isExchanging {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -767,6 +779,13 @@ struct SignInView: View {
         .background(Theme.bg)
         .interactiveDismissDisabled(requiresAccount || isExchanging)
         .sheet(isPresented: $showQuickStart) { QuickStartVideoView() }
+        .sheet(isPresented: $showEmailSignIn) {
+            EmailAccountSignInSheet {
+                showEmailSignIn = false
+                onSignedIn()
+                if !requiresAccount { dismiss() }
+            }
+        }
     }
 
     private func handle(_ result: Result<ASAuthorization, Error>) {
@@ -821,6 +840,114 @@ struct SignInView: View {
                         isExchanging = false
                         errorMessage = "Couldn't sign in: \(error.localizedDescription)"
                     }
+                }
+            }
+        }
+    }
+}
+
+/// App-specific credentials are entered by the person and exchanged with
+/// Supabase Auth. This sheet contains no account creation or embedded secret.
+private struct EmailAccountSignInSheet: View {
+    let onSignedIn: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var email = ""
+    @State private var password = ""
+    @State private var isSigningIn = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    Image(systemName: "envelope.fill")
+                        .font(.system(size: 44, weight: .light))
+                        .foregroundStyle(Theme.accent)
+                        .accessibilityHidden(true)
+                    Text("Sign in with email")
+                        .font(.rpTitle)
+                        .foregroundStyle(Theme.ink)
+                        .multilineTextAlignment(.center)
+                    Text("Enter the email and password for your Rendprop account.")
+                        .font(.rpBody)
+                        .foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.center)
+
+                    VStack(spacing: 0) {
+                        TextField("Email address", text: $email)
+                            .textContentType(.username)
+                            .keyboardType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .submitLabel(.next)
+                            .accessibilityIdentifier("account.emailAddress")
+                        Divider().padding(.vertical, 14)
+                        SecureField("Password", text: $password)
+                            .textContentType(.password)
+                            .submitLabel(.go)
+                            .accessibilityIdentifier("account.emailPassword")
+                    }
+                    .font(.rpBody)
+                    .padding(18)
+                    .background(Theme.card, in: RoundedRectangle(cornerRadius: 22))
+                    .overlay(RoundedRectangle(cornerRadius: 22).stroke(Theme.border, lineWidth: 1))
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.warn)
+                            .multilineTextAlignment(.center)
+                            .accessibilityIdentifier("account.emailError")
+                    }
+
+                    Button(action: signIn) {
+                        Group {
+                            if isSigningIn { ProgressView() }
+                            else { Text("Sign in") }
+                        }
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .modifier(RendpropActionAppearance(primary: true))
+                    .disabled(isSigningIn || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
+                    .accessibilityIdentifier("account.emailSubmit")
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .background(Theme.bg)
+            .navigationTitle("Email sign-in")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }.disabled(isSigningIn)
+                }
+            }
+        }
+        .interactiveDismissDisabled(isSigningIn)
+    }
+
+    private func signIn() {
+        guard !isSigningIn else { return }
+        isSigningIn = true
+        errorMessage = nil
+        Task {
+            do {
+                let identity = try await AuthStore.shared.signInWithPassword(email: email, password: password)
+                guard identity.isCurrent else { isSigningIn = false; return }
+                password = ""
+                isSigningIn = false
+                onSignedIn()
+            } catch is CancellationError {
+                isSigningIn = false
+            } catch {
+                isSigningIn = false
+                if let status = (error as? APIError)?.status, [400, 401, 422].contains(status) {
+                    errorMessage = "Email or password wasn't accepted. Check the details and try again."
+                } else {
+                    errorMessage = error.localizedDescription
                 }
             }
         }

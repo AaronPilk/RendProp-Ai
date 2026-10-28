@@ -48,7 +48,7 @@ installed or tested a build.
 | `CaptureRecoveryTests` | Relaunch, joining a seeded saved take and opening original/part export sheets | Requires the isolated synthetic recovery setup below; does not write to a selected share destination. |
 | `ProductionPlanUITests` | Photo-first property plan, local checklist persistence, no false cloud-save claim | Mock, no camera, upload or paid provider. |
 | `GuidedPhotoNavigationTests` | Photos and exterior camera entry, truthful unavailable hardware, Close/reopen and largest accessibility text | Dedicated simulator; no synthetic camera output or physical lens validation. |
-| `SessionNetworkFlow` | Publish/photo/aerial/reel actions resume once after session-network recovery | Debug loopback server at `127.0.0.1:18765`, fixture control endpoints and a disposable simulator required. |
+| `SessionNetworkFlow` | Publish/photo/aerial/reel actions resume once after session-network recovery; review-account password rejection, sign-in, sign-out, and account switch | Debug loopback server at `127.0.0.1:18765`, fixture control endpoints and a disposable simulator required. |
 
 ## Mock and local network behavior
 
