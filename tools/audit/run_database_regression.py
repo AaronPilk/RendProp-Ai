@@ -57,6 +57,7 @@ REFLECTION_FIXTURES = (
     ("trial_hybrid_funded_serving.sql", '"assertions": 43', 43),
     ("paid_media_budget_cap.sql", '"assertions": 19', 19),
     ("reviewer_sandbox_shared_credit.sql", '"assertions": 42', 42),
+    ("trial_card_backed_authority.sql", '"assertions": 25', 25),
 )
 
 # These already-shipped transactional Studio migrations intentionally create
@@ -145,6 +146,9 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     # Exact paid/reviewer predecessor guards and new private functions apply
     # once; a second application must refuse before changing money authority.
     "20261028010346_reviewer_sandbox_shared_credit_budget.sql",
+    # New card authority tables and CAS function rewrites are installed once;
+    # cash-backed historical paths remain covered by reflection fixtures.
+    "20261028211732_trial_card_backed_authority.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
