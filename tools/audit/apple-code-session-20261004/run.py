@@ -40,7 +40,9 @@ def main():
                "    private static func priorAccessTokenForAdoption(", "    func signOut(",
                "    static func jwtSubject(", "    nonisolated static func tokenIsIdentified(", "    private struct SupabaseSession:",
                "    nonisolated private static func tokenPayload(", "    nonisolated private static func tokenIdentityClaimIsValid(", "    nonisolated private static func jwtExpiry(",
-               "    func exchangeAppleIdentityToken("]
+               "    func exchangeAppleIdentityToken(",
+               "    private func beginIdentifiedSignInAttempt(",
+               "    private func acceptIdentifiedSession("]
     methods = {marker: block(source, marker) for marker in markers}
     hashes = {marker: hashlib.sha256(body.encode()).hexdigest() for marker, body in methods.items()}
     expected = None
@@ -62,13 +64,13 @@ def main():
         methods[marker] = methods[marker].replace(needle, needle + "\n        if let legacy = SecureStore.get(Keys.pendingAppleAuthCode) { await submitAppleAuthorizationCode(legacy, for: identity) }")
         expected = "legacy unscoped code is preserved without transport"
     elif args.inject_fault == "drop-exchange-fence":
-        marker = "    func exchangeAppleIdentityToken("
+        marker = "    private func acceptIdentifiedSession("
         needle = "        guard !Task.isCancelled, sessionEpoch == acceptedEpoch,\n              isSignedIn, isIdentified, let acceptedOwner, userID == acceptedOwner else { throw CancellationError() }"
         assert methods[marker].count(needle) == 1
         methods[marker] = methods[marker].replace(needle, "        guard let acceptedOwner else { throw CancellationError() }")
         expected = "exchange cannot return a sign-in receipt after replacement identity"
     elif args.inject_fault == "drop-apply-acceptance":
-        marker = "    func exchangeAppleIdentityToken("
+        marker = "    private func acceptIdentifiedSession("
         needle = '''        guard applySession(accessToken: session.accessToken,
                            refreshToken: session.refreshToken,
                            expiresAt: session.expiryDate) else {
