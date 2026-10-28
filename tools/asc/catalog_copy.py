@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reconcile only Rendprop's 1.0.5 subscription and review copy.
+"""Reconcile Rendprop's 1.0.5 base and optional Team subscription copy.
 
 `plan` uses authenticated GETs. After the funded monthly catalog is active,
 `apply` patches changed en-US subscription
@@ -94,7 +94,7 @@ def _relationship_id(row, name):
     return (((row.get("relationships") or {}).get(name) or {}).get("data") or {}).get("id")
 
 
-def _validate_price_and_trial(client, subscription, spec):
+def _validate_price_and_trial(client, subscription, spec, require_trial=True):
     product_id = spec["productId"]
     offers = client.get_all("/v1/subscriptions/%s/introductoryOffers" % subscription["id"])
     valid_offers = [o for o in offers if all((
@@ -106,8 +106,10 @@ def _validate_price_and_trial(client, subscription, spec):
         (o.get("attributes", {}).get("startDate") or "9999-12-31") <=
             datetime.now(timezone.utc).date().isoformat(),
     ))]
-    if not valid_offers:
+    if require_trial and not valid_offers:
         raise CopyError("%s has no open 7-day free trial" % product_id)
+    if not require_trial and offers:
+        raise CopyError("%s has a trial offer, incompatible with the paid-Team-owner route" % product_id)
     prices, included = client.get_all_included(
         "/v1/subscriptions/%s/prices" % subscription["id"],
         params={"include": "subscriptionPricePoint,territory", "limit": 200})
@@ -148,9 +150,11 @@ def _change(kind, resource, attrs):
     return {"kind": kind, "id": resource["id"], "attrs": changed}
 
 
-def plan(client):
+def plan(client, include_team_seats=False):
     team_variants_dormant = verify_source()
-    catalog = specs()
+    if include_team_seats and team_variants_dormant:
+        raise CopyError("Team 4-9 is still excluded from the native StoreKit allowlist")
+    catalog = specs() if include_team_seats else specs()[:len(CORE)]
     app = asc.require_app(client)
     if app["id"] != EXPECTED_APP_ID:
         raise CopyError("App ID %s is not the vetted Rendprop app" % app["id"])
@@ -166,7 +170,9 @@ def plan(client):
         subscription = by_product.get(product_id)
         if not subscription or subscription.get("attributes", {}).get("subscriptionPeriod") != "ONE_MONTH":
             raise CopyError("%s is missing or not monthly" % product_id)
-        price_date = _validate_price_and_trial(client, subscription, spec)
+        price_date = _validate_price_and_trial(
+            client, subscription, spec,
+            require_trial=product_id in {row[1] for row in CORE})
         local = _one([row for row in client.get_all(
             "/v1/subscriptions/%s/subscriptionLocalizations" % subscription["id"])
             if row.get("attributes", {}).get("locale") == "en-US"],
@@ -188,33 +194,37 @@ def plan(client):
     local = _one([row for row in client.get_all(
         "/v1/appStoreVersions/%s/appStoreVersionLocalizations" % version["id"])
         if row.get("attributes", {}).get("locale") == "en-US"], "version en-US localization")
-    copy_variant = "" if team_variants_dormant else "_team_seats"
+    copy_variant = "_team_seats" if include_team_seats else ""
     listing = {"description": _copy_file("description" + copy_variant, 4000),
                "promotionalText": _copy_file("promotional_text", 170),
                "whatsNew": _copy_file("release_notes", 4000)}
     changes.append(_change("appStoreVersionLocalizations", local, listing))
     detail = client.get_optional("/v1/appStoreVersions/%s/appStoreReviewDetail" % version["id"])
     if not detail or not (detail.get("data") or {}).get("id"):
-        raise CopyError("Version 1.0.5 App Review detail is missing")
+        raise CopyError("Version 1.0.5 App Review detail is missing; create it with the demo account in App Store Connect's private UI")
+    if (detail["data"].get("attributes") or {}).get("demoAccountRequired") is not True:
+        raise CopyError("Version 1.0.5 App Review demo login is not configured; set it in App Store Connect's private UI before copy reconciliation")
     notes = _copy_file("review_notes" + copy_variant, 4000)
-    if team_variants_dormant and "Team 4-9-seat products are not offered" not in notes:
-        raise CopyError("Review notes must disclose dormant Team 4-9-seat products")
-    if not team_variants_dormant and (
-            "Team 4-9-seat products are not offered" in notes or
-            "additional Team seats" not in notes or "additional Team seats" not in listing["description"]):
-        raise CopyError("Public and review copy must describe newly sold additional Team seats")
+    if not include_team_seats and "Team 4–9-seat variants are prepared but gated" not in notes:
+        raise CopyError("Default review notes must disclose gated Team 4-9 variants")
+    if include_team_seats and (
+            "More Team seats" not in notes or
+            "If activated, a paid Team owner" not in listing["description"]):
+        raise CopyError("Team variant copy must describe the conditional paid-owner route")
     changes.append(_change("appStoreReviewDetails", detail["data"], {"notes": notes}))
     return app["id"], version["id"], changes, evidence
 
 
 def run(client, action, confirm_app_id=None, confirm_version_id=None,
-        confirm_credit_activation=False, out=None):
+        confirm_credit_activation=False, include_team_seats=False,
+        confirm_team_seat_activation=False, out=None):
     out = out or sys.stdout
-    app_id, version_id, changes, evidence = plan(client)
+    app_id, version_id, changes, evidence = plan(client, include_team_seats)
     out.write("App %s, iOS version %s (%s)\n" % (app_id, VERSION, version_id))
     for product_id, amount, price_date, desired, current in evidence:
-        out.write("  %s: USA USD %s %s; 7-day trial; %s / %s%s\n" %
+        out.write("  %s: USA USD %s %s; %s; %s / %s%s\n" %
                   (product_id, amount, "from " + price_date if price_date else "current",
+                   "7-day trial" if product_id in {row[1] for row in CORE} else "no trial",
                    desired["name"], desired["description"],
                    " [change]" if any(current.get(k) != v for k, v in desired.items()) else ""))
     pending = [change for change in changes if change["attrs"]]
@@ -231,6 +241,8 @@ def run(client, action, confirm_app_id=None, confirm_version_id=None,
     if not confirm_credit_activation:
         raise CopyError("Apply requires --confirm-credit-activation after a live readback "
                         "of active monthly credit catalog, funded schedules and serving policy")
+    if include_team_seats and not confirm_team_seat_activation:
+        raise CopyError("Apply with Team 4-9 requires --confirm-team-seat-activation after funded candidate setup, distinct review screenshots and device verification; keep public gates off until Apple approval")
     for change in pending:
         kind, identifier, attrs = change["kind"], change["id"], change["attrs"]
         path = "/v1/%s/%s" % (kind, identifier)
@@ -251,11 +263,16 @@ def main(argv=None):
     parser.add_argument("--confirm-version-id")
     parser.add_argument("--confirm-credit-activation", action="store_true",
                         help="operator confirms a fresh live readback of funded retail credit activation")
+    parser.add_argument("--include-team-seats", action="store_true",
+                        help="explicitly select the conditional 4-9-seat Team metadata")
+    parser.add_argument("--confirm-team-seat-activation", action="store_true",
+                        help="operator confirms funded Team-seat candidate, review images and device route; public gate awaits Apple approval")
     args = parser.parse_args(argv)
     try:
         client = asc.Client(asc.load_credentials(), verbose=False)
         return run(client, args.action, args.confirm_app_id, args.confirm_version_id,
-                   args.confirm_credit_activation)
+                   args.confirm_credit_activation, args.include_team_seats,
+                   args.confirm_team_seat_activation)
     except (CopyError, asc.AscError) as exc:
         print("FAILED: %s" % exc, file=sys.stderr)
         return 1

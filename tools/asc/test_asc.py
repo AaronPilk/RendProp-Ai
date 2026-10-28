@@ -2006,6 +2006,52 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertIn("cannot create app records", str(caught.exception))
 
 
+class ReviewDetailDemoAccountTests(unittest.TestCase):
+    class Client:
+        def __init__(self, attributes=None):
+            self.attributes = attributes
+            self.patches = []
+
+        def get_optional(self, path):
+            if self.attributes is None:
+                return None
+            return {"data": {"type": "appStoreReviewDetails", "id": "review-1",
+                             "attributes": self.attributes}}
+
+        def patch(self, path, body):
+            self.patches.append((path, body))
+            self.attributes.update(body["data"]["attributes"])
+            return {"data": {"id": "review-1", "attributes": self.attributes}}
+
+    def test_provisioned_demo_account_is_preserved_when_notes_change(self):
+        client = self.Client({"demoAccountRequired": True,
+                              "demoAccountName": "review@example.invalid",
+                              "demoAccountPassword": "example-secret",
+                              "notes": "old"})
+        asc.ensure_review_detail(client, "version-1", None, "updated",
+                                 asc.Plan(dry_run=False, out=io.StringIO()))
+        self.assertEqual(len(client.patches), 1)
+        self.assertEqual(client.patches[0][1]["data"]["attributes"], {"notes": "updated"})
+        self.assertEqual(client.attributes["demoAccountRequired"], True)
+        self.assertEqual(client.attributes["demoAccountName"], "review@example.invalid")
+        self.assertEqual(client.attributes["demoAccountPassword"], "example-secret")
+
+    def test_unprovisioned_demo_account_blocks_review_note_upload(self):
+        client = self.Client({"demoAccountRequired": False, "notes": "old"})
+        with self.assertRaises(asc.AscError) as caught:
+            asc.ensure_review_detail(client, "version-1", None, "updated",
+                                     asc.Plan(dry_run=False, out=io.StringIO()))
+        self.assertIn("demo login is not configured", str(caught.exception))
+        self.assertEqual(client.patches, [])
+
+    def test_missing_review_details_must_be_created_in_secure_ui(self):
+        client = self.Client()
+        with self.assertRaises(asc.AscError):
+            asc.ensure_review_detail(client, "version-1", None, "updated",
+                                     asc.Plan(dry_run=False, out=io.StringIO()))
+        self.assertEqual(client.patches, [])
+
+
 class ReviewSubmitTests(unittest.TestCase):
     """`review submit` is explicit and never part of `apply`."""
 

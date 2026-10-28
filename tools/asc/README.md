@@ -163,7 +163,7 @@ That runs, in order, stopping at the first failure:
 | 2 | `asc.py subscriptions apply --skip-product com.rendprop.app.team.annual` | Subscription group, six products (Team Yearly skipped, see below), en-US names and descriptions, then per product **availability → price → 1-week free trial** in that order, plus the App Store Server Notification URLs. A product Apple has no price point for is left unpriced and reported. |
 | 3 | `asc.py metadata apply` | App name, subtitle, categories, age rating, privacy policy URL, content rights (no third-party content), the app's own price (Free, base territory USA), US-only app availability, then the version's description, keywords, promotional text, support and marketing URLs. "What's New" is skipped until the app has a released version. |
 | 4 | `asc.py screenshots apply [--dir …] [--replace]` | Uploads the 6.9-inch set in filename order — `docs/appstore/screenshots/6.9-framed/*.png` (the composed set) when that directory has PNGs, else the raw `docs/appstore/screenshots/6.9/*.png`. `bash tools/asc/bridge-610-asc-apply.sh --replace-screenshots` passes `--replace`, which deletes every screenshot already in the set first — needed once after a re-frame, because a set holds at most 10 and the old images are still in it. |
-| 5 | `asc.py review apply --skip-product com.rendprop.app.team.annual` | App Review contact + notes, and the paywall screenshot on every subscription that is sold. |
+| 5 | `asc.py review apply --skip-product com.rendprop.app.team.annual` | App Review contact + notes, and the paywall screenshot on every subscription that is sold. First set and rehearse the private demo login in App Store Connect; this command refuses to sync notes while `demoAccountRequired` is false. |
 | 5b | `asc.py review stage --skip-product com.rendprop.app.team.annual` | Apple's "Add for Review" by API: one draft review submission with the selected editable version, the subscription group and the five sold subscriptions as items. Nothing is submitted. Needs App Privacy published and every subscription priced in all territories (which `subscriptions apply` now does). |
 | 6 | `asc.py status --skip-product com.rendprop.app.team.annual` | One page saying where everything stands and what is still missing. Team Yearly is deliberately withdrawn (see below), so it is shown but not counted. |
 
@@ -310,7 +310,20 @@ missing"), `2` bad arguments.
 | `docs/appstore/metadata/en-US/copyright.txt` | copyright line (optional) |
 | `docs/appstore/screenshots/6.9-framed/*.png` | the composed screenshots (`tools/screenshots/compose.py` from `docs/appstore/screenshots/plan.json`), uploaded in filename order; `--dir` picks another directory, `docs/appstore/screenshots/6.9/` is the raw fallback |
 | `docs/appstore/iap-review/paywall.png` | the review screenshot on each subscription |
-| `docs/appstore/metadata/en-US/review_notes.txt` | Uploaded App Review notes (≤4000); skipped if absent. The separate Markdown review guide is not read by this script. |
+| `docs/appstore/metadata/en-US/review_notes.txt` | Uploaded App Review notes (≤4000); skipped if absent. `review_notes_team_seats.txt` is selected only with `review --include-team-seats` or `catalog_copy.py --include-team-seats`. The separate Markdown review guide is not read by these scripts. |
+
+`description_team_seats.txt` is a conditional drafting variant; `asc.py metadata`
+always reads `description.txt`, while the narrow `catalog_copy.py` selects the
+Team variant only with `--include-team-seats`. `review apply` updates only contact fields and
+source notes on an existing App Review Information record. It never reads,
+prints, creates, or patches demo credentials or `demoAccountRequired`. Set the
+provisioned owner account and `demoAccountRequired` in App Store Connect's
+private UI first. The command refuses to upload notes while that flag is false
+and refuses to create the review record without the secure UI handoff. If the
+expired-subscription account must be entered in the private Notes field, append
+it in the UI **after the final `review apply`**; rerunning the command would
+replace the whole Notes field with the tracked source text. See
+`docs/appstore/submission-metadata-readiness-20261028.md` for the current gate.
 
 > **"What's New" is not written on a first release.** App Store Connect rejects
 > `whatsNew` on an app's first version with 409 `STATE_ERROR`, "Attribute

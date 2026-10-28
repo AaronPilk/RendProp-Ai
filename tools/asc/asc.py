@@ -3059,7 +3059,10 @@ def ensure_review_detail(client, version_id, contact, notes, plan):
         return
     current = client.get_optional("/v1/appStoreVersions/%s/appStoreReviewDetail" % version_id)
 
-    wanted = {"demoAccountRequired": False}
+    # Demo credentials belong in App Store Connect's private App Review
+    # Information UI. Never clear a provisioned login while syncing contact
+    # details or notes from this checkout.
+    wanted = {}
     if contact:
         wanted.update(
             {
@@ -3075,6 +3078,17 @@ def ensure_review_detail(client, version_id, contact, notes, plan):
     if current and (current.get("data") or {}).get("id"):
         detail_id = current["data"]["id"]
         attrs = attributes_of(current["data"])
+        if notes and attrs.get("demoAccountRequired") is not True:
+            message = (
+                "App Review demo login is not configured for this version. "
+                "Provision and rehearse the reviewer account, then enter its "
+                "credentials in App Store Connect > App Review Information. "
+                "This tool never reads or writes those credentials."
+            )
+            if plan.dry_run:
+                plan.warn(message)
+                return
+            raise AscError(message + " No App Review details were changed.")
         changed = {k: v for k, v in wanted.items() if attrs.get(k) != v}
         if not changed:
             plan.note("App Review details are current")
@@ -3088,15 +3102,15 @@ def ensure_review_detail(client, version_id, contact, notes, plan):
         )
         return
 
-    body = {
-        "data": {
-            "type": "appStoreReviewDetails",
-            "attributes": wanted,
-            "relationships": {"appStoreVersion": relationship("appStoreVersions", version_id)},
-        }
-    }
-    # https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-appStoreReviewDetails
-    plan.act("create App Review details", lambda: client.post("/v1/appStoreReviewDetails", body))
+    message = (
+        "App Review Information is absent for this version. Create it in "
+        "App Store Connect with the provisioned demo login, then rerun to "
+        "sync contact details and notes. This tool never handles credentials."
+    )
+    if plan.dry_run:
+        plan.warn(message)
+        return
+    raise AscError(message + " No App Review details were changed.")
 
 
 def ensure_iap_review_screenshot(client, subscription_id, product_id, plan, out):

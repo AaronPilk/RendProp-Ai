@@ -63,10 +63,10 @@ class CatalogCopyTests(unittest.TestCase):
         self.assertEqual(len(specs), 10)
         self.assertEqual(specs[0]["description"], "60 AI credits monthly; 1 seat.")
         self.assertEqual(specs[-1]["description"], "1,200 AI credits monthly; 9 seats.")
-        self.assertIn("Max ($49.99, 120 credits", catalog_copy._copy_file("description", 4000))
+        self.assertIn("Max (120, one seat)", catalog_copy._copy_file("description", 4000))
         self.assertIn("four monthly products", catalog_copy._copy_file("review_notes", 4000))
-        self.assertIn("Each additional Team seat adds $50", catalog_copy._copy_file("description_team_seats", 4000))
-        self.assertIn("Each additional Team seat adds $50", catalog_copy._copy_file("review_notes_team_seats", 4000))
+        self.assertIn("If activated, a paid Team owner", catalog_copy._copy_file("description_team_seats", 4000))
+        self.assertIn("More Team seats", catalog_copy._copy_file("review_notes_team_seats", 4000))
 
     def test_price_and_trial_require_exact_usa_terms(self):
         spec = catalog_copy.specs()[0]
@@ -77,6 +77,26 @@ class CatalogCopyTests(unittest.TestCase):
             catalog_copy._validate_price_and_trial(PriceClient(amount="29.00"), sub, spec)
         with self.assertRaisesRegex(catalog_copy.CopyError, "no open 7-day"):
             catalog_copy._validate_price_and_trial(PriceClient(offer=False), sub, spec)
+
+    def test_team_variant_requires_removal_of_introductory_offer(self):
+        spec = catalog_copy.specs()[4]
+        self.assertIsNone(catalog_copy._validate_price_and_trial(
+            PriceClient(amount=spec["usd"], offer=False), {"id": "team4"}, spec,
+            require_trial=False))
+        with self.assertRaisesRegex(catalog_copy.CopyError, "trial offer"):
+            catalog_copy._validate_price_and_trial(
+                PriceClient(amount=spec["usd"], offer=True), {"id": "team4"}, spec,
+                require_trial=False)
+
+    def test_team_variant_copy_needs_explicit_native_and_operator_activation(self):
+        with patch.object(catalog_copy, "verify_source", return_value=True):
+            with self.assertRaisesRegex(catalog_copy.CopyError, "native StoreKit allowlist"):
+                catalog_copy.plan(None, include_team_seats=True)
+        snapshot = (catalog_copy.EXPECTED_APP_ID, "version", [], [])
+        with patch.object(catalog_copy, "plan", return_value=snapshot):
+            with self.assertRaisesRegex(catalog_copy.CopyError, "confirm-team-seat-activation"):
+                catalog_copy.run(PatchClient(), "apply", catalog_copy.EXPECTED_APP_ID,
+                                 "version", True, True, False, out=io.StringIO())
 
     def test_existing_products_require_the_known_future_schedule(self):
         spec = catalog_copy.specs()[1]

@@ -12,10 +12,10 @@ MAKE A VIDEO
 Choose Listing for a landscape video or Social media for a portrait video. Select your photos in order and review framing. Optional narration and music stay under your control. Review the finished result before saving, sharing or choosing it for your website.
 
 YOUR PROPERTY WEBSITE
-Bring together photos, listing details, contact information and your selected listing video. A recorded drone-style walkthrough is optional and separate. Room tags require a recorded or uploaded walkthrough. Share the website link with buyers and review enquiries in Leads.
+Bring together photos, listing details, contact information and your selected listing video. A recorded drone-style walkthrough is optional and separate. Room tags require a recorded or uploaded walkthrough. Share the website link with buyers and review enquiries in Leads. Classic is included with paid access. Signature Estate and Coastal Luxe have design samples; live property previews require a published website.
 
 WORK ON IPHONE AND IN STUDIO
-Sign in with Apple to use your account and listing records across iPhone and Rendprop Studio. Local media is not automatically copied to every device. Internet is required for AI processing, publishing and Studio.
+Sign in with Apple or sign in to an existing Rendprop account with email and password. Your account and listing records work across iPhone and Rendprop Studio. Local media is not automatically copied to every device. Internet is required for AI processing, publishing and Studio.
 
 YOUR CONTENT, YOUR CHOICES
 Cloud AI asks permission before sending selected content to named providers. You control what to review and publish. Only use content you have permission to share.
@@ -23,9 +23,14 @@ Cloud AI asks permission before sending selected content to named providers. You
 With paid access, Aerial intro can make an optional AI-generated opening from a front exterior photo. Review the result before choosing whether it starts a video. Floor plans, measurements and 3D tours are Coming soon and are not included in any plan.
 
 SUBSCRIPTIONS
-The monthly plans are Pro ($29.99, 60 credits, one seat), Max ($49.99, 120 credits, one seat), Ultra ($99.99, 250 credits, one seat) and Team ($249.99, 600 credits, three seats). Choose Team plans with 4–9 seats in the app. Each additional Team seat adds $50 per month and 100 monthly credits: four seats are $299.99 with 700 credits, up to nine seats at $549.99 with 1,200 credits. Credits cover eligible AI photo edits after the trial; the app shows each eligible edit's credit cost first. Prices above are for the U.S. storefront. The app shows your localized price and current offer before you confirm with Apple.
+Four monthly plans are prepared: Pro (60 monthly credits, one seat), Max (120, one seat), Ultra (250, one seat) and Team (600, three seats). The app shows Apple's localized price and current offer before confirmation. Credits cover eligible AI work after the trial, with the cost shown before you start. Annual subscriptions are not offered.
+
+If activated, a paid Team owner may choose monthly 4–9-seat plans under More Team seats. Each added seat brings 100 monthly credits. Availability depends on the workspace and Apple.
 
 Eligible new subscribers can start a 7-day free trial by confirming a subscription with Apple. The trial permits one draft listing and limited AI photo edits. Video generation, aerial generation and website publication begin after the first paid renewal. Full paid allowances begin after the trial. Subscriptions renew automatically unless cancelled at least 24 hours before the current period ends. Manage or cancel subscriptions in Apple account Settings. Deleting the app or account does not cancel an Apple subscription.
+
+ONE-TIME EXTRAS
+When enabled for eligible accounts, a 100-credit pack is a $39.99 U.S. consumable for one workspace, and a $25 U.S. Luxury Property Website consumable unlocks both luxury designs for one saved property. Purchased credits do not expire; the design upgrade adds neither credits nor hosting. These purchase controls appear only after activation and eligibility checks; otherwise they are absent. Apple shows the localized price before confirmation.
 
 Terms of Use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 Rendprop terms: https://rendprop.com/terms

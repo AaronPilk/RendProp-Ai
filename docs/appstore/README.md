@@ -64,8 +64,8 @@ evidence that every feature is ready for public release.
 
 ## Metadata measurements
 
-Measured from the local 27 October 2026 candidate files
-after trimming outer whitespace, matching the tool's inputs:
+Measured from the local 28 October 2026 source draft after trimming trailing
+newlines, matching the tool's inputs. These counts do not imply an ASC upload:
 
 | Field | Characters | UTF-8 bytes | Tool limit |
 | --- | ---: | ---: | --- |
@@ -73,9 +73,11 @@ after trimming outer whitespace, matching the tool's inputs:
 | `subtitle.txt` | 29 | 29 | 30 characters |
 | `promotional_text.txt` | 153 | 153 | 170 characters |
 | `keywords.txt` | 96 | 96 | 100 bytes |
-| `description.txt` | 2497 | 2497 | 4000 characters |
-| `release_notes.txt` | 630 | 630 | 4000 characters |
-| `review_notes.txt` | 3614 | 3614 | 4000 characters |
+| `description.txt` | 3720 | 3720 | 4000 characters |
+| `description_team_seats.txt` | 3903 | 3905 | 4000 characters; selected only by `catalog_copy.py --include-team-seats`, not by `asc.py metadata` |
+| `release_notes.txt` | 709 | 709 | 4000 characters |
+| `review_notes.txt` | 3533 | 3535 | 4000 characters |
+| `review_notes_team_seats.txt` | 3773 | 3775 | 4000 characters; selected only with `review --include-team-seats` or `catalog_copy.py --include-team-seats` |
 
 Re-measure after editing; old counts are not a validation result for new
 text. The tool checks limits before sending fields.
@@ -88,19 +90,20 @@ reintroduce those claims until a signed build re-enables the tool.
 
 ## Keep listing claims consistent with the product
 
-- The repository's Starter/Pro/Team allowances in
-  [Products.swift](../../apps/ios/Rendprop/Purchases/Products.swift) are respectively
-  **4/100/30/2**, **10/200/60/4** and **25/400/150/8** for monthly tour renders,
-  AI photo edits, reel clips and aerial intros. Team has two seats. These match
-  current native plan copy; verify live `plan_entitlements` when changing plans.
-  The advertised photo counts exceed the conservative serving budgets for the
-  owner's 75%-after-Apple margin target. Agreement between files does not certify
-  profitability or that all advertised actions can be funded. See
-  [the pricing audit](../PRICING-AUDIT-20261003.md).
-- The app requests only the three monthly Starter, Pro and Team products.
-  `notSoldAtLaunch` excludes all annual products. The app presents Apple's
-  localized `Product.displayPrice`; a local fixture is not a fresh read of
-  store availability or regional prices.
+- The source catalog in [Products.swift](../../apps/ios/Rendprop/Purchases/Products.swift)
+  defines Pro, Max, Ultra and three-seat Team at 60, 120, 250 and 600 monthly
+  credits. These are post-trial targets; confirm the funded server grant and
+  exact StoreKit product before claiming a paid allowance on a device.
+- The base app asks StoreKit for four monthly subscriptions. Annual products
+  and Team 4–9 variants are dormant in this source; a separate paid-Team-owner
+  activation is required for the seat variants. Team's current ASC price was
+  $249.00 at the 28 October readback, with $249.99 scheduled for 30 October.
+  Rely on Apple's localized `Product.displayPrice` for the amount charged.
+- The $39.99 U.S. 100-credit consumable and $25 U.S. per-property luxury
+  website consumable are prepared in ASC but their production gates were off
+  at the 28 October readback. The candidate description and review notes state
+  those conditions; [submission readiness](submission-metadata-readiness-20261028.md)
+  tracks what must be verified before either purchase is advertised as live.
 - Named-account continuity requires the same account and workspace and completed
   uploads. Do not turn offline capture or anonymous-session support into a claim
   that unsynced local files automatically appear on another device.
