@@ -1,0 +1,351 @@
+{
+  "duration_seconds": 467.2176041666666,
+  "scenes": [
+    {
+      "id": "01",
+      "chapter": "Find your way",
+      "title": "Your first listing, from start to share",
+      "start": 0.0,
+      "audio_seconds": 10.29075,
+      "end": 10.84075
+    },
+    {
+      "id": "02",
+      "chapter": "Find your way",
+      "title": "Five tabs keep work organized",
+      "start": 10.84075,
+      "audio_seconds": 13.054208333333333,
+      "end": 24.444958333333332
+    },
+    {
+      "id": "03",
+      "chapter": "Find your way",
+      "title": "Sign in, then explore",
+      "start": 24.444958333333332,
+      "audio_seconds": 10.128666666666666,
+      "end": 35.123625
+    },
+    {
+      "id": "04",
+      "chapter": "Find your way",
+      "title": "Start in Listings",
+      "start": 35.123625,
+      "audio_seconds": 9.7826875,
+      "end": 45.456312499999996
+    },
+    {
+      "id": "05",
+      "chapter": "Build the home",
+      "title": "Enter the real address",
+      "start": 45.456312499999996,
+      "audio_seconds": 10.202541666666667,
+      "end": 56.20885416666666
+    },
+    {
+      "id": "06",
+      "chapter": "Build the home",
+      "title": "Choose who buyers contact",
+      "start": 56.20885416666666,
+      "audio_seconds": 10.189041666666666,
+      "end": 66.94789583333333
+    },
+    {
+      "id": "07",
+      "chapter": "Build the home",
+      "title": "Plan a simple photo route",
+      "start": 66.94789583333333,
+      "audio_seconds": 12.311354166666666,
+      "end": 79.80925
+    },
+    {
+      "id": "08",
+      "chapter": "Build the home",
+      "title": "Record a walkthrough only if useful",
+      "start": 79.80925,
+      "audio_seconds": 10.8655,
+      "end": 91.22475
+    },
+    {
+      "id": "09",
+      "chapter": "Photos & AI",
+      "title": "Add the original photos",
+      "start": 91.22475,
+      "audio_seconds": 9.460875,
+      "end": 101.235625
+    },
+    {
+      "id": "10",
+      "chapter": "Photos & AI",
+      "title": "Capture for a clean result",
+      "start": 101.235625,
+      "audio_seconds": 9.874791666666667,
+      "end": 111.66041666666666
+    },
+    {
+      "id": "11",
+      "chapter": "Photos & AI",
+      "title": "Open Photo versions",
+      "start": 111.66041666666666,
+      "audio_seconds": 11.428,
+      "end": 123.63841666666667
+    },
+    {
+      "id": "12",
+      "chapter": "Photos & AI",
+      "title": "Use AI Photo Studio selectively",
+      "start": 123.63841666666667,
+      "audio_seconds": 12.263916666666667,
+      "end": 136.45233333333334
+    },
+    {
+      "id": "13",
+      "chapter": "Photos & AI",
+      "title": "Review edits for truthfulness",
+      "start": 136.45233333333334,
+      "audio_seconds": 11.361645833333334,
+      "end": 148.36397916666667
+    },
+    {
+      "id": "14",
+      "chapter": "Photos & AI",
+      "title": "Set the gallery and cover",
+      "start": 148.36397916666667,
+      "audio_seconds": 9.222104166666666,
+      "end": 158.13608333333335
+    },
+    {
+      "id": "15",
+      "chapter": "Photos & AI",
+      "title": "Export the right photo copies",
+      "start": 158.13608333333335,
+      "audio_seconds": 12.647041666666667,
+      "end": 171.33312500000002
+    },
+    {
+      "id": "16",
+      "chapter": "Make a video",
+      "title": "Open Make a video",
+      "start": 171.33312500000002,
+      "audio_seconds": 11.130354166666667,
+      "end": 183.01347916666668
+    },
+    {
+      "id": "17",
+      "chapter": "Make a video",
+      "title": "Choose the photos in order",
+      "start": 183.01347916666668,
+      "audio_seconds": 10.5025,
+      "end": 194.0659791666667
+    },
+    {
+      "id": "18",
+      "chapter": "Make a video",
+      "title": "Set the screen shape",
+      "start": 194.0659791666667,
+      "audio_seconds": 10.252020833333333,
+      "end": 204.86800000000002
+    },
+    {
+      "id": "19",
+      "chapter": "Make a video",
+      "title": "Tune motion and timing",
+      "start": 204.86800000000002,
+      "audio_seconds": 11.459375,
+      "end": 216.87737500000003
+    },
+    {
+      "id": "20",
+      "chapter": "Make a video",
+      "title": "Check the framing review",
+      "start": 216.87737500000003,
+      "audio_seconds": 10.998416666666667,
+      "end": 228.4257916666667
+    },
+    {
+      "id": "21",
+      "chapter": "Make a video",
+      "title": "Add sound only when it helps",
+      "start": 228.4257916666667,
+      "audio_seconds": 11.384854166666667,
+      "end": 240.36064583333336
+    },
+    {
+      "id": "22",
+      "chapter": "Make a video",
+      "title": "Create, leave, and return",
+      "start": 240.36064583333336,
+      "audio_seconds": 10.597645833333333,
+      "end": 251.5082916666667
+    },
+    {
+      "id": "23",
+      "chapter": "Make a video",
+      "title": "Watch before you use it",
+      "start": 251.5082916666667,
+      "audio_seconds": 12.299104166666666,
+      "end": 264.3573958333334
+    },
+    {
+      "id": "24",
+      "chapter": "Optional video tools",
+      "title": "Aerial intro starts outside",
+      "start": 264.3573958333334,
+      "audio_seconds": 11.560916666666667,
+      "end": 276.4683125
+    },
+    {
+      "id": "25",
+      "chapter": "Optional video tools",
+      "title": "Accept an opening only if it works",
+      "start": 276.4683125,
+      "audio_seconds": 10.9641875,
+      "end": 287.9825
+    },
+    {
+      "id": "26",
+      "chapter": "Optional video tools",
+      "title": "Tag a recorded walkthrough",
+      "start": 287.9825,
+      "audio_seconds": 11.288666666666666,
+      "end": 299.82116666666667
+    },
+    {
+      "id": "27",
+      "chapter": "Publish the website",
+      "title": "Choose the website design",
+      "start": 299.82116666666667,
+      "audio_seconds": 11.396479166666667,
+      "end": 311.76764583333335
+    },
+    {
+      "id": "28",
+      "chapter": "Publish the website",
+      "title": "Review before publishing",
+      "start": 311.76764583333335,
+      "audio_seconds": 15.592520833333333,
+      "end": 327.91016666666667
+    },
+    {
+      "id": "29",
+      "chapter": "Publish the website",
+      "title": "Publish, then share the link",
+      "start": 327.91016666666667,
+      "audio_seconds": 12.391625,
+      "end": 340.85179166666666
+    },
+    {
+      "id": "30",
+      "chapter": "Publish the website",
+      "title": "Use the right MLS link",
+      "start": 340.85179166666666,
+      "audio_seconds": 11.103729166666668,
+      "end": 352.5055208333333
+    },
+    {
+      "id": "31",
+      "chapter": "Follow up & manage",
+      "title": "Leads stay with the property",
+      "start": 352.5055208333333,
+      "audio_seconds": 10.386395833333333,
+      "end": 363.44191666666666
+    },
+    {
+      "id": "32",
+      "chapter": "Follow up & manage",
+      "title": "Activity is the job dashboard",
+      "start": 363.44191666666666,
+      "audio_seconds": 14.662229166666666,
+      "end": 378.6541458333333
+    },
+    {
+      "id": "33",
+      "chapter": "Follow up & manage",
+      "title": "Recover without starting over",
+      "start": 378.6541458333333,
+      "audio_seconds": 12.061604166666667,
+      "end": 391.26574999999997
+    },
+    {
+      "id": "34",
+      "chapter": "Account & usage",
+      "title": "Account holds your tools",
+      "start": 391.26574999999997,
+      "audio_seconds": 11.605416666666667,
+      "end": 403.42116666666664
+    },
+    {
+      "id": "35",
+      "chapter": "Account & usage",
+      "title": "Understand the trial and plans",
+      "start": 403.42116666666664,
+      "audio_seconds": 20.457208333333334,
+      "end": 424.42837499999996
+    },
+    {
+      "id": "36",
+      "chapter": "Account & usage",
+      "title": "Credits are separate from the plan",
+      "start": 424.42837499999996,
+      "audio_seconds": 14.896291666666666,
+      "end": 439.8746666666666
+    },
+    {
+      "id": "37",
+      "chapter": "Account & usage",
+      "title": "Work with a team carefully",
+      "start": 439.8746666666666,
+      "audio_seconds": 12.589,
+      "end": 453.0136666666666
+    },
+    {
+      "id": "38",
+      "chapter": "Account & usage",
+      "title": "One last review, then share",
+      "start": 453.0136666666666,
+      "audio_seconds": 13.6539375,
+      "end": 467.2176041666666
+    }
+  ],
+  "chapters": [
+    {
+      "title": "Find your way",
+      "start": 0.0,
+      "end": 45.456312499999996
+    },
+    {
+      "title": "Build the home",
+      "start": 45.456312499999996,
+      "end": 91.22475
+    },
+    {
+      "title": "Photos & AI",
+      "start": 91.22475,
+      "end": 171.33312500000002
+    },
+    {
+      "title": "Make a video",
+      "start": 171.33312500000002,
+      "end": 264.3573958333334
+    },
+    {
+      "title": "Optional video tools",
+      "start": 264.3573958333334,
+      "end": 299.82116666666667
+    },
+    {
+      "title": "Publish the website",
+      "start": 299.82116666666667,
+      "end": 352.5055208333333
+    },
+    {
+      "title": "Follow up & manage",
+      "start": 352.5055208333333,
+      "end": 391.26574999999997
+    },
+    {
+      "title": "Account & usage",
+      "start": 391.26574999999997,
+      "end": 467.2176041666666
+    }
+  ]
+}

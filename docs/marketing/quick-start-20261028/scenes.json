@@ -1,0 +1,197 @@
+{
+  "title": "Rendprop · A complete first-listing guide",
+  "voice": "Samantha",
+  "voice_rate_wpm": 200,
+  "scenes": [
+    {
+      "id": "01", "chapter": "Find your way", "title": "Your first listing, from start to share",
+      "narration": "Welcome to Rendprop. This guide walks through one complete listing: enter the home, capture photos, review optional edits, make a video, publish the website, and follow up with buyers.",
+      "steps": ["One home keeps the work together", "You can leave while AI work continues", "Review every result before sharing"], "art": "hero"
+    },
+    {
+      "id": "02", "chapter": "Find your way", "title": "Five tabs keep work organized",
+      "narration": "The bottom bar has Home, Listings, Activity, Leads, and Account. Home starts new work. Listings holds each property. Activity tracks jobs. Leads holds enquiries. Account contains your profile, settings, and plan.",
+      "steps": ["Home → start", "Listings → property files", "Activity, Leads, Account → follow through"], "art": "tabs"
+    },
+    {
+      "id": "03", "chapter": "Find your way", "title": "Sign in, then explore",
+      "narration": "Sign in with Apple and finish the short introduction. Exploring the app does not start a free trial. A trial begins only if Apple offers it, you confirm the subscription, and Rendprop verifies it.",
+      "steps": ["Sign in with Apple", "Choose your business and role", "Check Apple’s offer before confirming"], "art": "sign-in"
+    },
+    {
+      "id": "04", "chapter": "Find your way", "title": "Start in Listings",
+      "narration": "Open Listings and add the property before making media. The listing is the folder for its original photos, saved edits, videos, website, contact choice, and buyer enquiries.",
+      "steps": ["Tap Listings", "Add a home", "Return to this listing for every later step"], "art": "toolbox"
+    },
+    {
+      "id": "05", "chapter": "Build the home", "title": "Enter the real address",
+      "narration": "Enter the home address carefully. Confirm the map suggestion when it is right, then add only facts you know, such as beds, baths, and square feet. An address can be edited before publishing.",
+      "steps": ["Enter and confirm the address", "Add known property facts", "Review before saving"], "art": "listing"
+    },
+    {
+      "id": "06", "chapter": "Build the home", "title": "Choose who buyers contact",
+      "narration": "Open Who should buyers contact? Use your own contact card or select the client’s details when appropriate. Check the visible name, email, and phone before publishing so leads reach the right person.",
+      "steps": ["Open buyer contact", "Choose the listing’s contact card", "Verify every public detail"], "art": "contact"
+    },
+    {
+      "id": "07", "chapter": "Build the home", "title": "Plan a simple photo route",
+      "narration": "Start outside if you have a clear front-of-home photo. Then photograph entry, living area, kitchen, bedrooms, baths, and the best outdoor spaces. A short, deliberate set is easier to review than many near-duplicates.",
+      "steps": ["Front exterior, then key rooms", "One clear view per useful angle", "Keep extras for the gallery"], "art": "photo"
+    },
+    {
+      "id": "08", "chapter": "Build the home", "title": "Record a walkthrough only if useful",
+      "narration": "Drone-style walkthrough is optional. You can record in the app or upload an existing clip. Move slowly and smoothly, keep the phone level, and avoid quick turns. The photo-based listing video is a separate feature.",
+      "steps": ["Optional: record or upload", "Move steadily through connected rooms", "Photo video remains independent"], "art": "walkthrough"
+    },
+    {
+      "id": "09", "chapter": "Photos & AI", "title": "Add the original photos",
+      "narration": "In the listing toolbox, open Photos. Tap Add photos or Take a photo. Import keeps the original source, so you can compare every later version and return to the untouched image.",
+      "steps": ["Listing toolbox → Photos", "Add photos or Take a photo", "Originals remain available"], "art": "photos"
+    },
+    {
+      "id": "10", "chapter": "Photos & AI", "title": "Capture for a clean result",
+      "narration": "Use natural light, hold the phone level, and shoot landscape for the website and listing video. Use the point-five lens only when the room needs it. Avoid cutting off walls or important fixtures.",
+      "steps": ["Landscape and level", "Fit the whole room", "Retake blur or severe distortion"], "art": "photo"
+    },
+    {
+      "id": "11", "chapter": "Photos & AI", "title": "Open Photo versions",
+      "narration": "Tap a photo to inspect its saved versions. Switch between Original, Latest, Decluttered, and Staged when available. The selected listing version is a choice; creating an edit does not silently replace every photo.",
+      "steps": ["Tap an image", "Compare saved versions", "Choose the version used on the listing"], "art": "photos"
+    },
+    {
+      "id": "12", "chapter": "Photos & AI", "title": "Use AI Photo Studio selectively",
+      "narration": "From an original, tap the wand or Edit originals with AI. Choose declutter, staging, sky, or another available edit. Check the credit or plan allowance shown before you start; each selected photo may use AI processing.",
+      "steps": ["Start from Original", "Pick an edit and photos", "Review displayed usage before Generate"], "art": "studio"
+    },
+    {
+      "id": "13", "chapter": "Photos & AI", "title": "Review edits for truthfulness",
+      "narration": "Open the result beside its source. Check windows, doors, walls, fixtures, and room proportions. A staged room should not invent permanent features. Save only edits you would feel comfortable showing a buyer.",
+      "steps": ["Compare with source", "Check permanent details", "Save or reject the result"], "art": "review"
+    },
+    {
+      "id": "14", "chapter": "Photos & AI", "title": "Set the gallery and cover",
+      "narration": "Tap a photo’s listing control to use that saved version, or use Select All within a filtered group when the whole set is right. Choose a strong cover and review gallery order before publishing.",
+      "steps": ["Use on listing, or Select All", "Choose the cover photo", "Review the final gallery order"], "art": "gallery-cover"
+    },
+    {
+      "id": "15", "chapter": "Photos & AI", "title": "Export the right photo copies",
+      "narration": "Photos can be shared as originals or prepared copies. Export photos offers organized versions and destination choices. Check your MLS image rules before sending files; website copies are not a substitute for the retained originals.",
+      "steps": ["Photos → Share or Export", "Choose destination and versions", "Keep original files available"], "art": "export"
+    },
+    {
+      "id": "16", "chapter": "Make a video", "title": "Open Make a video",
+      "narration": "Back in the toolbox, tap Make a video. This uses your selected photos to create a downloadable listing or social video. It does not require a recorded walkthrough. Start with only the strongest reviewed images.",
+      "steps": ["Toolbox → Make a video", "Choose reviewed photos in order", "Keep the first shot purposeful"], "art": "toolbox"
+    },
+    {
+      "id": "17", "chapter": "Make a video", "title": "Choose the photos in order",
+      "narration": "On Choose your photos, tap images in the sequence viewers should see. The numbered tiles show the exact saved versions. Change filters if you need originals or finished edits. Nothing is generated on this screen.",
+      "steps": ["Tap 1, 2, 3 in viewing order", "Use the saved version you reviewed", "Continue to Choose the look"], "art": "video-flow"
+    },
+    {
+      "id": "18", "chapter": "Make a video", "title": "Set the screen shape",
+      "narration": "Choose the look next. Wide makes a landscape listing video; Tall makes a vertical social video. Pick the destination before checking crop, because the same photo fits differently in each shape.",
+      "steps": ["Wide → landscape listing", "Tall → vertical social", "Preview the crop for that shape"], "art": "video-flow"
+    },
+    {
+      "id": "19", "chapter": "Make a video", "title": "Tune motion and timing",
+      "narration": "Choose Photo motion for a controlled move over each still, or an available AI camera option. Set time on each photo: a simple entrance can be brief; important rooms can hold longer. Preview framing before creating.",
+      "steps": ["Choose movement style", "Set seconds per photo", "Open Framing review"], "art": "video-flow"
+    },
+    {
+      "id": "20", "chapter": "Make a video", "title": "Check the framing review",
+      "narration": "Framing review shows the start and end crop. Watch for trimmed ceilings, doorways, or important details. If a photo does not fit the format, change the photo or shape before you spend usage on the video.",
+      "steps": ["Compare start and end frames", "Keep important features visible", "Change photos if the crop fails"], "art": "video-flow"
+    },
+    {
+      "id": "21", "chapter": "Make a video", "title": "Add sound only when it helps",
+      "narration": "On the review screen, open Voice and music. Music, narration, and large words are optional. Preview sound, then pause it before continuing if needed. A clean silent video is valid for many listing uses.",
+      "steps": ["Review → Voice & music", "Preview and choose options", "Leave them off for a silent export"], "art": "video-review"
+    },
+    {
+      "id": "22", "chapter": "Make a video", "title": "Create, leave, and return",
+      "narration": "Review the selected photos, timing, and any credit quote. Tap Make my video once. Processing may take several minutes; you can leave the screen. Activity keeps the job under the right property.",
+      "steps": ["Confirm the review", "Tap Make my video once", "Activity → Active tracks progress"], "art": "processing"
+    },
+    {
+      "id": "23", "chapter": "Make a video", "title": "Watch before you use it",
+      "narration": "When Activity says Ready, open the finished video. Check smoothness, crop, scene order, and sound. Save to Photos or Share for MLS or social delivery. Tap Use on listing website only after you approve the full video.",
+      "steps": ["Activity → Ready → video", "Watch the complete result", "Use on listing website, Save, or Share"], "art": "video-result"
+    },
+    {
+      "id": "24", "chapter": "Optional video tools", "title": "Aerial intro starts outside",
+      "narration": "Aerial intro is an optional AI opening shot, not captured drone footage. Use an original photo showing the whole front and actual roof. Review the crop, processing terms, and credit quote before making the opening.",
+      "steps": ["Choose a true front exterior", "Keep roof and entrance in frame", "Review terms and usage"], "art": "aerial"
+    },
+    {
+      "id": "25", "chapter": "Optional video tools", "title": "Accept an opening only if it works",
+      "narration": "Watch the saved aerial clip and check motion, roof shape, and the path toward the entrance. Use as the opening only if you accept it. When selected, it plays first; the following photo order stays intact.",
+      "steps": ["Watch the saved opening", "Check roof and smoothness", "Use as opening → first clip"], "art": "aerial"
+    },
+    {
+      "id": "26", "chapter": "Optional video tools", "title": "Tag a recorded walkthrough",
+      "narration": "For a separate recorded walkthrough, tag rooms at the moments they appear. These become tap-to-jump chapters on the property experience. Re-render refreshes that recording; it does not replace the photo-based listing video.",
+      "steps": ["Open Drone-style walkthrough", "Tag room transitions", "Review the recorded result"], "art": "walkthrough"
+    },
+    {
+      "id": "27", "chapter": "Publish the website", "title": "Choose the website design",
+      "narration": "Open Website design from the listing. Classic is the included design with paid access. Signature Estate and Coastal Luxe are optional property-specific upgrades when available. Preview a sample without publishing your draft.",
+      "steps": ["Listing → Website design", "Preview Classic or luxury samples", "Confirm any upgrade before purchase"], "art": "site-choice"
+    },
+    {
+      "id": "28", "chapter": "Publish the website", "title": "Review before publishing",
+      "narration": "Check the gallery cover, approved listing video, property facts, address, and buyer contact. The website uses the video you chose as its opening hero. If you accepted an aerial opening and included it in that video, it plays first on the website too. A recorded walkthrough remains separate.",
+      "steps": ["Gallery and cover", "Selected hero video · accepted aerial first", "Facts and buyer contact"], "art": "site-review"
+    },
+    {
+      "id": "29", "chapter": "Publish the website", "title": "Publish, then share the link",
+      "narration": "Tap Publish listing when the review is complete. Your address-based share link includes a unique publication identifier, so a later agent can publish the same address without taking your page. Use Copy, QR, or Share your link.",
+      "steps": ["Publish listing after review", "Copy, QR, or Share", "Buyers open it without the app"], "art": "share"
+    },
+    {
+      "id": "30", "chapter": "Publish the website", "title": "Use the right MLS link",
+      "narration": "The listing also offers an unbranded MLS link. Check your local MLS rules before using it. Keep the agent-branded share link for your own marketing, and confirm the published page on a browser before sending it broadly.",
+      "steps": ["Agent link → direct marketing", "MLS link → unbranded", "Check rules and live page"], "art": "site-mls"
+    },
+    {
+      "id": "31", "chapter": "Follow up & manage", "title": "Leads stay with the property",
+      "narration": "Open Leads to see enquiries grouped by listing. Follow up from the actual buyer request, and verify the contact method you chose. A listing's website can collect enquiries while you work elsewhere in the app.",
+      "steps": ["Open Leads", "Filter by listing", "Respond to each enquiry"], "art": "leads"
+    },
+    {
+      "id": "32", "chapter": "Follow up & manage", "title": "Activity is the job dashboard",
+      "narration": "Activity groups work as Active, Ready, Needs attention, and History. Search for a property when you have many jobs. Open a row to return to its listing. When completed work can be counted, the app shows a percentage; otherwise it says Progress not reported instead of guessing.",
+      "steps": ["Active → in progress", "Ready or Needs attention → review", "History → older work"], "art": "activity"
+    },
+    {
+      "id": "33", "chapter": "Follow up & manage", "title": "Recover without starting over",
+      "narration": "If a job needs attention, open its listing and read the specific status before retrying. Do not repeatedly tap Create or buy credits again. Saved photos and requests remain attached to the home; use the offered recovery control.",
+      "steps": ["Open the status", "Use the specific Retry or Review action", "Keep saved originals and edits"], "art": "activity"
+    },
+    {
+      "id": "34", "chapter": "Account & usage", "title": "Account holds your tools",
+      "narration": "Open Account for Profile and contact card, then Settings and plan. Settings includes your app walkthrough, team management when available, account data, and support paths. Ask AI can explain the screen you are on.",
+      "steps": ["Account → Profile & contact card", "Account → Settings & plan", "Ask AI → contextual help"], "art": "account"
+    },
+    {
+      "id": "35", "chapter": "Account & usage", "title": "Understand the trial and plans",
+      "narration": "Pro, Max, Ultra, and Team are monthly plans. Check Apple's current price, included access, and any eligible seven-day offer before confirming. The limited trial supports one listing and limited photo edits; video and website publishing need paid access. If paid access is missing, select the original workspace and tap Restore purchases in Settings before buying again.",
+      "steps": ["Plans → compare current offers", "Apple shows exact renewal terms", "Missing access → Restore purchases"], "art": "plans"
+    },
+    {
+      "id": "36", "chapter": "Account & usage", "title": "Credits are separate from the plan",
+      "narration": "Credits and extra usage shows the shared workspace balance, monthly and purchased portions, and available top-ups. Purchased credits do not expire. The app shows a job's credit cost when spending is available. If a top-up is missing, tap Check pending purchase before buying again.",
+      "steps": ["Settings → Credits & extra usage", "Review available and held credits", "Missing top-up → Check pending purchase"], "art": "credits"
+    },
+    {
+      "id": "37", "chapter": "Account & usage", "title": "Work with a team carefully",
+      "narration": "Team workspaces share listing work and one credit balance. Owners or admins manage eligible purchases and invitations; seat availability depends on the current subscription. Check which workspace is selected before buying or editing a shared property.",
+      "steps": ["Settings → Team", "Confirm the selected workspace", "Owner or admin manages purchases"], "art": "team"
+    },
+    {
+      "id": "38", "chapter": "Account & usage", "title": "One last review, then share",
+      "narration": "That is the practical path: accurate home details, clean originals, reviewed edits, a video you have watched, the right contact card, and a published website. Floor plans and three-dimensional capture are later features, not part of this first release.",
+      "steps": ["Review photos and video", "Publish and open the live link", "Return to Leads and Activity"], "art": "hero"
+    }
+  ]
+}

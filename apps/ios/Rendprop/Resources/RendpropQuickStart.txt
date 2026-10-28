@@ -1,19 +1,172 @@
-Welcome to Rendprop. Turn your property photos into polished marketing, a professional video, and a beautiful listing website.
+Rendprop — Complete first-listing guide
+Narrated transcript and on-screen steps
 
-Sign in with Apple, choose a plan, and confirm Apple’s offer and renewal price. Eligible accounts get seven days free with usage limits. Cancel through Apple anytime.
+FIND YOUR WAY
 
-Tap Get started. Add the address, property details and buyer contact. Take or upload clear, high-resolution photos. Shoot landscape for a listing or website. Keep the phone level and use natural light. Indoors, use the point-five lens if available and needed to fit the room. Avoid extreme angles.
+01. Your first listing, from start to share
+Welcome to Rendprop. This guide walks through one complete listing: enter the home, capture photos, review optional edits, make a video, publish the website, and follow up with buyers.
+On screen: One home keeps the work together • You can leave while AI work continues • Review every result before sharing
 
-A recorded walkthrough is optional. Walk slowly and steadily, turning smoothly around corners. A gimbal can help. Tag rooms adds chapter jumps; Re-render refreshes your recorded tour.
+02. Five tabs keep work organized
+The bottom bar has Home, Listings, Activity, Leads, and Account. Home starts new work. Listings holds each property. Activity tracks jobs. Leads holds enquiries. Account contains your profile, settings, and plan.
+On screen: Home → start • Listings → property files • Activity, Leads, Account → follow through
 
-In Photos, start from Original. Import brightens your photos automatically. Tap the wand to declutter, stage or make another edit. Choose your staging style. Compare every result with its source, check windows, walls and fixtures, then choose your gallery versions and cover. Your originals stay unchanged. Decluttered and Staged keep saved results; start another style from Original.
+03. Sign in, then explore
+Sign in with Apple and finish the short introduction. Exploring the app does not start a free trial. A trial begins only if Apple offers it, you confirm the subscription, and Rendprop verifies it.
+On screen: Sign in with Apple • Choose your business and role • Check Apple’s offer before confirming
 
-Tap Make a video. Choose Listing for landscape or Social media for vertical, then select reviewed photos. Rendprop plans the order and varied, restrained motion. Each photo becomes its own shot. Check the framing preview before creating. Under Optional, add voice, music or labels.
+04. Start in Listings
+Open Listings and add the property before making media. The listing is the folder for its original photos, saved edits, videos, website, contact choice, and buyer enquiries.
+On screen: Tap Listings • Add a home • Return to this listing for every later step
 
-After Rendprop confirms your video is processing, you can leave the app. Turn on notifications to be told when it is ready. Review the finished video privately before publishing.
+BUILD THE HOME
 
-Publish your included Classic website, or preview the other designs. Buyers can explore Home, Gallery and Location, watch the video, and request information or a showing.
+05. Enter the real address
+Enter the home address carefully. Confirm the map suggestion when it is right, then add only facts you know, such as beds, baths, and square feet. An address can be edited before publishing.
+On screen: Enter and confirm the address • Add known property facts • Review before saving
 
-Share the website link; buyers don't need the app. Send your coordinator a photo ZIP with Originals, Decluttered and Staged folders plus listing or social copies. Check your MLS's requirements before uploading.
+06. Choose who buyers contact
+Open Who should buyers contact? Use your own contact card or select the client’s details when appropriate. Check the visible name, email, and phone before publishing so leads reach the right person.
+On screen: Open buyer contact • Choose the listing’s contact card • Verify every public detail
 
-Find enquiries grouped by property in Leads. Need a hand? Tap Ask AI for help on your current screen.
+07. Plan a simple photo route
+Start outside if you have a clear front-of-home photo. Then photograph entry, living area, kitchen, bedrooms, baths, and the best outdoor spaces. A short, deliberate set is easier to review than many near-duplicates.
+On screen: Front exterior, then key rooms • One clear view per useful angle • Keep extras for the gallery
+
+08. Record a walkthrough only if useful
+Drone-style walkthrough is optional. You can record in the app or upload an existing clip. Move slowly and smoothly, keep the phone level, and avoid quick turns. The photo-based listing video is a separate feature.
+On screen: Optional: record or upload • Move steadily through connected rooms • Photo video remains independent
+
+PHOTOS & AI
+
+09. Add the original photos
+In the listing toolbox, open Photos. Tap Add photos or Take a photo. Import keeps the original source, so you can compare every later version and return to the untouched image.
+On screen: Listing toolbox → Photos • Add photos or Take a photo • Originals remain available
+
+10. Capture for a clean result
+Use natural light, hold the phone level, and shoot landscape for the website and listing video. Use the point-five lens only when the room needs it. Avoid cutting off walls or important fixtures.
+On screen: Landscape and level • Fit the whole room • Retake blur or severe distortion
+
+11. Open Photo versions
+Tap a photo to inspect its saved versions. Switch between Original, Latest, Decluttered, and Staged when available. The selected listing version is a choice; creating an edit does not silently replace every photo.
+On screen: Tap an image • Compare saved versions • Choose the version used on the listing
+
+12. Use AI Photo Studio selectively
+From an original, tap the wand or Edit originals with AI. Choose declutter, staging, sky, or another available edit. Check the credit or plan allowance shown before you start; each selected photo may use AI processing.
+On screen: Start from Original • Pick an edit and photos • Review displayed usage before Generate
+
+13. Review edits for truthfulness
+Open the result beside its source. Check windows, doors, walls, fixtures, and room proportions. A staged room should not invent permanent features. Save only edits you would feel comfortable showing a buyer.
+On screen: Compare with source • Check permanent details • Save or reject the result
+
+14. Set the gallery and cover
+Tap a photo’s listing control to use that saved version, or use Select All within a filtered group when the whole set is right. Choose a strong cover and review gallery order before publishing.
+On screen: Use on listing, or Select All • Choose the cover photo • Review the final gallery order
+
+15. Export the right photo copies
+Photos can be shared as originals or prepared copies. Export photos offers organized versions and destination choices. Check your MLS image rules before sending files; website copies are not a substitute for the retained originals.
+On screen: Photos → Share or Export • Choose destination and versions • Keep original files available
+
+MAKE A VIDEO
+
+16. Open Make a video
+Back in the toolbox, tap Make a video. This uses your selected photos to create a downloadable listing or social video. It does not require a recorded walkthrough. Start with only the strongest reviewed images.
+On screen: Toolbox → Make a video • Choose reviewed photos in order • Keep the first shot purposeful
+
+17. Choose the photos in order
+On Choose your photos, tap images in the sequence viewers should see. The numbered tiles show the exact saved versions. Change filters if you need originals or finished edits. Nothing is generated on this screen.
+On screen: Tap 1, 2, 3 in viewing order • Use the saved version you reviewed • Continue to Choose the look
+
+18. Set the screen shape
+Choose the look next. Wide makes a landscape listing video; Tall makes a vertical social video. Pick the destination before checking crop, because the same photo fits differently in each shape.
+On screen: Wide → landscape listing • Tall → vertical social • Preview the crop for that shape
+
+19. Tune motion and timing
+Choose Photo motion for a controlled move over each still, or an available AI camera option. Set time on each photo: a simple entrance can be brief; important rooms can hold longer. Preview framing before creating.
+On screen: Choose movement style • Set seconds per photo • Open Framing review
+
+20. Check the framing review
+Framing review shows the start and end crop. Watch for trimmed ceilings, doorways, or important details. If a photo does not fit the format, change the photo or shape before you spend usage on the video.
+On screen: Compare start and end frames • Keep important features visible • Change photos if the crop fails
+
+21. Add sound only when it helps
+On the review screen, open Voice and music. Music, narration, and large words are optional. Preview sound, then pause it before continuing if needed. A clean silent video is valid for many listing uses.
+On screen: Review → Voice & music • Preview and choose options • Leave them off for a silent export
+
+22. Create, leave, and return
+Review the selected photos, timing, and any credit quote. Tap Make my video once. Processing may take several minutes; you can leave the screen. Activity keeps the job under the right property.
+On screen: Confirm the review • Tap Make my video once • Activity → Active tracks progress
+
+23. Watch before you use it
+When Activity says Ready, open the finished video. Check smoothness, crop, scene order, and sound. Save to Photos or Share for MLS or social delivery. Tap Use on listing website only after you approve the full video.
+On screen: Activity → Ready → video • Watch the complete result • Use on listing website, Save, or Share
+
+OPTIONAL VIDEO TOOLS
+
+24. Aerial intro starts outside
+Aerial intro is an optional AI opening shot, not captured drone footage. Use an original photo showing the whole front and actual roof. Review the crop, processing terms, and credit quote before making the opening.
+On screen: Choose a true front exterior • Keep roof and entrance in frame • Review terms and usage
+
+25. Accept an opening only if it works
+Watch the saved aerial clip and check motion, roof shape, and the path toward the entrance. Use as the opening only if you accept it. When selected, it plays first; the following photo order stays intact.
+On screen: Watch the saved opening • Check roof and smoothness • Use as opening → first clip
+
+26. Tag a recorded walkthrough
+For a separate recorded walkthrough, tag rooms at the moments they appear. These become tap-to-jump chapters on the property experience. Re-render refreshes that recording; it does not replace the photo-based listing video.
+On screen: Open Drone-style walkthrough • Tag room transitions • Review the recorded result
+
+PUBLISH THE WEBSITE
+
+27. Choose the website design
+Open Website design from the listing. Classic is the included design with paid access. Signature Estate and Coastal Luxe are optional property-specific upgrades when available. Preview a sample without publishing your draft.
+On screen: Listing → Website design • Preview Classic or luxury samples • Confirm any upgrade before purchase
+
+28. Review before publishing
+Check the gallery cover, approved listing video, property facts, address, and buyer contact. The website uses the video you chose as its opening hero. If you accepted an aerial opening and included it in that video, it plays first on the website too. A recorded walkthrough remains separate.
+On screen: Gallery and cover • Selected hero video · accepted aerial first • Facts and buyer contact
+
+29. Publish, then share the link
+Tap Publish listing when the review is complete. Your address-based share link includes a unique publication identifier, so a later agent can publish the same address without taking your page. Use Copy, QR, or Share your link.
+On screen: Publish listing after review • Copy, QR, or Share • Buyers open it without the app
+
+30. Use the right MLS link
+The listing also offers an unbranded MLS link. Check your local MLS rules before using it. Keep the agent-branded share link for your own marketing, and confirm the published page on a browser before sending it broadly.
+On screen: Agent link → direct marketing • MLS link → unbranded • Check rules and live page
+
+FOLLOW UP & MANAGE
+
+31. Leads stay with the property
+Open Leads to see enquiries grouped by listing. Follow up from the actual buyer request, and verify the contact method you chose. A listing's website can collect enquiries while you work elsewhere in the app.
+On screen: Open Leads • Filter by listing • Respond to each enquiry
+
+32. Activity is the job dashboard
+Activity groups work as Active, Ready, Needs attention, and History. Search for a property when you have many jobs. Open a row to return to its listing. When completed work can be counted, the app shows a percentage; otherwise it says Progress not reported instead of guessing.
+On screen: Active → in progress • Ready or Needs attention → review • History → older work
+
+33. Recover without starting over
+If a job needs attention, open its listing and read the specific status before retrying. Do not repeatedly tap Create or buy credits again. Saved photos and requests remain attached to the home; use the offered recovery control.
+On screen: Open the status • Use the specific Retry or Review action • Keep saved originals and edits
+
+ACCOUNT & USAGE
+
+34. Account holds your tools
+Open Account for Profile and contact card, then Settings and plan. Settings includes your app walkthrough, team management when available, account data, and support paths. Ask AI can explain the screen you are on.
+On screen: Account → Profile & contact card • Account → Settings & plan • Ask AI → contextual help
+
+35. Understand the trial and plans
+Pro, Max, Ultra, and Team are monthly plans. Check Apple's current price, included access, and any eligible seven-day offer before confirming. The limited trial supports one listing and limited photo edits; video and website publishing need paid access. If paid access is missing, select the original workspace and tap Restore purchases in Settings before buying again.
+On screen: Plans → compare current offers • Apple shows exact renewal terms • Missing access → Restore purchases
+
+36. Credits are separate from the plan
+Credits and extra usage shows the shared workspace balance, monthly and purchased portions, and available top-ups. Purchased credits do not expire. The app shows a job's credit cost when spending is available. If a top-up is missing, tap Check pending purchase before buying again.
+On screen: Settings → Credits & extra usage • Review available and held credits • Missing top-up → Check pending purchase
+
+37. Work with a team carefully
+Team workspaces share listing work and one credit balance. Owners or admins manage eligible purchases and invitations; seat availability depends on the current subscription. Check which workspace is selected before buying or editing a shared property.
+On screen: Settings → Team • Confirm the selected workspace • Owner or admin manages purchases
+
+38. One last review, then share
+That is the practical path: accurate home details, clean originals, reviewed edits, a video you have watched, the right contact card, and a published website. Floor plans and three-dimensional capture are later features, not part of this first release.
+On screen: Review photos and video • Publish and open the live link • Return to Leads and Activity
+
+Prices, trial eligibility, available credits, and AI processing access are shown by the app and Apple at the time of use. This guide does not start a purchase or guarantee an offer.
