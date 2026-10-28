@@ -21,6 +21,19 @@ begin
  end;
  raise exception 'Expected refusal: %',expected;
 end$$;
+-- Exercise the actual app_video BEFORE INSERT guard as the service role. The
+-- table is private, so this fixture-only definer copies a valid saved row.
+create function pg_temp.inject_legacy_video()
+returns void language sql security definer set search_path='' as $$
+ insert into public.app_video_cost_reservations(org_id,billing_org_id,actor_id,
+   idempotency_key,feature,provider,model,input_sha256,units,unit_cost_cents,
+   total_cents,hold_cents,meta)
+ select org_id,billing_org_id,actor_id,'review-funded-video-01',feature,
+   provider,model,input_sha256,units,unit_cost_cents,total_cents,hold_cents,meta
+ from public.app_video_cost_reservations
+ where idempotency_key='aerial-opening:ed400000-0000-4000-8000-000000000002';
+$$;
+grant execute on function pg_temp.inject_legacy_video() to service_role;
 
 insert into auth.users(id,email,is_anonymous,email_confirmed_at)
 values('ed000000-0000-4000-8000-000000000001','reviewer-sandbox@example.invalid',false,now()),
@@ -334,6 +347,11 @@ begin
  perform pg_temp.review_refuse(format(
    'select public.credit_serving_cost_reserve(%L,%L,''review-credit-02'',''photo.declutter:0'',''gemini'',''synthetic'',%L,1,''synthetic'',%L,''review-credit-02'',''Sandbox'')',
    actor,org,repeat('f',64),org),'RP403');
+ perform pg_temp.review_refuse(format(
+   'select public.serving_cost_reserve(%L,%L,''review-funded-legacy'',''photo.initial:0'',''gemini'',''synthetic'',%L,1,''synthetic'')',
+   actor,org,repeat('f',64)),'RP403: Reviewer serving requires ceiling mode');
+ perform pg_temp.review_refuse('select pg_temp.inject_legacy_video()',
+   'RP403: Reviewer serving requires ceiling mode');
 end$$;
 reset role;
 update public.app_config set value=jsonb_set(value,'{mode}','"ceiling"'::jsonb)

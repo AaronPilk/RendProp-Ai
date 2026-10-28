@@ -209,6 +209,8 @@ begin
  if f.id is null then return new;end if;
  if new.budget_source='credits' and new.credit_environment='Production'
  then return new;end if;
+ if public.serving_mode()<>'ceiling' then
+   raise exception 'RP403: Reviewer serving requires ceiling mode';end if;
  if current_setting('role',true) is distinct from 'service_role'
     or new.actor_id is distinct from f.actor_id or
     new.billing_org_id is distinct from b or
@@ -248,6 +250,8 @@ begin
  select * into f from public.serving_funding where org_id=b and source='app_review'
    and revoked_at is null and starts_at<=now() and ends_at>now();
  if f.id is null or new.credit_environment='Production' then return new;end if;
+ if public.serving_mode()<>'ceiling' then
+   raise exception 'RP403: Reviewer serving requires ceiling mode';end if;
  if current_setting('role',true) is distinct from 'service_role' or
     new.actor_id is distinct from f.actor_id or
     new.billing_org_id is distinct from b
