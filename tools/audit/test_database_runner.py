@@ -135,7 +135,7 @@ class RunnerCase(unittest.TestCase):
             elif sqlfile == 'trial_full_window_admission.sql':
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 11}\n', 0))
             elif sqlfile == 'paid_media_budget_cap.sql':
-                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 18}\n', 0))
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 19}\n', 0))
             elif sqlfile == 'trial_hybrid_funded_serving.sql':
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 43}\n', 0))
             elif sqlfile == 'property_address_reservations_assert.sql':
@@ -297,7 +297,7 @@ class InventoryTests(RunnerCase):
             {'phase': phase, 'fixture': filename, 'assertions': count,
              'rolledBack': True, 'database': database}
             for phase, database in [('initial', 'rendprop_audit'), ('replayed', 'rendprop_replay')]
-            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25), ('trial_full_window_admission.sql', 11), ('trial_hybrid_funded_serving.sql', 43), ('paid_media_budget_cap.sql', 18)]])
+            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25), ('trial_full_window_admission.sql', 11), ('trial_hybrid_funded_serving.sql', 43), ('paid_media_budget_cap.sql', 19)]])
         commands = {row['name']: row for row in result.receipt['commands']}
         self.assertIn('replay-20261002225458_video_erase_direct_bria', commands)
         for phase in ('initial', 'replayed'):

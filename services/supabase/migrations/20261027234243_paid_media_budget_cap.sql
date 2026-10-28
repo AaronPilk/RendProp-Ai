@@ -122,6 +122,10 @@ begin
   or account.receipt_ref is not distinct from trial_ref or account.starts_at>funding.starts_at
   or account.ends_at<funding.retention_ends_at then
   raise exception 'RP402: Separate business-paid media account reserve required';end if;
+ perform pg_advisory_xact_lock(hashtextextended('media-budget:'||p_org,72453));
+ if (select coalesce(sum(r.bytes),0) from public.media_storage_receipts r
+  where r.billing_org_id=p_org and r.deleted_at is null)>policy.storage_limit then
+  raise exception 'RP402: Paid media storage cap is below retained physical bytes';end if;
  media_result:=public.provision_media_delivery_budget(
   p_org,media_ref,funding.id,funding.starts_at,funding.retention_ends_at,
   policy.request_limit,policy.byte_limit,policy.storage_limit,account.tariff,

@@ -71,6 +71,19 @@ update public.subscription_trial_media_template set account_reserve_ref='synthet
 update public.paid_media_budget_policy set enabled=true,activated_from=now()-interval '2 days',
  account_reserve_ref='synthetic-paid-cash',evidence_sha256=repeat('e',64)
  where product_id='com.rendprop.app.starter.monthly';
+insert into public.media_storage_receipts(org_id,bucket,object_key,bytes)
+ select org,'renders','renders/'||org||'/retained-large.mp4',3::bigint*1073741824+1
+ from paid_media_fixture;
+set local role service_role;
+do $$declare f record;begin select * into f from paid_media_fixture;
+ perform pg_temp.paid_media_denied(format(
+  'select fund_verified_retail_apple_transaction(%L,%L,%L,%L,%L,49990,''USD'',''USA'',null,null,%L,%L,%L,%L)',
+  f.actor,f.org,f.original,f.tx,f.sku,f.start_at,f.end_at,f.signed_at,repeat('b',64)),
+  'RP402: Paid media storage cap is below retained physical bytes',
+  'paid sale cannot issue a cap below existing physical retention');
+end$$;
+reset role;
+delete from public.media_storage_receipts where object_key like '%/retained-large.mp4';
 set local role service_role;
 do $$declare f record;r jsonb;cash_before bigint;used_before bigint;begin select * into f from paid_media_fixture;
  r:=fund_verified_retail_apple_transaction(f.actor,f.org,f.original,f.tx,f.sku,49990,'USD','USA',null,null,
