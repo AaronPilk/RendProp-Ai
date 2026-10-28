@@ -148,7 +148,7 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20261028010346_reviewer_sandbox_shared_credit_budget.sql",
     # New card authority tables and CAS function rewrites are installed once;
     # cash-backed historical paths remain covered by reflection fixtures.
-    "20261028211732_trial_card_backed_authority.sql",
+    "20261028213014_trial_card_backed_authority.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -217,10 +217,33 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
 }
 
 
+# Production recorded these SQL bodies under the versions in their canonical
+# filenames, although the original source commits used earlier timestamps.
+# A future db push identifies migrations by version; guard against reintroducing
+# either old version or changing the bytes of an already-applied migration.
+APPLIED_VERSION_RECONCILIATIONS = {
+    "20261028212254_credit_pack_sandbox_test_authority.sql": (
+        "20261028180000", "fa511e40ac5da499def68957f9ecf4d5058efb4b746f42ef402771ed4737e70d"),
+    "20261028213014_trial_card_backed_authority.sql": (
+        "20261028211732", "3d5d2b8a77cc08f236bdedc844bf3ee1a587df5157ec9aed95313a2f4e42ea3d"),
+}
+
+
 def partition_fresh_migrations(paths):
     paths = tuple(paths)
     names = [path.name for path in paths]
     require(len(names) == len(set(names)), "Duplicate migration filenames in fresh replay")
+    paths_by_name = dict(zip(names, paths))
+    versions = [name.split("_", 1)[0] for name in names]
+    require(len(versions) == len(set(versions)), "Duplicate migration versions in fresh replay")
+    for canonical_name, (obsolete_version, expected_hash) in APPLIED_VERSION_RECONCILIATIONS.items():
+        require(obsolete_version not in versions,
+                f"Obsolete applied migration version remains in source: {obsolete_version}")
+        require(canonical_name in paths_by_name,
+                f"Applied migration source missing: {canonical_name}")
+        actual_hash = hashlib.sha256(paths_by_name[canonical_name].read_bytes()).hexdigest()
+        require(actual_hash == expected_hash,
+                f"Already-applied migration SQL changed: {canonical_name}")
     missing = set(LIVE_STATE_ONLY_MIGRATIONS) - set(names)
     require(not missing, f"Classified live-state migrations missing: {sorted(missing)}")
     guarded_missing = set(GUARDED_ONE_SHOT_MIGRATIONS) - set(names)
