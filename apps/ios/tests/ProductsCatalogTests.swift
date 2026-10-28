@@ -16,6 +16,12 @@ enum SpaceType: Equatable {
             "com.rendprop.app.starter.monthly",
             "com.rendprop.app.pro.monthly",
             "com.rendprop.app.team.monthly",
+            "com.rendprop.app.team4.monthly",
+            "com.rendprop.app.team5.monthly",
+            "com.rendprop.app.team6.monthly",
+            "com.rendprop.app.team7.monthly",
+            "com.rendprop.app.team8.monthly",
+            "com.rendprop.app.team9.monthly",
         ])
         let legacy: [(String, RendpropPlan)] = [
             ("com.rendprop.app.starter.monthly", .max),
@@ -42,17 +48,22 @@ enum SpaceType: Equatable {
         precondition(RendpropPlan.team.allowances.customerBenefitLines(seats: 9).last ==
                      "9 seats in one workspace")
         precondition(RendpropPlan.team.allowances.seats == 3)
-        precondition(RendpropProducts.notSoldAtLaunch.count == 9)
+        precondition(RendpropProducts.notSoldAtLaunch.count == 3)
         precondition(TeamSeatVariant.all.map(\.seats) == [4, 5, 6, 7, 8, 9])
         precondition(TeamSeatVariant.all.map(\.monthlyCredits) == [700, 800, 900, 1000, 1100, 1200])
         for variant in TeamSeatVariant.all {
             precondition(RendpropProducts.plan(for: variant.productID) == .team)
             precondition(RendpropProducts.period(for: variant.productID) == .monthly)
-            precondition(RendpropProducts.notSoldAtLaunch.contains(variant.productID))
-            precondition(!RendpropProducts.all.contains(variant.productID))
+            precondition(!RendpropProducts.notSoldAtLaunch.contains(variant.productID))
+            precondition(RendpropProducts.all.contains(variant.productID))
+            precondition(!TeamSeatVariant.saleIsReady(for: variant.productID, serverProducts: nil))
+            precondition(!TeamSeatVariant.saleIsReady(for: variant.productID, serverProducts: []))
+            precondition(TeamSeatVariant.saleIsReady(for: variant.productID, serverProducts: [variant.productID]))
         }
+        precondition(TeamSeatVariant.saleIsReady(for: RendpropPlan.team.monthlyProductID,
+                                                 serverProducts: nil))
         precondition(RendpropProducts.plan(for: "com.rendprop.app.team10.monthly") == nil)
         precondition(!RendpropProducts.sellsAnnual)
-        print("PASS: four sellable tiers, legacy renewal/restore mappings, internal credit targets and honest retail benefits")
+        print("PASS: four base tiers, six server-gated Team seat variants, legacy mappings and honest retail benefits")
     }
 }

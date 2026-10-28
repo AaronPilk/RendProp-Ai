@@ -3,6 +3,7 @@ import { ensureAcceptedPhotoPublication } from "../_shared/photo-publication.ts"
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
 import { applyVerifiedMonthlyCredits } from "../_shared/apple-monthly-credits.ts";
 import { servingMode } from "../_shared/funded-serving.ts";
+import { teamSeatSaleProducts } from "../_shared/team-seat-sale.ts";
 
 /** Best effort: the envelope is informational on /me; the gate itself lives in
  * serving_envelope_admit. Null when the mode is funded or the RPC is unavailable. */
@@ -425,6 +426,8 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   const portfolioUrl = org.handle ? `${TOUR_BASE}/a/${org.handle}` : null;
   const trial = canManageSubscription && purchaseOrgId === servingOrgId ? await boundedTrialContext(admin, userId, servingOrgId) : {};
   const heldPurchase = canManageSubscription && purchaseOrgId === servingOrgId ? await heldTrialPurchase(admin, userId, servingOrgId) : null;
+  const teamSeatProducts = canManageSubscription
+    ? await teamSeatSaleProducts(admin, purchaseOrgId) : [];
 
   return json({
     user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null,
@@ -439,6 +442,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     ...trial,
     trial_offer: heldPurchase?.trial_offer ?? null,
     trial_reservation: heldPurchase,
+    team_seat_products: teamSeatProducts,
     serving_activation: servingActivation,
     serving_photo_package: photoPackage,
     // Launch cost model (2026-10-08): "ceiling" = ordinary StoreKit purchases,

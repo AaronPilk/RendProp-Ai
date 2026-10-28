@@ -358,6 +358,10 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
     var trialReservation: TrialPurchaseReservation? = nil
     var servingActivation: ServingActivationSummary? = nil
     var planName: String? = nil
+    /// Exact Team seat SKUs the server currently permits this workspace to
+    /// start. Missing on an older server means none; StoreKit alone is never
+    /// permission to begin a charge for a dormant variant.
+    var teamSeatProducts: [String] = []
     /// "ceiling" meters paid work. A seven-day Apple intro still needs the
     /// exact funded server reservation before StoreKit can begin it.
     var servingMode: String? = nil
@@ -391,6 +395,7 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
             let servingActivation: ServingActivationSummary?
             let plan: String?
             let servingMode: String?
+            let teamSeatProducts: [String]?
         }
         var value = try JSONDecoder().decode(BillingResponse.self, from: data).billing
         guard let selectedOrg, (value.contentOrgID ?? value.orgID) == selectedOrg,
@@ -413,6 +418,13 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
         value.servingActivation = trial.servingActivation
         value.planName = trial.plan
         value.servingMode = trial.servingMode
+        let teamSeatProducts = trial.teamSeatProducts ?? []
+        let knownTeamSeatProducts = Set((4...9).map { "com.rendprop.app.team\($0).monthly" })
+        guard Set(teamSeatProducts).count == teamSeatProducts.count,
+              teamSeatProducts.allSatisfy({ knownTeamSeatProducts.contains($0) }) else {
+            throw TrialPresentationError.invalidResponse
+        }
+        value.teamSeatProducts = teamSeatProducts
         return value
     }
 }

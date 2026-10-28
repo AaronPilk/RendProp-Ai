@@ -212,8 +212,8 @@ enum BillingPeriod: String, CaseIterable, Identifiable, Sendable {
 // MARK: - Product id ⇄ plan
 
 /// Exact Apple subscription identifiers for Team capacity above the existing
-/// three-seat product. These are known for restore, but remain unsold until
-/// App Store Connect prices and the server's paid-period catalog are active.
+/// three-seat product. StoreKit may return these, but the paywall presents one
+/// only when the server confirms its funded sale catalog is active.
 /// An Apple renewal preference never changes the currently verified seat count.
 struct TeamSeatVariant: Hashable, Sendable {
     let productID: String
@@ -231,6 +231,12 @@ struct TeamSeatVariant: Hashable, Sendable {
 
     static func forProduct(_ productID: String) -> Self? {
         all.first { $0.productID == productID }
+    }
+
+    /// A returned StoreKit product is only a price quote. The exact SKU must
+    /// also be present in the current server sale list before a new charge.
+    static func saleIsReady(for productID: String, serverProducts: [String]?) -> Bool {
+        forProduct(productID) == nil || serverProducts?.contains(productID) == true
     }
 }
 
@@ -250,11 +256,10 @@ enum RendpropProducts {
     /// offered. Their ids stay mapped below so a stray historical or Sandbox
     /// annual purchase still resolves to its plan; they are never requested
     /// from StoreKit and never shown a price. The products must also be
-    /// removed from sale in App Store Connect. The six Team capacity variants
-    /// also stay dormant pending exact ASC prices, funded schedules and an
-    /// over-capacity downgrade policy.
+    /// removed from sale in App Store Connect. Team capacity variants are
+    /// fetched from StoreKit, then hidden until the server's funded sale gate
+    /// lists the exact product ID for this workspace.
     static let notSoldAtLaunch: Set<String> = Set(RendpropPlan.allCases.compactMap(\.annualProductID))
-        .union(TeamSeatVariant.all.map(\.productID))
 
     /// True when at least one annual product is on sale. Drives whether the
     /// paywall shows the Monthly / Yearly picker at all.

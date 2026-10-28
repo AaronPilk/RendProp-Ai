@@ -301,6 +301,8 @@ final class PurchaseManager: ObservableObject {
 
     func canStartNewPurchase(for product: Product) -> Bool {
         guard Config.useLiveBackend && !Config.isUITesting else { return true }
+        guard TeamSeatVariant.saleIsReady(for: product.id,
+              serverProducts: billingContext?.teamSeatProducts) else { return false }
         if billingContext?.isCeilingMode == true {
             guard ceilingModePurchaseAllowed() else { return false }
             switch trialEligibility(for: product) {
@@ -341,6 +343,8 @@ final class PurchaseManager: ObservableObject {
 
     func canCheckTrialAvailability(for product: Product) -> Bool {
         guard Config.useLiveBackend && !Config.isUITesting else { return false }
+        guard TeamSeatVariant.saleIsReady(for: product.id,
+              serverProducts: billingContext?.teamSeatProducts) else { return false }
         return trialEligibility(for: product) != false && AuthStore.shared.isSignedIn && AuthStore.shared.isIdentified
             && AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil
             && billingContext?.orgID == WorkspaceContext.billingOrgID
@@ -395,6 +399,11 @@ final class PurchaseManager: ObservableObject {
                 revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
             guard current == captured, fresh.orgID == org, fresh.role == "owner", fresh.canManageSubscription else {
                 throw CloudSyncError.identityChanged
+            }
+            guard TeamSeatVariant.saleIsReady(for: product.id,
+                  serverProducts: fresh.teamSeatProducts) else {
+                lastError = "This Team seat option is not ready for purchase. No Apple billing has started."
+                return
             }
             billingContext = fresh; billingError = nil
             if let eligible { introOfferEligible[product.id] = eligible }
@@ -508,6 +517,11 @@ final class PurchaseManager: ObservableObject {
                     return
                 }
                 guard context.canManageSubscription else { lastError = context.unavailableMessage; return }
+                guard TeamSeatVariant.saleIsReady(for: product.id,
+                      serverProducts: context.teamSeatProducts) else {
+                    lastError = "This Team seat option is not ready for purchase. No Apple billing has started."
+                    return
+                }
                 if let activeProductID {
                     let previous = try PurchaseWorkspaceBindingStore.resolve(tokenOwner: activeBillingOwner, currentOwner: owner, productID: activeProductID)
                     let serverMatches = activeOriginalTransactionID.map { context.originalTransactionIDs?.contains($0) == true } == true
@@ -589,6 +603,22 @@ final class PurchaseManager: ObservableObject {
         }
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision,
               (!Config.useLiveBackend || Config.isUITesting || (WorkspaceContext.selectedOrgID == viewedOrgID && WorkspaceContext.billingOrgID == expectedOrgID)) else { return }
+        if Config.useLiveBackend && !Config.isUITesting && TeamSeatVariant.forProduct(product.id) != nil {
+            do {
+                guard let api, let freshOrg = expectedOrgID else { throw CloudSyncError.identityChanged }
+                let fresh = try await api.billingContext()
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision,
+                      WorkspaceContext.selectedOrgID == viewedOrgID,
+                      WorkspaceContext.billingOrgID == freshOrg,
+                      fresh.orgID == freshOrg, fresh.canManageSubscription,
+                      fresh.teamSeatProducts.contains(product.id) else {
+                    throw CloudSyncError.identityChanged
+                }
+            } catch {
+                lastError = "This Team seat option could not be confirmed for purchase. No Apple billing has started. Refresh plans and try again."
+                return
+            }
+        }
         let result: Product.PurchaseResult
         do {
             let options: Set<Product.PurchaseOption> = actor.flatMap(UUID.init(uuidString:)).map { [.appAccountToken($0)] } ?? []

@@ -263,12 +263,14 @@ struct PaywallView: View {
         .accessibilityAddTraits(selectedPlan == plan && selectedTeamVariant == nil ? [.isSelected] : [])
     }
 
-    /// Appears only after an approved variant is requested and StoreKit gives
-    /// a real localized price. All variants remain gated out at launch.
+    /// StoreKit supplies the localized price; a fresh server sale list controls
+    /// whether a new charge is offered. Keep the current variant visible for
+    /// Apple subscription management if sale activation is later withdrawn.
     @ViewBuilder private var teamSeatOptions: some View {
         let available = TeamSeatVariant.all.filter {
-            !RendpropProducts.notSoldAtLaunch.contains($0.productID) &&
-                purchases.product(for: $0.productID) != nil
+            (purchases.billingContext?.teamSeatProducts.contains($0.productID) == true ||
+                purchases.activeProductID == $0.productID) &&
+            purchases.product(for: $0.productID) != nil
         }
         if !available.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
@@ -283,7 +285,7 @@ struct PaywallView: View {
                             HStack(spacing: 12) {
                                 Image(systemName: "person.2.fill").foregroundStyle(Theme.accent)
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("\(variant.seats) seats")
+                                    Text("\(variant.seats) seats · \(variant.monthlyCredits) monthly credits")
                                         .font(.rpHeadline).foregroundStyle(Theme.ink)
                                     Text(product.displayPrice + "/month")
                                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -338,7 +340,8 @@ struct PaywallView: View {
 
     private var selectedOffer: PlanOffer {
         if selectedPlan == .team, let variant = selectedTeamVariant,
-           !RendpropProducts.notSoldAtLaunch.contains(variant.productID),
+           (purchases.billingContext?.teamSeatProducts.contains(variant.productID) == true ||
+            purchases.activeProductID == variant.productID),
            let product = purchases.product(for: variant.productID) {
             return PlanOffer(product: product, period: .monthly, note: nil)
         }

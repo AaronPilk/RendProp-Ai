@@ -36,6 +36,9 @@ update public.credit_monthly_catalog set active=true
 select pg_temp.monthly_ok(public.org_seats_allowed('4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')=3,
   'catalog activation alone cannot grant seats without paid funding');
 set local role service_role;
+select pg_temp.monthly_ok(cardinality(public.team_seat_sale_products(
+  '4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'))=0,
+  'dormant Team seat catalog has no sale-ready StoreKit variants');
 select pg_temp.monthly_ok(
   public.credit_verified_monthly_apply('4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     'com.rendprop.app.team4.monthly','Production','team-chain','team-four',
@@ -75,9 +78,37 @@ select pg_temp.monthly_ok(public.org_seats_allowed('4aaaaaaa-aaaa-4aaa-8aaa-aaaa
   and (select seats=4 and price_cents=29999 from public.team_current_paid_variant(
       '4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')),
   'exact current funded Apple transaction grants four seats at attested price');
+set local role service_role;
+select pg_temp.monthly_ok(cardinality(public.team_seat_sale_products(
+  '4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'))=0,
+  'a paid Team receipt alone cannot expose a seat option without active media funding policy');
+reset role;
 select pg_temp.monthly_ok((select seats=4 and price_cents=29999
     from public.org_entitlement('4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')),
   'consumer entitlement agrees with team invitation capacity and price');
+
+-- Synthetic cash and policy activation exist only inside this rolled-back
+-- fixture. A current paid owner sees an exact SKU only with every sale gate.
+insert into public.media_account_reserves(receipt_ref,account_id,cash_source,
+  cash_evidence_sha256,starts_at,ends_at,cash_paid_cents,tariff,reserves) values
+  ('team-seat-fixture-business-cash',repeat('c',32),'business_paid_cash',
+   repeat('c',64),now()-interval '6 days',now()+interval '140 days',1000000,
+   '{"r2_a_cents_per_million":450,"r2_b_cents_per_million":36,"worker_cents_per_million":30,"worker_cpu_cents_per_million_ms":2,"edge_cents_per_million":200,"db_cents":100,"logs_cents":100,"storage_cents_per_gb_month":2}',
+   '{"storage":1000,"delivery":1000,"compute":1000,"email":1000,"support":1000,"retention":1000,"uncertainty":1000}');
+update public.apple_serving_schedules set ends_at=starts_at+interval '30 days'
+  where product_id='com.rendprop.app.team4.monthly';
+update public.paid_media_budget_policy set enabled=true,
+  activated_from=now()-interval '6 days',
+  account_reserve_ref='team-seat-fixture-business-cash',evidence_sha256=repeat('d',64)
+  where product_id='com.rendprop.app.team4.monthly';
+set local role service_role;
+select pg_temp.monthly_ok(public.team_seat_sale_products(
+  '4aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')=
+  array['com.rendprop.app.team4.monthly']::text[],
+  'only exact cash-backed current paid Team variant appears in sale list');
+reset role;
+update public.paid_media_budget_policy set enabled=false
+  where product_id='com.rendprop.app.team4.monthly';
 
 set local role service_role;
 do $$

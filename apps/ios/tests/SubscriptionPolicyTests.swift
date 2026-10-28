@@ -24,6 +24,35 @@ import Foundation
         try check(disclosure.contains("Confirm your subscription with Apple") && disclosure.contains("€99,99/month") && disclosure.contains("24 hours"), "Trial confirmation, localized recurring charge and cancellation are explicit")
         try check(!SubscriptionOfferPolicy.disclosure(sevenDayTrial: false, price: "£49.00", period: "/year").contains("7 days"), "Ineligible customers receive no invented trial")
 
+        let billingOrg = UUID()
+        func billingResponse(_ products: Any?) throws -> Data {
+            var response: [String: Any] = [
+                "billing": ["org_id": billingOrg.uuidString, "role": "owner",
+                            "can_manage_subscription": true],
+                "org": ["id": billingOrg.uuidString],
+            ]
+            if let products { response["team_seat_products"] = products }
+            return try JSONSerialization.data(withJSONObject: response)
+        }
+        let dormant = try SubscriptionBillingContext.fromMe(
+            billingResponse(nil), selectedOrg: billingOrg)
+        try check(dormant.teamSeatProducts.isEmpty,
+                  "Missing server sale authority keeps Team seat variants hidden")
+        let variantID = "com.rendprop.app.team4.monthly"
+        let ready = try SubscriptionBillingContext.fromMe(
+            billingResponse([variantID]), selectedOrg: billingOrg)
+        try check(ready.teamSeatProducts == [variantID],
+                  "Only an exact server-listed Team seat SKU can be presented")
+        for invalid in [["com.rendprop.app.team10.monthly"], [variantID, variantID]] {
+            do {
+                _ = try SubscriptionBillingContext.fromMe(
+                    billingResponse(invalid), selectedOrg: billingOrg)
+                throw NSError(domain: "Invalid Team seat sale list was accepted", code: 1)
+            } catch SubscriptionBillingContext.TrialPresentationError.invalidResponse {
+                checks += 1
+            }
+        }
+
         let suite = "RendpropBillingTests." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
