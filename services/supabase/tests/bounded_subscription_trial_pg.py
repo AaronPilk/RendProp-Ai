@@ -40,7 +40,8 @@ HISTORICAL_LAST = "20261017200000_photo_output_feedback.sql"
 MIGRATIONS = [m for m in sorted((SQL / "migrations").glob("*.sql"))
               if m.name <= HISTORICAL_LAST]
 SOURCES = [*MIGRATIONS, SQL / "tests/ci-bootstrap.sql",
-           SQL / "tests/bounded_subscription_trial.sql", Path(__file__).resolve()]
+           SQL / "tests/bounded_subscription_trial.sql",
+           SQL / "tests/trial_media_fixture.sql", Path(__file__).resolve()]
 receipt = {"kind": "owned disposable local PostgreSQL; no providers or hosted calls", "output": str(OUT),
            "schemaCutoff": HISTORICAL_LAST, "historicalContract": "funded trial before limited-intro policy",
            "commands": [], "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}}
@@ -116,6 +117,8 @@ try:
     fixture = (SQL / "tests/bounded_subscription_trial.sql").read_text()
     assert fixture.count("\nbegin;\n") == 1
     mutant = OUT / "trial-helper-stage-fence-removed.sql"
+    # The SQL copy still uses \ir, which resolves beside the copied file.
+    shutil.copyfile(SQL / "tests/trial_media_fixture.sql", OUT / "trial_media_fixture.sql")
     mutant.write_text(fixture.replace("\nbegin;\n","\nbegin;\n" + old_guard.group(0) + "\n",1))
     run("trial-helper-stage-fence-removed",[*psql,"-Atq","-f",mutant],refuses="TRIAL FAIL expected RP402: trial suggestion refused before any photo credit or cash is spent")
     receipt["helperFenceNegativeControl"] = {"positiveOracleRejected":True,"sourceCopy":str(mutant),"sha256":hashlib.sha256(mutant.read_bytes()).hexdigest(),"exit":receipt["commands"][-1]["exit"]}
