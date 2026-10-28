@@ -2,7 +2,7 @@ import {assert,assertEquals,assertRejects,assertThrows} from "https://deno.land/
 for(const key of ["SUPABASE_SECRET_KEYS","RENDPROP_SECRET_KEY_NAME","SUPABASE_PUBLISHABLE_KEYS","RENDPROP_PUBLISHABLE_KEY_NAME"])Deno.env.delete(key);
 Deno.env.set("SUPABASE_URL","https://closed-mask-fixture.invalid");Deno.env.set("SUPABASE_SERVICE_ROLE_KEY","closed-fixture-not-valid");Deno.env.set("SUPABASE_ANON_KEY","closed-fixture-not-valid");
 const {priceMaskedPhotoChain}=await import("./masked-photo-pricing.ts");
-const {ceilingVerifiedQuote,fundedAttempt,mediaAttemptQuote,resetServingModeCache}=await import("../_shared/funded-serving.ts");
+const {boundedPhotoChain,ceilingVerifiedQuote,fundedAttempt,mediaAttemptQuote,resetServingModeCache}=await import("../_shared/funded-serving.ts");
 const {falInput}=await import("../_shared/providers/fal.ts");
 const {paramsOf}=await import("../_shared/router.ts");
 const {HttpError}=await import("../_shared/http.ts");
@@ -46,4 +46,32 @@ Deno.test("ordinary ceiling masked Fill reserves complete20-cent liability befor
   await assertRejects(()=>fundedAttempt(denied,"photo.declutter:0",route,source,mediaAttemptQuote(route,source),async()=>{dispatched++;return{};}),HttpError);
   assertEquals(dispatched,1,"Insufficient ordinary envelope cannot dispatch a paid mask call");
  }finally{globalThis.fetch=saved;resetServingModeCache();}
+});
+Deno.test("ceiling masked Declutter skips unfunded FAL even for private sponsorship and keeps the paid OpenAI route",async()=>{
+ const openai={...step,route_id:"masked-openai",position:3,provider:"openai",model:"gpt-image-2",capabilities:["mask","prompt-edit","fidelity"]};
+ const source=input(1536,2048),originalFetch=globalThis.fetch;
+ let mode="ceiling";
+ globalThis.fetch=()=>Promise.resolve(Response.json(mode));
+ resetServingModeCache();
+ try{
+  for(const sponsored of[false,true]){
+   const calls:{name:string;args:Record<string,unknown>}[]=[],dispatched:string[]=[];
+   const context:FundingContext={actorId:"photo-fixture",orgId:"photo-org",requestKey:"masked-ceiling-fixture",rpc:async(name,args)=>{
+    calls.push({name,args});
+    if(name.startsWith("org_has_"))return{data:sponsored,error:null};
+    return{data:{reserved:true,finished:true},error:null};
+   }};
+   const chain=await boundedPhotoChain(context,[step,openai],source);
+   assertEquals(chain,[openai]);
+   await assertRejects(()=>boundedPhotoChain(context,[step],source),HttpError,"no funded provider route");
+   await fundedAttempt(context,"photo.declutter:0",chain[0],source,mediaAttemptQuote(chain[0],source),async()=>{
+    dispatched.push(chain[0].provider);return{confirmed:true};
+   });
+   assertEquals(dispatched,["openai"]);
+   assertEquals(calls.find(c=>c.name==="serving_cost_reserve")?.args.p_hold_cents,11.3056);
+  }
+  mode="funded";resetServingModeCache();
+  const sponsoredContext:FundingContext={actorId:"photo-fixture",orgId:"photo-org",requestKey:"masked-funded-fixture",rpc:async()=>({data:true,error:null})};
+  assertEquals(await boundedPhotoChain(sponsoredContext,[step,openai],source),[step,openai]);
+ }finally{globalThis.fetch=originalFetch;resetServingModeCache();}
 });

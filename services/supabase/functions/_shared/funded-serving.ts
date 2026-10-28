@@ -136,18 +136,20 @@ export async function unlimitedSponsored(context: Pick<FundingContext, "orgId" |
 }
 
 /** Route eligibility/privacy/capability filtering happens first. A finite
- * package permits one pinned primary and at most one priced fallback, while
- * private unlimited QA retains its existing operator chain. */
+ * package permits one pinned primary and at most one priced fallback. Private
+ * unlimited QA retains its operator chain in funded mode; ceiling mode removes
+ * FAL from every photo chain while its supplier balance is unavailable. */
 export async function boundedPhotoChain(context: FundingContext, steps: RouteStep[], input: GenerateInput): Promise<RouteStep[]> {
- if(await unlimitedSponsored(context))return steps;
- // FAL has no funded balance. Keep the first approved Gemini route, and let
- // its real failure surface with the existing recovery controls. Never send a
- // doomed fallback request or silently switch to another provider.
+ const sponsored=await unlimitedSponsored(context);
+ // FAL has no funded balance. A private testing grant waives the workspace
+ // allowance, not the supplier's balance, so this applies to sponsored edits
+ // too. Keep other eligible routes and their existing recovery behavior.
  if(await servingMode()==="ceiling"){
   const available=steps.filter(step=>step.provider!=="fal");
   if(available.length===0)throw new FundingAdmissionError(503,"This photo edit has no funded provider route. No edit was sent.","upstream");
   return available;
  }
+ if(sponsored)return steps;
  if(input.extra?.photo_quality_4k===true){
   if(steps.length!==1||steps[0].task!==input.task||steps[0].provider!=="gemini"||!(steps[0].model==="gemini-3.1-flash-image"||(steps[0].model==="gemini-3-pro-image"&&photoPro4KInputAllowance(input)!==null))||input.mask_url||!photo4KInputAllowance(input)||!mediaAttemptQuote(steps[0],input))
    throw new FundingAdmissionError(503,"This photo tool has no complete bounded 4K serving route. No edit was sent.","upstream");
