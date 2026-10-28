@@ -52,9 +52,11 @@ try:
  for label,signature,anchor,replacement,oracle in [
   ('paid-receipt-authority','public.paid_quality_processing_budget(uuid)',"transaction_signed_at is not null","true",'missing signed transaction cannot grant paid processing'),
   ('current-paid-deadline','public.paid_quality_processing_budget(uuid)','expires_at=o.plan_expires_at','true','historical receipt cannot fund a different current paid deadline'),
-  ('COGS-floor','public.org_entitlement(uuid)','e.cogs_ceiling_cents:=greatest(e.cogs_ceiling_cents,budget);','null;','COGS and atomic serving agree'),
+  # The reviewer sponsor wraps both authorities. Mutate their paid-production
+  # predecessors so these controls still exercise the real final call chain.
+  ('COGS-floor','public.org_entitlement_before_reviewer_20261028(uuid)','e.cogs_ceiling_cents:=greatest(e.cogs_ceiling_cents,budget);','null;','COGS and atomic serving agree'),
   ('atomic-envelope-floor','public.plan_serving_ceiling_before_credit(uuid)',"if budget>0 and env->>'kind'='retail'","if false and env->>'kind'='retail'",'COGS and atomic serving agree'),
-  ('paid-service-period','public.org_month_spend_cents(uuid)','if public.paid_quality_processing_budget(b)>0 then','if false then','previous paid term booked cost never blocks a renewed service window'),
+  ('paid-service-period','public.org_month_spend_cents_before_reviewer_20261028(uuid)','if public.paid_quality_processing_budget(b)>0 then','if false then','previous paid term booked cost never blocks a renewed service window'),
   ('all-AI-liability','public.library_serving_envelope_admit(uuid,uuid,numeric,text)','spent:=greatest(0,spent-pre);','spent:=0;','real atomic gate refuses above remaining balance')]:
   original=run('read-'+label,[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%signature]);assert original.count(anchor)==1,(label,'source anchor')
   run('compile-'+label,[*PSQL,'-Atq'],original.replace(anchor,replacement,1));run('negative-'+label,[*PSQL,'-Atq'],fixture,refuses=oracle);run('restore-'+label,[*PSQL,'-Atq'],original)
