@@ -1,5 +1,6 @@
 \set ON_ERROR_STOP on
 begin;
+\ir trial_media_fixture.sql
 -- Seven-day receipts are absolute UTC terms, including across DST changes.
 set local timezone='UTC';
 -- This legacy25-percent fixture deliberately pins its tariff. New allocation
@@ -98,6 +99,7 @@ do $$declare
  t timestamptz:=now()-interval '1 minute';e timestamptz;t2 timestamptz;s timestamptz:=now()-interval '30 seconds';r jsonb;funding uuid;pool uuid;
  zeros jsonb:='{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}';
  components jsonb:='{"storage":5,"delivery":5,"compute":5,"email":5,"support":5,"retention":5,"uncertainty":0}';
+ trial_components jsonb:='{"storage":8,"delivery":3,"compute":4,"email":5,"support":6,"retention":8,"uncertainty":8}';
 begin
  perform pg_temp.fcheck((serving_operation_begin(u,o,'logical-operation-key','coach.chat',repeat('a',64))->>'begun')::boolean,'logical operation journals before chain');
  perform pg_temp.frefuse(format('select serving_operation_begin(%L,%L,''logical-operation-key'',''copy.script'',%L)',u,o,repeat('b',64)),'RP409');
@@ -116,9 +118,9 @@ begin
  perform pg_temp.frefuse(format('select serving_operation_begin(%L,%L,''saved-helper-key'',''coach.chat'',%L)',u,'a2000000-0000-4000-8000-000000000004',repeat('b',64)),'RP409');
  perform pg_temp.fcheck(not has_table_privilege('authenticated','serving_operation_results','SELECT,INSERT,UPDATE,DELETE')and not has_table_privilege('service_role','serving_operation_results','INSERT,UPDATE,DELETE'),'bounded generated recovery is private and immutable');
  perform pg_temp.frefuse(format('insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_reserve_components,evidence_sha256)values(''bad'',''USA'',''USD'',49000,4165,1,%L,%L,''{}'',%L,%L)',t,t+interval '1 day',zeros,repeat('a',64)),'check constraint');
- insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256,admissions_enabled)values('synthetic-trial-pool','trial',200,t,t+interval '14 days',repeat('c',64),true)returning id into pool;
+ insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256,admissions_enabled)values('synthetic-trial-pool','trial',500,t,t+interval '14 days',repeat('c',64),true)returning id into pool;
  insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
- values('com.rendprop.app.starter.monthly','USA','USD',49000,4165,1,t-interval '1 day',t+interval '20 days',components,200,components,7,pool,repeat('c',64));
+ values('com.rendprop.app.starter.monthly','USA','USD',49000,4165,1,t-interval '1 day',t+interval '20 days',components,500,trial_components,7,pool,repeat('c',64));
  e:=t+interval '1 month';
  perform apply_apple_entitlement_v2(o,u,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly','max','Production','active',e,true,'DID_RENEW',t,s,s,s);
  r:=fund_verified_apple_transaction(o,'synthetic-paid-original','synthetic-paid-tx','com.rendprop.app.starter.monthly',null,'USD','USA',null,null,t,e,s,repeat('a',64));
@@ -146,7 +148,7 @@ begin
  t:=now();s:=now();e:=t+interval '7 days';
  perform apply_apple_entitlement_v2(trial,u,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly','max','Production','active',e,true,'SUBSCRIBED',t,s,s,s);
  r:=fund_reserved_subscription_trial(u,trial,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',t,e,s,repeat('a',64));
- perform pg_temp.fcheck((r->>'funded')::boolean and(r->>'total_budget_cents')::int=200 and(r->>'provider_budget_cents')::int=170,'trial uses inclusive committed sponsor cash, not zero retail proceeds');
+ perform pg_temp.fcheck((r->>'funded')::boolean and(r->>'total_budget_cents')::int=500 and(r->>'provider_budget_cents')::int=458,'trial uses inclusive committed sponsor cash, not zero retail proceeds');
  r:=fund_reserved_subscription_trial(u,trial,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',t,e,s,repeat('a',64));
  perform pg_temp.fcheck((r->>'funded')::boolean and(r->>'replay')::boolean and(select count(*)=1 from serving_funding where sponsor_pool_id=pool),'trial restore never revokes or doubles its per-chain pool commitment');
  -- A separate eligible account competes for the fully committed pool.
