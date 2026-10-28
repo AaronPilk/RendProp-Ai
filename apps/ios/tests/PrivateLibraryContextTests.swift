@@ -116,9 +116,9 @@ import Foundation
             do { _ = try SubscriptionBillingContext.fromMe(value, selectedOrg: other, billingOrg: own, servingOrg: qa); fatalError("Foreign financial binding accepted") } catch { checks += 1 }
         }
         let before = TrialPurchaseSnapshot(actor: actor.uuidString, revision: 4, org: other, billingOrg: own)
-        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true, verifiedHeldTrial: false, captured: before, current: before), "Bound ceiling purchase rejected")
+        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true, eligibleIntro: false, verifiedHeldTrial: false, captured: before, current: before), "Bound intro-ineligible ceiling purchase rejected")
         for changed in [TrialPurchaseSnapshot(actor: actor.uuidString, revision: 4, org: own, billingOrg: own), TrialPurchaseSnapshot(actor: agent.uuidString, revision: 4, org: other, billingOrg: own), TrialPurchaseSnapshot(actor: actor.uuidString, revision: 5, org: other, billingOrg: own), TrialPurchaseSnapshot(actor: actor.uuidString, revision: 4, org: other, billingOrg: oldShared)] {
-            check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true, verifiedHeldTrial: false, captured: before, current: changed), "Changed purchase scope accepted")
+            check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true, eligibleIntro: false, verifiedHeldTrial: false, captured: before, current: changed), "Changed purchase scope accepted")
         }
         let memberBilling = try SubscriptionBillingContext.fromMe(billing(manage: false), selectedOrg: other, billingOrg: own, servingOrg: qa)
         check(!TrialPurchaseAdmission.allows(eligibleIntro: false, billing: memberBilling, captured: before, current: before), "Sponsored agent initiated parent purchase")
