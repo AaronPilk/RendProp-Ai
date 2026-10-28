@@ -135,6 +135,8 @@ begin
    not has_function_privilege('authenticated',
    'public.review_shared_supplier_reserve_guard()','execute'),
    'reviewer money authority remains private');
+ perform pg_temp.review_ok(public.serving_mode()='ceiling',
+   'reviewer Sandbox credit path requires ceiling lock ordering');
  r:=public.provision_serving_funding(org,'app_review','synthetic-review-sandbox',
    actor,0,500,t,z,1,reserve,repeat('a',64));
  f:=(r->>'funding_id')::uuid;
@@ -254,6 +256,24 @@ begin
    'processor_consent',aerial_policy->'processor_consent',
    'expires_at',now()+interval '10 minutes','privacy_stop_at',null);
  aerial_consent:=aerial_policy->'processor_consent';
+ -- Leave 50c of the 450c sponsor allowance. The aerial's largest one-row
+ -- hold is 45c, but its five rows total 67c. A per-statement stale snapshot
+ -- must not admit this multirow INSERT ... SELECT.
+ photo_motion_spend:=public.org_month_spend_cents(org);
+ legacy_hold:=400-photo_motion_spend;
+ perform public.serving_cost_reserve(actor,org,'review-near-cap','photo.initial:0',
+   'gemini','synthetic',repeat('b',64),legacy_hold,'synthetic');
+ perform pg_temp.review_ok(public.org_month_spend_cents(org)=400,
+   'near-cap test leaves exactly 50 cents for a five-stage aerial quote');
+ perform pg_temp.review_refuse(format(
+   'select public.property_video_aerial_admit_credit(%L,%L::jsonb,%L::jsonb,%L::jsonb,%L,%L)',
+   actor,aerial_manifest,aerial_quote,aerial_consent,'Sandbox','aerial-opening-v1'),
+   'RP402: Shared reviewer supplier budget');
+ perform pg_temp.review_ok((select count(*)=0 from public.serving_cost_reservations
+   where request_key='aerial-opening:ed400000-0000-4000-8000-000000000002'),
+   'near-cap multirow rejection leaves no aerial supplier journal');
+ perform public.serving_cost_finish(actor,org,'review-near-cap','photo.initial:0',
+   'rejected',0);
  aerial_job:=public.property_video_aerial_admit_credit(actor,
    aerial_manifest,aerial_quote,aerial_consent,'Sandbox','aerial-opening-v1');
  perform pg_temp.review_ok(aerial_job.id is not null and
@@ -297,6 +317,28 @@ begin
    where org_id=org and request_key in('review-credit-02','review-legacy-02')),
    'refused supplier attempts leave no dispatch journal');
 end$$;
+-- Funded mode uses a different legacy lock path. It cannot silently turn on
+-- reviewer Sandbox credit spending until that ordering is independently safe.
+reset role;
+update public.app_config set value=jsonb_set(value,'{mode}','"funded"'::jsonb)
+ where key='serving_mode';
+set local role service_role;
+do $$
+declare actor uuid:='ed000000-0000-4000-8000-000000000001';
+ org uuid:='ed100000-0000-4000-8000-000000000001';
+begin
+ perform pg_temp.review_ok(public.serving_mode()='funded' and
+   not public.reviewer_sandbox_signed_credit(org) and
+   not public.credit_primary_subscription(org,'Sandbox'),
+   'funded mode closes reviewer Sandbox credit admission');
+ perform pg_temp.review_refuse(format(
+   'select public.credit_serving_cost_reserve(%L,%L,''review-credit-02'',''photo.declutter:0'',''gemini'',''synthetic'',%L,1,''synthetic'',%L,''review-credit-02'',''Sandbox'')',
+   actor,org,repeat('f',64),org),'RP403');
+end$$;
+reset role;
+update public.app_config set value=jsonb_set(value,'{mode}','"ceiling"'::jsonb)
+ where key='serving_mode';
+set local role service_role;
 -- Expire the signed Sandbox monthly grant while leaving the sponsor active.
 -- This is a rollback-only clock-state fixture, never a live account mutation.
 reset role;

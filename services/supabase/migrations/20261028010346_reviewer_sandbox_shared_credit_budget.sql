@@ -44,7 +44,8 @@ returns boolean language sql stable security definer set search_path='' as $$
    join public.media_account_reserves a on a.receipt_ref=m.account_reserve_ref
      and a.cash_source='business_paid_cash' and a.starts_at<=f.starts_at
      and a.ends_at>=f.retention_ends_at
-   where f.org_id=p_org and f.source='app_review' and f.revoked_at is null
+ where f.org_id=p_org and f.source='app_review' and f.revoked_at is null
+     and public.serving_mode()='ceiling'
      and f.starts_at<=now() and f.ends_at>now() and f.actor_id is not null
      and sl.starts_at=f.starts_at and sl.ends_at=f.ends_at
      and s.status='active' and e.state in('paid','reversed')

@@ -141,6 +141,9 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20261027232500_subscription_trial_hybrid_funded_serving.sql",
     "20261027234000_trial_shared_launch_budget_guard.sql",
     "20261027234243_paid_media_budget_cap.sql",
+    # Exact paid/reviewer predecessor guards and new private functions apply
+    # once; a second application must refuse before changing money authority.
+    "20261028010346_reviewer_sandbox_shared_credit_budget.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -205,6 +208,7 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261027232500_subscription_trial_hybrid_funded_serving.sql": ("6cd0c5bc46406c41bc2db21c5074bb5c843a532e2fe65b13496d78ed790fdb05", 'relation "subscription_trial_media_template" already exists'),
     "20261027234000_trial_shared_launch_budget_guard.sql": ("3497a2fd566e35d27ce0fe2061971425d675ce6b07e127481193a1c450a0c7f6", 'Review shared launch budget guard already installed'),
     "20261027234243_paid_media_budget_cap.sql": ("c6b2f52621a30231aaa716dda46733e7ec1d48d085fbd723122bd56be3e96c38", 'Review paid media budget cap already installed'),
+    "20261028010346_reviewer_sandbox_shared_credit_budget.sql": ("30c392ca0fadbfbb721eaadbb7355591460760d126fda0e3222fdb982dc14b2a", "Review changed paid primary credit authority"),
 }
 
 
