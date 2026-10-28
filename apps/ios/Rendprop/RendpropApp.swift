@@ -3648,7 +3648,11 @@ private struct RendpropLaunchContent: View {
     @ViewBuilder private var normalContent: some View {
 #if DEBUG && targetEnvironment(simulator)
         if Config.isSessionNetworkTesting {
-            PhaseOneFixtureRoot()
+            if ProcessInfo.processInfo.arguments.contains("-ui.reviewAccountFixture") {
+                ReviewAccountFixtureRoot()
+            } else {
+                PhaseOneFixtureRoot()
+            }
         } else {
             accountContent
         }

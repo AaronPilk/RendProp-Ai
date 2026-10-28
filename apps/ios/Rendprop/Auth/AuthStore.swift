@@ -9,11 +9,10 @@ import os
 ///
 /// - When `Config.enableAuth == false` (dev): behaves like the old stub —
 ///   always "signed in", no token. LiveAPIClient simply sends no `Authorization`.
-/// - When `Config.enableAuth == true`: Sign in with Apple (the `SignInView`
-///   sheet in Screens/RenderStatusView.swift, using `SignInWithAppleButton`) →
-///   exchange the Apple identity token with Supabase Auth
-///   (`/auth/v1/token?grant_type=id_token`) → persist the JWT. LiveAPIClient
-///   refreshes via `validAccessToken()` right before every request.
+/// - When `Config.enableAuth == true`: Sign in with Apple or an existing
+///   app-specific email account → exchange with Supabase Auth → persist the
+///   identified JWT. LiveAPIClient refreshes via `validAccessToken()` right
+///   before every request.
 ///
 /// Tokens live in the KEYCHAIN (kSecClassGenericPassword, AfterFirstUnlock,
 /// ThisDeviceOnly). Sessions persisted by earlier builds in UserDefaults are
@@ -30,10 +29,10 @@ final class AuthStore: ObservableObject {
     /// A cached or accepted session, including a legacy guest kept for adoption.
     @Published var isSignedIn: Bool
 
-    /// TRUE ONLY WITH A REAL APPLE IDENTITY on the session.
+    /// TRUE ONLY WITH A REAL, non-anonymous Auth identity on the session.
     ///
     /// Launch requires an identified account. Legacy guest credentials stay
-    /// stored until the existing Apple adoption flow transfers their work.
+    /// stored until the existing account adoption flow transfers their work.
     @Published var isIdentified: Bool = false
 
     /// Legacy bootstrap task slot, cancelled at identity transitions. New
@@ -872,7 +871,7 @@ final class AuthStore: ObservableObject {
         return sub
     }
 
-    /// A sign-in receipt owns the Apple code before the caller can suspend.
+    /// A sign-in receipt owns the accepted session before the caller can suspend.
     /// Token refresh preserves this identity; account/session/workspace changes
     /// require a new receipt and cannot rebind the old code.
     struct AppleSessionIdentity: Equatable {
@@ -987,15 +986,7 @@ final class AuthStore: ObservableObject {
     @MainActor
     @discardableResult
     func exchangeAppleIdentityToken(idToken: String, nonce: String? = nil) async throws -> AppleSessionIdentity {
-        // A late anonymous/refresh response cannot replace the chosen identity.
-        sessionEpoch &+= 1
-        syncIdentityEpoch &+= 1
-        let epoch = sessionEpoch
-        anonymousBootstrap?.cancel()
-        anonymousBootstrap = nil
-        connection.cancelAll()
-        refreshInFlight?.cancel()
-        refreshInFlight = nil
+        let epoch = beginIdentifiedSignInAttempt()
         guard let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
               !Config.supabaseAnonKey.isEmpty else {
             throw APIError.notConfigured
@@ -1024,6 +1015,67 @@ final class AuthStore: ObservableObject {
         guard let session = try? JSONDecoder().decode(SupabaseSession.self, from: data) else {
             throw APIError.decoding
         }
+        return try await acceptIdentifiedSession(session, attemptEpoch: epoch)
+    }
+
+    /// Sign in an existing, operator-provisioned app account. No credential is
+    /// stored or logged; only the returned Supabase session enters the Keychain.
+    /// This is ordinary Auth password sign-in, not a client-side review bypass.
+    @MainActor
+    @discardableResult
+    func signInWithPassword(email: String, password: String) async throws -> AppleSessionIdentity {
+        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedEmail.isEmpty, normalizedEmail.utf8.count <= 320,
+              !password.isEmpty, password.utf8.count <= 1024 else {
+            throw APIError.server(status: 400, code: "invalid_credentials",
+                                  message: "Enter a valid account email and password.")
+        }
+        let epoch = beginIdentifiedSignInAttempt()
+        guard let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
+              !Config.supabaseAnonKey.isEmpty,
+              (authBase.scheme == "https" || Config.isSessionNetworkTesting),
+              var comps = URLComponents(url: authBase.appendingPathComponent("token"),
+                                        resolvingAgainstBaseURL: false) else {
+            throw APIError.notConfigured
+        }
+        comps.queryItems = [URLQueryItem(name: "grant_type", value: "password")]
+        guard let tokenURL = comps.url else { throw APIError.notConfigured }
+        var req = URLRequest(url: tokenURL)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["email": normalizedEmail,
+                                                                    "password": password])
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard !Task.isCancelled, sessionEpoch == epoch else { throw CancellationError() }
+        guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+        guard (200..<300).contains(http.statusCode) else {
+            throw Self.authError(status: http.statusCode, data: data)
+        }
+        guard let session = try? JSONDecoder().decode(SupabaseSession.self, from: data) else {
+            throw APIError.decoding
+        }
+        return try await acceptIdentifiedSession(session, attemptEpoch: epoch)
+    }
+
+    @MainActor
+    private func beginIdentifiedSignInAttempt() -> UInt64 {
+        // A late anonymous/refresh response cannot replace the chosen identity.
+        sessionEpoch &+= 1
+        syncIdentityEpoch &+= 1
+        anonymousBootstrap?.cancel()
+        anonymousBootstrap = nil
+        connection.cancelAll()
+        refreshInFlight?.cancel()
+        refreshInFlight = nil
+        return sessionEpoch
+    }
+
+    @MainActor
+    private func acceptIdentifiedSession(_ session: SupabaseSession,
+                                         attemptEpoch: UInt64) async throws -> AppleSessionIdentity {
+        guard !Task.isCancelled, sessionEpoch == attemptEpoch else { throw CancellationError() }
         guard Self.tokenIsIdentified(session.accessToken),
               let expiry = Self.jwtExpiry(session.accessToken), expiry > Date() else { throw APIError.decoding }
         // A whole Keychain envelope commits before either active credential is

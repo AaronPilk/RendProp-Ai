@@ -91,4 +91,23 @@ struct PhaseOneFixtureRoot: View {
         }
     }
 }
+
+/// Disposable simulator screen for the real review-account form and AuthStore
+/// exchange. The only credentials it accepts come from the loopback fixture
+/// server; this view is absent from Release and never uses production Auth.
+struct ReviewAccountFixtureRoot: View {
+    @ObservedObject private var auth = AuthStore.shared
+
+    var body: some View {
+        if auth.isSignedIn && auth.isIdentified, let owner = auth.userID {
+            VStack(spacing: 20) {
+                Text(owner).accessibilityIdentifier("reviewFixture.owner")
+                Button("Sign out") { auth.signOut() }
+                    .accessibilityIdentifier("reviewFixture.signOut")
+            }
+        } else {
+            SignInView.requiredAccount()
+        }
+    }
+}
 #endif

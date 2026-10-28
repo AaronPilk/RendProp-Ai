@@ -26,10 +26,11 @@ final class SessionNetworkFlow: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
     override func tearDownWithError() throws { app?.terminate(); app = nil }
 
-    private func launch(_ surface: String) throws {
+    private func launch(_ surface: String, reviewAccount: Bool = false) throws {
         XCTAssertEqual(try control("reset")["ok"] as? Bool, true)
         app = XCUIApplication()
         app.launchArguments = ["-uiTesting", "-sessionNetworkTesting", "-hasOnboarded", "YES"]
+        if reviewAccount { app.launchArguments.append("-ui.reviewAccountFixture") }
         app.launchEnvironment["RENDP_TEST_URL"] = base.absoluteString
         app.launchEnvironment["RENDP_TEST_RUN"] = UUID().uuidString
         app.launchEnvironment["RENDP_TEST_SURFACE"] = surface
@@ -111,5 +112,51 @@ final class SessionNetworkFlow: XCTestCase {
         try tap("phase1.reelGenerate")
         try recoverAndAssert("/functions/v1/ai-video/reel-clip", expectedCalls: 2)
         XCTAssertTrue(app.staticTexts["Your reel is ready"].waitForExistence(timeout: 60))
+    }
+
+    func testReviewAccountWrongPasswordSignOutAndSwitch() throws {
+        try launch("review", reviewAccount: true)
+        XCTAssertTrue(app.buttons["account.emailSignInOption"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["account.signInApple"].exists)
+
+        func enter(_ email: String, _ password: String) throws {
+            try tap("account.emailSignInOption")
+            let emailField = app.textFields["account.emailAddress"]
+            let passwordField = app.secureTextFields["account.emailPassword"]
+            XCTAssertTrue(emailField.waitForExistence(timeout: 5))
+            let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"),
+                                                      object: emailField)
+            XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 5), .completed)
+            emailField.tap(); emailField.typeText(email)
+            passwordField.tap(); passwordField.typeText(password)
+            try tap("account.emailSubmit")
+        }
+
+        try enter("review-a@example.invalid", "incorrect")
+        XCTAssertTrue(app.staticTexts["account.emailError"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["account.emailSubmit"].exists)
+        XCTAssertFalse(app.staticTexts["reviewFixture.owner"].exists)
+        // iOS can offer to save a typed password when this sheet closes. A
+        // relaunch clears that system prompt while keeping this test run's
+        // isolated Auth state, and also verifies rejection did not persist it.
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["account.emailSignInOption"].waitForExistence(timeout: 10))
+
+        try enter("review-a@example.invalid", "fixture-a-only")
+        XCTAssertTrue(app.staticTexts["reviewFixture.owner"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["reviewFixture.owner"].label,
+                       "10000000-0000-4000-8000-000000000003")
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["reviewFixture.owner"].waitForExistence(timeout: 10),
+                      "Accepted credentials must restore through the Keychain")
+        try tap("reviewFixture.signOut")
+        XCTAssertTrue(app.buttons["account.emailSignInOption"].waitForExistence(timeout: 10))
+
+        try enter("review-b@example.invalid", "fixture-b-only")
+        XCTAssertTrue(app.staticTexts["reviewFixture.owner"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["reviewFixture.owner"].label,
+                       "10000000-0000-4000-8000-000000000006")
+        let requests = try control("state")["requests"] as? [String: Int] ?? [:]
+        XCTAssertEqual(requests["/auth/v1/token?grant_type=password"], 3)
     }
 }

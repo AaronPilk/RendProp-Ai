@@ -71,6 +71,25 @@ test('session UI fixture retries an identified refresh, never guest signup', asy
     assert.equal(state.accepted, 0); assert.equal(state.identifiedExchanges, 0);
     assert.deepEqual(state.requests, {});
 
+    const badPassword = await post('/auth/v1/token?grant_type=password', {
+      email:'review-a@example.invalid', password:'incorrect'
+    });
+    assert.equal(badPassword.status, 401);
+    for (const [email, password, subject] of [
+      ['review-a@example.invalid', 'fixture-a-only', '10000000-0000-4000-8000-000000000003'],
+      ['review-b@example.invalid', 'fixture-b-only', '10000000-0000-4000-8000-000000000006']
+    ]) {
+      const response = await post('/auth/v1/token?grant_type=password', {email, password});
+      assert.equal(response.status, 200);
+      const session = await response.json();
+      assert.equal(payload(session.access_token).sub, subject);
+      assert.equal(payload(session.access_token).is_anonymous, false);
+      assert.equal(session.expires_in, 3600);
+    }
+    state = await (await fetch(base + '/__control/state')).json();
+    assert.equal(state.requests['/auth/v1/token?grant_type=password'], 3);
+    assert.equal(state.identifiedExchanges, 2);
+
     const fixture = await readFile(new URL('../../apps/ios/Rendprop/Auth/PhaseOneFixtures.swift', import.meta.url), 'utf8');
     assert.ok(fixture.startsWith('#if DEBUG && targetEnvironment(simulator)'));
     assert.ok(fixture.includes('exchangeAppleIdentityToken('));

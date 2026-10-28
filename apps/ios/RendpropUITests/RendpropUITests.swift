@@ -90,7 +90,16 @@ final class RendpropUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["Welcome to Rendprop"].waitForExistence(timeout: screenTimeout))
         XCTAssertTrue(app.buttons["account.signInApple"].exists)
+        XCTAssertTrue(app.buttons["account.emailSignInOption"].exists)
         XCTAssertFalse(app.buttons["Not now"].exists)
+        app.buttons["account.emailSignInOption"].tap()
+        XCTAssertTrue(app.textFields["account.emailAddress"].waitForExistence(timeout: shortTimeout))
+        XCTAssertTrue(app.secureTextFields["account.emailPassword"].exists)
+        XCTAssertFalse(app.buttons["account.emailSubmit"].isEnabled)
+        let emailSheet = XCTAttachment(screenshot: app.screenshot())
+        emailSheet.name = "email-account-sign-in"; emailSheet.lifetime = .keepAlways; add(emailSheet)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["account.signInApple"].exists)
         for identifier in ["account.terms", "account.privacy", "account.help"] {
             XCTAssertTrue(app.descendants(matching: .any)[identifier].exists, identifier)
         }
