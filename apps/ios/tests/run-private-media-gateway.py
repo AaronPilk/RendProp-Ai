@@ -43,7 +43,7 @@ before_send_type=execute_declaration.split('beforeSend: ',1)[1].split(' = nil',1
 base=interfaces.replace('__EXECUTE_ACTOR__',execute_actor).replace('__BEFORE_SEND_TYPE__',before_send_type)
 base+=block(api,'    func cloudMedia(listingID:')+'\n'+block(api,'    func cloudCreative(listingID:')+'\n}\n'
 base+=block(wire,'struct CloudMediaAccessContext:')+'\n'+block(wire,'struct CloudCreative {')+'\n'+block(wire,'struct CloudMediaPage:')+'\n'+block(wire,'enum CloudSyncError:')+'\n'
-base+='enum CloudListingMerge {\n'+block(wire,'static func date(')+'\n'+block(wire,'static func validateMedia(')+'\n}\n'
+base+='enum CloudListingMerge {\n'+block(wire,'static func validatedMediaKey(')+'\n'+block(wire,'static func date(')+'\n'+block(wire,'static func validateMedia(')+'\n}\n'
 base+='@MainActor final class ImportFixture {let auth=AuthStore.shared;let model=Model();var current:Listing;var mediaContext:String?;var importGeneration=UUID();var importing:UUID?;var error:String?;var notice:String?;var importTask:Task<Void,Never>?;var imported=Set<UUID>();var chapters:[Chapter]=[];init(_ l:Listing){current=l;model.listings=[l]}\n'
 for a in ['private func context(','@MainActor private func hasCurrentMediaContext(','@MainActor private func importPhoto(','@MainActor private func importVideo(','@MainActor private func importVoice(']:base+=block(view,a).replace('private ','',1)+'\n'
 base+='}\n'

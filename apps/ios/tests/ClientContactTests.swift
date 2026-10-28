@@ -110,6 +110,21 @@ enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fil
         let merged = try CloudListingMerge.merge(local: [listing], remote: [remote], protected: [])[0]
         try expect(merged.clientContact == draft && merged.clientContactDirty == true, "Property fact hydration cannot erase separate contact draft")
         try expect(merged.clientPhotoRelPath == listing.clientPhotoRelPath, "Cloud fact hydration retains client photo separate from property hero")
+        var oldCover = listing
+        oldCover.mainPhotoRelPath = "Photos/local-cover.jpg"
+        oldCover.cloudMainPhotoKey = "renders/\(org)/\(listingID)/old-cover.jpg"
+        oldCover.needsServerSync = true
+        let savedCover = try JSONDecoder().decode(Listing.self, from: JSONEncoder().encode(oldCover))
+        try expect(savedCover.cloudMainPhotoKey == oldCover.cloudMainPhotoKey, "Cloud cover identity survives a local snapshot roundtrip")
+        var selectedElsewhere = remote
+        selectedElsewhere.cloudMainPhotoKey = "renders/\(org)/\(listingID)/new-cover.jpg"
+        let changedCover = try CloudListingMerge.merge(local: [oldCover], remote: [selectedElsewhere], protected: [])[0]
+        try expect(changedCover.cloudMainPhotoKey == selectedElsewhere.cloudMainPhotoKey && changedCover.mainPhotoRelPath == oldCover.mainPhotoRelPath,
+                   "Cloud cover selection updates despite dirty facts while local photo bytes remain")
+        selectedElsewhere.cloudMainPhotoKey = nil
+        let removedCover = try CloudListingMerge.merge(local: [oldCover], remote: [selectedElsewhere], protected: [])[0]
+        try expect(removedCover.cloudMainPhotoKey == nil && removedCover.mainPhotoRelPath == nil,
+                   "Removing the cloud cover retires the stale local hero pointer")
         let body = draft.writeBody
         let publicBody = body["public_card"] as! [String: Any]
         try expect(publicBody["recipient_email"] == nil && publicBody["avatar_url"] == nil, "Private lead email and arbitrary avatar URL never written as public card")

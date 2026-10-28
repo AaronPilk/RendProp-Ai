@@ -2556,6 +2556,7 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
             soldAt: Self.parseDate(dto.soldAt),
             zillowURL: dto.zillowUrl.flatMap { $0.isEmpty ? nil : $0 },
             mainPhotoRelPath: nil,          // main_photo_key is a remote R2 key, not a local path
+            cloudMainPhotoKey: dto.mainPhotoKey,
             latitude: dto.lat,
             longitude: dto.lng,
             tagline: dto.tagline,

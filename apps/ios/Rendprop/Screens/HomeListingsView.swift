@@ -569,15 +569,105 @@ struct SoldListingsView: View {
 // MARK: - Aesthetic listing card
 
 struct ListingCard: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
     let listing: Listing
-    /// Downsampled hero, decoded once off the main thread (never a full-res
-    /// `UIImage(contentsOfFile:)` inside `body`).
+    /// Keep only the decoded image in memory. In particular, a cloud media
+    /// capability must never enter the saved listing snapshot or disk cache.
     @State private var hero: UIImage?
+    @State private var heroID: String?
+    @State private var unavailableHeroID: String?
+
+    private enum HeroSource {
+        case local(URL), cloud(String), none
+    }
+
+    private var heroSource: HeroSource {
+        if let projection = model.cloudPhotoProjection(for: listing.id) {
+            if let key = projection.snapshot.mainPhotoKey { return .cloud(key) }
+            if listing.cloudMainPhotoKey != nil { return .none }
+        }
+        if listing.serverID != nil, listing.cloudUnavailable != true,
+           let key = listing.cloudMainPhotoKey { return .cloud(key) }
+        return listing.mainPhotoURL.map(HeroSource.local) ?? .none
+    }
+
+    /// Includes the account and library so a reused List row cannot show an
+    /// earlier user's image during an account or workspace transition.
+    private var currentHeroID: String {
+        let scope = "\(auth.userID ?? "")|\(auth.syncSessionRevision)|\(WorkspaceContext.selectedOrgID?.uuidString ?? "")|\(listing.id.uuidString)|\(listing.serverID?.uuidString ?? "")|\(listing.serverOrgID?.uuidString ?? "")"
+        switch heroSource {
+        case .local(let url): return scope + "|local|" + url.path
+        case .cloud(let key): return scope + "|cloud|" + key
+        case .none: return scope + "|none"
+        }
+    }
 
     private var heroImage: UIImage? {
-        if let hero { return hero }
-        if let url = listing.mainPhotoURL { return ImageThumbnails.cached(url) }
+        if heroID == currentHeroID { return hero }
+        if case .local(let url) = heroSource { return ImageThumbnails.cached(url) }
         return nil
+    }
+
+    private var showPlaceholderSymbol: Bool {
+        if case .none = heroSource { return true }
+        return unavailableHeroID == currentHeroID
+    }
+
+    @MainActor private func isCurrentCloudCover(_ context: CloudMediaAccessContext,
+                                                 serverID: UUID, orgID: UUID, key: String, heroID: String) -> Bool {
+        guard !Task.isCancelled, (try? context.check()) != nil, currentHeroID == heroID,
+              let current = model.listings.first(where: { $0.id == listing.id }),
+              current.serverID == serverID, current.serverOrgID == orgID,
+              current.cloudUnavailable != true, model.isInSelectedWorkspace(current) else { return false }
+        if let projection = model.cloudPhotoProjection(for: listing.id) {
+            return projection.snapshot.mainPhotoKey == key
+        }
+        return current.cloudMainPhotoKey == key
+    }
+
+    @MainActor private func loadHero() async {
+        let id = currentHeroID, source = heroSource
+        hero = nil; heroID = nil; unavailableHeroID = nil
+        defer {
+            if !Task.isCancelled, currentHeroID == id, heroID != id { unavailableHeroID = id }
+        }
+        switch source {
+        case .none: return
+        case .local(let url):
+            let decoded: UIImage?
+            if let cached = ImageThumbnails.cached(url) { decoded = cached }
+            else { decoded = await ImageThumbnails.load(url) }
+            if let decoded, !Task.isCancelled, currentHeroID == id { hero = decoded; heroID = id }
+        case .cloud(let key):
+            guard let serverID = listing.serverID, let orgID = listing.serverOrgID,
+                  let api = model.api as? WorkspaceSyncAPI,
+                  let context = try? CloudMediaAccessContext.capture(orgID: orgID),
+                  isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) else { return }
+            do {
+                var offset = 0
+                while true {
+                    guard isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) else { return }
+                    let page = try await api.cloudMedia(listingID: serverID, orgID: orgID, offset: offset)
+                    guard isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) else { return }
+                    if let url = page.coverURL(for: key, actorID: context.actorID) {
+                        let file = try await CloudFileDownload.fetch(url, kind: .photo)
+                        defer {
+                            ImageThumbnails.invalidate(file.url)
+                            try? FileManager.default.removeItem(at: file.url)
+                        }
+                        guard isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) else { return }
+                        let decoded = await ImageThumbnails.load(file.url)
+                        if let decoded, isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) {
+                            hero = decoded; heroID = id
+                        }
+                        return
+                    }
+                    guard let next = page.next_offset, next > offset else { return }
+                    offset = next
+                }
+            } catch { return }
+        }
     }
 
     private var statusText: String {
@@ -598,12 +688,7 @@ struct ListingCard: View {
         .shadow(color: Color.black.opacity(0.07), radius: 16, x: 0, y: 6)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("\(listing.address), \(listing.subtitleLine), \(statusText)"))
-        .task(id: listing.mainPhotoRelPath) {
-            guard let url = listing.mainPhotoURL else { hero = nil; return }
-            if let cached = ImageThumbnails.cached(url) { hero = cached; return }
-            let decoded = await ImageThumbnails.load(url)
-            if !Task.isCancelled { hero = decoded }
-        }
+        .task(id: currentHeroID) { await loadHero() }
     }
 
     // Hero area — shows the main listing photo once one is set, else a branded placeholder.
@@ -624,12 +709,18 @@ struct ListingCard: View {
                              Theme.accentSoft],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
-                Image(systemName: listing.spaceType == .realEstate
-                                  ? "house.and.flag.fill"
-                                  : listing.spaceType.systemImage)
-                    .font(.system(size: 56, weight: .ultraLight))
-                    .foregroundStyle(Theme.accent.opacity(0.30))
-                    .offset(y: 6)
+                if showPlaceholderSymbol {
+                    Image(systemName: listing.spaceType == .realEstate
+                                      ? "house.and.flag.fill"
+                                      : listing.spaceType.systemImage)
+                        .font(.system(size: 56, weight: .ultraLight))
+                        .foregroundStyle(Theme.accent.opacity(0.30))
+                        .offset(y: 6)
+                } else {
+                    ProgressView()
+                        .tint(Theme.accent)
+                        .accessibilityLabel("Loading listing photo")
+                }
             }
 
             if listing.status == .ready {

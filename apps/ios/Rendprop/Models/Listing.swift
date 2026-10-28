@@ -25,9 +25,12 @@ struct Listing: Identifiable, Codable, Hashable {
     /// Studio can archive a listing without marking it sold. Preserve both states.
     var cloudArchived: Bool? = nil
     var zillowURL: String? = nil
-    /// The enhanced photo (path relative to Documents) shown as the card's hero
-    /// and in the public app link.
+    /// The locally chosen photo (path relative to Documents). Cloud selection
+    /// uses `cloudMainPhotoKey` when the listing has a server cover.
     var mainPhotoRelPath: String? = nil
+    /// Server-selected cover identity. This is an object key, never a signed URL
+    /// or a local file path; a fresh scoped media read resolves it for display.
+    var cloudMainPhotoKey: String? = nil
     /// Explicit local website-video choice. Recording a walkthrough or making
     /// another social video never replaces this selection or publishes it.
     var websiteVideoRelPath: String? = nil
@@ -338,7 +341,7 @@ struct Listing: Identifiable, Codable, Hashable {
 extension Listing {
     enum CodingKeys: String, CodingKey {
         case id, address, beds, baths, sqft, price, status, isSample, spaceTypeRaw,
-             createdAt, soldAt, cloudArchived, zillowURL, mainPhotoRelPath, latitude, longitude,
+             createdAt, soldAt, cloudArchived, zillowURL, mainPhotoRelPath, cloudMainPhotoKey, latitude, longitude,
              tagline, details, floorMeasurements, serverID, serverOrgID, serverLibraryOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateFactsFingerprint, cloudCreateReplayed, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
              lastError, needsServerSync, factsSync, measurementSync, publishedRenderID, lastRepublishedAt,
@@ -365,6 +368,7 @@ extension Listing {
         cloudArchived    = try c.decodeIfPresent(Bool.self, forKey: .cloudArchived)
         zillowURL        = try c.decodeIfPresent(String.self, forKey: .zillowURL)
         mainPhotoRelPath = try c.decodeIfPresent(String.self, forKey: .mainPhotoRelPath)
+        cloudMainPhotoKey = try c.decodeIfPresent(String.self, forKey: .cloudMainPhotoKey)
         websiteVideoRelPath = try c.decodeIfPresent(String.self, forKey: .websiteVideoRelPath)
         latitude         = try c.decodeIfPresent(Double.self, forKey: .latitude)
         longitude        = try c.decodeIfPresent(Double.self, forKey: .longitude)

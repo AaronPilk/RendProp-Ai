@@ -33,6 +33,24 @@ import Foundation
         var livePayload=payload();let liveExp=Date().addingTimeInterval(500);livePayload["exp"]=Int(liveExp.timeIntervalSince1970);let liveExpiry=formatter.string(from:liveExp)
         func page(_ p:[String:Any])->Data{try! JSONSerialization.data(withJSONObject:["org_id":org.uuidString,"listing_id":listing.uuidString,"photos":[["id":file.uuidString,"listing_id":listing.uuidString,"url":link(p).absoluteString,"expires_at":liveExpiry,"is_staged":false,"is_altered":false]],"videos":[],"next_offset":NSNull(),"unavailable_count":0])}
         let api=LiveFixture();api.responses=[page(livePayload)];let actualPage=try await api.cloudMedia(listingID:listing,orgID:org);expect(actualPage.photos.count==1,"Current gateway page failed")
+        let selectedKey=livePayload["key"] as! String
+        var otherCover=livePayload;otherCover["key"]="renders/\(org.uuidString.lowercased())/\(listing.uuidString.lowercased())/other.jpg"
+        let otherPhoto=CloudMediaPage.Photo(id:other,listing_id:listing,url:link(otherCover),expires_at:liveExpiry,caption:nil,is_staged:false,is_altered:false,original_url:nil)
+        let covers=CloudMediaPage(org_id:org,listing_id:listing,photos:[otherPhoto,actualPage.photos[0]],videos:[],next_offset:nil,unavailable_count:0)
+        expect(covers.coverURL(for:selectedKey,actorID:actor)==actualPage.photos[0].url,"Card chose a different listing photo instead of the selected cover")
+        expect(covers.coverURL(for:"renders/\(org.uuidString.lowercased())/\(listing.uuidString.lowercased())/missing.jpg",actorID:actor)==nil,"Missing selected cover borrowed another photo")
+        expect(covers.coverURL(for:selectedKey,actorID:other)==nil,"Card exposed a cover to another actor")
+        expect(covers.coverURL(for:selectedKey,actorID:actor,now:liveExp.addingTimeInterval(1))==nil,"Card reused an expired private link")
+        let foreignPhoto=CloudMediaPage.Photo(id:file,listing_id:other,url:actualPage.photos[0].url,expires_at:liveExpiry,caption:nil,is_staged:false,is_altered:false,original_url:nil)
+        let foreignPage=CloudMediaPage(org_id:org,listing_id:listing,photos:[foreignPhoto],videos:[],next_offset:nil,unavailable_count:0)
+        expect(foreignPage.coverURL(for:selectedKey,actorID:actor)==nil,"Card accepted a foreign listing's photo row")
+        var originalCover=livePayload;originalCover["key"]="uploads/\(org.uuidString.lowercased())/\(listing.uuidString.lowercased())/original.jpg";originalCover["bucket"]="uploads"
+        let versioned=CloudMediaPage.Photo(id:file,listing_id:listing,url:actualPage.photos[0].url,expires_at:liveExpiry,caption:nil,is_staged:false,is_altered:true,original_url:link(originalCover))
+        let versionedPage=CloudMediaPage(org_id:org,listing_id:listing,photos:[versioned],videos:[],next_offset:nil,unavailable_count:0)
+        expect(versionedPage.coverURL(for:originalCover["key"] as! String,actorID:actor)==versioned.original_url,"Card missed the selected original version")
+        let legacyPhoto=CloudMediaPage.Photo(id:file,listing_id:listing,url:URL(string:legacy)!,expires_at:expiry,caption:nil,is_staged:false,is_altered:false,original_url:nil)
+        let legacyPage=CloudMediaPage(org_id:org,listing_id:listing,photos:[legacyPhoto],videos:[],next_offset:nil,unavailable_count:0)
+        expect(legacyPage.coverURL(for:"uploads/\(org.uuidString.lowercased())/\(listing.uuidString.lowercased())/photo.jpg",actorID:actor,now:now)==legacyPhoto.url,"Card could not resolve a validated legacy private photo")
         var bad=livePayload;bad["actor"]=other.uuidString.lowercased();api.responses=[page(bad)];do{_=try await api.cloudMedia(listingID:listing,orgID:org);fatalError("FAILED: API accepted foreign actor")}catch{checks+=1}
         api.responses=[page(livePayload)];api.beforeDispatch={WorkspaceContext.selectedOrgID=other};let oldCount=api.requests.count;do{_=try await api.cloudMedia(listingID:listing,orgID:org);fatalError("FAILED: API stale predispatch accepted")}catch{checks+=1};expect(api.requests.count==oldCount,"Stale API dispatched");restore();api.beforeDispatch=nil
         api.responses=[page(livePayload)];api.afterResponse={AuthStore.shared.syncSessionRevision+=1};do{_=try await api.cloudMedia(listingID:listing,orgID:org);fatalError("FAILED: API late response accepted")}catch{checks+=1};restore();api.afterResponse=nil

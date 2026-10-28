@@ -337,7 +337,7 @@ private struct CloudAudioPreview: View {
 
 /// The private capability URL is the only authority sent to R2. No Supabase
 /// bearer, cookie, redirect or JSON body crosses to storage.
-private enum CloudFileDownload {
+enum CloudFileDownload {
     enum Kind { case photo, video, audio }
     struct File { let url: URL; let ext: String }
     final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {

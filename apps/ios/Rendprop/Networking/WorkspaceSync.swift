@@ -430,6 +430,21 @@ struct CloudMediaPage: Decodable {
         }
         return self
     }
+
+    /// Resolve only the current selected object from a scoped, unexpired page.
+    /// The URL itself is a short-lived capability and must never be persisted.
+    func coverURL(for selectedKey: String, actorID: UUID, now: Date = Date()) -> URL? {
+        guard !selectedKey.isEmpty else { return nil }
+        for photo in photos {
+            guard photo.listing_id == listing_id else { continue }
+            for url in [photo.url, photo.original_url].compactMap({ $0 }) {
+                guard (try? CloudListingMerge.validateMedia(url, expiry: photo.expires_at,
+                    listingID: listing_id, orgID: org_id, now: now, actorID: actorID)) != nil else { continue }
+                if CloudListingMerge.validatedMediaKey(url) == selectedKey { return url }
+            }
+        }
+        return nil
+    }
 }
 
 enum CloudSyncError: LocalizedError {
@@ -446,6 +461,22 @@ enum CloudSyncError: LocalizedError {
 }
 
 enum CloudListingMerge {
+    /// Call only after `validateMedia` succeeds for this URL and scope.
+    static func validatedMediaKey(_ url: URL) -> String? {
+        if url.host == "rendprop.com" {
+            let token = String(url.path.dropFirst("/private-media/".count))
+            guard let encoded = token.split(separator: ".", omittingEmptySubsequences: false).first else { return nil }
+            let base64 = String(encoded).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            guard let data = Data(base64Encoded: base64.padding(toLength: ((base64.count + 3) / 4) * 4, withPad: "=", startingAt: 0)),
+                  let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            return payload["key"] as? String
+        }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        let pieces = components.percentEncodedPath.split(separator: "/").compactMap { String($0).removingPercentEncoding }
+        guard pieces.count >= 2 else { return nil }
+        return pieces.dropFirst().joined(separator: "/")
+    }
+
     static func isContactPhotoKey(_ key: String?) -> Bool {
         guard let key else { return false }
         return key.split(separator: "/").last.map { $0.lowercased().hasPrefix("contact-") } ?? false
@@ -481,6 +512,13 @@ enum CloudListingMerge {
             merged.serverID = sid
             merged.serverOrgID = fresh.serverOrgID
             merged.serverLibraryOrgID = fresh.serverLibraryOrgID
+            // Cover selection is cloud authority, separate from local fact edits.
+            // Keep local files, but retire a former local pointer when its cloud
+            // cover was explicitly removed elsewhere.
+            if existing.cloudMainPhotoKey != nil && fresh.cloudMainPhotoKey == nil {
+                merged.mainPhotoRelPath = nil
+            }
+            merged.cloudMainPhotoKey = fresh.cloudMainPhotoKey
             merged.cloudSyncOwnerID = ownerID ?? existing.cloudSyncOwnerID
             merged.cloudDetachedServerID = nil
             merged.cloudUnavailable = false
