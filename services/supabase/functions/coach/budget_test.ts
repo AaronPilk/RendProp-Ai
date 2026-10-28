@@ -19,7 +19,7 @@ Deno.test("coach actual prompt uses screen/intent, correct feature facts and no 
  assert(!system.includes("nothing else can start before it"));
  assert(system.includes("identified account"));
  assert(!system.includes("Sign in with Apple is optional"));
- assert(system.includes("simulated") && system.includes("not real drone footage"));
+ assert(system.includes("12% movement") && system.includes("Automatic varies four directions") && system.includes("not real drone footage"));
  assert(!system.includes("word-by-word captions that land on the beat"));
  const turn=buildUserTurn({space:"real_estate",context,history:[{role:"user",content:"How do I make this reel?"}]});
  assert(turn.includes("CURRENT SCREEN HELP: Make a video"));
