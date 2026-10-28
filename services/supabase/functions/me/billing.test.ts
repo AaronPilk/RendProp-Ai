@@ -23,6 +23,12 @@ async function invoke(o:Options={}) {
    const row=(v:unknown)=>json(req.headers.get("accept")?.includes("vnd.pgrst.object")?v:[v]);
    if(url.pathname==="/auth/v1/user")return json({id:USER,aud:"authenticated",is_anonymous:o.anonymous??false});
    if(table==="active_org_for_user")return json(ORG);
+   if(table==="team_seat_sale_products"){
+    assertEquals(req.method,"POST");
+    assertEquals(req.headers.get("authorization"),"Bearer sb_secret_synthetic_billing_fixture");
+    assertEquals(await req.json(),{p_org:o.teamParent??o.selector??ORG});
+    return json([]);
+   }
    if(table==="workspace_directory")return json({actor_id:USER,own_org_id:o.delegatedOwner?o.teamParent:o.selector??ORG,billing_org_id:o.teamParent??o.selector??ORG,can_switch_agent_libraries:!!o.delegatedOwner,active_org_id:o.selector??ORG,workspaces:[{id:o.selector??ORG,name:"Fixture Workspace",role:o.delegatedOwner?"team_owner":o.role??"owner",access_mode:o.delegatedOwner?"team_owner":"own",library_owner_user_id:o.delegatedOwner?OTHER:USER,billing_org_id:o.teamParent??o.selector??ORG,can_read:true,can_write:o.role!=="marketing",can_manage_subscription:!o.teamParent}]});
    if(table==="library_access") {
     const args=await req.json(),parent=!!o.teamParent&&args.p_org===o.teamParent;
@@ -88,7 +94,7 @@ async function invoke(o:Options={}) {
  }finally{globalThis.fetch=oldFetch;Object.defineProperty(Deno,"serve",serve);for(const[key,value]of previous)value===undefined?Deno.env.delete(key):Deno.env.set(key,value);}
 }
 Deno.test("/me reports the serving mode the paywall keys on (ceiling → ordinary StoreKit purchase)",async()=>{
- const ceiling=await invoke({});assertEquals(ceiling.response.status,200);assertEquals(ceiling.body.serving_mode,"ceiling");assertEquals(ceiling.body.entitlement.renders_per_month,0,"Free /me cannot promise a render the admission gate denies");assertEquals(ceiling.body.entitlement.photo_edits_per_month,0,"Free /me cannot promise an AI photo edit after the intro ends");
+ const ceiling=await invoke({});assertEquals(ceiling.response.status,200);assertEquals(ceiling.body.team_seat_products,[]);assertEquals(ceiling.body.serving_mode,"ceiling");assertEquals(ceiling.body.entitlement.renders_per_month,0,"Free /me cannot promise a render the admission gate denies");assertEquals(ceiling.body.entitlement.photo_edits_per_month,0,"Free /me cannot promise an AI photo edit after the intro ends");
  assertEquals(ceiling.body.serving_envelope,{kind:"free",ceiling_cents:0,spent_cents:12.5,held_cents:0,available_cents:0,period_start:null,period_end:null,window:"lifetime",pool:null});
  const trial=await invoke({servingEnvelope:{kind:"trial",plan:"trial",ceiling_cents:500,spent_cents:"60.5",held_cents:4,available_cents:435.5,period_start:"2026-10-08T00:00:00+00:00",period_end:"2026-10-15T00:00:00+00:00",window:"trial_window",pool:{cap_cents:29000,starts_at:"2026-10-08T00:00:00+00:00",ends_at:"2026-11-08T00:00:00+00:00",spent_cents:460}}});
  assertEquals(trial.body.serving_envelope,{kind:"trial",ceiling_cents:500,spent_cents:60.5,held_cents:4,available_cents:435.5,period_start:"2026-10-08T00:00:00+00:00",period_end:"2026-10-15T00:00:00+00:00",window:"trial_window",pool:{cap_cents:29000,spent_cents:460,starts_at:"2026-10-08T00:00:00+00:00",ends_at:"2026-11-08T00:00:00+00:00"}});
