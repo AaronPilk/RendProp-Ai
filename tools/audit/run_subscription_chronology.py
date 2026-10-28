@@ -124,13 +124,13 @@ try:
  next(row for row in expected_matrix if row['plan']=='team').update(seats=3,price_cents=24999)
  expected_matrix.extend([
   legacy_pro,
-  {'plan':'max','renders_per_month':4,'photo_edits_per_month':100,'reels_per_month':30,'aerials_per_month':2,'topaz_per_month':0,'seats':1,'cogs_ceiling_cents':2032,'price_cents':4999},
+  {'plan':'max','renders_per_month':4,'photo_edits_per_month':100,'reels_per_month':30,'aerials_per_month':2,'topaz_per_month':0,'seats':1,'cogs_ceiling_cents':2032,'price_cents':4900},
   {'plan':'ultra','renders_per_month':10,'photo_edits_per_month':200,'reels_per_month':60,'aerials_per_month':4,'topaz_per_month':0,'seats':1,'cogs_ceiling_cents':4157,'price_cents':9999},
  ])
  expected_matrix.sort(key=lambda row:row['plan'])
  assert json.loads(query('allowance-matrix-after',matrix))==expected_matrix
  receipt['historicalChronologyAllowancesPreserved']=True
- receipt['laterReviewedPolicyDelta']={'migrations':['20261014200302_property_video_recipe_allowances.sql','20261026165813_limit_intro_trial_creative_spend.sql','20261027050000_four_tier_retail_plans.sql'],'paid':paid,'trial':{'renders':0,'reels':0,'photos':5,'aerials':0,'topaz':0,'ceiling_cents':500},'free':{'renders':0,'photos':0,'ceiling_cents':0},'legacyProExact':True,'newPlans':{'pro':2999,'max':4999,'ultra':9999,'team':24999},'everyOtherOriginalCellPreserved':True}
+ receipt['laterReviewedPolicyDelta']={'migrations':['20261014200302_property_video_recipe_allowances.sql','20261026165813_limit_intro_trial_creative_spend.sql','20261027050000_four_tier_retail_plans.sql','20261028170000_max49_price_contract.sql'],'paid':paid,'trial':{'renders':0,'reels':0,'photos':5,'aerials':0,'topaz':0,'ceiling_cents':500},'free':{'renders':0,'photos':0,'ceiling_cents':0},'legacyProExact':True,'newPlans':{'pro':2999,'max':4900,'ultra':9999,'team':24999},'everyOtherOriginalCellPreserved':True}
  for phase in ['fresh','replayed']:
   checks=query('chronology-'+phase,(SQL/'tests/subscription_chronology.sql').read_text())
   count=checks.count('|t');assert count>=25,count
