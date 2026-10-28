@@ -6,9 +6,10 @@ from a pricing UI change or a TestFlight screenshot.
 
 ## Public trial
 
-The promised introductory term is seven days, one listing, up to five selected
-photo edits and five assessments per day / ten per month. It does not include
-video or aerial generation. The app must verify Apple's actual USA free-intro
+The promised introductory term is seven days, one draft listing, up to five
+selected photo edits and five assessments per day / ten per month. The trial
+does not include publishing the listing website, video or aerial generation.
+The app must verify Apple's actual USA free-intro
 offer for the exact Pro29, Max, Ultra and Team subscription products, including
 one introductory term per subscription group. The local `.storekit` file is
 only a simulator fixture, not App Store Connect evidence.
@@ -65,8 +66,8 @@ the matching combined policy and date must be deliberately enabled after
 final economics QA.
 
 At the minimum funded operating reserve, the Pro/Max/Ultra/Team 3 supplier
-ceilings are $4.24/$7.24/$14.99/$38.74. Their monthly-credit supplier faces
-are $3/$6/$12.50/$30, leaving $1.24/$1.24/$2.49/$8.74 for noncredit media.
+ceilings are $4.24/$7.07/$14.99/$38.74. Their monthly-credit supplier faces
+are $3/$6/$12.50/$30, leaving $1.24/$1.07/$2.49/$8.74 for noncredit media.
 The precise price, reserve components and added-seat ladder are in
 [the pricing margin repair](PRICING_MARGIN_REPAIR_20261027.md). This bounds
 spending but does not prove realized margin without actual invoices and
