@@ -29,13 +29,30 @@ try:
     conn=['-h',SOCK,'-p','55564','-U','postgres'];run('createdb',[TOOLS['createdb'],*conn,'product_media_serving'])
     P=[TOOLS['psql'],'-X','--no-password',*conn,'-d','product_media_serving','-v','ON_ERROR_STOP=1']
     run('bootstrap',[*P,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
-    for m in partition_fresh_migrations(sorted((SQL/'migrations').glob('*.sql')))[0]:run('apply-'+m.stem,[*P,'-q','-1','-f',m])
-    for name in ['fresh','replay']:
-        if name=='replay':run('replay-migration',[*P,'-q','-1','-f',MIG])
+    # Later trial and paid-media migrations deliberately wrap this function.
+    # Replay it at its historical point, then exercise the complete schema.
+    migrations=partition_fresh_migrations(sorted((SQL/'migrations').glob('*.sql')))[0]
+    paid_media=SQL/'migrations/20261027234243_paid_media_budget_cap.sql'
+    assert MIG in migrations and paid_media in migrations and migrations.index(MIG)<migrations.index(paid_media)
+    for m in migrations:
+        run('apply-'+m.stem,[*P,'-q','-1','-f',m])
+        if m==MIG:
+            run('replay-migration',[*P,'-q','-1','-f',MIG])
+            historical=run('historical-definition',P+['-Atq','-c',"select pg_get_functiondef('public.media_delivery_admit(uuid,bigint,boolean)'::regprocedure)"]).stdout
+            assert historical.count('declare billing uuid;')==1
+            run('install-unknown-body',[*P,'-Atq'],historical.replace('declare billing uuid;','declare billing uuid;\n-- unknown future runtime'))
+            x=run('unknown-body-replay',[*P,'-q','-1','-f',MIG],okay=False)
+            assert x.returncode!=0 and 'Review changed product media admission' in x.stdout
+            r['controls'].append({'name':'unknown-source-replay','compiledActualSQL':True,'oracleRejected':'Review changed product media admission'})
+            run('restore-unknown-body',[*P,'-Atq'],historical)
+    for name in ['fresh','after-historical-replay']:
         x=run(name,[*P,'-Atq'],TEST.read_text())
         proof=[json.loads(l)for l in x.stdout.splitlines()if l.startswith('{')and'assertions'in l]
         assert len(proof)==1 and proof[0]['passed'];r[name]=proof[0]
-    definition=run('definition',P+['-Atq','-c',"select pg_get_functiondef('public.media_delivery_admit(uuid,bigint,boolean)'::regprocedure)"]).stdout
+    # The current function delegates legacy reads to the preserved product
+    # implementation. Mutate that implementation, not the paid-media wrapper.
+    definition=run('definition',P+['-Atq','-c',"select pg_get_functiondef('public.media_delivery_admit_before_paid_media_20261027(uuid,bigint,boolean)'::regprocedure)"]).stdout
+    wrapper=run('wrapper-definition',P+['-Atq','-c',"select pg_get_functiondef('public.media_delivery_admit(uuid,bigint,boolean)'::regprocedure)"]).stdout
     start=definition.index('  insert into public.media_serving_usage(');end=definition.index('  return jsonb_build_object',start)
     controls=[('request-byte-meter',[(definition[start:end],'  null;\n')],'HEAD and byte metering free'),
               ('generic-byte-bound',[('268435456','536870912')],'byte ceiling unchanged'),
@@ -46,16 +63,16 @@ try:
             assert changed.count(before)==1,(name,before)
             changed=changed.replace(before,after)
         run('install-'+name,[*P,'-Atq'],changed)
+        if name=='generic-byte-bound':
+            # Both layers enforce the 256 MiB ceiling. A fault in only one
+            # layer is masked by the other, so compile the paired mutation.
+            assert wrapper.count('268435456')==1
+            run('install-'+name+'-wrapper',[*P,'-Atq'],wrapper.replace('268435456','536870912'))
         x=run('fault-'+name,[*P,'-Atq'],TEST.read_text(),False)
         assert x.returncode!=0 and expected in x.stdout,(name,x.stdout[-2000:])
         r['controls'].append({'name':name,'compiledActualSQL':True,'oracleRejected':expected})
         run('restore-'+name,[*P,'-Atq'],definition)
-    assert definition.count('declare billing uuid;')==1
-    run('install-unknown-body',[*P,'-Atq'],definition.replace('declare billing uuid;','declare billing uuid;\n-- unknown future runtime'))
-    x=run('unknown-body-replay',[*P,'-q','-1','-f',MIG],okay=False)
-    assert x.returncode!=0 and 'Review changed product media admission' in x.stdout
-    r['controls'].append({'name':'unknown-source-replay','compiledActualSQL':True,'oracleRejected':'Review changed product media admission'})
-    run('restore-unknown-body',[*P,'-Atq'],definition)
+        if name=='generic-byte-bound':run('restore-'+name+'-wrapper',[*P,'-Atq'],wrapper)
     # Two simultaneous actual service transactions must retain both counts.
     run('race-setup',[*P,'-Atq'],"""insert into auth.users(id,email)values('c1600000-0000-4000-8000-000000000001','concurrent-owner@fixture.invalid');
 """)
