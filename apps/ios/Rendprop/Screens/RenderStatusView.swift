@@ -664,6 +664,7 @@ struct SignInView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var rawNonce = ""
     @State private var isExchanging = false
@@ -672,110 +673,124 @@ struct SignInView: View {
     @State private var showEmailSignIn = false
 
     var body: some View {
-        VStack(spacing: 22) {
-            Spacer()
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 22) {
+                    Spacer(minLength: 0)
 
-            Image(systemName: requiresAccount ? "house.lodge.fill" : "person.crop.circle.badge.checkmark")
-                .font(.system(size: 52, weight: .light))
-                .foregroundStyle(Theme.accent)
+                    Image(systemName: requiresAccount ? "house.lodge.fill" : "person.crop.circle.badge.checkmark")
+                        .font(.system(size: 52, weight: .light))
+                        .foregroundStyle(Theme.accent)
 
-            VStack(spacing: 8) {
-                Text(title)
-                    .font(.rpTitle)
-                    .foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.center)
-                Text(subtitle)
-                    .font(.rpBody)
-                    .foregroundStyle(Theme.inkDim)
-                    .multilineTextAlignment(.center)
+                    VStack(spacing: 8) {
+                        Text(title)
+                            .font(.rpTitle)
+                            .foregroundStyle(Theme.ink)
+                            .multilineTextAlignment(.center)
+                        Text(subtitle)
+                            .font(.rpBody)
+                            .foregroundStyle(Theme.inkDim)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+
+                    if requiresAccount {
+                        Button { showQuickStart = true } label: {
+                            Label("See how Rendprop works", systemImage: "play.circle.fill")
+                                .font(.rpBody).foregroundStyle(Theme.accent)
+                                .padding(.vertical, 8)
+                        }
+                        .disabled(isExchanging)
+                        .accessibilityHint("Plays a short video. No account is needed to watch.")
+                        .accessibilityIdentifier("account.quickStartVideo")
+                    }
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.warn)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+
+                    SignInWithAppleButton(.signIn) { request in
+                        let raw = AuthStore.randomNonceString()
+                        rawNonce = raw
+                        request.requestedScopes = [.fullName, .email]
+                        request.nonce = AuthStore.sha256(raw)
+                    } onCompletion: { result in
+                        handle(result)
+                    }
+                    // Black button on light bg, white on dark — a .black button would
+                    // disappear into the near-black dark-mode background.
+                    .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                    .frame(height: 50)
                     .padding(.horizontal)
-            }
-
-            if requiresAccount {
-                Button { showQuickStart = true } label: {
-                    Label("See how Rendprop works", systemImage: "play.circle.fill")
-                        .font(.rpBody).foregroundStyle(Theme.accent)
-                        .padding(.vertical, 8)
-                }
-                .disabled(isExchanging)
-                .accessibilityHint("Plays a short video. No account is needed to watch.")
-                .accessibilityIdentifier("account.quickStartVideo")
-            }
-
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.rpCaption)
-                    .foregroundStyle(Theme.warn)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
-
-            SignInWithAppleButton(.signIn) { request in
-                let raw = AuthStore.randomNonceString()
-                rawNonce = raw
-                request.requestedScopes = [.fullName, .email]
-                request.nonce = AuthStore.sha256(raw)
-            } onCompletion: { result in
-                handle(result)
-            }
-            // Black button on light bg, white on dark — a .black button would
-            // disappear into the near-black dark-mode background.
-            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-            .frame(height: 50)
-            .padding(.horizontal)
-            .disabled(isExchanging)
-            .accessibilityIdentifier("account.signInApple")
-
-            Button { showEmailSignIn = true } label: {
-                Label("Sign in with email", systemImage: "envelope.fill")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 50)
-            }
-            .modifier(RendpropActionAppearance(primary: false))
-            .padding(.horizontal)
-            .disabled(isExchanging)
-            .accessibilityHint("Use an existing Rendprop account.")
-            .accessibilityIdentifier("account.emailSignInOption")
-
-            if isExchanging {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Signing in…").foregroundStyle(Theme.inkDim)
-                }
-                .font(.rpCaption)
-            }
-
-            if !requiresAccount {
-                Button("Not now") { dismiss() }
-                    .font(.rpBody)
-                    .foregroundStyle(Theme.inkDim)
-                    .padding(.top, 4)
                     .disabled(isExchanging)
-            }
+                    .accessibilityIdentifier("account.signInApple")
 
-            Text(dismissNote)
-                .font(.rpCaption)
-                .foregroundStyle(Theme.inkDim)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 28)
+                    Button { showEmailSignIn = true } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "envelope.fill")
+                                .accessibilityHidden(true)
+                            Text("Sign in with email")
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .font(.rpBody.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .modifier(RendpropActionAppearance(primary: false))
+                    .padding(.horizontal)
+                    .disabled(isExchanging)
+                    .accessibilityHint("Use an existing Rendprop account.")
+                    .accessibilityIdentifier("account.emailSignInOption")
 
-            if requiresAccount {
-                HStack(spacing: 18) {
-                    Link("Terms", destination: URL(string: "https://rendprop.com/terms")!)
-                        .accessibilityIdentifier("account.terms")
-                    Link("Privacy", destination: URL(string: "https://rendprop.com/privacy")!)
-                        .accessibilityIdentifier("account.privacy")
-                    Link("Get help", destination: SettingsView.supportMailURL(subject: "Rendprop account help"))
-                        .accessibilityIdentifier("account.help")
+                    if isExchanging {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Signing in…").foregroundStyle(Theme.inkDim)
+                        }
+                        .font(.rpCaption)
+                    }
+
+                    if !requiresAccount {
+                        Button("Not now") { dismiss() }
+                            .font(.rpBody)
+                            .foregroundStyle(Theme.inkDim)
+                            .padding(.top, 4)
+                            .disabled(isExchanging)
+                    }
+
+                    Text(dismissNote)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 28)
+
+                    if requiresAccount {
+                        (dynamicTypeSize.isAccessibilitySize
+                            ? AnyLayout(VStackLayout(spacing: 12))
+                            : AnyLayout(HStackLayout(spacing: 18))) {
+                            Link("Terms", destination: URL(string: "https://rendprop.com/terms")!)
+                                .accessibilityIdentifier("account.terms")
+                            Link("Privacy", destination: URL(string: "https://rendprop.com/privacy")!)
+                                .accessibilityIdentifier("account.privacy")
+                            Link("Get help", destination: SettingsView.supportMailURL(subject: "Rendprop account help"))
+                                .accessibilityIdentifier("account.help")
+                        }
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.accent)
+                    }
+
+                    Spacer(minLength: 0)
                 }
-                .font(.rpCaption)
-                .foregroundStyle(Theme.accent)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: geometry.size.height)
             }
-
-            Spacer()
+            .scrollIndicators(.hidden)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
         .interactiveDismissDisabled(requiresAccount || isExchanging)
         .sheet(isPresented: $showQuickStart) { QuickStartVideoView() }
