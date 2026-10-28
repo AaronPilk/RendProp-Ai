@@ -1286,6 +1286,10 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     }
     assert(data?.ok === true && data.test_only === true && data.environment === "Sandbox" && data.org_id === orgId,
       503, "Authorized test access could not be confirmed. Please retry.");
+    // Restore must synchronize the same Apple-signed paid Sandbox period as
+    // notification delivery. A free introductory receipt still grants zero
+    // credits, and supplier spending remains fenced by the funded test grant.
+    await applyVerifiedMonthlyCredits((name,args)=>admin.rpc(name,args),orgId,tx);
     return json(data, 200, { "cache-control": "no-store" });
   }
 

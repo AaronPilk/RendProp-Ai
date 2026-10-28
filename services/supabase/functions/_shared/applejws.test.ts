@@ -1175,9 +1175,19 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     assertEquals(refusal.status, 403); assertEquals(refusal.code, "sandbox_testing_required");
     assertEquals(calls.map(call => call.name), ["record_apple_sandbox_receipt"]);
     sandboxGranted = true; calls.length = 0;
+    const paidSandboxCreditCalls = monthlyCalls.length;
     const testReceipt = await (await methods.handleEntitlement(sandboxRequest(), user)).json();
     assertEquals(testReceipt.test_only, true); assertEquals(testReceipt.plan, "team"); assertEquals(testReceipt.source, "manual");
     assertEquals(calls.map(call => call.name), ["record_apple_sandbox_receipt"]);
+    assertEquals(monthlyCalls.length, paidSandboxCreditCalls + 1,
+      "a restored signed paid Sandbox period synchronizes its isolated credit grant");
+    assertEquals(monthlyCalls.at(-1)?.p_environment, "Sandbox");
+    assertEquals(monthlyCalls.at(-1)?.p_event, "paid");
+    assertEquals(monthlyCalls.at(-1)?.p_transaction, "2000000700000001");
+    const freeSandboxCreditCalls = monthlyCalls.length;
+    await methods.handleEntitlement(sandboxIntroRequest(), user);
+    assertEquals(monthlyCalls.length, freeSandboxCreditCalls,
+      "a signed zero-price Sandbox intro never mints monthly credits");
     const sandboxOuter = await signJws(chain, { notificationUUID: "sandbox-event", notificationType: "DID_RENEW", signedDate: event, data: { bundleId: "com.rendprop.app", environment: "Sandbox", signedTransactionInfo: sandboxTx } });
     calls.length = 0;
     await methods.handleNotify(new Request("https://fixture.invalid/apple-subscriptions/notify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ signedPayload: sandboxOuter }) }));
