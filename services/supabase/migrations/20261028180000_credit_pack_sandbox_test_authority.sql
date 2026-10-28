@@ -4,7 +4,7 @@
 -- or production account gains an offer merely by claiming environment=Sandbox.
 begin;
 
-create table public.credit_pack_sandbox_test_authority (
+create table if not exists public.credit_pack_sandbox_test_authority (
   actor_id uuid not null references auth.users(id) on delete cascade,
   org_id uuid not null references public.orgs(id) on delete cascade,
   product_id text not null references public.credit_products(product_id),
@@ -21,7 +21,7 @@ alter table public.credit_pack_sandbox_test_authority enable row level security;
 revoke all on public.credit_pack_sandbox_test_authority
   from public,anon,authenticated,service_role;
 
-create function public.credit_sandbox_pack_authorized(
+create or replace function public.credit_sandbox_pack_authorized(
   p_actor uuid,p_org uuid,p_product text
 ) returns boolean language sql stable security definer set search_path='' as $$
   select current_setting('role',true)='service_role'
@@ -45,20 +45,29 @@ grant execute on function public.credit_sandbox_pack_authorized(uuid,uuid,text)
 -- their original binding. New Sandbox intents snapshot the environment, so a
 -- delayed Ask-to-Buy or a recovery can settle after the test window closes.
 alter table public.credit_purchase_intents
-  add column expected_environment text not null default 'Production'
+  add column if not exists expected_environment text not null default 'Production'
     check (expected_environment in ('Production','Sandbox'));
 -- A test intent consumes one of three lifetime preparation slots even if the
 -- client abandons it: Apple can still approve an already pending transaction.
 -- Keeping the marker on the intent also prevents a later authority renewal
 -- from silently resetting the issuance ceiling.
 alter table public.credit_purchase_intents
-  add column sandbox_test_authority boolean not null default false,
-  add constraint credit_intent_sandbox_test_exact check (
-    not sandbox_test_authority or
-    (expected_environment='Sandbox' and product_id='com.rendprop.app.credits.100'
-      and credits=100));
+  add column if not exists sandbox_test_authority boolean not null default false;
+do $$begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid='public.credit_purchase_intents'::regclass
+      and conname='credit_intent_sandbox_test_exact'
+  ) then
+    alter table public.credit_purchase_intents
+      add constraint credit_intent_sandbox_test_exact check (
+        not sandbox_test_authority or
+        (expected_environment='Sandbox' and product_id='com.rendprop.app.credits.100'
+          and credits=100));
+  end if;
+end$$;
 
-create function public.credit_purchase_intent_create(
+create or replace function public.credit_purchase_intent_create(
   p_actor uuid,p_org uuid,p_product text,p_environment text
 ) returns jsonb language plpgsql security definer set search_path='' as $$
 declare old public.credit_purchase_intents; iid uuid; token uuid;
