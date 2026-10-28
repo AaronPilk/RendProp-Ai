@@ -388,7 +388,10 @@ Deno.serve(async (req) => {
       await requireMediaGateway(req);
       assert(req.method==="POST",405,"Media gateway request required.");
       const body=await readJsonLimited(req,8192);
-      assert(typeof body.cap==="string"&&typeof body.bytes==="number"&&Number.isSafeInteger(body.bytes)&&body.bytes>=0&&body.bytes<=268435456,400,"Invalid media gateway request.");
+      // A ready registered background master may be larger than the generic
+      // 256 MiB admission chunk. The private authority below proves the exact
+      // object and charges large bytes through bounded SQL chunks.
+      assert(typeof body.cap==="string"&&typeof body.bytes==="number"&&Number.isSafeInteger(body.bytes)&&body.bytes>=0&&body.bytes<=REGISTERED_BACKGROUND_BYTES,400,"Invalid media gateway request.");
       return json(await privateMediaAuthority(adminClient(),body.cap,body.bytes),200,{"Cache-Control":"no-store"});
     }
     if (req.method !== "GET") throw new HttpError(405, "Only GET is supported");
