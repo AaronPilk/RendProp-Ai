@@ -211,7 +211,7 @@ __ONBOARDING_FINISH__
         check(cacheNotifications == 0, "Cached account does not detach itself on same-owner refresh")
         let required = SignInView.requiredAccount()
         check(required.requiresAccount, "Required sign-in has no dismiss mode")
-        check(required.title.contains("Rendprop") && required.subtitle.contains("Create an account"), "Required account gate uses branded honest copy")
+        check(required.title.contains("Rendprop") && required.subtitle.contains("Sign in with Apple") && required.subtitle.contains("sign in with email"), "Required account gate uses branded honest copy")
         var pending = NativeIncomingQueue()
         pending.enqueue(.link(.tour("owned-fixture")))
         pending.enqueue(.link(.join("invite-fixture")))
