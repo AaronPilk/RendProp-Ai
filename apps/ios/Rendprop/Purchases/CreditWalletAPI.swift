@@ -3,7 +3,8 @@ import Foundation
 protocol CreditWalletAPI {
     func creditWallet(context: CreditWalletContext, environment: String) async throws -> CreditWalletSnapshot
     func openCreditPurchaseIntents(context: CreditWalletContext) async throws -> CreditOpenIntents
-    func prepareCreditPurchase(productID: String, context: CreditWalletContext) async throws -> CreditPurchasePreparation
+    func prepareCreditPurchase(productID: String, environment: String,
+                               context: CreditWalletContext) async throws -> CreditPurchasePreparation
     func abandonCreditPurchase(intent: CreditPurchaseIntent, context: CreditWalletContext) async throws
     func settleCreditPurchase(signedTransaction: String, intentID: UUID?, expectedOrgID: UUID?,
                               context: CreditWalletContext) async throws -> CreditPurchaseReceipt
@@ -23,10 +24,13 @@ extension LiveAPIClient: CreditWalletAPI {
         catch { throw CloudSyncError.invalidResponse }
     }
 
-    func prepareCreditPurchase(productID: String, context: CreditWalletContext) async throws -> CreditPurchasePreparation {
-        guard RendpropCreditProduct.quantities[productID] != nil else { throw CloudSyncError.invalidResponse }
+    func prepareCreditPurchase(productID: String, environment: String,
+                               context: CreditWalletContext) async throws -> CreditPurchasePreparation {
+        guard RendpropCreditProduct.quantities[productID] != nil,
+              ["Production", "Sandbox"].contains(environment) else { throw CloudSyncError.invalidResponse }
         let data = try await CreditWalletRequest.perform("POST", action: "purchase-intent", context: context,
-            body: ["expected_org_id": context.servingOrgID.uuidString.lowercased(), "product_id": productID])
+            body: ["expected_org_id": context.servingOrgID.uuidString.lowercased(),
+                   "product_id": productID, "environment": environment])
         do { return try JSONDecoder().decode(CreditPurchasePreparation.self, from: data).checked(for: context, product: productID) }
         catch { throw CloudSyncError.invalidResponse }
     }

@@ -241,7 +241,7 @@ begin
   r:=public.credit_purchase_refund('Sandbox','tx-pre-refunded',repeat('b',64),now());
   perform pg_temp.credit_ok(r->>'pending_purchase'='true',
     'Apple refund may arrive before device acknowledgement');
-  r:=public.credit_purchase_intent_create(actor,org,sku);
+  r:=public.credit_purchase_intent_create(actor,org,sku,'Sandbox');
   third_intent:=(r->>'intent_id')::uuid;
   third_token:=(r->>'app_account_token')::uuid;
   r:=pg_temp.credit_purchase_grant(actor,org,third_intent,sku,'Sandbox',
@@ -250,7 +250,7 @@ begin
     (public.credit_wallet_state(org,'Sandbox')->>'total_available')::integer=0,
     'pre-recorded Apple refund never becomes spendable');
 
-  r:=public.credit_purchase_intent_create(actor,org,sku);
+  r:=public.credit_purchase_intent_create(actor,org,sku,'Sandbox');
   sandbox_intent:=(r->>'intent_id')::uuid;
   sandbox_token:=(r->>'app_account_token')::uuid;
   r:=pg_temp.credit_purchase_grant(actor,org,sandbox_intent,sku,'Sandbox',

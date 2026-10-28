@@ -60,8 +60,20 @@ struct CreditWalletSnapshot: Decodable, Equatable {
     struct Product: Decodable, Equatable, Identifiable {
         let productID: String
         let credits: Int
+        let sandboxOnly: Bool
         var id: String { productID }
-        enum CodingKeys: String, CodingKey { case productID = "product_id", credits }
+        enum CodingKeys: String, CodingKey {
+            case productID = "product_id", credits, sandboxOnly = "sandbox_only"
+        }
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            productID = try values.decode(String.self, forKey: .productID)
+            credits = try values.decode(Int.self, forKey: .credits)
+            sandboxOnly = try values.decodeIfPresent(Bool.self, forKey: .sandboxOnly) ?? false
+        }
+        func isAvailable(in environment: String) -> Bool {
+            !sandboxOnly || environment == "Sandbox"
+        }
     }
     let orgID: UUID
     let environment: String

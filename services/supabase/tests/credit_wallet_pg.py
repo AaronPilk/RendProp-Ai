@@ -53,6 +53,11 @@ with tempfile.TemporaryDirectory(prefix="rendprop-credit-pg-", dir=str(ROOT.pare
         results = [json.loads(line) for line in output.splitlines()
                    if line.startswith("{") and '"assertions"' in line]
         assert len(results) == 1 and results[0]["passed"] is True, output
+        sandbox_pack_output = run("Sandbox-only credit pack fixture",
+                                  [*psql, "-Atq", "-f", SQL / "tests/credit_pack_sandbox_authority.sql"])
+        sandbox_pack_results = [json.loads(line) for line in sandbox_pack_output.splitlines()
+                                if line.startswith("{") and '"assertions"' in line]
+        assert len(sandbox_pack_results) == 1 and sandbox_pack_results[0]["passed"] is True, sandbox_pack_output
         photo_output = run("photo credit fixture", [*psql, "-Atq", "-f", SQL / "tests/credit_photo_spend.sql"])
         photo_results = [json.loads(line) for line in photo_output.splitlines()
                          if line.startswith("{") and '"assertions"' in line]

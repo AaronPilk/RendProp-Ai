@@ -44,7 +44,8 @@ import StoreKit
                 let apple = (try? await Product.products(for: Array(RendpropCreditProduct.quantities.keys))) ?? []
                 guard context.isCurrent else { return }
                 product = apple.first { item in item.type == .consumable &&
-                    fetched.products.contains(where: { $0.productID == item.id }) }
+                    fetched.products.contains(where: { $0.productID == item.id &&
+                        $0.isAvailable(in: verifiedEnvironment) }) }
             }
             message = nil; messageContext = context
         } catch {
@@ -60,17 +61,19 @@ import StoreKit
         setMessage(nil, context: context)
         do {
             guard let api, let wallet = snapshot, snapshotContext == context,
-                  wallet.canPurchase,
+                  wallet.canPurchase, wallet.environment == environment,
                   let product, product.type == .consumable,
                   wallet.products.contains(where: { $0.productID == product.id &&
-                      $0.credits == RendpropCreditProduct.quantities[product.id] }) else {
+                      $0.credits == RendpropCreditProduct.quantities[product.id] &&
+                      $0.isAvailable(in: wallet.environment) }) else {
                 throw CloudSyncError.invalidResponse
             }
             guard try CreditPurchaseIntentStore.load(actor: context.actorID) == nil else {
                 setMessage("A credit purchase is still pending. Recover it before buying again.", context: context)
                 return
             }
-            let prepared = try await api.prepareCreditPurchase(productID: product.id, context: context)
+            let prepared = try await api.prepareCreditPurchase(productID: product.id,
+                environment: wallet.environment, context: context)
             guard context.isCurrent else { throw CloudSyncError.identityChanged }
             if prepared.replay == true {
                 // A server intent may outlive a crash before the device saved

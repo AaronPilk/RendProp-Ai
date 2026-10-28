@@ -53,15 +53,21 @@ export async function creditsRoute(
     const org = url.searchParams.has("org_id") ? workspaceID(url.searchParams.get("org_id")) :
       (await workspaceDirectory(admin, actor, requestedWorkspace(req))).billing_org_id;
     const role = await memberOrg(admin, actor, org);
-    const [balance, products, quotes, primary, effective, trial] = await Promise.all([
+    const [balance, products, sandboxAuthority, quotes, primary, effective, trial] = await Promise.all([
       wallet(admin, org, environment),
-      admin.from("credit_products").select("product_id,credits").eq("active", true).order("credits"),
+      admin.from("credit_products").select("product_id,credits,active").order("credits"),
+      // Visibility is tied to a named operator-authorized actor/workspace,
+      // never to the untrusted `environment` query parameter alone.
+      admin.rpc("credit_sandbox_pack_authorized", {
+        p_actor: actor, p_org: org, p_product: "com.rendprop.app.credits.100",
+      }),
       admin.from("credit_tariffs").select("operation,version,credits").eq("active", true).order("operation"),
       admin.rpc("credit_primary_subscription",{p_org:org,p_environment:environment}),
       admin.rpc("effective_plan",{p_org:org}),
       admin.rpc("subscription_trial_context",{p_actor:actor,p_org:org}),
     ]);
-    assert(!products.error && !quotes.error && !primary.error && !effective.error && !trial.error &&
+    assert(!products.error && !sandboxAuthority.error && !quotes.error && !primary.error &&
+      !effective.error && !trial.error && typeof sandboxAuthority.data === "boolean" &&
       typeof primary.data === "boolean" && typeof effective.data === "string", 503,
       "Credit catalog could not be loaded.");
     const trialUsage=trial.data && typeof trial.data === "object" && !Array.isArray(trial.data)
@@ -73,7 +79,11 @@ export async function creditsRoute(
     return json({ org_id: org, environment, balance,
       funding_mode:fundingMode,
       can_purchase:role === "owner" || role === "admin",
-      products: products.data ?? [],
+      products: (products.data ?? [])
+        .filter((p) => p.active === true ||
+          (sandboxAuthority.data === true && p.product_id === "com.rendprop.app.credits.100"))
+        .map((p) => ({ product_id: p.product_id, credits: p.credits,
+          sandbox_only: p.active !== true })),
       quotes: (quotes.data ?? []).map((q) => ({ operation: q.operation, credits: q.credits,
         tariff_version: q.version })) }, 200, NO_STORE);
   }
@@ -92,12 +102,15 @@ export async function creditsRoute(
   if (segment === "purchase-intent" && subsegment === undefined && req.method === "POST") {
     assert(await durableRateLimit(`credit-intent:${actor}`, 12, 300), 429,
       "Please wait before starting another credit purchase.");
-    const body = await readJsonLimited<{ expected_org_id?: unknown; product_id?: unknown }>(req, 2048);
+    const body = await readJsonLimited<{
+      expected_org_id?: unknown; product_id?: unknown; environment?: unknown;
+    }>(req, 2048);
     const org = workspaceID(body.expected_org_id);
     assert(typeof body.product_id === "string" && body.product_id.length <= 160, 400,
       "Choose an available credit pack.");
+    const environment = appleEnvironment(body.environment);
     const { data, error } = await admin.rpc("credit_purchase_intent_create", {
-      p_actor: actor, p_org: org, p_product: body.product_id,
+      p_actor: actor, p_org: org, p_product: body.product_id, p_environment: environment,
     });
     rpcError(error, "Credit purchase could not be prepared. Please retry.");
     assert(data?.org_id === org && data?.product_id === body.product_id &&
