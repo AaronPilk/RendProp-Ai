@@ -4099,9 +4099,12 @@ struct RootTabView: View {
 }
 
 
-enum NativeAccountDestination { case profile, settings }
+enum NativeAccountDestination: String, Identifiable {
+    case profile, settings
+    var id: String { rawValue }
+}
 struct NativeAccountNavigation {
-    private(set) var destination: NativeAccountDestination?
+    var destination: NativeAccountDestination?
     var presentsProfile: Bool { destination == .profile }
     var presentsSettings: Bool { destination == .settings }
     @discardableResult mutating func open(_ tab: NativeRootTab) -> Bool {
@@ -4118,8 +4121,12 @@ struct NativeAccountNavigation {
 struct NativeAccountView: View {
     @Binding var navigation: NativeAccountNavigation
     var body: some View {
-        ProfileView(accountSettings: { navigation.open(.settings) })
-            .sheet(isPresented: Binding(get: { navigation.presentsSettings }, set: { if !$0 { navigation.close(.settings) } })) {
+        ZStack {
+            ProfileView(accountSettings: { navigation.open(.settings) })
+        }
+        .sheet(item: $navigation.destination) { destination in
+            switch destination {
+            case .settings:
                 NavigationStack {
                     SettingsView().toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -4127,10 +4134,10 @@ struct NativeAccountView: View {
                         }
                     }
                 }
-            }
-            .sheet(isPresented: Binding(get: { navigation.presentsProfile }, set: { if !$0 { navigation.close(.profile) } })) {
+            case .profile:
                 ProfileView(modalDone: { navigation.close(.profile) })
             }
+        }
     }
 }
 
