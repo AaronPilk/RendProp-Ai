@@ -13212,7 +13212,9 @@ struct ReelStudioView: View {
                     .accessibilityAddTraits(!photoMotionAutomatic && photoMotionDirection == direction ? .isSelected : [])
                 }
             }
-            Text("Cycles through these four 12% movements in photo order. Consecutive photos use different directions.")
+            Text(photoMotionAutomatic
+                ? "Cycles through these four 12% movements in photo order. Consecutive photos use different directions."
+                : "Uses the selected 12% movement on every photo.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
         }
     }
