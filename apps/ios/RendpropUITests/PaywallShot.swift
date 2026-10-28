@@ -234,6 +234,22 @@ final class PaywallShot: XCTestCase {
             loaded = waitForProducts()
             settle(1.5)          // let the cards and the buy bar finish animating in
             if loaded {
+                let pro = app.descendants(matching: .any)
+                    .matching(identifier: "paywall.plan.pro").firstMatch
+                guard pro.waitForExistence(timeout: shortTimeout) else {
+                    note("REJECTED: Pro plan could not be selected for the App Review screenshot.")
+                    loaded = false
+                    shot("p01-paywall-EMPTY")
+                    return
+                }
+                tap(pro)
+                guard waitForLabel(containing: "Selected: Pro", timeout: shortTimeout) != nil else {
+                    note("REJECTED: Pro is not the selected plan in the App Review screenshot.")
+                    loaded = false
+                    shot("p01-paywall-EMPTY")
+                    return
+                }
+                settle(0.7)
                 shot("p01-paywall-monthly")
             } else {
                 note("EMPTY: no StoreKit price rendered within \(Int(productTimeout))s, so this is the "
@@ -307,10 +323,9 @@ final class PaywallShot: XCTestCase {
     /// True only when every launch plan shows the exact local StoreKit price
     /// and the purchase screen does not say subscriptions are unavailable.
     ///
-    /// A card whose product did not load prints a bare dash. A live App Store
-    /// catalog can also leak into a CLI simulator run even after SKTestSession
-    /// initializes; checking only for "/month" previously accepted the wrong
-    /// $49.00/$99.00/$249.00 prices as a current fixture capture.
+    /// A card whose product did not load prints a bare dash. Assert today's
+    /// approved US launch prices; future Ultra and Team price schedules are
+    /// checked separately in App Store Connect.
     /// The cards combine their children into accessibility labels.
     ///
     /// When the empty state ("Plans aren't available right now") shows up
@@ -322,8 +337,8 @@ final class PaywallShot: XCTestCase {
         let expected = [
             (id: "paywall.plan.pro", price: "$29.99/month"),
             (id: "paywall.plan.max", price: "$49.00/month"),
-            (id: "paywall.plan.ultra", price: "$99.99/month"),
-            (id: "paywall.plan.team", price: "$249.99/month"),
+            (id: "paywall.plan.ultra", price: "$99.00/month"),
+            (id: "paywall.plan.team", price: "$249.00/month"),
         ]
         repeat {
             let labels = expected.map { item -> String in

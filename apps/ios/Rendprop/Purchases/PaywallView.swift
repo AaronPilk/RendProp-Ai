@@ -85,7 +85,7 @@ struct PaywallView: View {
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
             } else {
-                Text("Choose a plan and check trial availability before reviewing any reserved terms. New paid subscriptions are temporarily unavailable. Restore and subscription management remain available.")
+                Text("Choose a plan and review its terms before subscribing. Apple shows any available trial offer and confirms the charge. Apple handles billing and cancellation.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
             }
