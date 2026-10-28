@@ -1,9 +1,9 @@
 import {
   assertEquals,
   assertRejects,
-  assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { attachGeneratedVideoProof } from "./generated-proof.ts";
+import { privateMediaIdentity } from "../_shared/private-media.ts";
 import { HttpError } from "../_shared/http.ts";
 import type { StudioContext } from "./context.ts";
 const org = "11111111-1111-4111-8111-111111111111",
@@ -200,6 +200,8 @@ Deno.test("video-status imports completed MP4 and attaches video provenance with
     R2_ACCESS_KEY_ID: "fixture-access-key",
     R2_SECRET_ACCESS_KEY: "fixture-secret-key",
     UPLOAD_GATEWAY_ORIGIN: "https://uploads.rendprop.com",
+    PRIVATE_MEDIA_DELIVERY: "gateway-v1",
+    MEDIA_GATEWAY_SECRET: "a".repeat(64),
   };
   const old = Object.fromEntries(
       Object.keys(env).map((name) => [name, Deno.env.get(name)]),
@@ -276,7 +278,7 @@ Deno.test("video-status imports completed MP4 and attaches video provenance with
     assertEquals(f.row.storage_key, key);
     assertEquals(f.proof.altered_key, key);
     assertEquals(f.proof.original_key, f.source.storage_key);
-    assertStringIncludes(body.result.url, "-complete-");
+    assertEquals(privateMediaIdentity(body.result.url)?.key, key);
     assertEquals(calls.length, 5);
     assertEquals(JSON.stringify(body).includes("fixture-secret-key"), false);
   } finally {

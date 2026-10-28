@@ -1,7 +1,7 @@
 import {assert, assertEquals} from 'jsr:@std/assert@1';
 const id = (n: number) => `f8000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const actor=id(1), org=id(2), listing=id(3);
-const fixtureEnv={SUPABASE_URL:'https://selection-db.fixture.invalid', SUPABASE_ANON_KEY:'public-fixture', SUPABASE_SERVICE_ROLE_KEY:'service-fixture', CLOUDFLARE_ACCOUNT_ID:'a'.repeat(32), R2_ACCESS_KEY_ID:'inert-fixture', R2_SECRET_ACCESS_KEY:'inert-fixture', PRIVATE_MEDIA_DELIVERY:'off'};
+const fixtureEnv={SUPABASE_URL:'https://selection-db.fixture.invalid', SUPABASE_ANON_KEY:'public-fixture', SUPABASE_SERVICE_ROLE_KEY:'service-fixture', CLOUDFLARE_ACCOUNT_ID:'a'.repeat(32), R2_ACCESS_KEY_ID:'inert-fixture', R2_SECRET_ACCESS_KEY:'inert-fixture', PRIVATE_MEDIA_DELIVERY:'gateway-v1', MEDIA_GATEWAY_SECRET:'a'.repeat(64)};
 function environment(){const before=new Map(Object.keys(fixtureEnv).map(key=>[key,Deno.env.get(key)]));for(const[key,value]of Object.entries(fixtureEnv))Deno.env.set(key,value);return()=>{for(const[key,value]of before)value===undefined?Deno.env.delete(key):Deno.env.set(key,value);};}
 const restoreImport=environment();
 const {handler}=await import('./index.ts').finally(restoreImport);

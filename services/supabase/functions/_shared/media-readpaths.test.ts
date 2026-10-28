@@ -23,7 +23,11 @@ const { adminClient } = await import("./supabase.ts");
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
 type Options = { legacyOrderChanged?:boolean;legacyOrderReverse?:boolean;legacyOrderMalformed?:boolean; delivery?:boolean; largeBytes?:number; backgroundMaster?:boolean; backgroundUnregistered?:boolean; backgroundRevoked?:boolean; publishedAlteredVideo?: boolean; denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean; mainPhotoKey?: string | null; coverPhoto?: Record<string,unknown> | null; revokeCoverAtFinal?: boolean; selection?:string[]|null; withHistoricalPhoto?:boolean; changeSelection?:boolean; identity?:Record<string,unknown>; changeIdentity?:boolean; identityFailure?:boolean; noDiscovery?:boolean; withdrawDiscovery?:boolean; clientFailure?:boolean; discovery?:unknown; emptyPortfolio?:boolean; withdrawPortfolio?:boolean; foreignPortfolioAgent?:boolean; removePortfolioMember?:boolean; deletingPortfolioActor?:boolean; legacyPortfolio?:boolean; expiredHosting?:boolean; hostingExpiresAfterAssembly?:boolean };
 async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "history" | "portfolio", opts: Options = {}) {
-  const previous = globalThis.fetch; const priorGateway=Deno.env.get("MEDIA_GATEWAY_SECRET");if(opts.delivery)Deno.env.set("MEDIA_GATEWAY_SECRET","a".repeat(64)); let legacyOrderReads=0; let checks = 0, profileRead = false, contactReads=0,listingReads=0,identityReads=0,hostingReads=0,disclosureRead=false; const seen: Record<string, unknown>[] = [];
+  const previous = globalThis.fetch; const priorGateway=Deno.env.get("MEDIA_GATEWAY_SECRET"), priorDelivery=Deno.env.get("PRIVATE_MEDIA_DELIVERY");
+  const gatewaySigning=handler==="creative"||handler==="history";
+  if(opts.delivery||gatewaySigning)Deno.env.set("MEDIA_GATEWAY_SECRET","a".repeat(64));
+  if(gatewaySigning)Deno.env.set("PRIVATE_MEDIA_DELIVERY","gateway-v1");
+  let legacyOrderReads=0; let checks = 0, profileRead = false, contactReads=0,listingReads=0,identityReads=0,hostingReads=0,disclosureRead=false; const seen: Record<string, unknown>[] = [];
   globalThis.fetch = async (input, init) => {
     const req = new Request(input, init), url = new URL(req.url);
     assertEquals(url.hostname, "media-privacy-fixture.invalid");
@@ -104,7 +108,10 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
     // restoring fetch; resource sanitization stays enabled and no live HTTP is
     // permitted by this transport fixture.
     await new Promise<void>(resolve=>setTimeout(resolve,0));
-    globalThis.fetch = previous;if(opts.delivery)priorGateway===undefined?Deno.env.delete("MEDIA_GATEWAY_SECRET"):Deno.env.set("MEDIA_GATEWAY_SECRET",priorGateway); }
+    globalThis.fetch = previous;
+    if(opts.delivery||gatewaySigning)priorGateway===undefined?Deno.env.delete("MEDIA_GATEWAY_SECRET"):Deno.env.set("MEDIA_GATEWAY_SECRET",priorGateway);
+    if(gatewaySigning)priorDelivery===undefined?Deno.env.delete("PRIVATE_MEDIA_DELIVERY"):Deno.env.set("PRIVATE_MEDIA_DELIVERY",priorDelivery);
+  }
 }
 Deno.test("actual public tour service handler denies revoked published render lineage", async () => {
   const r = await invoke("tour", { denyRender: true }); assertEquals(r.status, 404); assert(!JSON.stringify(r.body).includes("media-fixture.invalid"));
