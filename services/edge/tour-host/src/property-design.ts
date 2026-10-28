@@ -480,7 +480,7 @@ const DESIGN_CSS = `
     $S .listing-cover.property-video-hero:has(.property-film.is-playing) :is(.property-hero-link,.listing-cover-actions button,.property-recorded-option button) { color:var(--ink); border-color:var(--premium-line-strong); background:transparent; backdrop-filter:none; -webkit-backdrop-filter:none; }
     $S .listing-cover.property-video-hero:has(.property-film.is-playing) .listing-cover-actions .property-hero-contact { color:var(--on-accent); background:var(--lux-fill); border-color:var(--lux-fill); }
     $S .listing-cover.property-video-hero:has(.property-film.is-playing) .listing-media-label a { text-decoration-color:var(--premium-line-strong); }
-    $S .listing-cover.property-video-hero:has(.property-film.is-playing) .property-recorded-option summary { justify-content:flex-start; padding-inline:0; }
+    $S .listing-cover.property-video-hero:has(.property-film.is-playing) .property-recorded-option summary { justify-content:flex-start; padding-inline:0; color:var(--ink-dim); border-color:var(--premium-line-strong); }
     $P #overview { padding-top:0; }
     .property-site .property-preview-banner { padding:10px 16px; font-size:12px; }
     .property-site .property-preview-watermark { padding:6px 9px; font-size:10px; }

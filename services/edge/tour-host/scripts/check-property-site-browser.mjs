@@ -25,6 +25,15 @@ const { renderNearbyMap } = await load("nearby-map");
 
 const checks = [];
 const check = (condition, label) => { assert.ok(condition, label); checks.push(label); };
+const contrastRatio = (page, selector) => page.locator(selector).first().evaluate((el) => {
+  const parse = (c) => { const m = c.match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1].split(/[ ,/]+/).filter(Boolean).map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; };
+  const layers = []; for (let n = el; n; n = n.parentElement) { const b = parse(getComputedStyle(n).backgroundColor); if (b && b.a > 0) { layers.push(b); if (b.a >= 1) break; } }
+  let bg = { r: 255, g: 255, b: 255 }; for (const l of layers.reverse()) bg = { r: l.r * l.a + bg.r * (1 - l.a), g: l.g * l.a + bg.g * (1 - l.a), b: l.b * l.a + bg.b * (1 - l.a) };
+  const fgRaw = parse(getComputedStyle(el).color), opacity = [...function* () { for (let n = el; n; n = n.parentElement) yield Number(getComputedStyle(n).opacity); }()].reduce((a, b) => a * b, 1);
+  const alpha = fgRaw.a * opacity, fg = { r: fgRaw.r * alpha + bg.r * (1 - alpha), g: fgRaw.g * alpha + bg.g * (1 - alpha), b: fgRaw.b * alpha + bg.b * (1 - alpha) };
+  const lum = ({ r, g, b }) => [r, g, b].map((v) => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }).reduce((s, v, i) => s + v * [.2126, .7152, .0722][i], 0);
+  const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a); return (hi + .05) / (lo + .05);
+});
 const svg = (label, color, portrait = false) => `<svg xmlns="http://www.w3.org/2000/svg" width="${portrait ? 900 : 1600}" height="${portrait ? 1600 : 1200}"><rect width="100%" height="100%" fill="${color}"/><text x="80" y="600" font-size="96" fill="white">SYNTHETIC ${label}</text></svg>`;
 const PHOTOS = [["Front exterior", "#264653"], ["Living room", "#2a9d8f"], ["Kitchen", "#8a5a44"], ["Primary bedroom", "#6d597a"], ["Terrace", "#355070"], ["Broken file", "#000000"]];
 const photoPath = (i) => i === 5 ? "/photos/missing-5.svg" : `/photos/photo-${i}.svg`;
@@ -151,6 +160,11 @@ try {
           if (theme === "signature-estate") check(composition.overlay.display !== "none" && composition.overlay.opacity === "1" && composition.overlay.background.includes("linear-gradient"), tag+": Signature film poster keeps its dark contrast overlay behind the white address and actions");
           else check(composition.overlay.display === "none", tag+": Coastal film frame has no contrast overlay over its separate dark identity");
           check(await page.locator(".property-recorded-option summary").evaluate(el => el.getBoundingClientRect().height >= 44), tag+": optional recorded walkthrough keeps a 44px touch target");
+          if (theme === "signature-estate") {
+            const ratio = await contrastRatio(page, ".property-recorded-option summary");
+            measurements.push({ tag, type: "poster-recorded-walkthrough-contrast", ratio });
+            check(ratio >= 4.5, `${tag}: optional recorded walkthrough stays readable over the poster (${ratio.toFixed(2)}:1)`);
+          }
           check(!/\d\s*×\s*\d/.test(hero.text) && !hero.text.includes("Select Play") && !hero.text.includes("1920"), tag+": premium hero shows no pixel-dimension string");
           check(hero.label === "Property film · 0:30" && hero.status === "" && hero.play === "Play the film" && hero.videoLabel === "Property film for 123 Synthetic Lane, Example, FL 33000", tag+": premium hero reads as a film with its running time, one play control and a silent status until loading");
           const settled = await page.evaluate(async () => {
@@ -168,6 +182,15 @@ try {
             return { display:style.display, opacity:style.opacity };
           });
           check(theme === "signature-estate" ? (width === 390 ? playingOverlay.display === "none" : playingOverlay.opacity === "0") : playingOverlay.display === "none", tag+": playing film exposes the complete frame without a contrast overlay");
+          if (theme === "signature-estate") {
+            if (width === 390) {
+              const ratio = await contrastRatio(page, ".property-recorded-option summary");
+              measurements.push({ tag, type: "playing-recorded-walkthrough-contrast", ratio });
+              check(ratio >= 4.5, `${tag}: optional recorded walkthrough stays readable on ivory after film play (${ratio.toFixed(2)}:1)`);
+            } else {
+              check(await page.locator(".property-hero-copy").evaluate(el => getComputedStyle(el).opacity === "0"), tag+": desktop copy leaves the film clear while playing");
+            }
+          }
         }
       }
       if (theme !== "basic") presentationChecks.push([composition.watchContrast.length > 0 && composition.watchContrast.every(ratio => ratio >= 4.5),tag+": film navigation text meets 4.5:1 contrast with either primary media"]);
@@ -259,15 +282,7 @@ try {
     await page.goto(origin + "/property/synthetic-site", { waitUntil: "networkidle" });
     check(await page.locator("#property-photo-modal .property-photo-all").getAttribute("href") === "/property/synthetic-site?page=gallery", theme + ": Home photo viewer links to the complete Gallery when it previews a subset");
 
-    const contrast = async (selector) => page.locator(selector).first().evaluate((el) => {
-      const parse = (c) => { const m = c.match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1].split(/[ ,/]+/).filter(Boolean).map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; };
-      const layers = []; for (let n = el; n; n = n.parentElement) { const b = parse(getComputedStyle(n).backgroundColor); if (b && b.a > 0) { layers.push(b); if (b.a >= 1) break; } }
-      let bg = { r: 255, g: 255, b: 255 }; for (const l of layers.reverse()) bg = { r: l.r * l.a + bg.r * (1 - l.a), g: l.g * l.a + bg.g * (1 - l.a), b: l.b * l.a + bg.b * (1 - l.a) };
-      const fgRaw = parse(getComputedStyle(el).color), opacity = [...function* () { for (let n = el; n; n = n.parentElement) yield Number(getComputedStyle(n).opacity); }()].reduce((a, b) => a * b, 1);
-      const alpha = fgRaw.a * opacity, fg = { r: fgRaw.r * alpha + bg.r * (1 - alpha), g: fgRaw.g * alpha + bg.g * (1 - alpha), b: fgRaw.b * alpha + bg.b * (1 - alpha) };
-      const lum = ({ r, g, b }) => [r, g, b].map((v) => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }).reduce((s, v, i) => s + v * [.2126, .7152, .0722][i], 0);
-      const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a); return (hi + .05) / (lo + .05);
-    });
+    const contrast = (selector) => contrastRatio(page, selector);
     for (const selector of [".agent .avatar", ".agent .social a", ".field .lbl .opt", ...(theme === "basic" ? [] : [".property-hero-title", ".property-hero-price", ".lp-stat .k", ".property-page-menu summary"])]) {
       const ratio = await contrast(selector); measurements.push({ theme, selector, ratio });
       check(ratio >= 4.5, `${theme}: ${selector} text meets 4.5:1 contrast (${ratio.toFixed(2)})`);
