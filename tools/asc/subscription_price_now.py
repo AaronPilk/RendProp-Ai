@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""One-off, fail-closed advance of the three scheduled USA monthly prices.
+"""Read-only audit and one-off restoration of the Max Oct 30 USA schedule.
 
-This tool is pinned to the live 2026-10-30 App Store Connect price rows observed
-on 2026-10-28. ``plan`` uses GETs only. ``apply`` requires two explicit flags,
-rechecks all three products before any write, deletes only the pinned future
-row for each product, then creates the same .99 price with ``startDate: null``.
-After every write it reads Apple back; an error stops without automatic retry.
-The operator must separately verify the real StoreKit prices on a TestFlight
-iPhone. No app version, review item, territory, or subscriber is submitted.
+Apple refused an immediate replacement for an approved subscription with
+HTTP 409 after the future Max row was deleted. The previous immediate-price
+operation is permanently disabled. ``plan`` uses GETs only. ``restore-max``
+can recreate only the exact Max $49.99 USA phase for 2026-10-30, preserving
+existing subscriber prices; Ultra and Team must still match their untouched
+future phases. After a write it reads Apple back and stops on any mismatch.
+The operator must separately verify StoreKit on a TestFlight iPhone.
 
-Apple documents null startDate as immediately effective and deletion of a
-scheduled price change. It does not promise a particular propagation time.
-https://developer.apple.com/documentation/appstoreconnectapi/configuring-subscription-prices-across-territories
+Apple says approved subscriptions use scheduled changes, generally at least
+one or two days in advance. No app version or review item is submitted here.
+https://developer.apple.com/help/app-store-connect/manage-subscriptions/manage-pricing-for-auto-renewable-subscriptions
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ class PriceNowError(Exception):
 @dataclass(frozen=True)
 class Decision:
     product_id: str
-    state: str  # scheduled, deleted, or applied
+    state: str  # scheduled, deleted, or restored
 
 
 def _related_id(row, name):
@@ -113,9 +113,9 @@ def _state(client, product_id, spec):
             row["date"] == EXPECTED_DATE and \
             row["preserved"] is False and old[0]["preserved"] is True:
         return "scheduled"
-    if row["id"] != spec["future_price_id"] and row["date"] is None and \
+    if row["id"] != spec["future_price_id"] and row["date"] == EXPECTED_DATE and \
             row["preserved"] is False and old[0]["preserved"] is True:
-        return "applied"
+        return "restored"
     raise PriceNowError("%s price phase changed; inspect Apple before retry" % product_id)
 
 
@@ -141,7 +141,7 @@ def _preflight(client, snapshot):
 
 def _create_body(spec):
     return {"data": {"type": "subscriptionPrices", "attributes": {
-        "startDate": None, "preserveCurrentPrice": True, "planType": "UPFRONT"},
+        "startDate": EXPECTED_DATE, "preserveCurrentPrice": True, "planType": "UPFRONT"},
         "relationships": {
             "subscription": asc.relationship("subscriptions", spec["subscription_id"]),
             "territory": asc.relationship("territories", asc.USA_TERRITORY),
@@ -153,10 +153,10 @@ def _create_body(spec):
 def run(client, action, confirm_live=False, confirm_preserve=False,
         snapshot=SNAPSHOT, out=None):
     out = out or sys.stdout
-    if action not in ("plan", "apply"):
-        raise PriceNowError("Use plan or apply")
-    if action == "apply" and not (confirm_live and confirm_preserve):
-        raise PriceNowError("Apply requires both live-reprice and subscriber-preservation flags")
+    if action not in ("plan", "restore-max"):
+        raise PriceNowError("Use plan or restore-max; immediate changes are disabled")
+    if action == "restore-max" and not (confirm_live and confirm_preserve):
+        raise PriceNowError("Restoration requires both live-reprice and subscriber-preservation flags")
     decisions = _preflight(client, snapshot)
     for item in decisions:
         spec = snapshot[item.product_id]
@@ -166,32 +166,29 @@ def run(client, action, confirm_live=False, confirm_preserve=False,
     if action == "plan":
         out.write("Read-only. No App Store Connect write made.\n")
         return 0
-    for item in decisions:
-        product_id = item.product_id
-        spec = snapshot[product_id]
-        # Re-read immediately before each write; never rely on the first GET.
-        state = _state(client, product_id, spec)
-        if state != item.state:
-            raise PriceNowError("%s changed after preflight; no write" % product_id)
-        if state == "applied":
-            continue
-        if state == "scheduled":
-            client.request("DELETE", "/v1/subscriptionPrices/%s" %
-                           spec["future_price_id"], expect=(204,))
-            if _state(client, product_id, spec) != "deleted":
-                raise PriceNowError("%s scheduled-row deletion not confirmed" % product_id)
-        client.post("/v1/subscriptionPrices", _create_body(spec))
-        if _state(client, product_id, spec) != "applied":
-            raise PriceNowError("%s immediate .99 price not confirmed; inspect Apple" % product_id)
-        out.write("%s: Apple confirmed immediate .99 USA row; verify StoreKit.\n"
-                  % product_id)
-    out.write("Finished remote readback. Verify the real USA StoreKit prices before review.\n")
+    max_id = "com.rendprop.app.starter.monthly"
+    states = {item.product_id: item.state for item in decisions}
+    if any(states[product_id] != "scheduled" for product_id in
+           scheduled.EXISTING_MONTHLY_IDS if product_id != max_id):
+        raise PriceNowError("Ultra or Team changed; no restoration write")
+    if states[max_id] in ("scheduled", "restored"):
+        out.write("Max Oct 30 schedule already present; no write.\n")
+        return 0
+    if states[max_id] != "deleted":
+        raise PriceNowError("Max is not in the exact deleted-schedule state")
+    spec = snapshot[max_id]
+    if _state(client, max_id, spec) != "deleted":
+        raise PriceNowError("Max changed after preflight; no write")
+    client.post("/v1/subscriptionPrices", _create_body(spec))
+    if _state(client, max_id, spec) != "restored":
+        raise PriceNowError("Max schedule write not confirmed; inspect Apple")
+    out.write("Apple confirmed restored Max Oct 30 USA $49.99 schedule.\n")
     return 0
 
 
 def main(argv=None, out=None, client=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("plan", "apply"))
+    parser.add_argument("action", choices=("plan", "restore-max"))
     parser.add_argument("--confirm-live-reprice", action="store_true")
     parser.add_argument("--confirm-preserve-existing-prices", action="store_true")
     parser.add_argument("--key-dir", type=Path, default=asc.DEFAULT_KEY_DIR)

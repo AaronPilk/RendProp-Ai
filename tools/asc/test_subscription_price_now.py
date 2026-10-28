@@ -1,4 +1,4 @@
-"""Offline fault controls for the one-off immediate USA reprice."""
+"""Offline fault controls for restoration after Apple's approved-price denial."""
 
 import io
 import json
@@ -14,38 +14,37 @@ import subscription_price_now as price_now  # noqa: E402
 import subscription_reprice as scheduled  # noqa: E402
 from test_asc import Args, FakeAsc  # noqa: E402
 
-
 OLD = {"com.rendprop.app.starter.monthly": "49.00",
        "com.rendprop.app.pro.monthly": "99.00",
        "com.rendprop.app.team.monthly": "249.00"}
+MAX = "com.rendprop.app.starter.monthly"
 
 
-class FakeImmediate(FakeAsc):
-    fail_null_post = False
+class FakeScheduled(FakeAsc):
+    fail_scheduled_post = False
     accept_without_readback = False
 
     def __call__(self, method, url, headers, body):
         path = urlparse(url).path
         attrs = ((json.loads(body.decode("utf-8")).get("data") or {}).get("attributes")
                  if body and method == "POST" else None)
-        immediate = method == "POST" and path == "/v1/subscriptionPrices" and \
-            attrs is not None and "startDate" in attrs and attrs["startDate"] is None
-        if immediate and self.fail_null_post:
+        scheduled_post = method == "POST" and path == "/v1/subscriptionPrices" and \
+            attrs is not None and attrs.get("startDate") == price_now.EXPECTED_DATE
+        if scheduled_post and self.fail_scheduled_post:
             self.writes.append((method, path))
-            return 409, {}, b'{"errors":[{"code":"ENTITY_ERROR","status":"409"}]}'
-        if immediate and self.accept_without_readback:
+            return 409, {}, b'{"errors":[{"code":"STATE_ERROR","status":"409"}]}'
+        if scheduled_post and self.accept_without_readback:
             self.writes.append((method, path))
             return 201, {}, b'{"data":{"type":"subscriptionPrices","id":"not-visible"}}'
         response = super().__call__(method, url, headers, body)
-        if immediate and response[0] == 201:
-            # The real API reports the new non-preserved current price.
+        if scheduled_post and response[0] == 201:
             data = json.loads(response[2])
             self.store["subscriptionPrices"][data["data"]["id"]]["attributes"]["preserved"] = False
         return response
 
 
 def seeded_client():
-    fake = FakeImmediate()
+    fake = FakeScheduled()
     client = asc.Client(None, transport=fake, verbose=False, out=io.StringIO())
     assert asc.cmd_subscriptions(client, Args(), io.StringIO()) == 0
     snapshot = {}
@@ -82,96 +81,80 @@ def seeded_client():
     return fake, client, snapshot
 
 
-class SubscriptionPriceNowTests(unittest.TestCase):
-    def test_plan_is_get_only_and_snapshot_is_exact(self):
+def remove_max_future(fake, client, snapshot):
+    client.request("DELETE", "/v1/subscriptionPrices/%s" %
+                   snapshot[MAX]["future_price_id"], expect=(204,))
+    fake.writes.clear()
+    fake.bodies.clear()
+
+
+class SubscriptionPriceRecoveryTests(unittest.TestCase):
+    def test_plan_is_read_only_and_sees_exact_deleted_max(self):
         fake, client, snapshot = seeded_client()
+        remove_max_future(fake, client, snapshot)
         out = io.StringIO()
         self.assertEqual(price_now.run(client, "plan", snapshot=snapshot, out=out), 0)
         self.assertEqual(fake.writes, [])
-        self.assertEqual(out.getvalue().count("scheduled"), 3)
+        self.assertIn("starter.monthly: deleted", out.getvalue())
 
-    def test_apply_deletes_only_pinned_future_rows_and_posts_null_date(self):
+    def test_restore_writes_only_max_future_phase_and_is_idempotent(self):
         fake, client, snapshot = seeded_client()
+        remove_max_future(fake, client, snapshot)
         out = io.StringIO()
-        self.assertEqual(price_now.run(client, "apply", True, True, snapshot, out), 0)
-        self.assertEqual(len(fake.writes), 6)
-        for i, product_id in enumerate(snapshot):
-            self.assertEqual(fake.writes[2*i],
-                             ("DELETE", "/v1/subscriptionPrices/%s" %
-                              snapshot[product_id]["future_price_id"]))
-            self.assertEqual(fake.writes[2*i+1], ("POST", "/v1/subscriptionPrices"))
-        bodies = [body for method, path, body in fake.bodies
-                  if method == "POST" and path == "/v1/subscriptionPrices"]
-        self.assertEqual(len(bodies), 3)
-        for body in bodies:
-            self.assertEqual(body["data"]["attributes"],
-                             {"startDate": None, "preserveCurrentPrice": True,
-                              "planType": "UPFRONT"})
-            self.assertEqual(body["data"]["relationships"]["territory"]["data"]["id"],
-                             "USA")
+        self.assertEqual(price_now.run(client, "restore-max", True, True,
+                                       snapshot, out), 0)
+        self.assertEqual(fake.writes, [("POST", "/v1/subscriptionPrices")])
+        body = fake.bodies[0][2]
+        self.assertEqual(body["data"]["attributes"],
+                         {"startDate": price_now.EXPECTED_DATE,
+                          "preserveCurrentPrice": True, "planType": "UPFRONT"})
+        self.assertEqual(body["data"]["relationships"]["subscription"]["data"]["id"],
+                         snapshot[MAX]["subscription_id"])
         fake.writes.clear()
-        self.assertEqual(price_now.run(client, "apply", True, True,
+        self.assertEqual(price_now.run(client, "restore-max", True, True,
                                        snapshot, io.StringIO()), 0)
         self.assertEqual(fake.writes, [])
 
-    def test_apply_requires_both_flags(self):
+    def test_immediate_apply_is_permanently_disabled(self):
         fake, client, snapshot = seeded_client()
+        with self.assertRaisesRegex(price_now.PriceNowError, "immediate changes are disabled"):
+            price_now.run(client, "apply", True, True, snapshot)
+        self.assertEqual(fake.writes, [])
+
+    def test_restore_requires_both_flags(self):
+        fake, client, snapshot = seeded_client()
+        remove_max_future(fake, client, snapshot)
         for live, preserve in ((False, False), (False, True), (True, False)):
             with self.subTest(live=live, preserve=preserve):
                 with self.assertRaisesRegex(price_now.PriceNowError, "requires"):
-                    price_now.run(client, "apply", live, preserve, snapshot)
+                    price_now.run(client, "restore-max", live, preserve, snapshot)
         self.assertEqual(fake.writes, [])
 
-    def test_last_product_point_drift_blocks_all_writes(self):
+    def test_drift_in_ultra_or_team_blocks_restoration(self):
         fake, client, snapshot = seeded_client()
-        fake.price_ladder = ["29.99", "49.99", "99.99", "249.00"]
-        with self.assertRaises((price_now.PriceNowError, scheduled.RepriceError)):
-            price_now.run(client, "apply", True, True, snapshot, io.StringIO())
-        self.assertEqual(fake.writes, [])
-
-    def test_unexpected_future_date_blocks_all_writes(self):
-        fake, client, snapshot = seeded_client()
+        remove_max_future(fake, client, snapshot)
         team = snapshot["com.rendprop.app.team.monthly"]
         fake.store["subscriptionPrices"][team["future_price_id"]]["attributes"][
             "startDate"] = "2026-10-31"
         with self.assertRaisesRegex(price_now.PriceNowError, "phase changed"):
-            price_now.run(client, "apply", True, True, snapshot)
+            price_now.run(client, "restore-max", True, True, snapshot)
         self.assertEqual(fake.writes, [])
 
-    def test_delete_denial_stops_without_post(self):
+    def test_approved_schedule_denial_stops_without_retry(self):
         fake, client, snapshot = seeded_client()
-        fake.price_delete_error = (409, "PRICE_LOCKED")
+        remove_max_future(fake, client, snapshot)
+        fake.fail_scheduled_post = True
         with self.assertRaises(asc.ApiError):
-            price_now.run(client, "apply", True, True, snapshot)
-        self.assertEqual(len(fake.writes), 1)
-        self.assertEqual(fake.writes[0][0], "DELETE")
+            price_now.run(client, "restore-max", True, True, snapshot)
+        self.assertEqual(fake.writes, [("POST", "/v1/subscriptionPrices")])
 
-    def test_post_denial_stops_and_next_run_can_resume_deleted_phase(self):
+    def test_accepted_post_without_readback_stops(self):
         fake, client, snapshot = seeded_client()
-        fake.fail_null_post = True
-        with self.assertRaises(asc.ApiError):
-            price_now.run(client, "apply", True, True, snapshot)
-        self.assertEqual([m for m, _ in fake.writes], ["DELETE", "POST"])
-        fake.fail_null_post = False
-        fake.writes.clear()
-        self.assertEqual(price_now.run(client, "apply", True, True,
-                                       snapshot, io.StringIO()), 0)
-        self.assertEqual(fake.writes[0], ("POST", "/v1/subscriptionPrices"))
-
-    def test_accepted_post_without_readback_stops_before_next_product(self):
-        fake, client, snapshot = seeded_client()
+        remove_max_future(fake, client, snapshot)
         fake.accept_without_readback = True
         with self.assertRaisesRegex(price_now.PriceNowError, "not confirmed"):
-            price_now.run(client, "apply", True, True, snapshot)
-        self.assertEqual([m for m, _ in fake.writes], ["DELETE", "POST"])
-
-    def test_subscription_identity_drift_blocks_all_writes(self):
-        fake, client, snapshot = seeded_client()
-        team = snapshot["com.rendprop.app.team.monthly"]
-        team["subscription_id"] = "wrong"
-        with self.assertRaisesRegex(price_now.PriceNowError, "identity/period"):
-            price_now.run(client, "apply", True, True, snapshot)
-        self.assertEqual(fake.writes, [])
+            price_now.run(client, "restore-max", True, True, snapshot)
+        self.assertEqual(fake.writes, [("POST", "/v1/subscriptionPrices")])
 
 
 if __name__ == "__main__":
