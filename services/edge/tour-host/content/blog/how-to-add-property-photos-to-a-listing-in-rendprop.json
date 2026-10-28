@@ -1,0 +1,40 @@
+{
+  "slug": "how-to-add-property-photos-to-a-listing-in-rendprop",
+  "title": "How to add property photos to a listing in Rendprop",
+  "description": "Open the listing, choose the photos that belong to this property, and continue. Landscape photos feed the listing video, portrait photos feed social.",
+  "category": "howto",
+  "keywords": [
+    "add photos to a listing in rendprop",
+    "rendprop property photos",
+    "landscape photos or portrait photos for a listing",
+    "iphone listing photos to video",
+    "which photos to add to a listing"
+  ],
+  "tldr": "Open the listing, choose the photos on your phone that belong to this property, and continue. Add landscape photos if you want a listing video and portrait photos if you want a vertical social video. Pick the ones that belong rather than everything from the shoot; you can add more later.",
+  "html": "<p>Open the listing in Rendprop, choose the photos on your phone that belong to this property, and continue. That is the whole action. The decision that matters is which photos: landscape photos are what the listing video is built from, portrait photos are what the vertical social video is built from, and the untouched originals you add here stay in the listing's photo history whatever you edit later.</p><h2>Get the photos onto the phone first</h2><p>If you shot on the iPhone, they are already there. If a photographer shot the listing, get the delivered files onto the phone before you open the app: a shared album, a cloud folder opened on the phone, or a direct transfer. Use the full-size delivered images, not screenshots of a web gallery and not the compressed previews that come through a messaging app. A screenshot of a kitchen will look fine on the screen and soft in the video.</p><h2>Landscape photos, portrait photos, or both</h2><p>Rendprop makes two kinds of photo-based video. The listing video is a landscape video, 16:9, and wants landscape photos. The social video is vertical, 9:16, and wants portrait photos. A landscape photo squeezed into a vertical frame loses the sides of the room; a portrait photo in a landscape video frame loses the ceiling and the floor. So the honest answer to \"which should I add\" is: add the landscape photos for the listing video, and if you also want a reel, add portrait photos shot for that purpose.</p><p>If your photographer delivered only landscape photos, add them, make the listing video, and plan the portrait photos for the next shoot. The <a href=\"/blog/landscape-or-portrait-shooting-photos-for-listing-video-and-social-video\">orientation post</a> goes deeper on shooting for both in one visit.</p><h2>Adding the photos, in order</h2><ol><li>Open the listing from Home (or start a new one if this is a fresh property).</li><li>Choose the photos you want in this listing from your phone. Select the landscape photos first.</li><li>Add the portrait photos if you have them.</li><li>Continue. The photos are now in the listing and you can move into the photo studio, the video step or the website step.</li></ol><h3>A thirty-second check of the photo set</h3><ul><li>Every photo is from this property. Four shoots on one Saturday is how a neighbour's kitchen ends up in the wrong listing.</li><li>No duplicates. Photographers often deliver a bracketed set; pick one of each room and angle.</li><li>The front exterior is in there. It is the likely main photo and the first scene of the video.</li><li>Rooms that matter to this buyer are covered: kitchen, main living space, primary bedroom, primary bath, yard. A powder room can sit this one out.</li></ul><h2>How many to add</h2><p>Enough to tell the story of the home, not the whole shoot. For a 3-bed in a cul-de-sac, 15 to 25 landscape photos is a sensible working set: front, back, kitchen from two angles, living room, dining, each bedroom, the baths, the yard, one of the street if it helps. The <a href=\"/blog/how-many-photos-does-a-listing-video-need\">photo count post</a> gives numbers by home size. You can add more later if a room is missing, so start lean.</p><h2>A worked example: a photographer with four shoots</h2><p>Saturday, four properties. The photographer keeps one Rendprop listing per property and adds photos the same afternoon, between shoots, from the car. Property one: 22 landscape photos and 8 portrait photos, chosen from a delivered set of 60. Property two: 18 landscape photos, no portrait photos because the agent did not ask for a reel. By 6pm all four listings exist and hold the right photos. The edits, the videos and the pages can wait until Sunday morning; the sorting is done while the houses are fresh in memory, which is when sorting is easiest.</p><h2>What goes wrong at this step</h2><ul><li><strong>Adding compressed images.</strong> If the file came through a chat app, ask for the original.</li><li><strong>Adding every bracket and every angle.</strong> The video step plans scene order automatically from the photos you give it. Give it a clean set.</li><li><strong>Portrait photos only, then expecting a landscape video.</strong> Match orientation to the video you want.</li><li><strong>Mixing two listings.</strong> One property per listing, always.</li><li><strong>Adding edited exports from another app with no original.</strong> Add your originals here. Edits made in the photo studio keep the original in photo history and carry a disclosure; edits made elsewhere do not come with either.</li></ul><h2>What happens to the photos after you add them</h2><p>They become the source for everything downstream. The photo studio proposes and makes edits as separate versions, the video step builds scenes from the versions you choose, and the website step uses your selected main photo and gallery. You own the photos and videos; Rendprop does not use your content for its own marketing or AI training without written permission. The <a href=\"/features#photo-studio\">photo studio section</a> describes the edits that come next.</p><p>Next step: get the full-size files from your latest shoot onto the phone, open that listing, and add the landscape photos first. Portrait photos can follow once you have decided whether this listing gets a reel.</p>",
+  "faq": [
+    {
+      "q": "Can I add photos a photographer shot on a camera?",
+      "a": "Yes. Get the full-size delivered files onto the phone first, through a shared album, a cloud folder or a direct transfer, then choose them in the listing. Avoid screenshots and chat-app compressed copies."
+    },
+    {
+      "q": "Do I need portrait photos?",
+      "a": "Only if you want a vertical social video. The landscape video for the listing is built from landscape photos. Many agents start with landscape photos and add portrait photos on the next shoot."
+    },
+    {
+      "q": "Can I add more photos later?",
+      "a": "Yes. Open the listing and add them. Starting with a lean set and adding a missing room later is easier than pruning a set of sixty."
+    },
+    {
+      "q": "What if I add the wrong photo?",
+      "a": "Leave it out when you choose the photos for the video and the gallery, and do not select it as the main photo. Check the set once against the property before you continue; it takes thirty seconds and saves rebuilding the video."
+    }
+  ],
+  "related": [
+    "how-to-start-a-listing-in-rendprop",
+    "how-many-photos-does-a-listing-video-need",
+    "landscape-or-portrait-shooting-photos-for-listing-video-and-social-video",
+    "preparing-iphone-photos-for-a-listing-video"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-a-photo-based-listing-video",
+  "title": "What is a photo-based listing video",
+  "description": "A photo-based listing video is a property video built from still photos: camera motion on each frame, a planned scene order, voiceover and captions.",
+  "category": "glossary",
+  "keywords": [
+    "photo based listing video",
+    "listing video from photos",
+    "real estate video from still photos",
+    "photo to video listing",
+    "what is a listing video"
+  ],
+  "tldr": "A photo-based listing video is a property video assembled from still photographs rather than filmed footage. Each photo becomes a scene with camera motion, the scenes run in a planned order, and a voiceover, captions and music can sit on top. It is the quickest way to get a video from a photo shoot you already paid for, and it is not a walkthrough.",
+  "html": "<p>A photo-based listing video is a property video assembled from still photographs rather than filmed footage. Each photo becomes a scene with camera motion across it, the scenes run in a planned order from exterior to interior, and a voiceover, on-screen captions and music can sit on top. Nobody films anything. The video exists because the photos exist.</p><p>It is the practical answer to a seller who wants a video and an agent who has thirty good photos and no videographer.</p><h2>How one gets created</h2><p>The inputs are the listing photos, usually the same set going into the MLS. The tool, or an editor, decides which photos to use, what order they play in and how the camera moves on each one: a slow push into the kitchen, a drift across the living room, a pull back from the front elevation. Each photo holds for a few seconds. Transitions join them. A voice track, recorded or synthetic, can carry the facts; captions can repeat them for viewers with the sound off; music fills the gaps.</p><p>Modern tools plan the scene order and the motion automatically from the photos, so the human work is choosing the photos and reviewing the result.</p><h2>Where a photo video earns its keep</h2><ul><li>Every listing that has photos and no video. It costs no extra visit.</li><li>The property page, the MLS virtual tour field and YouTube, in landscape orientation.</li><li>Instagram, TikTok and Shorts, in vertical orientation built from portrait photos.</li><li>Just listed, open house and price change announcements, by rebuilding from the same photo set with a different script.</li></ul><p>It is less useful when the home's selling point is flow, a long gallery hall, a loft with a view down to the kitchen, because stills cannot show how spaces connect. That is the walkthrough's job.</p><h2>What a photo-based video is not</h2><p>A photo-based listing video is not a slideshow, although a bad one becomes one. The difference is motion, pacing and sequence. It is not a <a href=\"/blog/what-is-a-listing-walkthrough-video\">walkthrough</a>, which is continuous recorded footage moving through the home. It is not drone footage, and it is not a 3D tour. It is also not a virtual tour in the old sense of a clickable 360, although it is commonly what goes in the virtual tour field today.</p><p>The nearest confusable thing is a videographer's edit of real footage. That product is filmed, takes a separate visit and typically costs $250 to $600 at typical U.S. rates as of August 2026. A photo-based video comes from the photo shoot you already paid for.</p><h2>One listing, start to finish</h2><p>A photographer shoots a 3-bed split-level on Saturday morning and delivers twenty-eight landscape photos and ten portrait ones by Saturday night. The agent picks sixteen landscape photos: front exterior, entry, living room, kitchen from two angles, dining, primary bedroom, primary bath, two more bedrooms, hall bath, back deck, yard, garage, and the exterior again to close. She types a short script, records it in her car with the windows up, turns on captions and leaves the music quiet.</p><p>The landscape video goes on the property page and into the MLS tour field as the unbranded link. From the ten portrait photos she builds a vertical cut for Instagram on Sunday. Monday the just listed email goes out with the page link. One shoot, two videos, no videographer, no second visit.</p><h2>How this works in Rendprop</h2><p>Rendprop builds a photo-based listing video in the video step from the photos you add to a listing: landscape photos for the landscape video and portrait photos for the vertical social video. Scene order and camera motion are planned automatically. You can record a voiceover or have an AI voice read your script, add word-by-word captions, add music or leave it out, and export in 16:9 and 9:16. You review the video before publishing it to the property website, where it plays on request and does not autoplay. See <a href=\"/features#reels\">the video section</a> and <a href=\"/blog/how-to-create-a-landscape-listing-video-in-rendprop\">how to create a landscape video in Rendprop</a>.</p><h2>Where photo videos go wrong</h2><p>Too many photos make it long and repetitive. Too few make it feel like an ad. Motion that is too fast turns a kitchen into a blur; motion that is identical on every frame turns it into a slideshow. A voiceover that reads the MLS remarks word for word loses people by the second sentence. The fix for all of these is a review pass with the sound on and the sound off before the video goes anywhere.</p><p>Next step: take your current listing's photos, choose the twelve to sixteen that tell the story from the kerb to the back yard, and build one video. Review it on your phone before you show the seller.</p>",
+  "faq": [
+    {
+      "q": "Is a photo-based listing video the same as a slideshow?",
+      "a": "No. A slideshow holds a static image, cuts and holds another. A photo-based listing video adds camera motion to each frame, sequences the scenes with intent and layers a voiceover, captions and music. The result reads as a video, not a deck of photos."
+    },
+    {
+      "q": "Can a photo-based video go in the MLS virtual tour field?",
+      "a": "Often, yes, through an unbranded page. Check your MLS's current rules for what the field accepts before you paste a link there."
+    },
+    {
+      "q": "How many photos does a photo-based listing video need?",
+      "a": "Enough to walk a viewer from the exterior to the back yard without repeating a room, which is usually twelve to twenty for a typical home. More than that and the video gets long; fewer and it feels thin."
+    },
+    {
+      "q": "Does a photo-based video replace a walkthrough?",
+      "a": "For most listings it is the only video the home gets, and that works. For homes where the flow between rooms is the selling point, a recorded walkthrough shows something stills cannot. The two can live on the same property page."
+    }
+  ],
+  "related": [
+    "photo-based-listing-video-what-it-is-and-when-it-beats-a-walkthrough",
+    "can-i-make-a-listing-video-from-photos-only",
+    "what-is-a-listing-walkthrough-video",
+    "how-to-create-a-landscape-listing-video-in-rendprop"
+  ],
+  "published": "2026-10-28"
+}

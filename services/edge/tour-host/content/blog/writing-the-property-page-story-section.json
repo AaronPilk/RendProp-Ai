@@ -1,0 +1,40 @@
+{
+  "slug": "writing-the-property-page-story-section",
+  "title": "Writing the property page story section",
+  "description": "The story section is the paragraph you would say to a buyer in the doorway, not the MLS remarks pasted in. Four beats, 120 to 200 words, no feature list.",
+  "category": "copy",
+  "keywords": [
+    "property page story section",
+    "property website description",
+    "single property website copy",
+    "what to write on a listing page",
+    "listing page about section"
+  ],
+  "tldr": "The story section on a property page is the paragraph you would say to a buyer standing in the doorway: why this home, what living in it is like, what the photos cannot show, and what was done and when. It is not the MLS remarks pasted in, and it is not a feature list, because the details fields already hold the numbers. Aim for 120 to 200 words in four beats.",
+  "html": "<p>The story section on a property page is the paragraph you would say to a buyer standing in the doorway, not the MLS remarks pasted in. Its job is to say why this home, what it is like to live in, what the photos cannot show, and what was done and when. The numbers live in the details fields next to it, so the story section does not repeat them. One hundred and twenty to two hundred words, in four beats, is enough.</p><p>It gets neglected because the MLS remarks already exist and pasting them feels efficient. But the remarks were written for a field with a character limit, in portal shorthand, often with abbreviations and capitals that look odd on a clean page under a large photo. The property page is yours, the visitor arrived from your link, and the text can speak the way you do.</p><h2>What the story section is for, and what the details are for</h2><p>The details fields answer the questions every buyer asks in the same order: price, beds, baths, square feet. They are scanned, not read. The story section is read. Treat the two as a pair: facts up top, in fields; the account of the home below, in sentences. If a sentence in the story is just a number from the fields with words around it, cut it.</p><h2>Four beats that fit in 150 words</h2><ol><li><strong>The one thing.</strong> The sentence you would say first in the car. “This is the last house on the lane, and the back fence is the edge of the county forest.”</li><li><strong>A day in the home.</strong> Where the sun is in the morning, which room people end up in, what you hear with the windows open. Two or three sentences, all true, all specific. “The kitchen gets the morning; by four the light is on the back deck. With the windows open you hear the creek, not the road.”</li><li><strong>What was done and when.</strong> The improvements, with years, in one sentence or two. “The roof and furnace were replaced in 2022; the kitchen cabinets are original 1990s oak, repainted last year.”</li><li><strong>What to do next.</strong> One line that points at the form below. “Pick a date on the form and the showing gets arranged.” It should match how the page's enquiry form works.</li></ol><h2>Pasted remarks versus a written story</h2><p>Before (pasted from the remarks): “GORGEOUS 3BR/2BA RANCH W/ UPDATED KIT & BATHS. HDWD FLRS THRU-OUT. FIN BSMT. LRG FENCED YD. CLOSE TO SCHOOLS, SHOPPING & HWY. MUST SEE.”</p><p>After (written for the page): “This is the last house on Fern Lane, and the back fence is the edge of the county forest. The kitchen gets the morning sun and the deck gets the afternoon; with the windows open you hear the creek rather than the road. The roof and furnace were replaced in 2022, and the basement was finished in 2019 with a second living room and a full bath. Pick a date on the form below and the showing gets arranged.”</p><p>Both describe the same house. Only one sounds like a person who has stood in it.</p><h2>Where story sections go wrong</h2><ul><li><strong>Repeating the details.</strong> “This three-bedroom, two-bath home with 1,640 square feet” is already on the page in the details fields.</li><li><strong>The pasted remarks.</strong> Abbreviations, capitals and “must see” read as shouting under a quiet photo.</li><li><strong>Writing about the agent.</strong> The contact card handles who you are. The story is about the house.</li><li><strong>Promises.</strong> “Perfect for entertaining” and “ideal for a growing family” describe the reader, not the property. Describe the deck size and the number of bedrooms and let the reader decide. Lines about who should live there are worth a check with your broker.</li><li><strong>Filler to fill the box.</strong> If you have nothing true to say beyond the facts, write two sentences and stop.</li><li><strong>Edited photos described as the home.</strong> If the main photo is a twilight edit or the living room is virtually staged, the story should describe the real room and the disclosure should sit where the photos are. See <a href=\"/blog/describing-ai-edited-photos-in-the-listing-text\">describing AI-edited photos in the listing text</a>.</li></ul><h2>How this works in Rendprop</h2><p>On a Rendprop <a href=\"/features#listing-site\">property page</a>, the details you typed into the listing (price, beds, baths, square feet for a home) sit with the gallery and the main photo, and the story section is a separate block for your paragraph. Sections appear when filled in and hide when empty, so a short story is fine and an empty one does not leave a gap. The page also carries the selected listing video, which plays on request and never autoplays, your contact card, and the enquiry form that asks for the date the visitor wants. Rendprop does not write the story section for you. The words on the page are the ones you typed, which is the point of having a page that is yours.</p><h2>Write it in the doorway</h2><p>Next time you are at the house, stand in the front door, open the notes app, and dictate what you would say to a buyer who just walked up. Trim it to four beats and 150 words at your desk. That is the story section, and it will be better than anything written from the listing agreement.</p>",
+  "faq": [
+    {
+      "q": "How long should the story section on a property page be?",
+      "a": "Around 120 to 200 words, in four short beats: the one thing, a day in the home, what was done and when, and what to do next. Longer is fine if every sentence adds something the photos and the details fields do not. Shorter is fine too; two true sentences beat six lines of filler."
+    },
+    {
+      "q": "Can I just paste the MLS remarks into the story section?",
+      "a": "You can, but the remarks were written for a field with a character limit, often in abbreviations and capitals that look wrong under a large photo. Write a version in plain sentences for the page. It takes ten minutes and reads like a person."
+    },
+    {
+      "q": "Should the story section repeat the price and the room count?",
+      "a": "No. The details fields on the page already show those. The story section is for what the fields cannot hold: light, sound, position, the history of the improvements and the reason to come."
+    },
+    {
+      "q": "What if I have nothing to say beyond the facts?",
+      "a": "Write two sentences, or leave it empty. On a page where sections hide when empty, an unfilled story is better than one padded with adjectives. Most homes have at least one true thing worth a sentence, though, and it is usually about position or light."
+    }
+  ],
+  "related": [
+    "what-a-single-property-website-should-include",
+    "property-details-that-belong-on-the-page-price-beds-baths-and-square-fee",
+    "writing-a-listing-description-that-matches-the-photos",
+    "the-first-sentence-of-a-listing-description"
+  ],
+  "published": "2026-10-28"
+}

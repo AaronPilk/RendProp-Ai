@@ -1,0 +1,40 @@
+{
+  "slug": "sharing-a-listing-link-by-text-what-the-preview-should-show",
+  "title": "Sharing a listing link by text: what the preview should show",
+  "description": "When you text a listing link, the preview bubble is the first impression. It should show the home's main photo and a title that says what and where.",
+  "category": "website",
+  "keywords": [
+    "text a listing link",
+    "link preview real estate",
+    "share property website by text",
+    "imessage link preview listing",
+    "listing link preview image"
+  ],
+  "tldr": "When you text a listing link, the preview bubble is the buyer's first look at the home. It should show the main exterior photo and a title that names the property, so the buyer taps without reading the message. Send the link to yourself first to see what your phone renders, and write one line of context above it: who, what, and when they can see it.",
+  "html": "<p>When you text a listing link, the preview bubble that appears under your message is the buyer's first look at the home. It should show the main photo and a title that says what the property is, so the person taps before they have finished reading your text. Send the link to yourself first to see what your phone actually renders, then write one line above it with the context: which home, why them, and when they can see it.</p><p>Texting is how listing links usually travel: agent to buyer, buyer to partner, seller to sister. The preview is doing the selling in each of those hops, and you only control it once, at the source.</p><h2>What a good preview contains</h2><p><strong>The main photo.</strong> Usually the front exterior, or the view or the kitchen if that is what sells the home. It should be the same photo that sits at the top of the page, so the tap feels like a continuation rather than a surprise.</p><p><strong>A title that names the home.</strong> The address or at least the street and town, with the price if the page shows it. \"24 Alder Street, Riverton\" tells the buyer what they are about to open. \"Property Listing\" tells them nothing.</p><p><strong>A clean domain.</strong> The preview usually shows where the link goes. A recognisable domain reads as safe; a string of random characters reads as spam.</p><p>What the preview should not contain: your headshot, a logo instead of the home, or a generic placeholder image because the page had no main photo set.</p><h2>The message above the link</h2><p>The link does the showing. Your one line does the framing. Keep it to a sentence or two and make it specific to the person.</p><p>To a buyer you showed a similar home last week: \"This one just came up, same street as the one you liked, bigger yard. Open Saturday 1 to 3.\"</p><p>To the seller on launch day: \"Your home is live. Here is the page, share it with anyone. Let me know if anything needs changing.\"</p><p>To a past client whose friend is looking: \"You mentioned Dana was looking in Riverton. This might suit her.\"</p><p>Then the link, on its own line, so the preview renders cleanly. Do not bury the link mid-sentence or send it with three other links; many phones only preview one.</p><h2>A worked example: Thursday night, three texts</h2><p>A 3-bed on a quiet crescent goes live Thursday afternoon. The page is up, the main photo is the front at golden hour, the title reads the street and town. You send the link to yourself first. The bubble shows the house and the street name. Good.</p><p>Text one goes to the seller, who forwards it to her brother. Text two goes to a buyer couple who lost out on a similar home in March. Text three goes to a past client who said their neighbour was looking. All three previews show the same house, the same street. The buyer couple tap it in the car, watch the video, and fill in the form for Saturday. The brother tells the seller the page looks professional. The neighbour saves it.</p><p>None of those people read a paragraph. They saw a house and tapped.</p><h2>Text-share mistakes that kill the tap</h2><ul><li><strong>No preview at all.</strong> Some links render as bare text. Buyers do not tap bare text from numbers they do not recognise. Check before sending.</li><li><strong>Wrong image.</strong> The preview pulls a logo or the first image on the page rather than the main photo. Fix the main photo on the listing.</li><li><strong>Stale preview.</strong> Some phones cache the first preview they fetched. If you changed the main photo after sending the link once, the old image may persist on that recipient's phone. Set the main photo before sharing the first time.</li><li><strong>A wall of text above the link.</strong> The preview gets pushed below the fold of the message and the buyer sees a paragraph. One or two lines, then the link.</li><li><strong>The unbranded link.</strong> It has no name on it. A buyer who taps it, likes the home and wants to ask a question has to scroll back to your text to remember who sent it. Use the branded link for anything you send personally.</li></ul><h2>How this works in Rendprop</h2><p>After you publish, open the Share sheet and copy the branded link, rendprop.com/f/ followed by the listing's slug. The page opens on the selected main photo, with the details you typed in, the gallery, the video (plays on request, never autoplays), your contact card and the enquiry form. Choose the main photo before you share the link for the first time so the page's first impression is the one you want. The <a href=\"/features#two-links\">two links feature page</a> explains branded versus unbranded, and <a href=\"/blog/how-to-share-a-rendprop-listing-link\">how to share a Rendprop listing link</a> walks through the Share sheet. Send the link to yourself before sending it to anyone else and look at what your own phone shows.</p><h2>The habit</h2><p>Every time you text a listing link to anyone, do three things: send it to yourself first, check the preview, write one specific line. It takes twenty seconds and it is the difference between a tap and a scroll-past.</p><p>The next step: text yourself the link to your current listing and look at the bubble. If the image or title is wrong, fix the main photo or the details on the listing before anyone else sees it. For what happens after the buyer forwards it, read <a href=\"/blog/how-buyers-share-a-property-page-the-link-path-from-one-phone-to-another\">how buyers share a property page</a>, and for the page itself, see <a href=\"/blog/a-property-page-that-works-on-a-phone-what-buyers-tap-first\">a property page that works on a phone</a>.</p>",
+  "faq": [
+    {
+      "q": "Why does my listing link show no preview when I text it?",
+      "a": "Some messaging apps and some links do not render a preview, and some phones suppress previews from unknown numbers. Send the link to yourself first to see what renders. If the page has a main photo set and still shows nothing, send one short line of context so the buyer knows what they are tapping."
+    },
+    {
+      "q": "Can I change the preview image after I have sent the link?",
+      "a": "You can change the main photo on the listing, but some phones cache the preview they first fetched. New recipients see the new image; people who already received the link may keep the old one. Set the main photo before the first share."
+    },
+    {
+      "q": "Should I text the branded or unbranded link?",
+      "a": "Branded, always, for anything you send personally. It carries your name and a one-tap call. The unbranded link is for the MLS tour field and nothing else."
+    },
+    {
+      "q": "How much should I write above the link?",
+      "a": "One or two lines, specific to the person: which home, why them, when they can see it. Then the link on its own line. Long messages push the preview down and the buyer sees text instead of a house."
+    }
+  ],
+  "related": [
+    "how-buyers-share-a-property-page-the-link-path-from-one-phone-to-another",
+    "a-property-page-that-works-on-a-phone-what-buyers-tap-first",
+    "how-to-share-a-rendprop-listing-link",
+    "which-photo-should-be-the-main-photo-of-a-listing"
+  ],
+  "published": "2026-10-28"
+}

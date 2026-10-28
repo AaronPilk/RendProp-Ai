@@ -1,0 +1,40 @@
+{
+  "slug": "before-and-after-what-an-ai-twilight-edit-changes-and-what-it-should-not",
+  "title": "What an AI twilight edit changes, and what it should not",
+  "description": "A twilight edit should change the sky, the window glow, existing exterior lights and the tone. It should not change the house. A frame-by-frame check.",
+  "category": "photos",
+  "keywords": [
+    "twilight edit before and after",
+    "AI day to dusk what changes",
+    "check twilight photo edit",
+    "virtual twilight checklist",
+    "twilight edit mistakes real estate"
+  ],
+  "tldr": "A twilight edit should change four things: the sky, the brightness of the windows, the exterior lights that already exist, and the overall tone. It should not change the house: no new fixtures, no different siding, no altered roofline, no extra windows. Put before and after side by side and work down both lists.",
+  "html": "<p>A twilight edit should change four things: the sky, the brightness of the windows, the exterior lights that already exist, and the overall tone of the frame. It should not change the house: no new fixtures, no different siding, no altered roofline, no extra windows, no moved trees, no new path lights. Put the before and after side by side and work down that list. If the second list has anything on it, the edit is not finished.</p><h2>What should change</h2><p><strong>The sky.</strong> Daylight blue or overcast grey becomes a dusk gradient, deeper at the top, lighter and warmer toward the horizon. The brightest part of the sky should sit where the sun went down, which is the side the daytime shadows pointed away from.</p><p><strong>The windows.</strong> Rooms with lights on glow warm. Rooms without lights stay dark or reflect the sky. In a real dusk photo, three or four windows glow and the rest do not. An edit that lights every window on three floors is overdoing it.</p><p><strong>The existing exterior lights.</strong> Porch sconces, a coach light on the garage, path lights that are in the original. They turn on. Their glow should be local and soft, a pool on the wall or the step, not a flare.</p><p><strong>The tone.</strong> Everything gets a little cooler and darker, because that is what dusk does. Siding that was white at noon is pale blue-grey at dusk. If the siding is still bright white under a dusk sky, the house is cut out and pasted.</p><h2>What should not change</h2><ul><li>The number, position and shape of windows and doors</li><li>The roofline, chimney, gutters and downspouts</li><li>Siding colour and material, brick pattern, trim</li><li>Trees, hedges, the lawn edge and the drive</li><li>Any fixture that was not there: a light added to a blank wall is an invented detail</li><li>The ground. A twilight edit that adds wet-look paving or a reflective drive has changed the surface</li></ul><h2>A worked example, frame by frame</h2><p>A two-storey colonial, white siding, black shutters, two porch sconces, no path lights, shot at 1pm on a clear day. The edit comes back and the agent compares.</p><p>Sky: dusk gradient, brightest on the left. The 1pm shadows fell to the right, so the sun was on the left. Pass.</p><p>Windows: four lit on the ground floor, two upstairs, three dark. Pass.</p><p>Exterior lights: both sconces on, soft pool on the siding. But there is a glow along the front path. The original has no path lights. Fail.</p><p>Tone: siding has gone to pale grey, shutters still black. Pass.</p><p>House: windows and doors count the same. Roofline same. The chimney is slightly shorter in the edit. Fail.</p><p>Two fails. The agent runs the edit again with a custom prompt that says to keep the chimney and the path exactly as they are and add no lighting that is not already present. The second version passes and goes out with an AI-alteration disclosure.</p><h2>The checks that take ten seconds each</h2><ol><li>Find the daytime shadow and confirm the dusk sky is brightest on the opposite side.</li><li>Count lit windows. More than half lit is a flag.</li><li>Find every exterior light in the original and confirm there are no extras in the edit.</li><li>Count windows, doors and chimneys in both frames.</li><li>Look at the lawn edge, the drive edge and the tree line.</li><li>Check the siding colour has cooled. If it has not, the house and the sky were not edited together.</li></ol><h2>Twilight versions in Rendprop</h2><p>In the <a href=\"/features#photo-studio\">photo studio</a>, a twilight edit is saved as a separate version with an AI-alteration disclosure, and the untouched original stays in the photo history. Comparing is the step where you choose which version the listing uses, so the before-and-after list above is what you run there. If the edit added a fixture or shortened a chimney, choose the original or try a custom prompt that names what to keep. AI can change or invent details, which is why the second list exists. Check your MLS rules before publishing an altered exterior as the main photo.</p><h2>Keep the two lists on your phone</h2><p>Four things that should change, six that should not. Save it as a note and read it against every twilight edit until it is automatic. For when a twilight edit is worth running at all, <a href=\"/blog/twilight-photo-edits-when-they-help-a-listing-and-when-they-look-fake\">twilight photo edits: when they help and when they look fake</a> is the companion piece, and <a href=\"/blog/twilight-edits-and-misrepresentation-where-the-line-sits\">twilight edits and misrepresentation</a> covers where it crosses into a problem.</p>",
+  "faq": [
+    {
+      "q": "How many windows should be lit in a twilight edit?",
+      "a": "A few, not all. A real house at dusk has three or four rooms lit and the rest dark or reflecting the sky. If more than half the windows glow, the frame reads as rendered. Ask for fewer in a custom prompt or use the original."
+    },
+    {
+      "q": "Can a twilight edit add path lights or uplighting?",
+      "a": "No. It should only turn on fixtures that exist in the original. A glow along a path with no lights is an invented detail, and a buyer who drives past at dusk will notice. Count the exterior lights in both frames."
+    },
+    {
+      "q": "How do I check the sun direction in a twilight edit?",
+      "a": "Find a daytime shadow in the original, under the eaves or beside the garage. The sun was on the opposite side of the shadow, so the dusk sky should be brightest on that side. A bright sky on the shadow side is the usual giveaway."
+    },
+    {
+      "q": "What if the twilight edit changed the chimney or the roofline?",
+      "a": "Reject it. Run the edit again with a custom prompt that names the chimney, the roofline and anything else to keep exactly as it is, then compare again. If the second version also changes the house, use the daylight original."
+    }
+  ],
+  "related": [
+    "twilight-photo-edits-when-they-help-a-listing-and-when-they-look-fake",
+    "twilight-edits-and-misrepresentation-where-the-line-sits",
+    "how-to-compare-an-ai-edited-listing-photo-against-the-original",
+    "delivering-twilight-edits-at-scale"
+  ],
+  "published": "2026-10-28"
+}

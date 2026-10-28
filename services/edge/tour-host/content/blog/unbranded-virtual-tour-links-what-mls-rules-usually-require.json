@@ -1,0 +1,44 @@
+{
+  "slug": "unbranded-virtual-tour-links-what-mls-rules-usually-require",
+  "title": "Unbranded virtual tour links: what to check in your MLS rules",
+  "description": "Many boards want the tour link free of agent name, brokerage, contact details and logo. What unbranded means in practice, and how to check your own rules.",
+  "category": "website",
+  "keywords": [
+    "unbranded virtual tour link",
+    "mls virtual tour rules",
+    "unbranded tour link requirements",
+    "mls branding rules virtual tour",
+    "what counts as unbranded"
+  ],
+  "tldr": "An unbranded virtual-tour link shows the property and nothing that identifies the listing agent or brokerage: no name, no phone, no email, no logo, no link back to your site. Boards write the rule differently and change it over time, so read your own before you paste a link. The reason behind it is syndication: the tour travels to portals and other brokers' sites, in front of buyers who may be working with someone else.",
+  "html": "<p>An unbranded virtual-tour link shows the property and nothing that identifies the listing agent or brokerage: no agent name, no brokerage name, no phone number, no email, no logo, and no link back to an agent site. That is what boards generally mean by the word, but rules differ by board and change over time, so read your own before you paste anything into the tour field. A page with the home, the gallery, the video and a neutral enquiry form is the common standard.</p><p>The reason is syndication. What you put in the tour field travels with the listing to portals, to other brokers' IDX sites and to buyer apps. A buyer who is already working with another agent is going to see it there, and that is the situation the rule is written for.</p><h2>What \"unbranded\" generally means</h2><p>Boards write the rule differently, but the practical list that comes up is usually some version of this. An unbranded tour should not contain:</p><ul><li>The listing agent's name or photo</li><li>The brokerage name or logo</li><li>A phone number or email address for the agent or brokerage</li><li>Links to the agent's website, social profiles or other listings</li><li>Calls to action that route to the agent (\"Call Sarah to book a showing\")</li><li>Watermarks or lower-thirds with agent branding inside the video</li></ul><p>What it can and should contain: the photos, the video, the address or neighbourhood, the property facts, and usually a way for a buyer to enquire that is neutral in presentation.</p><h2>The grey areas people trip over</h2><p><strong>Branding inside the video.</strong> The page can be clean while the video has your name in the opening title or your voice saying \"I'm Sarah with Hometown Realty.\" Your board may treat that as branding. If your video for the MLS is the same one you use on social, consider a version with a neutral script and no title card, or check whether your board has flagged this before.</p><p><strong>The platform's own branding.</strong> A small \"powered by\" mark from the tool that hosts the page is not agent branding in the ordinary sense, but your board may read it differently. The safest page has none.</p><p><strong>The enquiry form.</strong> A form that says \"Request a showing\" and sends to you is the neutral version. A form that says \"Contact Sarah\" with your headshot is not.</p><p><strong>The URL itself.</strong> If the path includes your name or brokerage, a strict board may count that as branding. A neutral path avoids the question.</p><h2>A worked example: entering a Thursday listing</h2><p>A 2-bed condo goes live Thursday. The photographer delivered a page with the gallery and a 45-second video. Before you paste the link into the tour field, open it in a private browser window on your phone, the way a stranger would see it. Scroll top to bottom. Note anything with your name, your office, your phone, your face, or a link out. Watch the video to the end, including the closing frame. If any of those appear, you need the unbranded version, not this one.</p><p>Paste the unbranded link into the tour field. Keep the branded link for your own channels. Then, after the listing syndicates, open the property on a portal and click through to the tour from there to confirm what the public sees.</p><h2>What goes wrong when you skip this</h2><p>What happens depends on the board. The link may be removed, so the tour disappears from every syndicated site; you may get a notice from the board; a competing broker may report it; or nothing happens for weeks and then the listing is flagged during a check when you are least able to deal with it. None of these are worth the small effort of using the correct link.</p><p>The quieter failure is the reverse. Agents who learn the rule the hard way sometimes start using the unbranded link everywhere, including on their own social posts and signs, and their enquiries drop because nobody can see who to contact.</p><h2>How this works in Rendprop</h2><p>Every published listing in Rendprop gets an unbranded link at rendprop.com/u/ followed by the listing's slug. That page shows the property with no name, no contact details and no Rendprop branding, made for the MLS virtual-tour field. The branded page at rendprop.com/f/ carries your contact card for everywhere else. Both links sit in the Share sheet after publishing and both point at the same listing, so a price change shows on each. The unbranded page has no contact form, so enquiries come through the branded page and land in the app's inbox along with everything else. Still check your own MLS rules before posting, especially if your video includes a voiceover that names you. The <a href=\"/features#two-links\">two links feature page</a> has the detail.</p><h2>Read your own rules once a year</h2><p>Boards update their rules and the virtual-tour section is one that changes. Find the current rules document, search it for \"virtual tour\" and \"branded\", and keep a note of what yours actually says. If a question comes up, that note is worth more than what another agent remembers.</p><p>The next step: open the tour link on your most recent active listing in a private window and check it against the list above. For the mechanics of entering the link, see <a href=\"/blog/putting-a-property-website-link-in-your-mls-listing-the-right-way\">putting a property website link in your MLS listing the right way</a>, and for why you still want a branded link for everything else, read <a href=\"/blog/branded-and-unbranded-listing-links-why-you-need-both\">branded and unbranded listing links: why you need both</a>.</p>",
+  "faq": [
+    {
+      "q": "Does an unbranded virtual tour still need a way for buyers to enquire?",
+      "a": "No, and in Rendprop it does not have one. The unbranded page carries the property and nothing else: no name, no phone number, no contact form and no links off the page, which is what an MLS virtual-tour field is usually looking for. A buyer who arrives through a portal and wants a showing asks through the listing's own contact details or the branded link; check your board's current wording either way."
+    },
+    {
+      "q": "Is a voiceover that mentions my name considered branding?",
+      "a": "Your board may treat it that way. If your listing video for the MLS names you or your brokerage, consider a neutral version for the tour field. Check how your own board has handled this before relying on either answer."
+    },
+    {
+      "q": "Can the unbranded page show the address?",
+      "a": "Normally yes. The address identifies the property, not the agent. Some sellers prefer the neighbourhood only for privacy reasons, which is a separate decision from branding."
+    },
+    {
+      "q": "What happens if I put a branded link in the tour field by mistake?",
+      "a": "That depends on the board; the link may be removed, or you may get a notice. Replace it with the unbranded link as soon as you notice, and ask your broker whether anything else is needed."
+    },
+    {
+      "q": "Do portals show the virtual-tour link?",
+      "a": "Portals that syndicate from your MLS often display the tour link, which is why it needs to be unbranded. After the listing goes live, open it on a portal and click through to confirm what the public sees."
+    }
+  ],
+  "related": [
+    "branded-and-unbranded-listing-links-why-you-need-both",
+    "putting-a-property-website-link-in-your-mls-listing-the-right-way",
+    "how-to-find-your-unbranded-mls-link-in-rendprop",
+    "virtual-staging-rules-what-to-label-and-what-your-mls-expects"
+  ],
+  "published": "2026-10-28"
+}

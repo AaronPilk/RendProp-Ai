@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-a-branded-listing-page",
+  "title": "What is a branded listing page",
+  "description": "A branded listing page is a property web page that shows the home and the agent: name, business, number and an enquiry form that reaches you.",
+  "category": "glossary",
+  "keywords": [
+    "branded listing page",
+    "branded property page",
+    "branded property website",
+    "branded vs unbranded listing",
+    "listing page with contact card"
+  ],
+  "tldr": "A branded listing page is a web page for one property that shows the home and the person marketing it: your name, your business, a tap-to-call number and an enquiry form routed to you. It is the version you share on your own channels. Its twin, the unbranded link, strips the identity for the MLS virtual tour field.",
+  "html": "<p>A branded listing page is a web page for a single property that shows the home and the person marketing it. Alongside the gallery, the video and the details, it carries your name, your business, a number a buyer can tap and an enquiry form that reaches you. It is the version of the page you share everywhere you are allowed to.</p><p>The branding is not decoration. It is the reason a buyer who likes the house ends up talking to you rather than to whichever agent they bump into next.</p><h2>What the page is made of</h2><p>A branded page has two layers. The property layer is the same on any version: main photo, price and facts, gallery, video, and whatever description you wrote. The identity layer sits on top: a contact card with your name and business, a phone number, and a form whose submissions land with you. Remove the identity layer and you have the unbranded page; add it back and you have the branded one. Same listing, two presentations.</p><p>Most platforms give the branded page its own URL so you can hand it out without worrying about which version a visitor will see.</p><h2>Where it belongs</h2><ul><li>The text to the seller on launch day. They want to see the page with your name on it.</li><li>Your email to your database, where the single link should be the page, not a portal.</li><li>The link in your Instagram and TikTok bios and under each reel about the home.</li><li>The QR code on the yard sign, the sign rider and the open house flyer.</li><li>Your own website and any ad you run yourself.</li></ul><p>The one place it does not belong is the MLS virtual tour field, which is what the unbranded link is for. Ask what your MLS's current rules allow in that field before you paste anything into it.</p><h2>Where the confusion starts</h2><p>The thing people mix it up with is the <a href=\"/blog/what-is-an-unbranded-virtual-tour-link\">unbranded virtual tour link</a>. Both open the same house. The difference is who the page points to. A branded page says this home is listed by you, call this number. An unbranded page says this is the home, and nothing else.</p><p>A branded page is also not a brokerage website. A brokerage site lists every home the firm has. A branded listing page is about one address and one agent, which is why it converts curiosity into an enquiry better than a search results page ever will.</p><h2>A colonial, Tuesday to the weekend</h2><p>A 4-bed colonial goes live on a Tuesday. Monday night the photos are done, the video is built and the page is published. Tuesday morning the agent texts the branded link to the sellers, who forward it to three friends. Tuesday afternoon it goes into the database email. Wednesday a reel points to it from the bio. Thursday the sign goes in with a QR code that opens the same page.</p><p>By the weekend, every enquiry from every channel has arrived in one place, with the agent's name on the page that produced it. The buyer who found the home through the sellers' friend and the buyer who scanned the sign both ended up talking to the same person.</p><h2>How this works in Rendprop</h2><p>Publishing a property website in Rendprop produces a branded page at rendprop.com/f/your-slug. It shows the selected main photo, the details typed into the app, the gallery, the selected listing video, which plays on request and does not autoplay, a contact card and an enquiry form that asks for the date the visitor wants. Any section you leave empty stays off the page. A photographer can present a client's contact details on a listing instead of their own, with enquiry forwarding once the client's email is verified. The branded link and the unbranded link both come from the Share sheet. The live demo at <a href=\"/f/estate-demo\">/f/estate-demo</a> shows a finished one, and <a href=\"/features#listing-site\">the listing site section</a> covers what the page includes.</p><h2>Mistakes that cost enquiries</h2><p>A branded page with an old phone number is worse than no page. Check the contact card before you share the link. A branded page that leads with the agent's headshot instead of the home is a vanity page; keep the house first and your details one scroll away. And a page you built but did not link anywhere is a page nobody visits.</p><p>Next step: open your branded page on your own phone, tap the number on the contact card and confirm it rings you. Then put the link in your bio.</p>",
+  "faq": [
+    {
+      "q": "What is the difference between a branded and an unbranded listing page?",
+      "a": "They show the same property. The branded page adds your name, business, phone number and an enquiry form routed to you. The unbranded page removes all of that so it can go in the MLS virtual tour field; check your MLS's current rules on what that field accepts."
+    },
+    {
+      "q": "Can a photographer put the agent's details on a branded page?",
+      "a": "On some platforms, yes. In Rendprop a photographer can put a client's contact details on a listing; enquiries forward to the client once the client's email has been verified. The page then looks like the agent's page to a buyer."
+    },
+    {
+      "q": "Should the branded page show my headshot?",
+      "a": "It can, but the home should come first. Buyers open the page to see the property. Your name, business and number should be easy to find after the gallery, not before it."
+    },
+    {
+      "q": "Where should I share the branded link?",
+      "a": "Anywhere you control: texts to the seller, your database email, social bios and captions, QR codes on signs and flyers, and your own website. Keep it out of the MLS virtual tour field unless your MLS's current rules allow branded links there."
+    }
+  ],
+  "related": [
+    "what-is-an-unbranded-virtual-tour-link",
+    "what-is-a-property-page-contact-card",
+    "what-is-a-single-property-website",
+    "branded-and-unbranded-listing-links-why-you-need-both"
+  ],
+  "published": "2026-10-28"
+}

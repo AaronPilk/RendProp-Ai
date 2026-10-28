@@ -1,0 +1,40 @@
+{
+  "slug": "can-i-market-a-rental-the-same-way-as-a-sale",
+  "title": "Can I market a rental the same way as a sale",
+  "description": "Mostly yes: same photos, same video, same page. What changes is the details tenants need, the honesty bar on edits, and what the enquiry is asking for.",
+  "category": "questions",
+  "keywords": [
+    "marketing a rental listing like a sale",
+    "rental listing video and website",
+    "rental property marketing photos",
+    "how to market a rental property",
+    "rental listing page"
+  ],
+  "tldr": "Mostly yes. The same photo set, the same photo-based video and the same property page work for a rental. Three things change: the details on the page (rent, availability date, deposit, terms, what is included), a stricter line on edits because the tenant will live with exactly what is shown, and the enquiry, which is a viewing and an application rather than a showing and an offer.",
+  "html": "<p>Mostly yes. The same photo set, the same photo-based video and the same property page work for a rental, and a rental that gets that treatment lets faster than one with six phone snaps on a portal. Three things change: the details on the page (rent, availability date, deposit, lease length, what is included), a stricter line on photo edits because the tenant will live with exactly what the photos show, and the enquiry, which is a viewing and an application rather than a showing and an offer.</p><h2>What stays the same</h2><p>Light, order and coverage. A tenant wants to see every room, the kitchen and bathroom in particular, the outdoor space if there is one, and where they would park. A 30-second video that walks the unit in order answers most of the first-message questions before they are asked. A page with the gallery, the video, the details and a form gives the tenant one link to forward to a partner or a parent. None of that is different from a sale.</p><p>Timing is the same too. A rental listed on Tuesday with a page and a video gets its best enquiries in the first few days, just like a sale.</p><h2>What changes: the details</h2><ul><li><strong>Monthly rent</strong> instead of a price, and whether utilities are included.</li><li><strong>Availability date.</strong> The single most asked question. Put it on the page.</li><li><strong>Deposit and lease length.</strong> Tenants filter on these before they visit.</li><li><strong>What is furnished and what is not.</strong> If the photos show furniture that leaves with the current tenant, say so, in writing, on the page.</li><li><strong>Pets, parking, laundry.</strong> The three questions that decide whether a tenant bothers to enquire.</li></ul><h2>What changes: the edits</h2><p>A buyer who sees a virtually staged living room understands the furniture is a suggestion and will be gone. A tenant who sees a furnished living room on a furnished rental assumes that is the furniture. A buyer who sees a tidied room knows the seller is moving out. A tenant may be moving into the room as the current occupant left it. The edits that are defensible on a sale with a label can set up a dispute on a rental.</p><p>So: blue sky, fine. Exposure, fine. Virtual staging on an unfurnished unit, only with a label large enough to survive a screenshot and a sentence on the page saying the unit is let unfurnished. Tidy-the-room on an occupied unit, think hard, because the tenant will measure the real room against the photo on move-in day. The post on <a href=\"/blog/ai-edits-on-rental-listings-tenants-screenshots-and-expectations\">AI edits on rental listings</a> works through each case.</p><h2>A worked example: a two-bed available 1 December</h2><p>A two-bed near the hospital comes up on 1 December. The outgoing tenant is still in place, tidy and cooperative. The agent shoots 18 landscape photos and 5 portrait photos on a bright Saturday morning, with the tenant's things in place but surfaces cleared.</p><p>The page goes live with the rent, the 1 December date, a one-month deposit, a twelve-month lease, unfurnished, one parking space, laundry in the unit, cats considered. No AI staging, because the unit is occupied and will be let empty. One blue-sky edit on the exterior, with its disclosure. The video is 30 seconds with a voiceover that says the date, the rent and the parking in the first ten.</p><p>Enquiries come in through the form with the date each person wants to view. The agent groups them into two viewing slots the following week and replies to each with the slot and the application steps. Two applications arrive the day after the viewings. The unit is let eleven days after listing, and the page is archived.</p><h2>Where rental marketing goes wrong</h2><ol><li><strong>Photos of the previous tenant's mess.</strong> Reschedule rather than shoot a room that will put people off.</li><li><strong>Hiding the availability date.</strong> Every enquiry then asks it, and half of them did not need to enquire.</li><li><strong>Showing furniture that leaves.</strong> The move-in day argument starts right there.</li><li><strong>Treating enquiries like buyer leads.</strong> Tenants want a viewing time and the application steps, not a nurture sequence.</li><li><strong>Leaving the page live after it lets.</strong> Enquiries keep coming for a unit that is gone.</li></ol><h2>How this works in Rendprop</h2><p>Rendprop's real estate mode handles rentals the same way as sales: add photos, review any AI edits against the originals, build the video, type the details, publish the property website. The enquiry form asks for the date the visitor wants, which for a rental is the viewing date. Enquiries land in the inbox per listing and all together. When the unit is let, mark the listing archived and the page says so. AI edits carry their disclosures and the untouched original stays in photo history. See the <a href=\"/features#listing-site\">property website</a> section of the features page, and <a href=\"/blog/rental-listing-videos-what-tenants-actually-want-to-see\">rental listing videos</a> for what to put in the 30 seconds.</p><h2>One extra pass before publishing</h2><p>Market the next rental exactly as you would a sale, with one extra pass before publishing: read the page as the tenant on move-in day and ask whether anything shown will not be there. If the answer is yes, change the photo or say so on the page.</p>",
+  "faq": [
+    {
+      "q": "Is a video worth making for a rental listing?",
+      "a": "Yes. A 30-second video that walks the unit in order and states the rent, the availability date and the parking answers the first-message questions before they are asked, which means fewer unqualified enquiries and quicker viewings."
+    },
+    {
+      "q": "Can I virtually stage a rental?",
+      "a": "Only on an unfurnished unit, with a label that survives a screenshot and a line on the page saying the unit is let unfurnished. Tenants read a furnished photo as the furniture they get, so the label matters more than it does on a sale."
+    },
+    {
+      "q": "What details must a rental page show?",
+      "a": "Rent and what it includes, the availability date, deposit, lease length, furnished or not, parking, laundry and the pet position. Those are the filters tenants apply before they enquire, so putting them on the page saves everyone a message."
+    },
+    {
+      "q": "What should I do with the page after the unit is let?",
+      "a": "Archive it so it says the listing is no longer available, rather than deleting it or leaving it live. That keeps old links from landing on an error and stops enquiries for a unit that is gone."
+    }
+  ],
+  "related": [
+    "rental-listing-videos-what-tenants-actually-want-to-see",
+    "ai-edits-on-rental-listings-tenants-screenshots-and-expectations",
+    "copy-for-a-rental-listing-rules-dates-and-the-application",
+    "marketing-a-listing-with-tenants-in-place"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-a-saved-photo-version",
+  "title": "What is a saved photo version",
+  "description": "A saved photo version is one edited output of a listing photo, kept beside the original with its own label, to use in the gallery or leave unused.",
+  "category": "glossary",
+  "keywords": [
+    "saved photo version",
+    "photo version listing app",
+    "edited photo version real estate",
+    "choose photo version for listing",
+    "photo versions and originals"
+  ],
+  "tldr": "A saved photo version is one edited output of a listing photo, stored beside the original with its own label, which you can choose to use in the gallery or the video, or leave unused. One photo can have several versions: a blue sky, a twilight, a staged one. The original is not a version; it is the thing every version came from.",
+  "html": "<p>A saved photo version is one edited output of a listing photo, stored beside the original with its own label, which you can choose for the gallery or the video or leave unused. One photo can have several versions, a blue sky, a twilight, a staged one, and each is a separate file with a separate disclosure. The original is not a version; it is the thing all the versions came from.</p><p>The idea is simple and the consequence is large: an edit is something you add, not something you do to the photo.</p><h2>How a version is created</h2><p>You pick a photo and ask for an edit, a preset like tidy the room or a custom instruction. The tool produces a new image, labels it by the kind of edit, and saves it as a version attached to that photo. The original file is not touched. If you ask for a second edit, you get a second version. If you run the same edit twice because the first attempt was poor, you get two versions and keep the better one.</p><p>Each version then has one job: to be selected or not. The version you select appears in the gallery and is available to the video. The ones you do not select stay on the shelf, with their labels, in case you change your mind.</p><h2>When versions pay off</h2><ul><li>Trying two ideas on the same frame: twilight against blue sky on the front exterior, then choosing one.</li><li>Keeping a staged and an unstaged living room so the gallery can show both.</li><li>Rebuilding a video later with the untouched exterior after the season changes.</li><li>Answering a question about an edit, because the version and the original sit together with the label between them.</li></ul><h2>What a version is not</h2><p>A version is not a copy of the listing, not a draft of the page and not a layer in an editor. It is not the <a href=\"/blog/what-is-photo-history-in-a-listing-app\">photo history</a> either; history is the whole trail, original included, and a version is a single entry in it.</p><p>The nearest confusable thing is an exported file. Once you export a version to your camera roll, rename it and send it somewhere, it stops being a version in any useful sense: no label, no link to the original, no way to tell it apart from a straight photo. Keep versions where they were made.</p><h2>A kitchen with three versions</h2><p>A photographer shoots a kitchen in an occupied 3-bed on a Monday. The counter has a kettle, a knife block and a stack of mail. She makes a tidy version that removes the mail and the kettle. The agent asks whether the room could read warmer, so she makes a second version from the original with a custom prompt that asks for the under-cabinet lights to be on. Then a third that combines both ideas.</p><p>Three versions, one original. The agent compares each against the original at full size. The combined version has moved a cabinet handle. She rejects it, picks the tidy-only version for the gallery and the video, and leaves the lit version unused but saved. If a buyer later asks whether the kitchen was edited, the answer is a label and an original, not a shrug.</p><h2>How this works in Rendprop</h2><p>Rendprop treats every AI edit as its own saved version with a disclosure attached. Staging is labelled Virtually staged; other edits carry an AI-alteration disclosure; the untouched original stays in photo history. Each version is compared with the original before you decide which saved versions go into the gallery and the video. AI can change or invent details, so compare edited photos against your originals before publishing. See <a href=\"/features#photo-studio\">the photo studio</a> and <a href=\"/blog/how-to-review-ai-edits-in-rendprop-and-compare-them-with-the-original\">how to review AI edits in Rendprop</a>.</p><h2>Where version handling goes wrong</h2><p>Picking the wrong version by accident is the everyday mistake: the staged living room ends up in the MLS set when the unstaged one was meant to go. The second is selecting a version without comparing it, because the thumbnail looked fine. The third is running an edit on a version instead of the original, stacking alterations until the photo has drifted a long way from the room. Edit from the original, compare at full size, and select deliberately.</p><p>Next step: in your current listing, find one photo with more than one version and check which one is selected. If you cannot say why that one, choose again.</p>",
+  "faq": [
+    {
+      "q": "Can one listing photo have more than one saved version?",
+      "a": "Yes. A front exterior might have a blue sky version and a twilight version; a living room might have a tidied version and a staged version. Each is stored separately with its own label, and you choose which, if any, to use."
+    },
+    {
+      "q": "Does making a version change the original photo?",
+      "a": "No. The original stays untouched and the version is a new file beside it. That is what makes comparison possible and lets you go back if you change your mind."
+    },
+    {
+      "q": "Should I edit from the original or from a version?",
+      "a": "From the original, unless you specifically want to stack two edits. Editing a version of a version compounds any detail the AI changed, and the result can drift far from the real room without you noticing."
+    },
+    {
+      "q": "What happens to unused versions?",
+      "a": "They stay saved with their labels. You can select one later, compare it again or leave it. Only the selected version appears in the gallery and the video."
+    }
+  ],
+  "related": [
+    "what-is-photo-history-in-a-listing-app",
+    "how-to-compare-an-ai-edited-listing-photo-against-the-original",
+    "how-to-review-ai-edits-in-rendprop-and-compare-them-with-the-original",
+    "what-is-an-ai-disclosure-on-a-listing-photo"
+  ],
+  "published": "2026-10-28"
+}

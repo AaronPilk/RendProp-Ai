@@ -1,0 +1,40 @@
+{
+  "slug": "keeping-original-photos-why-your-photo-history-matters",
+  "title": "Keeping original photos: why your photo history matters",
+  "description": "Keep the untouched original of every listing photo where you can find it in a minute. Five times it gets asked for and how originals get lost.",
+  "category": "photos",
+  "keywords": [
+    "keep original listing photos",
+    "photo history real estate",
+    "original vs edited listing photo",
+    "photo version history property",
+    "why keep unedited photos"
+  ],
+  "tldr": "Keep the untouched original of every listing photo for years, in a place you can find it in under a minute. The original is what you show a buyer who asks whether a photo was edited, what a board asks for, what you re-edit when the seller changes their mind, and what you reuse when the listing relaunches.",
+  "html": "<p>Keep the untouched original of every listing photo, for years rather than weeks, in a place you can find it in under a minute. The original is what you show a buyer who asks whether a photo was edited, what you give a board that asks for it, what you re-edit when the seller changes their mind, and what you reuse when the listing comes back in a different season. An edited photo without its original is a claim you cannot back up.</p><h2>Five times the original gets asked for</h2><ol><li><strong>The buyer at the showing.</strong> They saw a green lawn and are standing on a brown one. You show them the original and the disclosure, and the conversation ends there.</li><li><strong>The board.</strong> An MLS compliance query about an altered exterior. The original and the version history answer it in one email.</li><li><strong>The seller.</strong> Two weeks in, they want the staged living room swapped for the empty one, or they want the twilight frame instead of the daylight one. Without originals, that is a reshoot.</li><li><strong>The relaunch.</strong> The listing expires in November and comes back in March. The originals get a fresh set of edits suited to spring, rather than re-editing an edit.</li><li><strong>The dispute.</strong> Rare, and the one that matters most. If a transaction goes wrong and someone claims the photos misrepresented the home, the original is the record of what the home looked like on the day.</li></ol><h2>What photo history means in practice</h2><p>Photo history is more than a folder of originals. It is the original plus every edited version, each labelled with what was done to it, in an order you can read. The question it answers is: what did this photo look like at each step, and which step was published.</p><p>A folder called final with one file per room does not answer that. A folder with original, twilight-v1, twilight-v2 and a note saying v2 was published does.</p><h2>A worked example: the March relaunch</h2><p>A 3-bed listed in late October with a twilight main photo and two staged interiors. It sits. The seller takes it off in December and relists with a new agent in March. The new agent asks the photographer for the files.</p><p>The photographer has the originals and the versions. The twilight exterior is replaced with a daylight frame, because March light is better than October's and the twilight edit now looks like last year's listing. The staged interiors are re-staged from the originals in a lighter style, because the seller repainted. The listing goes live looking new, with the same shoot underneath it. The alternative was a second shoot at $150–300 for photos at typical U.S. rates as of August 2026, plus staging again at $5–15 per photo.</p><h2>How originals get lost</h2><ul><li>Editing in place, so the edit overwrites the file</li><li>Exporting from an app that keeps only the output</li><li>Sharing a zip of finals and deleting the shoot to save space</li><li>A vendor that returns edits without returning the originals it was sent</li><li>A phone that was replaced before the photos were backed up</li></ul><p>Each of these is fixed by one rule: the original is saved first, separately, before anything is done to it.</p><h2>How Rendprop keeps the history</h2><p>Every AI edit in Rendprop's <a href=\"/features#photo-studio\">photo studio</a> is a separate version. The untouched original stays in the photo history, staging is labelled Virtually staged, and other edits carry an AI-alteration disclosure. When you choose which saved versions the listing uses, the ones you did not choose are still there. You own your photos and videos, and Rendprop does not use your content for its own marketing or AI training without written permission. That makes the app a working record of what was shot and what was published, which is what the five situations above need. The <a href=\"/features#two-links\">two links</a> section explains how the published page relates to that record.</p><h2>Back up before you edit</h2><p>Save the originals before you touch anything, and keep the versions where you can read them in order. If you shoot for agents, this is also what lets you answer a client's question a year later without a search. <a href=\"/blog/why-a-photographer-should-keep-the-originals-and-the-versions\">Why a photographer should keep the originals and the versions</a> covers that side, and <a href=\"/blog/why-the-untouched-original-is-the-most-valuable-photo-in-the-set\">why the untouched original is the most valuable photo in the set</a> makes the broader case.</p>",
+  "faq": [
+    {
+      "q": "How long should I keep original listing photos?",
+      "a": "For years, not weeks. Disputes, relaunches and seller requests can come long after the listing closes, and a second shoot costs real money. Storage is cheap compared with a reshoot or an argument you cannot settle."
+    },
+    {
+      "q": "What is the difference between keeping originals and keeping photo history?",
+      "a": "Originals are the untouched files. Photo history is the originals plus every edited version, labelled with what was done, in an order you can read. History tells you which version was published and what it looked like at each step."
+    },
+    {
+      "q": "Does Rendprop keep the original when I run an AI edit?",
+      "a": "Yes. Every AI edit is saved as a separate version and the untouched original stays in the photo history. Versions you did not choose for the listing are still there, and you own your photos and videos."
+    },
+    {
+      "q": "What is the most common way originals get lost?",
+      "a": "Editing in place, so the edit overwrites the file, and sharing a zip of finals then deleting the shoot. Both are fixed by saving the original separately before any edit is made."
+    }
+  ],
+  "related": [
+    "why-the-untouched-original-is-the-most-valuable-photo-in-the-set",
+    "why-a-photographer-should-keep-the-originals-and-the-versions",
+    "photo-provenance-for-real-estate-originals-versions-and-labels",
+    "what-to-do-when-an-ai-edit-invents-a-detail-that-is-not-in-the-room"
+  ],
+  "published": "2026-10-28"
+}

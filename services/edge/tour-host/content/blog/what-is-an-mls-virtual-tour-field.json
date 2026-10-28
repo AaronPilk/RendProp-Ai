@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-an-mls-virtual-tour-field",
+  "title": "What is an MLS virtual tour field",
+  "description": "The MLS virtual tour field is the slot in a listing entry that holds a link to media beyond the photos: a video, a page or a tour, usually unbranded.",
+  "category": "glossary",
+  "keywords": [
+    "mls virtual tour field",
+    "virtual tour url mls",
+    "what goes in the virtual tour field",
+    "mls tour link",
+    "unbranded tour link mls"
+  ],
+  "tldr": "The MLS virtual tour field is the slot in a listing entry that holds a URL to media beyond the still photos: a listing video, a property page, a 3D tour or a walkthrough. Whatever you paste there is syndicated to portals and other brokers' sites, which is why the link normally points to an unbranded page; check your MLS's current rules. The field's name is older than the content it holds today.",
+  "html": "<p>The MLS virtual tour field is the slot in a listing entry that holds a web address to media beyond the still photos: a listing video, a property page, a 3D tour or a recorded walkthrough. Whatever you paste there travels with the listing to portals and to other brokers' sites, which is the reason the link normally opens a page with no agent branding on it. Your MLS's current rules say what the field accepts; check them first.</p><p>The name is a leftover from the era of clickable 360 panoramas. The field is still called virtual tour; what it points to has moved on.</p><h2>How the field behaves</h2><p>When you enter a listing, the form has a place for one or more tour URLs. Some systems offer a branded and an unbranded slot; some offer only one and expect it to be unbranded. The link is published alongside the photos to every site that pulls your MLS feed. A buyer on a portal sees a button that says virtual tour or video and lands on whatever you linked. A buyer's agent on another brokerage's site sees the same.</p><p>Because that audience includes buyers already working with other agents, the linked page is normally one that does not identify you. Rules differ by board and change, so check your MLS's current rules for what the field accepts, how many links it allows and what counts as branding.</p><h2>When to fill the field</h2><ul><li>Every listing where you have a video or a property page. An empty field is a missed button on every portal.</li><li>When the video lives on a page rather than a video site, because a page can hold the gallery, the video and the details together.</li><li>For a recorded walkthrough or a 3D tour, if your board accepts that type of link.</li></ul><h2>What the field is not</h2><p>The virtual tour field is not the place for your branded link. That is the <a href=\"/blog/what-is-a-branded-listing-page\">branded listing page</a>, which belongs in your email, your bio and your sign. It is not a photo slot, and it is not the public remarks, where a URL may be stripped or disallowed anyway. It does not require a 3D tour; a photo-based listing video on a clean page is commonly what sits there today.</p><p>The nearest confusable thing is the video URL field some systems add alongside it. Where both exist, the video field usually expects a direct link to a hosted video, and the virtual tour field expects a page. If your board has both, read the help text before deciding which link goes where.</p><h2>One field, one unbranded link, a Wednesday</h2><p>An agent enters a 2-bed townhouse on a Wednesday. She has a property page with a gallery and a listing video, and two links for it: branded and unbranded. The listing form has one virtual tour field marked unbranded. She pastes the unbranded link, saves, and checks the listing on a portal an hour later. The tour button opens a page showing the home, the gallery and the video with no name on it.</p><p>Thursday, a buyer's agent from a brokerage across the county finds the listing on her own firm's site, taps the tour button, watches the video and books a showing for her client. The listing agent did not speak to that buyer, which is exactly how the field is supposed to work. Her own buyers came through the branded link in Wednesday's email.</p><h2>How this works in Rendprop</h2><p>Every property website Rendprop publishes comes with two links. The unbranded link at rendprop.com/u/your-slug shows the main photo, the gallery, the selected listing video and the property details with no name, no contact details and no Rendprop branding, made for an MLS virtual tour field. The branded link at rendprop.com/f/your-slug is for everything else. The Share sheet gives you both. See <a href=\"/features#two-links\">the two links</a> and <a href=\"/blog/putting-a-property-website-link-in-your-mls-listing-the-right-way\">putting a property website link in your MLS listing the right way</a>.</p><h2>Where tour links go wrong</h2><p>The classic failure is pasting the branded link, which a compliance check may flag or remove, sometimes days later, leaving the field empty without telling you. The second is a link that works on a desktop and breaks on a phone, which is where much of the portal traffic comes from. The third is a page that autoplays video with sound, which annoys a buyer's agent showing it on a tablet. Paste the unbranded link, open it on your phone from the portal, and confirm it loads clean and quiet.</p><p>Next step: find your current listing on a portal, tap the virtual tour button and see what a stranger sees. If your name is on that page, swap the link.</p>",
+  "faq": [
+    {
+      "q": "What kind of link goes in the MLS virtual tour field?",
+      "a": "A URL to media beyond the photos: a property page with a video, a listing video, a 3D tour or a walkthrough. The linked page is normally unbranded, with no agent name or contact details on it. Check your MLS's current rules for what is accepted."
+    },
+    {
+      "q": "Does the virtual tour field need an actual 3D tour?",
+      "a": "Usually not. The name is historical. A photo-based listing video on a clean page is commonly accepted, but boards differ, so check your MLS's current rules before relying on it."
+    },
+    {
+      "q": "Why does the tour link have to be unbranded?",
+      "a": "Because the field is syndicated to portals and other brokers' sites, where a buyer may already be represented by someone else. Rules vary by board; check your MLS's current rules rather than assuming."
+    },
+    {
+      "q": "What happens if I paste the branded link by mistake?",
+      "a": "A compliance check may flag it or remove it, sometimes without notice, leaving the field empty. Paste the unbranded link, then open the listing on a portal from your phone to confirm what strangers see."
+    }
+  ],
+  "related": [
+    "putting-a-property-website-link-in-your-mls-listing-the-right-way",
+    "what-is-an-unbranded-virtual-tour-link",
+    "unbranded-virtual-tour-links-what-mls-rules-usually-require",
+    "how-to-find-your-unbranded-mls-link-in-rendprop"
+  ],
+  "published": "2026-10-28"
+}

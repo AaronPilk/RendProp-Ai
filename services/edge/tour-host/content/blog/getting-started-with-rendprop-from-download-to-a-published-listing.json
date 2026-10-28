@@ -1,0 +1,40 @@
+{
+  "slug": "getting-started-with-rendprop-from-download-to-a-published-listing",
+  "title": "Getting started with Rendprop: download to published listing",
+  "description": "Download the iPhone app, start a listing, add photos, pick edits and a video, publish the page and share two links. One sitting, no laptop needed.",
+  "category": "howto",
+  "keywords": [
+    "getting started with rendprop",
+    "rendprop tutorial",
+    "how to use rendprop",
+    "rendprop first listing",
+    "publish a listing website from iphone"
+  ],
+  "tldr": "Download Rendprop on an iPhone running iOS 16 or later, sign in with Apple, start a listing, add the property photos, review the edits and the video, then publish the property website and copy the branded and unbranded links from the Share sheet. A first listing with photos you already have takes one sitting.",
+  "html": "<p>Download Rendprop from the App Store on an iPhone running iOS 16 or later, start a listing, add the property photos, pick the edits and the video you want, then publish the property website and share the link. That is the whole path. A first listing with photos you already have takes one sitting, and nothing in it needs a laptop.</p><h2>What you need before you open the app</h2><p>An iPhone on iOS 16 or later. The app is free to download; check the App Store listing for current device support beyond that. You also want the listing photos on the phone, landscape photos if you plan a listing video, portrait photos if you plan a social video, and the basic details: price, beds, baths, square feet.</p><p>You can prepare a listing before you sign in. Publishing is the step that needs a connection and a connected workspace, so if you are standing in a basement with one bar of signal, keep going; the upload can wait until you are back in the car.</p><h2>The seven stops from download to a live page</h2><ol><li><strong>Sign in with Apple.</strong> That creates the account. Do it before you publish; everything before that point works locally.</li><li><strong>Start a listing from Home.</strong> Pick the mode in the mode chooser. For a home, that is real estate; the fields and sample content follow the mode you choose.</li><li><strong>Add the photos.</strong> Choose the ones that belong in this listing. Landscape photos feed the listing video, portrait photos feed the social video.</li><li><strong>Review edits in the photo studio.</strong> Blue sky, twilight, green lawn, tidy the room, add furniture, or a custom prompt. Every edit becomes a separate version with a disclosure; the original stays in photo history. Compare each one against the original before you keep it.</li><li><strong>Make the video in the video step.</strong> Choose the landscape video for the listing or the vertical video for social. Scene order and camera motion are planned for you. Record a voiceover or let an AI voice read your script, with word-by-word captions following the words, add music if you want it, then watch it through.</li><li><strong>Fill in the website step.</strong> Main photo, price, beds, baths, square feet, the video you reviewed. Sections you leave empty do not appear.</li><li><strong>Publish and open the Share sheet.</strong> Copy the branded link for buyers and the unbranded link for the MLS virtual-tour field.</li></ol><h3>Three checks before the first publish</h3><p>Three things. The main photo is the one you would put on the yard sign. Every edited photo you selected still matches the room (count windows, doors, outlets). The price and square feet match the MLS entry. Fixing these after a buyer has shared the page is more work than fixing them now.</p><h2>A first listing, start to finish</h2><p>Say it is a 3-bed in a cul-de-sac, photographed Tuesday morning, 28 photos on your phone by lunch. You start the listing in the car, pick real estate, add the 18 best landscape photos and 6 portrait photos. In the photo studio you run blue sky on the front exterior because Tuesday was overcast, compare it to the original, keep it. You try tidy the room on the kitchen counter, decide the edited version moved a cabinet handle, and keep the original instead.</p><p>In the video step you choose the landscape video, read a 30-second script into the phone in the quiet of the garage, and watch it twice. In the website step you type the price and the beds, baths and square feet from the listing agreement. You publish from the driveway. By the time you are back at the office the branded link is in a text to the seller and the unbranded link is pasted into the MLS.</p><h2>After the page is live</h2><p>Enquiries from the form land in the inbox, grouped per listing and also all together, and each one carries the date the visitor asked for. When the home goes under contract and closes, mark the listing sold and the page says so. Nothing else to take down. If you want more detail on any single stop, the <a href=\"/blog/how-to-start-a-listing-in-rendprop\">post on starting a listing</a> picks up from step two.</p><h2>Where first listings go wrong</h2><ul><li><strong>Mixing listings.</strong> Photos from two properties in one listing. Start a new listing per property from Home.</li><li><strong>Keeping every edit.</strong> An edit that invents a detail is worse than no edit. Keep the version that is true, and check your own MLS rules before posting altered images.</li><li><strong>Skipping the video review.</strong> Watch the whole thing once with sound before you publish.</li><li><strong>Sending the branded link to the MLS.</strong> The MLS virtual-tour field usually wants the unbranded one. Check your own MLS rules.</li><li><strong>Publishing with placeholder details.</strong> If the price is not final, leave the field empty and it will not show, then fill it in when you have it.</li></ul><h2>Where each stop is described on the features page</h2><p>The photo edits are described under the <a href=\"/features#photo-studio\">photo studio</a>, and the page under <a href=\"/features#listing-site\">the listing site</a>. If you want to see what a finished page looks like before you build one, open the <a href=\"/f/estate-demo\">demo listing</a> on your phone and tap through it the way a buyer would.</p><p>Next step: download the app, sign in with Apple, and start a listing with the photos from your most recent shoot. Do not wait for a new listing; a past one is a fine rehearsal.</p>",
+  "faq": [
+    {
+      "q": "Do I need an account before I can start a listing?",
+      "a": "No. You can start a listing, add photos and prepare content locally before you sign in. Publishing the property website needs Sign in with Apple, a connection and a connected workspace."
+    },
+    {
+      "q": "What phone does Rendprop run on?",
+      "a": "An iPhone on iOS 16 or later. For anything beyond that, check the current App Store listing rather than assuming."
+    },
+    {
+      "q": "How long does a first listing take?",
+      "a": "With photos already on the phone, one sitting. The slowest part is reviewing edits honestly and watching the video through, and that is time worth spending."
+    },
+    {
+      "q": "Which link goes where once the page is published?",
+      "a": "The branded link goes to buyers, sellers, texts, social posts and your email. The unbranded link, with no name or contact details, is made for the MLS virtual-tour field. Check your own MLS rules."
+    }
+  ],
+  "related": [
+    "how-to-start-a-listing-in-rendprop",
+    "how-to-add-property-photos-to-a-listing-in-rendprop",
+    "how-to-publish-a-property-website-in-rendprop",
+    "what-you-need-to-run-rendprop"
+  ],
+  "published": "2026-10-28"
+}

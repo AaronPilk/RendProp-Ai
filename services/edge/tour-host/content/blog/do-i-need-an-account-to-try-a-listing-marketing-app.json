@@ -1,0 +1,40 @@
+{
+  "slug": "do-i-need-an-account-to-try-a-listing-marketing-app",
+  "title": "Do I need an account to try a listing marketing app",
+  "description": "To publish, yes. To look around, usually not. A good app lets you see a finished example and start preparing a listing before you sign in or pay anything.",
+  "category": "questions",
+  "keywords": [
+    "try listing marketing app without account",
+    "real estate app sign up required",
+    "test property marketing app",
+    "listing app free to download",
+    "what to check before signing up for real estate app"
+  ],
+  "tldr": "To publish a page or share a link, yes, because the app has to know whose listing it is. To look around, usually not: a well-designed app lets you see a finished example and start building a listing before you sign in. Use that window to check the things that matter later, such as who owns your photos and how you delete the account.",
+  "html": "<p>To publish a listing or share a link, yes: the app has to know whose listing it is, where enquiries should go and which subscription applies. To look around, usually not; a well-designed app lets you open a finished example, start a listing and get a feel for the workflow before you sign in. Use that window to check the things that will matter in six months, not just whether the buttons look nice.</p><h2>What you can judge without an account</h2><p>More than most people think. Before any sign-in you can usually see a live example of the output, which tells you what buyers will see. You can read the terms, which tell you who owns the photos you upload. You can find the account deletion process, which tells you how much the company respects your exit. And you can often start building a listing on the device, which tells you whether the workflow suits the way you work.</p><p>What you cannot judge without an account is the end-to-end result for your own listing: the published page at its real address, the links in the Share sheet, enquiries arriving. That part needs the account, and it is a fair ask.</p><h2>A worked example: twenty minutes on a Sunday evening</h2><p>An agent with a new listing on Tuesday wants to know if an app is worth the trouble. Sunday evening, on the sofa, with the photographer's files already on the phone.</p><p>Minute one to five: open the live demo listing in a browser and scroll it as a buyer would. Does the gallery load fast, does the video play on request, is the enquiry form short, does it work on a phone. Minute five to ten: download the app, skip sign-in if it allows, start a listing, add six photos and see whether the steps match how you work. Minute ten to fifteen: read the ownership section of the terms and search the support page for “delete account.” Minute fifteen to twenty: decide. If the output looks right and the terms are clean, sign in and publish Tuesday's listing for real. If not, delete the app and nothing has been handed over.</p><h2>What to check before you create the account</h2><ol><li><strong>Who owns the photos and video you upload.</strong> The answer should be you, in plain words, with no licence for the app to use your content in its marketing or AI training without asking.</li><li><strong>Whether photos leave the app for processing, and whether you are asked first.</strong> AI edits usually run on a server. The question is whether the app tells you and asks permission before sending anything to an outside processor.</li><li><strong>Where enquiries go.</strong> Your inbox, per listing, or a shared pool.</li><li><strong>How you leave.</strong> An account deletion request that is easy to find, and a clear statement of what happens to published pages.</li><li><strong>What a published page looks like six months later.</strong> Does it say sold, does the link stay live, does it start charging you.</li></ol><p>The post on <a href=\"/blog/your-listing-content-and-ai-training-questions-to-ask-any-app\">questions to ask any app about your content</a> goes deeper on the first two.</p><h2>Mistakes people make while trying an app</h2><ul><li><strong>Signing up for five tools in one evening.</strong> Five accounts, five sets of terms nobody read, five sources of email. Try one properly.</li><li><strong>Judging the app by the sign-up screen.</strong> The sign-up screen is the least important screen. Judge the published page and the enquiry flow.</li><li><strong>Uploading a client's photos to test.</strong> Test with photos you own outright. Client files go in once you have read the terms.</li><li><strong>Confusing “free to download” with free to use.</strong> Many apps cost nothing to install and charge to publish. Look for where the plan details and price are shown before you commit.</li></ul><h2>How this works in Rendprop</h2><p>Rendprop is an iPhone app for iOS 16 or later and is free to download, with a web Studio at studio.rendprop.com for continuity between phone and desktop. You can prepare content locally before signing in; publishing needs a connection and a connected workspace. Sign in with Apple creates the account. You own your photos and videos, Rendprop does not use your content for its own marketing or AI training without written permission, and the optional Kie photo-to-video processing asks for separate permission before photos are sent. Current plan features and included usage are shown in the app, and Apple shows the price, billing period and any introductory offer terms before confirmation. A published example is live at the <a href=\"/f/estate-demo\">demo listing</a>, the <a href=\"/features\">features page</a> lists what the workflow does, and <a href=\"/support\">support</a> covers account questions.</p><h2>Where to start tonight</h2><p>Open the demo listing on your phone and scroll it as a buyer. If that page is what you would want for your next listing, download the app and build the listing locally; sign in only when you are ready to publish.</p>",
+  "faq": [
+    {
+      "q": "Can I see what the finished page looks like before signing up?",
+      "a": "With most reputable apps, yes, through a live example page. Judge that page as a buyer would: how it loads on a phone, whether the video plays on request, how short the enquiry form is. That is the output you are buying."
+    },
+    {
+      "q": "Is it safe to upload listing photos to try an app?",
+      "a": "Read the ownership and processing terms first, and test with photos you own outright. Only upload client or photographer files once you know the app does not claim rights over them or use them for its own purposes without permission."
+    },
+    {
+      "q": "What does free to download mean in practice?",
+      "a": "The app costs nothing to install, and you can usually explore and prepare content. Publishing and some features typically sit behind a subscription. Look for where the app shows current plan features and included usage before committing."
+    },
+    {
+      "q": "What should I check about deleting an account?",
+      "a": "That the deletion request is easy to find, that the app explains what happens to published pages and media, and that you can download or keep your originals first. An app that hides the exit is telling you something."
+    }
+  ],
+  "related": [
+    "can-i-publish-a-listing-from-my-phone",
+    "your-listing-content-and-ai-training-questions-to-ask-any-app",
+    "what-the-rendprop-demo-listing-shows-you",
+    "what-you-need-to-run-rendprop"
+  ],
+  "published": "2026-10-28"
+}

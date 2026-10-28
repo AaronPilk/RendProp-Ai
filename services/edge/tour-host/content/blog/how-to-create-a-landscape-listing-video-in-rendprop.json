@@ -1,0 +1,40 @@
+{
+  "slug": "how-to-create-a-landscape-listing-video-in-rendprop",
+  "title": "How to create a landscape video for a listing in Rendprop",
+  "description": "In the video step, choose the landscape video, pick the landscape photos you want, add a voiceover and captions, review it, and export 16:9 for the page.",
+  "category": "howto",
+  "keywords": [
+    "landscape video for a listing rendprop",
+    "16:9 property video from photos",
+    "create listing video on iphone",
+    "rendprop video step",
+    "photo to video real estate"
+  ],
+  "tldr": "Open the listing, go to the video step and choose the landscape video. Pick the landscape photos (and the edited versions) you want in it, add a recorded or AI voiceover with word-by-word captions and optional music, let Rendprop plan the scene order and camera motion, review the result, and export 16:9. That video becomes the one on the property page.",
+  "html": "<p>Open the listing, go to the video step, and choose the landscape video. Pick the landscape photos you want in it, add a voiceover if you want one, with word-by-word captions following the words, decide on music, and let Rendprop plan the scene order and camera motion. Watch it through, then export 16:9.</p><p>The result is the listing video that plays on the property page and that you can post wherever a wide frame belongs.</p><h2>What a landscape video is built from</h2><p>Landscape photos. The listing video is 16:9, so it wants the wide shots: front exterior, kitchen, living room, primary bedroom, yard. Portrait photos are for the vertical social video and will not sit well in a wide frame. If your set is all landscape photos, you are ready. If it is mixed, choose only the landscape photos for this video and save the portrait ones for the reel.</p><p>Use the photo versions you have already reviewed. If you kept a blue sky edit of the front and the original of the kitchen, those are the versions that go into the video. The disclosures travel with the photos; the <a href=\"/blog/how-rendprop-labels-ai-edited-photos-and-videos\">labelling post</a> explains how.</p><h2>Building it, in order</h2><ol><li>Open the listing from Home and go to the video step.</li><li>Choose the landscape video.</li><li>Choose the photos you want in the video and continue. Fifteen to twenty-five is a good range for a 3-bed; the <a href=\"/blog/how-many-photos-does-a-listing-video-need\">photo count post</a> has numbers by home size.</li><li>Add the voice. Record a voiceover on the phone, or type a script and let an AI voice read it. Word-by-word captions follow the words either way.</li><li>Decide on music. It is optional. If the voiceover carries the video, leave music off or keep it quiet.</li><li>Let Rendprop plan the scene order and camera motion. You do not key-frame anything.</li><li>Watch the whole video with sound.</li><li>Export 16:9.</li></ol><h3>What to check before you export</h3><ul><li>The first scene is the one a buyer would recognise from the street or the yard sign.</li><li>No scene shows a photo you decided not to use. If an unreviewed edit slipped in, go back to the photo studio and fix the selection.</li><li>The voiceover matches what is on screen. Saying \"three bedrooms\" over a shot of the garage is a small thing that reads as careless.</li><li>Captions spell the street and the neighbourhood correctly.</li><li>The price and details you mention are the ones in the MLS.</li></ul><h2>A worked example: Tuesday listing, Saturday open house</h2><p>An agent lists a 3-bed in a cul-de-sac on Tuesday. Twenty landscape photos reviewed Tuesday night, three with blue sky edits kept, the rest original. Wednesday morning in the kitchen, the agent writes a 40-second script: street, layout, kitchen, yard, open house Saturday from one to three. Records it in the pantry with the door shut, because the pantry is the quietest room in the house.</p><p>In the video step the agent picks the landscape video, chooses the 20 photos, adds the recording, leaves music off, and lets the scene order and camera motion be planned. Watches it twice: once for the pictures, once with eyes closed for the words. Exports 16:9. Publishes the page with that video selected so it plays on request for anyone who opens the branded link. The same file goes into a text to the seller, who forwards it to their sister, which is roughly how it ends up with 40 people by Thursday.</p><h2>Why scene order and camera motion are planned for you</h2><p>Because an agent should not be deciding whether the kitchen pans left or right at 11pm. Rendprop plans the order of scenes and the motion on each still so the video moves like a tour rather than a slideshow. Your control is upstream: which photos go in, which versions, what the voice says. If the order feels wrong when you watch it, the usual cause is the photo set, so look there first.</p><h2>What goes wrong with a landscape video</h2><ul><li><strong>Portrait photos in a wide video.</strong> They crop badly. Keep them for the vertical video.</li><li><strong>Forty photos.</strong> Every closet, every angle. The video drags and the good rooms get the same time as the laundry.</li><li><strong>Music louder than the voice.</strong> If you add music, it is a bed, not a lead.</li><li><strong>Skipping the watch-through.</strong> Review it once, in full, with sound, before you publish or post.</li><li><strong>Exporting and forgetting the page.</strong> The property page shows the selected listing video and plays it on request. Select it in the website step so the link does the work.</li></ul><h2>Where the landscape video goes</h2><p>On the property page, where it plays on request and does not autoplay. On a video channel that wants a wide frame. In the MLS where a video link is allowed, usually via the unbranded link to the page rather than a file; check your own MLS rules. The <a href=\"/features#reels\">video section</a> describes the two formats, and the <a href=\"/blog/how-to-create-a-vertical-social-video-in-rendprop\">vertical video post</a> covers the social version built from portrait photos.</p><p>Next step: open the listing you most recently added landscape photos to, go to the video step, and build the landscape video with the versions you have already reviewed. Watch it before you export.</p>",
+  "faq": [
+    {
+      "q": "Do I choose the scene order myself?",
+      "a": "No. Rendprop plans the scene order and the camera motion automatically from the photos you choose. Your control is which photos and which versions go in, and what the voiceover says."
+    },
+    {
+      "q": "Can I use edited photos in the video?",
+      "a": "Yes. Choose the saved versions you reviewed and kept. The disclosure that applies to an edited photo applies to what viewers see of it, so compare against your originals before you build the video."
+    },
+    {
+      "q": "Do I need a voiceover?",
+      "a": "No, but a video with a voice tells the buyer what they are looking at. Record your own on the phone or type a script for an AI voice. Word-by-word captions follow the words."
+    },
+    {
+      "q": "What format does the landscape video export in?",
+      "a": "16:9. The vertical social video exports in 9:16. Build the format for the place the video will be watched."
+    }
+  ],
+  "related": [
+    "how-to-create-a-vertical-social-video-in-rendprop",
+    "how-to-add-a-voiceover-to-a-rendprop-video",
+    "how-many-photos-does-a-listing-video-need",
+    "reviewing-a-listing-video-before-you-post-it-a-checklist"
+  ],
+  "published": "2026-10-28"
+}

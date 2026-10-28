@@ -1,0 +1,100 @@
+{
+  "slug": "mirino",
+  "name": "Mirino",
+  "url": "https://mirino.ai",
+  "pricingUrl": "https://mirino.ai/pricing",
+  "title": "Rendprop vs Mirino: a listing page and link, or video and posts",
+  "description": "Mirino sells flat-rate unlimited video and queued social posts. Rendprop publishes a property page with video, MLS link and enquiry form, from an iPhone.",
+  "tldr": "Pick Mirino if you want unlimited photo-to-video generation for one flat price, a browser timeline editor and posts queued to Facebook and Instagram for approval. Pick Rendprop if the thing you need to hand over is a published property page with the video, a contact form, a branded link and an unbranded MLS link, made from an iPhone, with enquiries landing in the app. Both start from the photos you already have.",
+  "html": "<p>Mirino and Rendprop both start from the photos you already have and turn them into video. The difference is what you hand over at the end. Mirino gives you video files and a queue of social posts, generated without a cap for one flat price, with a browser timeline editor when you want to cut by hand. Rendprop gives you a published property page with the video, the gallery, the details and an enquiry form, plus a branded link and an unbranded MLS link, all made from an iPhone. A reel and a posting schedule: Mirino. A link that brings enquiries back to you: Rendprop.</p><h2>What Mirino is</h2><p>Mirino is a web app, formerly HomeReel, that makes AI video from existing photos. It started in real estate and now also covers ads and product content. You can import photos from a listing URL, run virtual staging, add avatar or character options, and cut the result in an in-browser timeline editor.</p><p>The part most people underrate is the prompting workflow. You type one sentence about the property, Mirino expands it into a brief you can edit, and the format checks sit apart from the creative prompt, so changing what the video says does not disturb how it is built. On top of that sits automation: Mirino can plan a run of posts, generate them, and queue them to Facebook and Instagram for your approval. For an agent whose real problem is getting the reel posted on Thursday before the Saturday open house, that is the feature. It also ships updates quickly.</p><h2>Where Mirino is the better pick</h2><ul><li><strong>You produce in volume.</strong> Flat-rate, unlimited image-to-video generation means a photographer with four shoots on Saturday can turn every set into several cuts without counting.</li><li><strong>You want a timeline.</strong> Mirino has an in-browser editor where you trim, reorder and swap clips. Rendprop plans scene order and camera motion automatically and asks you to review the result; there is no timeline to drag.</li><li><strong>You want posting handled.</strong> Mirino plans, generates and queues posts to Facebook and Instagram for approval. Rendprop does not schedule or autopost; you export 9:16 or 16:9 and post it yourself, or share the listing link.</li><li><strong>You make ads and product content too.</strong> Rendprop's modes are built around a place with details and an enquiry form; that is a different job.</li></ul><h2>Where Rendprop is the better pick</h2><p>Rendprop's output is a listing page at a link, not a file.</p><ul><li><strong>The page is the deliverable.</strong> Publishing creates a hosted <a href=\"/features#listing-site\">property website</a> with the main photo, the details you typed (price, beds, baths, square feet), the gallery, the selected video, a contact card and an enquiry form that asks the visitor which date they want. Nothing to design or host. With Mirino, where the video lives afterwards is up to you.</li><li><strong>Two links per listing.</strong> A branded page (rendprop.com/f/ plus the slug) and an unbranded link (rendprop.com/u/ plus the same slug) with no name, no contact details and no Rendprop branding, made for an MLS virtual-tour field. See <a href=\"/features#two-links\">the two links</a>. Mirino has no MLS link as a product.</li><li><strong>Enquiries land in the app.</strong> The form on the page feeds an <a href=\"/features#leads\">inbox</a>, per listing and all together. Mirino has no enquiry inbox; a comment under an Instagram post is not something you can file against a listing.</li><li><strong>It runs on the phone.</strong> Rendprop is an iPhone app (iOS 16 or later) with a web Studio for desktop continuity. Add photos at the property, review edits in the car, publish before you leave. Mirino is web only.</li><li><strong>Review-first AI.</strong> Every AI edit is a separate labelled version beside the untouched original; staging is labelled \"Virtually staged\" and other edits carry an AI-alteration disclosure, so when a broker asks how a photo was altered there is a specific answer. Compare edits against originals before publishing and check your own MLS rules on altered images.</li><li><strong>Beyond homes.</strong> Venue, restaurant and bar, gym and studio, retail and office modes change the fields and the page: hours, menu, capacity or membership instead of beds and baths.</li><li><strong>A real walkthrough, optional.</strong> Record a handheld walkthrough of the actual home in the app; viewers can watch it or scroll through it on the page. It is separate from the photo-based video.</li></ul><h2>Workflow, side by side</h2><p>Take a 3-bed in a cul-de-sac: 28 photos delivered Tuesday morning, open house Saturday.</p><h3>In Mirino</h3><ol><li>Paste the listing URL or upload the photos.</li><li>Write one sentence about the home and edit the brief Mirino builds from it.</li><li>Generate, and make as many versions as you want.</li><li>Open the timeline if a clip needs trimming; add staging or an avatar if the brief calls for it.</li><li>Export, or let the automation queue posts to Facebook and Instagram and approve them.</li><li>Send the file to the seller. For the MLS virtual-tour field you still need a page to point at.</li></ol><h3>In Rendprop</h3><ol><li>Start the listing on the iPhone in real estate mode and type the price, beds, baths and square feet.</li><li>Add landscape photos for the listing video and portrait photos for the vertical social video.</li><li>Review the optional AI edits, compare each with the original, and choose which versions to use.</li><li>Create the video. Scene order and camera motion are planned for you; record a voiceover or let an AI voice read your script; captions are word by word; music is optional.</li><li>Review it, then publish the property website.</li><li>From the Share sheet, paste the unbranded link into the MLS virtual-tour field and the branded link into the Saturday post and the text to the seller. Post the 9:16 export to Instagram yourself.</li><li>Enquiries land in the inbox under that listing. When it goes under contract, mark it sold and the page says so.</li></ol><p>One path ends with posts on a schedule. The other ends with a page, two links and an inbox, and you still post by hand.</p><h2>Pricing</h2><p>Mirino is positioned as flat-rate: unlimited image-to-video generation on a single plan, with a higher tier for premium models. That is taken from their public materials in October 2026 and may have changed, so check <a href=\"https://mirino.ai/pricing\">Mirino's pricing page</a> before you decide. If you make a lot of video, that matters.</p><p>For Rendprop, launch plans and included usage are being finalized. Rendprop shows current plan features and included usage in the app, and Apple shows the price, billing period and any introductory offer terms before you confirm. The <a href=\"/pricing\">pricing page</a> has the current position. Compare by what the money buys: Mirino sells generation volume and posting automation; Rendprop sells a published page per listing with two links and an inbox, video included.</p><h2>Who should choose which</h2><p><strong>Choose Mirino</strong> if you want a lot of video for a flat price, you like cutting in a timeline, you make ads or product content as well as listings, or you want posts planned and queued for approval. A photographer selling reels to agents, or a team posting daily, fits here.</p><p><strong>Choose Rendprop</strong> if what you need to hand over is a link: a property page with the video, the details and an enquiry form, plus an unbranded version for the MLS, made on the phone the day the photos arrive, with every enquiry landing in one place. A solo agent with a Saturday open house, or a venue that needs a page rather than a reel, fits here.</p><p>Some people will run both: Mirino for the posting cadence, Rendprop for the listing page and the MLS link.</p><p>Next step: take one current listing and write down what you have to deliver for it by Friday. If the answer is \"posts\", start with Mirino. If the answer is \"a link the seller, the MLS and the buyers can all open\", start a listing in Rendprop.</p>",
+  "table": [
+    {
+      "capability": "iPhone app",
+      "rendprop": "Yes (iOS 16+), plus a web Studio",
+      "them": "No (web app)"
+    },
+    {
+      "capability": "Hosted property website with contact form",
+      "rendprop": "Yes, one per listing",
+      "them": "No; output is video files and posts"
+    },
+    {
+      "capability": "Unbranded MLS link",
+      "rendprop": "Yes, per listing",
+      "them": "No"
+    },
+    {
+      "capability": "Enquiry inbox",
+      "rendprop": "Yes, in the app, per listing and all together",
+      "them": "No"
+    },
+    {
+      "capability": "Photo-based listing video (16:9)",
+      "rendprop": "Yes",
+      "them": "Yes"
+    },
+    {
+      "capability": "Vertical social video (9:16)",
+      "rendprop": "Yes",
+      "them": "Yes"
+    },
+    {
+      "capability": "Timeline editor",
+      "rendprop": "No; scene order and camera motion planned automatically, then you review",
+      "them": "Yes, in the browser"
+    },
+    {
+      "capability": "Social scheduling and autoposting",
+      "rendprop": "No; you post the export or share the link",
+      "them": "Yes; plans, generates and queues posts to Facebook and Instagram for approval"
+    },
+    {
+      "capability": "Virtual staging",
+      "rendprop": "Yes, labelled \"Virtually staged\", original kept",
+      "them": "Yes"
+    },
+    {
+      "capability": "Recorded walkthrough",
+      "rendprop": "Yes, optional, handheld, filmed in the app",
+      "them": "Not listed"
+    },
+    {
+      "capability": "Venue, restaurant, gym, retail modes",
+      "rendprop": "Yes; fields and page change by mode",
+      "them": "Real estate, plus ads and product content"
+    },
+    {
+      "capability": "Pricing model",
+      "rendprop": "Plans being finalized; the app shows features and included usage; Apple shows the price",
+      "them": "Flat rate, unlimited generation on one plan; higher tier for premium models"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Does Mirino publish a property website or an MLS link?",
+      "a": "No. Mirino's deliverable is video files and social posts queued to Facebook and Instagram. Rendprop publishes a hosted property page for each listing, with a branded link and an unbranded link made for the MLS virtual-tour field."
+    },
+    {
+      "q": "Can Rendprop schedule or autopost to Instagram and Facebook?",
+      "a": "No. Rendprop exports 9:16 and 16:9 video and you post it yourself, or you share the listing link. Mirino's automation can plan, generate and queue posts for your approval, which is a real advantage if posting cadence is your problem."
+    },
+    {
+      "q": "Which one has a timeline editor?",
+      "a": "Mirino has an in-browser timeline editor. Rendprop plans scene order and camera motion automatically and asks you to review the video before you publish; there is no timeline to edit by hand."
+    },
+    {
+      "q": "Is Mirino really unlimited?",
+      "a": "Their public materials in October 2026 position the main plan as flat-rate with unlimited image-to-video generation, and a higher tier for premium models. That may have changed, so check their pricing page before you decide."
+    },
+    {
+      "q": "What does Rendprop cost compared with Mirino?",
+      "a": "Launch plans and included usage for Rendprop are being finalized. The app shows current plan features and included usage, and Apple shows the price, billing period and any introductory offer terms before confirmation. Mirino's pricing is on their site; compare on what each one delivers rather than on a number alone."
+    },
+    {
+      "q": "Can I use Mirino and Rendprop together?",
+      "a": "Yes. Some people will use Mirino for volume social content and autoposting, and Rendprop for the property page, the unbranded MLS link and the enquiry inbox. Both start from the same photo set."
+    }
+  ],
+  "checked": "October 2026",
+  "published": "2026-10-28"
+}

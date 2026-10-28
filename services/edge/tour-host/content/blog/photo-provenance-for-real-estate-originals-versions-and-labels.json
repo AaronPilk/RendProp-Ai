@@ -1,0 +1,40 @@
+{
+  "slug": "photo-provenance-for-real-estate-originals-versions-and-labels",
+  "title": "Photo provenance for real estate: originals, versions and labels",
+  "description": "Provenance means showing, for any listing photo, the untouched original, every edited version and each label. A system that takes no extra time.",
+  "category": "ai-trust",
+  "keywords": [
+    "photo provenance real estate",
+    "listing photo version history",
+    "track edited listing photos",
+    "originals versions labels system",
+    "photo audit trail real estate"
+  ],
+  "tldr": "Provenance for a listing photo means three things stay together: the untouched original, every edited version, and the label on each version saying what changed. If you can produce all three for any photo in under a minute, from your phone, you have provenance. If you have to search a laptop, you do not.",
+  "html": "<p>Provenance for a listing photo means three things stay together: the untouched original, every edited version made from it, and the label on each version saying what changed. If you can produce all three for any photo in under a minute, from your phone, you have provenance. If you have to search a laptop, a photographer's email and a cloud folder, you do not, and you will find that out at the worst possible moment.</p><h2>What provenance is for</h2><p>It is not paperwork for its own sake. It answers four questions that come up on real listings:</p><ul><li><strong>A buyer asks what the room really looks like.</strong> You show the original.</li><li><strong>A seller asks what was changed.</strong> You show the versions side by side.</li><li><strong>A broker or MLS asks about a photo.</strong> You show the label and the original. Rules differ by MLS and state, so check your MLS's current rules on what they expect you to keep; being able to show the chain is good practice regardless.</li><li><strong>You want to re-edit a photo months later.</strong> You start from the original, not from a version that already has two edits baked in.</li></ul><h2>The three parts, and what breaks each one</h2><h3>Originals</h3><p>The untouched file, as delivered by the photographer or shot on your phone. Breaks when an app overwrites it on edit, when a photographer delivers only edited files, or when the only copy sits in a text thread. The <a href=\"/blog/why-the-untouched-original-is-the-most-valuable-photo-in-the-set\">post on the original</a> explains why this is the piece to protect first.</p><h3>Versions</h3><p>Each edit as its own file or saved state: the tidy version, the staged version, the twilight version. Breaks when edits are applied on top of each other in one file, so the staged version also contains the tidy edit and you cannot separate them.</p><h3>Labels</h3><p>Each version marked with what it is: “Virtually staged,” “Sky altered,” “Twilight edit.” Breaks when labels live only in an MLS caption field that does not travel with the file, or when an image is cropped for social and the on-image mark goes with the crop.</p><h2>A system that takes no extra time</h2><p>You do not need software built for forensics. You need a habit and a place.</p><ol><li><strong>One home for originals per listing.</strong> A folder, an album or an app that keeps history. Originals go in on day one and are not touched again.</li><li><strong>Edits are versions, not overwrites.</strong> Use a tool that saves each edit separately. If yours does not, duplicate before editing and name the copy for the edit: “kitchen-tidy,” “living-staged.”</li><li><strong>The label is on the version.</strong> A caption, a filename suffix or a mark on the image. Not a note in your head.</li><li><strong>The published set is a selection, not the whole folder.</strong> You choose which versions go out. The rest stay as history.</li><li><strong>Keep it past closing.</strong> Questions can arrive after the sale. Ask your broker how long the office wants listing media kept; it varies.</li></ol><h2>A worked example: the question in October</h2><p>A home closes in June. In October the buyer's attorney writes to the listing broker about the condition of the deck, and attaches the listing photo of the back yard. The broker asks the agent whether that photo was edited.</p><p>Agent with provenance: opens the listing, finds the back yard photo, sees the original and one version labelled “Sky altered,” exports both, and replies within the hour that the sky was replaced and nothing else was touched, with the files attached. Done.</p><p>Agent without provenance: has one file, called IMG_4471, which may or may not be the edited one. Emails the photographer, who has a different file. Spends two days establishing what was changed, and still cannot prove it. Nothing about the deck was ever edited, but it takes a week to say so convincingly.</p><h2>Where it breaks on a team</h2><ul><li><strong>The photographer keeps originals, the agent keeps edits.</strong> Nobody has both in one place. Agree who holds the full chain; the <a href=\"/blog/why-a-photographer-should-keep-the-originals-and-the-versions\">photographer's version of this post</a> covers the other side.</li><li><strong>Edits made in three apps.</strong> Sky in one, staging in another, cropping in a third. Each app has part of the history. Pick one place for edits and stick to it.</li><li><strong>Labels in the MLS only.</strong> The MLS caption does not follow the image to the property page or the reel. Carry the label with the version.</li></ul><h2>How this works in Rendprop</h2><p>Rendprop keeps every AI edit as a separate version with a disclosure; staging is labelled “Virtually staged” and other edits carry an AI-alteration disclosure. The untouched original stays in photo history, you compare each edit with the original, and you choose which saved versions go into the video and onto the property website. Your photos and videos are yours. That is the three-part chain, kept by the app rather than by your memory. The <a href=\"/features#photo-studio\">photo studio</a> page covers how edits are stored, and the <a href=\"/blog/how-rendprop-labels-ai-edited-photos-and-videos\">labelling post</a> covers the disclosures.</p><p>Next step: pick a closed listing from this year and try to produce the original, the versions and the labels for its main photo. Time it. If it took more than a minute, change the system before the next listing.</p>",
+  "faq": [
+    {
+      "q": "What does photo provenance mean for a real estate listing?",
+      "a": "Being able to show, for any listing photo, the untouched original, every edited version made from it, and the label on each version saying what changed. The test is whether you can produce all three from your phone in under a minute."
+    },
+    {
+      "q": "How long should I keep listing originals and versions?",
+      "a": "Past closing at minimum, because questions can come months later. Ask your broker how long the office wants listing media kept; rules and office policies differ by MLS and state."
+    },
+    {
+      "q": "What if my photographer keeps the originals and I only have edits?",
+      "a": "Agree who holds the full chain and make sure one of you has originals, versions and labels together. Ask the photographer to deliver originals alongside any edits, and keep both in one place per listing."
+    },
+    {
+      "q": "Does the MLS caption count as a label?",
+      "a": "It is one place for a label, but it does not travel with the file to the property page, the reel or a screenshot. Carry the label with the version itself, through a filename, a caption in your app or a mark on the image."
+    }
+  ],
+  "related": [
+    "why-the-untouched-original-is-the-most-valuable-photo-in-the-set",
+    "why-a-property-marketing-app-should-keep-your-originals",
+    "keeping-original-photos-why-your-photo-history-matters",
+    "why-a-photographer-should-keep-the-originals-and-the-versions"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "sending-the-property-page-before-the-showing",
+  "title": "Sending the property page before the showing",
+  "description": "Send the branded property page link the moment a showing is booked, with one line about what to watch. The buyer arrives informed, and the visit confirms.",
+  "category": "openhouse",
+  "keywords": [
+    "send listing link before showing",
+    "pre-showing property page",
+    "what to send buyers before a showing",
+    "showing confirmation text with link",
+    "listing video before showing"
+  ],
+  "tldr": "Send the branded property page link as soon as a showing is confirmed, in the same text as the time and the address, with one line telling the buyer what to watch in the video. They arrive having seen the gallery and the layout, so the showing becomes a confirmation visit with real questions rather than a first look that ends in four minutes.",
+  "html": "<p>Send the property page link the moment the showing is booked, in the same message as the date, the time and the address. Add one sentence about what to watch in the video. A buyer who has seen the gallery and the layout before they park spends the visit checking the things that matter to them rather than working out which room is which.</p><p>This is a small habit with a large effect on how showings go. The unprepared buyer walks in, forms an impression in the hall, and either loves or dismisses the house before reaching the kitchen. The prepared buyer walks in looking for the thing they noticed in the video, and that is a conversation.</p><h2>The message, word for word</h2><p>A Thursday 5:30 p.m. showing at a 4-bed colonial on Maple Ridge, booked on Tuesday through the buyer's agent. The text to the agent, to forward or not:</p><p><em>Confirmed Thursday 5:30 at 14 Maple Ridge. Here is the page with the full gallery and the video: [branded link]. Worth watching the video first; the kitchen opens to the family room in a way the photos do not show, and the back garden is bigger than it looks from the street. Parking on the drive is fine.</em></p><p>Four parts. The confirmation. The link. One specific thing to look for. One practical detail. Under sixty words.</p><p>The specific thing is what makes the message land. “Here is the listing” gets filed. “Watch how the kitchen opens to the family room” gets watched, because now there is a question to answer.</p><h2>When to send it, and when to send it again</h2><p>Send it when the booking is confirmed, not the night before. If the showing is more than two days out, a buyer has time to watch the video, show it to a partner, and arrive with both of them already agreed on what they want to check.</p><p>Then send a shorter version two hours before: the address, the time, and the link again. Phones lose messages. The second send is also the one they open in the car, which means the page is already on their screen when they walk up the path.</p><h2>What the buyer does with it</h2><p>Three things, usually. They scroll the gallery, which takes a minute. They play the video if you told them why, which takes another two. And they forward the link to whoever is not coming: the partner at work, the parent who is helping with the deposit. That third person forms a view before Thursday, and it is often their view that decides whether there is a second showing.</p><p>The page also carries your contact card, so if the buyer is unrepresented and has a question on Wednesday, they can ask you directly rather than through a portal that routes the question to whoever paid for the postcode.</p><h2>Mistakes that undo the whole point</h2><ul><li><strong>Sending a folder of photos.</strong> A zip or an album of twenty files is work. A link is a tap. The page already has the photos in order.</li><li><strong>Sending the unbranded link.</strong> It has no contact card and no enquiry form. It exists for the MLS virtual tour field. A buyer who opens it has your home and no way to reach you.</li><li><strong>Sending the portal listing.</strong> The buyer lands among competing homes with a button that may send their question to another agent.</li><li><strong>Sending it ten minutes before.</strong> They are driving. The link gets opened in the hallway, which defeats the purpose.</li><li><strong>No instruction.</strong> Without the one sentence about what to watch, the video is an option. With it, the video is homework, and most people do homework that takes two minutes.</li><li><strong>A video that hides the flaw.</strong> If the house backs onto a road and the video pretends otherwise, the buyer arrives primed and leaves annoyed. Let the video be accurate; the showing goes better.</li></ul><h2>How this works in Rendprop</h2><p>Each published listing has a branded property page with the gallery, the details, the chosen listing video and an enquiry form. Copy the branded link from the Share sheet and paste it into the confirmation text. The video plays when the buyer taps it, so sending the link does not force anything to start playing in a meeting. If the buyer wants a different time or a second visit, the enquiry form asks for the date they want and the enquiry lands in the app's inbox for that listing. Details are at <a href=\"/features#two-links\">branded and unbranded links</a> and <a href=\"/features#listing-site\">the property website</a>. Open the <a href=\"/f/estate-demo\">demo listing</a> on a phone to see what the buyer receives.</p><h2>One change to make today</h2><p>Add the branded link and one sentence about the video to your showing confirmation template, and use it on the next booking. If you want the video itself to do more of the filtering before a showing is even requested, read <a href=\"/blog/listing-video-as-a-pre-showing-fewer-wasted-visits\">listing video as a pre-showing</a>.</p>",
+  "faq": [
+    {
+      "q": "What should I send a buyer before a showing?",
+      "a": "The showing confirmation with the address and time, the branded property page link, one sentence about what to watch in the video, and one practical detail such as where to park. Keep it under sixty words. Send it when the booking is confirmed and again two hours before."
+    },
+    {
+      "q": "Should I send the link to the buyer or to their agent?",
+      "a": "To whoever booked the showing, which is usually the agent, written so it can be forwarded as is. The agent may add their own note. If the buyer is unrepresented, send it to them directly; the page's contact card gives them a way to ask questions before Thursday."
+    },
+    {
+      "q": "Why not just send the photos?",
+      "a": "A folder of photos is work to open and gives no order or scale. The property page has the gallery in the sequence you chose, the video that shows how rooms connect, the details and a way to ask for a second visit. One link is one tap, and it forwards cleanly to the people who are not coming."
+    },
+    {
+      "q": "Which link do I send, branded or unbranded?",
+      "a": "The branded one, which carries your contact card and the enquiry form. The unbranded link is for the MLS virtual tour field and carries no name and no contact details, so a buyer who opens it cannot reach you from it."
+    }
+  ],
+  "related": [
+    "listing-video-as-a-pre-showing-fewer-wasted-visits",
+    "sharing-a-listing-link-by-text-what-the-preview-should-show",
+    "second-showings-what-buyers-want-to-re-check",
+    "branded-and-unbranded-listing-links-why-you-need-both"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "a-listing-page-in-the-email-to-your-database",
+  "title": "A listing page in the email to your database",
+  "description": "A just-listed email should be one photo, four facts, three lines and one link to the property page. The page does the rest.",
+  "category": "website",
+  "keywords": [
+    "just listed email",
+    "email database new listing",
+    "real estate email with property link",
+    "listing announcement email",
+    "sphere email new listing"
+  ],
+  "tldr": "A just-listed email to your database should be short: one photo, the four headline facts, three lines of plain text and one link to the branded property page. The page carries the gallery, the video and the enquiry form, so the email does not have to. Send it the day the listing goes live, and send a second, different one before the open house.",
+  "html": "<p>A just-listed email to your database should be one photo, the four headline facts, three lines of plain text, and one link to the branded property page. The page has the gallery, the video and the enquiry form, so the email does not need to carry any of them. Send it the day the listing goes live, when the home is new to everyone, and send a different, shorter one two days before the open house.</p><p>Most listing emails fail because they try to be the listing. Twelve photos, a paragraph about the neighbourhood, a map, your bio, three buttons. The reader skims, finds no single thing to tap, and archives it. One photo and one link gives them one thing to do.</p><h2>The shape of the email</h2><ul><li><strong>Subject line.</strong> The street and the town, or the type and the town. \"Just listed: 3-bed on Birch Lane, Maplewood.\" No \"amazing\", no \"won't last\".</li><li><strong>One photo.</strong> The main photo from the page, the same one the reader will see when they tap through, so the transition feels continuous.</li><li><strong>Four facts.</strong> Price, beds, baths, square feet. In one line under the photo.</li><li><strong>Three lines.</strong> Why this home, who it suits, when it can be seen. Written the way you would say it to someone at a party.</li><li><strong>One link.</strong> The branded page, as a button or a plain link, with the text saying what it opens: \"See the full gallery and video.\"</li><li><strong>Your name and number.</strong> Under the link, plain, no signature block with six logos.</li></ul><h2>A worked example: Thursday 10am</h2><p>Subject: Just listed: 3-bed ranch on Birch Lane, Maplewood.</p><p>Photo: the front at golden hour.</p><p>$452,000. 3 bed, 2 bath, 1,640 sq ft.</p><p>Text: \"A single-level ranch on a quiet dead-end street with a kitchen that was redone last year and a backyard that backs onto the woods. It suits a buyer who wants one floor and a short walk to the elementary school. Open Saturday 1 to 3; showings from Friday.\"</p><p>Link: See the full gallery and video.</p><p>Name, number.</p><p>Sent Thursday at ten to the whole database. Of the people who open it, the ones with any interest tap the link and land on the page, where they swipe the gallery, maybe watch the video, and fill in the form or forward the link to someone. The email's job was the tap. The page's job is everything after.</p><h2>The second email, two days before the open house</h2><p>Shorter still. Subject: \"Open Saturday 1 to 3: Birch Lane.\" The same photo or the kitchen. One line: \"If you have been meaning to see it, Saturday is the easy day. Here is the page if you want a look first.\" Link. Name, number. People who ignored the first email because they were busy open the second because it has a date.</p><h2>Email mistakes that waste the send</h2><ul><li><strong>Attaching photos instead of linking.</strong> The email gets heavy, lands in spam or promotions, and the reader has no page to forward.</li><li><strong>Linking to a portal.</strong> The reader lands on a page where the contact button may go to another agent. Your email just handed your database to a competitor.</li><li><strong>Linking to the unbranded page.</strong> No name, no number. The reader who wants to call you has to go back to the email.</li><li><strong>Multiple links.</strong> The page, your site, your socials, a mortgage calculator. Every extra link lowers the chance of the right one being tapped.</li><li><strong>The video embedded in the email.</strong> Most email clients will not play it. A still image that links to the page is the version that works.</li><li><strong>Sending to everyone, every listing, with no segmentation.</strong> Your database includes past sellers who are not buying. A listing in their old neighbourhood is interesting; a listing across town is noise. If you can segment by area, do.</li><li><strong>No send after the sale.</strong> A just-sold email with the same photo and the same page link, now marked sold, is the follow-up that reminds sellers you get homes closed.</li></ul><h2>How this works in Rendprop</h2><p>The branded link from the Share sheet, rendprop.com/f/ followed by the listing's slug, is the link for the email. The page it opens shows the selected main photo, the details you typed in, the gallery, the selected listing video (plays on request, never autoplays), your contact card and an enquiry form that asks for the date the reader wants to visit. Use the same main photo in the email as the page shows so the tap feels continuous. Enquiries from the email's readers land in the app's inbox, per listing and all together. When the home sells, mark the listing sold and the same link becomes the just-sold link. The <a href=\"/features#listing-site\">listing site feature page</a> covers the page; the <a href=\"/f/estate-demo\">demo listing</a> shows what a reader lands on.</p><h2>Reuse the structure for every listing</h2><p>Save the email as a template with the six parts and fill it in each time. The photo, the facts, the three lines and the link change; the shape does not. Over a year, your database learns that your listing emails are short and have one thing to tap, which is why they keep opening them.</p><p>The next step: write the three lines for your current listing and send the email today if the page is live. For reusing the same link across every channel, read <a href=\"/blog/one-link-for-the-flyer-the-sign-the-mls-and-the-post-keeping-it-consiste\">one link for the flyer, the sign, the MLS and the post</a>, and for the just-sold version, see <a href=\"/blog/just-listed-under-contract-sold-three-videos-from-one-photo-set\">just listed, under contract, sold</a>.</p>",
+  "faq": [
+    {
+      "q": "How many photos should a just-listed email include?",
+      "a": "One, the main photo from the property page. The page holds the full gallery and the video. An email with twelve photos is heavy, lands in promotions tabs more often, and gives the reader no single thing to tap."
+    },
+    {
+      "q": "Should the email link to the property page or to the MLS listing on a portal?",
+      "a": "The property page, using the branded link. A portal page may route the enquiry to another agent, and it shows your reader competing listings. Your page shows your home and your contact card."
+    },
+    {
+      "q": "Can I embed the listing video in the email?",
+      "a": "Most email clients will not play embedded video. Use a still image from the video or the main photo, linked to the page, where the video plays when tapped."
+    },
+    {
+      "q": "How often should I email my database about listings?",
+      "a": "Once when a listing goes live, once before the open house, and once when it sells. Three short emails per listing. If you list often, segment by area so readers only hear about homes near them."
+    }
+  ],
+  "related": [
+    "one-link-for-the-flyer-the-sign-the-mls-and-the-post-keeping-it-consiste",
+    "just-listed-under-contract-sold-three-videos-from-one-photo-set",
+    "sharing-a-listing-link-by-text-what-the-preview-should-show",
+    "which-photo-should-be-the-main-photo-of-a-listing"
+  ],
+  "published": "2026-10-28"
+}

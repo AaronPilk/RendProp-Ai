@@ -1,0 +1,40 @@
+{
+  "slug": "pricing-changes-and-the-property-page",
+  "title": "Pricing changes and the property page",
+  "description": "A price change goes on the property page first, then the MLS, then the announcement. Change the number, refresh the video, send the same link.",
+  "category": "markets",
+  "keywords": [
+    "price reduction property website",
+    "updating listing price on property page",
+    "how to announce a price change on a listing",
+    "price change listing marketing",
+    "listing price reduction what to update"
+  ],
+  "tldr": "A price change should show up first on the one page that every link already points to, then in the MLS, then in the announcement, so that nobody who clicks the old link sees the old number. Change the price in the listing, publish the page, check it on your phone, update the MLS, and only then send the announcement with the same branded link, paired with something new to see, so the change reads as a reason to look again rather than a signal to wait.",
+  "html": "<p>A price change should appear first on the one page every link already points to, then in the MLS, then in the announcement. In that order, so that nobody who taps the link in last month's email, the sign or the social post sees the old number next to the new one in the portal. Change the price in the listing, publish the page, open the branded link on your phone and check it, update the MLS, and only then announce it, with the same link everyone already has and with something new to look at alongside the number. A price change announced on its own tells buyers to wait for the next one; a price change paired with a fresh video and a reason tells them to look again.</p><h2>One page, one price</h2><p>The reason to run every piece of listing marketing through a single property page is that a price change becomes one edit instead of nine. The flyer, the yard sign's code, the email, the social posts, the text to the buyer from the open house: they all point at the page. If the page carries the new price, every one of those channels is correct the moment it is published, including the ones you forgot you sent. If the price lives in six places, one of them will be wrong on the day the buyer checks, and the wrong one undermines the right one.</p><p>The portal is the exception, because its number comes from the MLS. Update the MLS straight after the page so the two agree, and expect a short window where a buyer could see both. Keep it short.</p><h2>A reduction on a Thursday</h2><p>A four-bed that launched five weeks ago at a price the seller insisted on. Enquiries slowed in week three. The seller agrees to a new price on Wednesday evening. On Thursday morning the agent changes the price in the listing, publishes the page, opens the branded link on a phone and reads the new number out loud. Then the MLS. Then, before any announcement, a new social video built from the same photos, opening on the back garden instead of the front, with a new first line and the new price in the captions. At noon the email goes to the database with the branded link, a subject line naming the street and the new price, and the video. The social post goes out at 5pm with the same link.</p><p>The three buyers who viewed in week two each get a personal text with the link and one sentence. Two of them re-open the page that evening; one books a second showing for Saturday through the form. The announcement did not say reduced in a red banner. It said here is the house again, here is what it costs now, here is a video you have not seen.</p><h2>What to change besides the number</h2><ul><li><strong>The main photo.</strong> A new main photo makes the listing look new in the grid and in the feed. Use the second-best exterior, a twilight if the house faces the right way, or the best room.</li><li><strong>The video opening.</strong> A new social video from the existing photos with a different first scene and a new voiceover line. Buyers who scrolled past the old one will stop for a new one.</li><li><strong>The first paragraph.</strong> Rewrite it to lead with the strongest fact about the house rather than with the price.</li><li><strong>The facts list.</strong> If anything was repaired, inspected or replaced since launch, add it. A price change plus a new roof certificate is a different story from a price change alone.</li><li><strong>The showing plan.</strong> Offer new slots in the announcement. A price change without a way to see the house that weekend is half an announcement.</li></ul><h2>What goes wrong with price changes</h2><ul><li><strong>Announcing before the page is updated.</strong> The buyer taps the link in the email, sees the old price, and assumes the email was wrong.</li><li><strong>The sign, the flyer and the post disagreeing.</strong> If any of them carried the price rather than the link, they are now wrong and you cannot recall them. Put the link on printed things, not the number.</li><li><strong>Reduced as the headline.</strong> It frames the house as a problem and tells buyers to wait. Lead with the house.</li><li><strong>Changing the number and nothing else.</strong> The same video, the same main photo, the same paragraph. The buyer who saw it in week one sees the same listing with a smaller number and learns that waiting works.</li><li><strong>Forgetting the buyers who already enquired.</strong> They are the warmest list you have. A personal message with the link reaches them before the portal alert does.</li></ul><h2>How a price change works in Rendprop</h2><p>The <a href=\"/features#listing-site\">property website</a> shows the price, beds, baths and square feet you typed into the listing, so a price change is a change to the listing's details followed by publishing the page, not a rebuild of a website. The branded link and the unbranded link belong to the listing, so the email, the sign and the MLS tour field keep working; see <a href=\"/features#two-links\">the two links</a>. A new social video comes from the portrait photos you already added, with a new script read in your voice or by an AI voice and the new price in the word-by-word captions. Enquiries that arrive after the change land in the same per-listing inbox as the earlier ones, so the week-two buyers are easy to find and message.</p><p>Next step: make a list of every place the listing's price appears in print or in a post, and replace each with the branded link before the next change. The next price change should be one edit and one email.</p>",
+  "faq": [
+    {
+      "q": "In what order should I update a listing price?",
+      "a": "Property page first, so every link already in circulation shows the new number. Then the MLS, so the portals agree. Then the announcement, with the same branded link and something new to see, such as a fresh video opening or a new main photo."
+    },
+    {
+      "q": "Should the announcement say the price was reduced?",
+      "a": "Lead with the house and state the new price plainly rather than putting reduced in the headline. Reduced frames the home as a problem and tells buyers to wait for the next cut. The new price plus a reason to look again does the job without the banner."
+    },
+    {
+      "q": "What should change on the listing besides the price?",
+      "a": "The main photo, the opening scene and first line of the social video, the first paragraph of the description, and the facts list if anything was repaired or replaced since launch. Offer new showing slots in the announcement as well."
+    },
+    {
+      "q": "Should I put the price on the flyer and the yard sign?",
+      "a": "Put the link, not the number. Printed prices cannot be recalled when the price changes, and a sign that disagrees with the page undermines both. The page carries the current price for everyone who scans or taps."
+    }
+  ],
+  "related": [
+    "writing-a-price-reduction-announcement",
+    "marketing-a-listing-with-an-upcoming-price-reduction",
+    "relisting-after-a-price-cut-new-photos-or-new-video",
+    "one-link-for-the-flyer-the-sign-the-mls-and-the-post-keeping-it-consiste"
+  ],
+  "published": "2026-10-28"
+}

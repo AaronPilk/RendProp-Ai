@@ -1,0 +1,40 @@
+{
+  "slug": "your-contact-card-on-every-listing-page-name-business-number-one-tap",
+  "title": "Your contact card on every listing page: name, number, one tap",
+  "description": "A listing page contact card needs your name, your business, a phone number that dials when tapped and an email. No bio, no office hours.",
+  "category": "website",
+  "keywords": [
+    "contact card property website",
+    "agent contact details listing page",
+    "tap to call real estate website",
+    "agent info on listing page",
+    "contact section listing website"
+  ],
+  "tldr": "The contact card on a listing page should carry four things: your name, your business name, a phone number that dials in one tap, and an email address. It sits near the enquiry form so a buyer who prefers to call can, and a buyer who prefers to write can. Leave off the biography, the awards and the office hours; a buyer deciding on a showing wants to know who to reach and how, not your career history.",
+  "html": "<p>The contact card on a listing page needs four things: your name, your business name, a phone number that dials when tapped, and an email address. It sits beside the enquiry form so a buyer who wants to talk can tap the number and a buyer who wants to write can use the form. Leave off the biography, the awards, the team photo and the office hours: a buyer deciding whether to see the home wants to know who to reach and how, and the rest is for after they call.</p><h2>The four things and why each is there</h2><p><strong>Your name.</strong> First and last. The buyer is about to call a stranger; a name makes that easier. If a photographer or assistant published the page, it is still the listing agent's name that goes here.</p><p><strong>Your business.</strong> The brokerage or your team name, whichever a buyer would recognise or look up. One line. It tells the buyer this is a professional listing and gives them a name to check if they want to.</p><p><strong>A phone number that dials.</strong> Not text that has to be copied. On a phone, a tap should open the dialler with the number filled in. This is the single most important thing on the card; a buyer in a car or a queue who wants a showing right now should be one tap from your voice.</p><p><strong>An email.</strong> For the buyer who does not want to call yet, and for the buyer's agent who wants to send a question. It should be the address you actually read, not an office alias checked on Mondays.</p><h2>What to leave off</h2><ul><li><strong>A biography.</strong> Twenty years in the area, top producer, family man. The buyer is evaluating the home, not you. Save it for the call.</li><li><strong>A headshot.</strong> Harmless on a branded page but not useful. If you include one, keep it small and keep it off the unbranded version entirely.</li><li><strong>Office hours.</strong> A buyer who calls at eight on a Sunday either gets you or leaves a message. Hours invite them not to try.</li><li><strong>Social links.</strong> They take the buyer off the page. The page is the destination, not a hub.</li><li><strong>A second agent, a third number, a fax.</strong> One person, one number, one email. A buyer who has to choose who to call may not call.</li></ul><h2>A worked example: the call from the driveway</h2><p>A buyer drives past a 3-bed with a sign out front, scans the code on the rider, and the page opens. She swipes six photos, sees the price, and decides she wants in today. She scrolls to the bottom. There is a name, a brokerage, a number. She taps the number. You answer. She says she is outside now. You say you can be there in twenty minutes, or she can come back at four. She picks four.</p><p>Now replace the card with a bio paragraph and a contact form only. She reads two lines, decides she does not want to fill in a form from the driveway, and drives on. She might come back. She probably does not.</p><h2>When someone else published the page</h2><p>A photographer or a media company may build and publish the page on your behalf. The contact card should still show you, the listing agent, not the photographer. The buyer should never have to work out who the agent is from a page about the home. If a photographer's workflow requires your email to be verified before enquiries are forwarded to you, do that before the page goes live, not after the first enquiry gets lost.</p><h2>The unbranded version is the opposite</h2><p>The MLS tour link needs a page with no contact card at all: no name, no business, no number, no email. That is not a flaw; it is what the syndicated tour field is for, and your own MLS's current rules spell out the detail. The branded page carries the card; the unbranded page carries none. Both point at the same listing.</p><h2>How this works in Rendprop</h2><p>Every branded property page Rendprop publishes includes a contact card alongside the gallery, the details, the selected video and the enquiry form. The unbranded link, made for the MLS virtual-tour field, shows no name, no contact details and no Rendprop branding. A photographer can present a client's contact details on a listing they shot, and enquiry forwarding to that client needs the client's email verified. Enquiries from the form land in the app's inbox, per listing and all together. See the <a href=\"/features#listing-site\">listing site feature page</a> for the page and <a href=\"/blog/how-a-photographer-presents-a-clients-contact-details-in-rendprop\">how a photographer presents a client's contact details</a> for the handoff.</p><h2>Check it from the buyer's side</h2><p>Open the page on your phone. Scroll to the card. Tap the number; it should open the dialler with your number ready. Tap the email; it should open a draft addressed to you. If either does nothing, or opens the wrong number, fix it before you share the link.</p><p>The next step: do that check on your current listing. For the form that sits beside the card, read <a href=\"/blog/contact-forms-on-a-listing-page-the-fields-that-get-real-enquiries\">contact forms on a listing page</a>, and for the photographer's side of the arrangement, see <a href=\"/blog/presenting-the-agents-contact-details-on-a-listing-you-shot\">presenting the agent's contact details on a listing you shot</a>.</p>",
+  "faq": [
+    {
+      "q": "Should my headshot be on the listing page contact card?",
+      "a": "It is optional and not needed. A name, a business, a tappable number and an email do the work. If you include a headshot, keep it small on the branded page and leave it off the unbranded page entirely."
+    },
+    {
+      "q": "What if a photographer published the page for me?",
+      "a": "The card should still show you, the listing agent, not the photographer. Ask how enquiries reach you; if forwarding requires your email to be verified, do that before the page goes live."
+    },
+    {
+      "q": "Should I list a team number or my direct number?",
+      "a": "The number that gets answered. If a team line is answered faster than your mobile, use that. If calls to the team line go to voicemail after six, use your mobile. A buyer who reaches voicemail from a driveway rarely calls back."
+    },
+    {
+      "q": "Why does the unbranded page have no contact card?",
+      "a": "Because the syndicated tour link is meant to show the home without agent branding or contact details, and your own MLS's current rules spell out what that means. The unbranded page shows the home only. Your branded page, the one you share yourself, carries the card."
+    }
+  ],
+  "related": [
+    "contact-forms-on-a-listing-page-the-fields-that-get-real-enquiries",
+    "presenting-the-agents-contact-details-on-a-listing-you-shot",
+    "how-a-photographer-presents-a-clients-contact-details-in-rendprop",
+    "branded-and-unbranded-listing-links-why-you-need-both"
+  ],
+  "published": "2026-10-28"
+}

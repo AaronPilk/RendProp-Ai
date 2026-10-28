@@ -1,0 +1,40 @@
+{
+  "slug": "photo-edits-buyers-notice-five-changes-that-cause-trouble-at-the-showing",
+  "title": "Five photo edits buyers notice at the showing",
+  "description": "Removed power lines, widened rooms, improved views, missing fixtures and brightening that hides damage. Each fails the moment a buyer walks in.",
+  "category": "photos",
+  "keywords": [
+    "photo edits buyers notice",
+    "misleading listing photos",
+    "real estate photo editing mistakes",
+    "edits that cause problems at showing",
+    "listing photos vs reality"
+  ],
+  "tldr": "Five edits cause trouble at the showing more than any others: removed power lines or poles, rooms widened by a lens or an edit, an invented or improved view, removed permanent fixtures, and brightening that hides damp or damage. Each survives the online scroll and fails the moment a buyer stands in the room.",
+  "html": "<p>Five edits cause trouble at the showing more than any others: removed power lines or poles, rooms widened by a lens or an edit, an invented or improved view, removed permanent fixtures, and brightening that hides damp or damage. Each one survives the online scroll and fails the moment a buyer stands in the room. The showing is where the photo meets the house, and the house wins.</p><h2>1. The power line that is still there</h2><p>A front exterior with the overhead lines and the pole on the kerb removed looks cleaner online. The buyer parks under the pole. They look up. Before they reach the door they are wondering what else was removed. Lines, poles, transformers, the neighbour's satellite dish and the cell tower behind the roof are permanent, and removing them is not an edit, it is a different property.</p><p>If the lines are ugly, shoot from the angle that puts them out of frame or behind a tree. That is composition, not alteration.</p><h2>2. The room that shrank on the drive over</h2><p>A 0.5x lens from the doorway makes a 12-foot bedroom look like a 16-foot one. An edit that pushes the walls out does the same. The buyer walks in with a sofa in mind and sees that it will not fit. There is no disclosure that fixes this, because the buyer does not feel misled about a photo, they feel misled about the house.</p><p>Shoot at 1x where you can, and reach for 0.5x only when 1x cannot show the room from any corner.</p><h2>3. The view through the window</h2><p>A living room window with a bright, sharp view of trees and sky, in a house that faces a car park. Window-pull photography, done honestly, shows what is outside. An edit that replaces what is outside with something better is the single most expensive edit you can publish, because the view is often why the buyer booked.</p><p>If the view is bad, let the window go bright and show the room. If the view is good, show it as it is. <a href=\"/blog/window-pull-and-view-photos-showing-what-is-outside\">Window pull and view photos</a> covers the technique.</p><h2>4. The radiator, the fan, the panel</h2><p>Tidy and staging edits remove permanent fixtures because the model reads them as clutter: a radiator under the window, a ceiling fan, an electrical panel on the basement wall, a wall-mounted AC unit, a baseboard heater. The buyer sees the fixture at the showing and starts counting what else is different.</p><p>Count fixtures in the edit against the original before publishing. <a href=\"/blog/how-to-compare-an-ai-edited-listing-photo-against-the-original\">How to compare an AI-edited listing photo against the original</a> has the list.</p><h2>5. The bright room with the stain in it</h2><p>A dark basement brightened until the water line on the wall disappears. A bathroom ceiling lifted until the mould spot is gone. A bright edit that happens to erase evidence of condition is, to a buyer and to a board, the same as removing it on purpose. Brighten rooms. Do not brighten problems away. If the stain is there, it is there in the photo, and the remarks explain it.</p><h2>A worked example: the Saturday showing</h2><p>A buyer books a showing on a 4-bed after seeing a listing with a clean front exterior, a wide primary bedroom and a bright finished basement. They arrive to a pole on the kerb, a bedroom that will not take their king bed, and a basement with a tide mark behind the dehumidifier. They leave in eleven minutes. The agent's next three listings get fewer showings from that buyer's agent, who tells the office.</p><p>None of the three edits was labelled, and a label would not have saved the showing. The edits changed the house.</p><h2>The test for any edit</h2><p>Will the buyer see the difference when they stand in the room? If the answer is yes, the edit has to go, or the thing it changed has to be disclosed in words, not just a label. Sky, lawn colour, clutter and furniture in an empty room pass this test, because the buyer expects them to differ. Lines, walls, views, fixtures and damage do not.</p><h2>How Rendprop keeps the edit and the original apart</h2><p>Rendprop's <a href=\"/features#photo-studio\">photo studio</a> saves each AI edit as a separate version with a disclosure, staging as Virtually staged and the rest as AI-altered, and keeps the untouched original in the photo history. That gives you the comparison you need to catch the five edits above before they go on the property page. The label does its job for sky and staging. For the five edits here, the fix is to choose the original, because AI can change or invent details and a disclosure does not put the pole back.</p><h2>Walk the house with the photos</h2><p>Before a listing goes live, stand in each room with the published photo on your phone and look for anything the photo does not show. If you shoot for agents, do this for them. It is the one check that catches what the showing would otherwise catch, and <a href=\"/blog/what-buyers-think-when-they-spot-an-obvious-ai-edit\">what buyers think when they spot an obvious AI edit</a> covers why it matters.</p>",
+  "faq": [
+    {
+      "q": "Which photo edits do buyers notice most at a showing?",
+      "a": "Removed power lines or poles, rooms that look wider than they are, a view that was improved, missing permanent fixtures like radiators and fans, and brightening that hid a stain or damp. All five change the house rather than the photo, which is why a label does not fix them."
+    },
+    {
+      "q": "Is removing power lines from a listing photo allowed?",
+      "a": "Check your MLS's current rules on altering permanent features, and then set the rules aside: buyers treat it as misleading the moment they park under the pole. Shoot from an angle that keeps the lines out of frame instead. That is composition, not alteration."
+    },
+    {
+      "q": "Can a disclosure fix an edit that changed the room?",
+      "a": "No. A disclosure tells the buyer a photo was altered. It does not tell them the bedroom is four feet narrower or the basement has a water line. If the buyer will see the difference standing in the room, use the original or explain the condition in words."
+    },
+    {
+      "q": "What is the quickest test for whether an edit is safe to publish?",
+      "a": "Ask whether the buyer will see the difference when they stand in the room. Sky, lawn colour, clutter and staged furniture pass, because buyers expect those to differ. Walls, views, fixtures, lines and damage fail."
+    }
+  ],
+  "related": [
+    "what-buyers-think-when-they-spot-an-obvious-ai-edit",
+    "how-to-compare-an-ai-edited-listing-photo-against-the-original",
+    "window-pull-and-view-photos-showing-what-is-outside",
+    "can-ai-misrepresent-a-property-yes-here-is-how-to-keep-it-from-happening"
+  ],
+  "published": "2026-10-28"
+}

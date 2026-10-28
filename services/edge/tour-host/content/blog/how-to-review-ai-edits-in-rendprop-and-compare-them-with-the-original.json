@@ -1,0 +1,40 @@
+{
+  "slug": "how-to-review-ai-edits-in-rendprop-and-compare-them-with-the-original",
+  "title": "How to review AI edits in Rendprop and compare with the original",
+  "description": "Every AI edit in Rendprop is a separate version beside the untouched original. Compare each for invented or missing details, then pick the versions to use.",
+  "category": "howto",
+  "keywords": [
+    "review ai edits rendprop",
+    "compare ai edited photo with original",
+    "rendprop photo studio versions",
+    "check virtual staging before publishing",
+    "ai photo edit review checklist"
+  ],
+  "tldr": "In the photo studio every AI edit is saved as a separate version with a disclosure, and the untouched original stays in photo history. Open each edit, compare it against the original for anything added, removed or moved, and choose which saved versions to use. If an edit changed something real about the room, use the original.",
+  "html": "<p>Open the edited photo in the photo studio, compare it against the original, and decide whether anything real about the room changed. If it did, use the original. If it did not, keep the version you prefer.</p><p>Rendprop saves every AI edit as a separate version with a disclosure and keeps the untouched original in photo history, so the comparison is always available; the job is to actually do it, for every photo, before anything is published.</p><h2>Why the comparison is the step, not a formality</h2><p>AI edits can change or invent details. A blue sky edit can also lighten a roof. A tidy-the-room edit can remove a cord and, while it is at it, remove an outlet. An add-furniture edit can put a sofa where the fireplace hearth is. None of this is visible if you only look at the edited photo, because the edited photo looks plausible. It is only visible side by side with the original. That is why Rendprop keeps both and why the version you did not choose is still there afterwards.</p><h2>The review, one photo at a time</h2><ol><li>Open the listing and go to the photo studio.</li><li>Pick a photo that has one or more edited versions.</li><li>Compare the edit with the original. Look at the whole frame, then the edges, then the details that identify the room.</li><li>Decide: keep the edit, keep the original, or try a different edit. Each attempt is its own version; nothing overwrites the original.</li><li>Choose which saved versions to use in the video and the gallery.</li><li>Move to the next photo. Do not skip the ones that \"look fine\"; those are the ones that catch you.</li></ol><h3>What to look at in the comparison</h3><ul><li><strong>Count things.</strong> Windows, doors, outlets, light switches, cabinet handles, ceiling fixtures. The numbers must match.</li><li><strong>Check fixed features.</strong> Fireplace, built-ins, radiator, stair rail, the kitchen island. Same place, same size, same shape.</li><li><strong>Check the view.</strong> Through every window, is it the same street, fence, tree, neighbour's wall?</li><li><strong>Check surfaces.</strong> Floor material, counter material, wall colour. A twilight edit that warms the floor from oak to walnut has changed the house.</li><li><strong>Check what was removed.</strong> With tidy the room, confirm only loose clutter went, not a cabinet, a vent or a crack that a buyer has a right to see.</li><li><strong>Check what was added.</strong> With add furniture, confirm nothing new is structural: no new window, no second door, no wall where there was none.</li></ul><h2>A worked example: the kitchen on a Tuesday evening</h2><p>You have a 3-bed in a cul-de-sac, listed Tuesday, open house Saturday. The kitchen was shot with a toaster, a paper towel roll and a drying rack on the counter, so you run tidy the room. The edit looks clean. Side by side with the original, the toaster, the roll and the rack are gone, which is what you wanted. But the outlet behind the toaster is also gone, and the backsplash grout line runs straight through where it was.</p><p>That is a changed room. You try a custom prompt instead, asking to remove only the loose items on the counter and keep the outlet. The new version is a second edit, separate from the first. This time the outlet is where it was. You choose that version for the gallery and the video. The first edit stays in history, unused, and the original is still there untouched. Total time for one photo: about ninety seconds. Across a set of 20, the <a href=\"/blog/how-to-review-a-batch-of-ai-photo-edits-in-ten-minutes\">ten-minute batch review</a> is a realistic target once you have the rhythm.</p><h2>Which edits deserve the hardest look</h2><p>Add furniture, because it changes a room's apparent size and layout and is labelled \"Virtually staged\" for that reason. Tidy the room, because removal is quiet and easy to miss. Custom prompts, because a loose instruction gets a loose result. Blue sky and green lawn are usually safer but still worth the count, since a sky edit can change the brightness of a whole exterior and a lawn edit can creep onto a driveway.</p><h2>Mistakes that get through when the review is rushed</h2><ul><li><strong>Glancing instead of looking.</strong> Look long enough, and close enough, to count the outlets.</li><li><strong>Comparing edit to edit.</strong> Compare each edit to the original, not to the previous edit; drift accumulates.</li><li><strong>Keeping the prettiest version by default.</strong> Prettier and true are different tests. Keep the true one.</li><li><strong>Assuming the disclosure covers the problem.</strong> The label tells a buyer the photo was altered; it does not make a removed outlet acceptable.</li><li><strong>Forgetting the MLS.</strong> Check your own MLS rules before posting altered images, label or not.</li></ul><h2>What the app keeps for you</h2><p>Every edit is a separate version with a disclosure. Staging is labelled \"Virtually staged\"; other edits carry an AI-alteration disclosure. The original stays in photo history. You decide which versions are used; the rest remain. The <a href=\"/features#photo-studio\">photo studio section</a> describes the edit types, and the <a href=\"/blog/how-rendprop-labels-ai-edited-photos-and-videos\">labelling post</a> explains what each disclosure says.</p><p>Next step: open your most recent listing, pick the one photo you edited the most, and put it next to its original. Count the outlets. Then do the rest.</p>",
+  "faq": [
+    {
+      "q": "Does an AI edit replace my original photo?",
+      "a": "No. Each edit is saved as a separate version with a disclosure, and the untouched original stays in photo history. You choose which saved versions to use."
+    },
+    {
+      "q": "What should I compare first?",
+      "a": "Counts and fixed features: windows, doors, outlets, the fireplace, the island, the view through each window. If any of those changed, use the original or try a narrower edit."
+    },
+    {
+      "q": "Can I try more than one edit on the same photo?",
+      "a": "Yes. Each attempt becomes its own version. Compare each one against the original rather than against the previous attempt."
+    },
+    {
+      "q": "If I keep an edit, do I still need to tell anyone?",
+      "a": "The version carries its disclosure, and staging is labelled Virtually staged. You should still check your own MLS rules before posting altered images, and compare against your originals before publishing."
+    }
+  ],
+  "related": [
+    "how-to-compare-an-ai-edited-listing-photo-against-the-original",
+    "how-to-review-a-batch-of-ai-photo-edits-in-ten-minutes",
+    "how-rendprop-labels-ai-edited-photos-and-videos",
+    "how-to-use-suggest-and-improve-my-prompt-in-rendprops-photo-studio"
+  ],
+  "published": "2026-10-28"
+}

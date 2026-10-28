@@ -1,0 +1,39 @@
+{
+  "slug": "how-to-switch-business-modes-in-rendprop",
+  "title": "How to switch business modes in Rendprop",
+  "description": "The mode is chosen in the mode chooser when you create a listing or workspace. To work in another mode, start a new listing and pick it there.",
+  "category": "howto",
+  "keywords": [
+    "switch modes rendprop",
+    "rendprop mode chooser",
+    "rendprop for restaurants and venues",
+    "business mode property page",
+    "rendprop real estate mode"
+  ],
+  "tldr": "Modes in Rendprop are set in the mode chooser when you create a listing or a workspace, so you switch by starting a new listing (or workspace) and choosing a different mode there. Real estate is the primary mode; event venues, restaurants and bars, gyms and studios, retail, and other businesses are the rest. The fields, wording and sample content change with the mode.",
+  "html": "<p>Switch modes by choosing a different mode in the mode chooser when you create the next listing or workspace. The mode is set when you create the listing or workspace, so the clean way to work on a restaurant is to start a new listing and pick restaurants and bars. The fields you are asked for, the words on the page and the sample content all follow the mode you chose.</p><h2>Six modes, one page structure</h2><ul><li><strong>Real estate.</strong> The primary mode. Price, beds, baths, square feet. The page reads as a listing.</li><li><strong>Event venues.</strong> Business details such as capacity and hours. The enquiry form's request for a date becomes the main question.</li><li><strong>Restaurants and bars.</strong> Details such as hours, menu and capacity.</li><li><strong>Gyms and studios.</strong> Details such as hours and membership.</li><li><strong>Retail.</strong> Details such as hours, and the shop itself in the photos.</li><li><strong>Other businesses.</strong> Offices, studios, workshops. The general case for a space that is not a home and not one of the above.</li></ul><p>The business details a page can show are hours, menu, capacity or membership; which of them a mode asks for, and how it words them, follows the mode. In every mode the structure of the page is the same: main photo, details, gallery, selected video on request, contact card, enquiry form. What changes is which details are asked for and how the page talks about them. The <a href=\"/features#industries\">industries section</a> lists the modes.</p><h2>Switching, in practice</h2><ol><li>Finish or pause what you are doing in the current listing. Nothing is lost by leaving it.</li><li>Go to Home and start a new listing.</li><li>In the mode chooser, pick the mode that matches the space: a wedding barn is event venues, a pilates studio is gyms and studios, a dental suite is other businesses.</li><li>Add the photos, review edits, build the video and fill in the website step as you would for a home. The fields will be the ones that mode needs.</li><li>Publish and share as usual. The two links work the same way in every mode.</li></ol><h3>What to check before you commit to a mode</h3><p>Ask what the page needs to say. If the answer is a price per unit of space, it is real estate. If it is a date and a headcount, it is event venues. If it is opening hours and a menu, it is restaurants and bars. If you are setting up a workspace for a photography business that shoots homes and venues, the mode is chosen per listing or per workspace, so decide whether one workspace with mixed listings or separate workspaces by client type suits how you work.</p><h2>A worked example: one photographer, three kinds of client</h2><p>A photographer shoots a 3-bed on Saturday morning, a 150-seat wedding barn at midday, and a boxing gym at four. Three listings, three modes. The home goes in as real estate: price, beds, baths, square feet from the agent. The barn goes in as event venues: capacity 150, hours, and the enquiry form asking visitors for the date they want, which is what the barn's owner actually needs to know. The gym goes in as gyms and studios: hours and membership.</p><p>Same phone, same photo studio, same video step. The barn's landscape video opens on the exterior at golden hour; the gym's vertical video opens on the ring. Each page uses the words its visitors expect. The photographer did not learn three tools; the mode did the translation. The <a href=\"/blog/rendprop-for-event-venues-restaurants-and-gyms-what-changes\">what-changes post</a> goes room by room through venues, restaurants and gyms.</p><h2>Mistakes when choosing a mode</h2><ul><li><strong>Choosing by who is paying.</strong> A developer's spec home is real estate even though the client is a company.</li><li><strong>Forcing a venue into real estate.</strong> A barn for hire has no price per square foot. The enquiry date and the capacity are the point; use event venues.</li><li><strong>Expecting a listing to change mode later.</strong> Mode is set when you create the listing or workspace. If you picked wrong and have not added much, start a fresh listing in the right mode.</li><li><strong>Picking other businesses for everything.</strong> If a more specific mode fits, use it; the words on the page will be closer to what the visitor expects.</li><li><strong>Leaving business details empty.</strong> Sections hide when empty, which is tidy but means a restaurant page without hours is a page that does not answer the first question.</li></ul><h2>When a mode is close but not exact</h2><p>A salon is closest to gyms and studios or other businesses, depending on whether membership matters. A coworking space is other businesses unless it sells by the room for events. A short-term rental is real estate. Pick the mode whose fields match what you want on the page, then fill in only what applies. The <a href=\"/blog/switching-modes-using-one-app-for-homes-venues-and-businesses\">one-app post</a> has more edge cases.</p><p>Next step: think of one non-residential client you already have, start a listing for them from Home, and choose the mode that matches what their visitors need to know. Fill in the website step and see how the fields change.</p>",
+  "faq": [
+    {
+      "q": "Where do I choose the mode?",
+      "a": "In the mode chooser when you create a listing or a workspace. Real estate is the primary mode; the others are event venues, restaurants and bars, gyms and studios, retail, and other businesses."
+    },
+    {
+      "q": "Can I change the mode of an existing listing?",
+      "a": "The mode is set at creation. If you chose the wrong one and have not added much yet, the reliable fix is to start a new listing in the right mode."
+    },
+    {
+      "q": "What actually changes between modes?",
+      "a": "The fields you are asked for, the wording on the page and the sample content. A home asks for price, beds, baths and square feet; a business asks for hours, menu, capacity or membership depending on the mode. The page structure, the video step and the two links are the same."
+    },
+    {
+      "q": "Which mode is right for a short-term rental?",
+      "a": "Real estate. It is a property with a price and rooms. Use a business mode only when the page needs business details such as hours, capacity or membership."
+    }
+  ],
+  "related": [
+    "switching-modes-using-one-app-for-homes-venues-and-businesses",
+    "rendprop-for-event-venues-restaurants-and-gyms-what-changes",
+    "how-to-start-a-listing-in-rendprop"
+  ],
+  "published": "2026-10-28"
+}

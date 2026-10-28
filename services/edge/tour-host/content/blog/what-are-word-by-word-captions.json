@@ -1,0 +1,40 @@
+{
+  "slug": "what-are-word-by-word-captions",
+  "title": "What are word-by-word captions",
+  "description": "Word-by-word captions are on-screen text that appears one word at a time with the voiceover, so a listing reel reads clearly with the sound off.",
+  "category": "glossary",
+  "keywords": [
+    "word by word captions",
+    "word-by-word captions meaning",
+    "animated captions listing reel",
+    "captions for real estate video",
+    "synced captions voiceover"
+  ],
+  "tldr": "Word-by-word captions are on-screen text that appears one word at a time, timed to the voiceover, rather than a full sentence shown at once. They let a listing reel be understood with the sound off, which is how much of a feed is watched, and the motion of each word arriving keeps eyes on the screen. They are generated from the script or the recording and sit in the middle band of the frame.",
+  "html": "<p>Word-by-word captions are on-screen text that appears one word at a time, timed to the voiceover, instead of a full sentence shown at once. They let a listing reel be understood with the sound off, which is how a large share of feed viewing happens, and the small motion of each word arriving keeps eyes on the screen while the home plays behind it.</p><p>They are the difference between a silent video that gets scrolled past and a silent video that still says three beds, corner lot, open Sunday.</p><h2>How they are produced</h2><p>The captions come from the words you say or the script the AI voice reads. The tool aligns each word with the moment it is spoken and shows it at that moment, usually highlighting the current word and keeping a few neighbours visible so the phrase is readable. The text sits in the lower middle of the frame, inside the safe area the platform's interface does not cover, in a face large enough to read on a phone at arm's length.</p><p>Because they are generated from the voiceover, the captions are only as good as the audio and the script. Clear speech and short sentences produce clean captions; mumbling and run-on sentences produce a wall of text nobody can follow.</p><h2>When they earn their place</h2><ul><li>Every vertical reel, because the sound is off for many viewers and the pace is fast.</li><li>Any video with a voiceover that carries facts: price, beds, baths, the open house time.</li><li>Videos watched in public, in an office, or on a tablet in a kitchen during an open house.</li></ul><p>They are optional on a quiet landscape video with only music, where there is nothing to caption, and on a long walkthrough where a running transcript would clutter the frame.</p><h2>What they are not</h2><p>Word-by-word captions are not subtitles in the broadcast sense, which show a full line at a time in a fixed position for accessibility. They are also not burned-in titles or lower-thirds, like the address card at the start of a video. And they are not the caption field under a post, which is a different thing with the same name.</p><p>The nearest confusable thing is a sentence caption that appears all at once and holds. That is readable, but static, and on a fast reel it means the viewer reads ahead and loses sync with the images. Word-by-word pacing keeps the text and the voice together.</p><h2>A 26-second reel with the sound off</h2><p>An agent builds a 26-second reel for a 3-bed on a corner lot and records a script of six short lines: Three beds, two baths, on a quiet corner lot. New roof last spring. The kitchen opens to the deck. Open house Sunday, one to three. Link in bio. Each line is spoken over one or two scenes.</p><p>With word-by-word captions on, a viewer scrolling on mute sees the words land as the kitchen scene plays, reads one to three as the deck shot drifts by, and taps the bio link. The same viewer with a static full-sentence caption would have read Open house Sunday before the kitchen appeared and moved on. The audio and the images are the same; the captions decide whether the message arrives.</p><h2>How this works in Rendprop</h2><p>Word-by-word captions are part of the video step in Rendprop, for both the landscape video and the vertical social video. You record a voiceover or have an AI voice read your script, and the captions follow the words. Music is optional and sits underneath. Exports come in 9:16 and 16:9. See <a href=\"/features#reels\">the reels section</a> and <a href=\"/blog/word-by-word-captions-why-listing-reels-need-them\">why listing reels need word-by-word captions</a>.</p><h2>Where they go wrong</h2><p>A script with long sentences turns the captions into a blur. A recording with background noise produces mistimed or misheard words. Captions placed at the very bottom get covered by the platform's buttons. A font too small to read on a phone defeats the purpose. Write short lines, record in a quiet room, keep the text in the middle band, and watch the export on your own phone with the sound off before you post.</p><p>Next step: take your current reel, mute it, and watch it start to finish. If you cannot say the price and the open house time afterwards, the captions are not doing their job.</p>",
+  "faq": [
+    {
+      "q": "Why word-by-word rather than a full sentence at once?",
+      "a": "Pacing. On a fast reel a full sentence lets the viewer read ahead of the images and lose the thread. Word-by-word timing keeps the text, the voice and the scene together, and the small motion of each word holds attention."
+    },
+    {
+      "q": "Do captions matter if my reel has a voiceover?",
+      "a": "More, not less. The voiceover carries the facts, and many viewers watch with the sound off. Captions are how those facts reach them. A voiceover without captions is silent to a large part of the audience."
+    },
+    {
+      "q": "Where should word-by-word captions sit on the screen?",
+      "a": "In the lower middle of the frame, inside the area the platform's interface does not cover. Text at the very bottom or top gets hidden behind buttons and usernames."
+    },
+    {
+      "q": "What makes captions come out wrong?",
+      "a": "Long sentences, background noise in the recording, and unusual words the tool does not recognise. Write short lines, record somewhere quiet, and review the captions on a phone before posting."
+    }
+  ],
+  "related": [
+    "word-by-word-captions-why-listing-reels-need-them",
+    "what-is-a-voiceover-for-a-listing-video",
+    "what-is-a-social-reel-for-a-listing",
+    "writing-a-30-second-voiceover-script-for-a-listing-reel"
+  ],
+  "published": "2026-10-28"
+}

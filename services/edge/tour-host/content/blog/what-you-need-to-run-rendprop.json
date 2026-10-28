@@ -1,0 +1,40 @@
+{
+  "slug": "what-you-need-to-run-rendprop",
+  "title": "What you need to run Rendprop: iPhone, iOS 16 and a connection",
+  "description": "Rendprop needs an iPhone on iOS 16 or later. Start a listing and add photos before signing in; publishing needs Sign in with Apple and a connection.",
+  "category": "howto",
+  "keywords": [
+    "rendprop requirements",
+    "does rendprop work on my iphone",
+    "rendprop ios 16",
+    "rendprop ipad android",
+    "rendprop offline"
+  ],
+  "tldr": "Rendprop runs on an iPhone with iOS 16 or later and is free to download. You can start a listing and add photos before you sign in; publishing the property website needs Sign in with Apple, a connection and a connected workspace. For devices beyond the iPhone, check the current App Store listing. Buyers need nothing: the page opens in any browser.",
+  "html": "<p>You need an iPhone running iOS 16 or later, and the app is free to download. That is enough to start a listing and add photos; content can be prepared locally before you sign in. To publish the property website you need an account created with Sign in with Apple, a connection, and a connected workspace.</p><p>Buyers need nothing at all; the published page opens in a browser on any phone or computer.</p><h2>The short checklist</h2><ul><li><strong>An iPhone on iOS 16 or later.</strong> Check your iOS version in the phone's own settings if you are not sure.</li><li><strong>The app from the App Store.</strong> Free to download. For device support beyond the iPhone, check the current App Store listing rather than assuming either way.</li><li><strong>Sign in with Apple.</strong> Creates the account. Needed before you publish, not before you start.</li><li><strong>A connection and a connected workspace, at publish time.</strong> Wifi or cellular; the driveway is fine.</li><li><strong>Space on the phone for photos.</strong> A listing is a set of full-size photos and a video or two. If the camera roll is already full, clear some room before a shoot.</li><li><strong>Optional: a desktop browser</strong> for Rendprop Studio at studio.rendprop.com, for continuity between phone and desk.</li></ul><h2>What works without a signal</h2><p>More than people expect. You can start a listing from Home, choose the mode, add the photos already on the phone, and prepare content locally before you have signed in. A photographer finishing a shoot in a rural property with no bars can sort the set into a listing in the car and leave the rest for later. Publishing is the step that needs a connection and a connected workspace, so do the sorting where you are and leave the rest for signal.</p><p>Walkthrough uploads are built for a weak signal: if the connection drops mid-upload, the upload resumes when it comes back. Let it finish.</p><h2>Getting set up, in order</h2><ol><li>Confirm the iPhone is on iOS 16 or later. Update it if it is not and the phone allows it.</li><li>Download Rendprop from the App Store.</li><li>Open the app. If you have a signal, sign in with Apple now so the account exists before you need it.</li><li>Start a listing from Home with photos you already have, even an old one, as a rehearsal.</li><li>Publish once the listing is ready and you have a connection and a connected workspace.</li><li>Open the branded link on your own phone to see what a buyer sees.</li></ol><h3>What to check before a shoot</h3><p>Battery, because a walkthrough and a voiceover use the phone harder than photos do. Storage, because full-size photos add up. The lens, because the 0.5x wide lens the walkthrough uses by default shows fingerprints as haze. And whether you have signed in at least once, so the only thing standing between you and publishing is a signal.</p><h2>A worked example: the new agent with an older phone</h2><p>A new agent has her first listing, a 3-bed in a cul-de-sac, and a four-year-old iPhone. She checks the iOS version: it is on iOS 16, so Rendprop runs. She downloads the app on the office wifi, signs in with Apple, and that evening starts the listing at the kitchen table with the photographer's files, which she opened on the phone from a shared folder. No signal problems because nothing yet needs a signal.</p><p>Wednesday she finishes the video, fills in the website step, and publishes from the seller's driveway on cellular. The page is live, the Share sheet gives her two links, and the buyer who opens the branded link on an older Android phone sees the page in the browser with no app at all. The agent's phone was the only device that had to meet a requirement. The <a href=\"/blog/new-agent-first-listing-the-media-plan\">first listing post</a> is the plan she followed.</p><h2>Questions this list does not answer, and where to look</h2><ul><li><strong>iPad or Android?</strong> Check the current App Store listing. This post will not claim or deny support that may change.</li><li><strong>What does it cost?</strong> Launch plans and included usage are being finalized. Rendprop shows current plan features and included usage in the app, in Settings, and Apple shows the price, billing period and any introductory offer terms before confirmation. The <a href=\"/pricing\">pricing page</a> and the <a href=\"/blog/checking-current-plan-features-and-included-usage-in-rendprop\">plan post</a> say the same.</li><li><strong>Do buyers need anything?</strong> No. A browser.</li><li><strong>Does a teammate need their own phone?</strong> Teams exist in Rendprop; each person works from their own iPhone on iOS 16 or later with the same workspace. The <a href=\"/blog/teams-in-rendprop-inviting-people-and-what-they-can-see\">teams post</a> covers the setup.</li></ul><h2>Where setups go wrong</h2><ul><li><strong>An iPhone on an older iOS.</strong> Update if the phone allows it; if it does not, the app will not run on that phone.</li><li><strong>Waiting to sign in until the moment of publishing in a basement.</strong> Sign in earlier, anywhere with a signal.</li><li><strong>A full camera roll on shoot day.</strong> Clear space the night before.</li><li><strong>Assuming the desktop can capture.</strong> The phone is where photos are shot, the walkthrough is recorded and your own voice goes in. Studio is for continuity, not capture.</li><li><strong>Expecting the buyer to install something.</strong> They do not. Send the link.</li></ul><p>Next step: check the iOS version on your phone, download Rendprop, and sign in with Apple while you are on wifi. Then start a rehearsal listing with photos from a past sale so the first real one is not the first time.</p>",
+  "faq": [
+    {
+      "q": "Which iPhones can run Rendprop?",
+      "a": "Any iPhone on iOS 16 or later. Check the iOS version in the phone's own settings, and check the current App Store listing for anything beyond the iPhone."
+    },
+    {
+      "q": "Does Rendprop work on iPad or Android?",
+      "a": "Check the current App Store listing. The requirement that is certain is an iPhone on iOS 16 or later; buyers can open a published page in any browser on any device."
+    },
+    {
+      "q": "Can I use Rendprop without an internet connection?",
+      "a": "You can start a listing and add photos; content can be prepared locally before you sign in. Publishing needs a connection and a connected workspace, and walkthrough uploads resume if the connection drops."
+    },
+    {
+      "q": "Is the app free?",
+      "a": "It is free to download. Launch plans and included usage are being finalized; Rendprop shows current plan features and included usage in the app, and Apple shows the price, billing period and any introductory offer terms before confirmation."
+    }
+  ],
+  "related": [
+    "getting-started-with-rendprop-from-download-to-a-published-listing",
+    "sign-in-with-apple-in-rendprop-what-it-does-and-why",
+    "checking-current-plan-features-and-included-usage-in-rendprop",
+    "how-to-use-rendprop-studio-on-the-web-alongside-the-iphone-app"
+  ],
+  "published": "2026-10-28"
+}

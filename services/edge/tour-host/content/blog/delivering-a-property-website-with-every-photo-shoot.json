@@ -1,0 +1,39 @@
+{
+  "slug": "delivering-a-property-website-with-every-photo-shoot",
+  "title": "Delivering a property website with every photo shoot",
+  "description": "A property website can be part of every shoot you deliver, not a separate product the agent buys elsewhere. What it should contain and how to hand it over.",
+  "category": "photographers",
+  "keywords": [
+    "property website for photographers",
+    "single property website delivery",
+    "real estate photographer website add-on",
+    "deliver listing website with photos",
+    "photographer client deliverables"
+  ],
+  "tldr": "Deliver a published property website with every shoot by publishing the gallery, the video and the agent's details to one page, then sending the agent two links. It costs you a few minutes per listing and gives the agent something they would otherwise pay a monthly site tool for.",
+  "html": "<p>A property website can go out with every shoot you deliver. Publish the gallery, the listing video and the agent's contact details to one page, then send the agent a branded link for their marketing and an unbranded link for the MLS. It takes a few minutes per listing once the photos are in, and it replaces a product the agent would otherwise buy from a monthly site tool at typical U.S. rates as of August 2026 of $9–150 per month.</p><p>Most photographers deliver a download link to a folder. The agent then has to build or buy somewhere to put those photos. If you hand them the finished page instead, you have moved from supplier to the person who delivers the listing's marketing. That is a different relationship, and it is the one that gets you the repeat call.</p><h2>What the page needs to contain</h2><p>A property page that works for an agent has the same parts every time. The main photo at the top. The details: price, beds, baths, square feet. The gallery in the order you would walk the home. The listing video, playing when the visitor asks for it. A contact card with the agent's name, business and number. An enquiry form that asks the visitor when they want to see the home.</p><p>You do not need to design any of that. The brief for a good page is that nothing on it needs explaining and the contact card is one tap away on a phone. The post on <a href=\"/blog/what-a-single-property-website-should-include\">what a single-property website should include</a> goes through each section from the buyer's side.</p><h2>A worked delivery</h2><p>Say you shoot a four-bed on Thursday for an agent who is launching on the MLS Friday morning. Your normal delivery is the edited set by Thursday evening. With a property page in the package, the sequence looks like this:</p><ol><li>Start a listing in Rendprop and add the landscape photos.</li><li>Run any AI edits the agent asked for in the photo studio, compare each one against the original, and choose the versions to use.</li><li>Create the landscape video at the video step and review it.</li><li>At the website step, type in the price, beds, baths and square feet the agent gave you, and set the agent's contact details so the page presents them, not you.</li><li>Publish, open the Share sheet, and send the agent the branded link and the unbranded link.</li></ol><p>The agent pastes the unbranded link into the MLS virtual-tour field Friday morning and puts the branded link in the listing email and their social bio. You have not sent a single file. The <a href=\"/f/estate-demo\">demo listing</a> shows the page they receive.</p><h2>Whose details go on the page</h2><p>Yours do not, unless the agent asks for it. A photographer can present a client's contact details on a listing, so the page carries the agent's name and number and enquiries are meant for them. For the agent to receive those enquiries, their email needs to be verified. Set that up on the first listing with a new client, because it is the step people forget until a buyer has already filled in the form. The <a href=\"/blog/presenting-the-agents-contact-details-on-a-listing-you-shot\">contact details post</a> walks through it.</p><h2>Why two links instead of one</h2><p>Every published listing gets a branded page at rendprop.com/f/ and an unbranded page at rendprop.com/u/. The unbranded page has no name, no contact details and no Rendprop branding, and it is made for the MLS virtual-tour field; check your MLS's current rules on what that field may contain. The branded page has the contact card and the form, which is what the agent wants everywhere else. Sending both saves the agent asking you for a second version on launch morning. The <a href=\"/features#two-links\">two links page</a> explains the split.</p><h2>Where this goes wrong</h2><ul><li><strong>Publishing before the details are in.</strong> Sections appear when they are filled in and hide when they are empty, so a page published without a price looks unfinished rather than broken. Get the details from the agent at booking, not after the shoot.</li><li><strong>Forgetting the main photo.</strong> The main photo is the first thing a buyer sees. Pick it deliberately. It is usually the front exterior or the strongest living space.</li><li><strong>Sending an AI-edited photo without checking it.</strong> AI edits can change or invent details. Compare against the original before the page goes live. Virtually staged photos carry a label; other edits carry an AI-alteration disclosure.</li><li><strong>Leaving the page up as active after the sale.</strong> Mark the listing sold or archived and the page says so. Agents notice when old listings look live.</li></ul><h2>The page as part of the package, not an extra</h2><p>You can price the page as an add-on, but it works harder as the default. When every shoot comes with a page, the agent's expectation of you changes. You are the person who makes the listing ready to share, and your competitor is still sending a zip file. The related post on handing an agent a link covers the handoff in detail.</p><p>Next step: take the last listing you shot, publish it as a page, and send the two links to the agent with a one-line note that this now comes with every shoot.</p>",
+  "faq": [
+    {
+      "q": "Does the agent need the app to use the property website?",
+      "a": "No. Buyers and the agent open the page in a browser. The agent only needs the app if they want to manage the listing themselves or read enquiries in the inbox. You can publish and share from your own account."
+    },
+    {
+      "q": "What if the agent already pays for a single-property website tool?",
+      "a": "Send them the page anyway and let them compare. Typical U.S. rates as of August 2026 put single-property sites at $9–150 per month. If your page covers the gallery, video, details and enquiry form, many agents will drop the extra tool."
+    },
+    {
+      "q": "Can I update the page after the agent reviews it?",
+      "a": "Yes. Change the details or the main photo in the listing and publish it again. The branded and unbranded links belong to the listing, so anything the agent has already pasted into the MLS or an email keeps pointing at it."
+    },
+    {
+      "q": "How do enquiries reach the agent instead of me?",
+      "a": "Set the listing to present the agent's contact details. Enquiry forwarding to the agent needs their email verified, so do that on the first listing you deliver for them."
+    }
+  ],
+  "related": [
+    "handing-an-agent-a-link-instead-of-a-zip-file",
+    "what-a-single-property-website-should-include",
+    "presenting-the-agents-contact-details-on-a-listing-you-shot"
+  ],
+  "published": "2026-10-28"
+}

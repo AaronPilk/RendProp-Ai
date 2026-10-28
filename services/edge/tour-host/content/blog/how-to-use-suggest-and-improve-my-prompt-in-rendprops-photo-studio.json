@@ -1,0 +1,39 @@
+{
+  "slug": "how-to-use-suggest-and-improve-my-prompt-in-rendprops-photo-studio",
+  "title": "Using Suggest and Improve my prompt in Rendprop's photo studio",
+  "description": "Suggest proposes edits for a photo; Improve my prompt sharpens a custom edit's wording. Use the first when unsure, the second when you know what you want.",
+  "category": "howto",
+  "keywords": [
+    "rendprop suggest edits",
+    "improve my prompt rendprop",
+    "custom prompt listing photo",
+    "ai photo edit prompt real estate",
+    "rendprop photo studio"
+  ],
+  "tldr": "Suggest proposes edits for a photo when you are not sure what it needs. Improve my prompt takes a custom prompt you have written and sharpens the wording so the edit does what you meant. Use Suggest to find the problem, write a custom prompt to name the fix, and use Improve my prompt to make the instruction precise before you run it.",
+  "html": "<p>Suggest proposes edits for the photo you are looking at; use it when you are not sure what the photo needs. Improve my prompt sharpens the wording of a custom prompt you have already written; use it when you know what you want and want the instruction to be precise. Both live in the photo studio, both produce separate versions with a disclosure, and neither replaces the comparison against the original that comes after.</p><h2>Suggest: a second opinion on what to fix</h2><p>You open a photo and it looks a bit off, but you cannot say why. Suggest looks at that photo and proposes edits. For a grey-sky front exterior it may propose blue sky; for a lounge with a pile of post on the side table it may propose tidy the room; for an empty bedroom it may propose add furniture. You can take a suggestion, ignore it, or take it as a hint and write something narrower yourself.</p><p>Treat it as a scout, not a boss. If Suggest proposes staging a room you intend to show empty, that is a proposal you decline. The value is in speed: for a set of 20 photos, Suggest gets you from \"something is wrong with half of these\" to a shortlist in a couple of minutes.</p><h2>Improve my prompt: turning a sentence into an instruction</h2><p>A custom prompt lets you ask for an edit the named edits do not cover. The catch with any custom prompt is that loose wording gets loose results. \"Make the kitchen nicer\" could mean anything, and the edit will decide for you. Improve my prompt takes what you typed and sharpens it: what to change, what to leave alone, where the edit stops.</p><p>Write the plain version first, in your own words. Run Improve my prompt. Read the improved version before you run the edit; if it added something you did not ask for, take it out. Then run it. The <a href=\"/blog/writing-a-custom-edit-prompt-for-a-property-photo\">custom prompt post</a> has more on wording.</p><h2>A sequence that works for a tricky photo</h2><ol><li>Open the photo in the photo studio.</li><li>Run Suggest. Read the proposals.</li><li>If a preset (blue sky, twilight, green lawn, tidy the room, add furniture) fits, run it and skip to step 6.</li><li>If not, write a custom prompt that names the thing to change and the things to keep. Example: \"Remove the garden hose and the two bins from the driveway. Keep the garage door, the path and the flower bed exactly as they are.\"</li><li>Run Improve my prompt. Check the sharpened wording still says only what you want. Run the edit.</li><li>Compare the result with the original. Count fixtures, check edges, check the view.</li><li>Keep the version that is true, or try again with a tighter prompt. Each attempt is a separate version; the original stays in photo history.</li></ol><h3>What to check before you run the edit</h3><p>The prompt names what to remove or change. The prompt names what must stay. The prompt does not ask for anything a buyer could reasonably treat as a feature of the home: no new windows, no bigger room, no view that is not there. If the improved wording drifted into any of those, edit it back.</p><h2>A worked example: the back yard with a trampoline</h2><p>A 3-bed in a cul-de-sac, back yard photographed with the kids' trampoline and a deflated paddling pool. The seller wants the yard to read as lawn and patio. You run Suggest; it proposes green lawn and tidy the room. The lawn is actually fine, so you skip that. Tidy the room is close but you want control over what goes, so you write: \"Remove the trampoline and the paddling pool. Keep the fence, the shed, the patio and the lawn as they are.\"</p><p>Improve my prompt sharpens it so the instruction is unambiguous about the fence line and the shed. You run it, compare with the original, and check the fence has the same number of panels and the shed door is still where it was. It is. You keep the version. The seller gets a yard photo that shows the yard, not the toys, and the version carries its AI-alteration disclosure so anyone looking knows it was altered. Check your own MLS rules before posting altered images.</p><h2>Where these two tools go wrong</h2><ul><li><strong>Taking every suggestion.</strong> Suggest proposes; you decide. A set where every photo got every proposed edit looks over-processed and takes longer to review.</li><li><strong>Writing the prompt as a wish.</strong> \"Make it look expensive\" is a wish. \"Remove the three magnets from the fridge door\" is an instruction.</li><li><strong>Skipping the read-through after Improve my prompt.</strong> Sharpened wording is still wording you are responsible for. Read it.</li><li><strong>Using a custom prompt to add a feature.</strong> A deck that is not there, a view that is not there. That is not an edit, it is a misrepresentation, label or no label.</li><li><strong>Not comparing afterwards.</strong> Suggest and Improve my prompt make the edit better aimed. They do not make the comparison optional.</li></ul><h2>How this sits inside the photo studio</h2><p>Suggest, Improve my prompt and custom prompts are all part of the <a href=\"/features#photo-studio\">photo studio</a>, alongside the preset edits. Every result is a separate version with a disclosure; staging is labelled \"Virtually staged\". You compare each with the original and choose which saved versions to use. If you want to see how the review goes once the edits exist, the <a href=\"/blog/how-to-review-ai-edits-in-rendprop-and-compare-them-with-the-original\">review post</a> covers it.</p><p>Next step: open one photo you have been unsure about, run Suggest, and then write one custom prompt that names exactly what should go and what must stay. Run Improve my prompt on it before you commit.</p>",
+  "faq": [
+    {
+      "q": "What is the difference between Suggest and Improve my prompt?",
+      "a": "Suggest proposes edits for a photo when you do not know what it needs. Improve my prompt sharpens the wording of a custom prompt you have already written. One finds the problem, the other makes your instruction precise."
+    },
+    {
+      "q": "Do I have to accept what Suggest proposes?",
+      "a": "No. Suggestions are proposals. Run the ones that fit, ignore the rest, or use one as a hint and write a narrower custom prompt instead."
+    },
+    {
+      "q": "Does Improve my prompt change what the edit will do?",
+      "a": "It changes the wording of your instruction so the edit is better aimed. Read the improved version before you run it; if it added anything you did not ask for, remove it."
+    },
+    {
+      "q": "Are edits from a custom prompt labelled?",
+      "a": "Yes. Every AI edit is a separate version with a disclosure. Staging is labelled Virtually staged and other edits carry an AI-alteration disclosure. The original stays in photo history."
+    }
+  ],
+  "related": [
+    "writing-a-custom-edit-prompt-for-a-property-photo",
+    "custom-ai-prompts-guardrails-that-keep-edits-inside-the-room",
+    "how-to-review-ai-edits-in-rendprop-and-compare-them-with-the-original"
+  ],
+  "published": "2026-10-28"
+}

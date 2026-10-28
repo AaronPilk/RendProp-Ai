@@ -1,0 +1,40 @@
+{
+  "slug": "blue-sky-replacement-for-listing-photos-a-practical-guide",
+  "title": "Blue sky replacement for listing photos: a practical guide",
+  "description": "Swap a flat grey sky when the house itself is well lit, match the sun direction and the window reflections, and skip it when the frame says rain.",
+  "category": "photos",
+  "keywords": [
+    "sky replacement real estate photo",
+    "blue sky edit listing photo",
+    "replace grey sky listing",
+    "sky swap real estate",
+    "overcast exterior photo fix"
+  ],
+  "tldr": "Replace a flat grey sky when the day was overcast and the house itself is well lit. Leave it alone when the frame says rain, when the windows reflect the real sky, or when the shadows do not match the sun you are about to add. Check sun direction, reflections, edges and cloud scale, then disclose it.",
+  "html": "<p>Replace a flat grey sky when the day was overcast and the house itself is well lit. Leave the sky alone when the light on the house says rain, when the windows reflect the real sky, or when the shadows on the ground do not match the sun you are about to add. Done carefully, it is the least controversial edit in real estate. Done carelessly, it is the one that makes the whole set look rendered.</p><h2>What the edit is actually for</h2><p>An overcast exterior has two problems: the sky is a white block, and the house under it is flat and cool. A sky replacement fixes the first. It does not fix the second, and this is where most bad edits start. If the house is dull and the sky is bright blue with cumulus clouds, the eye reads the mismatch even without knowing why.</p><p>So the test before you run it is: does the house look like it was shot on a decent day, with a sky that happened to be dull? If yes, swap the sky. If the whole frame looks like a wet afternoon, the sky is not the problem.</p><h2>Four checks that keep it honest</h2><ol><li><strong>Sun direction.</strong> Look at the shadow under the eaves or beside the garage. If the shadow falls left, the new sky's brightest area should sit on the right. A bright patch on the wrong side is the giveaway.</li><li><strong>Window reflections.</strong> Large front windows reflect the sky. A deep blue sky above and grey reflections in the glass is a frame that has been edited and not finished.</li><li><strong>Edge quality.</strong> Zoom on tree branches, roof ridges and a chimney. A sky swap that chews the edges of fine detail is visible at thumbnail size on a phone.</li><li><strong>Cloud scale.</strong> Towering clouds behind a single-storey ranch look like a backdrop. Small, high, thin clouds sit behind most houses without drawing attention.</li></ol><h2>A worked example: the overcast Tuesday shoot</h2><p>A split-level in a leafy suburb, shot at 11am under solid cloud. The house is bright enough because the cloud acted as a softbox, so the siding is even and the front door reads clearly. The sky is a white rectangle above the roof.</p><p>The edit replaces the sky with a mid blue, lighter near the horizon, with a few thin clouds. The brightest part of the new sky sits on the side where the faint shadow under the eaves says the sun is. The front windows get a touch more blue so the reflection matches. Branches at the top of the frame hold their edges. The result reads as a nice morning, which is what the house would have looked like on one.</p><p>The same edit on the rear elevation shot in drizzle, with wet decking and dark cloud reflected in a glass door, would fail. The deck says rain. A blue sky above wet decking is a frame a buyer does not trust.</p><h2>When to skip it entirely</h2><ul><li>The exterior has a dramatic real sky that happens to be grey. Storm light can look better than a swapped blue.</li><li>The listing is in a region where buyers know the season. A bright summer sky over leafless trees in January is a tell.</li><li>Every exterior in the set would need it. If five frames need new skies, the set needs a reshoot on a better day, or one strong edit on the main photo and honest frames behind it.</li></ul><h2>Sky edits and disclosure</h2><p>A sky replacement is an alteration. It is milder than staging and most buyers would not object, but it still changes the photo, so it carries an AI-alteration disclosure and your MLS may have a view on where that disclosure sits. Check the rules before posting an altered exterior as the main photo.</p><h2>Blue sky inside Rendprop</h2><p>Blue sky is one of the optional edits in the <a href=\"/features#photo-studio\">photo studio</a>. It runs on a photo, lands as a separate version with an AI-alteration disclosure, and the untouched original stays in the photo history. You compare the two and choose which version the listing uses. If the sun direction comes out wrong, choose the original or write a custom prompt that names the side the light should come from. The <a href=\"/f/estate-demo\">demo listing</a> is a useful reference for how an edited exterior sits as the main photo on a property page.</p><h2>The note that makes this easy</h2><p>At the shoot, write down the time and which side of the house faced the sun, even if you could not see it. When you run the sky edit later, that note tells you which way the light should go, and the edit stops being a guess. For the yard under that sky, <a href=\"/blog/green-lawn-edits-fixing-a-brown-yard-honestly\">green lawn edits</a> covers the matching problem on the ground, and <a href=\"/blog/exterior-photos-for-a-listing-front-angle-and-the-one-buyers-click\">exterior photos for a listing</a> covers getting the frame right so the sky is the only thing that needs fixing.</p>",
+  "faq": [
+    {
+      "q": "Is sky replacement allowed on MLS listing photos?",
+      "a": "Rules vary by board and they change, so check your board's current wording, especially for the main photo. Treat it as an alteration either way and label the edited frame as AI-altered."
+    },
+    {
+      "q": "How do I know which side the sun should be on in the new sky?",
+      "a": "Find a shadow in the original: under the eaves, beside the garage, under a parked car if there is one. The sun is on the opposite side of the shadow. The brightest part of the replacement sky should sit on that side."
+    },
+    {
+      "q": "Why does my sky replacement look fake even though the sky is fine?",
+      "a": "Usually because the house still looks like it was shot on a dull day, or the window reflections still show grey. The sky and the house have to agree. If the house is flat and cool, no sky will fix it, and the frame needs a reshoot."
+    },
+    {
+      "q": "Should I replace the sky in every exterior photo?",
+      "a": "No. One or two, usually the main photo and the rear elevation. If every exterior needs a new sky, the shoot happened on the wrong day. Buyers who see five perfect skies in a row start to doubt the rest of the set."
+    }
+  ],
+  "related": [
+    "green-lawn-edits-fixing-a-brown-yard-honestly",
+    "twilight-photo-edits-when-they-help-a-listing-and-when-they-look-fake",
+    "exterior-photos-for-a-listing-front-angle-and-the-one-buyers-click",
+    "the-difference-between-enhancement-and-alteration-in-listing-photos"
+  ],
+  "published": "2026-10-28"
+}

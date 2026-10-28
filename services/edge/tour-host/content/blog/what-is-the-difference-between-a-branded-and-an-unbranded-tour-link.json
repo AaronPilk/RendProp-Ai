@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-the-difference-between-a-branded-and-an-unbranded-tour-link",
+  "title": "Branded vs unbranded tour link: what is the difference",
+  "description": "A branded link shows the property with your name and contact details. An unbranded link shows the property alone, as an MLS virtual-tour field expects.",
+  "category": "questions",
+  "keywords": [
+    "branded vs unbranded tour link",
+    "unbranded virtual tour link MLS",
+    "what is an unbranded listing link",
+    "branded property website link",
+    "two links for a listing"
+  ],
+  "tldr": "A branded tour link opens the property page with your name, your contact card and your branding, and it is for everything you send out yourself. An unbranded link opens the same property with no agent name, no contact details and no app branding, and it is for the MLS virtual-tour field, where cooperating agents share it with their buyers. Same home, two audiences.",
+  "html": "<p>A branded tour link opens the property page with your name, your contact card and your branding, and it is for everything you send out yourself: texts, emails, social posts, the sign, the flyer. An unbranded link opens the same property with no agent name, no contact details and no app branding, and it is for the MLS virtual-tour field, where other agents will share it with their buyers. Same home, two audiences, two addresses.</p><p>Agents who are new to the split usually ask why anyone would want the version without their name on it. The answer is that the MLS is a cooperative system, and the virtual-tour field is commonly used so a buyer's agent can show the tour to their client without handing that client the listing agent's phone number.</p><h2>What each link is for</h2><h3>The branded link</h3><p>This is your marketing link. It goes in the text message to the buyer who called about the sign, in the email to your database, in the Instagram bio, on the QR code on the flyer and in the listing presentation for your next seller. When a buyer opens it they see the home, the gallery, the video, the details, your contact card and an enquiry form. Enquiries come to you.</p><h3>The unbranded link</h3><p>This is the cooperation link. It goes in the MLS virtual-tour field and nowhere you would normally put your own name. A buyer's agent pastes it into an email to their client; the client sees the home and nothing about who is selling it. The listing agent's details stay where the MLS keeps them, in the listing record the agent can see. What appears in that field and how it is labelled is governed by your MLS, so check your MLS's current rules before you paste anything.</p><h2>A worked example: one listing, both links in use</h2><p>A three-bed on a corner lot goes live on a Tuesday. The agent publishes the property page and gets two links.</p><p>The branded link goes out that morning in a text to twelve buyers who asked about the neighbourhood, in a just-listed email to the database, and in the first Instagram reel's caption. It is also printed as a QR code on the open house flyer for Saturday.</p><p>The unbranded link goes into the MLS virtual-tour field when the listing is entered. By Wednesday afternoon three buyer's agents have forwarded it to clients. Those clients watch the video and scroll the gallery without seeing the listing agent's name; their own agent handles the showing request. Nobody has crossed anyone's client relationship, which is the point of the field.</p><h2>What goes wrong when the links are swapped</h2><ul><li><strong>Branded link in the MLS field.</strong> Depending on your MLS's rules on branding in that field, this can draw a compliance notice. It also irritates the cooperating agents whose clients now have your number.</li><li><strong>Unbranded link in your own marketing.</strong> A buyer who finds the page from your post sees a home with no way to contact anyone. The lead evaporates.</li><li><strong>Branding hidden in the content.</strong> An unbranded page is not unbranded if the main photo has your watermark, the voiceover gives your name, or the description ends with “call Sam on…”. Check the photos, the video and the text, not just the template.</li><li><strong>Two pages that drift apart.</strong> If branded and unbranded are two separately built pages, a price change gets made on one and missed on the other. They should be two addresses for one listing.</li></ul><p>For the MLS side specifically, <a href=\"/blog/unbranded-virtual-tour-links-what-mls-rules-usually-require\">unbranded virtual tour links</a> covers what the field tends to expect, and <a href=\"/blog/putting-a-property-website-link-in-your-mls-listing-the-right-way\">putting the link in your MLS listing</a> walks through the entry.</p><h2>How this works in Rendprop</h2><p>Every listing published from Rendprop gets two links to the same property website. The branded page lives at rendprop.com/f/&lt;slug&gt; and shows your contact card. The unbranded link lives at rendprop.com/u/&lt;slug&gt; and shows the property with no name, no contact details and no Rendprop branding, made for an MLS virtual-tour field. Both come from one listing, so a change to the price, the photos or the video appears on both. You copy either one from the Share sheet. The <a href=\"/features#two-links\">two links</a> section of the features page shows the pair, and the <a href=\"/f/estate-demo\">demo listing</a> is a live branded example.</p><h2>Check your current listing now</h2><p>Open your current listing in the MLS and look at what is in the virtual-tour field. If it is a branded page, your own site or nothing, replace it with an unbranded link today, and keep the branded one for every channel you control.</p>",
+  "faq": [
+    {
+      "q": "Why would I want a link without my name on it?",
+      "a": "Because the MLS virtual-tour field is shared with cooperating agents and their buyers, and the field exists so buyer's agents can share a tour without the listing agent's details attached. Check your MLS's current rules on branding there. Your branded link is for every channel you control yourself."
+    },
+    {
+      "q": "Can I put my branded property page in the MLS?",
+      "a": "Usually not in the virtual-tour field. Rules differ by MLS and change, so check your MLS's current rules on what may appear there. The safe default is the unbranded link in the MLS and the branded link everywhere else."
+    },
+    {
+      "q": "Is an unbranded link a different website?",
+      "a": "It should be the same property page at a second address, with the agent details and branding removed. Two separately built pages drift apart when the price or the photos change; one listing with two links stays consistent."
+    },
+    {
+      "q": "What counts as branding on an unbranded page?",
+      "a": "Anything that identifies the agent or the brokerage: the contact card, a logo, a watermark on a photo, a name in the voiceover, a phone number in the description. Check the content as well as the template before pasting the link into the MLS."
+    }
+  ],
+  "related": [
+    "can-buyers-see-who-the-agent-is-on-an-unbranded-link",
+    "branded-and-unbranded-listing-links-why-you-need-both",
+    "unbranded-virtual-tour-links-what-mls-rules-usually-require",
+    "what-is-an-unbranded-virtual-tour-link"
+  ],
+  "published": "2026-10-28"
+}

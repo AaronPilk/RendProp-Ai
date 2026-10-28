@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-a-property-page-contact-card",
+  "title": "What is a property page contact card",
+  "description": "A property page contact card is the block on a listing page that shows who to contact about the home: name, business and a number a buyer can tap.",
+  "category": "glossary",
+  "keywords": [
+    "property page contact card",
+    "contact card listing page",
+    "agent contact on property website",
+    "tap to call listing page",
+    "who to contact on a property page"
+  ],
+  "tldr": "A property page contact card is the block on a listing page that tells a buyer who to contact about this home: a name, a business and a phone number they can tap to call, sometimes an email. It appears on the branded version of the page and is removed from the unbranded version. It is the part of the page that turns interest into a conversation.",
+  "html": "<p>A property page contact card is the block on a listing page that tells a visitor who to contact about this home: a name, a business and a phone number they can tap to call, sometimes an email. It appears on the branded version of the page and is removed from the unbranded version that goes in the MLS. It is the part of the page that turns a visitor into a conversation.</p><p>Everything else on the page is about the house. The contact card is about what to do next.</p><h2>How the card works</h2><p>The card pulls from the details you set for the listing or the workspace: your name as you want it shown, your business name, the number you want buyers to call. On a phone, the number is a link, so one tap starts a call. The card usually sits after the gallery and the details, where a buyer who has decided they are interested will find it.</p><p>On the unbranded link the card is not rendered at all. Same page, same home, no card, so the MLS virtual tour field gets a clean page. Check your MLS's current rules for what that field allows.</p><h2>Where a contact card does its work</h2><ul><li>Every branded page. A page you share with your name on it needs a way to reach you that does not involve the visitor guessing.</li><li>Open house traffic from the sign's QR code, where the visitor is standing outside the house and wants to call now.</li><li>Photographer-built pages, where the card shows the agent's details rather than the photographer's.</li></ul><h2>What the card is not</h2><p>The contact card is not the enquiry form. The form captures a written message with a date and a way to reply; the card gives a buyer a number to call this minute. They do different jobs and a page should have both. The card is also not your agent bio, your headshot gallery or your brokerage's branding block. It is three or four lines and a tap target.</p><p>The nearest confusable thing is the agent panel on a portal listing, which may show you next to two or three other agents who paid to appear there. Your own page's contact card shows one person, and that person is you.</p><h2>A photographer's page, an agent's phone</h2><p>A photographer shoots a 4-bed for an agent on a Saturday and builds the property page that evening. She sets the listing to present the agent's contact details, not her own, and the card shows the agent's name, brokerage and mobile number. The agent's email is verified so enquiries forward to him.</p><p>Sunday afternoon a couple drives past, scans the sign, and lands on the page. They scroll the gallery, play the video, reach the card and tap the number. The agent's phone rings while he is at another showing; he calls back in twenty minutes and books them for Monday. The photographer did the work, the agent got the call, and nobody had to explain who to contact.</p><h2>How this works in Rendprop</h2><p>Every property website Rendprop publishes includes a contact card and an enquiry form on the branded page. The unbranded link at rendprop.com/u/your-slug shows no name, no contact details and no Rendprop branding. A photographer can present a client's contact details on a listing, and enquiry forwarding to the client works once the client's email is verified. Empty sections stay hidden. See <a href=\"/features#listing-site\">the listing site section</a>, the <a href=\"/f/estate-demo\">live demo listing</a> for a finished card, and <a href=\"/blog/your-contact-card-on-every-listing-page-name-business-number-one-tap\">your contact card on every listing page</a>.</p><h2>Where contact cards go wrong</h2><p>An old number. A business name that does not match the sign. A card that shows the photographer when it should show the agent, or the team lead when it should show the agent who answers the phone. And a card placed above the gallery, so the page leads with the agent instead of the home. Check the number from your own phone, match the name to the yard sign, and keep the card after the house.</p><p>Next step: open your current listing's branded page, scroll to the contact card and tap the number. If it rings the wrong phone, or no phone, fix that before anything else.</p>",
+  "faq": [
+    {
+      "q": "What should a property page contact card include?",
+      "a": "A name, a business and a phone number that can be tapped to call. An email can be added. Keep it short; it is a tap target, not a biography."
+    },
+    {
+      "q": "Does the contact card appear on the unbranded link?",
+      "a": "No. The unbranded page removes the name, contact details and branding so it can go in the MLS virtual tour field. The card appears on the branded page only."
+    },
+    {
+      "q": "Can a photographer show the agent's details on the contact card?",
+      "a": "Yes, on platforms that support it. In Rendprop a photographer can present a client's contact details on a listing, and enquiry forwarding to the client works once the client's email is verified."
+    },
+    {
+      "q": "Where on the page should the contact card sit?",
+      "a": "After the gallery and the details, where a buyer who has decided they are interested will look for it. Leading the page with the card puts the agent before the home, which is the wrong order for a page about a house."
+    }
+  ],
+  "related": [
+    "your-contact-card-on-every-listing-page-name-business-number-one-tap",
+    "presenting-the-agents-contact-details-on-a-listing-you-shot",
+    "what-is-a-branded-listing-page",
+    "what-is-a-listing-enquiry"
+  ],
+  "published": "2026-10-28"
+}

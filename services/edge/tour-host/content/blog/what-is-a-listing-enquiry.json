@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-a-listing-enquiry",
+  "title": "What is a listing enquiry",
+  "description": "A listing enquiry is a message a visitor sends from a property page about that home: who they are, how to reply, and usually when they want to see it.",
+  "category": "glossary",
+  "keywords": [
+    "listing enquiry",
+    "what is a listing enquiry",
+    "property page enquiry form",
+    "listing lead vs enquiry",
+    "real estate enquiry meaning"
+  ],
+  "tldr": "A listing enquiry is a message a visitor sends through a property page's form about that specific home. It carries their name, a way to reply and, on a good form, the date they want to see the place. It is tied to one listing, which is what separates it from a general lead, and it should land somewhere you will see it the same day.",
+  "html": "<p>A listing enquiry is a message a visitor sends through a property page's form about that specific home. It carries their name, a way to reply and, on a well-built form, the date they want to see the place. It is tied to one listing, which is what makes it different from a general lead who filled in a form on your homepage.</p><p>An enquiry is a person who looked at a particular house and raised a hand. The job is to answer that person quickly, about that house.</p><h2>How an enquiry travels</h2><p>A visitor opens the property page from a sign, a text, a reel or the MLS. They scroll the gallery, maybe play the video, then reach the form. They type a name, a phone number or email, perhaps a date and a short note, and submit. The page sends that to wherever the listing's enquiries are routed, usually an inbox inside the app that published the page, sometimes also an email. The enquiry is stored against the listing so you can see all the enquiries for one address together, and all your enquiries across every listing in one place.</p><p>From there it is a reply, a call and, with luck, a showing.</p><h2>When the form earns its keep</h2><ul><li>On every property page, branded or not, because a page with no way to respond is a brochure.</li><li>During open house week, when the form doubles as a way to ask for a time outside the published hours.</li><li>For out-of-town buyers who will not call a number in another time zone but will type a message at eleven at night.</li><li>For photographers presenting a client's details, where the enquiry needs to reach the agent and not the person who built the page.</li></ul><h2>What an enquiry is not</h2><p>An enquiry is not a general lead. A lead from a portal or a homepage form has not necessarily looked at one home; they may be browsing or may want a valuation. An enquiry is about an address. It is also not a showing request through the MLS scheduling system, which comes from another agent on behalf of a client. And it is not a comment on a reel. Comments are public and vague; enquiries are private and specific.</p><p>The nearest confusable thing is a contact card tap. A buyer who taps the number on the page and calls is a caller, not a form submission, and you will not have their details in writing unless you take them down. The form captures what the call does not.</p><h2>A sign scan on Friday, a showing on Saturday</h2><p>A 4-bed on a corner lot goes live on a Thursday with a page link in the just listed email and a QR code on the sign. Friday at 9:40 pm a visitor who scanned the sign on an evening walk fills in the form: name, mobile number, and Saturday afternoon as the date she wants. Saturday at 7:15 am the agent sees it in the inbox, replies by text with two time slots, and books 2 pm.</p><p>On Sunday a second enquiry arrives from a different visitor who came through the email link and asks whether the garage is heated. The agent answers in one line and offers a showing. Both enquiries sit under the same listing, so the agent sees everyone who asked about that address in one place, and nothing was lost in a general inbox next to a newsletter.</p><h2>How this works in Rendprop</h2><p>Every property website Rendprop publishes includes an enquiry form that asks for the date the visitor wants. Enquiries land in the app, per listing and all together, in the inbox. When a photographer presents a client's contact details on a listing, enquiries forward to that client once the client's email is verified. Mark a listing sold or archived and the page says so. See <a href=\"/features#leads\">the leads section</a> and <a href=\"/blog/where-enquiries-appear-in-rendprop-and-how-to-reply\">where enquiries appear in Rendprop and how to reply</a>.</p><h2>Where enquiries get lost</h2><p>They go to an email address nobody checks on weekends. They arrive with no listing attached, so the reply starts with which home were you asking about. The form asks for too much and the visitor abandons it. Or the page stays up after the sale with the form still live, and the enquiry is for a home nobody can buy. Keep the form short, route it somewhere you look every morning, and let the page say sold when it is.</p><p>Next step: fill in the enquiry form on your own property page from your phone, then time how long it takes you to notice it. If the answer is tomorrow, fix the routing before the next listing.</p>",
+  "faq": [
+    {
+      "q": "What is the difference between a listing enquiry and a lead?",
+      "a": "An enquiry is about one specific home, sent from that home's page. A lead is a broader contact, often from a portal or a homepage form, who may be browsing, selling or just curious. Enquiries are easier to answer well because you already know what they want."
+    },
+    {
+      "q": "What fields should a listing enquiry form ask for?",
+      "a": "A name, one way to reply and, ideally, the date the visitor wants to see the home. A short message box helps. Anything more, such as budget or pre-approval status, lowers the number of people who finish the form."
+    },
+    {
+      "q": "Where should listing enquiries land?",
+      "a": "Somewhere you check every day, grouped by listing. An inbox inside the app that published the page keeps them tied to the address, so you can see every enquiry for one home together and all your enquiries in one place."
+    },
+    {
+      "q": "Can an enquiry reach the agent when a photographer built the page?",
+      "a": "Yes, if the platform supports it. In Rendprop a photographer can show a client's contact details on the listing, and once the client's email is verified the enquiries forward to that client."
+    }
+  ],
+  "related": [
+    "where-listing-enquiries-should-land-your-inbox-not-three-other-agents",
+    "follow-up-from-a-listing-enquiry-the-first-reply-and-the-first-call",
+    "where-enquiries-appear-in-rendprop-and-how-to-reply",
+    "contact-forms-on-a-listing-page-the-fields-that-get-real-enquiries"
+  ],
+  "published": "2026-10-28"
+}

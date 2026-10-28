@@ -1,0 +1,40 @@
+{
+  "slug": "permission-before-processing-why-an-app-should-ask-before-sending-photos",
+  "title": "Permission before processing: an app should ask first",
+  "description": "Many AI edits run on outside processors. An app should say so and ask before your listing photos leave it. What to expect and what to ask.",
+  "category": "ai-trust",
+  "keywords": [
+    "app permission before sending photos",
+    "third party AI processing real estate photos",
+    "photo processing consent app",
+    "where do my listing photos go AI",
+    "AI processor permission"
+  ],
+  "tldr": "Most AI photo and video edits run on outside processors, not inside the app on your phone. A trustworthy app tells you that, names the kind of processing, and asks for your permission before the first photo is sent, separately from the general terms you agreed at signup. If you were not asked, you did not agree.",
+  "html": "<p>Most AI photo and video edits do not run inside the app on your phone; they run on outside processors the app sends your photos to. A trustworthy app tells you that in plain words, says what kind of processing it is, and asks for your permission before the first photo leaves, separately from the long terms you tapped through at signup. If you were not asked, you did not agree, and the seller whose living room just went to a server you have never heard of did not either.</p><h2>Why a separate permission step matters</h2><p>Signup terms cover everything, which means they cover nothing in particular. Agreeing to them is not the same as knowing that the photo of a seller's kitchen is about to be sent to a third party to generate a video. A separate permission step at the moment it matters does three things:</p><ul><li>It tells you it is happening, so you can decide per feature rather than per app.</li><li>It gives you something to point to if a seller or broker asks where the photos went.</li><li>It makes the app accountable for naming the processing, rather than burying it under “we may use service providers.”</li></ul><p>Consent you did not notice giving is not consent anyone will respect later.</p><h2>What a good permission step looks like</h2><ol><li><strong>It is optional.</strong> You can use the rest of the app without it. Declining does not break photo editing you have already done.</li><li><strong>It is specific.</strong> It names the kind of processing: photo-to-video generation, for instance. Not “AI features.”</li><li><strong>It comes before the first send.</strong> Not after, not buried in a settings screen you might find later.</li><li><strong>It is separate from signup.</strong> A distinct ask, at the point of use.</li><li><strong>It is revocable.</strong> You can change your mind, and the app tells you how.</li></ol><h2>What to ask any app</h2><p>If the app does not volunteer this, ask support and keep the reply:</p><ul><li>Which features send my photos to outside processors?</li><li>Am I asked before each kind of processing, or once for everything?</li><li>Does the processor keep the photos after processing?</li><li>Does the processor use the photos for training its own models?</li><li>Can I use the app's other features without agreeing to this one?</li></ul><p>The <a href=\"/blog/your-listing-content-and-ai-training-questions-to-ask-any-app\">questions to ask any app</a> post has the wider list, including marketing use and account deletion.</p><h2>A worked example: the seller who asked</h2><p>An agent is at a listing appointment with a seller who works in IT. The seller asks where the photos of his home will go. The agent says: the photos are stored by the app, she owns them, and if she chooses to generate a photo-based video using an optional outside processor, the app asks her for separate permission first and she can decline. The seller asks whether the processor trains on his photos. The agent says she will ask support and send him the answer in writing. She does, and he is satisfied.</p><p>An agent who could not answer the first question would have lost the listing, or at least the seller's confidence in the marketing, over something that took one sentence to explain.</p><h2>Assumptions that leave you unable to answer</h2><ul><li><strong>Assuming the app runs everything locally.</strong> Very little AI editing happens on a phone. Assume outside processing unless told otherwise.</li><li><strong>One blanket consent at signup.</strong> Agreeing to “AI features” in general tells you nothing about which photos go where.</li><li><strong>Not being able to answer the seller.</strong> “I am not sure where the photos go” is a bad sentence in a listing appointment.</li><li><strong>Confusing permission with ownership.</strong> Giving permission to process a photo is not giving away the photo. A good app says both: you own the content, and here is who processes it, with your permission.</li></ul><h2>How this works in Rendprop</h2><p>Rendprop states that you own your photos and videos and that it never uses your content for its own marketing or AI training without written permission. Optional Kie photo-to-video processing asks for separate permission before photos are sent. The optional paid AI Aerial opening also requires separate processor permission, along with eligible paid access, a remaining Aerial allowance and available processing capacity; it starts from a reviewed original front exterior photo, produces generated footage rather than a drone recording, results vary, and you review before use. The <a href=\"/blog/how-rendprop-handles-your-photos-videos-and-ai-processing-permissions\">permissions how-to</a> walks through where these asks appear, and product questions go to the <a href=\"/support\">support page</a>.</p><p>Next step: open the app you use for listing photos and find the permission step for outside processing. If you cannot find one, send support the five questions above today.</p>",
+  "faq": [
+    {
+      "q": "Do AI photo edits happen on my phone or on a server?",
+      "a": "Almost always on a server, often run by a processor other than the app itself. Assume outside processing unless the app says otherwise, and expect the app to ask before sending photos for a given kind of processing."
+    },
+    {
+      "q": "Is agreeing to the app's terms at signup the same as giving permission for processing?",
+      "a": "Not in any meaningful way. Signup terms cover everything in general. A separate, specific permission step at the point of use is what tells you which photos go where, and gives you something to point to if a seller or broker asks."
+    },
+    {
+      "q": "Does giving permission to process a photo mean I give up ownership?",
+      "a": "No. Permission to process and ownership of content are different things. A good app states both plainly: your content stays yours, and here is who processes it, with your permission."
+    },
+    {
+      "q": "What does Rendprop ask permission for?",
+      "a": "Optional Kie photo-to-video processing asks for separate permission before photos are sent. The optional paid AI Aerial opening also requires separate processor permission, plus eligible paid access, a remaining Aerial allowance and available processing capacity. It starts from a reviewed original front exterior photo and produces generated footage, not a drone recording; results vary and you review before use."
+    }
+  ],
+  "related": [
+    "your-listing-content-and-ai-training-questions-to-ask-any-app",
+    "who-owns-an-ai-edited-listing-photo",
+    "how-rendprop-handles-your-photos-videos-and-ai-processing-permissions",
+    "ai-generated-aerial-openings-what-they-are-and-what-they-are-not"
+  ],
+  "published": "2026-10-28"
+}

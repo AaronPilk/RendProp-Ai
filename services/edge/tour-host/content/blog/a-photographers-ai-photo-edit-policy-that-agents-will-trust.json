@@ -1,0 +1,39 @@
+{
+  "slug": "a-photographers-ai-photo-edit-policy-that-agents-will-trust",
+  "title": "A photographer's AI photo edit policy that agents will trust",
+  "description": "A written AI edit policy tells agents what you will change, what you will not, how you label it and what you keep. A one-page version you can adapt today.",
+  "category": "photographers",
+  "keywords": [
+    "AI photo edit policy photographer",
+    "real estate photo editing policy",
+    "AI disclosure policy photography",
+    "what edits are allowed listing photos",
+    "photographer editing standards"
+  ],
+  "tldr": "A trustworthy AI edit policy fits on one page and answers four questions: what you will change, what you will not, how every changed photo is labelled, and what you keep. Write it, send it with your first delivery to each agent, and apply it the same way on every listing.",
+  "html": "<p>An AI photo edit policy agents will trust answers four questions on one page: what you will change, what you will not change, how every changed photo is labelled, and what you keep so the change can be checked. Send it with the first delivery to every new agent. Apply it identically on every listing. The policy is less about rules than about being predictable, because predictable is what an agent needs when a buyer or a broker asks what was done to the photos.</p><p>The photographers who get hurt by AI edits are not the ones who use them. They are the ones who use them inconsistently and cannot say afterwards what they did.</p><h2>Section one: what you will change</h2><p>List the edits you offer and describe each in a sentence a buyer would understand. A working list:</p><ul><li><strong>Sky replacement.</strong> An overcast sky replaced with a clear one. The building, trees and ground are untouched.</li><li><strong>Lawn colour.</strong> A dormant or patchy lawn shown green. The lawn's shape and the hardscape stay as shot.</li><li><strong>Twilight conversion.</strong> A daytime exterior rendered as dusk with interior lights on. The structure is unchanged.</li><li><strong>Decluttering.</strong> Movable personal items removed. Fixtures, fittings and anything that conveys with the home stay.</li><li><strong>Virtual staging.</strong> Furniture added to an empty room. Walls, floors, windows and dimensions are unchanged.</li></ul><p>Keep the list to what you can deliver consistently. An edit you offer once and cannot repeat is a liability.</p><h2>Section two: what you will not change</h2><p>This is the section agents read twice. Be specific:</p><ul><li>No changes to room size, ceiling height, window count or door positions.</li><li>No removal of permanent defects: cracks, stains, damaged flooring, visible damp.</li><li>No removal of fixed features the buyer will see: power lines, a neighbour's wall, a road, a pylon.</li><li>No adding of features the home does not have: a view, a fireplace, a pool.</li><li>No edits to a photo that would change what a buyer concludes about the condition of the home.</li></ul><p>The test you apply: would a buyer who saw the photo and then stood in the room feel misled? If yes, you do not make the edit, whoever asks. The post on <a href=\"/blog/the-difference-between-enhancement-and-alteration-in-listing-photos\">enhancement versus alteration</a> gives more examples on each side of the line.</p><h2>Section three: how edits are labelled</h2><p>Every changed photo carries a disclosure. Staged photos are labelled Virtually staged. Sky, lawn, twilight, decluttering and custom edits carry an AI-alteration disclosure. The label stays on the delivered file and on the property page. You do not supply unlabelled versions of edited photos, and the policy says so, which saves the conversation later. Point agents to their own MLS rules on altered images, which they need to check before posting.</p><h2>Section four: what you keep</h2><p>For every edited photo you keep the untouched original and every version made from it, and you can produce them on request. That one sentence is what makes the rest of the policy enforceable, because it means any question about an edit can be answered with the frames rather than an argument. The <a href=\"/blog/why-a-photographer-should-keep-the-originals-and-the-versions\">originals and versions post</a> explains why this is the clause that protects you.</p><h2>How this maps to Rendprop's photo studio</h2><p>Rendprop's edits are the ones in section one: blue sky, twilight, green lawn, tidy the room, add furniture, and a custom prompt. Every edit is saved as a separate version with its disclosure, the original stays in photo history, and you compare each version against the original before choosing which saved versions to use. Suggest proposes edits for a photo and Improve my prompt sharpens a custom request, which is where section two matters most: a custom prompt should describe a change inside the policy, and you still compare the result against the original because AI can change or invent details. The <a href=\"/features#photo-studio\">photo studio page</a> lists what is available.</p><h2>A worked example of the policy in use</h2><p>An agent asks you to remove the power lines from the front exterior of a 4-bed colonial because the seller hates them. Your policy says fixed features a buyer will see stay. You say no, and you offer what the policy allows: a blue sky, which lifts the photo without hiding the lines. The agent is irritated for a day. Three weeks later a buyer's agent at a showing asks whether the photos were edited. The agent says sky only, and she can prove it. That is what the policy bought her.</p><h2>Mistakes that make a policy worthless</h2><ul><li><strong>Exceptions for good clients.</strong> One unlabelled edit for one agent and the policy is a suggestion.</li><li><strong>Writing it and not sending it.</strong> The policy works because agents have read it before they ask.</li><li><strong>Making it long.</strong> One page. Agents will not read two.</li><li><strong>Not reviewing the output.</strong> A policy describes intent. The comparison against the original is what confirms the edit stayed inside it.</li></ul><p>Next step: write the four sections for your business this week, keep it to one page, and attach it to your next delivery email. The <a href=\"/blog/a-photographers-checklist-before-sending-ai-edits-to-an-agent\">pre-delivery checklist</a> is the per-listing companion to it.</p>",
+  "faq": [
+    {
+      "q": "Should the policy allow custom AI edits?",
+      "a": "Yes, as long as the custom edit stays inside the what-you-will and will-not lists. Describe the requested change in the prompt, compare the result against the original, and discard anything that moved outside the policy."
+    },
+    {
+      "q": "What if an agent asks for an edit the policy forbids?",
+      "a": "Decline and offer the nearest edit the policy allows. A photographer who holds the line once is the photographer the agent trusts when a buyer asks what was done."
+    },
+    {
+      "q": "Do decluttering edits need a label?",
+      "a": "Yes. Removing items changes the photo, and a buyer should know. In Rendprop a tidy-the-room edit carries an AI-alteration disclosure, and staging is labelled Virtually staged."
+    },
+    {
+      "q": "How long should the policy be?",
+      "a": "One page. Four short sections: what you change, what you will not, how it is labelled, what you keep. If it needs a second page, cut edits from the list rather than adding caveats."
+    }
+  ],
+  "related": [
+    "a-photographers-checklist-before-sending-ai-edits-to-an-agent",
+    "a-disclosure-policy-for-a-brokerage-using-ai-edits",
+    "why-every-ai-photo-edit-should-carry-a-disclosure"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "can-i-use-ai-edited-photos-in-the-mls",
+  "title": "Can I use AI-edited photos in the MLS",
+  "description": "Often yes, with a disclosure, but your MLS sets the rules. Check them and ask your broker. The edits that cause trouble are the ones that change the home.",
+  "category": "questions",
+  "keywords": [
+    "AI edited photos MLS rules",
+    "can I use AI photos in MLS listing",
+    "virtual staging MLS disclosure",
+    "AI enhanced listing photos allowed",
+    "MLS photo editing rules"
+  ],
+  "tldr": "Often yes, as long as the edit is disclosed and does not misrepresent the property, but the rules are set by your MLS and your brokerage, and they change. Check your MLS's current rules and ask your broker before you upload. The edits that cause trouble are the ones that alter what the property is: a removed power line, a wider room, a view that is not there.",
+  "html": "<p>Often yes, as long as the edit is disclosed and does not misrepresent the property. The actual rules are set by your MLS and your brokerage, and they change, so check your MLS's current rules and ask your broker before you upload anything altered. The edits that cause trouble are the ones that change what the property is: a removed power line, a room that looks wider than it measures, a view that is not there.</p><p>The question most agents are really asking is which edits are the safe kind. The honest answer has two parts: what the edit does, and whether a buyer is told.</p><h2>Enhancement, staging and alteration are three different things</h2><p>An <strong>enhancement</strong> changes how the photo looks without changing what is in it: exposure, white balance, straightening, a blue sky where the sky was grey on shoot day. The property is the same. These have been part of ordinary listing photography for years, and the sky swap is the one to think about, because weather is temporary but a buyer still sees a sunny home.</p><p><strong>Virtual staging</strong> adds furniture and decor to a room. The room is real, the sofa is not. This is widely accepted when labelled, because a buyer understands that furniture is not part of the sale. The label is the whole point.</p><p>An <strong>alteration</strong> changes the property: removing a utility pole, adding a fence, replacing the lawn with turf that is not there in July, deleting a water stain on the ceiling, widening a hallway. A buyer who turns up and finds the pole has been misled about the property, not about the decor. This is where complaints, disputes and disciplinary conversations start, whatever the MLS rules say on the day.</p><h2>A worked example: a vacant two-bed condo</h2><p>The listing is a vacant two-bed in a 2008 building. The photos are flat and the rooms look small empty. The agent wants three edits: a twilight version of the exterior, virtual staging in the living room and primary bedroom, and the removal of a crack in the balcony concrete.</p><p>The twilight exterior is an enhancement; it changes the time of day, not the building. Fine, with an AI-alteration note. The staging is fine when each staged photo is labelled “Virtually staged” on the photo itself and in the listing. The crack removal is an alteration of a defect. It does not go to the MLS, and it does not go anywhere else either. The agent discloses the crack and gets the seller to repair it before showings.</p><h2>Where edited MLS photos get agents into trouble</h2><ul><li><strong>Staging without the label.</strong> A buyer books a showing, walks into an empty flat and feels tricked. The MLS complaint follows.</li><li><strong>Removing things that are permanent.</strong> Poles, cables, the neighbour's wall, a cell tower, a crack. Each one is a conversation at the showing you do not want.</li><li><strong>Posting the edit and losing the original.</strong> When a buyer or a board asks what the room actually looked like, you need the untouched photo. Keep it with the edit.</li><li><strong>AI changing more than you asked.</strong> A tidy-the-room edit that also removes a radiator or changes the floor pattern has altered the property without your intending it. Compare every edit with its original before upload.</li><li><strong>Assuming last year's rules.</strong> MLS policies on AI imagery change. Check the current version rather than what you remember.</li></ul><h2>A short checklist before an edited photo goes to the MLS</h2><ol><li>Name the edit: enhancement, staging or alteration. If it is an alteration of the property, stop.</li><li>Compare with the original at full size for anything added or removed that you did not ask for.</li><li>Label staging as virtually staged, on the image and in the remarks, in the way your MLS asks.</li><li>Keep the original in the listing file.</li><li>Check your MLS's current rules and your brokerage policy. If either is unclear, ask before you upload.</li></ol><p>The post on <a href=\"/blog/ai-edited-listing-photos-what-to-disclose-and-where\">what to disclose and where</a> covers wording for the remarks field and the property page.</p><h2>How this works in Rendprop</h2><p>In Rendprop's photo studio every AI edit is saved as a separate version with a disclosure. Staged photos get a “Virtually staged” label; every other edit carries an AI-alteration disclosure. The untouched original stays in photo history, and you compare each edit against the original before choosing which versions to use. Because AI can change or invent details, that comparison is part of the workflow rather than an extra step. Rendprop does not decide what your MLS allows; check your own MLS rules before posting altered images. The <a href=\"/features#photo-studio\">photo studio</a> page describes the edits available.</p><h2>Before the next upload</h2><p>Pull up your MLS's current policy on altered and virtually staged images, read it once, and write the three lines that matter into your listing checklist. Then run every edited photo through the five-point list above before it leaves your phone.</p>",
+  "faq": [
+    {
+      "q": "Do I have to disclose a blue sky edit in the MLS?",
+      "a": "That depends on your MLS's current rules, and the safe practice is to disclose any AI alteration in the way the MLS asks. The sky edit changes the weather in the photo rather than the property, but a buyer still sees something the camera did not."
+    },
+    {
+      "q": "Is virtual staging allowed in MLS photos?",
+      "a": "Often, when the photo is clearly labelled as virtually staged and the room shown is real. Rules vary by MLS and change over time, so check the current policy and your brokerage's guidance before uploading."
+    },
+    {
+      "q": "Which AI edits should stay out of a listing entirely?",
+      "a": "Any edit that changes the property itself: removing a utility pole, a crack or a stain, adding a fence or a view, or changing the apparent size of a room. Those misrepresent what a buyer will find at the showing."
+    },
+    {
+      "q": "What if the AI changed something I did not ask it to?",
+      "a": "Discard that version and use the original or re-run the edit. AI edits can add or remove details beyond the request, which is why you compare every edit with its original at full size before publishing."
+    }
+  ],
+  "related": [
+    "is-virtual-staging-allowed-in-listing-photos",
+    "ai-edited-listing-photos-what-to-disclose-and-where",
+    "what-should-i-check-before-publishing-an-ai-edited-photo",
+    "the-difference-between-enhancement-and-alteration-in-listing-photos"
+  ],
+  "published": "2026-10-28"
+}

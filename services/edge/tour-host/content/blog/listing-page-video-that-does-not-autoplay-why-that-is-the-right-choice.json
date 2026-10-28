@@ -1,0 +1,40 @@
+{
+  "slug": "listing-page-video-that-does-not-autoplay-why-that-is-the-right-choice",
+  "title": "Listing page video that does not autoplay: why that is right",
+  "description": "A listing video that waits for a tap respects where the buyer is, saves their data and plays with sound when they want it. Autoplay gets pages closed.",
+  "category": "website",
+  "keywords": [
+    "autoplay video property website",
+    "should listing video autoplay",
+    "listing page video play on click",
+    "autoplay real estate video",
+    "video on property page"
+  ],
+  "tldr": "A listing video should play when the buyer taps it, not on its own. Autoplay starts sound in public, burns cellular data before the buyer has seen a photo, competes with the gallery for attention, and tends to play muted anyway, which means the voiceover you wrote is never heard. A tap-to-play video is watched by the buyers who want it, with sound, from the start.",
+  "html": "<p>A listing video should play when the buyer taps it, and not before. Autoplay starts sound in a waiting room, loads a video over cellular before the buyer has seen a single photo, fights the gallery for attention, and on many phones plays muted anyway, so the voiceover you wrote is never heard. A video that waits for a tap is watched by the people who want it, from the beginning, with the sound on.</p><p>Autoplay feels like it increases views. What it increases is views of the first two seconds by people who did not choose to watch, followed by a closed tab.</p><h2>What autoplay actually does on a phone</h2><p>Phones often refuse to autoplay video with sound, so the video starts silent. The buyer sees motion in a box and does not know it has audio. They either scroll past it, thinking it is a looping animation, or they tap it, which restarts it or unmutes it mid-sentence. Either way the voiceover's opening line, the one that names the home and sets it up, is lost.</p><p>Where autoplay with sound does work, it is worse. The buyer opened the link on a bus, in an office, in bed next to someone asleep. Music starts. They close the page before finding the mute button. They do not come back.</p><p>And in both cases, the page spent the buyer's bandwidth on the video first. The gallery, which the buyer actually wanted, loads slower.</p><h2>What tap-to-play does instead</h2><p>The buyer scrolls the gallery at their own pace. When they reach the video, there is a still frame and a play button. They decide. Most of the ones who tap will put the sound on, or already have headphones in, because they are expecting a video. The voiceover plays from its first word. The captions are there for the ones who stay muted.</p><p>Fewer people press play than would have had the video forced on them. The ones who do are the ones who wanted to see the home move, and they watch longer.</p><h2>A worked example: the Tuesday open house follow-up</h2><p>Twelve people came through a Tuesday evening open house for a 3-bed on a corner lot. You text each of them the page the next morning. Four open it in the car. Two open it at work. Three open it that evening at home. Three never open it.</p><p>With autoplay: the four in the car get silent motion and scroll past it. The two at work get music and close the page. The three at home watch, but muted, and tap for sound halfway through.</p><p>With tap-to-play: the four in the car swipe the gallery and save the video for later. The two at work swipe the gallery, nothing embarrasses them, and one taps the video with headphones in. The three at home tap play, hear the voiceover from the top, and one fills in the form for Saturday.</p><p>Same video, same nine people. The second version gets watched.</p><h2>Where autoplay still sneaks in</h2><ul><li><strong>Embedded players from social platforms.</strong> Some default to autoplay and show unrelated suggestions when the video ends. Host the video on the page itself or use a player that does neither.</li><li><strong>Background hero video.</strong> A silent looping clip behind the headline. It loads before anything else and tells the buyer nothing they could not get from the main photo.</li><li><strong>Autoplay on scroll.</strong> The video starts when it enters the screen. Less intrusive than on load, still a surprise, still muted, still skips the first line.</li><li><strong>Site builder defaults.</strong> Many templates ship with autoplay on. Check the setting on every page you publish.</li></ul><h2>Make the still frame earn the tap</h2><p>Since the buyer decides whether to play, the frame they see matters. It should be a strong image from the video, usually the exterior or the best room, not a black frame or a mid-motion blur. If the video has a title, a title card makes a weak thumbnail; a photo makes a strong one. A clear play button in the centre, big enough for a thumb, finishes the job.</p><h2>How this works in Rendprop</h2><p>The property website Rendprop publishes shows the selected listing video with a play control, and it plays on request, never autoplays. The video sits with the gallery, the details, your contact card and the enquiry form on the same page, so a buyer who watches it has the form a scroll away. Rendprop videos carry word-by-word captions, so the buyer who taps play without sound still gets the script. The <a href=\"/features#listing-site\">listing site feature page</a> covers the page, and the <a href=\"/f/estate-demo\">demo listing</a> shows the video in place.</p><h2>If someone insists on autoplay</h2><p>Sometimes a seller or a team lead wants the video to \"just play\". Ask them to open the page on their own phone in a public place. The argument usually ends there. If it does not, a muted autoplay with a visible unmute control is the least bad version, but understand that the opening line of the voiceover is lost for most viewers and the captions have to carry it.</p><p>The next step: open your current listing page on your phone and see whether the video starts on its own. If it does, turn it off and set a good still frame. For how the page should handle on a phone overall, read <a href=\"/blog/a-property-page-that-works-on-a-phone-what-buyers-tap-first\">a property page that works on a phone</a>, and for making the video the centre of the page, see <a href=\"/blog/the-property-page-as-the-home-of-the-listing-video\">the property page as the home of the listing video</a>.</p>",
+  "faq": [
+    {
+      "q": "Does autoplay get more video views on a listing page?",
+      "a": "It gets more two-second views by people who did not choose to watch, and more closed pages. A tap-to-play video is watched by fewer people, but they watch from the start, with sound, and they are the buyers deciding on a showing."
+    },
+    {
+      "q": "Will buyers skip the video if it does not autoplay?",
+      "a": "Some will, and that is fine. They are the buyers who wanted the photos. The ones who want to see the home move will tap play. A good still frame and a clear play button bring more of them in."
+    },
+    {
+      "q": "What about muted autoplay with captions?",
+      "a": "It is the least bad form of autoplay, but it still loads the video before the gallery and skips the first line of the voiceover for most viewers. If you must, keep captions on and a visible unmute control. Tap-to-play with captions is still better."
+    },
+    {
+      "q": "What should the still frame of the video show?",
+      "a": "A strong image from the video itself, usually the exterior or the best room, with a large play button in the centre. Avoid black frames, title cards and blurred mid-motion frames; the still frame is what persuades the buyer to tap."
+    }
+  ],
+  "related": [
+    "a-property-page-that-works-on-a-phone-what-buyers-tap-first",
+    "the-property-page-as-the-home-of-the-listing-video",
+    "word-by-word-captions-why-listing-reels-need-them",
+    "music-on-a-listing-video-yes-no-and-how-loud"
+  ],
+  "published": "2026-10-28"
+}

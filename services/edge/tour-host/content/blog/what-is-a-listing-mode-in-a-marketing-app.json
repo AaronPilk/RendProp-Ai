@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-a-listing-mode-in-a-marketing-app",
+  "title": "What is a listing mode in a marketing app",
+  "description": "A listing mode is an app setting that swaps the fields, words and sample content to match what you are marketing: a home, a venue, a restaurant or a gym.",
+  "category": "glossary",
+  "keywords": [
+    "listing mode marketing app",
+    "property app modes",
+    "real estate mode vs business mode",
+    "venue listing mode",
+    "what is a listing mode"
+  ],
+  "tldr": "A listing mode is a setting in a property marketing app that changes the fields, the words and the sample content to match what you are marketing. Real estate mode asks for price, beds, baths and square feet; a restaurant mode asks for hours, menu and capacity; a gym mode asks about memberships. The page, the video and the enquiry form are built the same way; the mode decides what they say.",
+  "html": "<p>A listing mode is a setting in a property marketing app that changes the fields, the words and the sample content to match what you are marketing. In real estate mode a listing asks for price, beds, baths and square feet; in a restaurant mode it asks for hours, menu and capacity; in a gym mode it asks about memberships. The page, the video and the enquiry form are built the same way; the mode decides what they say.</p><p>It exists because a photographer who shoots homes on Saturday and a wedding barn on Tuesday should not have to type beds: 0 on the barn.</p><h2>How a mode works</h2><p>You choose the mode when you create the listing, or set it for a whole workspace if everything you market is the same kind of place. From that point the app swaps its vocabulary. The details section asks the questions that matter for that kind of property, the sample text reads as that kind of business, and the published page labels things correctly: a venue shows capacity, a restaurant shows hours and a menu, a home shows the price and the beds.</p><p>The media workflow does not change. Photos in, optional edits, a video built from the photos, a page published with a gallery and an enquiry form. A mode is a layer of words and fields on top of that.</p><h2>When to switch modes</h2><ul><li>A photographer who shoots homes and also venues, restaurants or fitness studios, and wants one app for all of them.</li><li>An agent who markets a mixed-use building and needs the retail unit presented as retail.</li><li>A venue owner or gym operator using a listing app for a space that is not for sale at all, to publish a tour page that takes booking or membership enquiries.</li></ul><h2>What a mode is not</h2><p>A mode is not a template or a theme. It does not change the look of the page so much as what the page asks for and says. It is not a separate app or account; the same listings, inbox and links live in one place regardless of mode. And it is not a property type field inside real estate, like condo versus single family; those are details within one mode.</p><p>The nearest confusable thing is a category tag. A tag labels a listing; a mode changes the form. If choosing an option made new fields appear and the sample text change, it was a mode.</p><h2>Three shoots, three modes, one Saturday</h2><p>A photographer has a Saturday with three shoots: a 3-bed bungalow at nine, a yoga studio at noon and a 120-seat event barn at three. In the app she creates three listings. The first in real estate mode: price, beds, baths, square feet. The second in gyms and studios mode: the fields ask about membership and hours, and the sample text reads like a studio page. The third in event venues mode: capacity and hours, with sample text written for a venue.</p><p>Each gets photos, a video and a published page with a gallery and an enquiry form. The studio owner gets enquiries from people asking about a first class; the barn gets a date-and-headcount enquiry from a couple planning a September wedding. Three businesses, one workflow, no fields that made no sense.</p><h2>How this works in Rendprop</h2><p>Rendprop's modes are real estate, which is the primary one, event venues, restaurants and bars, gyms and studios, retail, and other businesses such as offices, studios and workshops. The fields, words and sample content change with the mode. You set the mode in the mode chooser when you create the listing or the workspace. The property website shows the details typed into the app, which for a home means price, beds, baths and square feet, and for a business means hours, menu, capacity or membership. See <a href=\"/features#industries\">the industries section</a> and <a href=\"/blog/how-to-switch-business-modes-in-rendprop\">how to switch business modes in Rendprop</a>.</p><h2>Where mode choices go wrong</h2><p>Picking the wrong mode at creation and filling in fields that do not fit, then publishing a restaurant page that asks for beds. Setting a workspace to one mode and forgetting when a different kind of job comes in. Or ignoring modes altogether and typing a venue's capacity into a square feet field, which looks odd on the page and confuses the enquiry. Choose the mode first, before the photos go in.</p><p>Next step: the next time you create a listing for anything that is not a home, stop at the mode chooser and pick the mode that matches. Then look at which fields appeared.</p>",
+  "faq": [
+    {
+      "q": "What changes when I switch listing mode?",
+      "a": "The fields the listing asks for, the words the app and the page use, and the sample content. A home asks for price and beds; a restaurant asks for hours, menu and capacity. The media workflow, photos to video to page, stays the same."
+    },
+    {
+      "q": "Can one account use several modes?",
+      "a": "Yes. Modes are chosen per listing or per workspace, so a photographer can have a home, a gym and a venue in the same app, each with the right fields. In Rendprop the mode is set in the mode chooser when you create the listing or workspace."
+    },
+    {
+      "q": "Is real estate mode different from the others?",
+      "a": "It is the primary mode and the one most people start with. The others, event venues, restaurants and bars, gyms and studios, retail, and other businesses, use the same photo, video and page workflow with different fields and words."
+    },
+    {
+      "q": "Does a mode change how the page looks?",
+      "a": "It changes what the page asks for and labels, more than its design. A venue page shows capacity where a home page shows beds and baths. The gallery, the video, the contact card and the enquiry form work the same way."
+    }
+  ],
+  "related": [
+    "switching-modes-using-one-app-for-homes-venues-and-businesses",
+    "how-to-switch-business-modes-in-rendprop",
+    "rendprop-for-event-venues-restaurants-and-gyms-what-changes",
+    "can-i-use-one-app-for-homes-and-for-my-gym"
+  ],
+  "published": "2026-10-28"
+}

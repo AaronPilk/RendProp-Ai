@@ -1,0 +1,40 @@
+{
+  "slug": "how-to-publish-a-property-website-in-rendprop",
+  "title": "How to publish a property website in Rendprop",
+  "description": "In the website step, pick the main photo, type the details, select the video and publish. You need a connection and a workspace; empty sections hide.",
+  "category": "howto",
+  "keywords": [
+    "publish property website rendprop",
+    "single property website from iphone",
+    "rendprop website step",
+    "listing page with gallery and video",
+    "property page enquiry form"
+  ],
+  "tldr": "Open the listing, go to the website step, choose the main photo, type the details (price, beds, baths, square feet for a home), select the listing video, and publish. Publishing needs a connection and a connected workspace. The page shows the main photo, details, gallery, video on request, a contact card and an enquiry form; sections you leave empty do not appear. Then copy the two links from the Share sheet.",
+  "html": "<p>Open the listing, go to the website step, choose the main photo, type the details, select the video you reviewed, and publish. You need a connection and a connected workspace for that last tap; the listing itself can be prepared beforehand.</p><p>The page that goes live shows the main photo, the details, the gallery, the selected listing video (plays on request), a contact card and an enquiry form. Sections you leave empty do not appear, so there is nothing to design and nothing to host.</p><h2>What the website step asks you for</h2><ul><li><strong>The main photo.</strong> The one the page leads with. Usually the front exterior or the single best room. The <a href=\"/blog/which-photo-should-be-the-main-photo-of-a-listing\">main photo post</a> helps you pick.</li><li><strong>The details.</strong> For a home: price, beds, baths, square feet. For a business mode: hours, menu, capacity or membership, depending on the mode chosen when the listing was created.</li><li><strong>The gallery.</strong> The photos and versions you chose to use.</li><li><strong>The video.</strong> The listing video you built and reviewed in the video step.</li><li><strong>The contact card.</strong> Your name, business and number, or a client's details if you are a photographer presenting a listing for an agent.</li></ul><p>The enquiry form is part of the page and asks the visitor for the date they want. You do not build it.</p><h2>Publishing, step by step</h2><ol><li>Open the listing from Home and go to the website step.</li><li>Choose the main photo.</li><li>Type the details. If a detail is not final, leave it empty; the section hides until you fill it in.</li><li>Confirm the gallery uses the versions you reviewed in the photo studio.</li><li>Select the listing video.</li><li>Check the contact card shows the person who should get the call.</li><li>Sign in with Apple if you have not already; you need a connection and a connected workspace to publish.</li><li>Publish.</li><li>Open the Share sheet and copy the branded link and the unbranded link.</li></ol><h3>What to check before you publish</h3><p>Open each section the way a buyer will, on the phone. Main photo: right property, right version. Details: match the MLS to the dollar and the square foot. Gallery: no photo you meant to leave out, no edit you did not compare. Video: the reviewed one, not an earlier build. Contact card: the right number. The <a href=\"/blog/checking-a-property-page-before-you-share-it-a-two-minute-review\">two-minute review</a> is a tighter version of this list for when you are in a hurry.</p><h2>A worked example: publishing from the driveway</h2><p>Wednesday morning, 3-bed in a cul-de-sac, open house Saturday. The agent has the photos reviewed and the landscape video watched. In the website step she picks the blue-sky front exterior as the main photo, types the price, three beds, two baths and the square feet from the listing agreement, selects the video, and checks the contact card has her cell number. She is on the seller's wifi, signed in, workspace connected. She publishes.</p><p>The Share sheet gives her two links. The branded one goes into a text to the seller and into the Saturday post. The unbranded one goes into the MLS virtual-tour field, because it has no name, no contact details and no Rendprop branding, which is what that field is for. By lunch the seller's sister has opened the page, watched the video, and sent an enquiry asking about Saturday at two. It lands in the inbox under this listing.</p><h2>What the published page does on its own</h2><p>It plays the video only when a visitor asks it to. It hides any section you left empty, so a listing without a video simply has no video section. It collects enquiries through the form and sends them to the inbox, per listing and all together. When you later mark the listing sold or archived, the page says so. If you want to see one before you build yours, the <a href=\"/f/estate-demo\">demo listing</a> is live.</p><h2>Publishing mistakes that cost a relaunch</h2><ul><li><strong>Publishing with a placeholder price.</strong> Leave it empty instead; the section hides until you fill it.</li><li><strong>Selecting the wrong video build.</strong> If you made two, select the one you watched through.</li><li><strong>A gallery with an uncompared edit.</strong> Go back to the photo studio and check it against the original. Check your own MLS rules before posting altered images.</li><li><strong>Trying to publish with no signal.</strong> Prepare everything, then publish when you are connected.</li><li><strong>Sharing the branded link to the MLS.</strong> The virtual-tour field wants the unbranded link. Check your own MLS rules.</li></ul><h2>What happens next</h2><p>Enquiries arrive in the inbox. You can open the listing and update details as the sale moves along, and mark it sold when it closes. The <a href=\"/features#listing-site\">listing site section</a> describes the page, and the sharing post linked below covers where each link should go once you have them.</p><p>Next step: open the listing with the video you finished most recently, fill in the website step, and publish it while you have a connection. Then copy both links before you leave the screen.</p>",
+  "faq": [
+    {
+      "q": "What do I need to be able to publish?",
+      "a": "An account via Sign in with Apple, a connection, and a connected workspace. Content can be prepared locally before you sign in; publishing is the step that needs the connection."
+    },
+    {
+      "q": "Do I have to fill in every section?",
+      "a": "No. Sections appear when filled in and hide when empty. A listing without a video has no video section; a listing without a final price has no price until you add one."
+    },
+    {
+      "q": "Does the video autoplay on the page?",
+      "a": "No. The selected listing video plays on request. A visitor taps to watch it."
+    },
+    {
+      "q": "Can I change the page after it is published?",
+      "a": "Mark it sold or archived when the time comes and the page says so. For other changes, open the listing, make them, and check the published page on your phone afterwards; if something does not update the way you expect, the support page is the place to ask."
+    }
+  ],
+  "related": [
+    "what-is-on-a-rendprop-property-page",
+    "how-to-share-a-rendprop-listing-link",
+    "how-to-find-your-unbranded-mls-link-in-rendprop",
+    "checking-a-property-page-before-you-share-it-a-two-minute-review"
+  ],
+  "published": "2026-10-28"
+}

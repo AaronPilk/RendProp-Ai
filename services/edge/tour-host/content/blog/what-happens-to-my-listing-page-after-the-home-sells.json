@@ -1,0 +1,40 @@
+{
+  "slug": "what-happens-to-my-listing-page-after-the-home-sells",
+  "title": "What happens to my listing page after the home sells",
+  "description": "It should stay at the same link, say sold, stop inviting enquiries about a home that is gone, and keep working as proof of your marketing.",
+  "category": "questions",
+  "keywords": [
+    "listing page after sale",
+    "what to do with property website after sold",
+    "mark listing sold property page",
+    "keep listing page live after closing",
+    "sold property page link"
+  ],
+  "tldr": "The page should stay reachable at the same link and say sold, so the QR code on the old flyer and the link in your just-sold post still land somewhere sensible. It should stop inviting enquiries about a home that is no longer available, and it should keep working as evidence of your marketing when the next seller asks what you did for the last one.",
+  "html": "<p>The page should stay reachable at the same link and say sold. That way the QR code on the old flyer, the link in the MLS record and the link in your just-sold post all land on something sensible instead of an error. It should stop inviting enquiries about a home that is no longer available, and it should keep working as evidence of your marketing when the next seller asks what you did for the last one.</p><p>What actually happens depends on the tool. Some pages vanish when the subscription ends. Some keep saying “for sale” for years. Some can be marked sold in a tap. Decide which you want before you print anything with the link on it.</p><h2>The three jobs a sold page still does</h2><p><strong>It catches the stragglers.</strong> Links outlive listings. A buyer saved the page in March and opens it in June. A neighbour scans the QR code on a flyer that was left in a drawer. The portal still points at your virtual tour. Each of those people should see a clear sold notice, not a 404 and not an invitation to book a showing.</p><p><strong>It is your portfolio.</strong> The next listing presentation goes better when you can hand the seller a phone and say “this is what your neighbour's listing looked like online, and here is what it looks like now that it is sold.” A live, finished page is worth more than a slide.</p><p><strong>It closes the loop with the seller.</strong> Sellers like to see the page say sold. It is a small, visible end to the process, and a few will share it themselves.</p><h2>Sold, archived or gone: which to choose</h2><ul><li><strong>Sold.</strong> The page stays live, shows the home, and says sold. Use this for the typical sale. It keeps the links working and the portfolio intact.</li><li><strong>Archived.</strong> The page says the listing is no longer available without presenting it as a sale. Use this for a withdrawn listing, an expired one you expect to relaunch, or a rental that has been let.</li><li><strong>Removed.</strong> The page is taken down. Use this only when the seller asks for it, or where privacy requires it, because every link to it dies at the same moment.</li></ul><p>The post on <a href=\"/blog/marking-a-listing-sold-on-its-property-page\">marking a listing sold on its page</a> covers the wording and the timing.</p><h2>A worked example: the week after closing</h2><p>A four-bed on a cul-de-sac closes on a Friday. Saturday morning the agent marks the page sold. The status appears on the page itself, so the eleven people who still have the link from the open house see it the next time they open it.</p><p>Monday the agent posts a just-sold reel built from the same photos, with the branded link in the caption. People who click see a finished listing with a sold notice, which reads as competence rather than as a dead end. Wednesday, at a listing appointment two streets over, the agent opens the sold page on the phone and hands it to the seller. The seller scrolls the gallery, plays the video, sees the sold notice, and asks what the first week looked like. That is the conversation you want.</p><h2>The ways a sold page goes wrong</h2><ol><li><strong>The page keeps saying for sale.</strong> Buyers enquire, you say sorry, the brokerage looks disorganised. Mark it sold the day it closes.</li><li><strong>The page disappears.</strong> The subscription lapses or the listing is deleted, and every link, QR code and MLS record pointing at it breaks. Printed material cannot be recalled.</li><li><strong>The sold price appears when it should not.</strong> Some sellers do not want the sale price on a public page even where it is a matter of record. Ask before the status changes.</li><li><strong>Old enquiries get lost.</strong> The messages that came in during the listing are the warm buyers for your next one in that neighbourhood. Keep them accessible after the sale.</li><li><strong>The sold page is still branded for the wrong person.</strong> If a photographer or a team member published it, confirm the contact card is still right before using it in a presentation.</li></ol><h2>How this works in Rendprop</h2><p>In Rendprop you mark a listing sold or archived and the property page says so, at the same address, which is what keeps printed QR codes and MLS records from pointing at nothing. Enquiries land in the app's inbox, per listing and all together, so the conversations from a listing are in one place when you want them for the next one. The page carries the gallery and the selected video, which is what makes it useful in a listing presentation. See the <a href=\"/features#listing-site\">property website</a> section and the <a href=\"/features#leads\">enquiries</a> section of the features page.</p><h2>Do this with your last three sold pages</h2><p>Open the pages of your last three sold listings right now. If any of them still says for sale, fix it today. If any of them is a dead link, note which flyers, signs and posts still point at it, and make sure the next listing's page is one that stays up and says sold.</p>",
+  "faq": [
+    {
+      "q": "Should I take the property page down after the sale?",
+      "a": "Usually not. Keep it live and marked sold so existing links, QR codes and portal records still land somewhere sensible, and so you can show it to the next seller. Take it down only if the seller asks or privacy requires it."
+    },
+    {
+      "q": "Should the sold price appear on the page?",
+      "a": "Ask the seller first. Even where the sale price becomes public record, some sellers prefer it not to appear on a marketing page. A sold notice without the figure is the safe default."
+    },
+    {
+      "q": "What happens to the enquiries after the home sells?",
+      "a": "They are the warmest buyers for your next listing nearby, so keep them. Reply to anyone who enquired late with a short note that the home has sold and an offer to let them know about similar homes."
+    },
+    {
+      "q": "How long should a sold page stay up?",
+      "a": "As long as it is useful and the seller is comfortable. Many agents keep sold pages live indefinitely as a portfolio. Review them once a year and archive any the seller would rather see gone."
+    }
+  ],
+  "related": [
+    "marking-a-listing-sold-on-its-property-page",
+    "how-to-mark-a-listing-sold-or-archived-in-rendprop",
+    "reusing-listing-media-after-the-sale-testimonials-just-sold-and-case-stu",
+    "expired-listing-new-link-relaunching-a-property-page"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "how-to-use-rendprop-studio-on-the-web-alongside-the-iphone-app",
+  "title": "How to use Rendprop Studio on the web alongside the iPhone app",
+  "description": "Rendprop Studio at studio.rendprop.com gives continuity between iPhone and desktop: capture on the phone at the property, continue at a desk.",
+  "category": "howto",
+  "keywords": [
+    "rendprop studio web",
+    "studio.rendprop.com",
+    "rendprop on desktop",
+    "iphone app and web studio",
+    "continue a listing on a bigger screen"
+  ],
+  "tldr": "Rendprop Studio lives at studio.rendprop.com and exists for continuity between the iPhone app and a desktop. Use the phone where the phone is better (at the property, shooting photos, recording a walkthrough or a voiceover) and open Studio in a browser when you are at a desk and want to continue the same account on a bigger screen. Use the same account in both places.",
+  "html": "<p>Open studio.rendprop.com in a desktop browser and sign in to the same account you use in the iPhone app. Studio exists for continuity between phone and desktop: the listing you started on the phone is the listing you continue at the desk. Use the phone for anything that happens at the property, and Studio for the sit-down parts of the job where a bigger screen and a keyboard are more comfortable.</p><h2>What each one is for</h2><p>The iPhone app is the capture end. It is where you shoot photos, record a walkthrough with the live pacing cues, read a voiceover into the microphone in a quiet closet, and publish from the driveway. The phone is with you at the home; the desktop is not.</p><p>Studio is the desk end. It is where you want to be when you have a stack of listings to go through one after another, a script to type with a real keyboard, or details to copy across from a listing agreement open in the next window. Nothing about the account changes between the two; it is one account seen from two places. The <a href=\"/features\">features page</a> describes the app and Studio together.</p><h2>A working split that holds up</h2><ol><li><strong>At the property, on the phone:</strong> start the listing from Home, choose the mode, add the photos you shot, record the walkthrough if there is one, record the voiceover while the house is quiet.</li><li><strong>Back at the desk, in Studio:</strong> open studio.rendprop.com, sign in to the same account, and continue the same listing: the review and the typing.</li><li><strong>Wherever you have a connection and a connected workspace:</strong> publish, then copy the branded and unbranded links from the Share sheet.</li><li><strong>Back on the phone:</strong> open the published page as a buyer would, because buyers open it on a phone.</li></ol><h3>What to check when you move between them</h3><ul><li>You are signed in to the same account in both places. Sign in with Apple creates the account; two different Apple IDs means two accounts and two separate sets of listings.</li><li>The phone has had a connection since you last worked on it. Content can be prepared locally before signing in, and publishing needs a connection and a connected workspace, so give the phone a signal before you expect to pick the same listing up at the desk.</li><li>You are looking at the right listing. A photographer with four shoots on Saturday has four similar-looking kitchens.</li></ul><h2>A worked example: Saturday phone, Sunday desk</h2><p>A photographer shoots four homes on Saturday. Between shoots, in the car, she starts four listings on the phone, adds the photos to each, and does nothing else. Sunday morning she sits down with coffee, opens studio.rendprop.com, signs in, and continues the four listings in a row with a big screen and a keyboard, working through the sit-down parts of each one: the reviewing, the scripts, the details from each agent's email.</p><p>With everything reviewed and a connection in place, she publishes each listing, copies the two links, and emails each agent their branded link and their unbranded link. Then she picks up the phone, opens each page the way an agent will, and plays one video on the small screen to be sure the captions read. The capture happened where capture happens; the review happened where review is comfortable. The <a href=\"/blog/editing-on-the-phone-between-shoots\">between-shoots post</a> covers the phone half of that day.</p><h2>Where phone-and-desktop workflows go wrong</h2><ul><li><strong>Different accounts.</strong> Use the same account in both places, or you will be looking for listings that live elsewhere.</li><li><strong>Expecting the desk to capture.</strong> Photos, the walkthrough and a recorded voiceover come from the phone. Studio is continuity, not a replacement camera.</li><li><strong>Reviewing a page only on the desktop.</strong> Buyers open property pages on phones. Do the last check on the phone.</li><li><strong>Preparing a listing on the phone with no signal and switching to the desk before the phone has connected.</strong> Give it a signal first.</li><li><strong>Treating Studio as a different product.</strong> It is the same account and the same listings, reached from a browser.</li></ul><h2>When to stay on the phone entirely</h2><p>If you list a handful of homes a year and you are rarely at a desk, the phone is enough. The whole workflow, from starting a listing to publishing and sharing, runs on an iPhone on iOS 16 or later. Studio is there for the day you have a stack of listings or a long script and would rather not type it with thumbs. The <a href=\"/blog/listing-media-on-a-phone-a-workflow-for-agents-without-a-laptop\">phone-only workflow</a> is written for exactly that agent, and the <a href=\"/support\">support page</a> is the place to ask if something does not line up between the two.</p><p>Next step: open studio.rendprop.com on your computer, sign in to the account you use in the app, and open your most recent listing. Carry on from where the phone left off and notice which parts of the job are easier with a keyboard.</p>",
+  "faq": [
+    {
+      "q": "Where do I find Rendprop Studio?",
+      "a": "At studio.rendprop.com in a desktop browser. Sign in to the same account you use in the iPhone app and continue the same listings."
+    },
+    {
+      "q": "Is Studio a separate account or a separate product?",
+      "a": "Neither. It is the same account reached from a desktop, there for continuity between phone and desk. One account, one set of listings."
+    },
+    {
+      "q": "Can I do everything in Studio and skip the app?",
+      "a": "The capture side of the job, shooting photos, recording a walkthrough and recording a voiceover, happens on the iPhone. Studio is for the sit-down parts. Most people use both."
+    },
+    {
+      "q": "What if I started a listing on the phone without a signal?",
+      "a": "Content can be prepared locally. Give the phone a connection before you sit down at Studio so the account is current, then carry on from the desk."
+    }
+  ],
+  "related": [
+    "listing-media-on-a-phone-a-workflow-for-agents-without-a-laptop",
+    "editing-on-the-phone-between-shoots",
+    "sign-in-with-apple-in-rendprop-what-it-does-and-why",
+    "what-you-need-to-run-rendprop"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "event-space-enquiry-forms-capacity-date-and-the-one-question-that-matter",
+  "title": "Event space enquiry forms: capacity, date and the key question",
+  "description": "An event space enquiry form should ask one thing: the date. Put capacity on the page so visitors have checked fit; headcount and budget come in the reply.",
+  "category": "industries",
+  "keywords": [
+    "event space enquiry form",
+    "venue booking form fields",
+    "venue enquiry form date",
+    "event venue contact form",
+    "venue capacity on page"
+  ],
+  "tldr": "The one question an event space enquiry form has to ask is the date. Capacity belongs on the page, not in the form, so the visitor has already checked that the room fits before they write. Headcount, budget and the type of event come naturally in the message or the first reply. A long form loses the planner; a date and a message box gets the conversation started.",
+  "html": "<p>An event space enquiry form needs to ask one thing: the date. Everything else a venue wants to know, headcount, type of event, budget, catering, comes in the message box or the first reply. Capacity does not belong in the form at all; it belongs on the page, stated plainly, so the visitor has already checked that the room fits before they write.</p><p>A form with one required question and a message box gets filled in. A form with twelve fields gets abandoned by the planner who has four other venues open.</p><h2>Why the date is the question</h2><p>Every event enquiry is a date enquiry in disguise. A couple wants a Saturday in September. A company wants the second week of December. A charity wants a Thursday evening in spring. If the date is not free, nothing else matters and both sides want to know that first. If it is free, the venue can quote, and the quote is where the headcount and the budget conversation naturally happens. Asking for the date first respects the visitor's time and the venue's.</p><h2>Capacity goes on the page, not in the form</h2><p>Venues put a headcount field on the form because they want to filter out events that do not fit. The better filter is a clear capacity on the page. 'Seated 160, standing 220' above the form means a planner with 300 guests does not write, and a planner with 140 writes with confidence. A form field asking for headcount makes the planner do the filtering in their head while staring at your form, which is where they give up. State the number; let them decide.</p><h2>Worked example: a loft venue that cut its form to one question</h2><p>A loft venue with capacity for 120 seated or 180 standing had a form with eleven fields: name, email, phone, company, event type, date, alternate date, headcount, budget range, catering preference, and how did you hear about us. It got filled in rarely, and the ones that came through were often incomplete. The manager rebuilt the page: capacity stated at the top as 120 seated or 180 standing, hours showing the earliest access and the latest finish, a photo gallery, a short video of the room empty and set, and a form that asks for the date with a message box. The first week's enquiries were short and complete: 'Saturday 14 June, wedding reception, about 110 guests, is the date free.' The headcount came without being asked, because the planner had just read the capacity and wanted to confirm fit. The reply took two minutes.</p><h2>What belongs on the page around the form</h2><ul><li><strong>Capacity, seated and standing.</strong> Separately, for the layout people actually book.</li><li><strong>Hours.</strong> Earliest vendor access, latest finish, any music cut-off.</li><li><strong>The room empty and set.</strong> So they can picture their event.</li><li><strong>A contact card.</strong> Some planners would rather call. Let them.</li><li><strong>The form: date and message.</strong> Name and a way to reply are implied by any form; the date is the only question that needs asking.</li></ul><h2>What goes in the reply, not the form</h2><p>Headcount, if they did not say. Type of event. Catering, bar, AV. Budget, which is better discussed once the venue has given a starting price than demanded before. Alternate dates, which only matter if the first one is taken. All of this flows in a two-message exchange once the date is confirmed. Putting it in the form moves the whole conversation to a point where the visitor has no reason to invest the effort yet.</p><h2>Form mistakes that lose event bookings</h2><ul><li><strong>Required phone number.</strong> Many planners enquire from a desk during work hours and do not want a call. Let the message box carry it.</li><li><strong>Budget range before a quote.</strong> It reads as a filter, and people under-state it or leave.</li><li><strong>Event type dropdown with twenty options.</strong> Nobody's event is on the list.</li><li><strong>'How did you hear about us.'</strong> You will find out in the conversation.</li><li><strong>Capacity hidden in a PDF.</strong> The planner cannot check fit, so they ask about it in the form, and now the first reply is about whether the room works instead of whether the date is free.</li><li><strong>Enquiries going to a shared mailbox nobody owns.</strong> The form only works if someone sees the message the same day.</li></ul><h2>What the Rendprop form asks</h2><p>The enquiry form on every Rendprop property page asks for the date the visitor wants, which is the one question this post argues for. In the event venues mode the page shows capacity and hours typed in by you, so the visitor has checked fit before they reach the form. Enquiries land in the app's inbox, per listing and all together, where the person who answers bookings can reply the same day. Sections you leave empty stay hidden, so a venue without a menu does not show a menu line. See the <a href=\"/features#leads\">enquiries section</a> for where messages arrive and the <a href=\"/features#industries\">industries section</a> for the venue mode. For what the rest of the venue page should show, see <a href=\"/blog/a-virtual-tour-for-an-event-venue-what-planners-want-to-see\">a virtual tour for an event venue</a>.</p><h2>Cut the form today</h2><p>Count the fields on your current enquiry form. If there are more than two, move capacity and hours onto the page, keep the date and the message, and watch the next week's enquiries arrive shorter, more complete and easier to answer.</p>",
+  "faq": [
+    {
+      "q": "What should an event space enquiry form ask?",
+      "a": "The date, plus a message box. Headcount, event type and budget come in the message or the first reply. Capacity should be stated on the page so the visitor has already checked that the room fits."
+    },
+    {
+      "q": "Should the form ask for headcount?",
+      "a": "No. Put capacity on the page, seated and standing separately, and planners will mention their headcount in the message to confirm fit. A headcount field makes them filter themselves out while staring at your form."
+    },
+    {
+      "q": "Should the form ask for budget?",
+      "a": "No. Budget is better discussed after the venue has given a starting price. Asked up front it reads as a filter and planners under-state it or leave."
+    },
+    {
+      "q": "What does the Rendprop enquiry form ask?",
+      "a": "The date the visitor wants. Capacity and hours sit on the page as typed details, so the visitor has checked fit before reaching the form. Enquiries land in the app inbox per listing and all together, so the person who handles bookings can reply the same day."
+    }
+  ],
+  "related": [
+    "a-virtual-tour-for-an-event-venue-what-planners-want-to-see",
+    "wedding-venue-photos-and-video-the-shots-couples-actually-compare",
+    "contact-forms-on-a-listing-page-the-fields-that-get-real-enquiries",
+    "where-enquiries-appear-in-rendprop-and-how-to-reply"
+  ],
+  "published": "2026-10-28"
+}

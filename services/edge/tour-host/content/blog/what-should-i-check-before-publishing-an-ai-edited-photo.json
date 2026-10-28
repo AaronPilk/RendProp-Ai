@@ -1,0 +1,40 @@
+{
+  "slug": "what-should-i-check-before-publishing-an-ai-edited-photo",
+  "title": "What should I check before publishing an AI-edited photo",
+  "description": "Five things: nothing added or removed beyond the request, the property unchanged, the label present, the original kept, and your MLS's current rules read.",
+  "category": "questions",
+  "keywords": [
+    "check AI edited photo before publishing",
+    "AI listing photo review checklist",
+    "AI photo edit disclosure check",
+    "verify AI edited real estate photo",
+    "before posting AI edited listing photo"
+  ],
+  "tldr": "Five things, in order: that nothing was added or removed beyond what you asked for; that the property itself is unchanged, meaning fixtures, windows, floors, views and proportions; that the disclosure or “Virtually staged” label is on the image; that the untouched original is kept; and that your MLS's current rules allow the edit where you are about to post it. The check takes under a minute per photo once it is a habit.",
+  "html": "<p>Five things, in order: that nothing was added or removed beyond what you asked for; that the property itself is unchanged, meaning fixtures, windows, floors, the view through the glass and the proportions of the room; that the disclosure or “Virtually staged” label is on the image rather than in a note somewhere; that the untouched original is kept where you can find it; and that your MLS's current rules allow this kind of edit where you are about to post it. Once it is a habit, the check takes under a minute per photo.</p><h2>Check one: did it do only what you asked</h2><p>Put the edit and the original side by side at full size, not as thumbnails. Look at the area you asked to change, then look at everything around it. A sky edit should have changed the sky. If the brickwork is brighter, the roof is a different colour or the trees have more leaves, the edit did more than it was told. Decide whether the extra change is acceptable; usually a brighter wall is, a different roof is not.</p><h2>Check two: is the property still the property</h2><p>This is the one that protects you. Scan in a fixed order so you do not skip anything: fixtures (radiators, vents, outlets, switches, detectors, light fittings), windows and doors (count the panes, check the handles), floor (material, direction, pattern), the view (what is beyond the glass), and finally the proportions (does the room look wider or taller). Anything changed here is an alteration of the home rather than of the photo, and a buyer will meet the real version at the showing.</p><h2>Check three: is the label on the image</h2><p>A staged photo should say “Virtually staged” on the photo itself. Other AI edits should carry an AI-alteration disclosure that travels with the file. A note in the listing remarks does not survive a screenshot or a text message; the label on the image does. Check that it is present and legible at phone size.</p><h2>Check four: do you still have the original</h2><p>If a buyer, a broker or a board asks what the room really looked like, you need the untouched photo in seconds. Confirm it exists, that it is the original rather than an earlier edit, and that you know where it is. An edit without its original is a claim you cannot back up.</p><h2>Check five: does your MLS allow it here</h2><p>Rules on altered and staged images differ by MLS and change over time. Before an edited photo goes into the MLS, read the current rule on staging labels, on alterations and on where disclosures go. The same photo may be fine on your property page and need different handling in the MLS feed. When unsure, ask your broker before uploading.</p><h2>A worked example: three edits on a Thursday</h2><p>A four-bed on a corner lot has three AI edits queued before the Friday launch: a blue sky on the front exterior, a green lawn on the back garden, and staging in the empty dining room.</p><p>The sky edit passes checks one and two; the house is unchanged and the sky is the only difference. It gets its disclosure and goes through. The lawn edit fails check two: the model has also removed a drain cover and smoothed a slope in the lawn. The agent discards it, re-runs with a prompt that says to keep the ground shape and all fixtures, and the second version passes. The staging passes checks one and two, gets its “Virtually staged” label, and the agent confirms the original empty dining room is in the file. Check five: the agent reads the MLS's current policy on staged and altered images and follows its instructions on labels and remarks. Done. Three edits, about four minutes, and nothing to explain at the open house.</p><h2>Where the check gets skipped</h2><ul><li><strong>Thumbnails.</strong> Everything passes at thumbnail size. Open each one at full size.</li><li><strong>Checking the first photo and assuming the rest.</strong> The same prompt behaves differently on each image. Check them all.</li><li><strong>Trusting a label you did not see.</strong> Confirm the label is on the image, not just promised by the tool.</li><li><strong>Publishing from a different device than the one you reviewed on.</strong> Make sure the version you approved is the version you are posting.</li><li><strong>Deadline pressure.</strong> The launch is in an hour and the lawn edit looks fine. It is exactly the moment the drain cover disappears.</li></ul><p>The post on <a href=\"/blog/how-to-compare-an-ai-edited-listing-photo-against-the-original\">comparing an edited photo against the original</a> gives the side-by-side method, and <a href=\"/blog/how-to-review-a-batch-of-ai-photo-edits-in-ten-minutes\">reviewing a batch of edits in ten minutes</a> scales it to a whole set.</p><h2>How this works in Rendprop</h2><p>In Rendprop's photo studio each AI edit is a separate version with a disclosure, staging is labelled “Virtually staged”, and the untouched original stays in photo history. You compare every edit against the original and choose which saved versions to use; unchosen versions do not appear on the property website or in the video. AI can change or invent details, which is why the comparison sits in the workflow. What your MLS permits is not Rendprop's call; read your own MLS rules before posting altered images. The <a href=\"/features#photo-studio\">photo studio</a> section of the features page lists the edits.</p><h2>Make the five checks a habit</h2><p>Write the five checks on a sticky note in the order above and put it where you edit photos. Run it on the next three edits without skipping a step, and after that you will not need the note.</p>",
+  "faq": [
+    {
+      "q": "How long should checking an AI-edited photo take?",
+      "a": "Under a minute per photo once the order is a habit. Compare at full size, scan fixtures, windows, floor, view and proportions, confirm the label, confirm the original, and know your MLS rule for that edit type."
+    },
+    {
+      "q": "What is the most common thing that gets missed?",
+      "a": "Small fixtures that vanish during tidy, lawn and staging edits: radiators, vents, outlets, drain covers, smoke detectors. They are easy to overlook at thumbnail size and obvious at the showing."
+    },
+    {
+      "q": "Does the disclosure need to be on the photo itself?",
+      "a": "Treat it as required. A note in the remarks does not travel with a screenshot or a forwarded image; a label on the photo does. Check what your MLS's current rules say about placement and follow them as well."
+    },
+    {
+      "q": "What if an edit fails the check?",
+      "a": "Discard that version and either use the original or re-run the edit with a prompt that names what must stay unchanged. Then check the new version the same way; a tighter prompt lowers the risk without removing it."
+    }
+  ],
+  "related": [
+    "how-to-compare-an-ai-edited-listing-photo-against-the-original",
+    "can-ai-change-my-listing-photos-in-ways-i-did-not-ask-for",
+    "how-to-review-a-batch-of-ai-photo-edits-in-ten-minutes",
+    "can-i-use-ai-edited-photos-in-the-mls"
+  ],
+  "published": "2026-10-28"
+}

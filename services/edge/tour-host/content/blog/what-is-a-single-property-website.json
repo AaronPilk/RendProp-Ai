@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-a-single-property-website",
+  "title": "What is a single-property website",
+  "description": "A single-property website is a web page dedicated to one listing: photos, video, price and details, a contact card and an enquiry form, at its own link.",
+  "category": "glossary",
+  "keywords": [
+    "single property website",
+    "what is a single property website",
+    "property website for one listing",
+    "listing website",
+    "single listing site"
+  ],
+  "tldr": "A single-property website is a web page, or small set of pages, built for one listing and nothing else. It holds the gallery, the video, the price and details, a contact card and an enquiry form, at a link you can put on a sign, in an email or in the MLS. It differs from a brokerage site, which lists everything, and from a portal, which belongs to someone else.",
+  "html": "<p>A single-property website is a web page built for one listing and nothing else. It holds the photos, the video, the price and property details, a contact card and an enquiry form, at a link you can put on a yard sign, in a text or in an email, with an unbranded version of the same page for the MLS virtual tour field. The address is the whole site.</p><p>Agents have built these for luxury listings for years. What changed is that they no longer need a designer, a domain or a monthly tool to exist.</p><h2>What goes on it</h2><p>The core is short. A main photo at the top. The price, beds, baths and square feet. A gallery in a deliberate order. A listing video the visitor can play. A few sentences about the home. A way to reach the agent, usually a contact card with a tap-to-call number, and a form that captures a name, a way to reply and, ideally, when the visitor wants to see the place.</p><p>Everything else is optional. Neighbourhood notes, open house times and a map help when they are current and hurt when they are stale. The best single-property sites are the ones that hide a section rather than show it empty.</p><h2>When to reach for one</h2><ul><li>Every listing you want to send people to with a single link. A page you control beats a portal page that shows three other agents next to your name.</li><li>Open houses and sign calls. A QR code on the sign that opens the page answers most of the drive-by questions before anyone calls.</li><li>Listing presentations. Showing a seller a finished page for a previous home is more persuasive than describing one.</li><li>The MLS virtual tour field, using an unbranded version of the page. Check your MLS's current rules for that field.</li></ul><h2>What it is often mistaken for</h2><p>A single-property website is not a portal listing. On a portal you rent space, the layout is theirs and the page can show buyer's agents who paid for placement. It is also not your brokerage website, which exists to list everything the firm has. And it is not a social post, which disappears from the feed in a day.</p><p>The nearest confusable thing is a listing landing page built in a general web tool. Functionally similar, but you design it, host it, pay for it monthly and rebuild it for the next address. The single-property website as a category assumes the page comes from the listing itself and goes away, or says sold, when the listing does.</p><h2>A listing on a Saturday</h2><p>A photographer shoots a 3-bed cape at nine on a Saturday. By noon the agent has thirty photos. She picks a front exterior as the main photo, orders the gallery exterior first, kitchen second, living room third, and builds a listing video from the same set. She types in the price and facts and publishes.</p><p>The page link goes into the MLS as the unbranded version, onto the sign rider as a QR code, and into Monday morning's email as the branded version. Two weeks later the home goes under contract. The page stays up with the status changed, and the agent screenshots it for her next listing presentation. Total design time: none.</p><h2>What the market charges</h2><p>Standalone single-property website tools run about $9 to $150 per month at typical U.S. rates as of August 2026, usually per site or per active listing, before any time spent building the page. That is the number to compare against whatever produces the page for you as part of the listing workflow.</p><h2>How this works in Rendprop</h2><p>Rendprop publishes a hosted property website from the listing you build in the app. The page shows the selected main photo, the details typed into the app, the gallery, the selected listing video, a contact card and an enquiry form that asks for the date the visitor wants. Sections appear when filled in and hide when empty. There is nothing to design or host, and each published listing gets a branded link and an unbranded link for the MLS. Enquiries land in the app, per listing and all together, and marking a listing sold or archived updates the page. See <a href=\"/features#listing-site\">the listing site section</a>, open the <a href=\"/f/estate-demo\">live demo listing</a>, or read <a href=\"/blog/what-a-single-property-website-should-include\">what a single-property website should include</a>.</p><h2>Where single-property sites go wrong</h2><p>The failure is almost always maintenance. The page says the open house is Sunday and Sunday was three weeks ago. The price changed and the page did not. The home sold and the page still invites enquiries. A single-property website is only better than a portal page if it is as current as the MLS.</p><p>Next step: pick your current listing and write down the one link you want on the sign, in the email and in the MLS. If you do not have that link yet, that is the gap to close.</p>",
+  "faq": [
+    {
+      "q": "Does a single-property website need its own domain?",
+      "a": "No. A memorable address is nice for a luxury listing, but a hosted link works the same on a QR code, in a text or in the MLS. The link gets tapped or scanned far more often than it gets typed."
+    },
+    {
+      "q": "How much does a single-property website cost?",
+      "a": "Standalone tools typically run $9 to $150 per month at typical U.S. rates as of August 2026, often per site or per active listing. Some listing apps publish the page as part of the workflow instead, in which case the cost is whatever that app charges."
+    },
+    {
+      "q": "Can the same single-property website go in the MLS?",
+      "a": "Through an unbranded version of the page, with the agent's name and contact details removed, which is what the MLS virtual tour field is normally used for. Check your MLS's current rules on what the field accepts before you paste any link there."
+    },
+    {
+      "q": "What happens to the site after the home sells?",
+      "a": "The good ones stay up and say sold, which still works for your reputation and your next listing presentation. The bad ones either vanish, breaking every QR code you printed, or keep inviting enquiries for a home nobody can buy."
+    }
+  ],
+  "related": [
+    "what-a-single-property-website-should-include",
+    "single-property-websites-build-buy-or-get-one-with-the-listing",
+    "what-is-a-branded-listing-page",
+    "hosting-a-property-page-without-a-web-designer-or-a-monthly-site-tool"
+  ],
+  "published": "2026-10-28"
+}
