@@ -24,7 +24,8 @@ legacy_branch = rows.index('} else if let e = usage.entitlements {')
 assert package_branch < legacy_branch
 assert 'photoPackageRows(package)' in rows[package_branch:legacy_branch]
 assert 'usageRow(' not in rows[package_branch:legacy_branch]
-assert rows.count('if let package = usage.servingPhotoPackage { photoPackageRows(package) }') == 2
+# Funded, ended, and current trials each keep the verified package visible.
+assert rows.count('if let package = usage.servingPhotoPackage { photoPackageRows(package) }') == 3
 assert 'ForEach(package.rows, id: \\.title)' in block(settings, 'private func photoPackageRows(')
 assert 'usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation' in settings
 # The shared AI budget (ceiling mode) is drawn above the meters in both the
