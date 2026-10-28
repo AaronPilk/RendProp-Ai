@@ -785,7 +785,7 @@ struct PhotoExportSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if working { ProgressView("Preparing listing package…").font(.footnote) }
-                PrimaryButton(title: "Share ZIP", systemImage: "square.and.arrow.up", isDisabled: working, isCompact: true) {
+                PrimaryButton(title: "Share ZIP", systemImage: "square.and.arrow.up", isDisabled: working) {
                     start(saveToPhotos: false)
                 }
                 .accessibilityIdentifier("export.share")
