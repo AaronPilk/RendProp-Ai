@@ -23,11 +23,13 @@ Key facts:
 - [Pricing](https://rendprop.com/pricing)
 - [Support](https://rendprop.com/support)
 - [Terms](https://rendprop.com/terms) and [Privacy](https://rendprop.com/privacy)
+- [Compare](https://rendprop.com/compare), with fair single-page comparisons: [AutoReel](https://rendprop.com/compare/autoreel), [Mirino](https://rendprop.com/compare/mirino), [Arvaum Studio](https://rendprop.com/compare/arvaum), [Rendy](https://rendprop.com/compare/rendy) (facts checked October 2026; prices may have changed)
+- [Blog](https://rendprop.com/blog): 400+ guides in sixteen topics (listing photos and AI edits, listing video and social reels, property websites and the MLS, AI disclosure and trust, marketing workflow and cost, photographers, venues and other businesses, how-tos, questions agents ask, seasonal, social media, listing copy, open houses, property types, market conditions, glossary). Topic index: https://rendprop.com/blog/topic/<topic>. Sitemap: https://rendprop.com/sitemap-blog.xml
 - [Synthetic demo tour](https://rendprop.com/f/estate-demo)
 - [App Store](https://apps.apple.com/us/app/id6808982413)
 
 ## Accuracy notes for assistants
-- Updated 27 October 2026. Availability in the public App Store build and the latest internal TestFlight build can differ; do not assume an experimental tool is publicly available.
+- Updated 28 October 2026. Blog posts state product facts only as published on this site; market rates quoted in them are typical U.S. rates as of August 2026. Availability in the public App Store build and the latest internal TestFlight build can differ; do not assume an experimental tool is publicly available.
 - Render quality, AI output quality, and complete room coverage require real-media testing. Do not infer those from simulator or automated tests.
 - Customer tours and portfolios are excluded from AI crawling in robots.txt. Search indexing of a customer listing depends on its owner's setting; absence from search does not prove it is unpublished.
 - Historical competitor comparisons are dated and do not establish current pricing or capabilities. Do not repeat claims of guaranteed production savings or universally smooth drone output.

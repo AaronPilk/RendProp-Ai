@@ -35,20 +35,104 @@
 {
   "@context": "https://schema.org",
   "@graph": [
-    { "@type": "BreadcrumbList", "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Rendprop", "item": "https://rendprop.com/" },
-      { "@type": "ListItem", "position": 2, "name": "Features", "item": "https://rendprop.com/features" } ] },
-    { "@type": "ItemList", "name": "Rendprop features", "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Drone-style scroll tours", "url": "https://rendprop.com/features#scroll-tours" },
-      { "@type": "ListItem", "position": 2, "name": "AI video enhancement at 60 fps", "url": "https://rendprop.com/features#drone-render" },
-      { "@type": "ListItem", "position": 3, "name": "AI Photo Studio", "url": "https://rendprop.com/features#photo-studio" },
-      { "@type": "ListItem", "position": 4, "name": "Reels with your own voiceover", "url": "https://rendprop.com/features#reels" },
-      { "@type": "ListItem", "position": 5, "name": "Measurements and floor plans (coming soon, not yet available)", "url": "https://rendprop.com/features#floor-plans" },
-      { "@type": "ListItem", "position": 6, "name": "Optional paid AI Aerial opening from a reviewed original front exterior photo, subject to allowance, capacity and processor permission", "url": "https://rendprop.com/features#aerials" },
-      { "@type": "ListItem", "position": 7, "name": "Two links: branded and unbranded for the MLS", "url": "https://rendprop.com/features#two-links" },
-      { "@type": "ListItem", "position": 8, "name": "Enquiries in the app", "url": "https://rendprop.com/features#leads" },
-      { "@type": "ListItem", "position": 9, "name": "Modes for every kind of space", "url": "https://rendprop.com/features#industries" },
-      { "@type": "ListItem", "position": 10, "name": "Hosted listing page per tour", "url": "https://rendprop.com/features#listing-site" } ] }
+    {
+      "@type": "WebPage",
+      "@id": "https://rendprop.com/features#page",
+      "url": "https://rendprop.com/features",
+      "name": "Rendprop Features — Scroll Tours, AI Photo Studio, Reels & Two Links",
+      "description": "Property photos, AI edits, listing videos and websites. An optional paid AI Aerial opening starts from a reviewed original front exterior photo when allowance, capacity and processor permission permit.",
+      "isPartOf": {
+        "@id": "https://rendprop.com/#site"
+      },
+      "inLanguage": "en-US",
+      "breadcrumb": {
+        "@id": "https://rendprop.com/features#crumbs"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Rendprop",
+          "item": "https://rendprop.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Features",
+          "item": "https://rendprop.com/features"
+        }
+      ],
+      "@id": "https://rendprop.com/features#crumbs"
+    },
+    {
+      "@type": "ItemList",
+      "name": "Rendprop features",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Drone-style scroll tours",
+          "url": "https://rendprop.com/features#scroll-tours"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "AI video enhancement at 60 fps",
+          "url": "https://rendprop.com/features#drone-render"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "AI Photo Studio",
+          "url": "https://rendprop.com/features#photo-studio"
+        },
+        {
+          "@type": "ListItem",
+          "position": 4,
+          "name": "Reels with your own voiceover",
+          "url": "https://rendprop.com/features#reels"
+        },
+        {
+          "@type": "ListItem",
+          "position": 5,
+          "name": "Measurements and floor plans (coming soon, not yet available)",
+          "url": "https://rendprop.com/features#floor-plans"
+        },
+        {
+          "@type": "ListItem",
+          "position": 6,
+          "name": "Optional paid AI Aerial opening from a reviewed original front exterior photo, subject to allowance, capacity and processor permission",
+          "url": "https://rendprop.com/features#aerials"
+        },
+        {
+          "@type": "ListItem",
+          "position": 7,
+          "name": "Two links: branded and unbranded for the MLS",
+          "url": "https://rendprop.com/features#two-links"
+        },
+        {
+          "@type": "ListItem",
+          "position": 8,
+          "name": "Enquiries in the app",
+          "url": "https://rendprop.com/features#leads"
+        },
+        {
+          "@type": "ListItem",
+          "position": 9,
+          "name": "Modes for every kind of space",
+          "url": "https://rendprop.com/features#industries"
+        },
+        {
+          "@type": "ListItem",
+          "position": 10,
+          "name": "Hosted listing page per tour",
+          "url": "https://rendprop.com/features#listing-site"
+        }
+      ]
+    }
   ]
 }
 </script>
@@ -74,7 +158,7 @@
         <a href="/pricing">Pricing</a>
         <a href="/compare">Compare</a>
         <a href="/support">Support</a>
-        <a href="/#faq">FAQ</a>
+        <a href="/blog">Blog</a>
       </div>
       <div class="nav-actions">
         <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">◐</button>
@@ -518,6 +602,7 @@
       <a href="/pricing">Pricing</a>
       <a href="/compare">Compare</a>
       <a href="/support">Support</a>
+      <a href="/blog">Blog</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
       <a href="mailto:aaron@pilk.ai">Contact</a>

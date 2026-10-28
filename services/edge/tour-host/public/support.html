@@ -35,30 +35,109 @@
 {
   "@context": "https://schema.org",
   "@graph": [
-    { "@type": "BreadcrumbList", "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Rendprop", "item": "https://rendprop.com/" },
-      { "@type": "ListItem", "position": 2, "name": "Support", "item": "https://rendprop.com/support" } ] },
-    { "@type": "ContactPage",
+    {
+      "@type": "WebPage",
+      "@id": "https://rendprop.com/support#page",
+      "url": "https://rendprop.com/support",
+      "name": "Rendprop Support — Help, Billing, Account Deletion & Contact",
+      "description": "Rendprop support: email a human at aaron@pilk.ai, plus answers on cancelling through Apple, deleting your account, the MLS link, AI disclosure and requirements.",
+      "isPartOf": {
+        "@id": "https://rendprop.com/#site"
+      },
+      "inLanguage": "en-US",
+      "breadcrumb": {
+        "@id": "https://rendprop.com/support#crumbs"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Rendprop",
+          "item": "https://rendprop.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Support",
+          "item": "https://rendprop.com/support"
+        }
+      ],
+      "@id": "https://rendprop.com/support#crumbs"
+    },
+    {
+      "@type": "ContactPage",
       "name": "Rendprop support",
       "url": "https://rendprop.com/support",
-      "mainEntity": { "@type": "Organization", "name": "Rendprop", "url": "https://rendprop.com/",
+      "mainEntity": {
+        "@type": "Organization",
+        "name": "Rendprop",
+        "url": "https://rendprop.com/",
         "email": "aaron@pilk.ai",
-        "contactPoint": { "@type": "ContactPoint", "contactType": "customer support",
-          "email": "aaron@pilk.ai", "availableLanguage": "English", "areaServed": "US" } } },
-    { "@type": "FAQPage", "mainEntity": [
-      { "@type": "Question", "name": "How do I cancel my subscription?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Subscriptions are billed by Apple, so you cancel with Apple: Settings on your device, then your name, then Subscriptions, then Rendprop. The same sheet opens from inside the app under Settings, Plan and usage, Manage subscription. Cancelling stops the next renewal — cancel at least 24 hours before the current period (or the trial) ends to avoid the next charge — and the plan keeps working until the end of the period you have already paid for. Deleting the app does not cancel a subscription. Refunds are handled by Apple at reportaproblem.apple.com — we cannot refund an App Store purchase ourselves." } },
-      { "@type": "Question", "name": "How do I delete my account and everything in it?",
-        "acceptedAnswer": { "@type": "Answer", "text": "In the app: Settings, then Your data, then Delete account. It removes your account, unpublishes your shared tour links, and deletes your listings, tours, media and enquiries, then wipes the local data on your device. Deleting your account does not cancel an App Store subscription — cancel that with Apple as well." } },
-      { "@type": "Question", "name": "Which link do I put in the MLS?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Every tour you publish gives you two links. The branded one carries your card and the contact form. The unbranded one has no name, no contact details, no contact form and no Rendprop branding — that is the one built for an MLS virtual-tour field. Copy it from the Share sheet on the tour. MLS rules differ by market, so check yours before you post." } },
-      { "@type": "Question", "name": "How is AI-generated content disclosed?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Staging is labelled Virtually staged; other photo edits carry an AI-alteration disclosure. The untouched original stays in photo history for comparison. The optional paid AI Aerial opening is generated footage from a reviewed original front exterior photo, not captured drone footage or 3D. Results vary and quality is not guaranteed; review before use. Previously saved or published aerial clips remain accessible with their AI disclosures. The older free-form Aerial generator remains closed. A listing's Compliance section lists every AI asset with its disclosure and exports an audit log. You are responsible for any disclosure rules your MLS or local advertising rules add on top." } },
-      { "@type": "Question", "name": "What do I need to run Rendprop?",
-        "acceptedAnswer": { "@type": "Answer", "text": "An iPhone running iOS 16 or later and an Apple ID. You sign in with Apple to create your account; it owns your listings and carries your workspace to a new iPhone. The Rendprop app shows the features and included usage available with each current plan. Apple shows the price, billing period, and any introductory offer before you confirm a purchase. The optional paid AI Aerial opening requires an eligible allowance, available processing capacity and separate permission for the listed processors. The older free-form generator stays closed. Measurements, 3D floor plans and 3D walkthroughs remain Coming soon and are not included in a plan." } },
-      { "@type": "Question", "name": "A render or upload failed. What now?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Uploads resume on their own, so a dropped signal mid-upload is usually fixed by reopening the app on a better connection. If the same walkthrough fails twice, email aaron@pilk.ai with the listing name and roughly when you tried, and we'll look at that specific job. Current usage rules are shown in the app." } }
-    ] }
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "contactType": "customer support",
+          "email": "aaron@pilk.ai",
+          "availableLanguage": "English",
+          "areaServed": "US"
+        }
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "How do I cancel my subscription?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Subscriptions are billed by Apple, so you cancel with Apple: Settings on your device, then your name, then Subscriptions, then Rendprop. The same sheet opens from inside the app under Settings, Plan and usage, Manage subscription. Cancelling stops the next renewal — cancel at least 24 hours before the current period (or the trial) ends to avoid the next charge — and the plan keeps working until the end of the period you have already paid for. Deleting the app does not cancel a subscription. Refunds are handled by Apple at reportaproblem.apple.com — we cannot refund an App Store purchase ourselves."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I delete my account and everything in it?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "In the app: Settings, then Your data, then Delete account. It removes your account, unpublishes your shared tour links, and deletes your listings, tours, media and enquiries, then wipes the local data on your device. Deleting your account does not cancel an App Store subscription — cancel that with Apple as well."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which link do I put in the MLS?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Every tour you publish gives you two links. The branded one carries your card and the contact form. The unbranded one has no name, no contact details, no contact form and no Rendprop branding — that is the one built for an MLS virtual-tour field. Copy it from the Share sheet on the tour. MLS rules differ by market, so check yours before you post."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How is AI-generated content disclosed?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Staging is labelled Virtually staged; other photo edits carry an AI-alteration disclosure. The untouched original stays in photo history for comparison. The optional paid AI Aerial opening is generated footage from a reviewed original front exterior photo, not captured drone footage or 3D. Results vary and quality is not guaranteed; review before use. Previously saved or published aerial clips remain accessible with their AI disclosures. The older free-form Aerial generator remains closed. A listing's Compliance section lists every AI asset with its disclosure and exports an audit log. You are responsible for any disclosure rules your MLS or local advertising rules add on top."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What do I need to run Rendprop?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "An iPhone running iOS 16 or later and an Apple ID. You sign in with Apple to create your account; it owns your listings and carries your workspace to a new iPhone. The Rendprop app shows the features and included usage available with each current plan. Apple shows the price, billing period, and any introductory offer before you confirm a purchase. The optional paid AI Aerial opening requires an eligible allowance, available processing capacity and separate permission for the listed processors. The older free-form generator stays closed. Measurements, 3D floor plans and 3D walkthroughs remain Coming soon and are not included in a plan."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "A render or upload failed. What now?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Uploads resume on their own, so a dropped signal mid-upload is usually fixed by reopening the app on a better connection. If the same walkthrough fails twice, email aaron@pilk.ai with the listing name and roughly when you tried, and we'll look at that specific job. Current usage rules are shown in the app."
+          }
+        }
+      ]
+    }
   ]
 }
 </script>
@@ -82,7 +161,7 @@
         <a href="/pricing">Pricing</a>
         <a href="/compare">Compare</a>
         <a href="/support" aria-current="page">Support</a>
-        <a href="/#faq">FAQ</a>
+        <a href="/blog">Blog</a>
       </div>
       <div class="nav-actions">
         <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">◐</button>
@@ -244,6 +323,7 @@
       <a href="/pricing">Pricing</a>
       <a href="/compare">Compare</a>
       <a href="/support">Support</a>
+      <a href="/blog">Blog</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
       <a href="mailto:aaron@pilk.ai">Contact</a>

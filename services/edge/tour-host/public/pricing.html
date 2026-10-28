@@ -35,10 +35,40 @@
 {
   "@context": "https://schema.org",
   "@graph": [
-    { "@type": "BreadcrumbList", "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Rendprop", "item": "https://rendprop.com/" },
-      { "@type": "ListItem", "position": 2, "name": "Pricing", "item": "https://rendprop.com/pricing" } ] },
-    { "@type": "SoftwareApplication",
+    {
+      "@type": "WebPage",
+      "@id": "https://rendprop.com/pricing#page",
+      "url": "https://rendprop.com/pricing",
+      "name": "Rendprop Subscription Information",
+      "description": "Rendprop is free to download. Launch plans and included usage are being finalized; Rendprop shows plan features in the app and Apple shows purchase terms before confirmation.",
+      "isPartOf": {
+        "@id": "https://rendprop.com/#site"
+      },
+      "inLanguage": "en-US",
+      "breadcrumb": {
+        "@id": "https://rendprop.com/pricing#crumbs"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Rendprop",
+          "item": "https://rendprop.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Pricing",
+          "item": "https://rendprop.com/pricing"
+        }
+      ],
+      "@id": "https://rendprop.com/pricing#crumbs"
+    },
+    {
+      "@type": "SoftwareApplication",
       "name": "Rendprop",
       "applicationCategory": "BusinessApplication",
       "operatingSystem": "iOS 16.0 or later",
@@ -46,22 +76,65 @@
       "url": "https://rendprop.com/pricing",
       "installUrl": "https://apps.apple.com/us/app/id6808982413",
       "image": "https://rendprop.com/assets/og.jpg",
-      "publisher": { "@type": "Organization", "name": "Rendprop", "url": "https://rendprop.com/" }
+      "publisher": {
+        "@type": "Organization",
+        "name": "Rendprop",
+        "url": "https://rendprop.com/"
+      }
     },
-    { "@type": "FAQPage", "mainEntity": [
-      { "@type": "Question", "name": "Where can I see current feature and usage rules?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Rendprop shows the features, included usage, and availability for current subscription options in the app. These rules are being finalized and are not sold or promised on this website." } },
-      { "@type": "Question", "name": "Is there a free trial?",
-        "acceptedAnswer": { "@type": "Answer", "text": "If eligible for Apple's seven-day introductory offer, you can prepare one listing, add photos, and make up to five AI photo edits during the introductory period. Video generation and the optional AI Aerial opening are not included until paid access begins. The Aerial opening also requires an eligible allowance, available processing capacity and separate processor permission. Apple shows eligibility, renewal price, and billing terms before confirmation. Downloading or signing in does not activate an offer." } },
-      { "@type": "Question", "name": "How do I cancel?",
-        "acceptedAnswer": { "@type": "Answer", "text": "On your device: Settings, then your name, then Subscriptions, then Rendprop. You can also open the same sheet in the app under Settings, Plan and usage, Manage subscription. Cancelling stops the next renewal and the plan keeps working until the end of the period you have already paid for. Deleting the app does not cancel a subscription. Refunds are handled by Apple at reportaproblem.apple.com." } },
-      { "@type": "Question", "name": "What happens to my tours if I stop paying?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Nothing is deleted when a plan ends. For subscriptions started on or after October 6, 2026, published tours stay live for 90 days after the subscription expires; we send notices before hosting ends, and renewing keeps them up. New renders and AI tools stop until you subscribe again. You can download your files from the app at any time." } },
-      { "@type": "Question", "name": "Which currency are the prices in?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Launch pricing is being finalized. Apple shows the current price in your own currency in the app before confirmation, and that is what you are charged." } },
-      { "@type": "Question", "name": "What does a real estate marketing agency cost instead?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Launch pricing is being finalized. Rendprop shows current plan features and included usage in the app. Apple shows purchase terms before confirmation." } }
-    ] }
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Where can I see current feature and usage rules?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Rendprop shows the features, included usage, and availability for current subscription options in the app. These rules are being finalized and are not sold or promised on this website."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is there a free trial?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "If eligible for Apple's seven-day introductory offer, you can prepare one listing, add photos, and make up to five AI photo edits during the introductory period. Video generation and the optional AI Aerial opening are not included until paid access begins. The Aerial opening also requires an eligible allowance, available processing capacity and separate processor permission. Apple shows eligibility, renewal price, and billing terms before confirmation. Downloading or signing in does not activate an offer."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I cancel?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "On your device: Settings, then your name, then Subscriptions, then Rendprop. You can also open the same sheet in the app under Settings, Plan and usage, Manage subscription. Cancelling stops the next renewal and the plan keeps working until the end of the period you have already paid for. Deleting the app does not cancel a subscription. Refunds are handled by Apple at reportaproblem.apple.com."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What happens to my tours if I stop paying?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Nothing is deleted when a plan ends. For subscriptions started on or after October 6, 2026, published tours stay live for 90 days after the subscription expires; we send notices before hosting ends, and renewing keeps them up. New renders and AI tools stop until you subscribe again. You can download your files from the app at any time."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which currency are the prices in?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Launch pricing is being finalized. Apple shows the current price in your own currency in the app before confirmation, and that is what you are charged."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does a real estate marketing agency cost instead?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Launch pricing is being finalized. Rendprop shows current plan features and included usage in the app. Apple shows purchase terms before confirmation."
+          }
+        }
+      ]
+    }
   ]
 }
 </script>
@@ -85,7 +158,7 @@
         <a href="/pricing" aria-current="page">Pricing</a>
         <a href="/compare">Compare</a>
         <a href="/support">Support</a>
-        <a href="/#faq">FAQ</a>
+        <a href="/blog">Blog</a>
       </div>
       <div class="nav-actions">
         <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">◐</button>
@@ -280,6 +353,7 @@
       <a href="/pricing">Pricing</a>
       <a href="/compare">Compare</a>
       <a href="/support">Support</a>
+      <a href="/blog">Blog</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
       <a href="mailto:aaron@pilk.ai">Contact</a>
