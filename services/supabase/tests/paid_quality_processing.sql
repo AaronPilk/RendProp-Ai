@@ -21,7 +21,7 @@ select pg_temp.ok(paid_quality_processing_budget((select org from bf))=0,'policy
 reset role;update app_config set value='{"enabled":true,"profile":"fal-kling3-4k-v1"}'where key='property_video_quality';set local role service_role;
 select pg_temp.ok(paid_quality_processing_budget((select org from bf))=6500,'verified ordinary paid Starter gets bounded65-dollar allowance');
 select pg_temp.ok((org_entitlement((select org from bf))).cogs_ceiling_cents=6500 and(plan_serving_ceiling((select org from bf))->>'ceiling_cents')::numeric=6500,'COGS and atomic serving agree');
-select pg_temp.ok((org_entitlement((select org from bf))).price_cents=4999 and(org_entitlement((select org from bf))).reels_per_month=30 and(org_entitlement((select org from bf))).photo_edits_per_month=100,'Max catalog price and monthly feature quotas');
+select pg_temp.ok((org_entitlement((select org from bf))).price_cents=4900 and(org_entitlement((select org from bf))).reels_per_month=30 and(org_entitlement((select org from bf))).photo_edits_per_month=100,'Max catalog price and monthly feature quotas');
 select pg_temp.ok(plan_serving_ceiling((select org from bf))->>'window'='apple_term'and(plan_serving_ceiling((select org from bf))->>'period_end')::timestamptz=now()+interval'29 days','actual Apple paid service period retained');
 select pg_temp.ok(not org_has_internal_testing_grant((select org from bf))and not org_has_private_internal_testing((select org from bf)),'positive proof has no private sponsorship');
 -- Prior unrelated expense, uncertain liability and quotas are intentionally used.

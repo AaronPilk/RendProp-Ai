@@ -54,7 +54,7 @@ def require_contract(sql):
     assert re.search(r"\('solo',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)", matrix), 'solo alias'
     assert re.search(r"\('legacy_pro',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9900\)", matrix), 'legacy Pro preservation'
     assert re.search(r"\('pro',\s*2,\s*50,\s*15,\s*1,\s*0,\s*1,\s*1200,\s*2999\)", matrix), 'new Pro'
-    assert re.search(r"\('max',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4999\)", matrix), 'Max'
+    assert re.search(r"\('max',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)", matrix), 'Max'
     assert re.search(r"\('ultra',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9999\)", matrix), 'Ultra'
     assert re.search(r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*3,\s*10532,\s*24999\)", matrix), 'Team base seats'
     assert re.search(r"\('trial',\s*0,\s*5,\s*0,\s*0,\s*0,\s*null::integer,\s*500\)", sql), 'single-location trial override'
@@ -151,8 +151,8 @@ class DatabaseInvariantSourceTests(unittest.TestCase):
              "('legacy_pro', 10, 200, 12, 4, 0, 1, 2400, 9900)"),
             (r"\('pro',\s*2,\s*50,\s*15,\s*1,\s*0,\s*1,\s*1200,\s*2999\)",
              "('pro', 2, 50, 6, 1, 0, 1, 1200, 2999)"),
-            (r"\('max',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4999\)",
-             "('max', 4, 100, 6, 2, 0, 1, 1200, 4999)"),
+            (r"\('max',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)",
+             "('max', 4, 100, 6, 2, 0, 1, 1200, 4900)"),
             (r"\('ultra',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9999\)",
              "('ultra', 10, 200, 12, 4, 0, 1, 2400, 9999)"),
             (r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*3,\s*10532,\s*24999\)",

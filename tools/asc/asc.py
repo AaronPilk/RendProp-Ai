@@ -139,7 +139,7 @@ SUBSCRIPTIONS = [
         "productId": "com.rendprop.app.starter.monthly",
         "name": "Max Monthly",
         "period": "ONE_MONTH",
-        "usd": "49.99",
+        "usd": "49.00",
         "groupLevel": 3,
         "displayName": "Max Monthly",
         "description": "120 AI credits monthly; 1 seat.",

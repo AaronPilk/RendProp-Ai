@@ -1,9 +1,9 @@
-# Dormant launch pricing and serving budget — 27 October 2026
+# Dormant launch pricing and serving budget — updated 28 October 2026
 
 The pricing repair began as source-only on `codex/pricing-margin-repair-20261027`.
 No hosted database or active retail flag has changed. The later draft App Store
 Connect consumable setup is recorded below; it is not approved for sale.
-The four monthly customer prices remain Pro $29.99, Max $49.99, Ultra $99.99,
+The four monthly customer prices remain Pro $29.99, Max $49.00, Ultra $99.99,
 and three-seat Team $249.99. Each extra Team seat is $50/month through nine
 seats. The `com.rendprop.app.credits.100` consumable was created in App Store
 Connect on 27 October 2026 (Apple IAP ID `6827716217`) at the exact USA price
@@ -26,7 +26,7 @@ but the entire liability is reserved before the period can be activated.
 | Monthly product | Apple net floor | All-serving cap | Minimum storage, delivery, compute, email, support, retention, uncertainty reserve | Credit supplier face | Noncredit media available at minimum reserve |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Pro, 60 credits | $20.99 | $5.24 | $1.00 | $3.00 | $1.24 |
-| Max, 120 credits | $34.99 | $8.74 | $1.50 | $6.00 | $1.24 |
+| Max, 120 credits | $34.30 | $8.57 | $1.50 | $6.00 | $1.07 |
 | Ultra, 250 credits | $69.99 | $17.49 | $2.50 | $12.50 | $2.49 |
 | Team 3, 600 credits | $174.99 | $43.74 | $5.00 | $30.00 | $8.74 |
 | Team 4, 700 credits | $209.99 | $52.49 | $6.00 | $35.00 | $11.49 |
@@ -46,6 +46,13 @@ period must match the fixed owner price and a USA/USD schedule exactly.
 The minimum media slice must remain at least $1 Pro/Max, $2 Ultra, $5 Team 3,
 plus $1 per added seat. This is a cash ceiling for noncredit video,
 assessments and other supplier work, not an additional customer credit grant.
+At Max $49.00, 120 credits fit the minimum reserve by only seven cents:
+$34.30 conservative net × 25% rounds down to $8.57, less $1.50 of seven-category
+operating reserves and $6.00 of full credit face leaves $1.07 for noncredit
+media. An exact attested Apple net floor below $34.00 or any operating reserve
+above $1.57 would fail the $1.00 media floor. Keep the catalog dormant until
+the actual proceeds schedule and full-use costs are verified; do not silently
+reduce the 120-credit allowance.
 Existing feature counters remain safety limits and do not override the money
 gate. Current plan cards advertise only eligible credit edits and creation.
 

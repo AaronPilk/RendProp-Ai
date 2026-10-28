@@ -43,7 +43,7 @@ select sku,'USA','USD',price,least(price/20,3000),1,
     where collection_ref='synthetic-trial-readiness'),repeat('b',64)
 from (values
   ('com.rendprop.app.pro29.monthly',29990),
-  ('com.rendprop.app.starter.monthly',49990),
+  ('com.rendprop.app.starter.monthly',49000),
   ('com.rendprop.app.pro.monthly',99990),
   ('com.rendprop.app.team.monthly',249990)) products(sku,price);
 set local role service_role;

@@ -12,19 +12,21 @@ Owner-operated release tooling lives here:
 The scripts run on a Mac with Python 3.9+ and `openssl` installed; archives also
 need Xcode and XcodeGen. The Python utility uses the standard library only.
 
-## Current release target and catalog gate (27 October 2026)
+## Current release target and catalog gate (28 October 2026)
 
 `asc.py` targets editable version **1.0.5**. The proposed monthly catalog is
-Pro $29.99 (`pro29.monthly`), Max $49.99 (the existing `starter.monthly`
+Pro $29.99 (`pro29.monthly`), Max $49.00 (the existing `starter.monthly`
 identifier), Ultra $99.99 (the existing `pro.monthly` identifier), and the
 three-seat Team $249.99 (`team.monthly`). Annual identifiers remain mapped for
-restores but withdrawn from sale. Apple's currently approved monthly products
-still charge $49.00, $99.00, and $249.00; `pro29.monthly` is absent. A monthly
-launch price must match exactly. `subscriptions plan` and `subscriptions apply`
-now **refuse before any Apple write** while an existing monthly price differs;
-the separate [exact-price scheduling tool](SUBSCRIPTION-REPRICE.md) plans
-future USA increases while keeping existing subscribers at their current price.
-The broad bridge remains intentionally blocked until those prices are live.
+restores but withdrawn from sale. Max's existing $49.00 price is the intended
+price; Ultra and Team still charge $99.00 and $249.00 to new buyers at the
+28 October readback, with $99.99 and $249.99 scheduled for 30 October.
+`pro29.monthly` is absent. A monthly launch price must match exactly.
+`subscriptions plan` and `subscriptions apply` refuse before any Apple
+write while an existing monthly price differs. The
+[exact-price scheduling tool](SUBSCRIPTION-REPRICE.md) verifies Max read-only
+and handles only Ultra and Team future increases. The broad bridge remains
+blocked until the remaining prices and new Pro are verified.
 
 The 100-credit consumable and six Team extra-seat SKUs are not managed by
 the default `asc.py` run. The Team 4–9-seat subscriptions have an explicit,

@@ -185,7 +185,7 @@ begin
  perform pg_temp.review_ok(not public.reviewer_sandbox_signed_credit(org),
    'signed Sandbox receipt alone has no cash/media or monthly credit grant');
  r:=public.credit_verified_monthly_apply(org,'com.rendprop.app.pro.monthly',
-   'Sandbox','review-original','review-paid-tx',t,z,49990,now(),now(),'paid');
+   'Sandbox','review-original','review-paid-tx',t,z,49000,now(),now(),'paid');
  perform pg_temp.review_ok((r->>'granted')::boolean and
    not public.reviewer_sandbox_signed_credit(org),
    'a signed credit grant without funded media still cannot buy supplier work');

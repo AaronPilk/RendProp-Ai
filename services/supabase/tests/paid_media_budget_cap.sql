@@ -25,7 +25,7 @@ insert into public.memberships(user_id,org_id,role)
 insert into public.apple_subscriptions(original_transaction_id,org_id,user_id,product_id,plan,environment,status,expires_at,auto_renew,last_transaction_id,transaction_purchased_at,transaction_signed_at,app_account_token)
  select original,org,actor,sku,'max','Production','active',end_at,true,tx,start_at,signed_at,actor from paid_media_fixture;
 insert into public.apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_reserve_components,evidence_sha256)
- select sku,'USA','USD',49990,3499,1,start_at-interval '1 day',now()+interval '1 day',
+ select sku,'USA','USD',49000,3430,1,start_at-interval '1 day',now()+interval '1 day',
  '{"storage":30,"delivery":30,"compute":15,"email":5,"support":35,"retention":15,"uncertainty":20}',
  '{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}',repeat('a',64)
  from paid_media_fixture;
@@ -44,7 +44,7 @@ update public.app_config set value=value||jsonb_build_object('enabled',true,'act
 update public.credit_monthly_catalog set active=true where product_id='com.rendprop.app.starter.monthly';
 set local role service_role;
 do $$declare f record;q text;begin select * into f from paid_media_fixture;
- q:=format('select fund_verified_retail_apple_transaction(%L,%L,%L,%L,%L,49990,''USD'',''USA'',null,null,%L,%L,%L,%L)',
+ q:=format('select fund_verified_retail_apple_transaction(%L,%L,%L,%L,%L,49000,''USD'',''USA'',null,null,%L,%L,%L,%L)',
   f.actor,f.org,f.original,f.tx,f.sku,f.start_at,f.end_at,f.signed_at,repeat('b',64));
  perform pg_temp.paid_media_denied(q,'RP402: Paid media limits and account cash are unavailable',
   'unconfigured first paid sale cannot create a budgetless funding receipt');
@@ -77,7 +77,7 @@ insert into public.media_storage_receipts(org_id,bucket,object_key,bytes)
 set local role service_role;
 do $$declare f record;begin select * into f from paid_media_fixture;
  perform pg_temp.paid_media_denied(format(
-  'select fund_verified_retail_apple_transaction(%L,%L,%L,%L,%L,49990,''USD'',''USA'',null,null,%L,%L,%L,%L)',
+  'select fund_verified_retail_apple_transaction(%L,%L,%L,%L,%L,49000,''USD'',''USA'',null,null,%L,%L,%L,%L)',
   f.actor,f.org,f.original,f.tx,f.sku,f.start_at,f.end_at,f.signed_at,repeat('b',64)),
   'RP402: Paid media storage cap is below retained physical bytes',
   'paid sale cannot issue a cap below existing physical retention');
@@ -86,7 +86,7 @@ reset role;
 delete from public.media_storage_receipts where object_key like '%/retained-large.mp4';
 set local role service_role;
 do $$declare f record;r jsonb;cash_before bigint;used_before bigint;begin select * into f from paid_media_fixture;
- r:=fund_verified_retail_apple_transaction(f.actor,f.org,f.original,f.tx,f.sku,49990,'USD','USA',null,null,
+ r:=fund_verified_retail_apple_transaction(f.actor,f.org,f.original,f.tx,f.sku,49000,'USD','USA',null,null,
    f.start_at,f.end_at,f.signed_at,repeat('b',64));
  perform pg_temp.paid_media_ok(r->>'funded'='true'and r->>'media_budget_id' is not null
   and r->>'media_budget_replay'='false','bound signed paid receipt provisions one finite media budget');
@@ -98,7 +98,7 @@ do $$declare f record;r jsonb;cash_before bigint;used_before bigint;begin select
  select allocated_org_cents into cash_before from media_account_reserves where receipt_ref='synthetic-paid-cash';
  perform public.media_delivery_admit(f.org,1024,true);
  select used_bytes into used_before from media_delivery_budgets where org_id=f.org;
- r:=fund_verified_retail_apple_transaction(f.actor,f.org,f.original,f.tx,f.sku,49990,'USD','USA',null,null,
+ r:=fund_verified_retail_apple_transaction(f.actor,f.org,f.original,f.tx,f.sku,49000,'USD','USA',null,null,
    f.start_at,f.end_at,f.signed_at,repeat('b',64));
  perform pg_temp.paid_media_ok(r->>'media_budget_replay'='true' and
   (select count(*)=1 and min(used_bytes)=used_before from media_delivery_budgets where org_id=f.org)

@@ -63,7 +63,7 @@ insert into public.apple_serving_schedules(
   product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,
   service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,
   trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
-select 'com.rendprop.app.starter.monthly','USA','USD',49990,4165,1,
+select 'com.rendprop.app.starter.monthly','USA','USD',49000,4165,1,
   now()-interval '1 day',now()+interval '20 days',
   '{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',
   500,'{"storage":8,"delivery":3,"compute":4,"email":5,"support":6,"retention":8,"uncertainty":8}',
@@ -134,7 +134,7 @@ begin
   execute 'reset role';
   perform set_config('request.jwt.claim.sub',actor::text,true);
   intro:=public.org_entitlement(apple_org);
-  perform pg_temp.trial_ok(intro.plan='max' and intro.price_cents=4999
+  perform pg_temp.trial_ok(intro.plan='max' and intro.price_cents=4900
     and intro.renders_per_month=0 and intro.photo_edits_per_month=5
     and intro.reels_per_month=0 and intro.aerials_per_month=0
     and intro.topaz_per_month=0 and intro.cogs_ceiling_cents=500,

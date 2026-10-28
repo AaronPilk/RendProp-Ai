@@ -29,7 +29,7 @@ create temporary table combined_cases(org_id uuid,sku text,plan text,price bigin
   monthly_credits integer,expected_budget integer,expected_noncredit integer);
 insert into combined_cases values
  ('91aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.pro29.monthly','pro',29990,60,424,124),
- ('92aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.starter.monthly','max',49990,120,724,124),
+ ('92aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.starter.monthly','max',49000,120,707,107),
  ('93aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.pro.monthly','ultra',99990,250,1499,249),
  ('94aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','com.rendprop.app.team.monthly','team',249990,600,3874,874);
 grant select on combined_cases to service_role;
@@ -159,13 +159,13 @@ do $$declare actor uuid:='91111111-1111-4111-8111-111111111111';
    jsonb_build_object('request_key',key,'stage','photo.declutter:0','actor_id',actor));
  result:=public.credit_combined_budget_state(org);
  if (result->>'linked_credit_ledger_cents')::numeric<>25 or
-   (public.plan_serving_ceiling(org)->>'ceiling_cents')::numeric<>149 or
+   (public.plan_serving_ceiling(org)->>'ceiling_cents')::numeric<>132 or
    public.org_month_spend_cents(org)<>0 then
    raise exception 'COMBINED DIAGNOSTIC: state %, plan %, spend %',result,
      public.plan_serving_ceiling(org),public.org_month_spend_cents(org);
  end if;
  perform pg_temp.combined_ok((result->>'linked_credit_ledger_cents')::numeric=25 and
-   (public.plan_serving_ceiling(org)->>'ceiling_cents')::numeric=149 and
+   (public.plan_serving_ceiling(org)->>'ceiling_cents')::numeric=132 and
    public.org_month_spend_cents(org)=0,
    'settled credit supplier cost is counted once, outside noncredit early spend');
  insert into public.cost_ledger(org_id,feature,provider,model,total_cents,meta)

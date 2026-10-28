@@ -39,10 +39,10 @@ class SubscriptionRepriceTests(unittest.TestCase):
         out = io.StringIO()
         self.assertEqual(reprice.run(client, "plan", EFFECTIVE, out=out, today=TODAY), 0)
         self.assertEqual(fake.writes, [])
-        self.assertIn("USD 49.00; target USD 49.99", out.getvalue())
+        self.assertNotIn("starter.monthly:", out.getvalue())
         self.assertIn("USD 99.00; target USD 99.99", out.getvalue())
         self.assertIn("USD 249.00; target USD 249.99", out.getvalue())
-        self.assertIn("3 new USA schedules", out.getvalue())
+        self.assertIn("2 new USA schedules", out.getvalue())
 
     def test_apply_preserves_current_subscribers_and_is_idempotent(self):
         fake, client = seeded_client()
@@ -51,7 +51,7 @@ class SubscriptionRepriceTests(unittest.TestCase):
                                      confirm_preserve=True, out=out, today=TODAY), 0)
         posts = [(path, body) for method, path, body in fake.bodies
                  if method == "POST" and path == "/v1/subscriptionPrices"]
-        self.assertEqual(len(posts), 3)
+        self.assertEqual(len(posts), 2)
         for _path, body in posts:
             attrs = body["data"]["attributes"]
             self.assertEqual(attrs, {"startDate": EFFECTIVE,
@@ -122,7 +122,10 @@ class SubscriptionRepriceTests(unittest.TestCase):
                     confirm_preserve=True, out=io.StringIO(), today=TODAY)
         for row in fake.store["subscriptionPrices"].values():
             if row["_parents"].get("territory") == "USA" and \
-                    not row["attributes"].get("startDate"):
+                    not row["attributes"].get("startDate") and \
+                    row["_parents"].get("subscription") != next(
+                        s["id"] for s in fake.store["subscriptions"].values()
+                        if s["attributes"].get("productId") == reprice.MAX_PRODUCT_ID):
                 row["attributes"]["preserved"] = True
         fake.writes.clear()
         out = io.StringIO()
@@ -131,10 +134,23 @@ class SubscriptionRepriceTests(unittest.TestCase):
         self.assertIn("current USA unverified", out.getvalue())
         self.assertEqual(fake.writes, [])
 
+    def test_preserved_only_max_does_not_prove_current_new_buyer_price(self):
+        fake, client = seeded_client()
+        max_sub = next(s["id"] for s in fake.store["subscriptions"].values()
+                       if s["attributes"].get("productId") == reprice.MAX_PRODUCT_ID)
+        for row in fake.store["subscriptionPrices"].values():
+            if row["_parents"].get("subscription") == max_sub:
+                row["attributes"]["preserved"] = True
+        fake.writes.clear()
+        with self.assertRaisesRegex(reprice.RepriceError, "no provable current new-buyer"):
+            reprice.run(client, "apply", EFFECTIVE,
+                        confirm_preserve=True, today=TODAY)
+        self.assertEqual(fake.writes, [])
+
     def test_missing_exact_price_point_blocks_all_writes(self):
         fake, client = seeded_client()
         # Only the last target lacks its exact .99 point.
-        fake.price_ladder = ["29.99", "49.99", "99.99", "249.00"]
+        fake.price_ladder = ["29.99", "49.00", "99.99", "249.00"]
         with self.assertRaisesRegex(reprice.RepriceError, "0 provably exact"):
             reprice.run(client, "apply", EFFECTIVE,
                         confirm_preserve=True, today=TODAY)
@@ -150,14 +166,37 @@ class SubscriptionRepriceTests(unittest.TestCase):
                         confirm_preserve=True, today=TODAY)
         self.assertEqual(fake.writes, [])
 
-    def test_current_exact_price_does_not_need_a_write(self):
+    def test_max_remains_current_and_never_gets_a_schedule(self):
         fake, client = seeded_client()
-        fake.repoint_price("com.rendprop.app.starter.monthly", "49.99")
         fake.writes.clear()
         out = io.StringIO()
         reprice.run(client, "plan", EFFECTIVE, out=out, today=TODAY)
-        self.assertIn("already-current", out.getvalue())
         self.assertIn("2 new USA schedules", out.getvalue())
+        self.assertNotIn("starter.monthly:", out.getvalue())
+        self.assertEqual(fake.writes, [])
+
+    def test_max_price_drift_blocks_all_other_schedules(self):
+        fake, client = seeded_client()
+        fake.repoint_price("com.rendprop.app.starter.monthly", "49.99")
+        fake.writes.clear()
+        with self.assertRaisesRegex(reprice.RepriceError, "Max must remain"):
+            reprice.run(client, "apply", EFFECTIVE,
+                        confirm_preserve=True, today=TODAY)
+        self.assertEqual(fake.writes, [])
+
+    def test_a_future_max_change_blocks_all_other_schedules(self):
+        fake, client = seeded_client()
+        fake.price_ladder.append("49.99")
+        max_sub = next(s["id"] for s in fake.store["subscriptions"].values()
+                       if s["attributes"].get("productId") == reprice.MAX_PRODUCT_ID)
+        point = reprice._exact_point(client, max_sub, reprice._amount("49.99"))
+        client.post("/v1/subscriptionPrices", reprice.price_create_body({
+            "subscription_id": max_sub, "point_id": point,
+            "effective_date": date(2026, 10, 31)}))
+        fake.writes.clear()
+        with self.assertRaisesRegex(reprice.RepriceError, "Max must remain"):
+            reprice.run(client, "apply", EFFECTIVE,
+                        confirm_preserve=True, today=TODAY)
         self.assertEqual(fake.writes, [])
 
 

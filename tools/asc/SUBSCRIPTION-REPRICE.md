@@ -1,12 +1,13 @@
 # Exact US launch prices in App Store Connect
 
-The source catalog defines Pro **$29.99**, Max **$49.99**, Ultra **$99.99**,
-and three-seat Team **$249.99** per month. The approved Max, Ultra, and Team
-products currently have whole-dollar USA starting prices. The ordinary
-`asc.py subscriptions plan/apply` deliberately refuses that mismatch before it
-creates another product. `subscription_reprice.py` is a separate, narrow route
-for the three existing monthly products only. It does not touch Pro, annual
-products, Team seat variants, the credit pack, app review, or public release.
+The source catalog defines Pro **$29.99**, Max **$49.00**, Ultra **$99.99**,
+and three-seat Team **$249.99** per month. Max stays at its existing $49.00
+USA price. Ultra and Team have whole-dollar starting prices and their .99
+changes are separate. The ordinary `asc.py subscriptions plan/apply`
+refuses a mismatched monthly price before it creates another product.
+`subscription_reprice.py` verifies Max at $49.00 using GETs and can schedule
+only Ultra and Team. It does not touch Pro, Max's price, annual products,
+Team seat variants, the credit pack, app review, or public release.
 
 `plan` is authenticated GET-only. Choose a calendar date at least three UTC
 days ahead, then inspect its read-only result:
@@ -16,8 +17,9 @@ python3 tools/asc/subscription_reprice.py plan --effective-date YYYY-MM-DD
 ```
 
 `apply` requires the same date and a flag acknowledging that **existing
-subscribers keep their current price**. It preflights all three products and
-all exact Apple USA price points before the first write. It refuses a product
+subscribers keep their current price**. It verifies Max's current USA price
+and preflights Ultra and Team with exact Apple USA price points before the
+first write. It refuses a product
 with an existing conflicting future schedule, a missing/ambiguous current
 price, a price decrease, or any inexact price point. After each accepted write
 it reads the future schedule back. If that read-back is ambiguous, stop and
@@ -68,13 +70,20 @@ groups and refuses a collision before making any Apple write.
    $39.99/100-credit economics. An IAP review screenshot, a verified Sandbox
    purchase/grant/refund, and inclusion with the first app submission remain
    separate requirements.
-3. Wait for the existing subscriptions' future .99 prices to become effective,
+3. Wait for Ultra and Team's future .99 prices to become effective,
    then run `asc.py subscriptions plan` without skips and verify the USA prices
    using StoreKit. Do not label a scheduled price as live. Review the current
    paywall, paid-app agreement, banking/tax, credit funding, and App Review
    assets before a submission. None of these scripts submits the app.
 
-This procedure protects existing subscribers during the price increase. Apple
+Before any copy or release action, verify that Max has a current $49.00 USA
+new-buyer row. A row marked only `preserved=true` proves an existing cohort's
+renewal price, not the current new-buyer price, so `catalog_copy.py plan`
+must stop until Apple exposes a current non-preserved row. Any new Max future
+price also blocks the copy plan. Do not recreate the refused $49.99 schedule;
+the one-off Max restoration script was retired.
+
+This procedure protects existing subscribers during the Ultra and Team price increase. Apple
 does not permit preserving a higher existing subscriber price on a price
 decrease. It also avoids relying on a future date's storefront hour as an
 immediate price change.

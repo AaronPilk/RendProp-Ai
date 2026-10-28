@@ -5,9 +5,9 @@ Starter/Pro capture showing $49.00/$99.00, a yearly picker, and old allowances.
 It remains only as historical evidence. `tools/asc/asc.py review plan/apply`
 rejects its exact fingerprint before any App Store review write, and
 `asc.py status` reports it as missing launch evidence. Replace it with a fresh
-capture of the Pro $29.99 / Max $49.99 / Ultra $99.99 / Team $249.99 monthly
+capture of the Pro $29.99 / Max $49.00 / Ultra $99.99 / Team $249.99 monthly
 catalog. Inspect the PNG itself: the simulator must show those prices, not a
-dash, stale whole-dollar price, or "temporarily unavailable" purchase state.
+dash, stale Ultra/Team price, or "temporarily unavailable" purchase state.
 The local StoreKit fixture is only test data; verify the same prices and
 purchase availability against App Store Connect and on a real TestFlight device.
 
@@ -70,7 +70,7 @@ must never be uploaded. `StoreShots.swift` does not capture the paywall.
 `PaywallShot.swift` solves it the way Apple built for automation: it creates an
 `SKTestSession` from `Rendprop.storekit` (StoreKitTest framework) **before** launching the
 app. The generated screenshot must prove the app saw the local products by
-showing Pro $29.99 and Max $49.99 together. It is local fixture evidence only;
+showing Pro $29.99 and Max $49.00 together. It is local fixture evidence only;
 the real TestFlight capture below is the release image.
 The `.storekit` file is a resource of the **test bundle only** (never the app), the session
 has dialogs disabled and transactions cleared, and the storefront is pinned to `USA` /
@@ -81,7 +81,7 @@ identifiers and the by-hand recipe are in `apps/ios/RendpropUITests/README.md`
 ### The caveat you are accepting
 
 This is **StoreKit Testing in Xcode, not the App Store.** The prices come from
-`apps/ios/Rendprop.storekit` (29.99 / 49.99 / 99.99 / 249.99 for the monthly products), the "Start 7-day free trial"
+`apps/ios/Rendprop.storekit` (29.99 / 49.00 / 99.99 / 249.99 for the monthly products), the "Start 7-day free trial"
 eligibility is synthetic, and nothing in the PNG proves the real products load. The capture shows the actual app purchase UI populated by a local fixture;
 the owner must confirm that its names, prices and offers match the intended release. It is not a substitute for checking the live products on a
 device before submission, and it is not a marketing asset.

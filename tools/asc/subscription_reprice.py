@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Schedule Rendprop's three existing US monthly prices at their agreed .99 tiers.
+"""Schedule Ultra and Team US monthly prices; verify Max stays at USD 49.00.
 
 The broad ``asc.py subscriptions apply`` intentionally refuses an existing
 price mismatch. This narrower command can plan a future USA price change and
@@ -22,8 +22,9 @@ import sys
 import asc
 
 
+MAX_PRODUCT_ID = "com.rendprop.app.starter.monthly"
+MAX_USD = Decimal("49.00")
 EXISTING_MONTHLY_IDS = (
-    "com.rendprop.app.starter.monthly",  # Max
     "com.rendprop.app.pro.monthly",      # Ultra
     "com.rendprop.app.team.monthly",     # Team, three seats
 )
@@ -163,6 +164,15 @@ def plan_changes(client, effective_date, today=None):
     today = today or datetime.now(timezone.utc).date()
     desired_date = _date(effective_date, "--effective-date")
     by_product = _subscription_rows(client)
+    max_subscription = by_product.get(MAX_PRODUCT_ID)
+    if max_subscription is None or not max_subscription.get("id") or \
+            asc.attributes_of(max_subscription).get("subscriptionPeriod") != "ONE_MONTH":
+        raise RepriceError("Existing Max subscription is missing or not monthly")
+    max_current, max_future = _usa_schedule(client, max_subscription["id"], today)
+    if max_current != MAX_USD or max_future:
+        raise RepriceError(
+            "Max must remain at current USA USD 49.00 with no future price; "
+            "inspect Apple before repricing Ultra or Team")
     decisions = []
     for spec in _target_specs():
         product_id = spec["productId"]

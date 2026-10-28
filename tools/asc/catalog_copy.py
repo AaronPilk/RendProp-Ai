@@ -25,7 +25,7 @@ RELEASE_PRICE_DATE = "2026-10-30"
 SOURCE = asc.REPO_ROOT / "apps/ios/Rendprop/Purchases/Products.swift"
 CORE = (
     ("pro", "com.rendprop.app.pro29.monthly", 60, "29.99"),
-    ("max", "com.rendprop.app.starter.monthly", 120, "49.99"),
+    ("max", "com.rendprop.app.starter.monthly", 120, "49.00"),
     ("ultra", "com.rendprop.app.pro.monthly", 250, "99.99"),
     ("team", "com.rendprop.app.team.monthly", 600, "249.99"),
 )
@@ -116,20 +116,29 @@ def _validate_price_and_trial(client, subscription, spec, require_trial=True):
     points = {row["id"]: row.get("attributes", {}).get("customerPrice")
               for row in included if row.get("type") == "subscriptionPricePoints"}
     matches = []
+    today = datetime.now(timezone.utc).date().isoformat()
     for row in prices:
         if _relationship_id(row, "territory") != "USA":
             continue
         attrs = row.get("attributes") or {}
+        if product_id == "com.rendprop.app.starter.monthly" and \
+                attrs.get("preserved") is not True and \
+                (attrs.get("startDate") or "") >= today:
+            raise CopyError("Max has a future or same-day USA price phase; "
+                            "verify the current $49.00 new-buyer row in Apple")
         if attrs.get("preserved") is True or attrs.get("planType") not in (None, "UPFRONT"):
             continue
         point = points.get(_relationship_id(row, "subscriptionPricePoint"))
         if point is not None and Decimal(str(point)) == Decimal(spec["usd"]):
             matches.append(attrs.get("startDate"))
     if len(matches) != 1:
+        if product_id == "com.rendprop.app.starter.monthly":
+            raise CopyError("Max has %d provable current non-preserved USA USD 49.00 "
+                            "new-buyer prices; preserved subscriber rows do not "
+                            "establish the new-buyer charge" % len(matches))
         raise CopyError("%s has %d exact non-preserved USA USD %s prices" %
                         (product_id, len(matches), spec["usd"]))
-    if product_id in {"com.rendprop.app.starter.monthly",
-                      "com.rendprop.app.pro.monthly",
+    if product_id in {"com.rendprop.app.pro.monthly",
                       "com.rendprop.app.team.monthly"} and matches[0] != RELEASE_PRICE_DATE:
         raise CopyError("%s has price date %s, expected %s" %
                         (product_id, matches[0], RELEASE_PRICE_DATE))

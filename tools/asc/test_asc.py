@@ -565,7 +565,7 @@ class ConfigurationTests(unittest.TestCase):
             "com.rendprop.app.team.annual": ("ONE_YEAR", "2490.00", 1),
             "com.rendprop.app.pro.monthly": ("ONE_MONTH", "99.99", 2),
             "com.rendprop.app.pro.annual": ("ONE_YEAR", "990.00", 2),
-            "com.rendprop.app.starter.monthly": ("ONE_MONTH", "49.99", 3),
+            "com.rendprop.app.starter.monthly": ("ONE_MONTH", "49.00", 3),
             "com.rendprop.app.starter.annual": ("ONE_YEAR", "490.00", 3),
             "com.rendprop.app.pro29.monthly": ("ONE_MONTH", "29.99", 4),
         }
@@ -666,7 +666,7 @@ class FakeAsc(object):
     # is why com.rendprop.app.team.annual (2490.00) was priced at 1000.00 on the
     # live run. Pass this to reproduce that.
     YEARLY_CEILING_LADDER = [
-        "29.99", "49.99", "99.99", "249.99", "490.00", "990.00", "999.99", "1000.00",
+        "29.99", "49.00", "99.99", "249.99", "490.00", "990.00", "999.99", "1000.00",
     ]
 
     def __init__(self, price_ladder=None, app_attributes=None):
@@ -703,7 +703,7 @@ class FakeAsc(object):
         # A ladder that offers every Rendprop price exactly. Tests that care
         # about a missing price point pass YEARLY_CEILING_LADDER instead.
         self.price_ladder = price_ladder or [
-            "29.99", "49.99", "99.99", "249.99", "490.00", "990.00", "2490.00",
+            "29.99", "49.00", "99.99", "249.99", "490.00", "990.00", "2490.00",
         ]
         # Every territory offers the same numeric ladder, which is exactly why a
         # wrong-territory point is dangerous: 249.00 MXN looks like 249.00 USD.
@@ -1950,7 +1950,7 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertIn("2490.00", output)
 
     def test_exact_annual_price_produces_no_warning(self):
-        fake = FakeAsc(price_ladder=["29.99", "49.99", "99.99", "249.99",
+        fake = FakeAsc(price_ladder=["29.99", "49.00", "99.99", "249.99",
                                      "490.00", "990.00", "2490.00"])
         _code, output = self.run_subscriptions(fake)
         self.assertNotIn("PRICE POINT WARNING", output)
@@ -2573,7 +2573,7 @@ class PriceGuardTests(unittest.TestCase):
         self.assertIn("NOT PRICING com.rendprop.app.team.annual", output)
 
     def test_monthly_launch_price_never_uses_a_close_substitute(self):
-        fake = FakeAsc(price_ladder=["29.99", "49.00", "99.99", "249.99",
+        fake = FakeAsc(price_ladder=["29.99", "49.99", "99.99", "249.99",
                                      "490.00", "990.00", "2490.00"])
         _code, output = self.run_subscriptions(fake)
         self.assertNotIn("com.rendprop.app.starter.monthly", self.priced_products(fake))
@@ -2583,11 +2583,11 @@ class PriceGuardTests(unittest.TestCase):
     def test_existing_monthly_price_needs_explicit_price_schedule(self):
         fake = FakeAsc()
         self.run_subscriptions(fake)
-        fake.repoint_price("com.rendprop.app.starter.monthly", "49.00")
+        fake.repoint_price("com.rendprop.app.starter.monthly", "49.99")
         fake.writes = []
         with self.assertRaises(asc.AscError) as caught:
             self.run_subscriptions(fake)
-        self.assertIn("current USD 49.00; target USD 49.99", str(caught.exception))
+        self.assertIn("current USD 49.99; target USD 49.00", str(caught.exception))
         self.assertEqual(fake.writes, [], "preflight must refuse before any Apple write")
 
     def test_the_refusal_names_both_amounts_and_the_way_out(self):
@@ -2605,7 +2605,7 @@ class PriceGuardTests(unittest.TestCase):
 
     def test_a_substitute_inside_the_tolerance_is_still_used(self):
         # 2450.00 is 1.6% below 2490.00 - close enough to charge.
-        fake = FakeAsc(price_ladder=["29.99", "49.99", "99.99", "249.99",
+        fake = FakeAsc(price_ladder=["29.99", "49.00", "99.99", "249.99",
                                      "490.00", "990.00", "2450.00"])
         _code, output = self.run_subscriptions(fake)
         self.assertIn("PRICE POINT WARNING", output)
@@ -3088,10 +3088,10 @@ class StatusPriceTests(unittest.TestCase):
 
     def test_monthly_status_requires_the_exact_owner_price(self):
         fake = self.build()
-        fake.repoint_price("com.rendprop.app.starter.monthly", "49.00")
+        fake.repoint_price("com.rendprop.app.starter.monthly", "49.99")
         code, output = self.run_status(fake)
         self.assertEqual(code, 1)
-        self.assertIn("49.00 != 49.99", output)
+        self.assertIn("49.99 != 49.00", output)
 
     def test_a_correct_price_is_not_flagged(self):
         fake = self.build()

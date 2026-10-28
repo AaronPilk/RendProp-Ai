@@ -12,10 +12,11 @@ import catalog_copy
 
 
 class PriceClient:
-    def __init__(self, amount="29.99", date=None, offer=True):
+    def __init__(self, amount="29.99", date=None, offer=True, preserved=False):
         self.amount = amount
         self.date = date
         self.offer = offer
+        self.preserved = preserved
 
     def get_all(self, path):
         if path.endswith("/introductoryOffers"):
@@ -31,7 +32,7 @@ class PriceClient:
         prices = [{"relationships": {
             "territory": {"data": {"id": "USA"}},
             "subscriptionPricePoint": {"data": {"id": "point"}}},
-            "attributes": {"preserved": False, "planType": "UPFRONT",
+            "attributes": {"preserved": self.preserved, "planType": "UPFRONT",
                            "startDate": self.date}}]
         included = [{"type": "subscriptionPricePoints", "id": "point",
                      "attributes": {"customerPrice": self.amount}}]
@@ -98,13 +99,24 @@ class CatalogCopyTests(unittest.TestCase):
                 catalog_copy.run(PatchClient(), "apply", catalog_copy.EXPECTED_APP_ID,
                                  "version", True, True, False, out=io.StringIO())
 
-    def test_existing_products_require_the_known_future_schedule(self):
+    def test_max_requires_a_current_new_buyer_price(self):
         spec = catalog_copy.specs()[1]
+        self.assertIsNone(catalog_copy._validate_price_and_trial(
+            PriceClient(amount="49.00"), {"id": "max"}, spec))
+        with self.assertRaisesRegex(catalog_copy.CopyError, "future or same-day"):
+            catalog_copy._validate_price_and_trial(
+                PriceClient(amount="49.00", date="9999-12-31"), {"id": "max"}, spec)
+        with self.assertRaisesRegex(catalog_copy.CopyError, "preserved subscriber rows"):
+            catalog_copy._validate_price_and_trial(
+                PriceClient(amount="49.00", preserved=True), {"id": "max"}, spec)
+
+    def test_ultra_requires_the_known_future_schedule(self):
+        spec = catalog_copy.specs()[2]
         with self.assertRaisesRegex(catalog_copy.CopyError, "expected 2026-10-30"):
             catalog_copy._validate_price_and_trial(
-                PriceClient(amount="49.99", date="2026-10-31"), {"id": "sub"}, spec)
+                PriceClient(amount="99.99", date="2026-10-31"), {"id": "sub"}, spec)
         self.assertEqual(catalog_copy._validate_price_and_trial(
-            PriceClient(amount="49.99", date="2026-10-30"), {"id": "sub"}, spec),
+            PriceClient(amount="99.99", date="2026-10-30"), {"id": "sub"}, spec),
             "2026-10-30")
 
     def test_plan_never_writes_and_apply_requires_exact_confirmation(self):

@@ -321,7 +321,7 @@ final class PaywallShot: XCTestCase {
         var retries = 0
         let expected = [
             (id: "paywall.plan.pro", price: "$29.99/month"),
-            (id: "paywall.plan.max", price: "$49.99/month"),
+            (id: "paywall.plan.max", price: "$49.00/month"),
             (id: "paywall.plan.ultra", price: "$99.99/month"),
             (id: "paywall.plan.team", price: "$249.99/month"),
         ]
