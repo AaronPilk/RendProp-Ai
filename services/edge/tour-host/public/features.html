@@ -29,6 +29,8 @@
 <link rel="stylesheet" href="/assets/site.css">
 <script>(function(){try{var t=localStorage.getItem("rp-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
 <script src="/assets/site.js" defer></script>
+
+<link rel="preload" as="image" href="/assets/scene-kitchen.webp" imagesrcset="/assets/scene-kitchen-1200.webp 1200w, /assets/scene-kitchen.webp 2400w" imagesizes="100vw" fetchpriority="high">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -55,6 +57,13 @@
 
 <a class="skip" href="#main">Skip to content</a>
 
+<div class="scene" aria-hidden="true">
+  <img class="is-on" data-scene="kitchen" src="/assets/scene-kitchen.webp" srcset="/assets/scene-kitchen-1200.webp 1200w, /assets/scene-kitchen.webp 2400w" sizes="100vw" width="2400" height="1340" alt="" fetchpriority="high" decoding="async">
+  <img data-scene="dusk" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-src="/assets/scene-dusk-lounge.webp" data-srcset="/assets/scene-dusk-lounge-1200.webp 1200w, /assets/scene-dusk-lounge.webp 2400w" sizes="100vw" width="2400" height="1610" alt="" decoding="async">
+  <img data-scene="living" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-src="/assets/scene-living-ocean.webp" data-srcset="/assets/scene-living-ocean-1200.webp 1200w, /assets/scene-living-ocean.webp 2400w" sizes="100vw" width="2400" height="1340" alt="" decoding="async">
+  <img data-scene="twilight" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-src="/assets/scene-twilight-pool.webp" data-srcset="/assets/scene-twilight-pool-1200.webp 1200w, /assets/scene-twilight-pool.webp 2400w" sizes="100vw" width="2400" height="1340" alt="" decoding="async">
+</div>
+
 <header class="nav" id="nav">
   <div class="nav-inner">
     <a class="brand" href="/" aria-label="Rendprop home"><img class="brand-dot" src="/assets/rendprop-mark.svg" alt="" width="26" height="26">RENDPROP</a>
@@ -67,17 +76,31 @@
         <a href="/support">Support</a>
         <a href="/#faq">FAQ</a>
       </div>
-      <button class="menu-btn" id="menuBtn" type="button" aria-controls="navMenu" aria-expanded="false" aria-label="Menu">☰</button>
-      <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">◐</button>
-      <a class="btn btn-primary nav-cta" href="https://apps.apple.com/us/app/id6808982413?ct=site&amp;mt=8">Get the app</a>
+      <div class="nav-actions">
+        <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">◐</button>
+        <a class="btn btn-primary nav-cta" href="https://apps.apple.com/us/app/id6808982413?ct=site&amp;mt=8">Get the app</a>
+        <button class="menu-btn" id="menuBtn" type="button" aria-controls="navMenu" aria-expanded="false" aria-label="Menu">☰</button>
+      </div>
     </nav>
   </div>
 </header>
 
+<nav class="rail" aria-label="On this page">
+  <a href="#scroll-tours" data-tip="Tours" aria-label="Tours"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7l6-3v13l-6 3zM10 4l6 3v13l-6-3M16 7l4-2v13l-4 2"/></svg></a>
+  <a href="#listing-site" data-tip="The listing page" aria-label="The listing page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M8 6.5h.01M11 6.5h.01"/></svg></a>
+  <a href="#two-links" data-tip="Two links" aria-label="Two links"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 005.7 0l2.6-2.6a4 4 0 00-5.7-5.7L11.5 7"/><path d="M14 10a4 4 0 00-5.7 0l-2.6 2.6a4 4 0 005.7 5.7L12.5 17"/></svg></a>
+  <a href="#drone-render" data-tip="The render" aria-label="The render"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg></a>
+  <a href="#photo-studio" data-tip="AI Photo Studio" aria-label="AI Photo Studio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M12 5v14"/></svg></a>
+  <a href="#reels" data-tip="Videos" aria-label="Videos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9l5 3-5 3z"/></svg></a>
+  <a href="#aerials" data-tip="Aerial opening" aria-label="Aerial opening"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7M5 10v10h14V10"/></svg></a>
+  <a href="#leads" data-tip="Enquiries" aria-label="Enquiries"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 8l9 6 9-6"/></svg></a>
+  <a href="#industries" data-tip="Not only homes" aria-label="Not only homes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V8l5-3v15M9 20V11l6-3v12M15 20V13l5-2v9M3 20h18"/></svg></a>
+  <a href="#capture" data-tip="Guided capture" aria-label="Guided capture"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8a2 2 0 012-2h2l1.5-2h5L16 6h2a2 2 0 012 2v9a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><circle cx="12" cy="12.5" r="3.2"/></svg></a>
+</nav>
+
 <main id="main">
 
-<section class="page-hero" aria-label="Features intro">
-  <div class="orb orb-a" aria-hidden="true"></div>
+<section data-scene="kitchen" class="page-hero" aria-label="Features intro">
   <div class="wrap">
     <p class="eyebrow reveal">Inside the app</p>
     <h1 class="reveal">One iPhone app.<br><span class="grad-text">A full production studio.</span></h1>
@@ -152,7 +175,6 @@
 
 <!-- ============ TWO LINKS ============ -->
 <section id="two-links" aria-label="Branded and unbranded links">
-  <div class="orb orb-b" style="top:12%; right:-150px; bottom:auto;" aria-hidden="true"></div>
   <div class="wrap">
     <p class="eyebrow reveal">Two links, every time</p>
     <h2 class="reveal">One for buyers.<br><span class="grad-text">One for the MLS.</span></h2>
@@ -180,7 +202,7 @@
 </section>
 
 <!-- ============ DRONE RENDER ============ -->
-<section id="drone-render" class="band-dark" aria-label="AI video enhancement">
+<section data-scene="dusk" id="drone-render" class="band-dark" aria-label="AI video enhancement">
   <div class="band-bg" aria-hidden="true"><img src="/assets/ai-wave-dark.webp" width="2000" height="1142" loading="lazy" alt=""></div>
   <div class="wrap">
     <div class="frow">
@@ -217,7 +239,7 @@
 </section>
 
 <!-- ============ AI PHOTO STUDIO ============ -->
-<section id="photo-studio" aria-label="AI photo studio">
+<section data-scene="living" id="photo-studio" aria-label="AI photo studio">
   <div class="wrap">
     <p class="eyebrow reveal">AI Photo Studio</p>
     <h2 class="reveal">Every photo, magazine-ready.<br><span class="grad-text">Or just type what you want.</span></h2>
@@ -281,7 +303,6 @@
 
 <!-- ============ REELS ============ -->
 <section id="reels" aria-label="Social reels">
-  <div class="orb orb-b" style="top:15%; right:-140px; bottom:auto;" aria-hidden="true"></div>
   <div class="wrap">
     <div class="frow">
       <div class="reveal center">
@@ -418,7 +439,7 @@
 </section>
 
 <!-- ============ MULTI-INDUSTRY ============ -->
-<section id="industries" class="band-dark" aria-label="Multi-industry">
+<section data-scene="dusk" id="industries" class="band-dark" aria-label="Multi-industry">
   <div class="wrap">
     <p class="eyebrow reveal">Not only homes</p>
     <h2 class="reveal">Six kinds of space.<br><span class="grad-text">Six different apps.</span></h2>
@@ -438,7 +459,7 @@
 </section>
 
 <!-- ============ CAPTURE COACH ============ -->
-<section id="capture" aria-label="Guided capture">
+<section data-scene="twilight" id="capture" aria-label="Guided capture">
   <div class="wrap">
     <div class="frow">
       <div class="reveal center">
@@ -471,7 +492,6 @@
 
 <!-- ============ CTA ============ -->
 <section class="cta-band" aria-label="Get started">
-  <div class="orb orb-a" style="left:50%; top:30%; transform:translateX(-50%);" aria-hidden="true"></div>
   <div class="wrap">
     <h2 class="reveal">See it on your own listing.</h2>
     <p class="lede reveal center" data-d="1">Free to download. Rendprop shows current plan features and included usage in the app; Apple shows purchase and offer terms before confirmation.</p>

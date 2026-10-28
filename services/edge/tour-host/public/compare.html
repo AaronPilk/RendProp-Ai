@@ -29,6 +29,8 @@
 <link rel="stylesheet" href="/assets/site.css">
 <script>(function(){try{var t=localStorage.getItem("rp-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
 <script src="/assets/site.js" defer></script>
+
+<link rel="preload" as="image" href="/assets/scene-living-ocean.webp" imagesrcset="/assets/scene-living-ocean-1200.webp 1200w, /assets/scene-living-ocean.webp 2400w" imagesizes="100vw" fetchpriority="high">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -51,6 +53,11 @@
 
 <a class="skip" href="#main">Skip to content</a>
 
+<div class="scene" aria-hidden="true">
+  <img class="is-on" data-scene="living" src="/assets/scene-living-ocean.webp" srcset="/assets/scene-living-ocean-1200.webp 1200w, /assets/scene-living-ocean.webp 2400w" sizes="100vw" width="2400" height="1340" alt="" fetchpriority="high" decoding="async">
+  <img data-scene="dusk" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-src="/assets/scene-dusk-lounge.webp" data-srcset="/assets/scene-dusk-lounge-1200.webp 1200w, /assets/scene-dusk-lounge.webp 2400w" sizes="100vw" width="2400" height="1610" alt="" decoding="async">
+</div>
+
 <header class="nav" id="nav">
   <div class="nav-inner">
     <a class="brand" href="/" aria-label="Rendprop home"><img class="brand-dot" src="/assets/rendprop-mark.svg" alt="" width="26" height="26">RENDPROP</a>
@@ -63,17 +70,18 @@
         <a href="/support">Support</a>
         <a href="/#faq">FAQ</a>
       </div>
-      <button class="menu-btn" id="menuBtn" type="button" aria-controls="navMenu" aria-expanded="false" aria-label="Menu">☰</button>
-      <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">◐</button>
-      <a class="btn btn-primary nav-cta" href="https://apps.apple.com/us/app/id6808982413?ct=site&amp;mt=8">Get the app</a>
+      <div class="nav-actions">
+        <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">◐</button>
+        <a class="btn btn-primary nav-cta" href="https://apps.apple.com/us/app/id6808982413?ct=site&amp;mt=8">Get the app</a>
+        <button class="menu-btn" id="menuBtn" type="button" aria-controls="navMenu" aria-expanded="false" aria-label="Menu">☰</button>
+      </div>
     </nav>
   </div>
 </header>
 
 <main id="main">
 
-<section class="page-hero" aria-label="Comparison intro">
-  <div class="orb orb-a" aria-hidden="true"></div>
+<section data-scene="living" class="page-hero" aria-label="Comparison intro">
   <div class="wrap">
     <p class="eyebrow reveal">The honest comparison</p>
     <h1 class="reveal">Make the video.<br><span class="grad-text">Then share the listing.</span></h1>
@@ -235,7 +243,7 @@
 </section>
 
 <!-- ============ WHY IT MATTERS ============ -->
-<section class="band-dark" aria-label="Choose the source that fits">
+<section data-scene="dusk" class="band-dark" aria-label="Choose the source that fits">
   <div class="band-bg" aria-hidden="true"><img src="/assets/ai-wave-dark.webp" width="2000" height="1142" loading="lazy" alt=""></div>
   <div class="wrap">
     <p class="eyebrow reveal">Why it matters</p>
@@ -255,7 +263,7 @@
 </section>
 
 <!-- ============ WHO SHOULD PICK WHAT ============ -->
-<section aria-label="Recommendation">
+<section data-scene="living" aria-label="Recommendation">
   <div class="wrap">
     <p class="eyebrow reveal">Straight answer</p>
     <h2 class="reveal">Who should pick what.</h2>

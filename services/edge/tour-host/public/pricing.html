@@ -29,6 +29,8 @@
 <link rel="stylesheet" href="/assets/site.css">
 <script>(function(){try{var t=localStorage.getItem("rp-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
 <script src="/assets/site.js" defer></script>
+
+<link rel="preload" as="image" href="/assets/scene-lake-sunset.webp" imagesrcset="/assets/scene-lake-sunset-1200.webp 1200w, /assets/scene-lake-sunset.webp 2400w" imagesizes="100vw" fetchpriority="high">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -68,6 +70,11 @@
 
 <a class="skip" href="#main">Skip to content</a>
 
+<div class="scene" aria-hidden="true">
+  <img class="is-on" data-scene="lake" src="/assets/scene-lake-sunset.webp" srcset="/assets/scene-lake-sunset-1200.webp 1200w, /assets/scene-lake-sunset.webp 2400w" sizes="100vw" width="2400" height="1610" alt="" fetchpriority="high" decoding="async">
+  <img data-scene="dusk" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-src="/assets/scene-dusk-lounge.webp" data-srcset="/assets/scene-dusk-lounge-1200.webp 1200w, /assets/scene-dusk-lounge.webp 2400w" sizes="100vw" width="2400" height="1610" alt="" decoding="async">
+</div>
+
 <header class="nav" id="nav">
   <div class="nav-inner">
     <a class="brand" href="/" aria-label="Rendprop home"><img class="brand-dot" src="/assets/rendprop-mark.svg" alt="" width="26" height="26">RENDPROP</a>
@@ -80,17 +87,18 @@
         <a href="/support">Support</a>
         <a href="/#faq">FAQ</a>
       </div>
-      <button class="menu-btn" id="menuBtn" type="button" aria-controls="navMenu" aria-expanded="false" aria-label="Menu">☰</button>
-      <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">◐</button>
-      <a class="btn btn-primary nav-cta" href="https://apps.apple.com/us/app/id6808982413?ct=site&amp;mt=8">Get the app</a>
+      <div class="nav-actions">
+        <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">◐</button>
+        <a class="btn btn-primary nav-cta" href="https://apps.apple.com/us/app/id6808982413?ct=site&amp;mt=8">Get the app</a>
+        <button class="menu-btn" id="menuBtn" type="button" aria-controls="navMenu" aria-expanded="false" aria-label="Menu">☰</button>
+      </div>
     </nav>
   </div>
 </header>
 
 <main id="main">
 
-<section class="page-hero" aria-label="Pricing intro">
-  <div class="orb orb-a" aria-hidden="true"></div>
+<section data-scene="lake" class="page-hero" aria-label="Pricing intro">
   <div class="wrap center">
     <p class="eyebrow reveal">Pricing</p>
     <h1 class="reveal">Subscription details,<br><span class="grad-text">shown before you confirm.</span></h1>
@@ -169,7 +177,7 @@
 </section>
 
 <!-- ============ TRUST ============ -->
-<section class="band-dark" aria-label="Billing you can trust">
+<section data-scene="dusk" class="band-dark" aria-label="Billing you can trust">
   <div class="wrap">
     <p class="eyebrow reveal">No games</p>
     <h2 class="reveal">Billing you don't have to<br><span class="grad-text">read the fine print on.</span></h2>
@@ -198,7 +206,7 @@
 </section>
 
 <!-- ============ BILLING FAQ ============ -->
-<section id="faq" aria-label="Pricing questions">
+<section data-scene="lake" id="faq" aria-label="Pricing questions">
   <div class="wrap">
     <p class="eyebrow reveal">Pricing questions</p>
     <h2 class="reveal">The details.</h2>
@@ -249,7 +257,6 @@
 
 <!-- ============ CTA ============ -->
 <section class="cta-band" aria-label="Get started">
-  <div class="orb orb-a" style="left:50%; top:30%; transform:translateX(-50%);" aria-hidden="true"></div>
   <div class="wrap">
     <h2 class="reveal">Try it on a real listing.</h2>
     <p class="lede reveal center" data-d="1">Download it free. Rendprop shows current plan features and included usage in the app; Apple shows purchase and offer terms before confirmation.</p>
