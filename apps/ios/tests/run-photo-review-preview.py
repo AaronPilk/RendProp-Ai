@@ -26,7 +26,7 @@ for text in ['guard !needsStagingReview || stagingReview.isComplete','guard !nee
 for text in ['!versionChoices.contains(where: isRetainedSource)', 'selected: showOriginal ? isRetainedSource(version) : choiceTitle(viewed) == choiceTitle(version)']:
     assert text in review,'Saved source selection must follow the displayed source: '+text
 signin=block(account,'struct SignInView: View {')
-assert 'if requiresAccount {\n                Button { showQuickStart = true }' in signin
+assert re.search(r'if requiresAccount\s*\{\s*Button\s*\{\s*showQuickStart = true\s*\}', signin)
 assert 'QuickStartVideoView()' in signin and 'if !requiresAccount {' in signin and '.interactiveDismissDisabled(requiresAccount || isExchanging)' in signin
 for forbidden in ['URLSession','APIClient','AuthStore','AIConsent','requestAuthorization','requestWhenInUseAuthorization']:
     assert forbidden not in video,forbidden
