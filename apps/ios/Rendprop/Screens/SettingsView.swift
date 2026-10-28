@@ -312,16 +312,14 @@ struct SettingsView: View {
                         Button {
                             showSignIn = true
                         } label: {
-                            Label("Sign in with Apple", systemImage: "apple.logo")
+                            Label("Sign in", systemImage: "person.crop.circle")
                         }
+                        .accessibilityIdentifier("settings.signIn")
                     }
                 }
                 if serverAccountsEnabled {
-                    // Seats. Opening this screen requires nothing; holding a
-                    // seat requires Sign in with Apple, and that is the ONE
-                    // place in the app where sign-in is genuinely required
-                    // (App Store 5.1.1(v) allows it precisely because a team
-                    // seat is an account-based feature). Team/TeamView.swift.
+                    // A team seat belongs to a named Rendprop account. The
+                    // shared sign-in gate offers Apple and existing email accounts.
                     NavigationLink {
                         TeamView()
                     } label: {
@@ -587,7 +585,7 @@ struct SettingsView: View {
             Button("Clear this phone only", role: .destructive) { showClearDataConfirm = true }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your published tours and leads belong to your Rendprop account. Sign in with Apple first so we can delete them — or clear just this phone.")
+            Text("Your published tours and leads belong to your Rendprop account. Sign in to delete them, or clear just this phone.")
         }
         .alert("Couldn't delete account", isPresented: $showDeleteError) {
             let context = accountDeletionContext
@@ -630,7 +628,7 @@ struct SettingsView: View {
     /// Sign-out now also drops a workspace transfer that is still waiting
     /// (AuthStore.signOut), so the confirmation says so when there is one.
     private var signOutMessage: String {
-        var text = "Your \(localItemNoun)s, videos and tours stay on this phone. You\u{2019}ll be asked to sign in with Apple again to keep working."
+        var text = "Your \(localItemNoun)s, videos and tours stay on this phone. You\u{2019}ll be asked to sign in again to keep working."
         if auth.adoptionRecoveryMessage != nil {
             text += " The workspace transfer that is still waiting will be cancelled; those tours stay on this phone and can be published again."
         }
@@ -669,8 +667,8 @@ struct SettingsView: View {
             return "Offline build — capture and on-device rendering work without an account."
         }
         return auth.isIdentified
-            ? "Signed in with Apple. Publishing, leads and AI tools use this account."
-            : "Capture on this iPhone without signing in. Cloud uploads require a named account or an eligible Apple subscription. Sign in with Apple to sync across devices and recover your workspace if you delete the app."
+            ? "Signed in to Rendprop. Publishing, leads and AI tools use this account."
+            : "Sign in to connect your listings and saved work to your Rendprop account."
     }
 
     // MARK: - Notifications (1.0.2)
@@ -1144,12 +1142,12 @@ struct SettingsView: View {
     private var accountStatusLabel: String {
         guard serverAccountsEnabled else { return "Offline build" }
         // An anonymous session is a session, not an identity. Claiming "Signed
-        // in with Apple" here would be a lie to everyone who never tapped it.
+        // in" here would be a lie to everyone who never authenticated.
         guard auth.isIdentified else {
             return auth.isSignedIn ? "Not signed in" : "Connecting…"
         }
         let name = auth.displayName.trimmingCharacters(in: .whitespaces)
-        return name.isEmpty ? "Signed in with Apple" : name
+        return name.isEmpty ? "Signed in" : name
     }
 
     /// App version straight from the bundle so this row can never go stale.
@@ -1751,13 +1749,13 @@ struct LeadsView: View {
                     Label("Sign in to see your leads", systemImage: "person.crop.circle.badge.checkmark")
                         .font(.rpHeadline)
                         .foregroundStyle(Theme.ink)
-                    Text("Leads belong to your Rendprop account. Sign in with Apple to load them.")
+                    Text("Leads belong to your Rendprop account. Sign in to load them.")
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                     Button {
                         showSignIn = true
                     } label: {
-                        Label("Sign in with Apple", systemImage: "apple.logo")
+                        Label("Sign in", systemImage: "person.crop.circle")
                             .font(.rpBody.weight(.semibold))
                     }
                     .buttonStyle(.borderedProminent)
@@ -4697,7 +4695,7 @@ struct AdminConsoleView: View {
                 Button {
                     showSignIn = true
                 } label: {
-                    Label("Sign in with Apple", systemImage: "apple.logo")
+                    Label("Sign in", systemImage: "person.crop.circle")
                         .font(.rpBody.weight(.semibold))
                 }
                 .buttonStyle(.borderedProminent)
@@ -6282,7 +6280,7 @@ struct AdminRoutingView: View {
                 Button {
                     showSignIn = true
                 } label: {
-                    Label("Sign in with Apple", systemImage: "apple.logo")
+                    Label("Sign in", systemImage: "person.crop.circle")
                         .font(.rpBody.weight(.semibold))
                 }
                 .buttonStyle(.borderedProminent)

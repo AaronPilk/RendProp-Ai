@@ -466,13 +466,13 @@ final class ReviewerWalk: XCTestCase {
 
     // MARK: r10 — the sign-in gate
 
-    /// The Sign in with Apple sheet a reviewer meets when they try to publish
-    /// or open an AI tool without an account.
+    /// The account sheet a reviewer meets when they try to publish or open an
+    /// AI tool without an account. It offers Apple and existing email sign-in.
     ///
     /// EXPECTED TO SKIP under this walk, and that is not a defect. `AuthStore`
     /// reads `Config.isUITesting` and reports `isSignedIn == true` for the
     /// whole run (Auth/AuthStore.swift), so `FlythroughDetailView.needsSignIn`
-    /// is false, Settings draws "Sign out" instead of "Sign in with Apple", and
+    /// is false, Settings draws "Sign out" instead of "Sign in", and
     /// no path raises `SignInView`. Signing in for real needs an Apple ID on
     /// the simulator, which no automated walk can supply.
     ///
@@ -487,7 +487,7 @@ final class ReviewerWalk: XCTestCase {
                 return
             }
             scrollToTop()
-            guard let signIn = scrollTo(ids: [], labels: ["Sign in with Apple"], swipes: 8) else {
+            guard let signIn = scrollTo(ids: ["settings.signIn"], labels: ["Sign in"], swipes: 8) else {
                 scrollToTop()
                 guard app.launchArguments.contains("-uiTesting"),
                       scrollTo(ids: [], labels: ["Sign out"], swipes: 8) != nil else {
@@ -499,9 +499,9 @@ final class ReviewerWalk: XCTestCase {
             }
             tap(signIn)
             guard waitForAny(ids: [],
-                             labels: ["Sign in to publish", "Sign in to use", "Sign in with Apple"],
+                             labels: ["Use Rendprop on your other devices", "Sign in with email", "Sign in with Apple"],
                              timeout: screenTimeout) else {
-                note("SKIPPED: tapped \"Sign in with Apple\" but no sign-in sheet appeared.")
+                note("SKIPPED: tapped \"Sign in\" but no sign-in sheet appeared.")
                 dismissTopScreen()
                 return
             }
