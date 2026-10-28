@@ -14,6 +14,15 @@ setting was changed during the read.
 The source quotes the optional KIE 4K property clip at 167.5 cents for one
 five-second generation (`services/supabase/migrations/20261016100000_property_video_kie_kling3_4k_profile.sql`). This agrees with the visible KIE 335-credit receipts at $0.005 per supplier credit. The 12% local Photo Motion composition is a distinct route and does not make that KIE request. KIE's 1080p aerial examples agree with the source's 45-cent prospective route. Paid video retries, assessment, processing, hosting, delivery, refunds, and support must be accounted for in addition to a single successful model call.
 
+Live route readback still shows enabled FAL photo rows, including position 1
+for `photo.declutter`. However `serving_mode` is `ceiling`, and the deployed
+source's ordinary bounded-photo chain excludes FAL in that mode. The enabled
+`photo_preservation_quality` profile selects Gemini Pro 4K for ordinary
+unmasked staging and decluttering. Masked edits and privately sponsored QA
+can take different branches, so the negative FAL balance remains a focused
+device-test and funding concern; an enabled catalog row alone is not proof that
+the ordinary photo path dispatched to FAL.
+
 The [public KIE price list](https://kie.ai/pricing.html) independently lists
 Kling 3.0 Omni 1080p without native audio at 18 supplier credits per second
 and 4K at 67 per second. These match the observed 90/335-credit five-second
