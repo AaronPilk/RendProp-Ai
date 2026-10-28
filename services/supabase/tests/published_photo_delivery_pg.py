@@ -108,9 +108,14 @@ try:
         assert visibility.count(old)==1,(name,old)
         changed=visibility.replace(old,new)
         malformed(name,changed,'RP404:');run('restore-'+name,P+['-Atq'],visibility)
-    admit=run('admission-definition',P+['-Atq','-c',"select pg_get_functiondef('public.media_delivery_admit(uuid,bigint,boolean)'::regprocedure)"]).stdout
+    # The paid-media migration wraps the product admission function. This
+    # manual-plan fixture takes its preserved legacy branch, so fault the
+    # delegated function whose JSON receipt the photo RPC actually reads.
+    wrapper=run('admission-wrapper-definition',P+['-Atq','-c',"select pg_get_functiondef('public.media_delivery_admit(uuid,bigint,boolean)'::regprocedure)"]).stdout
+    assert wrapper.count('return public.media_delivery_admit_before_paid_media_20261027(p_org,p_bytes,p_required);')==1
+    admit=run('admission-definition',P+['-Atq','-c',"select pg_get_functiondef('public.media_delivery_admit_before_paid_media_20261027(uuid,bigint,boolean)'::regprocedure)"]).stdout
     for name,old,new in [('admission-string-boolean',"'admitted',true","'admitted','true'::text"),('admission-string-bytes',"'bytes_counted',p_bytes","'bytes_counted',p_bytes::text")]:
-        assert admit.count(old)==1
+        assert admit.count(old)==1,(name,old)
         malformed(name,admit.replace(old,new),'RP503:');run('restore-'+name,P+['-Atq'],admit)
     hosting=run('hosting-definition',P+['-Atq','-c',"select pg_get_functiondef('public.hosting_retention_state(uuid)'::regprocedure)"]).stdout
     # Keep the same signature/ACL but exercise malformed receipt and wall-clock
