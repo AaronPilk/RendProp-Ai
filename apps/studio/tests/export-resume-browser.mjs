@@ -30,8 +30,8 @@ const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["fixed", "baseline
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
-const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", ...["export", "recording-clock", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = { sourceHashes, audioOutput, diagnostics, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", ...["export", "recording-clock", "mp4-cadence", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
+const receipt = { sourceHashes, audioOutput, diagnostics, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], captureGapFailures: [], sparseCaptureFailures: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
@@ -154,7 +154,10 @@ document.querySelector("#run").onclick=async()=>{
     // As in the historical photo-clock control, exclude the later independent
     // recording guard only in this deliberately faulty compiled variant. Keep
     // actual startup readiness, original-audio loss admission and all clocks.
-    const isolated=code.replace(guard,'const recordingClock = {read() {}};');
+    const cadenceGuard='const captureCadence = new CaptureCadenceClock();';
+    assert.equal(code.split(cadenceGuard).length-1,1,"Historical resume control must isolate only the new capture guard");
+    const isolated=code.replace(guard,'const recordingClock = {read() {}};')
+      .replace(cadenceGuard,'const captureCadence = {capture() {}};');
     return omitOldAwait?isolated:isolated.replace(seam, '        const resumed = waitForEvent(recorder, "resume", renderSignal);\n        recorder.resume();\n        await resumed;');
   } };
   // Delay only export-time decoder readiness, never file inspection or source
@@ -192,7 +195,7 @@ document.querySelector("#run").onclick=async()=>{
     const clockWait = "const now = await nextExportFrame(renderSignal, (duration - elapsedAtWait) * 1000);";
     assert.equal(code.split(clockWait).length - 1, 1, "Observe only the existing export-frame wait without changing it");
     return code.replace(seam, seam + ' (window as any).fixture.frameClipIsPhoto = !video; (window as any).fixture.frameClipIndex = index; (window as any).fixture.trace.push({event:"clip.clock.start",at:start,index,diagnostics:(window as any).fixture.clockDiagnostics(index,audio,"start")}); if(index===1 && (window as any).fixture.interruptAudio) setTimeout(()=>{const sound=(window as any).fixture.audio; sound.suspend().then(()=>setTimeout(()=>{if(sound.state!=="closed")sound.resume();},180));},250);')
-      .replace(clockWait, '(window as any).fixture.observeClockWait(index, (duration - elapsedAtWait) * 1000); ' + clockWait)
+      .replace(clockWait, 'if(index===1 && (window as any).fixture.captureGapMs && !(window as any).fixture.captureGapInjected) { (window as any).fixture.captureGapInjected=true; (window as any).fixture.trace.push({event:"capture.gap.injected",at:performance.now(),index,milliseconds:(window as any).fixture.captureGapMs}); await new Promise(resolve=>setTimeout(resolve,(window as any).fixture.captureGapMs)); } if(index===1 && (window as any).fixture.sparseCaptureMs) { (window as any).fixture.trace.push({event:"capture.sparse.injected",at:performance.now(),index,milliseconds:(window as any).fixture.sparseCaptureMs}); await new Promise(resolve=>setTimeout(resolve,(window as any).fixture.sparseCaptureMs)); } (window as any).fixture.observeClockWait(index, (duration - elapsedAtWait) * 1000); ' + clockWait)
       .replace('recordingClock.read((now - start)', '(window as any).fixture.trace.push({event:"clip.clock.read",at:performance.now(),index,wall:(now-start)/1000,timeline:elapsed,audio:audio?.currentTime,media:video?.currentTime,diagnostics:(window as any).fixture.clockDiagnostics(index,audio,"read")}); recordingClock.read((now - start)')
       .replace(schedule, "const frame = (window as any).fixture.requestExportFrame(done);");
   } };
@@ -431,6 +434,42 @@ document.querySelector("#run").onclick=async()=>{
     if (variant === "fixed") {
       const cleanupSession = "fixed-interruption-and-preparation";
       const {context, page} = await openFixture(variant, cleanupSession);
+      for (const muted of [false, true]) {
+        // Delay only the first capture callback after the first recorder resume.
+        // Source playback and (when present) Web Audio continue on real clocks.
+        await page.evaluate(muted => {window.fixture.configure(!muted);window.fixture.muteStaleLookahead=muted;
+          window.fixture.captureGapMs=240;window.fixture.captureGapInjected=false;window.fixture.decodeDelays=[];}, muted);
+        await page.locator("#run").click();
+        await expect.poll(() => page.evaluate(() => window.fixture.exporting), {timeout:10000}).toBe(false);
+        const failure=await page.evaluate(()=>({muted:window.fixture.muteStaleLookahead,error:window.fixture.error,
+          cause:window.fixture.errorCause,result:window.fixture.result,trace:window.fixture.trace,
+          downloadHidden:document.querySelector("#download").hidden,tracks:window.fixture.tracks.map(track=>track.readyState)}));
+        receipt.captureGapFailures.push(failure);await persist();
+        assert.match(failure.error,/Video frames were skipped.*No download was created/);
+        assert.equal(failure.result,null,"A dropped dissolve cannot become a downloadable file");
+        assert(failure.downloadHidden&&failure.tracks.every(state=>state==="ended"));
+        assert.equal(failure.cause.maxGapMilliseconds,150);
+        assert(failure.cause.gapMilliseconds>=240,"The refusal must measure the injected active-capture gap");
+        assert.equal(failure.trace.filter(event=>event.event==="capture.gap.injected"&&event.index===1).length,1);
+        assert(failure.trace.some(event=>event.event==="resume.return"),"The gap must occur after a real recorder resume");
+      }
+      await page.evaluate(()=>{window.fixture.configure(false);window.fixture.muteStaleLookahead=true;
+        window.fixture.captureGapMs=0;window.fixture.sparseCaptureMs=55;window.fixture.decodeDelays=[];});
+      await page.locator("#run").click();
+      await expect.poll(() => page.evaluate(() => window.fixture.exporting), {timeout:10000}).toBe(false);
+      const sparseFailure=await page.evaluate(()=>({error:window.fixture.error,cause:window.fixture.errorCause,
+        result:window.fixture.result,trace:window.fixture.trace,downloadHidden:document.querySelector("#download").hidden,
+        tracks:window.fixture.tracks.map(track=>track.readyState)}));
+      receipt.sparseCaptureFailures.push(sparseFailure);await persist();
+      assert.match(sparseFailure.error,/Video frames were skipped.*No download was created/);
+      assert.equal(sparseFailure.result,null,"A sparse 14 fps dissolve cannot become a downloadable file");
+      assert(sparseFailure.downloadHidden&&sparseFailure.tracks.every(state=>state==="ended"));
+      assert.equal(sparseFailure.cause.transitionMilliseconds,280);
+      assert(sparseFailure.cause.framesCaptured<sparseFailure.cause.minFrames);
+      assert(sparseFailure.trace.filter(event=>event.event==="capture.sparse.injected"&&event.index===1).length>=3);
+      await page.evaluate(()=>{window.fixture.captureGapMs=0;window.fixture.sparseCaptureMs=0;window.fixture.muteStaleLookahead=false;});
+      receipt.checks.push("A 240 ms active-capture gap after recorder resume refuses choppy output, cleans tracks and offers no download with or without audio");
+      receipt.checks.push("Repeated 55 ms callback delays refuse a short dissolve with too few distinct painted frames, even when no single gap exceeds 150 ms");
       await page.evaluate(() => {window.fixture.configure(true);window.fixture.decodeDelays=[];window.fixture.interruptAudio=true;});
       await page.locator("#run").click();
       await expect.poll(() => page.evaluate(() => window.fixture.exporting), {timeout:10000}).toBe(false);

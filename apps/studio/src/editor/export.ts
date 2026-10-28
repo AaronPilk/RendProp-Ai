@@ -1,7 +1,8 @@
 import {decodeMusic} from "./music";
 import {musicGainAt} from "./finishing";
 import {OverlayPainter} from "./overlay-renderer";
-import {AudioStartupClock, RecordingClock} from "./recording-clock";
+import {AudioStartupClock, CaptureCadenceClock, RecordingClock} from "./recording-clock";
+import {verifyMp4FrameCadence, type EncodedTransition} from "./mp4-cadence";
 import {
   EDIT_LIMITS,
   draftMedia,
@@ -9,6 +10,7 @@ import {
   clipDuration,
   renderDimensions,
   timelineDuration,
+  transitionSeconds,
   validateDraft,
   type EditDraft,
   type EditClip,
@@ -201,6 +203,7 @@ export async function exportLocalVideo(options: {
   Object.assign(canvas, renderDimensions(draft.ratio));
   let stream: MediaStream | undefined;
   let recorder: MediaRecorder | undefined;
+  const encodedTransitions: EncodedTransition[] = [];
   let audio: AudioContext | undefined;
   let destination: MediaStreamAudioDestinationNode | undefined;
   let silentSource: ConstantSourceNode | undefined;
@@ -351,6 +354,11 @@ export async function exportLocalVideo(options: {
       await overlays.paint(canvas, elapsedBefore);
       throwIfAborted(renderSignal);
       const duration = clipDuration(clip);
+      if (hasPrevious && transitionSeconds(clip) > 0)
+        encodedTransitions.push({startSeconds: elapsedBefore, durationSeconds: transitionSeconds(clip)});
+      // Restart the cadence origin for each clip while the recorder is paused.
+      // Preparation can take time; only a gap in active capture is a defect.
+      const captureCadence = new CaptureCadenceClock(hasPrevious ? transitionSeconds(clip) * 1000 : 0);
       // Prepare bounded gain data while capture is still stopped/paused. The
       // curve retains the nominal 30 Hz targets and existing 25 ms smoothing,
       // with four interpolation points per capture interval (at most 21,601).
@@ -381,6 +389,11 @@ export async function exportLocalVideo(options: {
           });
         assertCurrentRevision(draft, currentDraft(), renderSignal);
         if (audio && audio.state !== "running") throw new Error("Audio stopped before recording could start. No download was created.");
+        // Give the browser a paint turn before the recorder and source start.
+        // A cold canvas/encoder can otherwise consume the first active frame
+        // interval, producing a frozen opening even though later frames flow.
+        await nextExportFrame(renderSignal, 1000 / 30);
+        assertCurrentRevision(draft, currentDraft(), renderSignal);
         // A canvas track can retain timestamps from its creation. Open it only
         // after readiness, so pre-content preparation cannot become a video prefix.
         // Drive capture from completed paints. Chromium's periodic canvas
@@ -426,6 +439,7 @@ export async function exportLocalVideo(options: {
         await overlays.paint(canvas, elapsedBefore);
         const track = stream!.getVideoTracks()[0] as
           CanvasCaptureMediaStreamTrack | undefined;
+        captureCadence.capture(performance.now(), 0);
         track?.requestFrame?.();
       } else {
         // resume() changes state synchronously and queues capture before its
@@ -434,6 +448,7 @@ export async function exportLocalVideo(options: {
         recorder.resume();
         const track = stream!.getVideoTracks()[0] as
           CanvasCaptureMediaStreamTrack | undefined;
+        captureCadence.capture(performance.now(), 0);
         track?.requestFrame?.();
       }
       // Start recording before advancing the source, so startup cannot discard speech.
@@ -541,6 +556,9 @@ export async function exportLocalVideo(options: {
         if (paintBucket !== lastPaintedBucket || elapsed >= duration) {
           drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore + elapsed, localTime: elapsed, previous: hasPrevious ? previous : undefined});
           await overlays.paint(canvas, elapsedBefore + elapsed);
+          // Wall and media clocks may agree while the event loop or encoder
+          // misses the entire transition. Refuse before offering that file.
+          captureCadence.capture(performance.now(), elapsed * 1000);
           (stream!.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined)?.requestFrame?.();
           lastPaintedBucket = paintBucket;
         }
@@ -588,6 +606,10 @@ export async function exportLocalVideo(options: {
       throw new Error(
         "The browser returned an empty recording. No export was created.",
       );
+    // The encoder can silently omit requested canvas frames. For MP4, verify
+    // its actual video sample cadence before offering a file; metadata reads
+    // skip the mdat payload and are bounded independently of clip duration.
+    if (extension === "mp4") await verifyMp4FrameCadence(blob, encodedTransitions, renderSignal);
     assertCurrentRevision(draft, currentDraft(), renderSignal);
     onProgress(1);
     return {
