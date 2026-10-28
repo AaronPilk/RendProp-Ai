@@ -87,14 +87,27 @@ try:
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     receipt["hybrid"] = run("hybrid-fresh", [*psql, "-Atq", "-f", SQL / "tests/trial_hybrid_funded_serving.sql"]).strip()
     receipt["fresh"] = run("trial-fresh", [*psql, "-Atq", "-f", SQL / "tests/subscription_trial_purchase_reservations.sql"]).strip()
-    # The historical replay restates these two RPCs at their old schema point.
-    # Save and restore the exact current definitions before checking the final
-    # contract a second time; the production migration remains one-shot.
-    current_trial_rpcs = run("snapshot-current-trial-rpcs", [*psql, "-Atq"],
-      "select pg_get_functiondef('public.prepare_subscription_trial_purchase(uuid,uuid,text)'::regprocedure)||';';"
-      "select pg_get_functiondef('public.fund_reserved_subscription_trial(uuid,uuid,text,text,text,bigint,text,text,integer,text,timestamptz,timestamptz,timestamptz,text)'::regprocedure)||';';")
-    run("replay-trial", [*psql, "-q", "-f", MIGRATION])
-    run("restore-current-trial-rpcs", [*psql, "-q"], current_trial_rpcs)
+    # This historical migration patches a specific predecessor funding body.
+    # The final schema has moved beyond that anchor, so replay must refuse and
+    # the entire attempted migration must roll back. Compare every RPC it
+    # creates or patches; never restore an old body after a failed replay.
+    trial_rpc_definitions_sql = "".join(
+        f"select pg_get_functiondef('{signature}'::regprocedure);"
+        for signature in (
+            "public.subscription_trial_held_offer(uuid,uuid)",
+            "public.prepare_subscription_trial_purchase(uuid,uuid,text)",
+            "public.subscription_trial_reserved_workspace(uuid,text)",
+            "public.fund_reserved_subscription_trial(uuid,uuid,text,text,text,bigint,text,text,integer,text,timestamptz,timestamptz,timestamptz,text)",
+            "public.fund_verified_apple_transaction(uuid,text,text,text,bigint,text,text,integer,text,timestamptz,timestamptz,timestamptz,text)",
+        )
+    )
+    current_trial_rpcs = run("snapshot-current-trial-rpcs", [*psql, "-Atq"], trial_rpc_definitions_sql)
+    run("replay-trial-one-shot-refused", [*psql, "-q", "-1", "-f", MIGRATION],
+        refuses="Unknown funding lock body")
+    after_refused_replay = run("snapshot-trial-rpcs-after-refusal", [*psql, "-Atq"], trial_rpc_definitions_sql)
+    assert after_refused_replay == current_trial_rpcs, "Refused historical migration changed final trial RPCs"
+    receipt["historicalReplay"] = {"oneShotRefused": True, "transactionRolledBack": True,
+                                   "finalRpcDefinitionsSha256": hashlib.sha256(after_refused_replay.encode()).hexdigest()}
     receipt["replay"] = run("trial-replay", [*psql, "-Atq", "-f", SQL / "tests/subscription_trial_purchase_reservations.sql"]).strip()
     actor1="f1000000-0000-4000-8000-000000000001"
     actor2="f1000000-0000-4000-8000-000000000002"
