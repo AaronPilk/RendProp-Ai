@@ -13,7 +13,7 @@ an App Review screenshot. This is not a purchase-path acceptance result.
 
 | Product | Accurate customer copy (≤45 characters) | Genuine offer screenshot |
 | --- | --- | --- |
-| `com.rendprop.app.credits.100` | `100 nonexpiring credits for one workspace.` | In the exact review build, sign in as an eligible workspace owner/admin. Open Account → Settings & plan → Credits. Capture the balance and `Add 100 credits · [StoreKit price]` offer. The production funding gate must be active before that CTA can appear. |
+| `com.rendprop.app.credits.100` | `100 nonexpiring credits for one workspace.` | In the exact review build, sign in as an eligible workspace owner/admin. Open Account → Settings & plan → Credits. Capture the balance and `Add 100 credits · [StoreKit price]` offer. The isolated Sandbox operator authority can expose this CTA to a specifically authorized QA actor with the Production product gate still off, after its matching migration and Edge function have been deployed. A QA grant does not establish retail funding. |
 | `com.rendprop.app.website.premium.property` | `Luxury design for one property. Plan hosting.` (current ASC copy; improve only with an intentional localized metadata edit) | Open a saved eligible property → Website design. Capture the real `Upgrade this property · [StoreKit price]` offer with luxury designs visible. TestFlight Sandbox can expose it when the server's Sandbox gate allows that property. |
 
 Use a genuine iPhone screenshot from the exact review build, with the item and
