@@ -5,7 +5,7 @@ struct APIError: Error { let status: Int; let code: String? }
 @MainActor final class SelectionFixture: ListingPhotoCloudSelectionAPI {
     let identity = PhotoCloudSelectionIdentity(actorID: UUID(), libraryOrgID: UUID(), localListingID: UUID(), serverListingID: UUID())
     let physical = UUID(), a = UUID(), a2 = UUID(), b = UUID(), b2 = UUID()
-    var ids: [UUID]? = [], cover: String?, receipts: [UUID: PhotoCloudSelectionSnapshot.Receipt] = [:]
+    var ids: [UUID]? = [], legacyEffective: [UUID] = [], cover: String?, receipts: [UUID: PhotoCloudSelectionSnapshot.Receipt] = [:]
     var abandoned: [UUID:PhotoCloudSelectionRequest] = [:]
     var abandonCount = 0
     var patchCount = 0, getCount = 0, prepareCount = 0, validateCount = 0
@@ -14,20 +14,21 @@ struct APIError: Error { let status: Int; let code: String? }
     var beforeGET: (() -> Void)?
     var beforePATCH: (() -> Void)?
     var afterPATCH: (() -> Void)?
+    var onPrepare: (() -> Void)?
     var catalog: [PhotoCloudLocalVersion] = []
     var lastOperation: PhotoCloudSelectionOperation?
     func key(_ id: UUID) -> String { "renders/\(physical.uuidString.lowercased())/\(identity.serverListingID.uuidString.lowercased())/gallery-\(id.uuidString.lowercased()).jpg" }
     func digest(_ n: Int) -> String { String(repeating: String(n), count: 64) }
     func reset() {
-        ids = [a,b]; cover = key(b); receipts = [:]; abandoned = [:]; abandonCount = 0; patchCount = 0; getCount = 0; prepareCount = 0; validateCount = 0; rejectTargetValidation = false
-        loseReply = false; failGET = false; refusal = nil; wrongReceipt = false; wrongRequest = false; beforeGET = nil; beforePATCH = nil; afterPATCH = nil; lastOperation = nil
+        ids = [a,b]; legacyEffective = [a,b]; cover = key(b); receipts = [:]; abandoned = [:]; abandonCount = 0; patchCount = 0; getCount = 0; prepareCount = 0; validateCount = 0; rejectTargetValidation = false
+        loseReply = false; failGET = false; refusal = nil; wrongReceipt = false; wrongRequest = false; beforeGET = nil; beforePATCH = nil; afterPATCH = nil; onPrepare = nil; lastOperation = nil
         catalog = [local("a", "A", a, 1),local("a2", "A", a2, 2),local("b", "B", b, 3),local("b2", "B", b2, 4)]
     }
     func local(_ id: String, _ family: String, _ asset: UUID?, _ n: Int, complete: Bool = true) -> PhotoCloudLocalVersion {
         .init(id: id, familyID: family, imageFile: id + ".jpg", sha256: digest(n), bytes: Int64(n * 100), knownAssetID: asset, historyComplete: complete)
     }
     func snapshot(operationID: UUID?, patch: Bool = false) throws -> PhotoCloudSelectionSnapshot {
-        let assets: [[String: Any]] = (ids ?? [a,b]).compactMap { id in
+        let assets: [[String: Any]] = (ids ?? legacyEffective).compactMap { id in
             let canonical: (String,Int64)? = id == a ? (digest(1),100) : id == a2 ? (digest(2),200)
                 : id == b ? (digest(3),300) : id == b2 ? (digest(4),400)
                 : catalog.first(where: { $0.knownAssetID == id }).map { ($0.sha256,$0.bytes) }
@@ -38,7 +39,7 @@ struct APIError: Error { let status: Int; let code: String? }
         var body: [String: Any] = ["schema":1,"actor_id":identity.actorID.uuidString,"org_id":physical.uuidString,
             "library_org_id":identity.libraryOrgID.uuidString,"listing_id":identity.serverListingID.uuidString,
             "gallery_asset_ids":ids.map { $0.map(\.uuidString) as Any } ?? NSNull(),"main_photo_key":cover as Any? ?? NSNull(),
-            "effective_asset_ids":(ids ?? [a,b]).map(\.uuidString),"gallery_assets":assets,"operation":NSNull(),"operation_status":operationID == nil ? NSNull() : (receipt == nil ? "not_found" : "accepted") as Any,"abandoned_operation":NSNull()]
+            "effective_asset_ids":(ids ?? legacyEffective).map(\.uuidString),"gallery_assets":assets,"operation":NSNull(),"operation_status":operationID == nil ? NSNull() : (receipt == nil ? "not_found" : "accepted") as Any,"abandoned_operation":NSNull()]
         if let receipt { body["operation"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(receipt)) }
         if let operationID, let request = abandoned[operationID], receipt == nil {
             body["operation_status"] = "abandoned"
@@ -63,8 +64,8 @@ struct APIError: Error { let status: Int; let code: String? }
             throw APIError(status: 409, code: "gallery_selection_changed")
         }
         if request.promoteCover {
-            guard let target = request.target, (ids ?? [a,b]).contains(target.assetID),
-                  (ids ?? [a,b]).filter({ request.familyAssetIDs.contains($0) }).count == 1 else { throw APIError(status:409,code:"not_selected") }
+            guard let target = request.target, (ids ?? legacyEffective).contains(target.assetID),
+                  (ids ?? legacyEffective).filter({ request.familyAssetIDs.contains($0) }).count == 1 else { throw APIError(status:409,code:"not_selected") }
             cover = key(target.assetID)
             receipts[operation.operationID] = .init(operationID:operation.operationID,request:request,result:.init(galleryAssetIDs:ids,mainPhotoKey:cover))
             afterPATCH?()
@@ -72,7 +73,7 @@ struct APIError: Error { let status: Int; let code: String? }
             return try snapshot(operationID:operation.operationID,patch:true)
         }
         var next: [UUID] = [], inserted = false
-        for id in ids ?? [a,b] {
+        for id in ids ?? legacyEffective {
             if request.familyAssetIDs.contains(id) {
                 if let target = request.target, !inserted { next.append(target.assetID); inserted = true }
             } else { next.append(id) }

@@ -1119,6 +1119,8 @@ final class AppModel: ObservableObject {
                 self.identityOwnerUserID = actor.flatMap(UUID.init(uuidString:))
                 self.lastCloudSyncAt = Date()
                 self.persist()
+                await self.defaultFirstCloudCoversAfterWorkspaceSync()
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
                 for listing in self.listings where !listing.isSample && self.isInSelectedWorkspace(listing) && listing.serverID != nil {
                     try? await self.refreshClientContact(for: listing.id)
                     guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
@@ -1463,7 +1465,7 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult func changeCloudPhotoSelection(listingID: UUID, versionID: String, selecting: Bool,
-                                                      followFamilyCover: Bool = false, reviewed: Bool, promoteCover: Bool = false, requireEmptyCover: Bool = false, requireSelectedVersion: Bool = false, requireCurrentSelection: Bool = false) async throws -> PhotoCloudSelectionProjection {
+                                                      followFamilyCover: Bool = false, reviewed: Bool, promoteCover: Bool = false, requireEmptyCover: Bool = false, requireSelectedVersion: Bool = false, requireCurrentSelection: Bool = false, requireBlankGallery: Bool = false) async throws -> PhotoCloudSelectionProjection {
         guard cloudPhotoMutationInFlight.insert(listingID).inserted else { throw PhotoCloudSelectionFailure.busy }
         defer { cloudPhotoMutationInFlight.remove(listingID) }
         let (identity, context, physical) = try cloudPhotoIdentity(listingID)
@@ -1472,7 +1474,7 @@ final class AppModel: ObservableObject {
         cloudPhotoStates.removeValue(forKey: listingID)
         func check() throws { try self.requireCloudPhotoIdentity(identity, context: context, physicalOrgID: physical, generation: generation) }
         let projection = try await photoCloudCoordinator.change(identity: identity, physicalOrgID: physical,
-            versionID: versionID, selecting: selecting, followFamilyCover: followFamilyCover, reviewed: reviewed, promoteCover: promoteCover, requireEmptyCover: requireEmptyCover, requireSelectedVersion: requireSelectedVersion, requireCurrentSelection: requireCurrentSelection, api: selectionAPI,
+            versionID: versionID, selecting: selecting, followFamilyCover: followFamilyCover, reviewed: reviewed, promoteCover: promoteCover, requireEmptyCover: requireEmptyCover, requireSelectedVersion: requireSelectedVersion, requireCurrentSelection: requireCurrentSelection, requireBlankGallery: requireBlankGallery, api: selectionAPI,
             catalog: { try await self.cloudPhotoCatalog(identity: identity, physicalOrgID: physical, requireIdentity: check) },
             prepare: { measured, org in
                 try check()
@@ -1600,9 +1602,61 @@ final class AppModel: ObservableObject {
             reviewed: reviewed, promoteCover: true)
     }
 
-    /// Only an explicit initial publication can start this persisted ordered
-    /// family queue. Automatic refresh can confirm a prior receipt, never send
-    /// its next request or replace the gallery from a directory enumeration.
+    /// A pre-existing phone listing with exactly one verified original can
+    /// acquire its first cloud cover on normal sync. Multi-photo history has
+    /// no unambiguous automatic choice, and remote homes cannot borrow a
+    /// partial local directory as publication authority.
+    private func defaultFirstCloudCoversAfterWorkspaceSync() async {
+        for listing in listings where !listing.isSample && isInSelectedWorkspace(listing)
+            && listing.serverID != nil && listing.cloudUnavailable != true && listing.cloudImported != true
+            && listing.mainPhotoRelPath == nil {
+            guard (try? PhotoVersionHistory.firstAutomaticCoverVersion(
+                directory: EnhancedPhoto.directory(for: listing.id), requireSingleFamily: true)) != nil else { continue }
+            do { try await defaultFirstCloudCoverIfNeeded(listingID: listing.id) }
+            catch is CancellationError { return }
+            catch CloudSyncError.identityChanged { return }
+            catch PhotoCloudSelectionFailure.identityChanged { return }
+            catch { continue }
+        }
+    }
+
+    /// Importing into an empty cloud gallery gives the first verified source a
+    /// website cover. The saved one-photo intent lets a later Photos visit
+    /// confirm a lost reply before completing its separate cover step.
+    func defaultFirstCloudCoverIfNeeded(listingID: UUID, freshImportIntoEmptyHome: Bool = false) async throws {
+        guard Config.useLiveBackend else { return }
+        let (identity, context, physical) = try cloudPhotoIdentity(listingID)
+        if let saved = try photoCloudJournal.initialIntent(identity) {
+            if saved.automaticFirstCover == true { try await publishInitialPhotoChoicesIfNeeded(listingID: listingID) }
+            return
+        }
+        guard let listing = listings.first(where: { $0.id == listingID }),
+              listing.cloudImported != true, listing.mainPhotoRelPath == nil else { return }
+        let directory = EnhancedPhoto.directory(for: listingID)
+        guard let source = try PhotoVersionHistory.firstAutomaticCoverVersion(
+            directory: directory, requireSingleFamily: !freshImportIntoEmptyHome) else { return }
+        let projection = try await refreshCloudPhotoSelection(listingID: listingID)
+        guard !projection.pending, projection.snapshot.mainPhotoKey == nil,
+              projection.snapshot.galleryAssetIDs == nil,
+              projection.snapshot.effectiveAssetIDs.allSatisfy({ $0 == projection.assetByVersion[source.id] }),
+              projection.mutableFamilyIDs.contains(source.familyID),
+              let measured = projection.versions.first(where: { $0.id == source.id }) else { return }
+        try context.check()
+        let (currentIdentity, _, currentPhysical) = try cloudPhotoIdentity(listingID)
+        guard currentIdentity == identity, currentPhysical == physical,
+              listings.first(where: { $0.id == listingID })?.mainPhotoRelPath == nil,
+              try PhotoVersionHistory.firstAutomaticCoverVersion(
+                  directory: directory, requireSingleFamily: !freshImportIntoEmptyHome) == source else {
+            throw PhotoCloudSelectionFailure.identityChanged
+        }
+        _ = try photoCloudJournal.beginInitial(.init(identity: identity, versions: [measured],
+            coverVersionID: measured.id, initialCoverWasEmpty: true, automaticFirstCover: true))
+        try await publishInitialPhotoChoicesIfNeeded(listingID: listingID)
+    }
+
+    /// Explicit tour publication and the one verified first-source default
+    /// can start this persisted ordered family queue. Generic refresh still
+    /// only confirms receipts and never starts its next network mutation.
     private func publishInitialPhotoChoicesIfNeeded(listingID: UUID) async throws {
         guard Config.useLiveBackend else { return }
         let (identity, context, physical) = try cloudPhotoIdentity(listingID)
@@ -1621,7 +1675,18 @@ final class AppModel: ObservableObject {
         guard currentPhotos.snapshot.effectiveAssetIDs.isEmpty || !currentPhotos.mutableFamilyIDs.isEmpty else {
             throw PhotoCloudSelectionFailure.unmapped
         }
-        let browserRepairs = currentPhotos.versions.filter {
+        let queuedIntent = try photoCloudJournal.initialIntent(identity)
+        let queuedAutomatic = queuedIntent?.automaticFirstCover == true
+        if queuedAutomatic {
+            let source = try PhotoVersionHistory.firstAutomaticCoverVersion(directory: EnhancedPhoto.directory(for: listingID))
+            if listings.first(where: { $0.id == listingID })?.cloudImported == true ||
+                listings.first(where: { $0.id == listingID })?.mainPhotoRelPath != nil ||
+                source?.id != queuedIntent?.coverVersionID {
+                try photoCloudJournal.discardAutomaticInitial(identity)
+                return
+            }
+        }
+        let browserRepairs = (queuedAutomatic ? [] : currentPhotos.versions).filter {
             currentPhotos.selectedVersionIDs.contains($0.id) && $0.needsBrowserDelivery && !currentPhotos.browserReadyVersionIDs.contains($0.id)
         }
         for captured in browserRepairs {
@@ -1675,16 +1740,35 @@ final class AppModel: ObservableObject {
             guard let measured = projection.versions.first(where: { $0.id == next.id }),
                   measured.familyID == next.familyID, measured.imageFile == next.imageFile,
                   measured.sha256 == next.sha256, measured.bytes == next.bytes else { throw PhotoCloudSelectionFailure.changed }
+            if intent.automaticFirstCover == true {
+                let untouched = projection.snapshot.galleryAssetIDs == nil &&
+                    projection.snapshot.mainPhotoKey == nil &&
+                    projection.snapshot.effectiveAssetIDs.allSatisfy({ $0 == projection.assetByVersion[next.id] })
+                if !untouched {
+                    try photoCloudJournal.discardAutomaticInitial(identity)
+                    return
+                }
+            }
             let selectedFamily = projection.versions.filter { $0.familyID == next.familyID && projection.selectedVersionIDs.contains($0.id) }
-            if projection.browserReadyVersionIDs.contains(next.id), selectedFamily.count == 1 {
+            if (intent.automaticFirstCover != true || projection.snapshot.galleryAssetIDs != nil),
+               projection.browserReadyVersionIDs.contains(next.id), selectedFamily.count == 1 {
                 try photoCloudJournal.confirmInitialCurrent(identity, version: measured)
             } else {
                 // The same frozen original can gain a browser delivery without
                 // changing its version/source intent or another family's cover.
                 let repairingCurrent = measured.needsBrowserDelivery && selectedFamily.count == 1 && selectedFamily.first?.id == next.id
                 let follow = repairingCurrent && projection.coverVersionIDs.contains(next.id)
-                _ = try await changeCloudPhotoSelection(listingID: listingID, versionID: next.id,
-                    selecting: true, followFamilyCover: follow, reviewed: false, requireCurrentSelection: repairingCurrent)
+                do {
+                    _ = try await changeCloudPhotoSelection(listingID: listingID, versionID: next.id,
+                        selecting: true, followFamilyCover: follow, reviewed: false,
+                        requireCurrentSelection: repairingCurrent, requireBlankGallery: intent.automaticFirstCover == true)
+                } catch {
+                    let changed = (error as? PhotoCloudSelectionFailure) == .changed ||
+                        (error as? APIError).map { $0.status == 409 && $0.code == "gallery_selection_changed" } == true
+                    guard intent.automaticFirstCover == true && changed else { throw error }
+                    try photoCloudJournal.discardAutomaticInitial(identity)
+                    return
+                }
             }
             try check()
         }
@@ -1697,11 +1781,20 @@ final class AppModel: ObservableObject {
                       let measured = projection.versions.first(where: { $0.id == coverID }),
                       measured.familyID == captured.familyID, measured.imageFile == captured.imageFile,
                       measured.sha256 == captured.sha256, measured.bytes == captured.bytes else { throw PhotoCloudSelectionFailure.changed }
+                var automaticSourceStillChosen = true
+                if intent.automaticFirstCover == true {
+                    automaticSourceStillChosen = try PhotoVersionHistory.firstAutomaticCoverVersion(
+                        directory: EnhancedPhoto.directory(for: listingID))?.id == coverID &&
+                        listings.first(where: { $0.id == listingID })?.mainPhotoRelPath == nil
+                }
+                let automaticStillSole = intent.automaticFirstCover != true ||
+                    projection.assetByVersion[coverID].map { projection.snapshot.effectiveAssetIDs == [$0] } == true
                 if projection.coverVersionIDs.contains(coverID) {
                     try photoCloudJournal.confirmInitialCover(identity, version: measured, preserved: false)
                 } else if !intent.initialCoverWasEmpty || projection.snapshot.mainPhotoKey != nil
                     || !projection.selectedVersionIDs.contains(coverID)
-                    || projection.versions.filter({ $0.familyID == captured.familyID && projection.selectedVersionIDs.contains($0.id) }).count != 1 {
+                    || projection.versions.filter({ $0.familyID == captured.familyID && projection.selectedVersionIDs.contains($0.id) }).count != 1
+                    || !automaticSourceStillChosen || !automaticStillSole {
                     try photoCloudJournal.confirmInitialCover(identity, version: measured, preserved: true)
                 } else {
                     do {
@@ -1719,8 +1812,10 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        if try photoCloudJournal.initialIntent(identity)?.coverWasPreserved == true {
-            cloudPhotoNotices[listingID] = "The listing’s existing cover setting was preserved. Choose a star in Photos to change it."
+        if let completed = try photoCloudJournal.initialIntent(identity), completed.coverWasPreserved {
+            cloudPhotoNotices[listingID] = completed.automaticFirstCover == true
+                ? "A newer photo choice was preserved. Choose a star in Photos to set the cover."
+                : "The listing’s existing cover setting was preserved. Choose a star in Photos to change it."
         }
         try photoCloudJournal.finishInitial(identity)
     }

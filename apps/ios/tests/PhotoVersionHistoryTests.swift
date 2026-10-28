@@ -39,6 +39,28 @@ struct PhotoVersionHistoryTests {
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("photo-history-tests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
+        let automaticDir = root.appendingPathComponent("automatic-cover")
+        try PhotoVersionHistory.saveCapture(original: Data("first original".utf8), enhanced: Data("first brightened".utf8),
+                                            id: "first", directory: automaticDir)
+        let firstSource = try PhotoVersionHistory.firstAutomaticCoverVersion(directory: automaticDir)
+        check(firstSource?.id == "first-original" && firstSource?.isRetainedOriginalSource == true,
+              "first new capture offers only its exact retained source for the initial cover")
+        _ = try PhotoVersionHistory.saveEdit(jpeg: Data("edited".utf8), id: "first-edit", parentID: "first",
+            sourceID: "first", edit: "declutter", style: nil, disclosure: "Changed", provenanceID: "receipt",
+            provenanceRecorded: true, directory: automaticDir)
+        let editedFirstSource = try PhotoVersionHistory.firstAutomaticCoverVersion(directory: automaticDir)
+        check(editedFirstSource == nil, "later local AI choice blocks the automatic source cover")
+        let multiDir = root.appendingPathComponent("multi-automatic-cover")
+        try PhotoVersionHistory.saveCapture(original: Data("first original".utf8), enhanced: Data("first brightened".utf8),
+                                            id: "first", directory: multiDir)
+        try PhotoVersionHistory.saveCapture(original: Data("second original".utf8), enhanced: Data("second brightened".utf8),
+                                            id: "second", directory: multiDir)
+        let historicalSource = try PhotoVersionHistory.firstAutomaticCoverVersion(directory: multiDir, requireSingleFamily: true)
+        check(historicalSource == nil,
+              "historical multi-photo gallery does not silently choose its first photo")
+        let freshFirstSource = try PhotoVersionHistory.firstAutomaticCoverVersion(directory: multiDir)
+        check(freshFirstSource?.id == "first-original",
+              "new first import still has a deterministic retained original")
         let dir = root.appendingPathComponent("home")
         let original = Data("unaltered-capture".utf8), enhanced = Data("local-enhancement".utf8)
         try PhotoVersionHistory.saveCapture(original: original, enhanced: enhanced, id: "capture", directory: dir)
@@ -636,6 +658,9 @@ struct PhotoVersionHistoryTests {
         check((try? PhotoVersionHistory.load(directory: removedDir).listingSelections) == removed.listingSelections, "repeat removal remains idempotent without restoring defaults")
         let originalSource = try PhotoVersionHistory.ensureOriginalSources(directory: removedDir).libraryVersions(.original)
             .first { $0.familyID == "room" }!
+        let removedFirstSource = try PhotoVersionHistory.firstAutomaticCoverVersion(directory: removedDir)
+        check(removedFirstSource == nil,
+              "explicit removal of the first family cannot fall through to another automatic cover")
         let cleanRemoval = try PhotoVersionHistory.saveEdit(jpeg: Data("new-clean-room".utf8), id: "room-clean-after-removal",
             parentID: stagedRemoval.id, sourceID: originalSource.id, edit: "declutter", style: nil, disclosure: nil,
             provenanceID: "clean-receipt", provenanceRecorded: true, directory: removedDir)

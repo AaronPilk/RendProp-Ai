@@ -236,7 +236,7 @@ enum PhotoGridListingSelection {
     }
 
     func change(identity: PhotoCloudSelectionIdentity, physicalOrgID: UUID?, versionID: String, selecting: Bool,
-                followFamilyCover: Bool, reviewed: Bool, promoteCover: Bool = false, requireEmptyCover: Bool = false, requireSelectedVersion: Bool = false, requireCurrentSelection: Bool = false, api: any ListingPhotoCloudSelectionAPI,
+                followFamilyCover: Bool, reviewed: Bool, promoteCover: Bool = false, requireEmptyCover: Bool = false, requireSelectedVersion: Bool = false, requireCurrentSelection: Bool = false, requireBlankGallery: Bool = false, api: any ListingPhotoCloudSelectionAPI,
                 catalog: Catalog, prepare: Prepare, validateTarget: ValidateTarget, requireIdentity: IdentityCheck) async throws -> PhotoCloudSelectionProjection {
         guard !changing.contains(identity) else { throw PhotoCloudSelectionFailure.busy }
         guard try store.load(identity) == nil else { throw PhotoCloudSelectionFailure.pending }
@@ -256,11 +256,23 @@ enum PhotoGridListingSelection {
                 throw PhotoCloudSelectionFailure.changed
             }
         }
+        func checkBlankGallery(_ current: PhotoCloudSelectionProjection, afterPreparation: Bool) throws {
+            guard !requireBlankGallery || (selecting && !promoteCover &&
+                (current.snapshot.galleryAssetIDs == nil ||
+                    (afterPreparation && current.snapshot.galleryAssetIDs?.isEmpty == true)) &&
+                current.snapshot.mainPhotoKey == nil &&
+                current.snapshot.effectiveAssetIDs.allSatisfy({ $0 == current.assetByVersion[versionID] })) else {
+                throw PhotoCloudSelectionFailure.changed
+            }
+        }
         try checkCurrentSelection(projection)
+        try checkBlankGallery(projection, afterPreparation: false)
         guard projection.mutableFamilyIDs.contains(version.familyID) else { throw PhotoCloudSelectionFailure.unmapped }
+        var preparedThisCall = false
         if selecting, projection.assetByVersion[versionID] == nil || (version.needsBrowserDelivery && version.browserDelivery == nil) {
             // This is the only preparation capability; refresh has no such closure.
             try await prepare(version, snapshot.orgID); try check()
+            preparedThisCall = true
             versions = try await catalog(); try check()
             guard versions.map({ ($0.id, $0.familyID, $0.imageFile, $0.sha256, $0.bytes, $0.historyComplete) }).elementsEqual(
                 initialVersions.map({ ($0.id, $0.familyID, $0.imageFile, $0.sha256, $0.bytes, $0.historyComplete) }), by: { $0 == $1 }) else {
@@ -274,6 +286,7 @@ enum PhotoGridListingSelection {
             projection = try .resolve(identity: identity, snapshot: snapshot, versions: versions, pending: false)
         }
         try checkCurrentSelection(projection)
+        try checkBlankGallery(projection, afterPreparation: preparedThisCall)
         guard projection.mutableFamilyIDs.contains(version.familyID) else { throw PhotoCloudSelectionFailure.unmapped }
         if requireEmptyCover {
             guard promoteCover else { throw PhotoCloudSelectionFailure.invalidReply }

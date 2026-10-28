@@ -486,6 +486,30 @@ enum PhotoVersionHistory {
         return source
     }
 
+    /// The first family's retained pre-enhancement source is the only safe
+    /// automatic cover candidate. Historical homes with multiple families
+    /// require an explicit choice unless this call follows their first import.
+    static func firstAutomaticCoverVersion(directory: URL, requireSingleFamily: Bool = false) throws -> Version? {
+        let index = try ensureOriginalSources(directory: directory)
+        guard !requireSingleFamily || index.orderedFamilyIDs.count == 1,
+              let family = index.orderedFamilyIDs.first,
+              !index.hiddenFamilies.contains(family),
+              index.excludedListingFamilies?.contains(family) != true,
+              let chosenID = (index.listingSelections ?? index.current)[family],
+              let chosen = index.versions[chosenID], chosen.parentID == nil,
+              chosen.edit == "capture" || chosen.edit == "capture-original",
+              chosen.effects.isEmpty, chosen.originalVerified, chosen.sourceHistoryKnown,
+              !chosen.needsStagingReview, !chosen.needsCustomReview,
+              let source = index.versions.values.first(where: {
+                  $0.familyID == family && $0.isRetainedOriginalSource &&
+                  $0.edit == "capture-original" && $0.imageFile == chosen.originalFile &&
+                  $0.customReviewed == nil &&
+                  $0.originalVerified && $0.sourceHistoryKnown && !$0.needsCustomReview
+              }) else { return nil }
+        try requireImage(source.imageFile, directory: directory)
+        return source
+    }
+
     /// Register only a newly captured/imported image whose pre-enhancement bytes
     /// this call owns. Older orig-* files may be AI predecessors, so never infer
     /// this guarantee from a filename.

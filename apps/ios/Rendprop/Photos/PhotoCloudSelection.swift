@@ -333,9 +333,15 @@ struct PhotoCloudInitialPublicationIntent: Codable, Equatable, Sendable {
     let initialCoverWasEmpty: Bool
     var coverFinished: Bool
     var coverWasPreserved: Bool = false
-    init(identity: PhotoCloudSelectionIdentity, versions: [PhotoCloudLocalVersion], coverVersionID: String? = nil, initialCoverWasEmpty: Bool = false) {
+    /// Only the first verified source on a still-unselected home may create
+    /// this intent. Its marker survives an accepted selection with a lost
+    /// reply, so a later Photos visit may finish the cover without guessing.
+    var automaticFirstCover: Bool? = nil
+    init(identity: PhotoCloudSelectionIdentity, versions: [PhotoCloudLocalVersion], coverVersionID: String? = nil,
+         initialCoverWasEmpty: Bool = false, automaticFirstCover: Bool = false) {
         self.identity = identity; self.versions = versions; self.coverVersionID = coverVersionID
         self.initialCoverWasEmpty = initialCoverWasEmpty; self.coverFinished = coverVersionID == nil
+        self.automaticFirstCover = automaticFirstCover ? true : nil
     }
     func validate() throws {
         guard versions.count <= 100, Set(versions.map(\.id)).count == versions.count,
@@ -344,6 +350,11 @@ struct PhotoCloudInitialPublicationIntent: Codable, Equatable, Sendable {
             throw PhotoCloudSelectionFailure.invalidReply
         }
         if let coverVersionID { guard versions.contains(where: { $0.id == coverVersionID }) else { throw PhotoCloudSelectionFailure.invalidReply } }
+        if automaticFirstCover == true {
+            guard versions.count == 1, coverVersionID == versions[0].id, initialCoverWasEmpty else {
+                throw PhotoCloudSelectionFailure.invalidReply
+            }
+        }
         guard !coverWasPreserved || coverFinished, coverVersionID != nil || coverFinished else { throw PhotoCloudSelectionFailure.invalidReply }
         for v in versions {
             try PhotoCloudSelectionTarget(assetID: v.knownAssetID ?? identity.serverListingID, sha256: v.sha256, bytes: v.bytes).validate()
@@ -499,6 +510,16 @@ final class PhotoCloudSelectionJournal: @unchecked Sendable {
         Self.lock.lock(); defer { Self.lock.unlock() }
         guard let intent = try readInitial(identity), intent.completedVersionIDs.count == intent.versions.count,
               intent.coverFinished else { throw PhotoCloudSelectionFailure.pending }
+        try FileManager.default.removeItem(at: initialURL(identity))
+        try synchronizeDirectory()
+    }
+
+    /// A newer manual gallery choice cancels only an undispatched automatic
+    /// default. A pending network operation still needs its receipt checked.
+    func discardAutomaticInitial(_ identity: PhotoCloudSelectionIdentity) throws {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        guard try read(identity) == nil else { throw PhotoCloudSelectionFailure.pending }
+        guard try readInitial(identity)?.automaticFirstCover == true else { return }
         try FileManager.default.removeItem(at: initialURL(identity))
         try synchronizeDirectory()
     }

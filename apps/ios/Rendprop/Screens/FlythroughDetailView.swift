@@ -7898,18 +7898,25 @@ struct PhotoStudioView: View {
         }
     }
 
-    /// Read the existing authenticated selection for every cloud listing.
-    /// Opening Photos never sends a choice; an unpublished page needs the
-    /// same confirmed state before its direct grid controls can show ticks.
-    private func refreshListingPhotoSelection() {
-        guard entry == .photos, !listing.isSample else { return }
+    /// Read the authenticated selection. A verified first source may become
+    /// this home's initial website cover; later refreshes only read it.
+    private func refreshListingPhotoSelection(afterImport: Bool = false, freshImportIntoEmptyHome: Bool = false) {
+        guard (entry == .photos || afterImport), !listing.isSample, !galleryRetrying else { return }
         // An empty new phone must not clear cloud photos. An explicitly hidden
         // final family, however, is a real user removal with retained history.
         guard !photos.isEmpty || ((try? PhotoVersionHistory.load(directory: dir).versions.isEmpty) == false) else { return }
         let current = model.listings.first(where: { $0.id == listing.id })
         guard current?.cloudUnavailable != true, let serverID = current?.serverID else { return }
         let localID = listing.id
-        Task { await model.syncGalleryPhotos(listingLocalID: localID, listingServerID: serverID) }
+        let context = NativeMediaExportContext()
+        galleryRetrying = true
+        Task { @MainActor in
+            defer { galleryRetrying = false }
+            do { try await model.defaultFirstCloudCoverIfNeeded(listingID: localID,
+                freshImportIntoEmptyHome: freshImportIntoEmptyHome) }
+            catch { if context.isCurrent { photoSaveError = error.localizedDescription } }
+            await model.syncGalleryPhotos(listingLocalID: localID, listingServerID: serverID)
+        }
     }
 
     /// UI walk only (`-uiTesting -ui.seedPhotosDir`): the store screenshots need
@@ -7979,8 +7986,8 @@ struct PhotoStudioView: View {
                     return
                 }
                 loadExisting()
-                // Importing never chooses a cloud version or cover.
-                if isCloudPhotoListing { refreshListingPhotoSelection() }
+                // A first verified original may become the initial cloud cover.
+                if isCloudPhotoListing { refreshListingPhotoSelection(afterImport: true, freshImportIntoEmptyHome: existingIDs.isEmpty) }
                 else if mainRelPath == nil, let first = photos.first { setMain(first) }
                 if let message = report.message {
                     photoSaveError = message
@@ -8008,6 +8015,7 @@ struct PhotoStudioView: View {
         photoSaveError = nil
         processingText = "Working on your photo…"
         let targetDir = dir
+        let wasEmptyHome = ((try? PhotoVersionHistory.load(directory: targetDir).versions.isEmpty) ?? false)
         let owner = AuthStore.shared.userID
         let revision = AuthStore.shared.syncSessionRevision
         let workspace = WorkspaceContext.selectedOrgID
@@ -8046,8 +8054,8 @@ struct PhotoStudioView: View {
                     return
                 }
                 loadExisting()
-                // Local first photos become the card's cover automatically.
-                if isCloudPhotoListing { refreshListingPhotoSelection() }
+                // First saved photos can become the card's cloud cover too.
+                if isCloudPhotoListing { refreshListingPhotoSelection(afterImport: true, freshImportIntoEmptyHome: wasEmptyHome) }
                 else if mainRelPath == nil, let first = photos.first { setMain(first) }
                 if failureCount > 0 {
                     let message = images.count == 1

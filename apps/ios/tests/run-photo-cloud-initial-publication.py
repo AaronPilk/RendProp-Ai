@@ -10,17 +10,24 @@ assert shutil.disk_usage('/').free>=3*1024**3 and shutil.disk_usage(a.output_dir
 app=(ROOT/paths[2]).read_text();marker='    private func publishInitialPhotoChoicesIfNeeded(';start=app.index(marker);end=app.index('{',start)+1;depth=1
 while depth:depth+=(app[end]=='{')-(app[end]=='}');end+=1
 actual=app[start:end].replace('private func','func',1)
+marker='    func defaultFirstCloudCoverIfNeeded(';ds=app.index(marker);de=app.index('{',ds)+1;depth=1
+while depth:depth+=(app[de]=='{')-(app[de]=='}');de+=1
+first_cover=app[ds:de]
+marker='    private func defaultFirstCloudCoversAfterWorkspaceSync(';bs=app.index(marker);be=app.index('{',bs)+1;depth=1
+while depth:depth+=(app[be]=='{')-(app[be]=='}');be+=1
+sync_backfill=app[bs:be].replace('private func','func',1)
+assert 'await self.defaultFirstCloudCoversAfterWorkspaceSync()' in app,'Normal workspace sync must invoke the backfill'
 marker='    func prepareCloudPhotoHide(';hs=app.index(marker);he=app.index('{',hs)+1;depth=1
 while depth:depth+=(app[he]=='{')-(app[he]=='}');he+=1
 hide=app[hs:he]
 
 fixture=(ROOT/paths[3]).read_text().split('@main struct PhotoCloudSelectionChecks')[0]
-main=(ROOT/paths[4]).read_text().replace('// __ACTUAL_SELECTION_FIXTURE__',fixture).replace('// __ACTUAL_INITIAL_QUEUE__',actual).replace('// __ACTUAL_HIDE_ADMISSION__',hide)
+main=(ROOT/paths[4]).read_text().replace('// __ACTUAL_SELECTION_FIXTURE__',fixture).replace('// __ACTUAL_INITIAL_QUEUE__',actual).replace('// __ACTUAL_HIDE_ADMISSION__',hide).replace('// __ACTUAL_FIRST_COVER_DEFAULT__',first_cover).replace('// __ACTUAL_FIRST_COVER_SYNC__',sync_backfill)
 (a.output_dir/'Main.swift').write_text(main)
 c=subprocess.run(['xcrun','swiftc','-swift-version','5','-parse-as-library',str(ROOT/paths[0]),str(ROOT/paths[1]),str(a.output_dir/'Main.swift'),'-o',str(a.output_dir/'checks')],capture_output=True,text=True,timeout=120)
 (a.output_dir/'compile.log').write_text(c.stdout+c.stderr);assert c.returncode==0,'Compile failure is not behavior proof'
 fixtures=a.output_dir/'fixtures';fixtures.mkdir();r=subprocess.run([str(a.output_dir/'checks'),str(fixtures)],capture_output=True,text=True,timeout=60)
 (a.output_dir/'runtime.log').write_text(r.stdout+r.stderr);assert r.returncode==0,r.stdout+r.stderr
 assert source=={p:h(ROOT/p)for p in paths},'Consumed source changed'
-v={'passed':True,'checkedUTC':datetime.datetime.now(datetime.timezone.utc).isoformat(),'sourceHashes':source,'actualInitialLoopSHA256':hashlib.sha256(actual.encode()).hexdigest(),'actualHideAdmissionSHA256':hashlib.sha256(hide.encode()).hexdigest(),'output':r.stdout,'externalNetworkCalls':0,'hostedWrites':0,'UIExecutions':0,'limits':'Actual initial loop, coordinator, journal; transport and local-version enumeration closed, no publication call or physical proof.'}
+v={'passed':True,'checkedUTC':datetime.datetime.now(datetime.timezone.utc).isoformat(),'sourceHashes':source,'actualInitialLoopSHA256':hashlib.sha256(actual.encode()).hexdigest(),'actualFirstCoverDefaultSHA256':hashlib.sha256(first_cover.encode()).hexdigest(),'actualFirstCoverSyncSHA256':hashlib.sha256(sync_backfill.encode()).hexdigest(),'actualHideAdmissionSHA256':hashlib.sha256(hide.encode()).hexdigest(),'output':r.stdout,'externalNetworkCalls':0,'hostedWrites':0,'UIExecutions':0,'limits':'Actual initial loop, first-cover default and normal-sync backfill, coordinator and journal; transport and local-version enumeration closed, no hosted publication call or physical proof.'}
 (a.output_dir/'receipt.json').write_text(json.dumps(v,indent=2)+'\n');print(r.stdout)
