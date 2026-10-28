@@ -253,9 +253,13 @@ select pg_temp.ok(provision_serving_funding((select org from bf),'retail','bg-ne
 -- Trial ceiling/photo policy hasno effect on sharedallocatedpool or priorgrants.
 select pg_temp.ok((select photo_edits=5 from subscription_trial_config),'futuretrialofferallowsfivephotoedits');
 select pg_temp.ok((select(value->>'trial_ceiling_cents')::integer=500 and(value->>'free_lifetime_cents')::integer=0 from app_config where key='serving_envelope'),'trial500free0bothtruthful');
-set local role service_role;
+-- Import a synthetic historical listing to test an already-saved draft.
+-- The current free/trial insert guard stays active for all new listings below.
+reset role;set local session_replication_role=replica;
+insert into listings(id,org_id,agent_id,address)values('f1300000-0000-4000-8000-000000000002',(select other_org from bf),(select other from bf),'Historical trial property');
+set local session_replication_role=origin;set local role service_role;
 select apply_apple_entitlement_v2((select other_org from bf),(select other from bf),'bg-trial-original','bg-trial-transaction','com.rendprop.app.starter.monthly','max','Production','active',now()+interval'7 days',true,'SUBSCRIBED',now(),now(),now(),now());
-reset role;insert into listings(id,org_id,agent_id,address)values('f1300000-0000-4000-8000-000000000002',(select other_org from bf),(select other from bf),'Synthetic trial property');set local role service_role;
+select pg_temp.refuse($q$insert into listings(id,org_id,agent_id,address)values('f1300000-0000-4000-8000-000000000003',(select other_org from bf),(select other from bf),'Unfunded trial property')$q$,'RP402:','unfunded introductory trial cannot create a new listing');
 select pg_temp.ok(plan_serving_ceiling((select other_org from bf))->>'ceiling_cents'='500','ordinaryintroductorywindowuses500cap');
 select pg_temp.refuse($q$select property_video_recipe_capacity((select other from bf),'f1300000-0000-4000-8000-000000000002',20,676.908+622.592+20)$q$,'RP402:','introductorytrialrefuseswholevideoquotebeforeproviderdispatch');
 -- Capacity pause/retry retains alreadyaccepted sources and cannotresetcharges.
