@@ -1,4 +1,6 @@
-# App Review demo-account runbook (operator draft, 2026-10-27)
+# App Review demo-account runbook (historical funding draft, 2026-10-27)
+
+**Access-path correction, 2026-10-28:** Do not execute the Apple Account handoff or paste its Notes template below. Native Sign in with Apple authenticates the iCloud account on the reviewer's device; an app-specific account cannot be selected by entering its Apple Account credentials in Rendprop. Apple's account-security guidance also says not to share an Apple Account. This document remains useful only as a reference for the finite `app_review` funding and media checks. The release access path and its unimplemented work are recorded in [reviewer-access-path-20261028.md](reviewer-access-path-20261028.md). The current `review_notes.txt` is still a draft and does not establish full reviewer access.
 
 **Status: STOP before App Store submission.** No dedicated Apple Account or Rendprop demo workspace exists. This document records the smallest operator sequence for the existing service-owned `app_review` grant; it is not proof of full reviewer access. Do not run the write examples or change App Store Connect (ASC) until the stop gates below pass against the exact deployed backend and submitted iPhone build. No credentials, live account, database row, or ASC field were created for this draft.
 
