@@ -47,6 +47,7 @@ import { propertyAddressOnlyPath, propertyAddressPath, propertyAddressSlug } fro
 import { previewWebsiteTheme } from "./property-design";
 import { isPublicLocation, lookupNearbyPlaces, peekNearbyPlaces, type NearbyPlacesResult } from "./nearby-places";
 import { renderNearbyMap } from "./nearby-map";
+import { withAssetRange } from "./asset-range";
 
 const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
 
@@ -713,7 +714,8 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   // The binding preserves asset MIME types, ranges, ETags and _headers.
   if (env.ASSETS) {
     const asset = await env.ASSETS.fetch(req);
-    if (asset.status !== 404) return asset;
+    // iOS media needs byte ranges; the binding answers ranges with a 200.
+    if (asset.status !== 404) return withAssetRange(req, asset);
   }
 
   // Safety net for local tests or a deployment without the asset binding.
