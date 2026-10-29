@@ -100,6 +100,14 @@ do $$declare f record;r jsonb;begin select * into f from fixture;
  perform pg_temp.denied(format('select serving_cost_reserve(%L,%L,''trial-photo-key-5'',''photo.stage:0'',''gemini'',''synthetic'',%L,1,''synthetic'')',f.u,f.o,repeat('a',64)),'RP402','sixth photo denied before provider');
  perform pg_temp.ok((select sum(hold_cents)=5 from serving_cost_reservations where org_id=f.o and state<>'rejected'),'reserved and ambiguous liability preserved independently of credits');
  perform pg_temp.ok((subscription_trial_context(f.u,f.o)#>>'{trial_usage,photo_edits,remaining}')::int=0 and subscription_trial_context(f.u,f.o)#>>'{trial_usage,status}'='active','individual exhausted bucket does not hide usable walkthrough/publication');
+ -- An admitted Declutter assessment (20261029210132) is analysis, not one of the
+ -- five included edits: it is held against the slice even after the fifth edit,
+ -- while an unadmitted suggestion stays refused.
+ perform pg_temp.ok((photo_declutter_assessment_admit(f.u,f.o,'trial-assess-key-0',repeat('b',64))->>'admitted')::boolean,'active trial admits its Declutter assessment');
+ perform serving_cost_reserve(f.u,f.o,'trial-assess-key-0','photo.suggest','gemini','synthetic',repeat('b',64),1,'synthetic');
+ perform pg_temp.ok(exists(select 1 from serving_cost_reservations where request_key='trial-assess-key-0')
+   and(select count(*)=5 from subscription_trial_actions where org_id=f.o and kind='photo'),'admitted Declutter assessment is held without using an included photo edit');
+ perform pg_temp.denied(format('select serving_cost_reserve(%L,%L,''trial-assess-unadmitted'',''photo.suggest'',''gemini'',''synthetic'',%L,1,''synthetic'')',f.u,f.o,repeat('a',64)),'RP402','unadmitted trial suggestion is still refused');
 end$$;
 create function pg_temp.ticket(o uuid,l uuid,id uuid,idem text,n bigint)returns jsonb language sql as $$select jsonb_build_array(jsonb_build_object('id',id,'listing_id',l,'kind',case when n>52428800 then 'video'else 'photo'end,'bucket','uploads','storage_key','uploads/'||o||'/'||l||'/'||id||case when n>52428800 then '.mp4'else '.jpg'end,'bytes',n,'parts_total',case when n>67108864 then ceil(n/33554432.0)::integer else null end,'part_size',case when n>67108864 then 33554432 else null end,'content_type',case when n>52428800 then 'video/mp4'else 'image/jpeg'end,'content_type_declared',true,'idem_key',idem));$$;
 do $$declare f record;r jsonb;id uuid:=gen_random_uuid();begin select * into f from fixture;
