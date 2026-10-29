@@ -20,7 +20,8 @@ function provider(name, inputs) {
   expect(matches.length === 1, `${name}: exactly one provider row`);
   for (const input of inputs) expect(matches.length === 1 && matches[0].includes(input), `${name}: ${input}`);
 }
-expect(t.includes("account-based workspace") && t.includes("sign in with Apple") && t.includes("The app is the source of truth"), "Terms state the account requirement and where current plan terms appear");
+expect(t.includes("account-based workspace") && t.includes("sign in with Apple") && t.includes("email address and password of an existing Rendprop account") && t.includes("The app is the source of truth"), "Terms state the account requirement, both sign-in methods and where current plan terms appear");
+expect(p.includes("email address and password of an") && p.includes("one-way hash"), "Privacy discloses email sign-in and password hashing");
 expect(p.includes("Account details") && p.includes("older guest session"), "Privacy covers the account identity and legacy guest sessions");
 expect(p.includes("scripts or transcript excerpts") && p.includes("personal information"), "AI inventory covers text and potentially identifying content");
 provider("Google Gemini", ["Selected photos or video", "text inputs"]);
@@ -49,7 +50,7 @@ for (const [label, html] of [["Privacy", privacy], ["Terms", terms]]) {
   expect(html.includes("#7c3aed") && html.includes("#9b6dff"), `${label}: existing light/dark brand accents`);
   expect(html.includes('<html lang="en">') && html.includes('name="viewport"'), `${label}: language and mobile viewport`);
   expect(html.includes('href="/support"') && html.includes('mailto:aaron@pilk.ai'), `${label}: support and contact preserved`);
-  expect(html.includes("Effective October 27, 2026"), `${label}: proposed notice revision date`);
+  expect(html.includes("Effective October 29, 2026"), `${label}: proposed notice revision date`);
   expect(html.includes("RendProp LLC") && html.includes("855 Central Avenue, Saint Petersburg, FL 33701"), `${label}: owner-supplied legal entity and mailing address`);
   expect(!/<script\b/i.test(html), `${label}: no third-party scripts or telemetry added`);
 }

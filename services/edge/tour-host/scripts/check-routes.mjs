@@ -662,7 +662,7 @@ async function main() {
     "[/terms] §6 must identify Apple as the purchase-term authority");
   expect(!/Starter, Pro and Team, each\s+billed monthly\./.test(terms.body),
     "[/terms] must not promise the superseded monthly-only launch line-up");
-  expect(terms.body.includes("Effective October 27, 2026"), "[/terms] proposed notice revision date");
+  expect(terms.body.includes("Effective October 29, 2026"), "[/terms] proposed notice revision date");
   ok("terms separate Rendprop usage details from Apple purchase terms");
 
   // ── safeUrl scheme allowlist (audit P1 re-open) ──────────────────────────

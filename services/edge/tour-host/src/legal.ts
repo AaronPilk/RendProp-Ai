@@ -9,7 +9,7 @@
 // (#7C3AED light / #9B6DFF dark — the app's Theme.accent), automatic
 // light/dark via prefers-color-scheme.
 
-const EFFECTIVE_DATE = "October 27, 2026";
+const EFFECTIVE_DATE = "October 29, 2026";
 // Prospective 90-day hosting grace was approved by the owner on October 6.
 // Deploy only with matching retention/read/export contracts; the legal draft
 // and handoff separate tested behavior from account-specific provider evidence.
@@ -143,7 +143,7 @@ ${BUSINESS} ("we", "us") and apply whenever you use the app or any page we host 
 
 <h2><span class="num">2.</span>Your account</h2>
 <p>Rendprop is an account-based workspace. You sign in with Apple to create or open your
-account; that account owns your listings, hosted pages, AI usage and team membership, and lets
+account, or sign in with the email address and password of an existing Rendprop account; that account owns your listings, hosted pages, AI usage and team membership, and lets
 you sync across devices and recover your workspace if you delete the app. Capturing and editing
 work offline once you are signed in; cloud uploads, hosted publication and AI tools need a
 connection. The app shows the features and included usage available with each current plan;
@@ -291,8 +291,10 @@ export function privacyPage(): string {
 <h2><span class="num">1.</span>What we collect</h2>
 <p>Rendprop collects the minimum it needs to run:</p>
 <ul>
-  <li><b>Account details</b> — you sign in with Apple to use Rendprop; Apple provides the name
-  and email or private-relay address you choose to share. Apple-linked sign-in and account deletion
+  <li><b>Account details</b> — you sign in with Apple, or with the email address and password of an
+  existing Rendprop account. With Apple, Apple provides the name and email or private-relay address
+  you choose to share; with email, we keep your email address and our authentication provider stores
+  your password only as a one-way hash. Apple-linked sign-in and account deletion
   can exchange tokens with Apple. Installs from before October 2026 may hold an older guest session
   until they sign in; its data transfers to the account you sign in with.</li>
   <li><b>Your content</b> — the listings you create and the video, photos, tours, and related
