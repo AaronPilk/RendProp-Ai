@@ -48,15 +48,37 @@ def main() -> None:
     out.mkdir(parents=True,exist_ok=True)
     assert MOVIE.is_file() and MOVIE.stat().st_size>0 and TRANSCRIPT.is_file(), 'Bundled media missing'
     scenes=json.loads((SOURCE/'scenes.json').read_text())['scenes']
+    scene_source=json.loads((SOURCE/'scenes.json').read_text())
+    visuals=json.loads((SOURCE/'visuals.json').read_text())
+    provenance=json.loads((SOURCE/'captures/provenance.json').read_text())
+    voice_manifest=json.loads((SOURCE/'voice/provenance.json').read_text())
     timeline=json.loads((SOURCE/'timeline.json').read_text())
     vtt=(SOURCE/'captions.vtt').read_text()
     transcript=TRANSCRIPT.read_text().strip()
     assert len(scenes)>=38 and len(timeline['scenes'])==len(scenes), 'Training scene coverage incomplete'
+    assert scene_source['voice']=='ElevenLabs Faye', 'Owner-approved ElevenLabs voice required'
+    assert voice_manifest['model']=='elevenlabs_v4_turbo' and voice_manifest['voice']=='Faye', 'Voice source changed'
+    voice_rows={item['id']:item for item in voice_manifest['scenes']}
+    assert set(voice_rows)=={s['id'] for s in scenes}, 'Narration source coverage incomplete'
+    for scene in scenes:
+        item=voice_rows[scene['id']]
+        master=SOURCE/'voice'/item['file']
+        assert master.is_file() and sha(master)==item['file_sha256'], f'Paid voice master changed: {scene["id"]}'
+        assert hashlib.sha256(scene['narration'].encode('utf-8')).hexdigest()==item['narration_sha256'], f'Narration text changed without matching voice: {scene["id"]}'
+    assert set(visuals)=={s['id'] for s in scenes}, 'Every lesson needs real app visuals'
+    used={key for keys in visuals.values() for key in keys}
+    assert len(used)>=24, 'Too few distinct actual app screens for the full guide'
+    for key in used:
+        item=provenance[key]
+        assert item['source'].startswith(('Physical iPhone','Current app simulator','Current live mobile browser')), f'Non-app visual: {key}'
+        capture=SOURCE/'captures'/item['file']
+        assert capture.is_file() and sha(capture)==item['file_sha256'], f'Capture changed: {key}'
     assert len(transcript.split())>1500, 'Transcript must include narration and on-screen directions'
     assert vtt.startswith('WEBVTT\n') and vtt.count('-->')>=len(scenes), 'Timed captions incomplete'
     for scene,item in zip(scenes,timeline['scenes']):
         assert scene['id']==item['id'] and scene['title'] in transcript, 'Scene/transcript mismatch'
         assert scene['narration'] in transcript, 'Narration missing from transcript'
+        assert item['visuals']==visuals[scene['id']], f'Stale visual edit for scene {scene["id"]}'
         assert item['end']>item['start'] and item['audio_seconds']>0, 'Empty scene or audio segment'
     assert [x['title'] for x in timeline['chapters']]==CHAPTERS, 'Chapter order mismatch'
     for phrase in ['Activity','Needs attention','Use on listing website','Restore purchases',
@@ -104,6 +126,7 @@ def main() -> None:
 
     receipt={'passed':True,'video':str(MOVIE),'duration_seconds':duration,
              'chapters':len(chapters),'scenes':len(scenes),'bytes':MOVIE.stat().st_size,
+             'distinct_real_captures':len(used),'voice':scene_source['voice'],
              'video_codec':video['codec_name'],'audio_codec':audio['codec_name'],
              'width':video['width'],'height':video['height'],'pixel_format':video['pix_fmt'],
              'narration_rms_first_last':rms,'video_sha256':sha(MOVIE),

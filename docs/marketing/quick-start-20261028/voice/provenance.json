@@ -1,0 +1,275 @@
+{
+  "provider": "ElevenLabs via connected Higgsfield",
+  "model": "elevenlabs_v4_turbo",
+  "voice": "Faye",
+  "voice_id": "d198dc0b-c4e5-5198-aa1d-ecf5ca0927c4",
+  "owner_approved_sample_seconds": 9.874,
+  "scenes": [
+    {
+      "id": "01",
+      "file": "scene-01.mp3",
+      "file_sha256": "2398cb1a001d9a85b3e3dfd9f407293801cb2cd05ab83aeb34407c9ef48354d4",
+      "narration_sha256": "07aaaf4072eb3ef3b4c45cf4313b087e8925680093306f2517284201738bee5b",
+      "duration_seconds": 12.74775
+    },
+    {
+      "id": "02",
+      "file": "scene-02.mp3",
+      "file_sha256": "d5429a21d83f75181c1550c965e97c3a92b3f1eacde8b676711c37c0238d9385",
+      "narration_sha256": "f24d184563b878a9e4eef4dbab1d3533eccfe5f2e92a0a908d476989d9acc1c1",
+      "duration_seconds": 17.319125
+    },
+    {
+      "id": "03",
+      "file": "scene-03.mp3",
+      "file_sha256": "27b8b85b4733e8fe16311dc8d26dbf8f9fb19e0560c46ddcfd3bca11f00f0543",
+      "narration_sha256": "dc7e6f965b3da867e7265f167d9ec8f8567d120c615b236ef77ac32eaffd1e04",
+      "duration_seconds": 12.74775
+    },
+    {
+      "id": "04",
+      "file": "scene-04.mp3",
+      "file_sha256": "b24adca3068798bb37607ca52da7e76a72f16af8c6e633240b7eff8160842fb6",
+      "narration_sha256": "0cfdffad6f9c640e670ec1f6a1781c1ad0d7083c4cb6311768d53e3a5d1a1ed5",
+      "duration_seconds": 12.199125
+    },
+    {
+      "id": "05",
+      "file": "scene-05.mp3",
+      "file_sha256": "6d6938a5b07766cd0fd0832f3e741ccd666a3306c93feb2217c9efa3594ac809",
+      "narration_sha256": "adac549969f6e018062344ce92329dffbc2c5ae496102b6eeb239e08efda0464",
+      "duration_seconds": 13.322438
+    },
+    {
+      "id": "06",
+      "file": "scene-06.mp3",
+      "file_sha256": "6d9473dd817ca8260b4297a45ee5f2a3b89831bba820547ba21d5b3ef349832f",
+      "narration_sha256": "3168b17bfbaa7e0930c5787b0df1d436af400f2dc41a8c347b0a54189dce9c5d",
+      "duration_seconds": 13.635875
+    },
+    {
+      "id": "07",
+      "file": "scene-07.mp3",
+      "file_sha256": "02699b32e7a6121104b1b8eec37663ce33a1ee50523cfe5c18a975afa777db57",
+      "narration_sha256": "44e556fd2e6313bd661a620c0132238e93cc4ef207556d0965ad4a2436132def",
+      "duration_seconds": 15.960813
+    },
+    {
+      "id": "08",
+      "file": "scene-08.mp3",
+      "file_sha256": "77332bc16f89b423ff644f242e4be6ba764f3a1773db8184789e699a85ece786",
+      "narration_sha256": "c156977c5f49c3170e62a3982808209031ad5aaeba3f5d7e2436c18ae9730b75",
+      "duration_seconds": 14.602438
+    },
+    {
+      "id": "09",
+      "file": "scene-09.mp3",
+      "file_sha256": "f7e4725a1131fc60888b1fb98c5d0d8aa413b9ee7b158113cd11247e2b6dc643",
+      "narration_sha256": "365aa58c0197d4d740db8e304679f83781b76e1e3811b9124b8de5b4cbed0ede",
+      "duration_seconds": 12.930563
+    },
+    {
+      "id": "10",
+      "file": "scene-10.mp3",
+      "file_sha256": "8471644394ac76291f1a935ffef7da830a80e2fc9a680d3455d90880e94f8d37",
+      "narration_sha256": "a2b949e6a429602805214d8d80d2c84867a662462184cedab42e4fe2bd5ed241",
+      "duration_seconds": 12.355875
+    },
+    {
+      "id": "11",
+      "file": "scene-11.mp3",
+      "file_sha256": "a84e908259d4d782317e9c87e83b9e758adf36c7239913c107f191521f2e0fa7",
+      "narration_sha256": "5899ad2ed32e6e13c8cc75db7b6f62ad479648999e70b94b7ef2c5200576788e",
+      "duration_seconds": 14.8375
+    },
+    {
+      "id": "12",
+      "file": "scene-12.mp3",
+      "file_sha256": "b204689d96bcd29b68d1e400a8dafc790eeeb41b2422d7e7c63657d48e75b927",
+      "narration_sha256": "86cb1438274d7bc27317a6ad5e03ef7bb0b96faa92ad98cec8c54c1e9cc57f05",
+      "duration_seconds": 16.431
+    },
+    {
+      "id": "13",
+      "file": "scene-13.mp3",
+      "file_sha256": "36fdf69cd090df08d958845e9c4023c9dc15052991a87ec8662de80a6dcba5c4",
+      "narration_sha256": "417a50d16ca696d5203608f284cc11bfe4c1849015678cae3c5d37a26975f9a5",
+      "duration_seconds": 14.02775
+    },
+    {
+      "id": "14",
+      "file": "scene-14.mp3",
+      "file_sha256": "d34dde483aaa8cf8c2793c6598239280aac2a86483d5f6bb55767f2a089621d3",
+      "narration_sha256": "8f6dee32d1f570bcc70dd7a30f384f387a72b43dd3430f82c8b8fca603f4b23f",
+      "duration_seconds": 12.826063
+    },
+    {
+      "id": "15",
+      "file": "scene-15.mp3",
+      "file_sha256": "b71a6d7e34aa0b6593b8100311fdfd592f17b23b9e1831a9c60d54e7d91192b6",
+      "narration_sha256": "3280d1f20e99d2f6536b65bbf84c2779ee3623f593f066e18e95986b862d17b1",
+      "duration_seconds": 15.960813
+    },
+    {
+      "id": "16",
+      "file": "scene-16.mp3",
+      "file_sha256": "bb8791686d91461b0bdf86efecfdf553b5d0309a77370c7b4285600bca06219e",
+      "narration_sha256": "71a72c45cfca6ecb59a1ed83fa2344683bdcd8c92ded9b7156ff700aa29443ff",
+      "duration_seconds": 14.210563
+    },
+    {
+      "id": "17",
+      "file": "scene-17.mp3",
+      "file_sha256": "73547f939ef7c0d14a74a19b25077de30ef1f97e4a8cc6a64ee187309f0816e7",
+      "narration_sha256": "e4dc9b0889b9064212d87294353be792f9e8008d63d20998138c66bf90556b64",
+      "duration_seconds": 14.02775
+    },
+    {
+      "id": "18",
+      "file": "scene-18.mp3",
+      "file_sha256": "e772d41222308b201a4735920c05adb87fa84c403dd08aa1843134bda1efb1c4",
+      "narration_sha256": "3929800a326bcc53d0b01d9ffc437746d31e1f4f5bc0a6f61cdc6032204a6b06",
+      "duration_seconds": 13.087313
+    },
+    {
+      "id": "19",
+      "file": "scene-19.mp3",
+      "file_sha256": "b690e31c19a1375113f8066a094f09a80ccc252fbb2e3cc5920a008dcf63afd3",
+      "narration_sha256": "313459b1d724917b317f91630232344dbac4fa4a5b2c3f4e68e750ce0da9ca48",
+      "duration_seconds": 21.786063
+    },
+    {
+      "id": "20",
+      "file": "scene-20.mp3",
+      "file_sha256": "229e9b7d58ab7cbc00911a2f92eec1305d28d07253bc30862bdbe3e88c6f8106",
+      "narration_sha256": "97eedcbd45d02f5cc32abab5a0cb50663959e9938ceff1c6da90f04ba69f85dd",
+      "duration_seconds": 13.792625
+    },
+    {
+      "id": "21",
+      "file": "scene-21.mp3",
+      "file_sha256": "7c0949aca47c0103c6e8adf0cf15460a3e53c5789a281f2b811ca11f8d7f4d01",
+      "narration_sha256": "524bcc668e5633469096b3fe0657072a3ce69c0737a640c2d9a1f0efa20014a0",
+      "duration_seconds": 14.445688
+    },
+    {
+      "id": "22",
+      "file": "scene-22.mp3",
+      "file_sha256": "58eae79e0bffb237e591bf77b7eff4268fba0cc1e52f9a8e65ed75f124cc1592",
+      "narration_sha256": "3600d6352996ed205b843a8c8b4d1e775895800cec5d876bcf4190d91132c754",
+      "duration_seconds": 13.322438
+    },
+    {
+      "id": "23",
+      "file": "scene-23.mp3",
+      "file_sha256": "a5274b8a49cf2a6d40705d998d8c71af1f55a96a5fa329299effd8a1e2ae21d0",
+      "narration_sha256": "b4c916073b9eb062ca7772f3cfc462628b5969dd207980c8789c4d423f8130cd",
+      "duration_seconds": 16.039125
+    },
+    {
+      "id": "24",
+      "file": "scene-24.mp3",
+      "file_sha256": "d85f3430db9faa6a0ddbb1d4ca791552778430829452649e28984b114e48aaeb",
+      "narration_sha256": "653a08f72a94f96ca9df4e5c54994be807af524e03b40d335fd2555b91811c23",
+      "duration_seconds": 14.210563
+    },
+    {
+      "id": "25",
+      "file": "scene-25.mp3",
+      "file_sha256": "ec674ed16646b278cb08581f775def63b85494525ccfebda921187712d9a08b0",
+      "narration_sha256": "2c9afdabee9e0b6590c1e49c578778bdbd52398342b916ab78f81643644ffab1",
+      "duration_seconds": 13.792625
+    },
+    {
+      "id": "26",
+      "file": "scene-26.mp3",
+      "file_sha256": "dec9503c84f418132536e1538e1738b5abd659cf296c9e41365fcae12dc0ff2a",
+      "narration_sha256": "c73af645a47b043611608a9461660d55820b74923a55b17f7c853a446d94bd65",
+      "duration_seconds": 14.02775
+    },
+    {
+      "id": "27",
+      "file": "scene-27.mp3",
+      "file_sha256": "2a6d7341c22301fed586343797495037138f663159311e9af4137395ab6cbc6a",
+      "narration_sha256": "e4bd28776272cc8ea9bfa6fea73a329d9da44119b19997541b8b78ce1dd4433f",
+      "duration_seconds": 14.367313
+    },
+    {
+      "id": "28",
+      "file": "scene-28.mp3",
+      "file_sha256": "75166def4e478d715ab2652520ef8743ccc2660e55b94c85745abe6e24650a38",
+      "narration_sha256": "ee679baea19464de6d4737b9e87c8548764bb7ab3f5e01972614e71df31e3af5",
+      "duration_seconds": 19.069375
+    },
+    {
+      "id": "29",
+      "file": "scene-29.mp3",
+      "file_sha256": "18154315cf5494bc7456c88dbd6d6d906f1f24bd842767b41a1f5ba5635e4b6b",
+      "narration_sha256": "c6a6b533a2510b4402e9daac0158f18e0b91ebfdaf77e14b69ba183648b49b91",
+      "duration_seconds": 14.759125
+    },
+    {
+      "id": "30",
+      "file": "scene-30.mp3",
+      "file_sha256": "37dd099340c57d48f47b0399865ca2b674c99bfa171e64ada1db70c404c96943",
+      "narration_sha256": "74da3c87118e1d758ef25a69127d0d56810fe4692465d4158ed7962c3e6eb9c6",
+      "duration_seconds": 14.106063
+    },
+    {
+      "id": "31",
+      "file": "scene-31.mp3",
+      "file_sha256": "799a7d150f83faba59df8faf9845de8f3cc6f02fafd3697af7a65b6391913baf",
+      "narration_sha256": "5ed77f82be6f97713d68572142bbc3972c0710ace8b112a923a26c1c1a0e6b4c",
+      "duration_seconds": 12.930563
+    },
+    {
+      "id": "32",
+      "file": "scene-32.mp3",
+      "file_sha256": "597ebdcd5120ec4b42d2cac5baf700e5cf6a3bd77cfd5aab55dd2f10e4aaa277",
+      "narration_sha256": "2e370b4f63f44a8d0c36e4f32fb49359247a44f41edded3962590023e4a90a89",
+      "duration_seconds": 20.506063
+    },
+    {
+      "id": "33",
+      "file": "scene-33.mp3",
+      "file_sha256": "10d92ddfb4ba8fa5f9645ef400eb63bed05a73c25f91160814ace3969c49924f",
+      "narration_sha256": "f28cee8ac3472431c6eeb8cdc97108f7d480fd485ec2c194aba860a5fd1e0237",
+      "duration_seconds": 15.882438
+    },
+    {
+      "id": "34",
+      "file": "scene-34.mp3",
+      "file_sha256": "7d9e6834564b406eb05f1c631b3cd3497ea9e1625d7ad2aac40cc361a658f952",
+      "narration_sha256": "ef8211fffd08bd6f804913933dcba23d4f20afc6802aebd224462646a07829a4",
+      "duration_seconds": 14.759125
+    },
+    {
+      "id": "35",
+      "file": "scene-35.mp3",
+      "file_sha256": "8a567a6598a84edd74602131666b566823ff5f9c129b7af45590fd50a6ff8c10",
+      "narration_sha256": "0cea68ca2f6bba8bdf98d41a4f0d2bc83551fa6dca5ddf1f942b3b47ba1b0104",
+      "duration_seconds": 25.54775
+    },
+    {
+      "id": "36",
+      "file": "scene-36.mp3",
+      "file_sha256": "bfdaaacd676b374a81d0855813b31f24dfd4d569733fe65b65e45323684bb254",
+      "narration_sha256": "f69f33d7d5e7535a9e874881d6ee31f7de91311cae55c14f18194d07c1ec04e2",
+      "duration_seconds": 18.991
+    },
+    {
+      "id": "37",
+      "file": "scene-37.mp3",
+      "file_sha256": "7ed2735dfc71895df76179b5f27f929b490fa65fc3db656bda1e287a27760ce6",
+      "narration_sha256": "c1a7508c96b4a53d1f3d9da496ebe078e37d1a88cc6866433fe4efa39d47a9eb",
+      "duration_seconds": 17.240813
+    },
+    {
+      "id": "38",
+      "file": "scene-38.mp3",
+      "file_sha256": "1c5edc36095fd51992159f083f9cebebec7413004d05432b16a1483ccc31e4cf",
+      "narration_sha256": "d10e3b7e556acee61b35c25e54995b8df9fba1cc0a8539b9217bfd5fea62afe0",
+      "duration_seconds": 16.58775
+    }
+  ]
+}

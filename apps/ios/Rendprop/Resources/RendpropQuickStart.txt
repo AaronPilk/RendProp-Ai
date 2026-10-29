@@ -1,5 +1,5 @@
 Rendprop — Complete first-listing guide
-Narrated transcript and on-screen steps
+ElevenLabs Faye narration · real app screens
 
 FIND YOUR WAY
 
@@ -82,8 +82,8 @@ Choose the look next. Wide makes a landscape listing video; Tall makes a vertica
 On screen: Wide → landscape listing • Tall → vertical social • Preview the crop for that shape
 
 19. Tune motion and timing
-Choose Photo motion for a controlled move over each still, or an available AI camera option. Set time on each photo: a simple entrance can be brief; important rooms can hold longer. Preview framing before creating.
-On screen: Choose movement style • Set seconds per photo • Open Framing review
+In Photo motion, Automatic varies the direction from photo to photo using the four twelve-percent movements. Or choose Push in, Pull back, Glide left, or Glide right to use one direction throughout. Set each photo's length: a simple entrance can be brief, while key rooms can hold longer. Then preview framing.
+On screen: Photo motion → Automatic varies each photo • Or choose one direction • Set seconds → Preview framing
 
 20. Check the framing review
 Framing review shows the start and end crop. Watch for trimmed ceilings, doorways, or important details. If a photo does not fit the format, change the photo or shape before you spend usage on the video.

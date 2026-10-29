@@ -1,44 +1,49 @@
 # Complete first-listing guide
 
-This is the source package for the offline training film bundled in the iOS
-app as `RendpropQuickStart.mp4`. It replaces the 118-second introduction with
-38 narrated scenes in eight chapters. The guide starts with navigation and
-one real listing, then teaches photos and reviewed AI edits, listing video,
-optional aerial/recorded walkthroughs, property-site publishing and sharing,
-Leads, Activity recovery, Account, plans, credits and Team. It treats floor
-plans and 3D capture as later features.
+The iOS app bundles `RendpropQuickStart.mp4` and an offline transcript. This
+guide has 38 narrated scenes in eight chapters and teaches a first listing in
+practical order: navigation, listing details, photos and reviewed AI edits,
+photo video, optional aerial opening and recorded walkthrough, property-site
+publishing, Leads, Activity, plans, credits and Team. Floor plans and 3D
+capture are described only as later features.
 
-## Source and visuals
+## Authentic visual source
 
-- `scenes.json`: exact narration and on-screen directions, in playback order.
-- `screens/`: eight small labeled excerpts from the previously bundled app
-  guide. These illustrate stable, visible controls such as the toolbox,
-  listing details, Photos, saved edit review, export, music and walkthrough.
-- The rendering script draws current-flow diagrams for numbered video photo
-  selection, framing, Activity, credits, purchases and website designs.
-  Diagrams say **illustrative** in-frame; they are not claimed to be a device
-  capture. The two luxury designs follow the current source material and
-  physical-iPhone Safari review, not the stale paid-site sample screenshot.
-- `captions.vtt` and `timeline.json`: generated timed sidecars. The app's
-  Video Guide transcript disclosure uses the complete bundled `.txt`
-  narration and directions; the MP4 also carries eight chapter markers.
+- `scenes.json` is the exact narration and instruction order.
+- `visuals.json` assigns one to three **actual app or property-site captures**
+  to every scene. `captures/provenance.json` records the source device/build and
+  original and checked-in SHA-256 hashes. The foreground UI is never drawn or
+  simulated by the renderer. Some simulator captures contain test-fixture
+  listing data; these illustrate actual controls, not a customer property.
+- `captions.vtt` and `timeline.json` are generated from the duration of each
+  ElevenLabs Faye audio file in the owner-selected voice. The MP4 has eight chapter
+  markers. The bundled transcript is available inside the app.
+- `voice/scene-XX.mp3` preserves all 38 audio masters. Its provenance
+  manifest pins each file hash to the exact narration text, voice and model.
 
-The script uses system fonts, the checked-in brand photographs, macOS
-Samantha speech, Pillow and ffmpeg. It makes **no provider or paid API calls**.
-Use an external work directory for intermediate PCM, AIFF and slide files:
+The owner rejected the earlier illustrated/Samantha cut. `build_quick_start.py`
+requires the checked-in real captures and 38 checked-in ElevenLabs scene files;
+it has **no system-voice fallback**. The local render does not call a provider
+or spend credits.
+
+## Rebuild
+
+Use an external volume for audio originals and intermediate frames:
 
 ```sh
-python3 -m pip install --target /path/to/external/pydeps Pillow==12.3.0
-PYTHONPATH=/path/to/external/pydeps TMPDIR=/path/to/external/work \
+python3 -m pip install --target /external/pydeps Pillow==12.3.0
+PYTHONPATH=/external/pydeps TMPDIR=/external/work \
   python3 tools/video/build_quick_start.py \
-  --work-dir /path/to/external/work --render
+  --work-dir /external/work --render
 python3 apps/ios/tests/run-quick-start-video.py \
-  --evidence-dir /path/to/external/qa
+  --evidence-dir /external/qa
 ```
 
-The render produces the MP4 and `.txt` in `apps/ios/Rendprop/Resources`,
-plus sidecars here. The QA check verifies actual picture and audio decoding,
-eight chapter timestamps, scene/transcript/caption alignment and native media
-formats. An iOS build separately verifies the resources are bundled. Playback
-and instructional judgment on the owner phone remain a device acceptance
-step; source and simulator validation do not stand in for that review.
+`voice/` contains `scene-01.mp3` through `scene-38.mp3`, generated with the
+selected ElevenLabs Faye v4 Turbo voice from the corresponding narration text.
+The final MP4 and transcript are copied into
+`apps/ios/Rendprop/Resources`. Source captures and sidecars are in this
+directory. The QA check verifies capture provenance, the exact media streams,
+chapter/timeline sync, picture/audio decode, and bundled asset byte identity
+when supplied an app bundle. Physical-iPhone playback and instructional
+judgment remain separate release checks.
