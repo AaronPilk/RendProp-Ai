@@ -7,7 +7,8 @@
 //                                        public/sitemap-blog.xml
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-const ROOT = new URL("..", import.meta.url).pathname;
+import { fileURLToPath } from "node:url";
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PUB = join(ROOT, "public"), POSTS = join(ROOT, "content/blog"), COMPARE = join(ROOT, "content/compare");
 const ORIGIN = "https://rendprop.com";
 const BUILD_DATE = process.env.BLOG_BUILD_DATE || new Date().toISOString().slice(0, 10);

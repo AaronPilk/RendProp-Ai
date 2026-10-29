@@ -3,7 +3,8 @@
 // Fails on invented product claims, banned phrasing, bad links and malformed entries.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-const ROOT = new URL("..", import.meta.url).pathname;
+import { fileURLToPath } from "node:url";
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const POSTS = join(ROOT, "content/blog"), COMPARE = join(ROOT, "content/compare");
 const BANNED = ["unlock", "elevate", "seamless", "game-changer", "game changer", "revolutioniz", "revolutionis", "cutting-edge", "cutting edge", "in today's", "in today’s", "leverage", "delve", "harness", "supercharge", "effortless", "stunning", "transform your", "to the next level", "whether you're", "whether you’re", "look no further", "in conclusion", "it's important to note", "world of", "tapestry", "testament", "dive into", "navigate the", "unleash", "empower", "robust", "streamline", "synergy", "next-level", "say goodbye", "say hello", "imagine a world", "picture this", "at the end of the day", "the bottom line is"];
 const CLAIMS = [
