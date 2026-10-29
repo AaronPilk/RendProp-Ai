@@ -7,6 +7,9 @@ struct OnboardingView: View {
     @State private var choosingType = false
     @State private var choosingRole = false
     @State private var selectedRole: RealEstateRole = .agent
+    // The guide video is onboarding's last step. Closing it enters the app.
+    @State private var showGuide = false
+    @State private var plansAfterGuide = false
 
     // Feature-first: each page is one headline feature wearing its signature
     // gradient (the same one it wears on Home's showroom).
@@ -35,6 +38,9 @@ struct OnboardingView: View {
             } else {
                 cardsView
             }
+        }
+        .fullScreenCover(isPresented: $showGuide, onDismiss: { enterApp(showPlans: plansAfterGuide) }) {
+            OnboardingGuideStep()
         }
     }
 
@@ -204,7 +210,50 @@ struct OnboardingView: View {
             identified: AuthStore.shared.isIdentified, actorID: AuthStore.shared.userID,
             offlineFixture: Config.isOfflineAccountFixture) else { return }
         if spaceTypeRaw == SpaceType.realEstate.rawValue { RealEstateRoleStore.choose(selectedRole, owner: AuthStore.shared.userID) }
+        plansAfterGuide = showPlans
+        showGuide = true
+    }
+
+    /// Runs when the guide closes, by Skip for now, Done or Continue to the app.
+    /// The account is checked again: a session that ended meanwhile keeps
+    /// onboarding unfinished, exactly as `finish(showPlans:)` would.
+    private func enterApp(showPlans: Bool) {
+        guard NativeAccountLaunchAdmission.allows(signedIn: AuthStore.shared.isSignedIn,
+            identified: AuthStore.shared.isIdentified, actorID: AuthStore.shared.userID,
+            offlineFixture: Config.isOfflineAccountFixture) else { return }
         hasOnboarded = true
         if showPlans { PaywallRouter.shared.present(reason: .upgrade) }
+    }
+}
+
+/// Onboarding's final step: the bundled guide, the same screen Settings replays.
+/// Watching is optional. "Skip for now" stays on screen the whole time, and Done
+/// and "Continue to the app" close it too; OnboardingView enters the app on close.
+private struct OnboardingGuideStep: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        QuickStartVideoView(returnLabel: "Continue to the app")
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 2) {
+                    Button { dismiss() } label: {
+                        Text("Skip for now")
+                            .font(.rpBody.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("onboarding.guide.skip")
+                    Text("You can replay it anytime in Settings.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background(.bar)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("onboarding.guide")
+            }
     }
 }

@@ -31,6 +31,8 @@ final class PhotographerClientFlowTests: XCTestCase {
         XCTAssertTrue(photographer.waitForExistence(timeout: 10)); photographer.tap()
         XCTAssertTrue(app.staticTexts["How do you work?"].exists)
         app.buttons["onboarding.role.explore"].tap()
+        let skipGuide = app.buttons["onboarding.guide.skip"]
+        XCTAssertTrue(skipGuide.waitForExistence(timeout: 10), app.debugDescription); skipGuide.tap()
         let listings = app.tabBars.buttons["Listings"]
         XCTAssertTrue(listings.waitForExistence(timeout: 20), app.debugDescription)
         listings.tap()

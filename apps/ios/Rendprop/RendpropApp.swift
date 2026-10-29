@@ -3618,6 +3618,29 @@ enum NativeAccountLaunchAdmission {
     }
 }
 
+/// iOS keeps an app's Keychain items when the app is deleted, but not its
+/// UserDefaults, so a reinstall can restore the deleted install's session and
+/// skip sign-in. The first launch of an install whose UserDefaults hold nothing
+/// from an earlier launch discards that session locally: sign-in comes first.
+/// An update keeps its UserDefaults and is never signed out.
+enum NativeInstallSession {
+    static let sentinelKey = "rendprop.installSentinel.v1"
+    /// `Analytics.start` writes the install postback mark on an install's first
+    /// launch (every build since September 2026); finishing onboarding writes
+    /// `hasOnboarded`. Neither is written in this launch before this check runs.
+    static let earlierLaunchKeys = ["attribution.conversionValue", "hasOnboarded"]
+
+    static func discardKeychainSessionOnFreshInstall() {
+        let defaults = UserDefaults.standard
+        guard Config.enableAuth, !Config.isUITesting, !Config.isSessionNetworkTesting,
+              defaults.object(forKey: sentinelKey) == nil else { return }
+        if !earlierLaunchKeys.contains(where: { defaults.object(forKey: $0) != nil }) {
+            AuthStore.shared.discardSessionRestoredFromKeychain()
+        }
+        defaults.set(true, forKey: sentinelKey)
+    }
+}
+
 private struct RendpropLaunchContent: View {
     let hasOnboarded: Bool
     @ObservedObject private var auth = AuthStore.shared
@@ -3719,6 +3742,9 @@ struct RendpropApp: App {
         if Config.isUITesting, ProcessInfo.processInfo.arguments.contains("-ui.onboardingReset") {
             UserDefaults.standard.set(false, forKey: "hasOnboarded")
         }
+        // Before any view, refresh or request can use a session restored from
+        // the Keychain of a deleted install.
+        NativeInstallSession.discardKeychainSessionOnFreshInstall()
     }
 
     var body: some Scene {

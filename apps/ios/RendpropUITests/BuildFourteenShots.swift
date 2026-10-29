@@ -101,6 +101,8 @@ final class BuildFourteenShots: XCTestCase {
         XCTContext.runActivity(named: "b02 home") { _ in
             let start = app.buttons["onboarding.explore"]
             if start.waitForExistence(timeout: shortTimeout), start.isHittable { start.tap() }
+            let skipGuide = app.buttons["onboarding.guide.skip"]
+            if skipGuide.waitForExistence(timeout: shortTimeout), skipGuide.isHittable { skipGuide.tap() }
             // Home takes a moment: it seeds the sample listings on first launch.
             _ = app.tabBars.buttons.firstMatch.waitForExistence(timeout: screenTimeout)
             sleep(6)

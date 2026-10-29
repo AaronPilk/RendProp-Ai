@@ -243,6 +243,9 @@ final class ReviewerWalk: XCTestCase {
                         return
                     }
                     tap(explore)
+                    // The guide video is onboarding's last step; skip it.
+                    let skipGuide = app.buttons["onboarding.guide.skip"]
+                    if skipGuide.waitForExistence(timeout: shortTimeout) { tap(skipGuide) }
                     XCTAssertTrue(waitForHome(timeout: screenTimeout),
                                   "Completing role onboarding must reveal the actual Home root")
                     break

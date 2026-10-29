@@ -128,6 +128,7 @@ enum SpaceType: String { case realEstate = "real_estate" }
 }
 @MainActor final class OnboardingState {
     var hasOnboarded = false, spaceTypeRaw = "real_estate", selectedRole = "agent"
+    var showGuide = false, plansAfterGuide = false
 __ONBOARDING_FINISH__
     func finishForTest() { finish(showPlans: true) }
 }
@@ -170,7 +171,7 @@ __ONBOARDING_FINISH__
         check(URLSession.shared.requests.isEmpty && AuthStore.credentialWrites == 0, "Fresh launch does not create anonymous users")
         let staleOnboarding = OnboardingState()
         staleOnboarding.finishForTest()
-        check(!staleOnboarding.hasOnboarded && RealEstateRoleStore.writes == 0 && PaywallRouter.shared.calls == 0, "Stale onboarding completion cannot save preferences or present purchases")
+        check(!staleOnboarding.hasOnboarded && !staleOnboarding.showGuide && RealEstateRoleStore.writes == 0 && PaywallRouter.shared.calls == 0, "Stale onboarding completion cannot save preferences or present purchases")
         for onboarded in [true, false] {
             check(!NativeAccountLaunchAdmission.allowsRoutes(accountReady: allowed(fresh), hasOnboarded: onboarded), "Onboarding preference cannot bypass the account gate")
         }

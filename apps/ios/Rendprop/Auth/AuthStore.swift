@@ -647,6 +647,20 @@ final class AuthStore: ObservableObject {
         isIdentified = Config.enableAuth ? false : true
     }
 
+    /// iOS keeps this app's Keychain items when the app is deleted, but not its
+    /// UserDefaults. `NativeInstallSession` calls this once, from `RendpropApp`'s
+    /// initializer on the first launch of a fresh install, so a named session
+    /// restored from the deleted install cannot skip sign-in. Nothing has used
+    /// the session yet at that point (no scene, refresh or request), so this is
+    /// only the durable barrier and credential removal that sign-out performs.
+    /// Guest credentials and pending adoption evidence stay for the adoption flow.
+    func discardSessionRestoredFromKeychain() {
+        guard Config.enableAuth, isSignedIn, isIdentified else { return }
+        if Self.suppressCachedSession() { Self.clearTokens() }
+        isSignedIn = false
+        isIdentified = false
+    }
+
     /// Remember the person's name (Apple returns `fullName` ONLY on the first
     /// authorization — it must be captured then). Persists locally, and when
     /// the org's public brand kit has no name yet, seeds it best-effort so the

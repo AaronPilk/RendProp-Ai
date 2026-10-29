@@ -137,7 +137,11 @@ import StoreKitTest
         XCTAssertTrue(app.buttons["Restore purchases"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["Manage subscription"].exists)
         XCTAssertTrue(app.staticTexts["Preview workspace"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["Selected: Pro · Monthly"].waitForExistence(timeout: 15))
+        // Max ("Most popular") is preselected; choose Pro by its plan identifier.
+        let pro = app.descendants(matching: .any).matching(identifier: "paywall.plan.pro").firstMatch
+        XCTAssertTrue(pro.waitForExistence(timeout: 15)); show(pro); pro.tap()
+        let selectedPro = app.staticTexts.matching(NSPredicate(format: "label == %@", "Selected: Pro · Monthly")).firstMatch
+        XCTAssertTrue(selectedPro.waitForExistence(timeout: 15))
         screenshot("billing-paywall-workspace-and-recovery")
         app.buttons["Close"].tap()
         let plansAgain = app.buttons["settings.upgradePlan"]
