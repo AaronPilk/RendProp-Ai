@@ -231,7 +231,7 @@ jobs:
             ${{ runner.temp }}/rendprop-photo-local-selection/*/*.log
             ${{ runner.temp }}/rendprop-photo-local-selection/*/*.swift
             ${{ runner.temp }}/rendprop-photo-feedback/**
-      - name: Branded quick-start video stays within two minutes with a readable transcript
+      - name: Complete narrated first-listing guide matches chapters and transcript
         run: |
           if ! command -v ffprobe >/dev/null; then
             brew install ffmpeg
@@ -480,7 +480,6 @@ jobs:
             ${{ runner.temp }}/rendprop-photo-browser-original/*.swift
             ${{ runner.temp }}/rendprop-quick-start-video/receipt.json
             ${{ runner.temp }}/rendprop-quick-start-video/ffprobe.json
-            ${{ runner.temp }}/rendprop-quick-start-video/ffprobe.stderr
             ${{ runner.temp }}/rendprop-native-form-commits/receipt.json
             ${{ runner.temp }}/rendprop-native-form-commits/*.log
             ${{ runner.temp }}/rendprop-reel-work-integration/receipt.json
