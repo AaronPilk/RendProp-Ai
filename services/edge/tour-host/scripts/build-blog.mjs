@@ -350,7 +350,7 @@ ${c.table.map((r) => `          <tr><td>${esc(r.capability)}</td><td class="us">
         </tbody>
       </table>
     </div>
-    <p class="tbl-note">Rendprop column reflects the current public app; launch plans and included usage are being finalized and the app shows current plan features. ${esc(c.name)} column from its public materials, ${esc(c.checked)}.</p>
+    <p class="tbl-note">Rendprop column reflects the current public app. Current plans and U.S. prices are on the Rendprop pricing page, and the app shows current plan features and your available usage. ${esc(c.name)} column from its public materials, ${esc(c.checked)}.</p>
   </div>
 </section>
 

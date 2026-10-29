@@ -167,5 +167,88 @@
       var warm = function () { sceneImgs.forEach(function (img) { if (img.dataset.src) { img.srcset = img.dataset.srcset; img.src = img.dataset.src; delete img.dataset.src; delete img.dataset.srcset; } }); };
       if ("requestIdleCallback" in window) requestIdleCallback(warm, { timeout: 4000 }); else setTimeout(warm, 2500);
     }
+
+    /* ---------- Motion: panels rise in, layers drift, cards answer the pointer ----------
+       Off entirely under reduced motion. Panels animate transform/opacity once.
+       Depth and pointer parallax write the independent `translate` property,
+       so they stack on top of the CSS float loops instead of replacing them. */
+    if (!window.matchMedia || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    // Glass panels that start below the fold rise into place as they arrive.
+    // Panels already on screen at load are left alone, so nothing flashes.
+    if ("IntersectionObserver" in window) {
+      var fold = innerHeight * 0.92;
+      var rise = new IntersectionObserver(function (es) {
+        es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("is-up"); rise.unobserve(e.target); } });
+      }, { threshold: 0, rootMargin: "0px 0px -8% 0px" });
+      document.querySelectorAll("main section:not(.hero) > .wrap, footer > .wrap").forEach(function (p) {
+        if (p.getBoundingClientRect().top > fold) { p.classList.add("panel-rise"); rise.observe(p); }
+      });
+    }
+
+    // [data-depth]: the layer scrolls slightly faster than the page (foreground).
+    // Anything visible at load rests exactly where the layout put it at the top
+    // of the page; anything further down rests when it reaches mid-screen.
+    // [data-mplx]: pixels of pointer parallax, fine pointers only.
+    var fine = matchMedia("(pointer: fine)").matches;
+    // Depth only where media sits beside the copy; in one-column layouts a
+    // drifting phone would slide into the paragraph above it.
+    var wide = matchMedia("(min-width: 981px)");
+    var layers = Array.prototype.slice.call(document.querySelectorAll("[data-depth], [data-mplx]")).map(function (el) {
+      return { el: el, d: parseFloat(el.dataset.depth) || 0, s: fine ? (parseFloat(el.dataset.mplx) || 0) : 0,
+        top: 0, h: 0, y0: 0, tx: 0, ty: 0, off: false };
+    }).filter(function (L) { return L.d || L.s; });
+    var plx = Array.prototype.slice.call(document.querySelectorAll(".plx-wrap img"));
+    var mx = 0, my = 0, frame = 0;
+    function measureLayers() {
+      var y = scrollY, vh = innerHeight;
+      layers.forEach(function (L) {
+        var r = L.el.getBoundingClientRect();
+        L.off = r.width === 0 && r.height === 0;
+        L.top = r.top + y - L.ty; L.h = r.height;
+        L.y0 = L.top < vh ? 0 : L.top + L.h / 2 - vh / 2;
+      });
+    }
+    function paint() {
+      frame = 0;
+      var y = scrollY, vh = innerHeight, i, shifts = [];
+      // Read every rect first, then write, so a frame never forces layout twice.
+      for (i = 0; i < plx.length; i++) {
+        var r = plx[i].parentElement.getBoundingClientRect();
+        shifts.push(r.bottom < 0 || r.top > vh ? null : ((r.top + r.height / 2 - vh / 2) / vh * -36).toFixed(1) + "px");
+      }
+      for (i = 0; i < plx.length; i++) if (shifts[i] !== null) plx[i].style.setProperty("--plx", shifts[i]);
+      var depthOn = wide.matches;
+      layers.forEach(function (L) {
+        if (L.off) return;
+        var dy = 0, d = depthOn ? L.d : 0;
+        if (d) {
+          var t = L.top - y;
+          if (t > vh * 1.5 || t + L.h < -vh * 0.5) return;
+          dy = -(y - L.y0) * d;
+        }
+        var tx = mx * -L.s, ty = my * -L.s + dy;
+        if (Math.abs(tx - L.tx) < 0.1 && Math.abs(ty - L.ty) < 0.1) return;
+        L.tx = tx; L.ty = ty;
+        L.el.style.translate = tx.toFixed(1) + "px " + ty.toFixed(1) + "px";
+      });
+    }
+    function schedule() { if (!frame) frame = requestAnimationFrame(paint); }
+    if (layers.length || plx.length) {
+      measureLayers(); paint();
+      addEventListener("scroll", schedule, { passive: true });
+      // iOS fires resize as the toolbar collapses mid-scroll; measure once per frame at most.
+      var remeasure = 0;
+      addEventListener("resize", function () {
+        if (!remeasure) remeasure = requestAnimationFrame(function () { remeasure = 0; measureLayers(); paint(); });
+      }, { passive: true });
+      addEventListener("load", function () { measureLayers(); schedule(); });
+      if (layers.some(function (L) { return L.s; })) {
+        addEventListener("pointermove", function (e) {
+          mx = e.clientX / innerWidth - 0.5; my = e.clientY / innerHeight - 0.5; schedule();
+        }, { passive: true });
+        document.documentElement.addEventListener("pointerleave", function () { mx = 0; my = 0; schedule(); });
+      }
+    }
   });
 })();

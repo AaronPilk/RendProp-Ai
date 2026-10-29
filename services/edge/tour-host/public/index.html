@@ -165,7 +165,7 @@
           "name": "What does Rendprop cost?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Launch plans and included usage are being finalized. Rendprop is free to download. Rendprop shows current plan features and included usage in the app. Apple shows the price, billing period, and any introductory offer eligibility, duration, renewal price, and terms before confirmation."
+            "text": "Rendprop is free to download. Monthly plans in the U.S. are Pro $29.99, Max $49, Ultra $99.99 and Team $249.99 with three seats, and eligible new subscribers can start with a 7-day free trial. The app shows current plan features and your available usage. Apple shows the price, billing period, and any introductory offer eligibility, duration, renewal price, and terms before confirmation."
           }
         },
         {
@@ -233,6 +233,9 @@
 
 <!-- ================= HERO ================= -->
 <section class="hero" data-scene="living" aria-label="Intro">
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-b" style="top:10%; right:-160px; bottom:auto;" aria-hidden="true"></div>
+  <div class="scroll-cue" aria-hidden="true"></div>
   <div class="wrap hero-inner">
     <div class="hero-card">
       <p class="eyebrow">The iPhone app for property photos, videos and websites</p>
@@ -250,16 +253,16 @@
     </div>
 
     <div class="hero-phone-col">
-      <div class="f-card a" aria-hidden="true">
+      <div class="f-card a" data-mplx="22" data-depth="0.12" aria-hidden="true">
         <span class="ico">✦</span>
         <span>Video preview<small>Review before publishing</small></span>
       </div>
-      <div class="f-card b" aria-hidden="true">
+      <div class="f-card b" data-mplx="16" data-depth="0.09" aria-hidden="true">
         <span class="ico">◉</span>
         <span>Property website<small>Gallery, video and contact details</small></span>
       </div>
       <!-- Illustrative phone preview; not a captured app screen -->
-      <div class="phone" aria-hidden="true">
+      <div class="phone" data-mplx="10" data-depth="0.05" aria-hidden="true">
         <div class="phone-screen">
           <img class="fill" src="/assets/living-room-walkthrough.webp" width="1400" height="1050" alt="" loading="eager">
           <div class="ps-grad"></div>
@@ -449,6 +452,7 @@
 
 <!-- ================= SHARE + LEADS ================= -->
 <section data-scene="kitchen" id="two-links" aria-label="Sharing and enquiries">
+  <div class="orb orb-a" style="top:20%; left:-180px;" aria-hidden="true"></div>
   <div class="wrap">
     <div class="frow">
       <div class="fcopy reveal">
@@ -484,6 +488,7 @@
 
 <!-- ================= LISTING WEBSITE ================= -->
 <section id="listing-site" aria-label="The listing website">
+  <div class="orb orb-b" style="top:12%; left:-160px; right:auto; bottom:auto;" aria-hidden="true"></div>
   <div class="wrap">
     <div class="frow">
       <div class="fcopy reveal">
@@ -519,20 +524,36 @@
 
 <!-- ================= PRICING TEASER ================= -->
 <section data-scene="twilight" id="pricing-teaser" aria-label="Pricing">
+  <div class="orb orb-b" style="top:8%; right:-140px; bottom:auto;" aria-hidden="true"></div>
   <div class="wrap center">
     <p class="eyebrow reveal">Pricing</p>
     <h2 class="reveal">Less than one photo pack.<br><span class="grad-text">Instead of a whole film crew.</span></h2>
-    <p class="lede reveal" data-d="1">Launch plans and included usage are being finalized. Rendprop is free to download,
-    and the app shows current subscription options before you confirm anything with Apple.</p>
+    <p class="lede reveal" data-d="1">Plans start at $29.99 a month. Eligible new subscribers in the U.S. can try it free for
+    7 days, and Apple shows the price and any introductory offer before you confirm.</p>
 
-    <div class="tiers" style="grid-template-columns: minmax(0, 560px); justify-content: center;">
-      <div class="tier hot reveal" data-d="1">
-        <div class="tier-name">Launch plans</div>
-        <div class="tier-price">Finalizing</div>
-        <p class="tier-for">Rendprop shows current plan features and included usage in the app. Apple shows the price, billing period, and any introductory offer eligibility, duration, renewal price, and terms before confirmation.</p>
-        <a class="btn btn-primary" href="/pricing">How subscriptions work</a>
-      </div>
+    <div class="tiers four">
+      <a class="tier tier-mini reveal" data-d="1" href="/pricing">
+        <span class="tier-name">Pro</span>
+        <span class="tier-price">$29.99<small>/month</small></span>
+        <span class="tier-for">AI photo edits, videos and a property website</span>
+      </a>
+      <a class="tier tier-mini hot reveal" data-d="2" href="/pricing"><span class="tier-flag">Most popular</span>
+        <span class="tier-name">Max</span>
+        <span class="tier-price">$49<small>/month</small></span>
+        <span class="tier-for">More monthly AI usage</span>
+      </a>
+      <a class="tier tier-mini reveal" data-d="3" href="/pricing">
+        <span class="tier-name">Ultra</span>
+        <span class="tier-price">$99.99<small>/month</small></span>
+        <span class="tier-for">For high-volume agents</span>
+      </a>
+      <a class="tier tier-mini reveal" data-d="4" href="/pricing">
+        <span class="tier-name">Team</span>
+        <span class="tier-price">$249.99<small>/month</small></span>
+        <span class="tier-for">3 seats, one workspace</span>
+      </a>
     </div>
+    <p class="reveal" data-d="2" style="margin-top:26px;"><a class="btn btn-primary" href="/pricing">See plans and the free trial</a></p>
   </div>
 </section>
 
@@ -605,9 +626,10 @@
       </details>
       <details>
         <summary>What does Rendprop cost?</summary>
-        <p>Launch plans and included usage are being finalized. Rendprop is free to download. Rendprop shows current plan features and included usage in the app.
-        Apple shows the price, billing period, and any introductory offer eligibility, duration, renewal price, and terms before confirmation.
-        <a href="/pricing">Learn how subscriptions work.</a></p>
+        <p>Rendprop is free to download. Monthly plans in the U.S. are Pro $29.99, Max $49, Ultra $99.99 and Team $249.99
+        with three seats, and eligible new subscribers can start with a 7-day free trial. The app shows current plan features
+        and your available usage. Apple shows the price, billing period, and any introductory offer eligibility, duration,
+        renewal price, and terms before confirmation. <a href="/pricing">See plans and the free trial.</a></p>
       </details>
       <details>
         <summary>Who owns my footage and photos?</summary>
@@ -625,6 +647,7 @@
 
 <!-- ================= FINAL CTA ================= -->
 <section class="cta-band" aria-label="Get started">
+  <div class="orb orb-a" style="left:calc(50% - 240px); top:6%;" aria-hidden="true"></div>
   <div class="wrap">
     <h2 class="reveal">Your next listing deserves a film crew.<br><span class="grad-text">You have an iPhone.</span></h2>
     <p class="lede reveal center" data-d="1">Free to download. Rendprop shows current plan features and included usage in the app; Apple shows purchase and offer terms before confirmation.</p>

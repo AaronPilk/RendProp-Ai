@@ -207,7 +207,7 @@ your original photo before using or publishing it.</p>
 the App Store</b>. The optional paid AI Aerial opening is available only with eligible paid access,
 a remaining Aerial allowance, available processing capacity and separate permission for the listed
 processors. The older free-form Aerial generator remains private and closed; previously saved
-aerial clips remain accessible. Launch plans and included usage are being finalized. <b>The app is the source of
+aerial clips remain accessible. Current monthly plans and their U.S. prices are listed at rendprop.com/pricing. <b>The app is the source of
 truth</b> for current plan features and included usage. Apple shows the price, billing period, and any
 introductory offer eligibility, duration, renewal price, and terms before confirmation.</p>
 <ul>
