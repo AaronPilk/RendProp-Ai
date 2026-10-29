@@ -1,0 +1,27 @@
+{
+  "locale": "en-US",
+  "applied_utc": "2026-10-29T19:40Z",
+  "review_screenshot": "paywall-all-plans-1320x2868.png (Pro29 review screenshot, all four plans) on Max, Ultra and Team",
+  "subscriptions": {
+    "com.rendprop.app.pro29.monthly": {
+      "name": "Pro Monthly",
+      "description": "AI photo editing and tours. One seat.",
+      "subscriptionVersion": "fc790430-1b0c-413a-968a-ecf23e3cc586 (v1)"
+    },
+    "com.rendprop.app.starter.monthly": {
+      "name": "Max Monthly",
+      "description": "More monthly AI usage than Pro. One seat.",
+      "subscriptionVersion": "921f6074-102d-4cf4-991a-2df2e8ac8a48 (v3)"
+    },
+    "com.rendprop.app.pro.monthly": {
+      "name": "Ultra Monthly",
+      "description": "More monthly AI usage than Max. One seat.",
+      "subscriptionVersion": "ba78bbf1-92d2-47b4-9984-b6b26d19915b (v3)"
+    },
+    "com.rendprop.app.team.monthly": {
+      "name": "Team Monthly",
+      "description": "Most monthly AI usage, for three seats.",
+      "subscriptionVersion": "d879428c-27f0-4586-82a1-a0f564bb9bf9 (v3)"
+    }
+  }
+}
