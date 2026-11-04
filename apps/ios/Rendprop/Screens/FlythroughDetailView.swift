@@ -4087,7 +4087,7 @@ private struct ListingFactsReviewSheet: View {
 /// Photos-library saves with a REAL completion (F-A-16). Both calls throw on a
 /// denied permission or a failed write, so a caller flips "Saved to Photos"
 /// only when the asset actually landed.
-private enum PhotosLibrarySaver {
+enum PhotosLibrarySaver {
     struct Denied: LocalizedError {
         var errorDescription: String? {
             "Rendprop isn't allowed to add to your Photos. Allow it in Settings → Rendprop → Photos, then try again."
@@ -4126,6 +4126,18 @@ private enum PhotosLibrarySaver {
         try await ensureAddAccess()
         guard context.isCurrent, canSave() else { throw ContextChanged() }
         try PhotoVersionHistory.requireDownloadReview(imageURL: url)
+        try await PHPhotoLibrary.shared().performChanges {
+            _ = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
+        }
+    }
+
+    /// A recovered cloud copy is deliberately not registered as an original or
+    /// editable Photo Studio version. Export its downloaded bytes to Photos only.
+    @MainActor static func saveCloudCopyFile(at url: URL, while canSave: @escaping @MainActor () -> Bool) async throws {
+        let context = NativeMediaExportContext()
+        guard context.isCurrent, canSave() else { throw ContextChanged() }
+        try await ensureAddAccess()
+        guard !Task.isCancelled, context.isCurrent, canSave() else { throw ContextChanged() }
         try await PHPhotoLibrary.shared().performChanges {
             _ = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
         }
@@ -6088,15 +6100,40 @@ struct PhotoStudioView: View {
                 .frame(width: 60, height: 60)
                 .background(RPGradient.photo,
                             in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            Text("Add your photos")
+            Text(cloudRecoveryListing == nil ? "Add your photos" : "Find your cloud photos")
                 .font(.rpHeadline).foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center)
-            Text("Every photo is brightened and sharpened the moment it lands \u{2014} free, on this phone, no waiting. Then AI Photo Studio can change any of them.")
+            Text(cloudRecoveryListing == nil
+                 ? "Every photo is brightened and sharpened the moment it lands \u{2014} free, on this phone, no waiting. Then AI Photo Studio can change any of them."
+                 : "This iPhone has no local photos for this listing. Photos uploaded from the previous install may still be in your cloud workspace.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            cloudRecoveryLink
+        }
+        .padding(.vertical, 18)
+    }
+
+    private var cloudRecoveryListing: Listing? {
+        guard auth.isIdentified,
+              let current = model.listings.first(where: { $0.id == listing.id }),
+              !current.isSample, current.serverID != nil, current.cloudUnavailable != true else { return nil }
+        return current
+    }
+
+    @ViewBuilder private var cloudRecoveryLink: some View {
+        if let current = cloudRecoveryListing {
+            NavigationLink { CloudMediaView(listing: current) } label: {
+                Label("View cloud photos", systemImage: "icloud.and.arrow.down")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .modifier(RendpropActionAppearance(primary: true))
+            .accessibilityIdentifier("photos.cloudRecovery")
+            Text("Copies without originals can be saved to iPhone Photos. Their edit history will still be unavailable.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.vertical, 18)
     }
 
     /// The line above the library grid. Three verbs, all of them free.
@@ -6199,6 +6236,7 @@ struct PhotoStudioView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             addButton("Add photos", "photo.stack", filled: true) { showLibrary = true }
+            cloudRecoveryLink
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
