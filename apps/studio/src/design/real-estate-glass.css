@@ -1,0 +1,177 @@
+/* Real-estate presentation only. Keep feature state, media geometry and form
+   semantics intact; every target is inside the opted-in Studio shell. */
+.studio-shell.studio-glass {
+  --sg-edge: 24px; --sg-gap: 20px; --sg-rail: 80px; --sg-frame: 1600px;
+  --sg-radius: 22px; --sg-radius-lg: 26px; --sg-blur: 28px;
+  --sg-glass: rgb(255 255 255 / 72%); --sg-strong: rgb(255 255 255 / 80%);
+  --sg-line: rgb(255 255 255 / 72%); --sg-highlight: rgb(255 255 255 / 85%);
+  --sg-shadow: 0 10px 34px rgb(24 16 48 / 10%);
+  --sg-veil: linear-gradient(180deg, rgb(252 250 255 / 14%), rgb(248 245 252 / 50%));
+  --sg-wash: rgb(247 245 251 / 70%); --sg-secondary: #575164;
+  --sg-frame-left: max(0px, calc((100vw - var(--sg-frame)) / 2));
+  position: relative; isolation: isolate; display: grid;
+  grid-template-columns: var(--sg-rail) minmax(0, 1fr); gap: var(--sg-gap);
+  width: 100%; max-width: var(--sg-frame); min-height: 100dvh;
+  margin: 0 auto; padding: var(--sg-edge); background: transparent;
+}
+:where([data-appearance="dark"]) .studio-shell.studio-glass {
+  --sg-glass: rgb(26 23 36 / 74%); --sg-strong: rgb(26 23 36 / 82%);
+  --sg-line: rgb(255 255 255 / 11%); --sg-highlight: rgb(255 255 255 / 9%);
+  --sg-shadow: 0 14px 40px rgb(0 0 0 / 36%); --sg-secondary: #d1cbdc;
+  --sg-veil: linear-gradient(180deg, rgb(10 8 16 / 30%), rgb(10 8 16 / 62%));
+  --sg-wash: rgb(14 12 20 / 80%);
+}
+@media (prefers-color-scheme: dark) {
+  :where([data-appearance="system"]) .studio-shell.studio-glass {
+    --sg-glass: rgb(26 23 36 / 74%); --sg-strong: rgb(26 23 36 / 82%);
+    --sg-line: rgb(255 255 255 / 11%); --sg-highlight: rgb(255 255 255 / 9%);
+    --sg-shadow: 0 14px 40px rgb(0 0 0 / 36%); --sg-secondary: #d1cbdc;
+    --sg-veil: linear-gradient(180deg, rgb(10 8 16 / 30%), rgb(10 8 16 / 62%));
+    --sg-wash: rgb(14 12 20 / 80%);
+  }
+}
+.studio-shell.studio-glass > .studio-glass-backdrop { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; background: var(--bg); }
+.studio-shell.studio-glass > .studio-glass-backdrop img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 45%; transform: scale(1.03); filter: blur(3px) saturate(.92); }
+.studio-shell.studio-glass > .studio-glass-backdrop::after { content: ""; position: absolute; inset: 0; background: var(--sg-veil); }
+.studio-shell.studio-glass:not([data-studio-page="overview"]) > .studio-glass-backdrop img { transform: scale(1.12); filter: blur(32px) saturate(1.15); }
+.studio-shell.studio-glass:not([data-studio-page="overview"]) > .studio-glass-backdrop::after { background: var(--sg-wash); }
+.studio-shell.studio-glass > .main-shell { grid-column: 2; width: auto; margin: 0; min-width: 0; }
+.studio-shell.studio-glass > .main-shell > main { width: 100%; max-width: none; margin: 0; padding: var(--sg-gap) 0 40px; }
+
+/* Studio keeps its desktop navigation rail when a browser window is resized.
+   The rail scrolls vertically so expanded tools never cover its controls. */
+.studio-shell.studio-glass > .sidebar {
+  position: fixed; inset: var(--sg-edge) auto var(--sg-edge) calc(var(--sg-frame-left) + var(--sg-edge));
+  display: flex; flex-direction: column;
+  width: var(--sg-rail); height: auto; padding: 12px 8px; gap: 8px;
+  border: 1px solid var(--sg-line); border-radius: var(--sg-radius-lg);
+  background: transparent; box-shadow: var(--sg-shadow), inset 0 1px 0 var(--sg-highlight); isolation: isolate;
+  overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; z-index: 25;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+.studio-shell.studio-glass > .sidebar::before { content: ""; position: fixed; inset: var(--sg-edge) auto var(--sg-edge) calc(var(--sg-frame-left) + var(--sg-edge)); width: var(--sg-rail); height: auto; border-radius: var(--sg-radius-lg); z-index: -1; pointer-events: none; background: var(--sg-strong); -webkit-backdrop-filter: blur(var(--sg-blur)) saturate(140%); backdrop-filter: blur(var(--sg-blur)) saturate(140%); }
+.studio-shell.studio-glass .sidebar > .brand { display: flex; justify-content: center; margin: 0 0 8px; padding: 0; min-height: 44px; flex: none; }
+.studio-shell.studio-glass .sidebar > .brand img { width: 36px; height: 36px; }
+.studio-shell.studio-glass .sidebar > :is(.workspace-switch, .nav-label, .sidebar-bottom),
+.studio-shell.studio-glass .sidebar > .brand > span { display: none; }
+.studio-shell.studio-glass .sidebar nav { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; flex: none; }
+.studio-shell.studio-glass .sidebar .nav-item { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 5px; width: 100%; min-height: 58px; padding: 8px 3px; border: 1px solid transparent; border-radius: 16px; color: var(--sg-secondary); background: transparent; box-shadow: none; line-height: 1.2; }
+.studio-shell.studio-glass .sidebar .nav-item svg { width: 22px; height: 22px; flex: none; color: inherit; }
+.studio-shell.studio-glass .sidebar .nav-label-full { display: none; }
+.studio-shell.studio-glass .sidebar .nav-label-short { display: block; max-width: 100%; font-size: .6875rem; white-space: normal; overflow-wrap: anywhere; text-transform: none; }
+.studio-shell.studio-glass .sidebar .nav-item.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.studio-shell.studio-glass .sidebar .nav-item:hover:not(.active) { background: var(--surface-subtle); }
+.studio-shell.studio-glass .secondary-navigation { margin: 4px 0 0; padding: 6px 0 0; border-top: 1px solid var(--sg-line); }
+.studio-shell.studio-glass .secondary-navigation > summary { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 58px; margin: 0; padding: 6px 2px; list-style: none; text-align: center; color: var(--sg-secondary); font-size: .6875rem; line-height: 1.2; letter-spacing: 0; text-transform: none; overflow-wrap: anywhere; border-radius: 16px; }
+.studio-shell.studio-glass .secondary-navigation > summary::-webkit-details-marker { display: none; }
+.studio-shell.studio-glass .secondary-navigation > summary::before { content: "•••"; font-size: 1rem; letter-spacing: 2px; line-height: 1; margin: 0; }
+.studio-shell.studio-glass .secondary-navigation[open] > summary { background: var(--accent-soft); color: var(--accent-text); }
+.studio-shell.studio-glass .secondary-navigation-menu { position: static; width: 100%; max-height: none; display: grid; gap: 4px; padding: 6px 0 0; border: 0; border-radius: var(--sg-radius); background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.studio-shell.studio-glass .studio-rail-toggle { display: flex; align-items: center; justify-content: center; min-height: 44px; width: 100%; padding: 8px 4px; margin-top: auto; flex: none; border-radius: 999px; border: 1px solid var(--sg-line); background: var(--surface); color: var(--ink); box-shadow: none; }
+.studio-shell.studio-glass .studio-rail-toggle > span { display: none; }
+.studio-shell.studio-glass.studio-nav-expanded .studio-rail-toggle > span { display: inline; }
+.studio-shell.studio-glass.studio-nav-expanded { --sg-rail: 248px; }
+.studio-shell.studio-glass.studio-nav-expanded .sidebar { padding: 16px 12px; }
+.studio-shell.studio-glass.studio-nav-expanded .sidebar > .brand { justify-content: flex-start; gap: 8px; padding: 0 8px; }
+.studio-shell.studio-glass.studio-nav-expanded .sidebar > .brand > span { display: block; font-size: 20px; }
+.studio-shell.studio-glass.studio-nav-expanded .sidebar > :is(.workspace-switch, .nav-label) { display: flex; margin: 0 0 8px; }
+.studio-shell.studio-glass.studio-nav-expanded .sidebar .nav-item { flex-direction: row; justify-content: flex-start; padding: 10px 12px; min-height: 48px; gap: 12px; }
+.studio-shell.studio-glass.studio-nav-expanded .sidebar .nav-label-full { display: block; font-size: .9375rem; white-space: normal; overflow-wrap: anywhere; }
+.studio-shell.studio-glass.studio-nav-expanded .sidebar .nav-label-short { display: none; }
+.studio-shell.studio-glass.studio-nav-expanded .sidebar-bottom { display: block; margin-top: 12px; padding: 0; }
+.studio-shell.studio-glass.studio-nav-expanded .secondary-navigation > summary { flex-direction: row; justify-content: flex-start; gap: 10px; padding: 10px 12px; font-size: .8125rem; min-height: 44px; }
+.studio-shell.studio-glass.studio-nav-expanded .secondary-navigation-menu { position: static; width: auto; max-height: none; padding: 4px 0 0; background: transparent; box-shadow: none; border: 0; }
+.studio-shell.studio-glass.studio-nav-expanded .device-card { background: var(--surface); margin-bottom: 12px; border-radius: 18px; }
+
+/* Floating chrome uses the same materials and control scale as restaurants. */
+.studio-shell.studio-glass .main-shell > .topbar { position: relative; top: auto; height: auto; min-height: 52px; display: flex; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 12px; padding: 0; border: 0; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; z-index: 20; }
+.studio-shell.studio-glass .main-shell > .topbar::after { display: none; }
+.studio-shell.studio-glass .top-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; margin-left: auto; min-width: 0; max-width: 100%; }
+.studio-shell.studio-glass :is(.studio-wordmark, .studio-appearance-pills, .account-button) { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 52px; max-width: 100%; padding: 0 16px; border: 1px solid var(--sg-line); border-radius: 999px; background: var(--sg-strong); color: var(--ink); box-shadow: var(--sg-shadow), inset 0 1px 0 var(--sg-highlight); -webkit-backdrop-filter: blur(var(--sg-blur)) saturate(140%); backdrop-filter: blur(var(--sg-blur)) saturate(140%); }
+.studio-shell.studio-glass .studio-wordmark { font-size: 1.0625rem; font-weight: 700; letter-spacing: -.02em; text-decoration: none; }
+.studio-shell.studio-glass .studio-wordmark img { width: 28px; height: 28px; flex: none; }
+.studio-shell.studio-glass .studio-wordmark span { color: var(--sg-secondary); font-weight: 500; }
+.studio-shell.studio-glass .studio-appearance-pills { flex-direction: row; padding: 3px; gap: 2px; }
+.studio-shell.studio-glass .studio-appearance-pills button { min-width: 44px; min-height: 44px; padding: 0 15px; border: 0; border-radius: 999px; box-shadow: none; background: transparent; color: var(--sg-secondary); font-size: .8125rem; }
+.studio-shell.studio-glass .studio-appearance-pills button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 4px 12px rgb(0 0 0 / 6%); }
+/* The shared business chooser deliberately carries ID-level reset specificity.
+   Override only its decorative properties; preserve its dialog and form rules. */
+.studio-shell.studio-glass .topbar .business-switch-trigger { min-height: 52px !important; background: var(--sg-strong) !important; border-color: var(--sg-line) !important; box-shadow: var(--sg-shadow), inset 0 1px 0 var(--sg-highlight); -webkit-backdrop-filter: blur(var(--sg-blur)) saturate(140%); backdrop-filter: blur(var(--sg-blur)) saturate(140%); }
+.studio-shell.studio-glass .topbar .business-switch-trigger small { color: var(--sg-secondary) !important; opacity: 1 !important; }
+.studio-shell.studio-glass .account-button { padding: 6px 12px; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
+.studio-shell.studio-glass .account-avatar { flex: none; }
+.studio-shell.studio-glass .breadcrumb { display: flex; flex-wrap: wrap; gap: 6px; font-size: .8125rem; color: var(--sg-secondary); }
+.studio-shell.studio-glass .connection { display: flex; color: var(--sg-secondary); font-size: .6875rem; line-height: 1.35; }
+
+/* Glass belongs to the outside of the workspace. Tools retain their own state,
+   form layout and media aspect ratios; editors and operational data stay solid. */
+.studio-shell.studio-glass :is(.app-dashboard, .business-workspace, .business-content, .planner-grid, .app-property-grid, .app-feature-grid) { gap: var(--sg-gap); }
+/* Section layout owns the space between headings, cards and footer actions. */
+.studio-shell.studio-glass :is(.app-dashboard > section:not(.app-home-hero), .app-all-tools > div > section) { display: grid; gap: var(--sg-gap); }
+.studio-shell.studio-glass .app-dashboard .app-section-heading { margin: 0; gap: var(--sg-gap); }
+.studio-shell.studio-glass .app-dashboard .app-section-heading h2 { margin: 0; }
+.studio-shell.studio-glass .app-dashboard > section > button { justify-self: start; max-width: 100%; white-space: normal; }
+.studio-shell.studio-glass .app-dashboard > .app-leads-banner { margin: 0; }
+.studio-shell.studio-glass .app-handoff-guide > details { margin: 0; padding-top: var(--sg-gap); }
+.studio-shell.studio-glass .app-all-tools > div { gap: var(--sg-gap); }
+.studio-shell.studio-glass .app-selected-property { flex-wrap: wrap; white-space: normal; }
+.studio-shell.studio-glass .app-selected-property select { flex: 1 1 12rem; min-width: 0; width: 100%; max-width: 100%; }
+.studio-shell.studio-glass :is(.app-home-hero, .app-handoff-guide, .app-all-tools, .app-leads-banner, .app-feature-card, .app-property-card, .lw-finish, .creative-empty, .business-metrics > div) { background: var(--sg-glass); border: 1px solid var(--sg-line); border-radius: var(--sg-radius); box-shadow: var(--sg-shadow), inset 0 1px 0 var(--sg-highlight); -webkit-backdrop-filter: blur(var(--sg-blur)) saturate(140%); backdrop-filter: blur(var(--sg-blur)) saturate(140%); color: var(--ink); }
+.studio-shell.studio-glass :is(.app-home-hero, .app-handoff-guide, .app-leads-banner, .lw-finish, .creative-empty) { padding: 24px; border-radius: var(--sg-radius-lg); }
+.studio-shell.studio-glass .app-home-hero { gap: 24px; flex-wrap: wrap; }
+.studio-shell.studio-glass :is(.section-heading, .app-section-heading, .page-title, .lw-title, .creative-heading, .business-intro, .business-heading) { flex-wrap: wrap; }
+.studio-shell.studio-glass :is(.app-home-hero, .section-heading, .app-section-heading, .page-title, .lw-title, .creative-heading, .business-intro, .business-heading) > * { min-width: 0; max-width: 100%; }
+.studio-shell.studio-glass .app-section-heading > button { white-space: normal; }
+.studio-shell.studio-glass .app-dashboard > section:not(.app-handoff-guide) > .app-section-heading { padding: 16px 20px; border: 1px solid var(--sg-line); border-radius: var(--sg-radius); background: var(--sg-strong); box-shadow: var(--sg-shadow); }
+.studio-shell.studio-glass .app-dashboard > section > .text-button { padding: 8px 16px; min-height: 44px; border: 1px solid var(--sg-line); border-radius: 999px; background: var(--sg-strong); color: var(--ink); }
+.studio-shell.studio-glass .app-home-hero::before { display: none; }
+.studio-shell.studio-glass :is(.app-home-hero h1, .page-title h1, .lw-title h1, .creative-workspace h1) { font-size: 2.125rem; font-weight: 700; letter-spacing: -.025em; line-height: 1.08; }
+.studio-shell.studio-glass .app-home-hero h1 { max-width: 20ch; margin: 8px 0 12px; }
+.studio-shell.studio-glass :is(.app-home-hero p, .app-hero-action > span, .app-feature-card > span:last-child, .app-leads-banner p, .app-leads-banner > span > span, .app-handoff-guide p) { color: var(--sg-secondary); }
+.studio-shell.studio-glass .app-feature-card { padding: 20px; }
+.studio-shell.studio-glass .app-feature-card:hover:not(:disabled), .studio-shell.studio-glass .app-property-card:hover { background: var(--sg-strong); border-color: var(--accent-line); }
+.studio-shell.studio-glass .app-feature-card:disabled { background: var(--surface-subtle); color: var(--muted); box-shadow: none; }
+.studio-shell.studio-glass .app-property-info { background: var(--surface); padding: 20px; }
+.studio-shell.studio-glass :is(.panel, .lw-card, .creative-card, .business-card, .planner-grid > section, .space-list, .settings-grid > section, .creation-location, .sync-toolbar, .project-bar) { border: 1px solid var(--sg-line); border-radius: var(--sg-radius); box-shadow: var(--sg-shadow); background: var(--surface); }
+.studio-shell.studio-glass :is(.panel, .lw-card, .creative-card, .business-card, .planner-grid > section) { padding: 24px; }
+.studio-shell.studio-glass .space-list { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.studio-shell.studio-glass .space-row { min-width: 0; width: 100%; max-width: 100%; }
+.studio-shell.studio-glass .space-row :is(strong, small) { white-space: normal; overflow-wrap: anywhere; }
+.studio-shell.studio-glass .space-row > svg { flex: none; }
+.studio-shell.studio-glass :is(.rp-editor, .rp-editor-inspector, .rp-editor-timeline, .rp-editor-transport, .creative-source, .creative-comparison, .creative-result, .video-options, .video-job, .business-save-bar, .business-content table) { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.studio-shell.studio-glass :is(.rp-editor-main, .rp-editor-stage) { -webkit-backdrop-filter: none; backdrop-filter: none; }
+.studio-shell.studio-glass :is(.lw-tabs, .creative-tabs, .business-nav) { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: fit-content; max-width: 100%; padding: 5px; border: 1px solid var(--sg-line); border-radius: 26px; background: var(--sg-strong); box-shadow: var(--sg-shadow); }
+.studio-shell.studio-glass :is(.lw-tabs, .creative-tabs, .business-nav) > button { min-height: 44px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; white-space: normal; line-height: 1.3; padding: 8px 16px; }
+.studio-shell.studio-glass :is(.lw-tabs button[aria-selected="true"], .creative-tabs button[aria-current], .business-nav button[aria-current="page"]) { background: var(--surface); color: var(--accent-text); box-shadow: 0 2px 8px rgb(0 0 0 / 8%); }
+.studio-shell.studio-glass :is(.primary, .creative-primary, .app-hero-action button, .app-handoff-guide button, .lw-photo-actions button, .creative-actions button, .business-actions button, .planner-form-actions button, .creation-location button, .sync-toolbar button) { border-radius: 999px; }
+.studio-shell.studio-glass :is(.app-hero-action button, .primary, .creative-primary) { min-height: 44px; }
+.studio-shell.studio-glass .business-save-bar { bottom: 16px; border-radius: 22px; }
+.studio-shell.studio-glass :is([aria-label="Business workspace"] + .settings-grid, .batch-photo-studio) { margin-top: var(--sg-gap); }
+.studio-shell.studio-glass .settings-grid :is(p, dd) { overflow-wrap: anywhere; }
+.studio-shell.studio-glass .content-planner :is(.stack, .form-row, label) { min-width: 0; }
+.studio-shell.studio-glass .content-planner :is(input, select, textarea) { min-width: 0; width: 100%; max-width: 100%; }
+.studio-shell.studio-glass .content-planner button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.studio-shell.studio-glass .planner-week-buttons { flex-wrap: wrap; }
+.studio-shell.studio-glass :is(.login-dialog, .app-feature-gate, .business-switch-dialog) { background: var(--surface); color: var(--ink); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.studio-shell.studio-glass [hidden] { display: none !important; }
+
+@media (max-width: 1250px) {
+  .studio-shell.studio-glass .breadcrumb { flex-basis: 100%; order: 5; padding: 0 4px; }
+  .studio-shell.studio-glass .top-actions { margin-left: 0; }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  .studio-shell.studio-glass { --sg-glass: var(--surface); --sg-strong: var(--surface); --sg-line: var(--line); --sg-shadow: none; --sg-highlight: transparent; --sg-secondary: var(--ink); }
+  .studio-shell.studio-glass .studio-glass-backdrop { display: none; }
+  .studio-shell.studio-glass :is(.studio-wordmark, .studio-appearance-pills, .account-button, .business-switch-trigger, .app-home-hero, .app-handoff-guide, .app-all-tools, .app-leads-banner, .app-feature-card, .app-property-card, .lw-finish, .creative-empty, .business-metrics > div, .app-property-status) { -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+  .studio-shell.studio-glass .topbar .business-switch-trigger { -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+  .studio-shell.studio-glass > .sidebar::before { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio-shell.studio-glass :is(.nav-item, .app-property-card, .app-feature-card, .secondary-navigation-menu, .studio-rail-toggle) { transition: none; animation: none; }
+  .studio-shell.studio-glass :is(.nav-item, .app-property-card, .app-feature-card):active, .studio-shell.studio-glass :is(.app-property-card, .app-feature-card):hover { transform: none; }
+}
+@media (forced-colors: active) {
+  .studio-shell.studio-glass { --sg-glass: Canvas; --sg-strong: Canvas; --sg-line: CanvasText; --sg-shadow: none; --sg-secondary: CanvasText; }
+  .studio-shell.studio-glass .studio-glass-backdrop { display: none; }
+  .studio-shell.studio-glass :is(.nav-item.active, [aria-pressed="true"]) { outline: 2px solid Highlight; }
+}

@@ -29,6 +29,7 @@ import { restoreDrafts } from "./drafts";
 import { canRetainWorkspace } from "./workspace-refresh";
 import {useEditingAssistant} from "./features/sync/useEditingAssistant";
 import type { Industry, PlanItem } from "./workspace";
+import "./design/real-estate-glass.css";
 
 type Page = "overview" | "properties" | "creative" | "editor" | "library" | "planner" | "workspace" | typeof ADMIN_REPORT;
 // Internal photo feedback report: reached by its ?view= route only, never listed
@@ -50,15 +51,15 @@ function VideoEditor(props: VideoEditorProps & {services?: ReturnType<typeof cre
   );
 }
 const pages: { id: Page; label: string; icon: IconName }[] = [
+  { id: "overview", label: "Home", icon: "home" },
   { id: "editor", label: "Create", icon: "film" },
   { id: "properties", label: "My homes", icon: "folder" },
   { id: "library", label: "Media", icon: "library" },
   { id: "workspace", label: "Business", icon: "settings" },
-  { id: "overview", label: "Home", icon: "home" },
   { id: "creative", label: "AI tools", icon: "plus" },
   { id: "planner", label: "Content planner", icon: "calendar" },
 ];
-const primaryPages: readonly Page[] = ["editor", "properties", "library", "workspace"];
+const primaryPages: readonly Page[] = ["overview", "editor", "properties", "library", "workspace"];
 const signedOut: SessionSnapshot = {
   status: "signed-out",
   identity: null,
@@ -109,6 +110,8 @@ export default function App({ servicesFactory }: {
   });
   const initialListing = useRef(new URL(window.location.href).searchParams.get("listing"));
   const [industry, setIndustry] = useState<Industry>("real_estate");
+  // Presentation only: expanding navigation must not remount an editing workspace.
+  const [studioNavigationExpanded, setStudioNavigationExpanded] = useState(false);
   const [storedWorkspace, setWorkspace] = useState<Workspace | null>(null);
   const [storedListings, setListings] = useState<Listing[]>([]);
   const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
@@ -855,7 +858,10 @@ export default function App({ servicesFactory }: {
     onClick={() => navigate(item.id)}
   ><Icon name={item.icon} /><span className="nav-label-full">{item.label}</span><span className="nav-label-short" aria-hidden="true">{compactLabels[item.id]}</span></button>;
   return (
-    <div className="studio-shell">
+    <div className={`studio-shell studio-glass${studioNavigationExpanded ? " studio-nav-expanded" : ""}`} data-studio-page={page}>
+      <div className="studio-glass-backdrop" aria-hidden="true">
+        <img src="/restaurant-studio/lounge-backdrop.webp" alt="" decoding="async" />
+      </div>
       <aside className="sidebar">
         <a
           className="brand"
@@ -877,13 +883,20 @@ export default function App({ servicesFactory }: {
           </div>
         </div>
         <p className="nav-label">YOUR STUDIO</p>
-        <nav aria-label="Studio navigation">
+        <nav id="studio-navigation" aria-label="Studio navigation">
           {navigation.filter(item => primaryPages.includes(item.id)).map(navigationButton)}
           <details className="secondary-navigation" open={page !== ADMIN_REPORT && !primaryPages.includes(page) || undefined}>
             <summary>More tools</summary>
             <div className="secondary-navigation-menu">{navigation.filter(item => !primaryPages.includes(item.id)).map(navigationButton)}</div>
           </details>
         </nav>
+        <button type="button" className="studio-rail-toggle"
+          aria-label={studioNavigationExpanded ? "Collapse navigation" : "Expand navigation"}
+          aria-expanded={studioNavigationExpanded} aria-controls="studio-navigation"
+          onClick={() => setStudioNavigationExpanded(expanded => !expanded)}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={studioNavigationExpanded ? "m14 6-6 6 6 6" : "m10 6 6 6-6 6"} /></svg>
+          <span>{studioNavigationExpanded ? "Collapse" : "Expand"}</span>
+        </button>
         <div className="sidebar-bottom">
           <div className="device-card">
             <Icon name="link" />
@@ -917,11 +930,14 @@ export default function App({ servicesFactory }: {
       </aside>
       <div className="main-shell">
         <header className="topbar">
+          <a className="studio-wordmark" href="https://rendprop.com" aria-label="Rendprop Studio website">
+            <img src="/rendprop-mark.svg" alt="" /><span><strong>Rendprop</strong> Studio</span>
+          </a>
           <div className="breadcrumb">
             Workspace <span>/</span> <strong>{heading.label}</strong>
           </div>
           <div className="top-actions">
-            <AppearanceSelector compact/>
+            <AppearanceSelector compact presentation="pills"/>
             <span className="connection">
               <i className={workspace ? "online" : ""} />
               {busy

@@ -57,7 +57,9 @@ export function verifyConnectedBundle(chunks, config) {
 // voice/music and review. Root approved400k total on2026-10-14 (prior355k).
 // Keep initial160k/Create260k, include the actual default simple dynamic entry,
 // and leave the existing advanced editor lazy until explicitly opened.
-export const DIST_BUDGETS = Object.freeze({ initial: 160_000, create: 260_000, total: 400_000 });
+// Desktop glass shell measured 2026-11-04: initial157,431/Create230,602/
+// total402,672 B gzip. Owner-approved410k total preserves both workflow caps.
+export const DIST_BUDGETS = Object.freeze({ initial: 160_000, create: 260_000, total: 410_000 });
 export const CREATE_ENTRIES = ["index.html", "src/features/projects/Projects.tsx", "src/features/sync/PropertyReels.tsx", "src/features/sync/MakeVideo.tsx"];
 export const PROXY_ENTRY = "src/editor/ProxyPanel.tsx";
 export function manifestClosure(manifest, entries) {
