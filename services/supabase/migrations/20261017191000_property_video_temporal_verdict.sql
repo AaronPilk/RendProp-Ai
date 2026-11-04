@@ -24,7 +24,7 @@ begin;
 -- object is refused rather than normalised by IF NOT EXISTS / OR REPLACE.
 -- Nothing below is historical DML.
 do $own_replay_guard$
-declare e record;p pg_catalog.pg_proc;rel oid;owner_expected oid;service_oid oid;postgres_oid oid;present integer;prior_path text;shape text;cons text;bad integer;
+declare e record;p pg_catalog.pg_proc;rel oid;owner_expected oid;service_oid oid;postgres_oid oid;present integer;prior_path text;shape text;cons text;not_null_cons text;bad integer;
 begin
  -- Deterministic deparse of constraint references, restored before any DDL.
  prior_path:=current_setting('search_path');perform set_config('search_path','public',true);
@@ -63,13 +63,19 @@ begin
    ||coalesce(' default '||pg_get_expr(d.adbin,d.adrelid),'')||coalesce(' acl '||a.attacl::text,''),', 'order by a.attnum)
   into shape from pg_catalog.pg_attribute a left join pg_catalog.pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum
   where a.attrelid=rel and a.attnum>0 and not a.attisdropped;
- select string_agg(conname||': '||pg_get_constraintdef(oid),'; 'order by conname)into cons from pg_catalog.pg_constraint where conrelid=rel;
+ -- PostgreSQL 18 also catalogs column NOT NULL clauses as constraints. Keep
+ -- their exact names and definitions pinned separately from the older keys.
+ select string_agg(conname||': '||pg_get_constraintdef(oid),'; 'order by conname)into cons from pg_catalog.pg_constraint where conrelid=rel and contype<>'n';
+ select string_agg(conname||': '||pg_get_constraintdef(oid),'; 'order by conname)into not_null_cons from pg_catalog.pg_constraint where conrelid=rel and contype='n';
  -- BEFORE UPDATE FOR EACH ROW is tgtype 19 (ROW 1 | BEFORE 2 | UPDATE 16).
  select count(*)into bad from pg_catalog.pg_trigger t where not t.tgisinternal and(t.tgrelid=rel or t.tgfoid=to_regprocedure('public.property_video_temporal_verdict_guard()'))
   and(t.tgrelid<>rel or t.tgname<>'property_video_temporal_verdict_guard'or t.tgfoid<>to_regprocedure('public.property_video_temporal_verdict_guard()')or t.tgtype<>19 or t.tgenabled<>'O'
    or t.tgnargs<>0 or t.tgqual is not null or t.tgconstraint<>0 or t.tgdeferrable or t.tgoldtable is not null or t.tgnewtable is not null or cardinality(t.tgattr::int2[])<>0);
  if shape is distinct from'job_id uuid not null, position integer not null, attempt_id uuid not null, limits_sha256 text not null, record jsonb not null, recorded_at timestamp with time zone not null default now()'
   or cons is distinct from'property_video_job_temporal_verdicts_limits_check: CHECK ((limits_sha256 ~ ''^[a-f0-9]{64}$''::text)); property_video_job_temporal_verdicts_pkey: PRIMARY KEY (job_id, "position", attempt_id, limits_sha256); property_video_job_temporal_verdicts_record_check: CHECK (((jsonb_typeof(record) = ''object''::text) AND ((record ->> ''attempt_id''::text) = (attempt_id)::text) AND ((record #>> ''{limits,sha256}''::text[]) = limits_sha256))); property_video_job_temporal_verdicts_source_fkey: FOREIGN KEY (job_id, "position") REFERENCES property_video_job_sources(job_id, "position") ON DELETE CASCADE'
+  or not_null_cons is distinct from(case when current_setting('server_version_num')::integer>=180000 then
+   'property_video_job_temporal_verdicts_attempt_id_not_null: NOT NULL attempt_id; property_video_job_temporal_verdicts_job_id_not_null: NOT NULL job_id; property_video_job_temporal_verdicts_limits_sha256_not_null: NOT NULL limits_sha256; property_video_job_temporal_verdicts_position_not_null: NOT NULL "position"; property_video_job_temporal_verdicts_record_not_null: NOT NULL record; property_video_job_temporal_verdicts_recorded_at_not_null: NOT NULL recorded_at'
+   else null end)
   or(select string_agg(indexrelid::regclass::text,', 'order by indexrelid::regclass::text)from pg_catalog.pg_index where indrelid=rel)is distinct from'property_video_job_temporal_verdicts_pkey'
   or(select relkind<>'r'or not relrowsecurity or relforcerowsecurity or relowner<>owner_expected from pg_catalog.pg_class where oid=rel)
   or exists(select 1 from pg_catalog.pg_policy where polrelid=rel)
