@@ -22,6 +22,12 @@ def run(name, argv):
         raise RuntimeError(f'{name}: {result.stdout[-4000:]}')
     return result.stdout
 
+def reject(name, argv, expected):
+    result = subprocess.run([str(value) for value in argv], cwd=root, env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=120)
+    (out / (name + '.log')).write_text(result.stdout)
+    assert result.returncode != 0 and expected in result.stdout, (name, result.stdout[-4000:])
+
 try:
     run('initdb', [tools['initdb'], '-D', data, '-U', 'postgres', '-A', 'trust', '--no-locale', '--encoding=UTF8'])
     run('start', [tools['pg_ctl'], '-D', data, '-l', out / 'postgres.log', '-w', '-t', '30',
@@ -34,11 +40,31 @@ try:
     migrations = partition_fresh_migrations(sorted((sql / 'migrations').glob('*.sql')))[0]
     for migration in migrations:
         run('apply-' + migration.stem, [*psql, '-q', '-1', '-f', migration])
+    backup_migration = sql / 'migrations/20261104212000_native_photo_backup_versions.sql'
+    run('replay-native-photo-backup', [*psql, '-q', '-1', '-f', backup_migration])
     result = run('native-photo-backup', [*psql, '-Atq', '-f', sql / 'tests/native_photo_backup_versions.sql'])
     proof = [json.loads(line) for line in result.splitlines() if line.startswith('{') and 'assertions' in line]
     assert len(proof) == 1 and proof[0]['passed'] and proof[0]['assertions'] >= 15, proof
+    for kind in ('table', 'helper'):
+        database = f'native_photo_backup_tamper_{kind}'
+        run('createdb-tamper-' + kind,
+            [tools['createdb'], *conn, '--template=native_photo_backup_proof', database])
+        tamper_psql = [tools['psql'], '-X', '--no-password', *conn, '-d', database,
+                       '-v', 'ON_ERROR_STOP=1']
+        if kind == 'table':
+            run('tamper-table', [*tamper_psql, '-c',
+                'alter table public.native_photo_backup_versions add column rogue integer'])
+            expected = 'Review changed native photo backup relation'
+        else:
+            run('tamper-helper', [*tamper_psql, '-c',
+                "create or replace function public.native_photo_backup_asset_ready("
+                "p_org uuid,p_listing uuid,p_receipt jsonb,p_actor uuid default null) "
+                "returns boolean language plpgsql stable security definer set search_path='' "
+                "as $$begin return true; end$$"])
+            expected = 'Review changed native photo backup helper'
+        reject('reject-tamper-' + kind, [*tamper_psql, '-q', '-1', '-f', backup_migration], expected)
     print(json.dumps({'passed': True, 'assertions': proof[0]['assertions'], 'migrations': len(migrations),
-                      'evidence': str(out)}))
+                      'replay': True, 'tamper_refusals': 2, 'evidence': str(out)}))
 finally:
     if started:
         subprocess.run([tools['pg_ctl'], '-D', str(data), '-m', 'immediate', '-w', 'stop'],

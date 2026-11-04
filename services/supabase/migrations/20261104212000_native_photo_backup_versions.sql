@@ -1,6 +1,111 @@
 -- Private, immutable native Photo Studio lineage. The API commits this only
 -- after both exact-byte uploads have completed; it is not gallery publication.
-create table public.native_photo_backup_versions (
+begin;
+-- This migration owns one relation, its three indexes and four privileged
+-- functions. A replay may reuse only the exact objects installed by the first
+-- application; a partial or changed set must stop before any DDL can repair it.
+do $own_replay_guard$
+declare
+  e record; p pg_catalog.pg_proc; rel oid; owner_expected oid; service_oid oid;
+  present integer; shape text; constraints text; indexes text;
+begin
+  select proowner into owner_expected from pg_catalog.pg_proc
+    where oid = to_regprocedure('public.client_listing_access(uuid,uuid,uuid,boolean)');
+  select oid into service_oid from pg_catalog.pg_roles where rolname = 'service_role';
+  if owner_expected is null or service_oid is null then
+    raise exception 'Native photo backup needs listing authority and service_role';
+  end if;
+  rel := to_regclass('public.native_photo_backup_versions');
+  present := (select count(*) from pg_catalog.pg_proc
+    where pronamespace = 'public'::regnamespace and proname in
+      ('native_photo_backup_asset_ready','native_photo_backup_commit',
+       'native_photo_backup_read','native_photo_backup_download'))
+    + (select count(*) from pg_catalog.pg_class
+    where relnamespace = 'public'::regnamespace and relname in
+      ('native_photo_backup_versions','native_photo_backup_versions_pkey',
+       'native_photo_backup_listing_page_idx','native_photo_backup_listing_family_idx'));
+  if present = 0 then return; end if;
+  if present <> 8 then
+    raise exception 'Review partial or unknown native photo backup objects (% present, 8 expected)', present;
+  end if;
+  for e in select * from (values
+    ('public.native_photo_backup_asset_ready(uuid,uuid,jsonb,uuid)',
+      '64c79a0bfaf0da9ec78819b1761451a3','boolean','s',
+      array['p_org','p_listing','p_receipt','p_actor'],
+      'p_org uuid, p_listing uuid, p_receipt jsonb, p_actor uuid DEFAULT NULL::uuid',false),
+    ('public.native_photo_backup_commit(uuid,uuid,uuid,uuid,jsonb)',
+      'e89723d138d8e88b3890a4d096d0ee48','jsonb','v',
+      array['p_actor','p_org','p_library','p_listing','p_manifest'],
+      'p_actor uuid, p_org uuid, p_library uuid, p_listing uuid, p_manifest jsonb',true),
+    ('public.native_photo_backup_read(uuid,uuid,uuid,uuid,text,integer)',
+      'a716ca368d09bc20b9e159bd98dda319','jsonb','s',
+      array['p_actor','p_org','p_library','p_listing','p_version','p_offset'],
+      'p_actor uuid, p_org uuid, p_library uuid, p_listing uuid, p_version text DEFAULT NULL::text, p_offset integer DEFAULT 0',true),
+    ('public.native_photo_backup_download(uuid,uuid,uuid,uuid,uuid)',
+      'e8ebc533aa6451d8371afe14c1feb569','jsonb','s',
+      array['p_actor','p_org','p_library','p_listing','p_asset'],
+      'p_actor uuid, p_org uuid, p_library uuid, p_listing uuid, p_asset uuid',true)
+  ) v(signature,body_md5,result_type,volatility,arg_names,args,service_execute) loop
+    select * into p from pg_catalog.pg_proc where oid = to_regprocedure(e.signature);
+    if not found or md5(p.prosrc) <> e.body_md5 or p.proowner <> owner_expected
+      or p.prokind <> 'f' or p.prolang <> (select oid from pg_catalog.pg_language where lanname = 'plpgsql')
+      or not p.prosecdef or p.provolatile <> e.volatility or p.proisstrict or p.proleakproof
+      or p.proparallel <> 'u' or p.proretset or p.proconfig is distinct from array['search_path=""']::text[]
+      or p.proargnames is distinct from e.arg_names or p.proargmodes is not null
+      or p.proallargtypes is not null or p.provariadic <> 0
+      or pg_get_function_arguments(p.oid) is distinct from e.args
+      or p.prorettype is distinct from to_regtype(e.result_type)::oid
+      or exists (select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+        where a.grantor <> owner_expected or a.privilege_type <> 'EXECUTE' or a.is_grantable
+          or a.grantee not in (owner_expected,service_oid)
+          or (a.grantee = service_oid and not e.service_execute))
+      or not exists (select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+        where a.grantee = owner_expected and a.privilege_type = 'EXECUTE')
+      or (e.service_execute and not exists (select 1
+        from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+        where a.grantee = service_oid and a.privilege_type = 'EXECUTE')) then
+      raise exception 'Review changed native photo backup helper: %', e.signature;
+    end if;
+  end loop;
+  select string_agg(a.attname || ' ' || format_type(a.atttypid,a.atttypmod)
+      || case when a.attnotnull then ' not null' else '' end
+      || coalesce(' default ' || pg_get_expr(d.adbin,d.adrelid),''),', ' order by a.attnum)
+    into shape from pg_catalog.pg_attribute a
+    left join pg_catalog.pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+    where a.attrelid = rel and a.attnum > 0 and not a.attisdropped;
+  select string_agg(conname || ': ' || pg_get_constraintdef(oid),'; ' order by conname)
+    into constraints from pg_catalog.pg_constraint where conrelid = rel;
+  select string_agg(pg_get_indexdef(indexrelid),'; ' order by indexrelid::regclass::text)
+    into indexes from pg_catalog.pg_index where indrelid = rel;
+  if shape is distinct from
+      'listing_id uuid not null, version_id text not null, family_id text not null, actor_id uuid not null, org_id uuid not null, library_org_id uuid not null, image_asset_id uuid not null, original_asset_id uuid not null, manifest jsonb not null, committed_at timestamp with time zone not null default clock_timestamp()'
+    or constraints is distinct from
+      'native_photo_backup_versions_check: CHECK ((((length(version_id) >= 1) AND (length(version_id) <= 128)) AND ((length(family_id) >= 1) AND (length(family_id) <= 128)))); native_photo_backup_versions_listing_id_fkey: FOREIGN KEY (listing_id) REFERENCES listings(id) ON DELETE CASCADE; native_photo_backup_versions_manifest_check: CHECK ((jsonb_typeof(manifest) = ''object''::text)); native_photo_backup_versions_pkey: PRIMARY KEY (listing_id, version_id)'
+    or indexes is distinct from
+      'CREATE INDEX native_photo_backup_listing_family_idx ON public.native_photo_backup_versions USING btree (listing_id, family_id); CREATE INDEX native_photo_backup_listing_page_idx ON public.native_photo_backup_versions USING btree (listing_id, committed_at, version_id); CREATE UNIQUE INDEX native_photo_backup_versions_pkey ON public.native_photo_backup_versions USING btree (listing_id, version_id)'
+    or exists (select 1 from pg_catalog.pg_attribute a where a.attrelid = rel and a.attnum > 0
+      and (a.attisdropped or a.attacl is not null or a.attidentity <> '' or a.attgenerated <> ''))
+    or exists (select 1 from pg_catalog.pg_constraint c where c.conrelid = rel
+      and (not c.convalidated or c.condeferrable or c.condeferred or not c.conislocal))
+    or exists (select 1 from pg_catalog.pg_index i where i.indrelid = rel
+      and (not i.indisvalid or not i.indisready or not i.indislive))
+    or exists (select 1 from pg_catalog.pg_class c where c.oid in
+      (select indexrelid from pg_catalog.pg_index where indrelid = rel)
+      and (c.relkind <> 'i' or c.relpersistence <> 'p' or c.relowner <> owner_expected
+        or c.reloptions is not null))
+    or exists (select 1 from pg_catalog.pg_trigger t where t.tgrelid = rel and not t.tgisinternal)
+    or exists (select 1 from pg_catalog.pg_policy where polrelid = rel)
+    or exists (select 1 from pg_catalog.pg_rewrite where ev_class = rel)
+    or exists (select 1 from pg_catalog.pg_class c where c.oid = rel
+      and (c.relkind <> 'r' or c.relpersistence <> 'p' or c.relowner <> owner_expected
+        or not c.relrowsecurity or c.relforcerowsecurity or c.relreplident <> 'd'
+        or c.relacl is distinct from acldefault('r',owner_expected)
+        or c.reloptions is not null)) then
+    raise exception 'Review changed native photo backup relation: public.native_photo_backup_versions';
+  end if;
+end$own_replay_guard$;
+
+create table if not exists public.native_photo_backup_versions (
   listing_id uuid not null references public.listings(id) on delete cascade,
   version_id text not null,
   family_id text not null,
@@ -16,16 +121,16 @@ create table public.native_photo_backup_versions (
   primary key (listing_id, version_id),
   check (length(version_id) between 1 and 128 and length(family_id) between 1 and 128)
 );
-create index native_photo_backup_listing_page_idx
+create index if not exists native_photo_backup_listing_page_idx
   on public.native_photo_backup_versions(listing_id, committed_at, version_id);
-create index native_photo_backup_listing_family_idx
+create index if not exists native_photo_backup_listing_family_idx
   on public.native_photo_backup_versions(listing_id, family_id);
 alter table public.native_photo_backup_versions enable row level security;
 revoke all on public.native_photo_backup_versions from public, anon, authenticated, service_role;
 
 -- A completed upload is a server-observed R2 length/type/ETag receipt. SHA-256
 -- remains advisory until a separate server byte readback is introduced.
-create function public.native_photo_backup_asset_ready(
+create or replace function public.native_photo_backup_asset_ready(
   p_org uuid, p_listing uuid, p_receipt jsonb,
   p_actor uuid default null
 ) returns boolean language plpgsql stable security definer set search_path = '' as $$
@@ -68,7 +173,7 @@ end$$;
 revoke all on function public.native_photo_backup_asset_ready(uuid,uuid,jsonb,uuid)
   from public, anon, authenticated, service_role;
 
-create function public.native_photo_backup_commit(
+create or replace function public.native_photo_backup_commit(
   p_actor uuid, p_org uuid, p_library uuid, p_listing uuid, p_manifest jsonb
 ) returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
@@ -216,7 +321,7 @@ revoke all on function public.native_photo_backup_commit(uuid,uuid,uuid,uuid,jso
   from public, anon, authenticated;
 grant execute on function public.native_photo_backup_commit(uuid,uuid,uuid,uuid,jsonb) to service_role;
 
-create function public.native_photo_backup_read(
+create or replace function public.native_photo_backup_read(
   p_actor uuid, p_org uuid, p_library uuid, p_listing uuid,
   p_version text default null, p_offset integer default 0
 ) returns jsonb language plpgsql stable security definer set search_path = '' as $$
@@ -255,7 +360,7 @@ grant execute on function public.native_photo_backup_read(uuid,uuid,uuid,uuid,te
 -- Reinstall restoration resolves a requested asset only through a committed
 -- version in the currently selected listing. Storage keys never come from the
 -- client, and the public handler redacts the key after minting a short URL.
-create function public.native_photo_backup_download(
+create or replace function public.native_photo_backup_download(
   p_actor uuid, p_org uuid, p_library uuid, p_listing uuid, p_asset uuid
 ) returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare a public.capture_assets; receipt jsonb; visible jsonb;
@@ -286,3 +391,4 @@ end$$;
 revoke all on function public.native_photo_backup_download(uuid,uuid,uuid,uuid,uuid)
   from public, anon, authenticated;
 grant execute on function public.native_photo_backup_download(uuid,uuid,uuid,uuid,uuid) to service_role;
+commit;
