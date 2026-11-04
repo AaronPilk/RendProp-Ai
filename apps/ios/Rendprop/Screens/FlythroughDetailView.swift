@@ -4084,6 +4084,25 @@ private struct ListingFactsReviewSheet: View {
     }
 }
 
+/// PhotoKit may finish an empty change transaction successfully when a creation
+/// request could not be made. Keep the request result across its async boundary.
+private final class PhotoLibraryChangeReceipt: @unchecked Sendable {
+    struct MissingRequest: LocalizedError {
+        var errorDescription: String? { "iPhone Photos could not accept this image file." }
+    }
+    private let lock = NSLock()
+    private var requested = false
+
+    func record(_ didCreateRequest: Bool) {
+        lock.lock(); requested = didCreateRequest; lock.unlock()
+    }
+
+    func requireRequest() throws {
+        lock.lock(); let didCreateRequest = requested; lock.unlock()
+        guard didCreateRequest else { throw MissingRequest() }
+    }
+}
+
 /// Photos-library saves with a REAL completion (F-A-16). Both calls throw on a
 /// denied permission or a failed write, so a caller flips "Saved to Photos"
 /// only when the asset actually landed.
@@ -4138,9 +4157,11 @@ enum PhotosLibrarySaver {
         guard context.isCurrent, canSave() else { throw ContextChanged() }
         try await ensureAddAccess()
         guard !Task.isCancelled, context.isCurrent, canSave() else { throw ContextChanged() }
+        let receipt = PhotoLibraryChangeReceipt()
         try await PHPhotoLibrary.shared().performChanges {
-            _ = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
+            receipt.record(PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url) != nil)
         }
+        try receipt.requireRequest()
     }
 
     private static func ensureAddAccess() async throws {
