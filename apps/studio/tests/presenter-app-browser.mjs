@@ -29,6 +29,7 @@ try {
   await nav("Home").click();await nav("AI tools").click();
   await expect(page.getByLabel("Your display name",{exact:true})).toHaveValue("Unsaved presenter identity");
   receipt.checks.push("Home card opens AI Presenter; ordinary page navigation preserves unsaved fields in its mounted workspace");
+  await page.getByRole("button",{name:"Expand navigation",exact:true}).click();
   const originalOrg=await page.getByLabel("Switch agent",{exact:true}).inputValue();
   let dialogs=0;page.on("dialog",async dialog=>{dialogs++;await dialog.dismiss();});
   await page.getByLabel("Switch agent",{exact:true}).selectOption("44444444-4444-4444-8444-444444444444");
