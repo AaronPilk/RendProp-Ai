@@ -49,7 +49,7 @@ async function readExactPhoto(copy:GalleryCopy,signal:AbortSignal,assertCurrent:
 }
 /** A prepare operation saves private history only. Listing selection is a separate explicit action. */
 export async function prepareGalleryCopy(services:StudioServices,scope:GalleryScope,sourceId:string,caption:string,signal:AbortSignal,
- options:{storage?:Storage;upload?:typeof uploadListingAsset;progress?:(message:string)=>void}={}):Promise<GalleryCopy>{
+ options:{storage?:Storage;upload?:typeof uploadListingAsset;progress?:(message:string)=>void;onSourcePrepared?:()=>void}={}):Promise<GalleryCopy>{
  const actor=services.getSnapshot(),storage=options.storage??localStorage,storageKey=key(scope,sourceId);
  const assertCurrent=()=>{signal.throwIfAborted();const now=services.getSnapshot();if(actor.identityVersion!==now.identityVersion||now.status!=="signed-in"||now.identity?.userId!==scope.actor)throw new Error("Your account changed. Reopen this property before preparing photos.");};
  assertCurrent();if(!UUID.test(sourceId))throw problem();
@@ -66,6 +66,7 @@ export async function prepareGalleryCopy(services:StudioServices,scope:GallerySc
  const api=async(body:Record<string,unknown>)=>{const result=decodeGalleryCopy(await scopedServices.api("/functions/v1/studio/photo-copy",{orgId:scope.org,method:"POST",body:{listing_id:scope.listing,operation_id:journal.operationId,...body},signal,timeoutMs:120_000}),scope,sourceId);assertCurrent();return result;};
  options.progress?.("Checking this saved photo…");
  let copy=await api({action:"prepare",source_asset_id:sourceId,caption:caption.slice(0,500)});
+ options.onSourcePrepared?.();
  if(journal.sourceSHA!==undefined&&journal.sourceSHA!==copy.source.sha256)throw problem();
  if(journal.upload&&journal.operationId!==copy.operation_id)throw problem();
  journal={...journal,operationId:copy.operation_id,sourceSHA:copy.source.sha256};persist();
