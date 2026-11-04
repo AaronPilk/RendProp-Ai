@@ -15,7 +15,7 @@ begin;
 -- than silently normalised by IF NOT EXISTS / OR REPLACE. Missing objects are
 -- the first apply.
 do $own_replay_guard$
-declare e record;p pg_catalog.pg_proc;rel oid;owner_expected oid;service_oid oid;postgres_oid oid;shape text;
+declare e record;p pg_catalog.pg_proc;rel oid;owner_expected oid;service_oid oid;postgres_oid oid;shape text;constraint_expected text;
 begin
  select proowner into owner_expected from pg_catalog.pg_proc where oid='public.photo_quality_begin(uuid,uuid,text,uuid,text,text,uuid,jsonb,jsonb)'::regprocedure;
  select oid into service_oid from pg_catalog.pg_roles where rolname='service_role';
@@ -63,8 +63,16 @@ begin
    select string_agg(a.attname||' '||format_type(a.atttypid,a.atttypmod)||case when a.attnotnull then ' not null'else ''end||coalesce(' default '||pg_get_expr(d.adbin,d.adrelid),''),', 'order by a.attnum)
     into shape from pg_catalog.pg_attribute a left join pg_catalog.pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum
     where a.attrelid=rel and a.attnum>0 and not a.attisdropped;
+   -- PostgreSQL 18 also catalogs column NOT NULL constraints here. Retain
+   -- exact whole-catalog fingerprints, including their names and definitions.
+   if current_setting('server_version_num')::integer between 180000 and 189999 then
+    if e.name='public.photo_output_feedback' then constraint_expected:='910d974f44a90a05030ed228e20f2ba0';
+    elsif e.name='public.photo_output_signals' then constraint_expected:='c20a87a94973215ef31fa101c9d1c956';
+    elsif e.name='public.photo_regression_cases' then constraint_expected:='363d8bbe2512beee15e7a513b668491d';
+    else raise exception 'Unknown photo feedback relation: %',e.name;end if;
+   else constraint_expected:=e.constraints;end if;
    if shape is distinct from e.shape
-    or md5((select string_agg(conname||': '||pg_get_constraintdef(oid),'; 'order by conname)from pg_catalog.pg_constraint where conrelid=rel))is distinct from e.constraints
+    or md5((select string_agg(conname||': '||pg_get_constraintdef(oid),'; 'order by conname)from pg_catalog.pg_constraint where conrelid=rel))is distinct from constraint_expected
     or(select string_agg(pg_get_indexdef(indexrelid),'; 'order by indexrelid::regclass::text)from pg_catalog.pg_index where indrelid=rel)is distinct from e.indexes
     or(select relkind<>'r'or not relrowsecurity or relforcerowsecurity or relowner<>owner_expected from pg_catalog.pg_class where oid=rel)
     or exists(select 1 from pg_catalog.pg_policy where polrelid=rel)
