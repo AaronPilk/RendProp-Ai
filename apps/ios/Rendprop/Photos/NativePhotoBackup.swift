@@ -400,11 +400,7 @@ protocol NativePhotoBackupAPI: AnyObject {
         // PhotoStudioView's directory accessor creates an empty directory even
         // before a photo is restored. Remove only an empty directory: rmdir is
         // atomic and refuses to remove any local file that appeared meanwhile.
-        if FileManager.default.fileExists(atPath: destination.path) {
-            guard destination.path.withCString({ Darwin.rmdir($0) }) == 0 else {
-                throw NativePhotoBackup.Failure.conflict
-            }
-        }
+        try removeEmptyDestination(destination)
         var receipts: [NativePhotoBackup.Receipt] = [], seen = Set<String>(), offset = 0
         repeat {
             try context.check(); try requireListing()
@@ -495,9 +491,20 @@ protocol NativePhotoBackupAPI: AnyObject {
         try encoder.encode(index).write(to: stage.appendingPathComponent(".photo-history.json"), options: .atomic)
         _ = try PhotoVersionHistory.load(directory: stage)
         try context.check(); try requireListing()
+        // SwiftUI may reevaluate the screen's eager directory getter during
+        // the download. It can recreate only an empty destination; never
+        // overwrite or remove a directory containing local work.
+        try removeEmptyDestination(destination)
         guard !FileManager.default.fileExists(atPath: destination.path) else { throw NativePhotoBackup.Failure.conflict }
         try FileManager.default.moveItem(at: stage, to: destination)
         return index.versions.count
+    }
+
+    private static func removeEmptyDestination(_ destination: URL) throws {
+        guard FileManager.default.fileExists(atPath: destination.path) else { return }
+        guard destination.path.withCString({ Darwin.rmdir($0) }) == 0 else {
+            throw NativePhotoBackup.Failure.conflict
+        }
     }
 
     private static func version(from body: [String: Any], serverListingID: UUID) throws -> PhotoVersionHistory.Version {

@@ -230,13 +230,16 @@ enum DirectUploader {
         let wholeSecondDestination = EnhancedPhoto.directory(for: UUID())
         let wholeSecondCount = try await NativePhotoBackupRestorer.restore(serverListingID: serverID,
             libraryOrgID: org, into: wholeSecondDestination, api: wholeSecondAPI, download: { url in
+                // SwiftUI can recreate its empty Photos folder while the
+                // signed downloads run. This must still restore safely.
+                try FileManager.default.createDirectory(at: wholeSecondDestination, withIntermediateDirectories: true)
                 let temp = root.appendingPathComponent(UUID().uuidString)
                 try DirectUploader.contents[url.lastPathComponent]!.write(to: temp)
                 return (temp, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
             })
         let wholeSecondRestored = try PhotoVersionHistory.load(directory: wholeSecondDestination)
         check(wholeSecondCount == 4 && wholeSecondRestored.versions.count == 4,
-              "valid whole-second server timestamps restore the complete listing")
+              "whole-second timestamps restore despite an empty folder recreated by the screen")
         let uploadsBeforeRecheck = DirectUploader.uploads.count
         let restoredModel = AppModel(.init(id: restoredLocalID, serverID: serverID, serverOrgID: org), api: api)
         NativePhotoBackupCoordinator.shared.schedule(listingID: restoredLocalID, model: restoredModel)
