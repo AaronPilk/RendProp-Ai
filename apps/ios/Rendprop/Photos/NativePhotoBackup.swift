@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Darwin
 
 /// A private, immutable copy of each locally retained photo version. This is
 /// independent of the public gallery and of the user's listing selections.
@@ -396,7 +397,14 @@ protocol NativePhotoBackupAPI: AnyObject {
                         }) async throws -> Int {
         let context = try CloudMediaAccessContext.capture(orgID: libraryOrgID)
         try context.check(); try requireListing()
-        guard !FileManager.default.fileExists(atPath: destination.path) else { throw NativePhotoBackup.Failure.conflict }
+        // PhotoStudioView's directory accessor creates an empty directory even
+        // before a photo is restored. Remove only an empty directory: rmdir is
+        // atomic and refuses to remove any local file that appeared meanwhile.
+        if FileManager.default.fileExists(atPath: destination.path) {
+            guard destination.path.withCString({ Darwin.rmdir($0) }) == 0 else {
+                throw NativePhotoBackup.Failure.conflict
+            }
+        }
         var receipts: [NativePhotoBackup.Receipt] = [], seen = Set<String>(), offset = 0
         repeat {
             try context.check(); try requireListing()
@@ -515,8 +523,11 @@ protocol NativePhotoBackupAPI: AnyObject {
               let rawDate = body["created_at"] as? String,
               ["capture-original", "capture", "declutter", "stage", "twilight", "sky", "lawn", "custom"].contains(edit)
         else { throw NativePhotoBackup.Failure.invalidReceipt }
-        let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = formatter.date(from: rawDate) else { throw NativePhotoBackup.Failure.invalidReceipt }
+        let fractional = ISO8601DateFormatter(); fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let whole = ISO8601DateFormatter(); whole.formatOptions = [.withInternetDateTime]
+        guard let date = fractional.date(from: rawDate) ?? whole.date(from: rawDate) else {
+            throw NativePhotoBackup.Failure.invalidReceipt
+        }
         let parent = try optional("parent_id", identifier: true), source = try optional("source_id", identifier: true)
         let base = try optional("staging_base_id", identifier: true), reference = try optional("staging_reference_id", identifier: true)
         let style = try optional("style"), disclosure = try optional("disclosure")

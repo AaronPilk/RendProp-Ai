@@ -191,6 +191,9 @@ enum DirectUploader {
 
         let restoredLocalID = UUID()
         let fresh = EnhancedPhoto.directory(for: restoredLocalID)
+        // The real PhotoStudioView `dir` getter creates this folder before the
+        // restore button is tapped. An empty one must not block restoration.
+        try FileManager.default.createDirectory(at: fresh, withIntermediateDirectories: true)
         let count = try await NativePhotoBackupRestorer.restore(serverListingID: serverID, libraryOrgID: org,
             into: fresh, api: api, download: { url in
                 let id = url.lastPathComponent
@@ -214,6 +217,26 @@ enum DirectUploader {
               "edit restored byte-for-byte")
         check(try Data(contentsOf: fresh.appendingPathComponent("edit-\(customID).jpg")) == custom,
               "custom edit restored byte-for-byte")
+        let wholeSecondAPI = FakeBackupAPI(serverID)
+        for (id, receipt) in api.rows {
+            var body = receipt.manifest
+            body["created_at"] = "2026-11-04T20:00:00Z"
+            wholeSecondAPI.rows[id] = try NativePhotoBackup.Receipt(json: [
+                "listing_id": serverID.uuidString.lowercased(), "version_id": id,
+                "family_id": receipt.familyID, "manifest": body,
+                "available": true, "committed_at": "2026-11-04T20:00:00Z"
+            ])
+        }
+        let wholeSecondDestination = EnhancedPhoto.directory(for: UUID())
+        let wholeSecondCount = try await NativePhotoBackupRestorer.restore(serverListingID: serverID,
+            libraryOrgID: org, into: wholeSecondDestination, api: wholeSecondAPI, download: { url in
+                let temp = root.appendingPathComponent(UUID().uuidString)
+                try DirectUploader.contents[url.lastPathComponent]!.write(to: temp)
+                return (temp, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            })
+        let wholeSecondRestored = try PhotoVersionHistory.load(directory: wholeSecondDestination)
+        check(wholeSecondCount == 4 && wholeSecondRestored.versions.count == 4,
+              "valid whole-second server timestamps restore the complete listing")
         let uploadsBeforeRecheck = DirectUploader.uploads.count
         let restoredModel = AppModel(.init(id: restoredLocalID, serverID: serverID, serverOrgID: org), api: api)
         NativePhotoBackupCoordinator.shared.schedule(listingID: restoredLocalID, model: restoredModel)
