@@ -5590,6 +5590,7 @@ struct PhotoStudioView: View {
 
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var photoBackup = NativePhotoBackupCoordinator.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -5688,6 +5689,8 @@ struct PhotoStudioView: View {
     @State private var selectedPhotoIDs: Set<String> = []
     @State private var publicationLabels: [String: String] = [:]
     @State private var galleryRetrying = false
+    @State private var restoringNativePhotos = false
+    @State private var nativeRestoreError: String?
     @State private var listingChoiceWorkID: UUID?
     @State private var listingChoiceTask: Task<Void, Never>?
     @State private var listingChoiceIDs: Set<String> = []
@@ -5932,6 +5935,46 @@ struct PhotoStudioView: View {
 
             savedPhotoEditCard
 
+            if !photos.isEmpty, let index = try? PhotoVersionHistory.load(directory: dir) {
+                let versions = NativePhotoBackup.ordered(index)
+                if !versions.isEmpty {
+                    let states = versions.map { photoBackup.state(for: $0, listingID: listing.id) }
+                    let saved = states.filter { $0 == .backedUp }.count
+                    let saving = states.contains(.backingUp)
+                    let attention = states.contains { [.needsOriginal, .retry, .unavailable, .conflict, .tooLarge, .unsupported].contains($0) }
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
+                            Label(attention ? "Needs attention" : saving ? "Saving to account" : saved == versions.count ? "Saved to account" : "On this iPhone",
+                                  systemImage: attention ? "exclamationmark.icloud" : saving ? "arrow.up.icloud" : saved == versions.count ? "checkmark.icloud.fill" : "icloud")
+                                .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                            Spacer(minLength: 8)
+                            Text("\(saved) of \(versions.count) versions")
+                                .font(.caption).foregroundStyle(Theme.inkDim)
+                        }
+                        Text(saved == versions.count
+                             ? "Private copies are stored. On a new iPhone, Restore saved versions checks each downloaded file before use."
+                             : "Your saved photos remain on this iPhone. Open a photo to see which version needs attention.")
+                            .font(.caption).foregroundStyle(Theme.inkDim)
+                        if attention || (!saving && saved < versions.count) {
+                            Button {
+                                photoBackup.retry(listingID: listing.id, model: model)
+                            } label: {
+                                Label("Retry account save", systemImage: "arrow.clockwise")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(minHeight: 44)
+                                    .padding(.horizontal, 16)
+                                    .background(.regularMaterial, in: Capsule())
+                            }
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityIdentifier("photos.retryPrivateBackup")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+            }
+
             if let photoSaveError {
                 Text(photoSaveError)
                     .font(.rpCaption).foregroundStyle(Theme.warn)
@@ -6144,16 +6187,56 @@ struct PhotoStudioView: View {
 
     @ViewBuilder private var cloudRecoveryLink: some View {
         if let current = cloudRecoveryListing {
+            Button { restoreNativePhotos(current) } label: {
+                Label(restoringNativePhotos ? "Restoring saved versions…" : "Restore saved versions",
+                      systemImage: "arrow.down.icloud")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .modifier(RendpropActionAppearance(primary: true))
+            .disabled(restoringNativePhotos)
+            .accessibilityIdentifier("photos.restorePrivateVersions")
+            if let nativeRestoreError {
+                Text(nativeRestoreError).font(.rpCaption).foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             NavigationLink { CloudMediaView(listing: current) } label: {
                 Label("View cloud photos", systemImage: "icloud.and.arrow.down")
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .modifier(RendpropActionAppearance(primary: true))
+            .modifier(RendpropActionAppearance(primary: false))
             .accessibilityIdentifier("photos.cloudRecovery")
-            Text("Copies without originals can be saved to iPhone Photos. Their edit history will still be unavailable.")
+            Text("The account restore checks saved originals and edit history. Review restored edits and listing choices again; published cloud photos may be separate copies.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @MainActor private func restoreNativePhotos(_ current: Listing) {
+        guard !restoringNativePhotos, let serverID = current.serverID,
+              let org = WorkspaceContext.selectedOrgID,
+              let api = model.api as? NativePhotoBackupAPI else { return }
+        restoringNativePhotos = true; nativeRestoreError = nil
+        Task { @MainActor in
+            defer { restoringNativePhotos = false }
+            do {
+                let count = try await NativePhotoBackupRestorer.restore(serverListingID: serverID,
+                    libraryOrgID: org, into: dir, api: api, requireListing: {
+                        guard let now = model.listings.first(where: { $0.id == listing.id }),
+                              now.serverID == serverID, now.cloudUnavailable != true,
+                              WorkspaceContext.selectedOrgID == org else {
+                            throw NativePhotoBackup.Failure.changedIdentity
+                        }
+                    })
+                guard count > 0 else {
+                    nativeRestoreError = "No private saved versions were found for this listing. Your published cloud photos may still be available below."
+                    return
+                }
+                loadExisting()
+                refreshListingPhotoSelection()
+            } catch {
+                nativeRestoreError = error.localizedDescription
+            }
         }
     }
 
@@ -7911,6 +7994,7 @@ struct PhotoStudioView: View {
         clips = SavedClip.loadAll(listingID: listing.id)
         refreshSavedAnimations()
         refreshSavedPhotoEdits()
+        NativePhotoBackupCoordinator.shared.schedule(listingID: listing.id, model: model)
         // Resolve each family's metadata independently. A missing selected
         // image still stops gallery upload, but doesn't erase other badges.
         do {
@@ -8428,6 +8512,7 @@ struct PhotoCompareView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var photoBackup = NativePhotoBackupCoordinator.shared
     @State private var selectedVersion: EnhancedPhoto?
     @State private var rememberedFamilyVersions: [String: EnhancedPhoto] = [:]
     @State private var showOriginal = false
@@ -8556,6 +8641,30 @@ struct PhotoCompareView: View {
                                 }
                             }
                             reviewDetails
+                            if let version = viewed.savedVersion, let listingID = photoListingID {
+                                let backupState = photoBackup.state(for: version, listingID: listingID)
+                                VStack(alignment: .leading, spacing: 5) {
+                                    HStack(spacing: 10) {
+                                        Label(backupState.title, systemImage: backupState.symbol)
+                                            .font(.subheadline.weight(.medium))
+                                            .foregroundStyle(backupState == .backedUp ? Theme.good : Theme.inkDim)
+                                        Spacer(minLength: 8)
+                                        if backupState == .local || backupState == .retry || backupState == .unavailable {
+                                            Button("Retry backup") {
+                                                photoBackup.retry(listingID: listingID, model: model)
+                                            }
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(Theme.accent)
+                                            .padding(.horizontal, 14).frame(minHeight: 44)
+                                            .background(.regularMaterial, in: Capsule())
+                                            .accessibilityLabel("Retry private backup of this photo")
+                                        }
+                                    }
+                                    Text(backupState.detail).font(.caption).foregroundStyle(Theme.inkDim)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .accessibilityIdentifier("photoVersion.backup.status")
+                            }
                             if isCloudListing, cloudProjection?.pending == true {
                                 SecondaryButton(title: "Discard saved photo choice", systemImage: "xmark.circle", isDisabled: selectionWorkID != nil, isCompact: true) {
                                     abandonSavedCloudSelection()
@@ -8993,9 +9102,16 @@ struct PhotoCompareView: View {
             HStack(spacing: 12) {
                 DetailPhotoThumb(url: version.enhancedURL, height: 64)
                     .frame(width: 80).accessibilityHidden(true)
-                Text(version.savedVersion?.title ?? "Earlier version")
-                    .font(.body).foregroundStyle(Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(version.savedVersion?.title ?? "Earlier version")
+                        .font(.body).foregroundStyle(Theme.ink)
+                    if let saved = version.savedVersion, let listingID = photoListingID {
+                        Label(photoBackup.state(for: saved, listingID: listingID).title,
+                              systemImage: photoBackup.state(for: saved, listingID: listingID).symbol)
+                            .font(.caption).foregroundStyle(Theme.inkDim)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 if selected {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)

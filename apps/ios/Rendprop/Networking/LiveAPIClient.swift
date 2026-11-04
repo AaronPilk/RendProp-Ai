@@ -43,7 +43,7 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 /// via `.convertFromSnakeCase`) and map to the app's models, and we build write
 /// bodies as explicit snake_case dictionaries (mirrors the AI/ clients' style),
 /// so the app models never have to match the DB column names.
-final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI, ListingGalleryRemovalAPI, ListingPhotoCloudSelectionAPI, PublishedListingVideoReading {
+final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI, ListingGalleryRemovalAPI, ListingPhotoCloudSelectionAPI, PublishedListingVideoReading, NativePhotoBackupAPI {
     private let base: URL
     private let session: URLSession
     /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
@@ -814,6 +814,78 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
               receipt.removed_asset_ids.allSatisfy(operation.requestedAssetIDs.contains) else { throw APIError.decoding }
         return .init(selection: selection, operationID: receipt.operation_id, replayed: receipt.replayed,
             requestedAssetIDs: receipt.requested_asset_ids, removedAssetIDs: receipt.removed_asset_ids)
+    }
+
+    // MARK: - Private native photo versions
+
+    @MainActor func nativePhotoVersion(listingID: UUID, versionID: String,
+                                       libraryOrgID: UUID) async throws -> NativePhotoBackup.Receipt? {
+        let context = try CloudMediaAccessContext.capture(orgID: libraryOrgID)
+        let query = [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased()),
+                     URLQueryItem(name: "version_id", value: versionID)]
+        var request = makeRequest(url: url(["studio", "native-photo-versions"], query: query))
+        request.setValue(libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try context.check()
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["ok"] as? Bool == true,
+              (json["listing_id"] as? String).flatMap(UUID.init(uuidString:)) == listingID,
+              let rows = json["versions"] as? [Any], rows.count <= 1 else {
+            throw NativePhotoBackup.Failure.invalidReceipt
+        }
+        guard let row = rows.first else { return nil }
+        let receipt = try NativePhotoBackup.Receipt(json: row)
+        guard receipt.listingID == listingID, receipt.versionID == versionID else {
+            throw NativePhotoBackup.Failure.invalidReceipt
+        }
+        return receipt
+    }
+
+    @MainActor func commitNativePhotoVersion(_ manifest: [String: Any], listingID: UUID,
+                                             versionID: String, libraryOrgID: UUID) async throws -> NativePhotoBackup.Receipt {
+        let context = try CloudMediaAccessContext.capture(orgID: libraryOrgID)
+        _ = try NativePhotoBackup.canonical(manifest)
+        var request = makeRequest(url: url(["studio", "native-photo-versions"]),
+            method: "POST", json: manifest,
+            idempotency: .key("native-photo-version:" + listingID.uuidString.lowercased() + ":" + versionID))
+        guard request.httpBody != nil else { throw NativePhotoBackup.Failure.invalidReceipt }
+        request.setValue(libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        // Immutable version IDs are the server idempotency key. A lost reply
+        // is reconciled by exact GET in the coordinator before any retry.
+        let data = try await execute(request, beforeSend: { try context.check() }, replayAuthenticationAfter401: false)
+        try context.check()
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["ok"] as? Bool == true else { throw NativePhotoBackup.Failure.invalidReceipt }
+        let receipt = try NativePhotoBackup.Receipt(json: json)
+        guard receipt.listingID == listingID, receipt.versionID == versionID else {
+            throw NativePhotoBackup.Failure.invalidReceipt
+        }
+        return receipt
+    }
+
+    @MainActor func nativePhotoVersions(listingID: UUID, offset: Int,
+                                        libraryOrgID: UUID) async throws -> NativePhotoBackup.Page {
+        let context = try CloudMediaAccessContext.capture(orgID: libraryOrgID)
+        guard offset >= 0 else { throw NativePhotoBackup.Failure.invalidReceipt }
+        let query = [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased()),
+                     URLQueryItem(name: "offset", value: String(offset))]
+        var request = makeRequest(url: url(["studio", "native-photo-versions"], query: query))
+        request.setValue(libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try context.check()
+        return try NativePhotoBackup.Page(json: JSONSerialization.jsonObject(with: data), listingID: listingID)
+    }
+
+    @MainActor func nativePhotoDownload(listingID: UUID, asset: NativePhotoBackup.Asset,
+                                        libraryOrgID: UUID) async throws -> NativePhotoBackup.DownloadTicket {
+        let context = try CloudMediaAccessContext.capture(orgID: libraryOrgID)
+        let query = [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased())]
+        var request = makeRequest(url: url(["studio", "native-photo-versions", asset.assetID], query: query))
+        request.setValue(libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try context.check()
+        return try NativePhotoBackup.DownloadTicket(json: JSONSerialization.jsonObject(with: data),
+            listingID: listingID, expected: asset)
     }
 
     // MARK: - Uploads (contract §2)
