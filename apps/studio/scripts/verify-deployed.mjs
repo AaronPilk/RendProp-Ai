@@ -87,9 +87,10 @@ async function readBack(){
   const warnings=[];
   // The zone already prepends its managed crawler policy to robots.txt. Pin the
   // observed platform prefix, never strip arbitrary differences from app assets.
-  // This permits verification of the origin tail without pretending that the
-  // combined Allow/Disallow policy proves crawl blocking. Noindex is independent.
-  const managedRobotsPrefixSha='842b34303164ead41bccb7c05d1707422e98d108753b397b6dcc19683eb02101';
+  // The exact 26-byte origin policy remains required as the response tail.
+  // The combined wildcard Allow/Disallow policy does not prove crawl blocking;
+  // X-Robots-Tag and HTML meta noindex are checked independently.
+  const managedRobotsPrefixSha='3073d1e371afb3271c7666148766fedc5145f7d8440f7114062db79b7bd58add';
   for(const file of files){
     const pathname=file==='index.html'?'/':`/${file}`;
     const response=await request(pathname);
