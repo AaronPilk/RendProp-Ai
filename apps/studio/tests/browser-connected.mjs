@@ -25,7 +25,7 @@ const openAdvanced = () => page.getByRole("button", {name:"Advanced desktop edit
 const check = (name) => receipt.checks.push(name);
 let savedKey;
 try {
-  await build({ configFile: false, root, publicDir: "public", logLevel: "error",
+  await build({ configFile: false, envFile: false, envPrefix: [], root, publicDir: "public", logLevel: "error",
     plugins: mutation ? [{ name: "deliberate-refresh-regression", enforce: "pre", transform(code, id) {
       if (!id.endsWith("/src/App.tsx")) return;
       const needle = "setBusy(true);\n    // Keep the same verified scope mounted";
@@ -114,6 +114,7 @@ try {
   check("verified access recovery restores the right draft and honestly requests original-file reselection");
 
   await nav("Workspace").click();
+  if (await page.locator(".studio-rail-toggle").getAttribute("aria-expanded") !== "true") await page.locator(".studio-rail-toggle").click();
   await page.locator("#switch-workspace").selectOption("44444444-4444-4444-8444-444444444444");
   await expect(page.getByText(/^Updated \d/)).toBeVisible();
   await nav("Video editor").click();
