@@ -14,7 +14,7 @@ const receipt = { proof: "Real App, ListingWorkflow and ClientContactEditor with
 const first = "55555555-5555-4555-8555-555555555500", second = "66666666-6666-4666-8666-666666666666", org = "44444444-4444-4444-8444-444444444444", other = "33333333-3333-4333-8333-333333333333";
 let server, browser, page, mutated = false;
 try {
-  await build({ configFile: false, root, publicDir: "public", logLevel: "error", plugins: fault ? [{name:"missing-contact-guard", enforce:"pre", transform(code,id) {
+  await build({ configFile: false, envFile: false, envPrefix: [], root, publicDir: "public", logLevel: "error", plugins: fault ? [{name:"missing-contact-guard", enforce:"pre", transform(code,id) {
     if (!id.endsWith("/src/features/listings/ClientContactEditor.tsx")) return;
     const needle = fault === "missing-guard" ? "if (JSON.stringify(current.current) === JSON.stringify(baseline.current)) return true;" : "const draftKey = `${userId}:${orgId}:${listingId}`;";
     assert(code.includes(needle)); mutated = true; return code.replace(needle, fault === "missing-guard" ? "return true;" : "const draftKey = `${orgId}:${listingId}`;");
@@ -51,6 +51,7 @@ try {
   await save().click(); await expect(contact().getByText(/Client contact saved/)).toBeVisible(); const afterSaveDialogs = dialogs.length;
   await property().selectOption(second); await openContact(); await expect(name()).toHaveValue("Saved client B"); await property().selectOption(first); await openContact(); await expect(name()).toHaveValue("Client A after retry"); assert.equal(dialogs.length,afterSaveDialogs);
   receipt.checks.push("Failed save retains draft and guard; verified successful save clears the guard and preserves both saved clients");
+  if (await page.locator(".studio-rail-toggle").getAttribute("aria-expanded") !== "true") await page.locator(".studio-rail-toggle").click();
   await name().fill("Client A held save"); await page.evaluate(() => window.studioFixture.holdContactSave()); await save().click(); await expect(contact().getByRole("button",{name:"Saving…",exact:true})).toBeDisabled();
   await property().selectOption(second); await expect(property()).toHaveValue(first); await page.getByLabel("Switch agent",{exact:true}).selectOption(other); await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(org);
   await page.evaluate(() => window.studioFixture.releaseContactSave()); await expect(contact().getByText(/Client contact saved/)).toBeVisible();

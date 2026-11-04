@@ -4,6 +4,12 @@ import App from "../../src/App";
 import { createStudioServices, type StudioAuth } from "../../src/data";
 import "../../src/styles.css";
 import "../../src/design/studio.css";
+// Match the release entry stylesheet order in behavioral browser gates.
+import "../../src/features/listings/listings.css";
+import "../../src/features/sync/make-video.css";
+import "../../src/features/creative/creative.css";
+import "../../src/editor/conversation.css";
+import "../../src/editor/editor.css";
 
 // Separately bundled test entry, never imported by src/main.tsx. No real Auth,
 // provider redirect, customer fixture, remote request or secret is used here.
