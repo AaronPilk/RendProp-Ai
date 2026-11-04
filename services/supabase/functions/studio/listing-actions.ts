@@ -165,7 +165,7 @@ export async function handleListingActions(req: Request, context: ListingActionC
   assert(context.admin, 503, "Gallery saving is temporarily unavailable.");
   // The database derives the immutable photo keys and disclosure, and checks
   // current actor authority under locks. Browser metadata cannot set flags.
-  const { data, error } = await context.admin.rpc("studio_attach_photo", {
+  const { data, error } = await context.admin.rpc("studio_attach_photo_from_upload", {
     p_actor: context.userId, p_org: context.orgId, p_listing: listingId,
     p_asset: asset.id, p_caption: caption, p_provenance: body.provenance_id ?? null,
   });

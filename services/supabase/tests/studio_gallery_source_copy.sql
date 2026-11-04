@@ -35,6 +35,7 @@ create function pg_temp.complete(a uuid)returns void language plpgsql as $$decla
 grant all on checks to service_role;
 select pg_temp.ok(not has_table_privilege('service_role','studio_gallery_copies','insert')and not has_table_privilege('authenticated','studio_gallery_copies','select'),'receipt table has no direct client or service writes');
 select pg_temp.ok(has_function_privilege('service_role','studio_gallery_copy_finish(uuid,uuid,uuid,uuid,text,bigint)','execute')and not has_function_privilege('authenticated','studio_gallery_copy_prepare(uuid,uuid,uuid,uuid,uuid,text)','execute')and not has_function_privilege('anon','studio_gallery_copy_status(uuid,uuid,uuid,uuid)','execute'),'copy API is service-only and internal proof stays private');
+select pg_temp.ok(has_function_privilege('service_role','studio_attach_photo_from_upload(uuid,uuid,uuid,uuid,text,uuid)','execute')and not has_function_privilege('authenticated','studio_attach_photo_from_upload(uuid,uuid,uuid,uuid,text,uuid)','execute')and not has_function_privilege('anon','studio_attach_photo_from_upload(uuid,uuid,uuid,uuid,text,uuid)','execute'),'direct Studio attachment guard is service-only');
 set local role service_role;
 do $$declare f cf;op uuid:=gen_random_uuid();edop uuid:=gen_random_uuid();r jsonb;again jsonb;copy uuid;edcopy uuid;second uuid;source_before jsonb;old_history jsonb;selection_before jsonb;qc_before jsonb;complete_time text;begin
  select *into f from cf;
@@ -59,6 +60,7 @@ do $$declare f cf;op uuid:=gen_random_uuid();edop uuid:=gen_random_uuid();r json
  perform pg_temp.denied(format('select studio_gallery_copy_bind(%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,op,second),'different upload cannot replace bound destination');
  perform pg_temp.denied(format('select studio_gallery_copy_finish(%L,%L,%L,%L,%L,100)',f.actor,f.org,f.listing,op,repeat('a',64)),'unuploaded copy cannot finalize');
  perform pg_temp.complete(copy);
+ perform pg_temp.denied(format('select studio_attach_photo_from_upload(%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,copy,'Unverified prepared copy'),'bound copy cannot attach before server verifies its exact bytes');
  perform pg_temp.denied(format('select studio_gallery_copy_finish(%L,%L,%L,%L,%L,100)',f.actor,f.org,f.listing,op,repeat('f',64)),'wrong actual stored hash cannot attach a copy');
  perform pg_temp.ok(not exists(select 1 from photos where id=copy),'wrong hash has no private history side effect');
  r:=studio_gallery_copy_finish(f.actor,f.org,f.listing,op,repeat('a',64),100);
@@ -98,6 +100,29 @@ do $$declare f cf;op uuid:=gen_random_uuid();edop uuid:=gen_random_uuid();r json
  perform pg_temp.ok(studio_gallery_copy_finish(f.actor,f.org,f.listing,edop,repeat('b',64),101)=r,'edited finalization replay does not re-alias or duplicate history');
  perform pg_temp.ok((select gallery_asset_ids='{}'::uuid[]and main_photo_key is null from listings where id=f.listing),'all source preparations leave selection and cover empty');
  perform pg_temp.ok(not exists(select 1 from cost_ledger where org_id=f.org)and not exists(select 1 from app_video_cost_reservations where org_id=f.org),'preparation creates no paid reservation or ledger');
+end$$;
+do $$declare f cf;fresh uuid;stale uuid;phone uuid;edited uuid:=gen_random_uuid();result jsonb;begin
+ select *into f from cf;
+ phone:=pg_temp.copy_ticket(f,100,'native-photo-'||gen_random_uuid());perform pg_temp.complete(phone);
+ perform pg_temp.denied(format('select studio_attach_photo_from_upload(%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,phone,'Unknown older copy'),'phone gallery upload without lineage cannot be relabelled Original');
+ perform pg_temp.ok(not exists(select 1 from photos where id=phone),'refused phone gallery upload stays private and unattached');
+ stale:=pg_temp.copy_ticket(f,100,'studio-upload:'||gen_random_uuid());perform pg_temp.complete(stale);
+ update upload_reservations set settled_at=clock_timestamp()-interval'49 hours'where asset_id=stale;
+ perform pg_temp.denied(format('select studio_attach_photo_from_upload(%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,stale,'Old Studio copy'),'old unattached Studio upload cannot be silently labelled Original');
+ perform pg_temp.ok(not exists(select 1 from photos where id=stale),'old Studio copy remains cloud-visible but unselected');
+ fresh:=pg_temp.copy_ticket(f,100,'studio-upload:'||gen_random_uuid());perform pg_temp.complete(fresh);
+ result:=studio_attach_photo_from_upload(f.actor,f.org,f.listing,fresh,'New Studio import');
+ perform pg_temp.ok(result->>'created'='true'and result#>>'{photo,original_key}'=(select storage_key from capture_assets where id=fresh),'fresh completed same-actor Studio import attaches as its original');
+ update upload_reservations set settled_at=clock_timestamp()-interval'49 hours'where asset_id=fresh;
+ result:=studio_attach_photo_from_upload(f.actor,f.org,f.listing,fresh,'Replay');
+ perform pg_temp.ok(result->>'created'='false'and(select count(*)=1 from photos where id=fresh),'existing photo attachment replays after reservation ages out');
+ insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,bytes,sha256,content_type,transport_version)
+ values(edited,f.listing,'photo','renders','renders/'||f.org||'/'||f.listing||'/'||edited||'.jpg',true,100,repeat('e',64),'image/jpeg',2);
+ insert into media_provenance(org_id,listing_id,kind,original_key,altered_key,disclosure)
+ values(f.org,f.listing,'declutter',(select storage_key from capture_assets where id=f.original),(select storage_key from capture_assets where id=edited),'AI altered; compare with retained Original');
+ result:=studio_attach_photo_from_upload(f.actor,f.org,f.listing,edited,'Verified edit');
+ perform pg_temp.ok(result->>'created'='true'and result#>'{photo,is_staged}'='true'::jsonb and result#>>'{photo,original_key}'=(select storage_key from capture_assets where id=f.original),'proved edit keeps its retained original and disclosure');
+ perform pg_temp.ok((select gallery_asset_ids='{}'::uuid[]and main_photo_key is null from listings where id=f.listing),'guarded attach never selects a gallery photo or cover');
 end$$;
 reset role;
 -- A completed copy removed through canonical deletion must not be recreated by replay.

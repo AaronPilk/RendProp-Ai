@@ -89,7 +89,7 @@ Deno.test("replayed photo attachment uses stable asset id and does not insert du
   const f = fixture([
     { table: "memberships", result: { data: { role: "agent" } } },
     { table: "capture_assets", result: { data: asset } },
-    { table: "studio_attach_photo", client: "admin", result: { data: { ok: true, created: false, photo: row } } },
+    { table: "studio_attach_photo_from_upload", client: "admin", result: { data: { ok: true, created: false, photo: row } } },
   ]);
   const response = await handleListingActions(request("photos", { listing_id: listing, asset_id: id, caption: "Kitchen" }), f.context);
   assertEquals(response?.status, 200); assertEquals(f.calls.some((c) => c.op === "insert"), false);
@@ -186,14 +186,30 @@ Deno.test("photo attachment fails closed without request service client or confi
   const base = [{ table: "memberships", result: { data: { role: "owner" } } }, { table: "capture_assets", result: { data: asset } }];
   const missing = fixture([...base]); const { admin: _admin, ...context } = missing.context;
   await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, asset_id: id }), context), Error, "temporarily unavailable");
-  const foreign = fixture([...base, { table: "studio_attach_photo", client: "admin", result: { data: { ok: true, created: true, photo: { id, listing_id: org } } } }]);
+  const foreign = fixture([...base, { table: "studio_attach_photo_from_upload", client: "admin", result: { data: { ok: true, created: true, photo: { id, listing_id: org } } } }]);
   await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, asset_id: id }), foreign.context), Error, "could not be confirmed");
 });
 Deno.test("photo service refusal after preliminary read preserves atomic authority gate", async () => {
   for (const message of ["RP403: Your role does not permit editing photos", "RP409: This account is being deleted"]) {
-    const f = fixture([{ table: "memberships", result: { data: { role: "owner" } } }, { table: "capture_assets", result: { data: asset } }, { table: "studio_attach_photo", client: "admin", result: { data: null, error: { message } } }]);
+    const f = fixture([{ table: "memberships", result: { data: { role: "owner" } } }, { table: "capture_assets", result: { data: asset } }, { table: "studio_attach_photo_from_upload", client: "admin", result: { data: null, error: { message } } }]);
     await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, asset_id: id, caption: "Reviewed", is_staged: false, enhanced_key: "invented" }), f.context), Error, message.slice(7));
     assertEquals(f.calls.find(c => c.op === "rpc" && c.table !== "listing_library_scope")?.args[0], { p_actor: user, p_org: org, p_listing: listing, p_asset: id, p_caption: "Reviewed", p_provenance: null });
     assertEquals(f.calls.some(c => ["insert", "update"].includes(c.op)), false);
   }
+});
+Deno.test("old unverified saved copy cannot attach through Studio even if the client asks to use it", async () => {
+  const message = "RP409: This older saved copy needs its original or verified edit history before it can be added to listing photos";
+  const f = fixture([
+    { table: "memberships", result: { data: { role: "owner" } } },
+    { table: "capture_assets", result: { data: asset } },
+    { table: "studio_attach_photo_from_upload", client: "admin", result: { data: null, error: { message } } },
+  ]);
+  const error = await assertRejects(() => handleListingActions(request("photos", {
+    listing_id: listing, asset_id: id, caption: "Use this copy", is_staged: false,
+    original_key: asset.storage_key, reviewed: true,
+  }), f.context), HttpError, "needs its original or verified edit history");
+  assertEquals(error.status, 409);
+  assertEquals(f.calls.find(c => c.table === "studio_attach_photo_from_upload")?.args,
+    [{ p_actor: user, p_org: org, p_listing: listing, p_asset: id, p_caption: "Use this copy", p_provenance: null }]);
+  assertEquals(f.calls.some(c => ["insert", "update"].includes(c.op)), false);
 });
