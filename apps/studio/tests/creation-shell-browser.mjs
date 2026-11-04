@@ -29,8 +29,8 @@ try {
   await expect(page.getByRole("heading",{name:"Make a video",exact:true})).toBeVisible();await expect(page.getByLabel("Video property",{exact:true})).toHaveValue("");await expect(page.getByText("Add a property and save its photos first, then choose it here.",{exact:true})).toBeVisible();await openAdvanced();
   await expect(page.getByLabel("Property reel",{exact:true})).toHaveValue("");
   await expect(prompt()).toBeVisible();
-  assert.deepEqual(await page.getByRole("navigation",{name:"Studio navigation"}).getByRole("button").allTextContents(),["CreateCreate","My Listingslistings","MediaMedia","BusinessBusiness"]);
-  receipt.checks.push("Create defaults to the simple photo-to-video flow with four primary destinations; an account with no properties gets property guidance and can explicitly open the real advanced local editor");
+  assert.deepEqual(await page.locator("#studio-navigation > .nav-item").evaluateAll(buttons=>buttons.map(button=>button.getAttribute("aria-label"))),["Home","Create","My Listings","Media","Business"]);
+  receipt.checks.push("Create defaults to the simple photo-to-video flow with five primary destinations; an account with no properties gets property guidance and can explicitly open the real advanced local editor");
 
   await page.goto(`${origin}/tests/fixtures/connected.html`);
   await openAdvanced();
@@ -68,6 +68,7 @@ try {
   assert.equal((await page.evaluate(()=>window.studioFixture.calls())).filter(call=>call.method!=="GET").length,0);
   receipt.checks.push("Opening a property is an explicit separate-edit decision; cancel preserves local work, return retains bytes, URLs follow selection, and local media never uploads or cloud-saves");
 
+  await page.getByRole("button",{name:"Expand navigation",exact:true}).click();
   page.removeAllListeners("dialog");page.on("dialog",dialog=>dialog.dismiss());
   await page.getByLabel("Switch agent",{exact:true}).selectOption(other);
   await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(org);
@@ -75,6 +76,7 @@ try {
   page.removeAllListeners("dialog");page.on("dialog",dialog=>dialog.accept());
   await page.getByLabel("Switch agent",{exact:true}).selectOption(other);
   await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(other);
+  await page.getByRole("button",{name:"Collapse navigation",exact:true}).click();
   await openAdvanced();
   await expect(local().getByRole("button",{name:/Select clip 1:/})).toHaveCount(0);
   await prompt().fill("Second workspace private text");
@@ -94,6 +96,7 @@ try {
   await expect(page.getByRole("region",{name:"Make something",exact:true})).toBeHidden();
   await page.locator(".app-all-tools>summary").click();
   await expect(page.getByRole("region",{name:"Make something",exact:true})).toBeVisible();
+  await page.locator(".secondary-navigation>summary").click();
   await nav("AI tools").click();await expect(page.getByRole("region",{name:"Creative Studio",exact:true})).toBeVisible();
   receipt.checks.push("Legacy editor/property and Home URLs remain valid, and secondary AI tools plus the complete tool catalog remain accessible");
 
@@ -104,9 +107,9 @@ try {
   for(const width of [1440,390]) {await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:join(artifacts,`create-${width}.png`),fullPage:true});}
   await page.locator(".secondary-navigation>summary").click();
   await expect(nav("Home")).toBeVisible();
-  const menu=await page.locator(".secondary-navigation-menu").boundingBox(),bar=await page.locator(".sidebar").boundingBox();assert.ok(menu&&bar&&menu.y+menu.height<=bar.y+5);
+  const menu=await page.locator(".secondary-navigation-menu").boundingBox(),summary=await page.locator(".secondary-navigation>summary").boundingBox(),bar=await page.locator(".sidebar").boundingBox();assert.ok(menu&&summary&&bar&&menu.y>=summary.y+summary.height-1&&menu.x>=bar.x-1&&menu.x+menu.width<=bar.x+bar.width+1);
   await nav("AI tools").click();await expect(page.getByRole("region",{name:"Creative Studio",exact:true})).toBeVisible();
-  receipt.checks.push("The creation shell has no horizontal overflow at desktop and phone widths; the mobile More tools menu opens above its navigation bar");
+  receipt.checks.push("The creation shell has no horizontal overflow at desktop and phone widths; More tools expands within the persistent navigation rail");
   assert.deepEqual(receipt.errors,[]);assert.deepEqual(receipt.externalRequests,[]);receipt.status="passed";
 }catch(error){receipt.status="failed";receipt.failure=String(error.stack??error);process.exitCode=1;await page?.screenshot({path:join(artifacts,"failure.png"),fullPage:true}).catch(()=>{});if(page)await writeFile(join(artifacts,"failure.txt"),await page.locator("body").innerText().catch(()=>""));}
 finally{await browser?.close();if(server)await new Promise(done=>server.close(done));await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));console.log(JSON.stringify({...receipt,artifacts},null,2));}
