@@ -7,7 +7,7 @@ begin;
 do $own_replay_guard$
 declare
   e record; p pg_catalog.pg_proc; rel oid; owner_expected oid; service_oid oid;
-  present integer; shape text; constraints text; indexes text;
+  present integer; shape text; constraints text; not_null_constraints text; indexes text;
 begin
   select proowner into owner_expected from pg_catalog.pg_proc
     where oid = to_regprocedure('public.client_listing_access(uuid,uuid,uuid,boolean)');
@@ -74,13 +74,20 @@ begin
     left join pg_catalog.pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
     where a.attrelid = rel and a.attnum > 0 and not a.attisdropped;
   select string_agg(conname || ': ' || pg_get_constraintdef(oid),'; ' order by conname)
-    into constraints from pg_catalog.pg_constraint where conrelid = rel;
+    into constraints from pg_catalog.pg_constraint where conrelid = rel and contype <> 'n';
+  -- PostgreSQL 18 catalogs named NOT NULL constraints separately. Pin their
+  -- exact names there; older supported servers expose only attnotnull.
+  select string_agg(conname || ': ' || pg_get_constraintdef(oid),'; ' order by conname)
+    into not_null_constraints from pg_catalog.pg_constraint where conrelid = rel and contype = 'n';
   select string_agg(pg_get_indexdef(indexrelid),'; ' order by indexrelid::regclass::text)
     into indexes from pg_catalog.pg_index where indrelid = rel;
   if shape is distinct from
       'listing_id uuid not null, version_id text not null, family_id text not null, actor_id uuid not null, org_id uuid not null, library_org_id uuid not null, image_asset_id uuid not null, original_asset_id uuid not null, manifest jsonb not null, committed_at timestamp with time zone not null default clock_timestamp()'
     or constraints is distinct from
       'native_photo_backup_versions_check: CHECK ((((length(version_id) >= 1) AND (length(version_id) <= 128)) AND ((length(family_id) >= 1) AND (length(family_id) <= 128)))); native_photo_backup_versions_listing_id_fkey: FOREIGN KEY (listing_id) REFERENCES listings(id) ON DELETE CASCADE; native_photo_backup_versions_manifest_check: CHECK ((jsonb_typeof(manifest) = ''object''::text)); native_photo_backup_versions_pkey: PRIMARY KEY (listing_id, version_id)'
+    or (current_setting('server_version_num')::integer < 180000 and not_null_constraints is not null)
+    or (current_setting('server_version_num')::integer >= 180000 and not_null_constraints is distinct from
+      'native_photo_backup_versions_actor_id_not_null: NOT NULL actor_id; native_photo_backup_versions_committed_at_not_null: NOT NULL committed_at; native_photo_backup_versions_family_id_not_null: NOT NULL family_id; native_photo_backup_versions_image_asset_id_not_null: NOT NULL image_asset_id; native_photo_backup_versions_library_org_id_not_null: NOT NULL library_org_id; native_photo_backup_versions_listing_id_not_null: NOT NULL listing_id; native_photo_backup_versions_manifest_not_null: NOT NULL manifest; native_photo_backup_versions_org_id_not_null: NOT NULL org_id; native_photo_backup_versions_original_asset_id_not_null: NOT NULL original_asset_id; native_photo_backup_versions_version_id_not_null: NOT NULL version_id')
     or indexes is distinct from
       'CREATE INDEX native_photo_backup_listing_family_idx ON public.native_photo_backup_versions USING btree (listing_id, family_id); CREATE INDEX native_photo_backup_listing_page_idx ON public.native_photo_backup_versions USING btree (listing_id, committed_at, version_id); CREATE UNIQUE INDEX native_photo_backup_versions_pkey ON public.native_photo_backup_versions USING btree (listing_id, version_id)'
     or exists (select 1 from pg_catalog.pg_attribute a where a.attrelid = rel and a.attnum > 0

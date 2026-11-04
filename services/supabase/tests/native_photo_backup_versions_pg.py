@@ -45,7 +45,10 @@ try:
     result = run('native-photo-backup', [*psql, '-Atq', '-f', sql / 'tests/native_photo_backup_versions.sql'])
     proof = [json.loads(line) for line in result.splitlines() if line.startswith('{') and 'assertions' in line]
     assert len(proof) == 1 and proof[0]['passed'] and proof[0]['assertions'] >= 15, proof
-    for kind in ('table', 'helper'):
+    server_version = int(run('server-version', [*psql, '-Atq', '-c',
+                              "select current_setting('server_version_num')"]).strip())
+    tamper_kinds = ('table', 'helper') + (('not-null-name',) if server_version >= 180000 else ())
+    for kind in tamper_kinds:
         database = f'native_photo_backup_tamper_{kind}'
         run('createdb-tamper-' + kind,
             [tools['createdb'], *conn, '--template=native_photo_backup_proof', database])
@@ -55,16 +58,21 @@ try:
             run('tamper-table', [*tamper_psql, '-c',
                 'alter table public.native_photo_backup_versions add column rogue integer'])
             expected = 'Review changed native photo backup relation'
-        else:
+        elif kind == 'helper':
             run('tamper-helper', [*tamper_psql, '-c',
                 "create or replace function public.native_photo_backup_asset_ready("
                 "p_org uuid,p_listing uuid,p_receipt jsonb,p_actor uuid default null) "
                 "returns boolean language plpgsql stable security definer set search_path='' "
                 "as $$begin return true; end$$"])
             expected = 'Review changed native photo backup helper'
+        else:
+            run('tamper-not-null-name', [*tamper_psql, '-c',
+                'alter table public.native_photo_backup_versions rename constraint '
+                'native_photo_backup_versions_actor_id_not_null to rogue_actor_id_not_null'])
+            expected = 'Review changed native photo backup relation'
         reject('reject-tamper-' + kind, [*tamper_psql, '-q', '-1', '-f', backup_migration], expected)
     print(json.dumps({'passed': True, 'assertions': proof[0]['assertions'], 'migrations': len(migrations),
-                      'replay': True, 'tamper_refusals': 2, 'evidence': str(out)}))
+                      'replay': True, 'tamper_refusals': len(tamper_kinds), 'evidence': str(out)}))
 finally:
     if started:
         subprocess.run([tools['pg_ctl'], '-D', str(data), '-m', 'immediate', '-w', 'stop'],
