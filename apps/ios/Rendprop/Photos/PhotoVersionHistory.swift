@@ -527,7 +527,8 @@ enum PhotoVersionHistory {
             try requireImage(capture.originalFile!, directory: directory)
             return capture
         }
-        guard !viewed.originalVerified, !viewed.isRetainedOriginalSource,
+        guard !viewed.originalVerified, viewed.edit == "legacy", viewed.effects.isEmpty,
+              !viewed.isRetainedOriginalSource,
               index.isVisible(viewed.id) else { throw Failure.missingImage }
         try requireImage(viewed.imageFile, directory: directory)
         return viewed

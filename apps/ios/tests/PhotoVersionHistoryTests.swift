@@ -652,6 +652,12 @@ struct PhotoVersionHistoryTests {
         let legacyEditSource = try PhotoVersionHistory.enhancedCaptureForEditing(id: legacyForEdit.id, directory: legacyEditDir)
         check(legacyEditSource.id == legacyForEdit.id,
               "legacy edited image stays usable without falsely claiming a verified local enhancement")
+        let unverifiedStage = try PhotoVersionHistory.saveEdit(jpeg: captured, id: "legacy-stage",
+            parentID: legacyForEdit.id, sourceID: legacyForEdit.id, edit: "stage", style: "modern",
+            disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: legacyEditDir)
+        rejected("unverified staged pixels cannot replace a missing enhanced capture by default") {
+            _ = try PhotoVersionHistory.enhancedCaptureForEditing(id: unverifiedStage.id, directory: legacyEditDir)
+        }
         let removedDir = root.appendingPathComponent("listing-removal")
         for id in ["room", "neighbor"] {
             try PhotoVersionHistory.saveCapture(original: original, enhanced: enhanced, id: id, directory: removedDir)
