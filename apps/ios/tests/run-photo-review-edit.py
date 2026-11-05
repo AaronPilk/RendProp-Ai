@@ -23,7 +23,7 @@ def block(text, anchor):
 review = block(source, 'struct PhotoCompareView: View {')
 sheet = block(source, 'private struct PhotoReviewEditSheet: View {')
 for required in ['SecondaryButton(title: "Edit"', '.accessibilityLabel("Edit enhanced photo")', 'action: openSinglePhotoEdit',
-                 '.onReceive(photoJobs.$job) { receiveSinglePhotoWork($0) }',
+                 '.onReceive(photoJobs.$jobs)',
                  '.sheet(isPresented: $showEditActions, onDismiss: continueSinglePhotoEdit)',
                  '.sheet(item: $singleDeclutterReview, onDismiss: finishSinglePhotoSetup)',
                  'guard review.isCurrent, !photos.isEmpty else { clearSinglePhotoEdit(); return }',
@@ -46,7 +46,7 @@ for forbidden in ['batchSelection', 'startEdit(', 'applyBatchSelection', 'select
 enum = block(source, 'private enum PhotoReviewEdit: Equatable {').replace('private enum', 'enum', 1)
 context = block(source, '@MainActor private struct NativeMediaExportContext {').replace('private struct', 'struct', 1)
 methods = '\n'.join(block(review, x).replace('private ', '', 1) for x in [
-    'private var reviewListing:', 'private func openSinglePhotoEdit()', 'private func continueSinglePhotoEdit()',
+    'private var reviewListing:', 'private var singlePhotoIsBusy:', 'private func openSinglePhotoEdit()', 'private func continueSinglePhotoEdit()',
     'private func startSinglePhotoWork(', 'private func receiveSinglePhotoWork(', 'private func clearSinglePhotoEdit()'])
 actual = enum + '\n' + context + '\n' + methods
 fixture = FIXTURE.read_text()

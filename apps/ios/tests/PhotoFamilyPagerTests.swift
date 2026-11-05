@@ -1,5 +1,10 @@
 import Foundation
-struct EnhancedPhoto: Equatable { let id: String; let originalURL: URL; let enhancedURL: URL }
+struct EnhancedPhoto: Equatable {
+    let id: String; let originalURL: URL; let enhancedURL: URL
+    var savedVersion: PhotoVersionHistory.Version? {
+        try? PhotoVersionHistory.load(directory: enhancedURL.deletingLastPathComponent()).versions[id]
+    }
+}
 struct Listing { let id: UUID; var cloudUnavailable: Bool? = nil }
 @MainActor final class AppModel { var listings: [Listing] = [] }
 @MainActor final class AuthStore { static let shared = AuthStore(); var userID: String? = "owner"; var syncSessionRevision = 1 }
@@ -7,7 +12,12 @@ struct Listing { let id: UUID; var cloudUnavailable: Bool? = nil }
 @MainActor final class FeatureSessionAction { var isWaiting = false; func cancel() { isWaiting = false } }
 @MainActor final class PhotoDeclutterReviewModel { func cancel() {} }
 @MainActor final class PhotoWorkQueue {
-    static let shared = PhotoWorkQueue(); struct Job { var running = true }; var visibleJob: Job?
+    static let shared = PhotoWorkQueue()
+    struct Job { var running = true; var listingID = UUID(); var photoKeys: Set<String> = [] }
+    var visibleJob: Job?
+    func isPhotoBusy(listingID: UUID, key: String) -> Bool {
+        visibleJob.map { $0.running && $0.listingID == listingID && $0.photoKeys.contains(key) } == true
+    }
 }
 __HELPER__
 __CONTEXT__

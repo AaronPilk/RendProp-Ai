@@ -13,7 +13,7 @@ def block(text,anchor):
  while depth:depth+=(text[i]=='{')-(text[i]=='}');i+=1
  return text[start:i]
 review=block(s,'struct PhotoCompareView: View {');helper=block(s,'private enum PhotoFamilyPager {').replace('private enum','enum',1);context=block(s,'@MainActor private struct NativeMediaExportContext {').replace('private struct','struct',1)
-anchors=['private var familyPhotos:', 'private var familyPosition:', 'private var canNavigateFamilies:', 'private var requestedCoverForViewed:', 'private func movePhotoFamily(', 'private var reviewListing:', 'private func openSinglePhotoEdit()', 'private func chooseVersion(', 'private func clearSinglePhotoEdit()']
+anchors=['private var familyPhotos:', 'private var familyPosition:', 'private var canNavigateFamilies:', 'private var requestedCoverForViewed:', 'private func movePhotoFamily(', 'private var reviewListing:', 'private var singlePhotoIsBusy:', 'private func openSinglePhotoEdit()', 'private func chooseVersion(', 'private func clearSinglePhotoEdit()']
 methods='\n'.join(block(review,x).replace('private ','',1)for x in anchors)
 for required in ['galleryPhotos: entry == .photos ? galleryFamilyPhotos : []','Text(entry == .photos ? "Photos · \\(galleryFamilyPhotos.count)" : "AI Photo Studio")','let history = viewed.history','List(viewed.history) { version in historyVersionButton(version) }','if familyWasMain || requestedCoverForViewed','familyNavigation','DragGesture(minimumDistance: 30)','PhotoFamilyPager.swipeOffset(horizontal: Double(value.translation.width)','movePhotoFamily(offset)','photoVersion.position','photoVersion.previousPhoto','photoVersion.nextPhoto','.accessibilityAction(named: Text("Previous photo"))','.accessibilityAction(named: Text("Next photo"))']:
  assert required in s,required

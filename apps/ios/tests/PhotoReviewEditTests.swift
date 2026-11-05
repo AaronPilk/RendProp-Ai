@@ -21,6 +21,9 @@ struct Listing { var id: UUID; var cloudUnavailable: Bool? = nil; var isSample =
 }
 struct EnhancedPhoto {
     let id: String; let originalURL: URL; let enhancedURL: URL
+    var savedVersion: PhotoVersionHistory.Version? {
+        try? PhotoVersionHistory.load(directory: enhancedURL.deletingLastPathComponent()).versions[id]
+    }
 }
 struct DeclutterGenerationApproval { let sourceVersionID: String }
 struct DeclutterCreditAuthorization { let tariffVersion: String; let environment: String }
@@ -36,8 +39,19 @@ struct PhotoStagingSetup { let pending: PendingBatchEdit; let targets: [Enhanced
 @MainActor final class PhotoWorkQueue {
     static let shared = PhotoWorkQueue()
     struct Failure { let error: Error }
-    struct Job { var id = UUID(); var running = true; var failures: [Failure] = []; var done = 0 }
-    var visibleJob: Job?
+    struct Job {
+        var id = UUID(); var running = true; var failures: [Failure] = []; var done = 0
+        var listingID = UUID(); var photoKeys: Set<String> = []
+    }
+    var jobs: [Job] = []
+    var visibleJob: Job? {
+        get { jobs.last }
+        set { jobs = newValue.map { [$0] } ?? [] }
+    }
+    func job(id: UUID) -> Job? { jobs.first { $0.id == id } }
+    func isPhotoBusy(listingID: UUID, key: String) -> Bool {
+        jobs.contains { $0.running && $0.listingID == listingID && $0.photoKeys.contains(key) }
+    }
 }
 @MainActor final class PhotoEditService {
     struct Call {
@@ -51,7 +65,7 @@ struct PhotoStagingSetup { let pending: PendingBatchEdit; let targets: [Enhanced
     func start(title: String, photos: [EnhancedPhoto], edit: String, style: String?, prompt: String?, stagingReferenceID: String?,
                declutterApprovals: [String: DeclutterGenerationApproval]?,
                declutterCredit: DeclutterCreditAuthorization?, stageCredit: StageCreditAuthorization?) -> Bool {
-        guard PhotoWorkQueue.shared.visibleJob?.running != true else { return false }
+        guard !PhotoWorkQueue.shared.isPhotoBusy(listingID: listing.id, key: photos.first?.savedVersion?.familyID ?? photos.first?.id ?? "") else { return false }
         guard declutterCredit == nil || (edit == "declutter" && declutterApprovals != nil) else { return false }
         guard stageCredit == nil || edit == "stage" else { return false }
         if edit == "declutter" {
@@ -62,7 +76,9 @@ struct PhotoStagingSetup { let pending: PendingBatchEdit; let targets: [Enhanced
                                 prompt: prompt, reference: stagingReferenceID,
                                 approvalIDs: Set(declutterApprovals?.keys.map { $0 } ?? []),
                                 declutterCredit: declutterCredit, stageCredit: stageCredit))
-        PhotoWorkQueue.shared.visibleJob = .init(); return true
+        PhotoWorkQueue.shared.visibleJob = .init(listingID: listing.id,
+            photoKeys: Set(photos.map { $0.savedVersion?.familyID ?? $0.id }))
+        return true
     }
 }
 enum Haptics { static func selection() {} }
@@ -186,8 +202,10 @@ __METHODS__
         reset(); let waiting = Harness(photo, model); waiting.openSinglePhotoEdit(); waiting.pendingEdit = .declutter; AIConsent.shared.suspend = true; waiting.continueSinglePhotoEdit(); await settle()
         AuthStore.shared.syncSessionRevision += 1; AIConsent.shared.waiting?.resume(returning: true); AIConsent.shared.waiting = nil; await settle()
         check(PhotoEditService.calls.isEmpty && waiting.singleDeclutterReview == nil, "session revision changed while awaiting consent cannot dispatch")
-        reset(); let busy = Harness(photo, model); PhotoWorkQueue.shared.visibleJob = .init(); busy.openSinglePhotoEdit()
-        check(!busy.showEditActions, "another active photo job blocks one-photo entry")
+        reset(); let busy = Harness(photo, model)
+        PhotoWorkQueue.shared.visibleJob = .init(listingID: id, photoKeys: ["room"])
+        busy.openSinglePhotoEdit()
+        check(!busy.showEditActions, "an active edit of the same photo blocks one-photo entry")
         reset(); let missingHome = Harness(photo, model); model.listings = []; missingHome.openSinglePhotoEdit()
         check(!missingHome.showEditActions, "removed home cannot open paid choices"); model.listings = [.init(id: id)]
         reset(); let ready = Harness(photo, model); ready.openSinglePhotoEdit(); ready.editConsentRevision = AIConsent.shared.revocationRevision; ready.startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvedDeclutter)
