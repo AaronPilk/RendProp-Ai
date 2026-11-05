@@ -39,9 +39,12 @@ const versionMembers = ['        var customReviewed: Bool? = nil',
   return history.slice(start, history.indexOf('\n', start));
 }).join('\n');
 const fixture = readFileSync(new URL('PhotoConsentBatchTests.swift', import.meta.url), 'utf8')
-  .replace('__VERSION_SELECTION_MEMBERS__', versionMembers + '\n' + actualDeclaration('        var isRetainedOriginalSource: Bool {'))
+  .replace('__VERSION_SELECTION_MEMBERS__', versionMembers + '\n' +
+    actualDeclaration('        var isRetainedOriginalSource: Bool {') + '\n' +
+    actualDeclaration('        var isVerifiedCaptureEnhancement: Bool {'))
   .replace('__ACTUAL_EDIT_CONTEXT__', actualDeclaration('    static func source(for id: String, edit: String, directory: URL)') + '\n' +
-    actualDeclaration('    static func editContext(for id: String, edit: String, directory: URL)'));
+    actualDeclaration('    static func editContext(for id: String, edit: String, directory: URL)') + '\n' +
+    actualDeclaration('    static func enhancedCaptureForEditing(id: String, directory: URL)'));
 assert.ok(!fixture.includes('__VERSION_SELECTION_MEMBERS__'), 'actual version selection members must be installed');
 assert.ok(!fixture.includes('__ACTUAL_EDIT_CONTEXT__'), 'actual original/source/parent policy must be installed');
 

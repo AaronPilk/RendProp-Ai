@@ -22,8 +22,8 @@ enum UserDefaults {
 }
 struct EnhancedPhoto {
     let id: String
-    var originalURL: URL { directory(for: UUID()).appendingPathComponent(id + ".jpg") }
-    var enhancedURL: URL { originalURL }
+    var originalURL: URL { directory(for: UUID()).appendingPathComponent(id + "-raw.jpg") }
+    var enhancedURL: URL { directory(for: UUID()).appendingPathComponent(id + ".jpg") }
     static func directory(for listingID: UUID) -> URL { URL(fileURLWithPath: "/synthetic-photo-consent", isDirectory: true) }
     private func directory(for listingID: UUID) -> URL { Self.directory(for: listingID) }
 }
@@ -81,8 +81,10 @@ struct AIPhotoEditResult {
         precondition(continuation == nil)
         pauseStage = stage; pausePhoto = photo
         entered = []; calls = []; saved = []
-        originals = ["one.jpg": Data("original-one".utf8), "two.jpg": Data("original-two".utf8),
-                     "three.jpg": Data("original-three".utf8)]
+        originals = ["one.jpg": Data("enhanced-one".utf8), "two.jpg": Data("enhanced-two".utf8),
+                     "three.jpg": Data("enhanced-three".utf8),
+                     "one-raw.jpg": Data("original-one".utf8), "two-raw.jpg": Data("original-two".utf8),
+                     "three-raw.jpg": Data("original-three".utf8)]
     }
 }
 @MainActor final class ConsentAPI {
@@ -167,7 +169,8 @@ struct UIImage {
         var parentID: String? = nil
         var sourceID: String? = nil
         var stagingBaseID: String? = nil
-        var edit: String? = nil; var style: String? = nil; var disclosure: String? = nil
+        var edit: String = "capture"; var style: String? = nil; var disclosure: String? = nil
+        var sourceHistoryKnown = true
         var provenanceID: String? = nil; var originalAssetID: String? = nil; var serverListingID: String? = nil
         var provenanceRecorded = false
 __VERSION_SELECTION_MEMBERS__
@@ -181,16 +184,17 @@ __VERSION_SELECTION_MEMBERS__
         func isVisible(_ id: String) -> Bool { versions[id] != nil }
     }
     static func load(directory: URL) throws -> Index {
-        Index(versions: Dictionary(uniqueKeysWithValues: PhotoBoundary.originals.keys.map { file in
+        Index(versions: Dictionary(uniqueKeysWithValues: PhotoBoundary.originals.keys.filter { !$0.hasSuffix("-raw.jpg") }.map { file in
             let id = String(file.dropLast(4))
-            return (id, Version(id: id, imageFile: file, originalFile: file))
+            return (id, Version(id: id, imageFile: file, originalFile: id + "-raw.jpg"))
         }))
     }
     static func requireImage(_ name: String, directory: URL) throws {
         guard PhotoBoundary.originals[name] != nil else { throw Failure.missingImage }
     }
     static func trackExisting(id: String, imageFile: String, priorFile: String?, directory: URL) throws -> Version {
-        .init(id: id, imageFile: imageFile, originalFile: priorFile ?? imageFile)
+        if let existing = try load(directory: directory).versions[id] { return existing }
+        return .init(id: id, imageFile: imageFile, originalFile: priorFile ?? imageFile)
     }
 __ACTUAL_EDIT_CONTEXT__
     static func stagingReference(id: String, directory: URL) throws -> Version {
@@ -303,7 +307,7 @@ struct UNNotificationRequest { let identifier: String; let content: UNMutableNot
 
         for stage in ["image", "listing", "original"] {
             for regrant in [false, true] {
-                let preparing = reset(stage: stage, photo: "two.jpg")
+                let preparing = reset(stage: stage, photo: stage == "original" ? "two-raw.jpg" : "two.jpg")
                 let originals = PhotoBoundary.originals
                 start(preparing); await settle { PhotoBoundary.continuation != nil }
                 check(PhotoBoundary.calls == ["one.jpg"] && PhotoBoundary.saved == ["one.jpg.edited"],
