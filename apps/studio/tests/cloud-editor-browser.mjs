@@ -65,10 +65,10 @@ function installMediaTimingFixture() {
 async function captureMediaTiming() {
   for(const device of timingDevices){
     if(device.tab.isClosed())continue;
-    try{device.trace=await device.tab.evaluate(()=>window.mediaTimingFixture.snapshot());device.clockRefusals=await device.tab.evaluate(()=>window.exportClockRefusals??[]);}
+    try{device.trace=await device.tab.evaluate(()=>window.mediaTimingFixture.snapshot());device.clockRefusals=await device.tab.evaluate(()=>window.exportClockRefusals??[]);device.encodedCadence=await device.tab.evaluate(()=>window.exportEncodedCadence??[]);}
     catch(error){device.captureError=String(error);}
   }
-  receipt.mediaTiming=timingDevices.map(({id,listing,trace,clockRefusals,captureError})=>({id,listing,trace,clockRefusals,captureError}));
+  receipt.mediaTiming=timingDevices.map(({id,listing,trace,clockRefusals,encodedCadence,captureError})=>({id,listing,trace,clockRefusals,encodedCadence,captureError}));
 }
 async function captureAudioOutputDevice(tab){
   const device=timingDevices.find(device=>device.tab===tab);
@@ -98,8 +98,32 @@ export class RecordingClock extends ShippingRecordingClock {
   }
 }`;
 }};
+// Observe only parsed MP4 timing metadata after recording has stopped. This
+// cannot alter capture scheduling, encoded bytes, or the production verdict.
+const encodedCadenceReceiptPlugin={name:"cloud-encoded-cadence-receipt",enforce:"pre",transform(code,id){
+  if(!id.endsWith('/src/editor/mp4-cadence.ts'))return;
+  const seam='  frames.sort((a, b) => a.start - b.start);';
+  assert.equal(code.split(seam).length-1,1,"Actual encoded-cadence observation anchor missing");
+  return code.replace(seam,seam+`
+  let receiptWindowStart = 0, minimumWindowFrames = frames.length;
+  let maximumFrameDurationSeconds = 0, maximumStartGapSeconds = 0;
+  for (let index = 0; index < frames.length; index++) {
+    maximumFrameDurationSeconds = Math.max(maximumFrameDurationSeconds, frames[index].end - frames[index].start);
+    if (index) maximumStartGapSeconds = Math.max(maximumStartGapSeconds, frames[index].start - frames[index - 1].start);
+    while (frames[receiptWindowStart].start < frames[index].start - DENSITY_WINDOW_SECONDS) receiptWindowStart++;
+    if (frames[index].start - frames[0].start >= DENSITY_WINDOW_SECONDS)
+      minimumWindowFrames = Math.min(minimumWindowFrames, index - receiptWindowStart + 1);
+  }
+  ((window as any).exportEncodedCadence ??= []).push({
+    frameCount: frames.length, maximumFrameDurationSeconds, maximumStartGapSeconds, minimumWindowFrames,
+    transitionFrameCounts: transitions.map(transition => ({startSeconds: transition.startSeconds,
+      durationSeconds: transition.durationSeconds,
+      frameCount: frames.filter(frame => frame.start >= transition.startSeconds - .02 &&
+        frame.start < transition.startSeconds + transition.durationSeconds + .02).length})),
+  });`);
+}};
 try {
-  await build({ configFile: false, root, publicDir: false, logLevel: "error", plugins:[clockReceiptPlugin], build: { outDir: dist, rollupOptions: { input: join(root, "tests/cloud-editor-fixture.html") } } });
+  await build({ configFile: false, root, publicDir: false, logLevel: "error", plugins:[clockReceiptPlugin,encodedCadenceReceiptPlugin], build: { outDir: dist, rollupOptions: { input: join(root, "tests/cloud-editor-fixture.html") } } });
   server = createServer(async (request, response) => { const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`); if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end(); try { response.setHeader("Content-Type", ({ ".html": "text/html", ".js": "application/javascript", ".css": "text/css" })[extname(path)] ?? "application/octet-stream"); response.end(await readFile(path)); } catch { response.writeHead(404).end(); } });
   await new Promise((done) => server.listen(0, "127.0.0.1", done)); const origin = `http://127.0.0.1:${server.address().port}`;
   const sourceVideo = join(artifacts, "source-blue.mp4"), agentVideo = join(artifacts, "agent-green.mp4"), voiceFile = join(artifacts, "narration.wav");

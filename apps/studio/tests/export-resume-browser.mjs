@@ -151,13 +151,15 @@ document.querySelector("#run").onclick=async()=>{
     assert.equal([...code.matchAll(new RegExp(seam.source,"g"))].length,1,"Negative control must match the audited resume fix exactly once");
     const guard='const recordingClock = new RecordingClock();';
     assert.equal(code.split(guard).length-1,1,"Historical resume control must isolate only the main segment recording guard");
-    // As in the historical photo-clock control, exclude the later independent
-    // recording guard only in this deliberately faulty compiled variant. Keep
-    // actual startup readiness, original-audio loss admission and all clocks.
-    const cadenceGuard='const captureCadence = new CaptureCadenceClock();';
+    // Isolate guards added after this historical bug only in the deliberately
+    // faulty compiled variant. Keep startup and original-audio loss admission.
+    const cadenceGuard='const captureCadence = new CaptureCadenceClock(hasPrevious ? transitionSeconds(clip) * 1000 : 0);';
     assert.equal(code.split(cadenceGuard).length-1,1,"Historical resume control must isolate only the new capture guard");
+    const encodedGuard='if (extension === "mp4") await verifyMp4FrameCadence(blob, encodedTransitions, renderSignal);';
+    assert.equal(code.split(encodedGuard).length-1,1,"Historical resume control must isolate only the new encoded guard");
     const isolated=code.replace(guard,'const recordingClock = {read() {}};')
-      .replace(cadenceGuard,'const captureCadence = {capture() {}};');
+      .replace(cadenceGuard,'const captureCadence = {capture() {}};')
+      .replace(encodedGuard,'');
     return omitOldAwait?isolated:isolated.replace(seam, '        const resumed = waitForEvent(recorder, "resume", renderSignal);\n        recorder.resume();\n        await resumed;');
   } };
   // Delay only export-time decoder readiness, never file inspection or source
@@ -204,9 +206,15 @@ document.querySelector("#run").onclick=async()=>{
     const seam = /export function nextExportFrame\([\s\S]*?\n}\n/;
     assert(seam.test(code), "Frame-clock control must match the actual deadline helper");
     assert(!code.match(seam)[0].includes("awaitAudioStartup"), "Frame-clock control must preserve independent startup readiness");
-    // Reproduce the historical exporter, including its missing capture/audio
-    // guard. The fixed and late-frames variants always use the actual guard.
-    return code.replace('const recordingClock = new RecordingClock();', 'const recordingClock = {read() {}};').replace(seam, `export function nextExportFrame(signal: AbortSignal, _remainingMs: number): Promise<number> {
+    // Reproduce the historical exporter without later recording and cadence
+    // guards. The fixed and late-frames variants retain those actual guards.
+    const cadenceGuard='const captureCadence = new CaptureCadenceClock(hasPrevious ? transitionSeconds(clip) * 1000 : 0);';
+    const encodedGuard='if (extension === "mp4") await verifyMp4FrameCadence(blob, encodedTransitions, renderSignal);';
+    assert.equal(code.split(cadenceGuard).length-1,1,"Historical frame-clock control must isolate only the new capture guard");
+    assert.equal(code.split(encodedGuard).length-1,1,"Historical frame-clock control must isolate only the new encoded guard");
+    return code.replace('const recordingClock = new RecordingClock();', 'const recordingClock = {read() {}};')
+      .replace(cadenceGuard,'const captureCadence = {capture() {}};')
+      .replace(encodedGuard,'').replace(seam, `export function nextExportFrame(signal: AbortSignal, _remainingMs: number): Promise<number> {
       throwIfAborted(signal);
       return new Promise((resolve, reject) => {
         const aborted = () => {cancelAnimationFrame(frame); reject(signal.reason);};
@@ -220,7 +228,15 @@ document.querySelector("#run").onclick=async()=>{
     if (!id.endsWith("/src/editor/export.ts")) return;
     const seam = "Math.min(remainingMs, 1000 / 30)";
     assert(code.includes(seam), "Cadence control must remove only the frame interval ceiling");
-    return code.replace(seam, "remainingMs");
+    // This deliberately broken historical clock must yield an encoded file so
+    // the unchanged visual dissolve oracle can identify its dropped frames.
+    const cadenceGuard='const captureCadence = new CaptureCadenceClock(hasPrevious ? transitionSeconds(clip) * 1000 : 0);';
+    const encodedGuard='if (extension === "mp4") await verifyMp4FrameCadence(blob, encodedTransitions, renderSignal);';
+    assert.equal(code.split(cadenceGuard).length-1,1,"Historical deadline control must isolate only the new capture guard");
+    assert.equal(code.split(encodedGuard).length-1,1,"Historical deadline control must isolate only the new encoded guard");
+    return code.replace(seam, "remainingMs")
+      .replace(cadenceGuard,'const captureCadence = {capture() {}};')
+      .replace(encodedGuard,'');
   } };
   for (const variant of variants) await build({ root: artifacts, configFile: false, publicDir: false, base: "./", logLevel: "error", plugins: [clockObservationPlugin, delayedDecodePlugin, ...(variant === "baseline" ? [oldAwaitPlugin] : variant === "sequential" ? [sequentialPreparationPlugin] : variant === "clock-baseline" ? [oldFrameClockPlugin] : variant === "cadence-baseline" ? [deadlineOnlyPlugin] : [])], build: { outDir: join(dist, variant), rollupOptions: { input: join(artifacts, "fixture.html") } } });
   server = createServer(async (request, response) => {
