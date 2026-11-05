@@ -30,7 +30,7 @@ def main():
     args = parser.parse_args()
     raw = SOURCE.read_bytes()
     source = raw.decode()
-    saver = block(source, "private enum PhotosLibrarySaver")
+    saver = block(source, "enum PhotosLibrarySaver")
     caller = block(source, "struct PlanExportSheet: View")
     bodies = {
         "__DENIED__": block(saver, "    struct Denied: LocalizedError"),

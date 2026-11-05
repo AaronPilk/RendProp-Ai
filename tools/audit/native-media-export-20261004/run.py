@@ -40,7 +40,8 @@ def main():
         "__PRESENTATION_STATE__": state_marker.replace("@State ", ""),
         "__PRESENTATION__": block(source, "    private var hasCurrentPresentationContext:"),
         "__CONTEXT__": block(source, "@MainActor private struct NativeMediaExportContext"),
-        "__SAVER__": block(source, "private enum PhotosLibrarySaver"),
+        "__CHANGE_RECEIPT__": block(source, "private final class PhotoLibraryChangeReceipt"),
+        "__SAVER__": block(source, "enum PhotosLibrarySaver"),
         "__ADMISSION__": block(source, "    @MainActor private func mediaExportAdmission("),
         "__LOAD__": block(source, "    @MainActor private func loadCompliance()"),
         "__ORIGINALS__": block(source, "    @MainActor private func saveOriginalsToPhotos()"),
@@ -52,7 +53,7 @@ def main():
     expected = None
     if args.inject_fault == "drop-permission-context":
         needle = "        guard context.isCurrent, canSave() else { throw ContextChanged() }"
-        assert bodies["__SAVER__"].count(needle) == 4
+        assert bodies["__SAVER__"].count(needle) == 5
         bodies["__SAVER__"] = bodies["__SAVER__"].replace(needle, "        // injected missing permission admission")
         expected = "permission change prevents Photos transaction"
     elif args.inject_fault == "drop-custom-download-review":
