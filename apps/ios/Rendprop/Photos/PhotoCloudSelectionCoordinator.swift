@@ -26,7 +26,7 @@ struct PhotoCloudSelectionProjection: Equatable, Sendable {
     func label(versionID: String) -> String {
         guard !pending else { return "Checking saved photo choice" }
         guard let version = versions.first(where: { $0.id == versionID }),
-              mutableFamilyIDs.contains(version.familyID) else { return "Check listing selection" }
+              mutableFamilyIDs.contains(version.familyID) else { return "Refresh listing selection" }
         if selectedVersionIDs.contains(versionID) { return "Selected for listing" }
         if versions.contains(where: { $0.familyID == version.familyID && selectedVersionIDs.contains($0.id) }) {
             return "Another version on listing"
@@ -35,7 +35,9 @@ struct PhotoCloudSelectionProjection: Equatable, Sendable {
     }
 
     /// Missing selected metadata, unknown history and cross-family/byte aliases
-    /// never become authority to subtract a partial family footprint.
+    /// never become authority to subtract a partial family footprint. A cloud
+    /// photo outside this phone's complete local families may remain selected:
+    /// a known-family change preserves that photo in the raw CAS snapshot.
     static func resolve(identity: PhotoCloudSelectionIdentity, snapshot: PhotoCloudSelectionSnapshot,
                         versions: [PhotoCloudLocalVersion], pending: Bool) throws -> Self {
         try snapshot.validate(identity: identity)
@@ -92,7 +94,11 @@ struct PhotoCloudSelectionProjection: Equatable, Sendable {
         let conflictingAssets = Set(versions.filter { conflictingFamilies.contains($0.familyID) }.flatMap(\.familyAssetIDs))
         let selected = Set(snapshot.effectiveAssetIDs)
         if !selected.isDisjoint(with: conflictingAssets) { complete = false }
-        if !selected.isSubset(of: Set(snapshot.galleryAssets.map(\.assetID))) || !selected.isSubset(of: Set(occupied.keys)) {
+        // Every selected asset still needs an exact server receipt. It need not
+        // also exist in this phone's local version catalog: an older selected
+        // cloud photo is outside every known family footprint and is preserved
+        // unchanged by the server's compare-and-swap family mutation.
+        if !selected.isSubset(of: Set(snapshot.galleryAssets.map(\.assetID))) {
             complete = false
         }
         let mutable = complete && !pending ? Set(versions.map(\.familyID)).subtracting(conflictingFamilies) : []
@@ -125,7 +131,7 @@ enum PhotoGridListingSelection {
             case .selectedNeedsBrowserCopy: return "On listing · prepare copy"
             case .available: return "Use on listing"
             case .reviewRequired: return "Review to use"
-            case .unknown: return "Check selection"
+            case .unknown: return "Refresh selection"
             case .pending: return "Check saved choice"
             case .saving: return "Saving…"
             }

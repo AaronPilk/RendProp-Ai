@@ -15,13 +15,14 @@ struct APIError: Error { let status: Int; let code: String? }
     var beforePATCH: (() -> Void)?
     var afterPATCH: (() -> Void)?
     var onPrepare: (() -> Void)?
+    var externalAssets: [UUID: (String, Int64)] = [:]
     var catalog: [PhotoCloudLocalVersion] = []
     var lastOperation: PhotoCloudSelectionOperation?
     func key(_ id: UUID) -> String { "renders/\(physical.uuidString.lowercased())/\(identity.serverListingID.uuidString.lowercased())/gallery-\(id.uuidString.lowercased()).jpg" }
     func digest(_ n: Int) -> String { String(repeating: String(n), count: 64) }
     func reset() {
         ids = [a,b]; legacyEffective = [a,b]; cover = key(b); receipts = [:]; abandoned = [:]; abandonCount = 0; patchCount = 0; getCount = 0; prepareCount = 0; validateCount = 0; rejectTargetValidation = false
-        loseReply = false; failGET = false; refusal = nil; wrongReceipt = false; wrongRequest = false; beforeGET = nil; beforePATCH = nil; afterPATCH = nil; onPrepare = nil; lastOperation = nil
+        loseReply = false; failGET = false; refusal = nil; wrongReceipt = false; wrongRequest = false; beforeGET = nil; beforePATCH = nil; afterPATCH = nil; onPrepare = nil; lastOperation = nil; externalAssets = [:]
         catalog = [local("a", "A", a, 1),local("a2", "A", a2, 2),local("b", "B", b, 3),local("b2", "B", b2, 4)]
     }
     func local(_ id: String, _ family: String, _ asset: UUID?, _ n: Int, complete: Bool = true) -> PhotoCloudLocalVersion {
@@ -31,7 +32,7 @@ struct APIError: Error { let status: Int; let code: String? }
         let assets: [[String: Any]] = (ids ?? legacyEffective).compactMap { id in
             let canonical: (String,Int64)? = id == a ? (digest(1),100) : id == a2 ? (digest(2),200)
                 : id == b ? (digest(3),300) : id == b2 ? (digest(4),400)
-                : catalog.first(where: { $0.knownAssetID == id }).map { ($0.sha256,$0.bytes) }
+                : catalog.first(where: { $0.knownAssetID == id }).map { ($0.sha256,$0.bytes) } ?? externalAssets[id]
             guard let canonical else { return nil }
             return ["asset_id":id.uuidString,"sha256":canonical.0,"bytes":canonical.1,"storage_key":key(id)]
         }
@@ -207,7 +208,34 @@ struct APIError: Error { let status: Int; let code: String? }
         check(fixture.patchCount == 0,"Unmapped family has zero PATCHes")
         fixture.reset(); (c,store) = make(); fixture.ids = [fixture.a,UUID()]
         projection = try await refresh(c)
-        check(projection.mutableFamilyIDs.isEmpty,"Unknown selected cloud asset blocks partial family mutation")
+        check(projection.mutableFamilyIDs.isEmpty,"Selected asset without server metadata still blocks family mutation")
+        fixture.reset(); (c,store) = make()
+        let older = UUID(); fixture.externalAssets[older] = (fixture.digest(9),900)
+        fixture.ids = [older,fixture.a]; fixture.cover = fixture.key(older)
+        projection = try await refresh(c)
+        check(projection.mutableFamilyIDs == ["A","B"] && projection.selectedVersionIDs == ["a"],
+              "Older selected cloud photo outside local catalog does not block known families")
+        check(projection.coverVersionIDs.isEmpty && fixture.cover == fixture.key(older),
+              "Older cover remains a cloud fact without inventing a local cover badge")
+        let target = PhotoGridListingSelection.Target(id:"a2",familyID:"A",imageFile:"a2.jpg",requiresReview:false)
+        check(PhotoGridListingSelection.state(target,cloud:true,projection:projection,localSelected:nil).title == "Use on listing",
+              "Known edited version offers a listing choice despite older unmapped photo")
+        projection = try await change(c)
+        check(fixture.ids == [older,fixture.a2] && fixture.cover == fixture.key(older),
+              "Selecting known edit preserves older cloud photo and cover")
+        check(fixture.lastOperation?.request.expectedSelection.galleryAssetIDs == [older,fixture.a] &&
+              fixture.lastOperation?.request.familyAssetIDs == [fixture.a,fixture.a2].sorted(by: { $0.uuidString < $1.uuidString }),
+              "Family CAS includes the older photo but never claims it as a family member")
+        check(projection.selectedVersionIDs == ["a2"] &&
+              PhotoGridListingSelection.state(target,cloud:true,projection:projection,localSelected:nil).title == "On listing",
+              "Accepted exact edited version receives the listing badge")
+        fixture.reset(); (c,store) = make()
+        fixture.externalAssets[older] = (fixture.digest(1),100)
+        fixture.ids = [older,fixture.a]
+        projection = try await refresh(c)
+        check(projection.mutableFamilyIDs.isEmpty,"Cloud byte alias still blocks ambiguous local family mapping")
+        await refuses("Ambiguous older photo cannot authorize mutation") { _ = try await change(c) }
+        check(fixture.patchCount == 0,"Ambiguous older photo sends no selection PATCH")
         fixture.reset(); (c,store) = make(); fixture.catalog[0] = fixture.local("a","A",fixture.a,1,complete:false)
         projection = try await refresh(c)
         check(projection.mutableFamilyIDs.isEmpty,"Incomplete local history cannot certify cloud footprint")
