@@ -652,7 +652,10 @@ jobs:
 
   studio:
     name: Studio contracts, build and property workflows (offline)
-    runs-on: ubuntu-latest
+    # ubuntu-latest is moving to 26.04. On that image the 2026-11-05 Studio
+    # run spent its entire 20-minute FFmpeg step downloading apt dependencies.
+    # Keep this browser/media gate on the known 24.04 image during the rollout.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
