@@ -11,17 +11,20 @@ enum DirectUploader {
     /// exact per-ticket cancellation receipt. No operation deletes the source.
     static func uploadPhoto(fileURL: URL, listingID: UUID, role: String,
                             contentType: String, keyPrefix: String, api: APIClient,
+                            requestFilename: String? = nil,
                             journalStore: DirectUploadJournal = .shared,
                             transfer: (URLRequest, URL) async throws -> URLResponse = { request, file in
                                 try await URLSession.shared.upload(for: request, fromFile: file).1
                             }, delay: (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }) async throws -> String {
         // Public photo receipts describe the retained bytes, never their legacy filename.
         let browser = ["gallery", "original", "render"].contains(role) ? try browserPhoto(fileURL) : nil
-        if let browser, browser.contentType != contentType { throw BrowserPhotoFailure.unsupportedFormat }
-        let bytes = browser?.bytes ?? FileStore.fileSize(fileURL)
-        guard bytes > 0, let digest = browser?.sha256 ?? sha256(of: fileURL) else { throw UploadRecovery.Failure.invalidTicket }
+        let retained = role == "capture" ? try retainedPhoto(fileURL) : nil
+        if let descriptor = browser ?? retained, descriptor.contentType != contentType { throw BrowserPhotoFailure.unsupportedFormat }
+        let bytes = browser?.bytes ?? retained?.bytes ?? FileStore.fileSize(fileURL)
+        guard bytes > 0, let digest = browser?.sha256 ?? retained?.sha256 ?? sha256(of: fileURL) else { throw UploadRecovery.Failure.invalidTicket }
         func checkBody() throws {
             if let browser, try browserPhoto(fileURL) != browser { throw BrowserPhotoFailure.sourceChanged }
+            if let retained, try retainedPhoto(fileURL) != retained { throw BrowserPhotoFailure.sourceChanged }
         }
         if Config.useLiveBackend && Config.enableAuth {
             // An anonymous session may still be connecting on first launch.
@@ -41,7 +44,7 @@ enum DirectUploader {
         }
         func create() async throws -> UploadTicket {
             try await checkOwner(); try checkBody()
-            let ticket = try await api.requestUpload(filename: fileURL.lastPathComponent, bytes: bytes,
+            let ticket = try await api.requestUpload(filename: requestFilename ?? fileURL.lastPathComponent, bytes: bytes,
                 listingID: listingID, sha256: digest, kind: "photo", role: role,
                 contentType: contentType, idempotencyKey: key)
             try await checkOwner(); try checkBody()
@@ -193,13 +196,23 @@ enum DirectUploader {
     /// Same-descriptor, bounded signature and streaming hash. No image conversion,
     /// file rename, or whole-photo allocation. Filename is deliberately irrelevant.
     static func browserPhoto(_ url: URL) throws -> BrowserPhoto {
+        try measuredPhoto(url, allowHEIC: false, maxBytes: 128 * 1024 * 1024)
+    }
+
+    /// Exact private capture bytes, including HEIC/HEIF originals whose local
+    /// historical filename ends in .jpg. The server accepts at most 50 MiB.
+    static func retainedPhoto(_ url: URL) throws -> BrowserPhoto {
+        try measuredPhoto(url, allowHEIC: true, maxBytes: 50 * 1024 * 1024)
+    }
+
+    private static func measuredPhoto(_ url: URL, allowHEIC: Bool, maxBytes: Int64) throws -> BrowserPhoto {
         let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard fd >= 0 else { throw BrowserPhotoFailure.unsupportedFormat }
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? handle.close() }
         var before = stat()
         guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
-              before.st_size > 0, before.st_size <= 128 * 1024 * 1024 else { throw BrowserPhotoFailure.unsupportedFormat }
+              before.st_size > 0, before.st_size <= maxBytes else { throw BrowserPhotoFailure.unsupportedFormat }
         var total: Int64 = 0, prefix = Data(), hash = SHA256()
         while true {
             let chunk: Data
@@ -222,6 +235,12 @@ enum DirectUploader {
         if prefix.starts(with: [0xFF, 0xD8, 0xFF]) { mime = "image/jpeg" }
         else if prefix.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { mime = "image/png" }
         else if prefix.count >= 12, prefix.prefix(4) == Data("RIFF".utf8), prefix.dropFirst(8).prefix(4) == Data("WEBP".utf8) { mime = "image/webp" }
+        else if allowHEIC, prefix.count >= 12, prefix.dropFirst(4).prefix(4) == Data("ftyp".utf8) {
+            let brand = String(data: prefix.dropFirst(8).prefix(4), encoding: .ascii) ?? ""
+            if ["heic", "heix", "hevc", "hevx"].contains(brand) { mime = "image/heic" }
+            else if ["mif1", "msf1", "heif"].contains(brand) { mime = "image/heif" }
+            else { throw BrowserPhotoFailure.unsupportedFormat }
+        }
         else { throw BrowserPhotoFailure.unsupportedFormat }
         return BrowserPhoto(contentType: mime, bytes: total, sha256: hash.finalize().map { String(format: "%02x", $0) }.joined())
     }

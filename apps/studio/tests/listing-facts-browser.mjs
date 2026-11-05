@@ -15,7 +15,7 @@ const paths=["src/features/listings/model.ts","src/features/listings/ListingWork
 let server,browser,page,mutated=false;
 try {
   receipt.sourceHashes=Object.fromEntries(await Promise.all(paths.map(async path=>[path,createHash("sha256").update(await readFile(join(root,path))).digest("hex")])));
-  await build({configFile:false,root,publicDir:"public",logLevel:"error",plugins:fault?[{name:"listing-facts-fault",enforce:"pre",transform(code,id){
+  await build({configFile:false,envFile:false,envPrefix:[],root,publicDir:"public",logLevel:"error",plugins:fault?[{name:"listing-facts-fault",enforce:"pre",transform(code,id){
     if(fault==="missing-draft") { if(!id.endsWith("/src/features/listings/ListingWorkflow.tsx"))return; const needle='const cached = useRef(propertyDrafts.get(services)?.get(draftKey)).current;';assert(code.includes(needle));mutated=true;return code.replace(needle,'const cached = undefined;'); }
     if(!id.endsWith("/src/features/listings/model.ts"))return;
     const needle=fault==="broad-changes"?'.filter(([key, value]) => value !== original[key])':'expected[key] = baseline[key];';
@@ -58,6 +58,7 @@ try {
   await page.evaluate(()=>window.studioFixture.switchUser("B"));await expect(page.getByRole("button",{name:"Manage Fixture B",exact:true})).toBeVisible();await tab().click();await expect(headline()).toHaveValue("Keep until verified");
   await page.evaluate(()=>window.studioFixture.switchUser("A"));await expect(page.getByRole("button",{name:"Manage Your account",exact:true})).toBeVisible();await tab().click();await expect(headline()).toHaveValue("Unsaved fact draft belongs only to account A");
   receipt.checks.push("Property switching recovers open-tab fact drafts; forced account changes isolate and restore them to their original owner");
+  if (await page.locator(".studio-rail-toggle").getAttribute("aria-expanded") !== "true") await page.locator(".studio-rail-toggle").click();
   await page.evaluate(()=>window.studioFixture.holdFactsSave());await save().click();await expect(headline()).toBeDisabled();
   await page.getByLabel("Working on",{exact:true}).selectOption("66666666-6666-4666-8666-666666666666");await expect(page.getByLabel("Working on",{exact:true})).toHaveValue(first);
   await page.getByLabel("Switch agent",{exact:true}).selectOption(org);await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(logicalOrg);

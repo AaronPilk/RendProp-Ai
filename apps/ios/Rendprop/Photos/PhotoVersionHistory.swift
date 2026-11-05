@@ -447,6 +447,16 @@ enum PhotoVersionHistory {
     /// Existing enhanced/AI IDs must never be reused for different image bytes.
     /// Current and explicit publication selections stay unchanged.
     static func ensureOriginalSources(directory: URL) throws -> Index {
+        try registerOriginalSources(directory: directory, skipMissing: false)
+    }
+
+    /// Backup can continue with intact families while the Photos screen still
+    /// reports a missing source through the strict entry point above.
+    static func ensureAvailableOriginalSourcesForBackup(directory: URL) throws -> Index {
+        try registerOriginalSources(directory: directory, skipMissing: true)
+    }
+
+    private static func registerOriginalSources(directory: URL, skipMissing: Bool) throws -> Index {
         lock.lock(); defer { lock.unlock() }
         var index = try loadUnlocked(directory: directory)
         var changed = false
@@ -455,7 +465,12 @@ enum PhotoVersionHistory {
         }.sorted { $0.createdAt < $1.createdAt }
         for capture in captures {
             guard !index.hiddenFamilies.contains(capture.familyID), let file = capture.originalFile else { continue }
-            try requireImage(file, directory: directory)
+            if skipMissing {
+                // One damaged family must not suppress intact families' backup.
+                guard (try? requireImage(file, directory: directory)) != nil else { continue }
+            } else {
+                try requireImage(file, directory: directory)
+            }
             if index.versions.values.contains(where: {
                 $0.familyID == capture.familyID && $0.parentID == nil && $0.imageFile == file && $0.originalFile == file
             }) { continue }

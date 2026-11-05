@@ -16,6 +16,7 @@ import { privateMediaUrl } from "../_shared/private-media.ts";
 
 import { handleOptions } from "../_shared/cors.ts";
 import { handleProjectMedia } from "./project-media.ts";
+import { handleNativePhotoVersions } from "./native-photo-versions.ts";
 import { handleMediaAnalysis } from "./media-analysis.ts";
 import { mediaAnalysisProduction } from "./media-analysis-production.ts";
 import { handleProjectIndex } from "./projects.ts";
@@ -79,7 +80,8 @@ export async function handleStudio(req: Request): Promise<Response> {
     // the whole old Team library for the invited agent.
     let listingId = url.searchParams.get("listing_id") ?? undefined;
     if (!["GET", "HEAD"].includes(req.method)) {
-      const body = await readJsonLimited<Record<string, unknown>>(req.clone(), 2 * 1024 * 1024);
+      const body = await readJsonLimited<Record<string, unknown>>(req.clone(),
+        seg[0] === "native-photo-versions" ? 8192 : 2 * 1024 * 1024);
       if (body.listing_id !== undefined) {
         assert(typeof body.listing_id === "string" && (!listingId || listingId === body.listing_id), 400, "Listing selectors disagree.");
         listingId = body.listing_id;
@@ -100,6 +102,10 @@ export async function handleStudio(req: Request): Promise<Response> {
     assert(!rate.error, 503, "Workspace actions are temporarily unavailable.");
     assert(rate.data === true, 429, "Please wait a moment before refreshing again.");
     if (seg[0] === "project-media") return await handleProjectMedia(req, context);
+    if (seg[0] === "native-photo-versions") {
+      const backup = await handleNativePhotoVersions(req, context);
+      if (backup) return backup;
+    }
     if (seg.length === 1 && seg[0] === "media-analysis") return await handleMediaAnalysis(req, context, mediaAnalysisProduction(context));
     if (seg.length === 1 && seg[0] === "projects") return await handleProjectIndex(req, context);
     if (seg.length === 1 && seg[0] === "documents") return await handleDocuments(req, context);

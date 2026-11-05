@@ -13,7 +13,7 @@ const operations=new Map(),calls=[];let mode='ok',suppliers=0,browser,server,ui,
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const wait=async(predicate)=>{for(let n=0;n<200;n++){if(predicate())return;await new Promise(r=>setTimeout(r,10));}throw Error('bounded fixture wait timed out');};
 try{
- await build({configFile:false,root,publicDir:false,logLevel:'error',build:{outDir:dist,rollupOptions:{input:[join(root,'tests/photo-recovery-fixture.html'),join(root,'tests/creative-fixture.html')]}}});
+ await build({configFile:false,envFile:false,envPrefix:[],root,publicDir:false,logLevel:'error',build:{outDir:dist,rollupOptions:{input:[join(root,'tests/photo-recovery-fixture.html'),join(root,'tests/creative-fixture.html')]}}});
  server=createServer(async(req,res)=>{
   const url=new URL(req.url,'http://local');
   if(url.pathname==='/fixture/photo'&&req.method==='POST'){
