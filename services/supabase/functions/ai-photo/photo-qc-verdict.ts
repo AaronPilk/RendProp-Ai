@@ -85,9 +85,10 @@ fixtures: existing mounted/built-in shelves, art, lights, cabinetry, counters an
 surfaces: actual flooring/materials/finishes, permanent marks and visible property condition;
 viewpoint: same room, full camera framing, perspective and access.
 Fixed features may never be added, removed, moved, redesigned, recolored or hidden.
-Do not infer what exists behind a covering or clutter. Newly replacing an opaque
-or covered opening with clear glazing/a newly visible view is not verified
-preservation. An obscured fixed feature is uncertain; do not claim unseen facts.
+Do not infer what exists behind a covering or clutter. Replacing a visibly opaque
+or fully covered opening with clear glazing, or adding an outside view absent
+from SOURCE, is not verified preservation. An entirely obscured fixed feature
+is uncertain; do not claim unseen facts.
 
 Permitted edit differences:
 stage: movable furniture and freestanding decor can change; no added mounted
