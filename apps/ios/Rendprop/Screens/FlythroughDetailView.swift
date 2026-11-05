@@ -6845,7 +6845,8 @@ struct PhotoStudioView: View {
                 } else {
                     let (report, error) = await PhotoGridListingSelection.selectAll(targets, requireCurrent: check, state: currentState, select: { try await apply($0, selecting: true) })
                     try check()
-                    listingChoiceNote = "\(report.selected) selected · \(report.unchanged) already on listing · \(report.needsReview) need review."
+                    listingChoiceNote = "\(report.selected) selected · \(report.unchanged) already on listing · \(report.needsReview) need review" +
+                        (report.unavailable == 0 ? "." : " · \(report.unavailable) could not be verified and were left unchanged.")
                     if let error { photoSaveError = "\(report.selected) choices confirmed. Further selection stopped. " + error.localizedDescription }
                 }
             } catch { if context.isCurrent { photoSaveError = error.localizedDescription } }

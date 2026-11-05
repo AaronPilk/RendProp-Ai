@@ -364,6 +364,23 @@ struct APIError: Error { let status: Int; let code: String? }
         fixture.reset(); (c,store) = make(); fixture.wrongRequest = true
         await refuses("Matching operation ID with different frozen request must refuse") { _ = try await change(c) }
         check(try store.load(fixture.identity) != nil,"Changed receipt intent cannot retire journal")
+
+        let uncertainTarget = PhotoGridListingSelection.Target(id:"uncertain",familyID:"U",imageFile:"u.jpg",requiresReview:false)
+        let verifiedTarget = PhotoGridListingSelection.Target(id:"verified",familyID:"V",imageFile:"v.jpg",requiresReview:false)
+        var bulkChosen: Set<String> = []
+        let (partial, partialError) = await PhotoGridListingSelection.selectAll([uncertainTarget,verifiedTarget],
+            requireCurrent: {}, state: { target in
+                target.id == uncertainTarget.id ? .unknown : bulkChosen.contains(target.id) ? .selected : .available
+            }, select: { target in _ = bulkChosen.insert(target.id) })
+        check(partialError == nil && partial.unavailable == 1 && partial.selected == 1 &&
+              bulkChosen == [verifiedTarget.id],
+              "Bulk selection skips an uncertain family and confirms a later verified family")
+        bulkChosen = []
+        let (pendingBulk, pendingError) = await PhotoGridListingSelection.selectAll([uncertainTarget,verifiedTarget],
+            requireCurrent: {}, state: { target in target.id == uncertainTarget.id ? .pending : .available },
+            select: { target in _ = bulkChosen.insert(target.id) })
+        check(pendingError != nil && pendingBulk.selected == 0 && bulkChosen.isEmpty,
+              "A pending saved choice still stops bulk selection before any mutation")
         print("\(count) assertions PASS")
     }
 }

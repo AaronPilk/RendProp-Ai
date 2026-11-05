@@ -198,7 +198,7 @@ enum PhotoGridListingSelection {
         var families: Set<String> = []
         return ordered.filter { families.insert($0.familyID).inserted }
     }
-    struct Report: Equatable { var selected = 0; var unchanged = 0; var needsReview = 0 }
+    struct Report: Equatable { var selected = 0; var unchanged = 0; var needsReview = 0; var unavailable = 0 }
     @MainActor static func selectAll(_ targets: [Target], requireCurrent: () throws -> Void,
         state: (Target) throws -> State, select: (Target) async throws -> Void) async -> (Report, Error?) {
         var report = Report()
@@ -213,7 +213,9 @@ enum PhotoGridListingSelection {
                     try requireCurrent()
                     guard try state(target) == .selected else { throw PhotoCloudSelectionFailure.changed }
                     report.selected += 1
-                case .unknown: throw PhotoCloudSelectionFailure.unmapped
+                // An unrelated family's uncertain history must not stop
+                // verified families. Leave this photo unchanged and report it.
+                case .unknown: report.unavailable += 1
                 case .pending, .saving: throw PhotoCloudSelectionFailure.pending
                 }
             }
