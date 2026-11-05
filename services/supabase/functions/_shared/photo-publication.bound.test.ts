@@ -20,12 +20,26 @@ Deno.test("an accepted listing-bound edit retains its exact source and prepared 
   ]);
 });
 
+Deno.test("an accepted listing-bound edit can use an uploaded original", async () => {
+  const f = await publicationFixture({ bound: true, sourceBucket: "uploads" });
+  const result = await ensureAcceptedPhotoPublication(
+    f.client, f.scope, f.actor, f.asset,
+    { reviewed: true, expected: { sha256: f.outputSHA, bytes: f.output.length } }, f.io,
+  );
+  assertEquals(result?.id, f.pub);
+  assertEquals(f.state.phase, "prepared");
+});
+
 Deno.test("listing-bound publication refuses cross-listing and altered original custody", async () => {
   for (const damage of [
     (f: Awaited<ReturnType<typeof publicationFixture>>) => { f.state.e.listing_id = publicationID(99); },
     (f: Awaited<ReturnType<typeof publicationFixture>>) => { f.state.root.listing_id = null; },
     (f: Awaited<ReturnType<typeof publicationFixture>>) => { f.state.e.original_reference!.storage_key += "-changed"; },
     (f: Awaited<ReturnType<typeof publicationFixture>>) => { f.state.e.original_reference!.actor_id = publicationID(99); },
+    (f: Awaited<ReturnType<typeof publicationFixture>>) => { Object.assign(f.state.e.original_reference!, { bucket: "other" }); },
+    (f: Awaited<ReturnType<typeof publicationFixture>>) => { f.state.e.original_reference!.bucket = "uploads"; },
+    (f: Awaited<ReturnType<typeof publicationFixture>>) => { f.state.e.original_reference!.storage_key = f.state.root.original_key = `uploads/${publicationID(99)}/${f.listing}/photo.jpg`; },
+    (f: Awaited<ReturnType<typeof publicationFixture>>) => { f.state.e.original_reference!.storage_key = f.state.root.original_key = `renders/${f.org}/${f.listing}/nested/photo.jpg`; },
   ]) {
     const f = await publicationFixture({ bound: true });
     damage(f);
@@ -36,6 +50,19 @@ Deno.test("listing-bound publication refuses cross-listing and altered original 
     assertEquals(f.state.writes, 0);
     assertEquals(f.state.calls.some(({ name }) => name === "photo_publication_reserve"), false);
   }
+});
+
+Deno.test("a withdrawn upstream source cannot fall through to a fresh publication", async () => {
+  const f = await publicationFixture({ bound: true });
+  // The database source authority returns this when its Presenter/publication
+  // ancestry walk finds a withdrawn original.
+  f.state.resolveError = "RP404: This saved photo is unavailable for publication";
+  await assertRejects(() => ensureAcceptedPhotoPublication(
+    f.client, f.scope, f.actor, f.asset,
+    { reviewed: true, expected: { sha256: f.outputSHA, bytes: f.output.length } }, f.io,
+  ));
+  assertEquals(f.state.writes, 0);
+  assertEquals(f.state.calls.some(({ name }) => name === "photo_publication_reserve"), false);
 });
 
 Deno.test("library evidence still uses the established NULL-listing publication path", async () => {

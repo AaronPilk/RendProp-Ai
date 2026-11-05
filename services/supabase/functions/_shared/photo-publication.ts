@@ -40,7 +40,8 @@ function source(v:unknown,scope:{actor:string;org:string;library:string;listing:
   if(!object(e)||!object(q)||!object(m)||!UUID.test(e.id)||!UUID.test(q.id)||q.evidence_id!==e.id||q.automatic!==true||e.actor_id!==scope.actor||e.org_id!==scope.org||e.library_org_id!==scope.library||e.state!=="accept"||e.purpose!=="prospective"||q.state!=="accept"||!UUID.test(e.provenance_id)||m.id!==e.provenance_id||expectedProvenance!==undefined&&m.id!==expectedProvenance||m.org_id!==scope.org||!object(m.qc)||m.qc.publishable!==true||m.qc.action!=="accept"||m.qc.evidence_id!==e.id||m.qc.check_id!==q.id||typeof m.disclosure!=="string"||!m.disclosure.trim())throw fail();
   const unbound=e.listing_id===null&&m.listing_id===null&&e.original_asset_id===null&&e.original_reference===null;
   const reference=e.original_reference;
-  const bound=e.listing_id===scope.listing&&m.listing_id===scope.listing&&UUID.test(e.original_asset_id)&&object(reference)&&reference.asset_id===e.original_asset_id&&reference.actor_id===scope.actor&&reference.org_id===scope.org&&reference.listing_id===scope.listing&&reference.storage_key===m.original_key;
+  const sourcePrefix=object(reference)&&["uploads","renders"].includes(reference.bucket)?`${reference.bucket}/${scope.org}/${scope.listing}/`:null;
+  const bound=e.listing_id===scope.listing&&m.listing_id===scope.listing&&UUID.test(e.original_asset_id)&&object(reference)&&reference.asset_id===e.original_asset_id&&reference.actor_id===scope.actor&&reference.org_id===scope.org&&reference.listing_id===scope.listing&&sourcePrefix!==null&&safeKey(reference.storage_key)&&reference.storage_key.startsWith(sourcePrefix)&&!reference.storage_key.slice(sourcePrefix.length).includes("/")&&reference.storage_key===m.original_key;
   if(!unbound&&!bound)throw fail();
   const prefix=`ai-router/${scope.org}/photo-evidence/${scope.actor}/${e.id}/`;
   const input=file(r.source_input,prefix),output=file(r.source_output,prefix);

@@ -73,13 +73,16 @@ begin
   end if;
   select * into a from public.capture_assets where id=e.original_asset_id;
   if a.id is null or a.listing_id is distinct from e.listing_id or a.kind is distinct from 'photo'
-   or a.bucket is distinct from 'renders' or a.transport_version is distinct from 2
+   or (a.bucket is distinct from 'renders' and a.bucket is distinct from 'uploads')
+   or a.transport_version is distinct from 2
    or a.uploaded is distinct from true or a.upload_aborted is distinct from false
    or a.storage_key is distinct from e.original_reference->>'storage_key'
+   or coalesce(a.storage_key !~ ('^'||a.bucket||'/'||p_org::text||'/'||e.listing_id::text||'/[^/]+$'),true)
    or a.sha256 is distinct from e.original_reference->>'sha256'
    or to_jsonb(a.bytes) is distinct from e.original_reference->'bytes'
    or a.content_type is distinct from e.original_reference->>'content_type'
    or a.bucket is distinct from e.original_reference->>'bucket'
+   or not public.studio_presenter_media_access(a.id)
    or not exists(select 1 from public.upload_reservations r where r.asset_id=a.id
       and r.actor_id=p_actor and r.org_id=p_org and r.listing_id=e.listing_id and r.state='completed')
    or not exists(select 1 from public.upload_operations o where o.asset_id=a.id
