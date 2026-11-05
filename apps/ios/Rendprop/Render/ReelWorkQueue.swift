@@ -578,7 +578,7 @@ struct NativeActivityPresentationState {
             if entry.state.isActive {
                 let live: Bool
                 switch entry.kind {
-                case .photos: live = PhotoWorkQueue.shared.visibleJob.map { "photo:\($0.id)" == entry.id && $0.running } == true
+                case .photos: live = PhotoWorkQueue.shared.visibleJobs.contains { "photo:\($0.id)" == entry.id && $0.running }
                 case .video: live = ReelWorkQueue.shared.reviewableJobs.contains { Self.reelID($0) == entry.id }
                 case .tour: live = model.renderCoordinator.activityID(entry.listingID) == entry.id && model.renderCoordinator.activityScopes[entry.listingID] == scope
                 case .analysis, .voice: live = liveLocalIDs.contains(entry.id) && liveLocalRevisions[entry.id] == AIConsent.shared.revocationRevision
@@ -618,10 +618,14 @@ struct NativeActivityPresentationState {
             }
         }
         guard let model else { return }
-        if let job = PhotoWorkQueue.shared.visibleJob {
+        for job in PhotoWorkQueue.shared.visibleJobs {
             let state: NativeActivityEntry.State = job.running ? (job.stopRequested ? .waiting : .working) : job.interrupted ? .stopped : job.failures.isEmpty ? .ready : .failed
+            let saved = "\(job.done) of \(job.total) photos saved"
+            let failures = job.failures.isEmpty ? "" : " · \(job.failures.count) failed"
             observe(id: "photo:\(job.id)", listingID: job.listingID, kind: .photos, state: state,
-                    stage: job.running ? (job.stopRequested ? "Stopping remaining edits" : job.phase?.title ?? "Preparing photo") : "\(job.done) of \(job.total) photos saved",
+                    stage: job.title + " · " + (job.running
+                        ? (job.stopRequested ? "Stopping remaining edits" : job.phase?.title ?? "Preparing photo") + " · " + saved + failures
+                        : saved + failures),
                     completed: job.done, total: job.total, countUnit: "photos saved", startedAt: job.startedAt, progressToken: job.running ? String(job.phase?.rawValue ?? -1) : "finished")
         }
         for job in ReelWorkQueue.shared.reviewableJobs {

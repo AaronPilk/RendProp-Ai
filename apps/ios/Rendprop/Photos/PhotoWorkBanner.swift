@@ -28,7 +28,7 @@ struct PhotoWorkBanner: View {
 
     var body: some View {
         Group {
-            if let job = jobs.visibleJob {
+            ForEach(jobs.visibleJobs) { job in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
                         Image(systemName: job.running ? "sparkles" : job.failures.isEmpty && !job.interrupted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
@@ -39,20 +39,22 @@ struct PhotoWorkBanner: View {
                         Spacer(minLength: 0)
                         Button("Review") { reviewListing = model.listings.first { $0.id == job.listingID } }
                             .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
-                            .frame(minWidth: 44, minHeight: 44).accessibilityIdentifier("photoWork.review")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel("Review \(job.title) photos")
+                            .accessibilityIdentifier("photoWork.review")
                         if job.running {
-                            Button { jobs.stopRemaining() } label: {
+                            Button { jobs.stopRemaining(jobID: job.id) } label: {
                                 Image(systemName: "stop.circle.fill")
                             }.frame(width: 44, height: 44)
                                 .foregroundStyle(Theme.warn)
                                 .disabled(job.stopRequested)
-                                .accessibilityLabel(job.stopRequested ? "Remaining edits stopped" : "Stop remaining edits")
+                                .accessibilityLabel(job.stopRequested ? "\(job.title) remaining edits stopped" : "Stop remaining \(job.title) edits")
                                 .accessibilityHint("No more photos will be sent. A photo already sent may still finish and be charged.")
                                 .accessibilityIdentifier("photoWork.stopRemaining")
                         }
                         if !job.running {
-                            Button { jobs.dismissResult() } label: { Image(systemName: "xmark") }
-                                .frame(width: 44, height: 44).accessibilityLabel("Dismiss photo status")
+                            Button { jobs.dismissResult(jobID: job.id) } label: { Image(systemName: "xmark") }
+                                .frame(width: 44, height: 44).accessibilityLabel("Dismiss \(job.title) photo status")
                         }
                     }
                     if job.running {

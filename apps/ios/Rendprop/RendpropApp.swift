@@ -915,7 +915,7 @@ final class AppModel: ObservableObject {
     /// unpublishes its hosted tour (decision A3). Samples are never removed.
     func remove(_ id: UUID) async {
         guard let listing = listings.first(where: { $0.id == id }), !listing.isSample else { return }
-        if PhotoWorkQueue.shared.job?.listingID == id { PhotoWorkQueue.shared.cancel() }
+        PhotoWorkQueue.shared.cancel(listingID: id)
 
         renderCoordinator.cancel(listingID: id)
         ProductionVideoLibrary.shared.cancelForPropertyDeletion(id)

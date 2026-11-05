@@ -2,14 +2,22 @@ import Foundation
 
 // Platform/network/image boundaries are deterministic doubles. The runner
 // injects the actual service identity, start, cleanup and notification methods.
-struct EnhancedPhoto { let id: String }
+struct EnhancedPhoto {
+    let id: String
+    static func directory(for listing: UUID) -> URL { URL(fileURLWithPath: NSTemporaryDirectory()) }
+}
 struct DeclutterGenerationApproval {}
 struct DeclutterCreditAuthorization {}
 struct StageCreditAuthorization {}
 struct Listing { let id: UUID; var cloudUnavailable: Bool? = nil }
 enum SpaceType { case realEstate }
 enum CloudSyncError: Error { case identityChanged }
-enum PhotoVersionHistory { enum Failure: Error { case missingImage } }
+enum PhotoVersionHistory {
+    enum Failure: Error { case missingImage }
+    struct Version { let familyID: String }
+    struct Index { var versions: [String: Version] = [:] }
+    static func load(directory: URL) throws -> Index { .init() }
+}
 enum PhotoPendingEdit { enum Failure: Error { case unavailable } }
 enum SyntheticFailure: Error { case quota, unauthorized, serviceUnavailable, trialCapacityUnavailable, recoverable }
 enum Analytics { static func trackAIFailure(_ event: String, step: String, error: Error) {} }
@@ -114,7 +122,10 @@ struct UNNotificationRequest {
             preconditionFailure("Synthetic lifecycle did not settle")
         }
         func reset() {
-            PhotoWorkQueue.shared.dismissResult(); UIApplication.shared.reset(); IdleTimer.reset()
+            for job in PhotoWorkQueue.shared.jobs where !job.running {
+                PhotoWorkQueue.shared.dismissResult(jobID: job.id)
+            }
+            UIApplication.shared.reset(); IdleTimer.reset()
             UNUserNotificationCenter.shared.reset()
             AuthStore.shared.userID = "synthetic-owner"; AuthStore.shared.syncSessionRevision = 1
             WorkspaceContext.selectedOrgID = UUID()
@@ -130,7 +141,7 @@ struct UNNotificationRequest {
         })
         check(service!.start(title: "Synthetic", photos: [.init(id: "one")], edit: "declutter", style: nil, prompt: nil), "Start navigation-independent work")
         check(IdleTimer.holds == 1 && UIApplication.shared.began == 1, "One owner acquires idle and background leases")
-        check(!service!.start(title: "Blocked", photos: [.init(id: "other")], edit: "declutter", style: nil, prompt: nil), "A rejected start acquires no leases")
+        check(!service!.start(title: "Blocked", photos: [.init(id: "one")], edit: "declutter", style: nil, prompt: nil), "A rejected same-photo start acquires no leases")
         check(IdleTimer.holds == 1 && UIApplication.shared.began == 1, "No duplicate leases after a rejected start")
         service = nil // The navigation destination drops its reference.
         await settle { continuation != nil }

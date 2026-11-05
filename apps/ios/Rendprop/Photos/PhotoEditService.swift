@@ -167,7 +167,7 @@ final class PhotoEditService {
     /// written before the original POST reached the service.
     func recover(_ selected: PhotoPendingEdit.Saved) async throws {
         try requireIdentity()
-        guard !Self.recoveryInProgress, PhotoWorkQueue.shared.job?.running != true else { throw PhotoPendingEdit.Failure.unavailable }
+        guard !Self.recoveryInProgress, !PhotoWorkQueue.shared.hasRunningJobs else { throw PhotoPendingEdit.Failure.unavailable }
         Self.recoveryInProgress = true
         defer { Self.recoveryInProgress = false }
         guard let owner, let workspace, selected.identity.actor == owner,
@@ -273,10 +273,17 @@ final class PhotoEditService {
         if let declutterApprovals {
             guard edit == "declutter", photos.allSatisfy({ declutterApprovals[$0.id] != nil }) else { return false }
         }
+        // Reserve the entire family, not just the currently generating version.
+        // An original and its latest edit have different IDs but share one
+        // current-version parent and one retained-operation journal.
+        let directory = EnhancedPhoto.directory(for: listing.id)
+        guard let history = try? PhotoVersionHistory.load(directory: directory) else { return false }
+        let photoKeys = photos.map { history.versions[$0.id]?.familyID ?? $0.id }
         var background: UIBackgroundTaskIdentifier = .invalid
+        var startedJobID: UUID?
         let queue = PhotoWorkQueue.shared
         let byID = Dictionary(photos.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let started = queue.start(listingID: listing.id, title: title, photoIDs: photos.map(\.id),
+        let started = queue.start(listingID: listing.id, title: title, photoIDs: photos.map(\.id), photoKeys: photoKeys,
             identityIsCurrent: { self.identityIsCurrent }, stopOnError: { error in
                 Task { @MainActor in Analytics.trackAIFailure("photo_edit", step: edit, error: error) }
                 let failure = AIFailure(error)
@@ -293,7 +300,7 @@ final class PhotoEditService {
                     || (error as? APIError)?.isPhotoPromptRefusal == true
             }, process: { id in
                 guard let photo = byID[id] else { throw PhotoVersionHistory.Failure.missingImage }
-                guard let jobID = queue.visibleJob?.id else { throw CloudSyncError.identityChanged }
+                guard let jobID = PhotoWorkQueue.executingJobID else { throw CloudSyncError.identityChanged }
                 try await self.edit(photo, edit: edit, style: style, prompt: prompt, batch: photos.count > 1,
                                     stagingReferenceID: stagingReferenceID, declutterApproval: declutterApprovals?[id],
                                     declutterCredit: declutterCredit, stageCredit: stageCredit, progress: { phase in
@@ -305,10 +312,11 @@ final class PhotoEditService {
                 self.notify(result)
             })
         if started {
+            startedJobID = queue.jobs.last?.id
             IdleTimer.hold()
             background = UIApplication.shared.beginBackgroundTask(withName: "rendprop.photo-edit") {
                 Task { @MainActor in
-                    queue.cancel()
+                    if let startedJobID { queue.cancel(jobID: startedJobID) }
                     if background != .invalid { UIApplication.shared.endBackgroundTask(background); background = .invalid }
                 }
             }
