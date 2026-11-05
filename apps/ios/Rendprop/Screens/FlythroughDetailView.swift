@@ -3674,6 +3674,7 @@ struct AIFailure: Identifiable {
     /// Stop unsent photos and reconcile the retained operation, never rebuy it.
     static func requiresSavedPhotoCheck(_ error: Error) -> Bool {
         if error is URLError { return true }
+        if error is PhotoPendingEdit.Failure { return true }
         guard let api = error as? APIError else { return false }
         if ["photo_quality_pending", "photo_quality_hold"].contains(api.code ?? "") { return true }
         guard let status = api.status else { return true }

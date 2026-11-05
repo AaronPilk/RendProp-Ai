@@ -127,7 +127,13 @@ final class PhotoEditService {
             if let failure = error as? APIError,
                failure.isValidation || failure.isQuota || failure.code == "photo_quality_refused"
                     || (failure.status == 422 && failure.code == "photo_quality_closed"),
-               let pending { try? PhotoPendingEdit.finish(pending) }
+               let pending {
+                // A terminal result is safe to move past only after its local
+                // request journal is removed. A failed removal leaves recovery
+                // state uncertain, so the batch must stop before another edit.
+                do { try PhotoPendingEdit.finish(pending) }
+                catch { throw PhotoPendingEdit.Failure.unavailable }
+            }
             throw error
         }
         // Sent work may finish after consent is withdrawn. Preserve its exact

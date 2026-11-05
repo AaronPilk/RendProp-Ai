@@ -10,6 +10,7 @@ struct Listing { let id: UUID; var cloudUnavailable: Bool? = nil }
 enum SpaceType { case realEstate }
 enum CloudSyncError: Error { case identityChanged }
 enum PhotoVersionHistory { enum Failure: Error { case missingImage } }
+enum PhotoPendingEdit { enum Failure: Error { case unavailable } }
 enum SyntheticFailure: Error { case quota, unauthorized, serviceUnavailable, trialCapacityUnavailable, recoverable }
 enum Analytics { static func trackAIFailure(_ event: String, step: String, error: Error) {} }
 struct AIFailure {
@@ -147,7 +148,8 @@ struct UNNotificationRequest {
             APIError.server(status: 409, code: "photo_clarification_required", message: "Choose a specific edit."),
             APIError.server(status: 400, code: "unsupported_edit", message: "We can't repaint a listing photo."),
             APIError.server(status: 409, code: "photo_quality_pending", message: "Your edit is saved privately. Check this same saved edit again; no new generation is needed."),
-            APIError.server(status: 409, code: "photo_quality_hold", message: "Your saved edit needs review. Check the saved edit before starting another image.")]
+            APIError.server(status: 409, code: "photo_quality_hold", message: "Your saved edit needs review. Check the saved edit before starting another image."),
+            PhotoPendingEdit.Failure.unavailable]
         for failure in stoppingFailures {
             reset(); model.testAPI.reset(); model.api = model.testAPI; model.listings = [listing]; calls = []
             let refused = PhotoEditService(model: model, listing: listing, process: { photo in
