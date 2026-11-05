@@ -9271,13 +9271,13 @@ struct PhotoCompareView: View {
 
     @ViewBuilder private var useOnListingButton: some View {
         if !showOriginal, viewed.savedVersion != nil {
-            PrimaryButton(title: selectionWorkID != nil ? "Checking…" : isCloudListing && !cloudSelectionKnown ? "Check selection" : cloudCoverRequested ? "Use as cover" : publicationSelected ? "Unselect" : "Use on listing",
+            PrimaryButton(title: selectionWorkID != nil ? "Checking…" : isCloudListing && !cloudSelectionKnown ? (cloudProjection?.pending == true ? "Check saved choice" : "Refresh selection") : cloudCoverRequested ? "Use as cover" : publicationSelected ? "Unselect" : "Use on listing",
                           systemImage: publicationSelected ? "minus.circle" : "checkmark.circle",
                           isDisabled: listingSelectionDisabled, action: changeListingSelection)
             .frame(minHeight: 44)
             .accessibilityIdentifier("photoVersion.useOnListing")
-            .accessibilityLabel(isCloudListing && !cloudSelectionKnown ? "Refresh listing photo selection" : cloudCoverRequested ? "Use this version as the listing cover" : publicationSelected ? "Remove this photo from listing" : "Use this version on listing")
-            .accessibilityHint(publicationSelected ? "Keeps every original and saved edit in Photos." : "Checks this home’s current cloud selection before changing it.")
+            .accessibilityLabel(isCloudListing && !cloudSelectionKnown ? "Refresh listing photo selection without changing it" : cloudCoverRequested ? "Use this version as the listing cover" : publicationSelected ? "Remove this photo from listing" : "Use this version on listing")
+            .accessibilityHint(isCloudListing && !cloudSelectionKnown ? "Checks whether this saved version can be used. Your current listing photos remain unchanged." : publicationSelected ? "Keeps every original and saved edit in Photos." : "Checks this home’s current cloud selection before changing it.")
             .disabled(listingSelectionDisabled)
         }
     }
@@ -9355,7 +9355,14 @@ struct PhotoCompareView: View {
             do {
                 guard context.isCurrent, viewed.id == versionID else { throw PhotoCloudSelectionFailure.identityChanged }
                 if !known {
-                    _ = try await model.refreshCloudPhotoSelection(listingID: listingID)
+                    let refreshed = try await model.refreshCloudPhotoSelection(listingID: listingID)
+                    guard context.isCurrent, viewed.id == versionID else { throw PhotoCloudSelectionFailure.identityChanged }
+                    if refreshed.pending {
+                        selectionError = PhotoCloudSelectionFailure.pending.localizedDescription
+                    } else if let family = viewed.savedVersion?.familyID,
+                              !refreshed.mutableFamilyIDs.contains(family) {
+                        selectionError = PhotoCloudSelectionFailure.unmapped.localizedDescription
+                    }
                     return
                 }
                 if !wasSelected || cloudCoverRequested {

@@ -6,6 +6,9 @@ struct PhotoCloudSelectionProjection: Equatable, Sendable {
     let snapshot: PhotoCloudSelectionSnapshot
     let versions: [PhotoCloudLocalVersion]
     let assetByVersion: [String: UUID]
+    /// Exact gallery receipts for this family, including a uniquely matched
+    /// older selected upload of the same immutable local bytes.
+    let familyFootprints: [String: Set<UUID>]
     let selectedVersionIDs: Set<String>
     let coverVersionIDs: Set<String>
     let mutableFamilyIDs: Set<String>
@@ -17,7 +20,7 @@ struct PhotoCloudSelectionProjection: Equatable, Sendable {
         let selected = Set(snapshot.effectiveAssetIDs)
         return Set(versions.filter { version in
             guard mutableFamilyIDs.contains(version.familyID) else { return false }
-            let family = Set(versions.filter { $0.familyID == version.familyID }.flatMap(\.familyAssetIDs))
+            let family = familyFootprints[version.familyID] ?? []
             guard let asset = assetByVersion[version.id], selected.intersection(family) == [asset] else { return false }
             return !version.needsBrowserDelivery || version.browserDelivery != nil
         }.map(\.id))
@@ -34,19 +37,20 @@ struct PhotoCloudSelectionProjection: Equatable, Sendable {
         return "Not selected for listing"
     }
 
-    /// Missing selected metadata, unknown history and cross-family/byte aliases
-    /// never become authority to subtract a partial family footprint. A cloud
-    /// photo outside this phone's complete local families may remain selected:
-    /// a known-family change preserves that photo in the raw CAS snapshot.
+    /// Missing selected metadata and cross-family/byte aliases never become
+    /// authority to subtract a partial family footprint. An incomplete or
+    /// mismatched history fences only its own family. A verified family may be
+    /// changed while older cloud photos and other local families stay selected
+    /// in the raw compare-and-swap snapshot.
     static func resolve(identity: PhotoCloudSelectionIdentity, snapshot: PhotoCloudSelectionSnapshot,
                         versions: [PhotoCloudLocalVersion], pending: Bool) throws -> Self {
         try snapshot.validate(identity: identity)
         guard Set(versions.map(\.id)).count == versions.count, versions.count <= 2000 else {
             throw PhotoCloudSelectionFailure.unmapped
         }
-        var mapping: [String: UUID] = [:], occupied: [UUID: String] = [:]
-        var complete = versions.allSatisfy(\.historyComplete)
-        var conflictingFamilies: Set<String> = []
+        var mapping: [String: UUID] = [:], occupied: [UUID: String] = [:], scopedAliases: [String: UUID] = [:]
+        let familiesByVersionID = Dictionary(uniqueKeysWithValues: versions.map { ($0.id, $0.familyID) })
+        var conflictingFamilies = Set(versions.filter { !$0.historyComplete }.map(\.familyID))
         for version in versions {
             try PhotoCloudSelectionTarget(assetID: version.knownAssetID ?? UUID(), sha256: version.sha256, bytes: version.bytes).validate()
             if let delivery = version.browserDelivery {
@@ -60,24 +64,46 @@ struct PhotoCloudSelectionProjection: Equatable, Sendable {
                 continue
             }
             let matches = snapshot.galleryAssets.filter { $0.sha256 == version.deliverySHA256 && $0.bytes == version.deliveryBytes }
-            guard matches.count <= 1 else { complete = false; continue }
-            if let match = matches.first {
-                guard version.knownAssetID == match.assetID else { complete = false; continue }
-            }
+            guard matches.count <= 1 else { conflictingFamilies.insert(version.familyID); continue }
+            // An older selected upload can have a different asset ID even when
+            // its bytes exactly match this known local version. Bind that
+            // server-scoped receipt to this family footprint; never guess from
+            // a filename, thumbnail, or digest shared by multiple versions.
+            let alias: UUID?
+            if let match = matches.first, match.assetID != version.knownAssetID {
+                guard version.knownAssetID != nil else { conflictingFamilies.insert(version.familyID); continue }
+                alias = match.assetID
+            } else { alias = nil }
             if let id = version.knownAssetID {
-                if occupied[id] != nil { complete = false; continue }
+                if let present = snapshot.galleryAssets.first(where: { $0.assetID == id }),
+                   present.sha256 != version.deliverySHA256 || present.bytes != version.deliveryBytes {
+                    conflictingFamilies.insert(version.familyID); continue
+                }
+                if let owner = occupied[id] {
+                    conflictingFamilies.formUnion([version.familyID, familiesByVersionID[owner] ?? version.familyID]); continue
+                }
                 occupied[id] = version.id; mapping[version.id] = id
             }
+            if let alias {
+                if let owner = occupied[alias] {
+                    conflictingFamilies.formUnion([version.familyID, familiesByVersionID[owner] ?? version.familyID]); continue
+                }
+                occupied[alias] = version.id; scopedAliases[version.id] = alias
+            }
             if let id = version.sourceAssetID {
-                guard version.browserDelivery != nil, id != version.knownAssetID,
-                      occupied[id] == nil else { complete = false; continue }
+                guard version.browserDelivery != nil, id != version.knownAssetID else {
+                    conflictingFamilies.insert(version.familyID); continue
+                }
+                if let owner = occupied[id] {
+                    conflictingFamilies.formUnion([version.familyID, familiesByVersionID[owner] ?? version.familyID]); continue
+                }
                 if let present = snapshot.galleryAssets.first(where: { $0.assetID == id }),
                    present.sha256 != version.sha256 || present.bytes != version.bytes {
-                    complete = false; continue
+                    conflictingFamilies.insert(version.familyID); continue
                 }
                 let matches = snapshot.galleryAssets.filter { $0.sha256 == version.sha256 && $0.bytes == version.bytes }
                 guard matches.count <= 1, matches.first?.assetID == nil || matches.first?.assetID == id else {
-                    complete = false; continue
+                    conflictingFamilies.insert(version.familyID); continue
                 }
                 occupied[id] = version.id
             }
@@ -86,29 +112,29 @@ struct PhotoCloudSelectionProjection: Equatable, Sendable {
         // badge. Its own family remains non-mutable, including every known
         // asset claim that overlaps another version/family.
         let claims = Dictionary(grouping: versions.flatMap { version in
-            version.familyAssetIDs.map { ($0, version.familyID) }
+            (version.familyAssetIDs + (scopedAliases[version.id].map { [$0] } ?? [])).map { ($0, version.familyID) }
         }, by: { $0.0 })
         for claim in claims.values where claim.count > 1 {
             conflictingFamilies.formUnion(claim.map { $0.1 })
         }
-        let conflictingAssets = Set(versions.filter { conflictingFamilies.contains($0.familyID) }.flatMap(\.familyAssetIDs))
         let selected = Set(snapshot.effectiveAssetIDs)
-        if !selected.isDisjoint(with: conflictingAssets) { complete = false }
         // Every selected asset still needs an exact server receipt. It need not
         // also exist in this phone's local version catalog: an older selected
         // cloud photo is outside every known family footprint and is preserved
         // unchanged by the server's compare-and-swap family mutation.
-        if !selected.isSubset(of: Set(snapshot.galleryAssets.map(\.assetID))) {
-            complete = false
+        let selectedHasReceipts = selected.isSubset(of: Set(snapshot.galleryAssets.map(\.assetID)))
+        let mutable = selectedHasReceipts && !pending ? Set(versions.map(\.familyID)).subtracting(conflictingFamilies) : []
+        let footprints = Dictionary(grouping: versions, by: \.familyID).mapValues { family in
+            Set(family.flatMap { $0.familyAssetIDs + (scopedAliases[$0.id].map { [$0] } ?? []) })
         }
-        let mutable = complete && !pending ? Set(versions.map(\.familyID)).subtracting(conflictingFamilies) : []
         let eligibleVersions = Set(versions.filter { mutable.contains($0.familyID) }.map(\.id))
         let chosen = Set(occupied.filter { selected.contains($0.key) && eligibleVersions.contains($0.value) }.map(\.value))
         let covers = Set(occupied.filter { entry in
             eligibleVersions.contains(entry.value) && snapshot.galleryAssets.contains { $0.assetID == entry.key && $0.storageKey == snapshot.mainPhotoKey }
         }.map(\.value))
         return Self(identity: identity, snapshot: snapshot, versions: versions, assetByVersion: mapping,
-            selectedVersionIDs: complete && !pending ? chosen : [], coverVersionIDs: complete && !pending ? covers : [],
+            familyFootprints: footprints,
+            selectedVersionIDs: chosen, coverVersionIDs: covers,
             mutableFamilyIDs: mutable, pending: pending)
     }
 }
@@ -302,7 +328,7 @@ enum PhotoGridListingSelection {
             guard !selecting, projection.selectedVersionIDs.contains(versionID) else { throw PhotoCloudSelectionFailure.changed }
         }
         let family = versions.filter { $0.familyID == version.familyID }
-        let footprint = Array(Set(family.flatMap(\.familyAssetIDs))).sorted { $0.uuidString < $1.uuidString }
+        let footprint = Array(projection.familyFootprints[version.familyID] ?? []).sorted { $0.uuidString < $1.uuidString }
         guard !footprint.isEmpty else { throw PhotoCloudSelectionFailure.unmapped }
         let target: PhotoCloudSelectionTarget?
         if selecting {

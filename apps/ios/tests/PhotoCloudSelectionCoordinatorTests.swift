@@ -203,7 +203,8 @@ struct APIError: Error { let status: Int; let code: String? }
         fixture.reset(); (c,store) = make()
         fixture.catalog.append(fixture.local("alias","C",fixture.a,1))
         projection = try await refresh(c)
-        check(projection.mutableFamilyIDs.isEmpty,"Cross-family byte aliases remain unmapped")
+        check(projection.mutableFamilyIDs == ["B"] && projection.selectedVersionIDs == ["b"],
+              "Cross-family byte aliases block both affected families, not independent B")
         await refuses("Ambiguous mapping cannot mutate") { _ = try await change(c) }
         check(fixture.patchCount == 0,"Unmapped family has zero PATCHes")
         fixture.reset(); (c,store) = make(); fixture.ids = [fixture.a,UUID()]
@@ -231,14 +232,39 @@ struct APIError: Error { let status: Int; let code: String? }
               "Accepted exact edited version receives the listing badge")
         fixture.reset(); (c,store) = make()
         fixture.externalAssets[older] = (fixture.digest(1),100)
-        fixture.ids = [older,fixture.a]
+        fixture.ids = [older,fixture.b]; fixture.cover = fixture.key(older)
         projection = try await refresh(c)
-        check(projection.mutableFamilyIDs.isEmpty,"Cloud byte alias still blocks ambiguous local family mapping")
-        await refuses("Ambiguous older photo cannot authorize mutation") { _ = try await change(c) }
-        check(fixture.patchCount == 0,"Ambiguous older photo sends no selection PATCH")
+        check(projection.mutableFamilyIDs == ["A","B"] && projection.selectedVersionIDs == ["a","b"] &&
+              projection.coverVersionIDs == ["a"],
+              "Unique same-byte older gallery receipt maps to its local original family")
+        check(projection.familyFootprints["A"] == Set([older,fixture.a,fixture.a2]),
+              "Exact older asset joins only its own family footprint")
+        await refuses("Same-family cover still needs explicit follow confirmation") { _ = try await change(c) }
+        check(fixture.patchCount == 0,"Unconfirmed cover change sends no selection PATCH")
+        projection = try await change(c,"b2")
+        check(fixture.ids == [older,fixture.b2] && fixture.cover == fixture.key(older) &&
+              projection.selectedVersionIDs == ["a","b2"],
+              "Independent edited family remains selectable without changing the older photo or cover")
+        check(fixture.lastOperation?.request.familyAssetIDs == [fixture.b,fixture.b2].sorted(by: { $0.uuidString < $1.uuidString }) &&
+              fixture.lastOperation?.request.expectedSelection.galleryAssetIDs == [older,fixture.b],
+              "Safe family footprint never claims same-byte foreign cover")
+        projection = try await change(c,"a2",follow:true)
+        check(fixture.ids == [fixture.a2,fixture.b2] && fixture.cover == fixture.key(fixture.a2) &&
+              projection.selectedVersionIDs == ["a2","b2"],
+              "Explicit same-family choice replaces older alias and follows its cover")
+        check(fixture.lastOperation?.request.familyAssetIDs == [older,fixture.a,fixture.a2].sorted(by: { $0.uuidString < $1.uuidString }) &&
+              fixture.lastOperation?.request.expectedSelection.galleryAssetIDs == [older,fixture.b2],
+              "Same-byte older asset is included in exactly this family's CAS footprint")
         fixture.reset(); (c,store) = make(); fixture.catalog[0] = fixture.local("a","A",fixture.a,1,complete:false)
+        fixture.cover = fixture.key(fixture.a)
         projection = try await refresh(c)
-        check(projection.mutableFamilyIDs.isEmpty,"Incomplete local history cannot certify cloud footprint")
+        check(projection.mutableFamilyIDs == ["B"] && projection.selectedVersionIDs == ["b"],
+              "Incomplete local history blocks its family while preserving a separate verified family")
+        await refuses("Incomplete source family cannot authorize mutation") { _ = try await change(c) }
+        check(fixture.patchCount == 0,"Incomplete source family sends no selection PATCH")
+        projection = try await change(c,"b2")
+        check(fixture.ids == [fixture.a,fixture.b2] && fixture.cover == fixture.key(fixture.a),
+              "Safe family choice never replaces the incomplete family's selected photo")
 
         fixture.reset(); (c,store) = make(); fixture.cover = fixture.key(fixture.a)
         await refuses("Cover follow requires explicit confirmation") { _ = try await change(c) }
@@ -314,7 +340,8 @@ struct APIError: Error { let status: Int; let code: String? }
         check(try store.initialIntent(fixture.identity) == nil,"Only complete initial queue is retired")
         fixture.reset(); (c,store) = make(); fixture.catalog[0] = fixture.local("a","A",nil,1)
         projection = try await refresh(c)
-        check(projection.mutableFamilyIDs.isEmpty && projection.selectedVersionIDs.isEmpty,"Uncached digest-only match remains neutral without scoped family receipt")
+        check(projection.mutableFamilyIDs == ["B"] && projection.selectedVersionIDs == ["b"],
+              "Uncached digest-only match blocks its family without erasing independent confirmed facts")
         await refuses("Uncached selected bytes cannot authorize family subtraction") { _ = try await change(c) }
         check(fixture.patchCount == 0,"Missing family receipt has zero PATCHes")
         fixture.reset(); (c,store) = make(); fixture.loseReply = true

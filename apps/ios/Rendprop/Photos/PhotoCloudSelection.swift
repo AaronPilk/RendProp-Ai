@@ -315,7 +315,7 @@ enum PhotoCloudSelectionFailure: Error, LocalizedError {
         switch self {
         case .identityChanged: return "This home's account or workspace changed. Refresh its listing selection."
         case .invalidReply: return "The listing selection could not be verified. Keep the saved request and refresh."
-        case .unmapped: return "Some cloud photo versions aren't mapped on this phone. Refresh the cloud photos before changing this selection."
+        case .unmapped: return "This saved photo version cannot be matched safely to the listing yet. Your current listing photos and cover are unchanged."
         case .pending: return "An earlier photo choice still needs its result checked. Refresh to check that saved request."
         case .changed: return "The listing photos changed elsewhere. Review the current selection before choosing again."
         case .coverUnavailable: return "This version is kept on your phone. Changing the cloud cover needs a separate confirmed action."
