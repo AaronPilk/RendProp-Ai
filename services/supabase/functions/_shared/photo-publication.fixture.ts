@@ -2,8 +2,8 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { publicationHash, verifyPublicationBody, type PublicationObject } from "./photo-publication-bytes.ts";
 import type { PublicationIO } from "./photo-publication.ts";
 export const publicationID=(n:number)=>`f0201020-0000-4000-8000-${n.toString(16).padStart(12,"0")}`;
-export async function publicationFixture(){
-  const actor=publicationID(1),org=publicationID(2),listing=publicationID(3),library=publicationID(4),asset=publicationID(5),copy=publicationID(6),evidence=publicationID(7),check=publicationID(8),original=publicationID(9),pub=publicationID(10),operation=publicationID(11),copyOperation=publicationID(12);
+export async function publicationFixture(options:{bound?:boolean}={}){
+  const actor=publicationID(1),org=publicationID(2),listing=publicationID(3),library=publicationID(4),asset=publicationID(5),copy=publicationID(6),evidence=publicationID(7),check=publicationID(8),original=publicationID(9),pub=publicationID(10),operation=publicationID(11),copyOperation=publicationID(12),sourceAsset=publicationID(13);
   const input=new Uint8Array([255,216,255,192,0,11,8,0,1,0,1,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]);
   const output=input.slice();output[output.length-3]=2;
   const inputSHA=await publicationHash(input),outputSHA=await publicationHash(output);
@@ -11,12 +11,13 @@ export async function publicationFixture(){
   const stored=new Map<string,{body:Uint8Array<ArrayBuffer>;etag:string}>([[inputKey,{body:input,etag:'"input"'}],[outputKey,{body:output,etag:'"output"'}],[targetKey,{body:output,etag:'"target"'}]]);
   const target={asset_id:asset,key:targetKey,bytes:output.length,mime:"image/jpeg",sha256:outputSHA,etag:'"target"',operation_id:operation};
   const source_input={key:inputKey,bytes:input.length,mime:"image/jpeg",sha256:inputSHA,etag:'"input"'},source_output={key:outputKey,bytes:output.length,mime:"image/jpeg",sha256:outputSHA,etag:'"output"'};
-  const root={id:original,org_id:org,listing_id:null,kind:"declutter",disclosure:"Digitally decluttered; compare the submitted source.",qc:{task:"judge.photo_fixed_features",medium:"photo",policy:"photo-fixed-features-v1",publishable:true,action:"accept",purpose:"prospective",check_id:check,evidence_id:evidence,prepared_sha256:inputSHA,output_sha256:outputSHA},qc_checked_at:"2026-10-20T18:29:10Z"};
-  const e={id:evidence,actor_id:actor,org_id:org,library_org_id:library,listing_id:null,state:"accept",purpose:"prospective",provenance_id:original,request_key:"C082AA20-63A9-4213-9F13-004D315A4365",request_sha256:"c".repeat(64)};
+  const sourceKey=`renders/${org}/${listing}/original-${sourceAsset}-complete-${operation}.jpg`;
+  const root={id:original,org_id:org,listing_id:options.bound?listing:null,original_key:options.bound?sourceKey:null,kind:"declutter",disclosure:"Digitally decluttered; compare the submitted source.",qc:{task:"judge.photo_fixed_features",medium:"photo",policy:"photo-fixed-features-v1",publishable:true,action:"accept",purpose:"prospective",check_id:check,evidence_id:evidence,prepared_sha256:inputSHA,output_sha256:outputSHA},qc_checked_at:"2026-10-20T18:29:10Z"};
+  const e={id:evidence,actor_id:actor,org_id:org,library_org_id:library,listing_id:options.bound?listing:null,original_asset_id:options.bound?sourceAsset:null,original_reference:options.bound?{asset_id:sourceAsset,actor_id:actor,org_id:org,listing_id:listing,storage_key:sourceKey}:null,state:"accept",purpose:"prospective",provenance_id:original,request_key:"C082AA20-63A9-4213-9F13-004D315A4365",request_sha256:"c".repeat(64)};
   const q={id:check,evidence_id:evidence,automatic:true,state:"accept"};
   const state={ordinary:false,resolveError:null as string|null,finishError:null as string|null,phase:null as string|null,claims:0,writes:0,unknownWrite:false,missingCopy:false,calls:[] as {name:string;args:any}[],reads:[] as string[],admissions:[] as number[],claim:"",target,e,q,root};
   const history=structuredClone({e,q,root,ledger:[{id:publicationID(20),total_cents:40.412}]});
-  const publication=()=>state.phase===null?null:{id:pub,photo_publication:{schema:1,phase:state.phase,source:{evidence_id:evidence,provenance_id:original,automatic_check_id:check,actor_id:actor,org_id:org,library_org_id:library,listing_id:null,request_key:e.request_key,request_sha256:e.request_sha256},target:{listing_id:listing,org_id:org,library_org_id:library,output_asset_id:asset,source_copy_asset_id:copy},input:source_input,output:source_output}};
+  const publication=()=>state.phase===null?null:{id:pub,photo_publication:{schema:1,phase:state.phase,source:{evidence_id:evidence,provenance_id:original,automatic_check_id:check,actor_id:actor,org_id:org,library_org_id:library,listing_id:e.listing_id,request_key:e.request_key,request_sha256:e.request_sha256},target:{listing_id:listing,org_id:org,library_org_id:library,output_asset_id:asset,source_copy_asset_id:copy},input:source_input,output:source_output}};
   const base=()=>({actor_id:actor,org_id:org,library_org_id:library,listing_id:listing,target:structuredClone(target),publication:publication()});
   const resolved=()=>({...base(),evidence:structuredClone(e),check:structuredClone(q),provenance:structuredClone(root),source_input:structuredClone(source_input),source_output:structuredClone(source_output)});
   const copy_asset=()=>({asset_id:copy,key:copyKey,bytes:input.length,mime:"image/jpeg",sha256:inputSHA,etag:state.phase==="prepared"?'"copy"':null});
