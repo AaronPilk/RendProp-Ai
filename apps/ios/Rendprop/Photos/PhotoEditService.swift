@@ -64,7 +64,15 @@ final class PhotoEditService {
         let prior = p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent
         let requested = try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
                                                            priorFile: prior, directory: directory)
-        let context = try PhotoVersionHistory.editContext(for: requested.id, edit: edit, directory: directory)
+        guard requested.imageFile == p.enhancedURL.lastPathComponent else {
+            throw PhotoVersionHistory.Failure.changedVersion
+        }
+        // An Original tile remains available for comparison, but cannot become
+        // the provider input when this family has a verified enhanced capture.
+        let editSource = requested.isRetainedOriginalSource
+            ? try PhotoVersionHistory.enhancedCaptureForEditing(id: requested.id, directory: directory)
+            : requested
+        let context = try PhotoVersionHistory.editContext(for: editSource.id, edit: edit, directory: directory)
         let parent = context.parent, sourceVersion = context.source
         guard let b64 = await AIImagePrep.jpegBase64(at: directory.appendingPathComponent(sourceVersion.imageFile),
                                                    maxDimension: 2048, quality: 0.9,
@@ -146,10 +154,12 @@ final class PhotoEditService {
     private func requireDeclutterApproval(_ approval: DeclutterGenerationApproval, source: PhotoVersionHistory.Version,
                                           prepared: String, edit: String) async throws {
         try requireUnsentWork()
-        guard edit == "declutter", source.isRetainedOriginalSource, let owner, let workspace,
+        let expected = try PhotoVersionHistory.enhancedCaptureForEditing(id: source.id, directory: EnhancedPhoto.directory(for: listing.id))
+        guard edit == "declutter", expected.id == source.id && expected.imageFile == source.imageFile,
+              let owner, let workspace,
               let bytes = Data(base64Encoded: prepared) else { throw PhotoVersionHistory.Failure.reviewRequired }
         let url = EnhancedPhoto.directory(for: listing.id).appendingPathComponent(source.imageFile)
-        let original = try await Task.detached(priority: .userInitiated) {
+        let sourceHash = try await Task.detached(priority: .userInitiated) {
             let info = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
             guard info.isRegularFile == true, info.isSymbolicLink != true, let count = info.fileSize,
                   count > 0, count <= 80_000_000 else { throw PhotoVersionHistory.Failure.missingImage }
@@ -157,7 +167,7 @@ final class PhotoEditService {
         }.value
         try requireUnsentWork()
         guard approval.permits(actor: owner, library: workspace, listing: listing.id, sourceVersionID: source.id,
-            originalSHA256: original, preparedSHA256: DeclutterGenerationApproval.sha256(bytes),
+            originalSHA256: sourceHash, preparedSHA256: DeclutterGenerationApproval.sha256(bytes),
             consentGranted: AIConsent.shared.isGranted, consentRevision: AIConsent.shared.revocationRevision) else {
             throw PhotoVersionHistory.Failure.reviewRequired
         }

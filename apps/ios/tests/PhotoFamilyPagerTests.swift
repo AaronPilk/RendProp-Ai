@@ -68,7 +68,8 @@ __METHODS__
         check(h.enhanced == nil && h.original == nil && h.imageContext == nil && !h.selectedForListing, "family switch clears stale pixels and selection display before decode")
         check(!h.requestedCoverForViewed, "cover intent never follows navigation into another family")
         h.imageContext = NativeMediaExportContext(); h.openSinglePhotoEdit()
-        check(h.editOriginal?.id == "room-2-original", "edit action after navigation targets only displayed family Original")
+        check(h.editOriginal?.id == "room-2" && h.editOriginal?.enhancedURL.lastPathComponent == "enh-room-2.jpg",
+              "edit action after navigation targets only the displayed family's enhanced capture")
         let inFlight = h.viewed.id; h.movePhotoFamily(1)
         check(h.viewed.id == inFlight, "pending edit context fences family navigation")
         h.clearSinglePhotoEdit(); h.chooseVersion(staged); h.imageContext = NativeMediaExportContext(); h.movePhotoFamily(1)

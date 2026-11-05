@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute actual per-photo review routing and persisted Original lineage, offline."""
+"""Execute actual per-photo review routing and verified enhanced lineage, offline."""
 import argparse, hashlib, json, subprocess, tempfile
 from pathlib import Path
 
@@ -22,7 +22,7 @@ def block(text, anchor):
 
 review = block(source, 'struct PhotoCompareView: View {')
 sheet = block(source, 'private struct PhotoReviewEditSheet: View {')
-for required in ['SecondaryButton(title: "Edit"', '.accessibilityLabel("Edit original photo")', 'action: openSinglePhotoEdit',
+for required in ['SecondaryButton(title: "Edit"', '.accessibilityLabel("Edit enhanced photo")', 'action: openSinglePhotoEdit',
                  '.onReceive(photoJobs.$job) { receiveSinglePhotoWork($0) }',
                  '.sheet(isPresented: $showEditActions, onDismiss: continueSinglePhotoEdit)',
                  '.sheet(item: $singleDeclutterReview, onDismiss: finishSinglePhotoSetup)',
@@ -36,7 +36,7 @@ for required in ['SecondaryButton(title: "Edit"', '.accessibilityLabel("Edit ori
 for required in ['PrimaryButton(title: "Declutter this photo"', 'SecondaryButton(title: space == .realEstate ? "Stage this photo"',
                  'ForEach(StagingStyle.all)', 'select(.stage(style.id))', 'select(.twilight)', 'select(.sky)',
                  'select(.lawn)', 'select(.custom)', 'No other photos are selected or changed.',
-                 'Your saved edits stay in history.', 'fixedSize(horizontal: false, vertical: true)']:
+                 'The retained Original and saved edits stay in history.', 'fixedSize(horizontal: false, vertical: true)']:
     assert required in sheet, required
 for forbidden in ['batchSelection', 'startEdit(', 'model.api', 'PhotoEditService', 'selectForPublication', 'setMainPhoto']:
     assert forbidden not in sheet, forbidden
@@ -52,11 +52,12 @@ actual = enum + '\n' + context + '\n' + methods
 fixture = FIXTURE.read_text()
 variants = [
     ('actual', methods, history, None),
-    ('wrong-family', methods, history.replace('$0.familyID == viewed.familyID && $0.isRetainedOriginalSource', 'true && $0.isRetainedOriginalSource'), 'another family cannot impersonate this Original'),
-    ('unverified-source', methods, history.replace('&& $0.originalVerified && $0.imageFile == file', '&& true && $0.imageFile == file'), 'unverified earlier source cannot become Original'),
+    ('wrong-displayed-file', methods.replace('index.versions[viewed.id]?.imageFile == viewed.enhancedURL.lastPathComponent', 'true'), history, 'a displayed file from another family cannot borrow this version ID'),
+    ('unverified-capture', methods, history.replace('&& effects.isEmpty && originalVerified && sourceHistoryKnown', '&& effects.isEmpty && true && sourceHistoryKnown'), 'a broken capture cannot impersonate an enhanced source'),
+    ('unverified-earlier-source', methods, history.replace('!viewed.isRetainedOriginalSource,\n              index.isVisible(viewed.id)', 'true,\n              true'), 'unverified earlier source cannot become an enhanced capture'),
     ('stale-start', methods.replace('let context = editContext, context.isCurrent,', 'let context = editContext, true,'), history, 'actor change cannot dispatch from retained sheet'),
     ('revoked-regrant', methods.replace('editConsentRevision == AIConsent.shared.revocationRevision,', 'true,'), history, 'revoked and regranted consent cannot revive old action'),
-    ('declutter-review-bypassed', methods.replace('if action == .declutter, declutterApprovals == nil {', 'if false {'), history, 'declutter opens an exact Original assessment before any paid image edit'),
+    ('declutter-review-bypassed', methods.replace('if action == .declutter, declutterApprovals == nil {', 'if false {'), history, 'declutter opens an exact enhanced assessment before any paid image edit'),
     ('wrong-job', methods.replace('job.id == singleEditJobID,', 'true,'), history, 'another job cannot replace this photo review'),
     ('drop-review-cancel', methods.replace('singleDeclutterReview?.cancel(); singleDeclutterReview = nil', 'singleDeclutterReview = nil'), history, 'dismissing declutter review cancels unsent assessment without a paid edit'),
     ('drop-declutter-credit', methods.replace('declutterCredit: declutterCredit,', 'declutterCredit: nil,'), history, 'single-photo declutter forwards exact credit authorization'),
@@ -86,6 +87,6 @@ assert HISTORY.read_text() == history, 'history changed during proof'
 receipt = {'passed': True, 'sourceHashes': {str(x.relative_to(ROOT)): hashlib.sha256(x.read_bytes()).hexdigest() for x in paths},
            'photoCompareSha256': hashlib.sha256(review.encode()).hexdigest(), 'editSheetSha256': hashlib.sha256(sheet.encode()).hexdigest(),
            'actualLogicSha256': hashlib.sha256(actual.encode()).hexdigest(), 'controls': len(variants)-1, 'results': results,
-           'scope': 'Actual review Original lookup/open/consent/session/start/completion/cleanup and real persisted history; closed service/queue/session/consent/provider/UI boundaries. No paid or network call, UIKit execution or phone/SDK claim. Bulk routing is unchanged and not entered by this path.'}
+           'scope': 'Actual review enhanced capture lookup/open/consent/session/start/completion/cleanup and real persisted history; closed service/queue/session/consent/provider/UI boundaries. No paid or network call, UIKit execution or phone/SDK claim. Bulk routing is unchanged and not entered by this path.'}
 (OUT / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
 print(OUT / 'receipt.json')

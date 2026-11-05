@@ -128,6 +128,13 @@ enum PhotoVersionHistory {
         var isRetainedOriginalSource: Bool {
             parentID == nil && effects.isEmpty && imageFile == originalFile
         }
+        /// Only a capture written by this app can certify that its separate
+        /// image is the on-device enhancement of the retained source.
+        var isVerifiedCaptureEnhancement: Bool {
+            edit == "capture" && id == familyID && parentID == nil && sourceID == nil
+                && effects.isEmpty && originalVerified && sourceHistoryKnown
+                && originalFile != nil && imageFile != originalFile
+        }
         var needsStagingReview: Bool { effects.contains("stage") && stagingReviewed != true }
         var canAutomaticallySelectForListing: Bool { !effects.contains("stage") && !needsCustomReview }
 
@@ -501,6 +508,31 @@ enum PhotoVersionHistory {
         return source
     }
 
+    /// Default AI actions start from the verified on-device enhancement, even
+    /// when the user opened an Original tile or an older AI version. A legacy
+    /// image with no certified enhancement may be edited as the displayed
+    /// image only; an unverified earlier source cannot masquerade as one.
+    static func enhancedCaptureForEditing(id: String, directory: URL) throws -> Version {
+        let index = try load(directory: directory)
+        guard let viewed = index.versions[id], !index.hiddenFamilies.contains(viewed.familyID) else {
+            throw Failure.changedVersion
+        }
+        let captures = index.versions.values.filter {
+            $0.familyID == viewed.familyID && $0.isVerifiedCaptureEnhancement
+                && $0.originalFile == viewed.originalFile
+        }
+        guard captures.count <= 1 else { throw Failure.invalidHistory }
+        if let capture = captures.first {
+            try requireImage(capture.imageFile, directory: directory)
+            try requireImage(capture.originalFile!, directory: directory)
+            return capture
+        }
+        guard !viewed.originalVerified, !viewed.isRetainedOriginalSource,
+              index.isVisible(viewed.id) else { throw Failure.missingImage }
+        try requireImage(viewed.imageFile, directory: directory)
+        return viewed
+    }
+
     /// The first family's retained pre-enhancement source is the only safe
     /// automatic cover candidate. Historical homes with multiple families
     /// require an explicit choice unless this call follows their first import.
@@ -614,11 +646,14 @@ enum PhotoVersionHistory {
     static func editContext(for id: String, edit: String, directory: URL) throws -> (parent: Version, source: Version) {
         let index = try load(directory: directory)
         guard let requested = index.versions[id], !index.hiddenFamilies.contains(requested.familyID) else { throw Failure.changedVersion }
-        if requested.isRetainedOriginalSource {
+        if requested.isRetainedOriginalSource || requested.isVerifiedCaptureEnhancement {
             guard let currentID = index.current[requested.familyID], let parent = index.versions[currentID],
                   index.isVisible(currentID) else { throw Failure.changedVersion }
-            try requireImage(requested.imageFile, directory: directory)
-            return (parent, requested)
+            let source = requested.isRetainedOriginalSource
+                ? try enhancedCaptureForEditing(id: requested.id, directory: directory)
+                : requested
+            try requireImage(source.imageFile, directory: directory)
+            return (parent, source)
         }
         guard index.isVisible(id) else { throw Failure.changedVersion }
         let parent = requested
@@ -667,7 +702,8 @@ enum PhotoVersionHistory {
         guard let parent = index.versions[parentID], let source = index.versions[sourceID],
               parent.familyID == source.familyID, index.isVisible(parentID) else { throw Failure.changedVersion }
         let expectedSourceID = edit == "stage" ? (parent.stagingBaseID ?? parentID) : parentID
-        guard sourceID == expectedSourceID || source.isRetainedOriginalSource else { throw Failure.changedVersion }
+        guard sourceID == expectedSourceID || source.isRetainedOriginalSource
+            || source.isVerifiedCaptureEnhancement else { throw Failure.changedVersion }
         try requireImage(source.imageFile, directory: directory)
         if let stagingReferenceID {
             guard edit == "stage", let reference = index.versions[stagingReferenceID],

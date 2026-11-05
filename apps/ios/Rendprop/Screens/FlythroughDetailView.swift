@@ -6265,7 +6265,7 @@ struct PhotoStudioView: View {
     /// The line above the library grid. Three verbs, all of them free.
     private var photosGridHint: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(libraryKind == .original ? "Tap the wand to edit an original. Tap a photo to review its saved versions."
+            Text(libraryKind == .original ? "Tap the wand to edit the enhanced capture. Tap a photo to review its saved versions."
                  : "Tap a photo to review, share, or select it for your listing. To try a different edit, return to Original.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
@@ -6291,7 +6291,7 @@ struct PhotoStudioView: View {
                     .background(RPGradient.photo,
                                 in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Edit originals with AI")
+                    Text("Edit enhanced photos with AI")
                         .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
                     Text("Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -8035,8 +8035,14 @@ struct PhotoStudioView: View {
             let index = try PhotoVersionHistory.ensureOriginalSources(directory: dir)
             if entry == .studio {
                 photos = index.libraryVersions(.original).map { version in
-                    let image = dir.appendingPathComponent(version.imageFile)
-                    return EnhancedPhoto(id: version.id, originalURL: image, enhancedURL: image)
+                    // Studio starts from the recorded local enhancement. The
+                    // retained capture remains the before image and disclosure
+                    // source. A missing enhancement stays visible for review,
+                    // while the edit service refuses to send its raw pixels.
+                    let editSource = (try? PhotoVersionHistory.enhancedCaptureForEditing(id: version.id, directory: dir)) ?? version
+                    let image = dir.appendingPathComponent(editSource.imageFile)
+                    let retained = dir.appendingPathComponent(editSource.originalFile ?? version.imageFile)
+                    return EnhancedPhoto(id: editSource.id, originalURL: retained, enhancedURL: image)
                 }
             }
             selectedPhotoIDs = Set(index.versions.keys.filter(index.isSelectedForListing))
@@ -8494,7 +8500,7 @@ private struct PhotoReviewEditSheet: View {
                 VStack(alignment: .leading, spacing: 14) {
                     DetailPhotoThumb(url: original.enhancedURL, height: 180)
                     Text("Change just this photo").font(.title2.bold()).foregroundStyle(Theme.ink)
-                    Text("Each action starts from this photo’s Original. Your saved edits stay in history. Review the new version before using it on your listing.")
+                    Text("Each action starts from this photo’s enhanced capture. The retained Original and saved edits stay in history. Review the new version before using it on your listing.")
                         .font(.subheadline).foregroundStyle(Theme.inkDim)
                         .fixedSize(horizontal: false, vertical: true)
                     if pickingStyle {
@@ -8523,7 +8529,7 @@ private struct PhotoReviewEditSheet: View {
                 }.padding(16).frame(maxWidth: 760).frame(maxWidth: .infinity)
             }
             .background(Theme.bg.ignoresSafeArea())
-            .navigationTitle("Edit original photo").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Edit enhanced photo").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
     }
@@ -8941,8 +8947,8 @@ struct PhotoCompareView: View {
                     isCompact: true,
                     action: openSinglePhotoEdit)
                     .accessibilityIdentifier("photoVersion.editOriginal")
-                    .accessibilityLabel("Edit original photo")
-                    .accessibilityHint("Declutter, stage or edit only this photo’s retained Original. Saved versions stay unchanged.")
+                    .accessibilityLabel("Edit enhanced photo")
+                    .accessibilityHint("Declutter, stage or edit this photo’s enhanced capture. Its retained Original stays available for comparison.")
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -8973,9 +8979,14 @@ struct PhotoCompareView: View {
               selectionWorkID == nil, !singlePhotoIsBusy else { return }
         do {
             let directory = viewed.enhancedURL.deletingLastPathComponent()
-            let source = try PhotoVersionHistory.originalForEditing(id: viewed.id, directory: directory)
+            let index = try PhotoVersionHistory.load(directory: directory)
+            guard index.versions[viewed.id]?.imageFile == viewed.enhancedURL.lastPathComponent else {
+                throw PhotoVersionHistory.Failure.changedVersion
+            }
+            let source = try PhotoVersionHistory.enhancedCaptureForEditing(id: viewed.id, directory: directory)
             let url = directory.appendingPathComponent(source.imageFile)
-            editOriginal = EnhancedPhoto(id: source.id, originalURL: url, enhancedURL: url)
+            let retained = directory.appendingPathComponent(source.originalFile ?? source.imageFile)
+            editOriginal = EnhancedPhoto(id: source.id, originalURL: retained, enhancedURL: url)
             editContext = NativeMediaExportContext()
             pendingEdit = nil
             showEditActions = true
