@@ -14,7 +14,7 @@ is copied with only its SwiftUI `@State` wrapper removed. Source and extracted-b
 hashes, compiler/runtime logs and receipts are retained. The only filesystem
 operations use synthetic source files and the operation's own temporary outputs.
 
-The 110 assertions check valid original/photo/video/CSV exports; rejection of a
+The 118 assertions check valid original/photo/video/CSV exports; rejection of a
 previous screen scheduling new requests after an account or workspace change; account,
 session and workspace changes during a download or permission prompt; exact
 listing/server/workspace binding changes; deletion and lost listing access;
@@ -32,6 +32,7 @@ python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-csv-
 python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-completion-context
 python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-presentation-actor
 python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-presentation-workspace
+python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-custom-download-review
 ```
 
 Passing these offline checks does not certify real Files/Photos delivery or
