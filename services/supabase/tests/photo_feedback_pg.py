@@ -204,7 +204,9 @@ commit;""")
     for name, db, minimum in EXISTING:
         target = db or DB
         if db:
-            run("template-" + db, [tool("createdb"), *conn, "-T", DB, db])
+            # The migrated template is large; file_copy avoids WAL logging
+            # each block on the disposable external-volume cluster.
+            run("template-" + db, [tool("createdb"), *conn, "-T", DB, "-S", "file_copy", db])
         out = run("existing-" + Path(name).stem, [*psql(target), "-Atq", "-f", SQL / "tests" / name])
         rows = [json.loads(line) for line in out.splitlines() if line.startswith('{') and '"assertions"' in line]
         assert len(rows) == 1 and rows[0]["passed"] is True and rows[0]["assertions"] >= minimum, (name, rows)
@@ -272,6 +274,13 @@ commit;""")
         # Each foreign object is refused by the replay guard inside a transaction that is rolled back.
         run("replay-refuses-" + label, [*PSQL, "-q"], "begin;\n" + mutate + "\n" + psql_include(MIG), refuses=needle)
         r["controls"].append({"name": label, "replayGuardRefused": True, "oracle": needle})
+    if int(query("pg-version-for-not-null-control", "show server_version_num;").strip()) >= 180000:
+        # PG18 adds named NOT NULL pg_constraint rows. A renamed row must fail
+        # the same exact replay check rather than disappear from its digest.
+        needle = "Review changed photo feedback relation"
+        run("replay-refuses-renamed-not-null", [*PSQL, "-q"],
+            "begin;\nalter table public.photo_output_signals rename constraint photo_output_signals_actor_id_not_null to photo_output_signals_actor_id_renamed;\n" + psql_include(MIG), refuses=needle)
+        r["controls"].append({"name": "guard-renamed-not-null", "replayGuardRefused": True, "oracle": needle})
     assert json.loads(query("after-guard-controls", CATALOG)) == final_boundary
     # Real concurrent offline resends against committed outputs.
     setup = FIX.read_text().split("-- BEGIN SETUP (reused verbatim by photo_feedback_pg.py for committed race fixtures)\n", 1)[1].split("-- END SETUP", 1)[0]

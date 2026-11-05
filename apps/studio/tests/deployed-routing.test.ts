@@ -254,7 +254,7 @@ test("managed robots: unknown prefix or changed origin tail is refused; the pinn
   }
   // The real platform prefix bytes are not retained, so this control swaps the pin
   // for a synthetic prefix's hash to exercise the accepted branch; the shipped pin is unchanged.
-  const pin = "const managedRobotsPrefixSha='842b34303164ead41bccb7c05d1707422e98d108753b397b6dcc19683eb02101';";
+  const pin = "const managedRobotsPrefixSha='3073d1e371afb3271c7666148766fedc5145f7d8440f7114062db79b7bd58add';";
   const unchanged = await runVerifier({ fault: "robots-prefix" });
   assert.match(String(unchanged.error), /Unrecognized managed robots policy change/);
   const known: [string, string] = [pin, `const managedRobotsPrefixSha='${sha(ROBOTS_TEST_PREFIX)}';`];

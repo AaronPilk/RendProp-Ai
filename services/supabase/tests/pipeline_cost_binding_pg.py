@@ -146,6 +146,11 @@ def main():
   control('changed-covered-acl','grant execute on function '+cov+' to authenticated;','revoke execute on function '+cov+' from authenticated;','Review changed pipeline cost binding helper: '+cov)
   control('changed-covered-security',original_cov.replace('SECURITY DEFINER','',1)+';',original_cov+';','Review changed pipeline cost binding helper: '+cov)
   control('changed-relation-shape','alter table '+RELATION+' add column extra integer;','alter table '+RELATION+' drop column extra;','Review changed pipeline cost binding relation: '+RELATION)
+  if q('server-version-for-not-null-control',"select current_setting('server_version_num')::integer")>=180000:
+   control('renamed-relation-not-null',
+    'alter table '+RELATION+' rename constraint pipeline_provider_cost_bindings_created_at_not_null to pipeline_provider_cost_bindings_unknown_not_null;',
+    'alter table '+RELATION+' rename constraint pipeline_provider_cost_bindings_unknown_not_null to pipeline_provider_cost_bindings_created_at_not_null;',
+    'Review changed pipeline cost binding relation: '+RELATION)
   control('changed-relation-acl','grant insert on '+RELATION+' to service_role;','revoke insert on '+RELATION+' from service_role;','Review changed pipeline cost binding relation: '+RELATION)
   control('added-relation-policy','create policy unknown_open on '+RELATION+' for select using(true);','drop policy unknown_open on '+RELATION+';','Review changed pipeline cost binding relation: '+RELATION)
   control('disabled-relation-rls','alter table '+RELATION+' disable row level security;','alter table '+RELATION+' enable row level security;','Review changed pipeline cost binding relation: '+RELATION)

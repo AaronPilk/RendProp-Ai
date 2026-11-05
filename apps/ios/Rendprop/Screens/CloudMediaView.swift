@@ -21,6 +21,7 @@ struct CloudMediaView: View {
     @State private var importTask: Task<Void, Never>?
     @State private var replaceVideo: CloudMediaPage.Video?
     @State private var imported = Set<UUID>()
+    @State private var savedCopies = Set<UUID>()
 
     private var current: Listing { model.listings.first(where: { $0.id == listing.id }) ?? listing }
     @State private var mediaContext: String?
@@ -43,7 +44,7 @@ struct CloudMediaView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Files from your phone and Studio").font(.title2.bold())
-                Text("Preview the shared files here. Save a photo or use a video when you want to edit it on this iPhone.")
+                Text("Photos with their originals can open in Photo Studio. When only a cloud copy is available, you can save that copy to iPhone Photos.")
                     .font(.subheadline).foregroundStyle(Theme.inkDim)
                 if loading { ProgressView("Loading cloud files…") }
                 if let error { Label(error, systemImage: "exclamationmark.icloud").font(.subheadline).foregroundStyle(.orange) }
@@ -62,14 +63,27 @@ struct CloudMediaView: View {
                                     .frame(height: 145).frame(maxWidth: .infinity).clipped().clipShape(RoundedRectangle(cornerRadius: 12))
                                 Text(photo.caption?.isEmpty == false ? photo.caption! : "Listing photo").font(.subheadline.weight(.medium))
                                 if photo.is_staged { Text("Virtually staged").font(.caption).foregroundStyle(.orange) }
-                                if photo.is_altered == true && photo.original_url == nil {
-                                    Text("The original must be attached before this edit can be imported.").font(.caption).foregroundStyle(Theme.inkDim)
+                                if photo.original_url == nil && photo.is_altered != false {
+                                    Text("Only this cloud copy is available. Saving it to iPhone Photos does not restore its original or edit history.")
+                                        .font(.caption).foregroundStyle(Theme.inkDim)
+                                    Button { saveAvailableCopy(photo) } label: {
+                                        Label(savedCopies.contains(photo.id) ? "Saved to iPhone Photos" : "Save available copy to Photos",
+                                              systemImage: savedCopies.contains(photo.id) ? "checkmark" : "square.and.arrow.down")
+                                            .font(.caption.weight(.semibold))
+                                            .frame(maxWidth: .infinity, minHeight: 44)
+                                    }
+                                    .modifier(RendpropActionAppearance(primary: true, compact: true))
+                                    .disabled(importing != nil || savedCopies.contains(photo.id))
+                                } else {
+                                    Button { importPhoto(photo) } label: {
+                                        Label(imported.contains(photo.id) ? "Saved in Photo Studio" : "Save to Photo Studio",
+                                              systemImage: imported.contains(photo.id) ? "checkmark" : "arrow.down.circle")
+                                            .font(.caption.weight(.semibold))
+                                            .frame(maxWidth: .infinity, minHeight: 44)
+                                    }
+                                    .modifier(RendpropActionAppearance(primary: true, compact: true))
+                                    .disabled(importing != nil || imported.contains(photo.id))
                                 }
-                                Button { importPhoto(photo) } label: {
-                                    Label(imported.contains(photo.id) ? "Saved on iPhone" : "Save to Photo Studio", systemImage: imported.contains(photo.id) ? "checkmark" : "arrow.down.circle")
-                                        .font(.caption.weight(.semibold))
-                                }
-                                .disabled(importing != nil || imported.contains(photo.id) || (photo.original_url == nil && photo.is_altered != false))
                             }.padding(12).background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14))
                         }
                     }
@@ -154,7 +168,7 @@ struct CloudMediaView: View {
 
     @MainActor private func clearAccountFiles() {
         importTask?.cancel(); importGeneration = UUID(); importing = nil; importTask = nil
-        photos = []; videos = []; chapters = []; imported = []
+        photos = []; videos = []; chapters = []; imported = []; savedCopies = []
         creative = nil; creativeError = nil; notice = nil; replaceVideo = nil; mediaContext = nil
     }
 
@@ -199,6 +213,48 @@ struct CloudMediaView: View {
             }
         } catch is CancellationError { return }
         catch { if auth.userID == actor && auth.syncSessionRevision == revision { self.error = error is CloudSyncError ? error.localizedDescription : "Cloud files couldn't be loaded. Refresh to try again." } }
+    }
+
+    @MainActor private func saveAvailableCopy(_ photo: CloudMediaPage.Photo) {
+        guard importing == nil, photo.original_url == nil, photo.is_altered != false,
+              let org = current.serverOrgID, let sid = current.serverID,
+              current.cloudUnavailable != true else { return }
+        let localID = current.id, actor = auth.userID, revision = auth.syncSessionRevision
+        guard let captured = try? CloudMediaAccessContext.capture(orgID: org),
+              hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { return }
+        let generation = UUID(); importGeneration = generation
+        importing = photo.id; error = nil; notice = nil
+        importTask = Task {
+            defer { if importGeneration == generation { importing = nil; importTask = nil } }
+            var temporary: URL?
+            defer { if let temporary { try? FileManager.default.removeItem(at: temporary) } }
+            do {
+                try CloudListingMerge.validateMedia(photo.url, expiry: photo.expires_at,
+                    listingID: sid, orgID: org, now: Date(), actorID: captured.actorID)
+                guard hasCurrentMediaContext(captured, localID: localID, listingID: sid) else {
+                    throw CloudSyncError.identityChanged
+                }
+                let copy = try await CloudFileDownload.fetch(photo.url, kind: .photo)
+                temporary = copy.url
+                try Task.checkCancellation()
+                guard auth.userID == actor, auth.syncSessionRevision == revision,
+                      hasCurrentMediaContext(captured, localID: localID, listingID: sid) else {
+                    throw CloudSyncError.identityChanged
+                }
+                try await PhotosLibrarySaver.saveCloudCopyFile(at: copy.url) {
+                    self.hasCurrentMediaContext(captured, localID: localID, listingID: sid)
+                }
+                guard hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { return }
+                savedCopies.insert(photo.id)
+                notice = "Copy saved to iPhone Photos. It is not an original; the original and edit history are still unavailable."
+            } catch is CancellationError { return }
+            catch {
+                if hasCurrentMediaContext(captured, localID: localID, listingID: sid) {
+                    self.error = error is CloudSyncError ? error.localizedDescription
+                        : "The available copy couldn't be saved to iPhone Photos. Check Photos access or free space, then try again."
+                }
+            }
+        }
     }
 
     @MainActor private func importPhoto(_ photo: CloudMediaPage.Photo) {

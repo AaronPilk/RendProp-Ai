@@ -26,7 +26,7 @@ import Foundation
         try CloudListingMerge.validateMedia(URL(string:legacy)!,expiry:expiry,listingID:listing,orgID:org,now:now,actorID:actor);checks+=1
         for seconds in [0,601]{refuses({try CloudListingMerge.validateMedia(URL(string:legacy.replacingOccurrences(of:"X-Amz-Expires=600",with:"X-Amz-Expires=\(seconds)"))!,expiry:expiry,listingID:listing,orgID:org,now:now,actorID:actor)},"Legacy expiry bound lost")}
         AuthStore.shared.userID=actor.uuidString;WorkspaceContext.selectedOrgID=org
-        func restore(){AuthStore.shared.userID=actor.uuidString;AuthStore.shared.syncSessionRevision=1;AuthStore.shared.isIdentified=true;WorkspaceContext.selectedOrgID=org;CloudFileDownload.onFetch=nil;CloudFileDownload.requests=[];MediaImporter.onMake=nil}
+        func restore(){AuthStore.shared.userID=actor.uuidString;AuthStore.shared.syncSessionRevision=1;AuthStore.shared.isIdentified=true;WorkspaceContext.selectedOrgID=org;CloudFileDownload.onFetch=nil;CloudFileDownload.requests=[];PhotosLibrarySaver.onSave=nil;MediaImporter.onMake=nil}
         restore();let context=try CloudMediaAccessContext.capture(orgID:org);try context.check();checks+=1
         for action in [{AuthStore.shared.userID=other.uuidString},{AuthStore.shared.syncSessionRevision+=1},{WorkspaceContext.selectedOrgID=other},{AuthStore.shared.isIdentified=false}]{restore();action();refuses({try context.check()},"Changed media context accepted")};restore()
         // Live methods receive gateway payloads at today's clock, with the same actor binding.
@@ -70,6 +70,21 @@ import Foundation
         for (change,label) in [({WorkspaceContext.selectedOrgID=other},"Stale import workspace committed"),({AuthStore.shared.syncSessionRevision+=1},"Stale import session committed"),({AuthStore.shared.userID=other.uuidString},"Stale import actor committed")]{restore();let f=fixture();let saved=CloudVoiceStore.saves;CloudFileDownload.onFetch={change()};f.importVoice(importedVoice());await f.importTask?.value;expect(CloudVoiceStore.saves==saved&&f.imported.isEmpty,label)}
         restore();let stale=fixture();stale.mediaContext=nil;let requests=CloudFileDownload.requests.count;stale.importVoice(importedVoice());await stale.importTask?.value;expect(CloudFileDownload.requests.count==requests,"Unloaded callback dispatched")
         restore();let photo=actualPage.photos[0];let pf=fixture();pf.importPhoto(photo);await pf.importTask?.value;expect(pf.imported.contains(file)&&PhotoVersionHistory.saves==1,"Current photo not saved")
+        let unpaired=CloudMediaPage.Photo(id:other,listing_id:listing,url:actualPage.photos[0].url,expires_at:liveExpiry,caption:nil,is_staged:false,is_altered:true,original_url:nil)
+        restore();let flat=fixture();flat.saveAvailableCopy(unpaired);await flat.importTask?.value
+        expect(flat.savedCopies.contains(other)&&PhotosLibrarySaver.saves==1&&flat.imported.isEmpty,"Unpaired cloud image was not exported without Photo Studio import")
+        expect(CloudFileDownload.requests.count==1,"Unpaired copy fetched a fabricated original")
+        let importSaves=PhotoVersionHistory.saves, fetched=CloudFileDownload.requests.count
+        flat.importPhoto(unpaired);await flat.importTask?.value
+        expect(PhotoVersionHistory.saves==importSaves&&CloudFileDownload.requests.count==fetched&&flat.imported.isEmpty,
+               "Unpaired cloud image was admitted into Photo Studio as an original")
+        restore();let staleCopy=fixture();let savedCopies=PhotosLibrarySaver.saves
+        CloudFileDownload.onFetch={WorkspaceContext.selectedOrgID=other}
+        staleCopy.saveAvailableCopy(unpaired);await staleCopy.importTask?.value
+        expect(PhotosLibrarySaver.saves==savedCopies&&staleCopy.savedCopies.isEmpty,"Stale cloud copy was written to Photos")
+        restore();let changedAtPhotos=fixture();PhotosLibrarySaver.onSave={WorkspaceContext.selectedOrgID=other}
+        changedAtPhotos.saveAvailableCopy(unpaired);await changedAtPhotos.importTask?.value
+        expect(PhotosLibrarySaver.saves==savedCopies&&changedAtPhotos.savedCopies.isEmpty,"Changed workspace saved cloud copy to Photos")
         restore();let latePhoto=fixture();let photoSaves=PhotoVersionHistory.saves;CloudFileDownload.onFetch={WorkspaceContext.selectedOrgID=other};latePhoto.importPhoto(photo);await latePhoto.importTask?.value;expect(latePhoto.imported.isEmpty&&PhotoVersionHistory.saves==photoSaves,"Late photo workspace saved")
         restore();let video=CloudMediaPage.Video(id:file,listing_id:listing,url:link(livePayload),expires_at:liveExpiry,duration_s:1,created_at:liveExpiry);let vf=fixture();vf.importVideo(video);await vf.importTask?.value;expect(vf.model.assets[local] != nil,"Current video not saved")
         restore();let lateVideo=fixture();MediaImporter.onMake={WorkspaceContext.selectedOrgID=other};lateVideo.importVideo(video);await lateVideo.importTask?.value;expect(lateVideo.model.assets[local]==nil&&lateVideo.imported.isEmpty,"Late video metadata saved")

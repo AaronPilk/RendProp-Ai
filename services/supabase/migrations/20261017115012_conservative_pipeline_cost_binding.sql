@@ -14,7 +14,7 @@ begin;
 -- refused here rather than silently normalised by IF NOT EXISTS / OR REPLACE.
 -- Missing objects are the first apply. Nothing below is historical DML.
 do $own_replay_guard$
-declare e record;p pg_catalog.pg_proc;rel oid;owner_expected oid;service_oid oid;postgres_oid oid;shape text;
+declare e record;p pg_catalog.pg_proc;rel oid;owner_expected oid;service_oid oid;postgres_oid oid;shape text;not_null_cons text;
 begin
  select proowner into owner_expected from pg_catalog.pg_proc where oid='public.serving_cost_finish(uuid,uuid,text,text,text,integer)'::regprocedure;
  select oid into service_oid from pg_catalog.pg_roles where rolname='service_role';
@@ -48,9 +48,16 @@ begin
   select string_agg(a.attname||' '||format_type(a.atttypid,a.atttypmod)||case when a.attnotnull then ' not null'else ''end||coalesce(' default '||pg_get_expr(d.adbin,d.adrelid),''),', 'order by a.attnum)
    into shape from pg_catalog.pg_attribute a left join pg_catalog.pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum
    where a.attrelid=rel and a.attnum>0 and not a.attisdropped;
+  -- PostgreSQL 18 also catalogs column NOT NULL clauses as named constraints.
+  -- Pin those exact names separately so an unknown constraint still refuses replay.
+  select string_agg(conname||': '||pg_get_constraintdef(oid),'; 'order by conname)
+   into not_null_cons from pg_catalog.pg_constraint where conrelid=rel and contype='n';
   if shape is distinct from 'reservation_id uuid not null, ledger_id uuid not null, created_at timestamp with time zone not null default now()'
-   or(select string_agg(conname||': '||pg_get_constraintdef(oid),'; 'order by conname)from pg_catalog.pg_constraint where conrelid=rel)is distinct from
+   or(select string_agg(conname||': '||pg_get_constraintdef(oid),'; 'order by conname)from pg_catalog.pg_constraint where conrelid=rel and contype<>'n')is distinct from
     'pipeline_provider_cost_bindings_ledger_id_fkey: FOREIGN KEY (ledger_id) REFERENCES cost_ledger(id) ON DELETE CASCADE; pipeline_provider_cost_bindings_ledger_id_key: UNIQUE (ledger_id); pipeline_provider_cost_bindings_pkey: PRIMARY KEY (reservation_id); pipeline_provider_cost_bindings_reservation_id_fkey: FOREIGN KEY (reservation_id) REFERENCES serving_cost_reservations(id)'
+   or not_null_cons is distinct from(case when current_setting('server_version_num')::integer>=180000 then
+    'pipeline_provider_cost_bindings_created_at_not_null: NOT NULL created_at; pipeline_provider_cost_bindings_ledger_id_not_null: NOT NULL ledger_id; pipeline_provider_cost_bindings_reservation_id_not_null: NOT NULL reservation_id'
+    else null end)
    or(select string_agg(indexrelid::regclass::text,', 'order by indexrelid::regclass::text)from pg_catalog.pg_index where indrelid=rel)is distinct from
     'pipeline_provider_cost_bindings_ledger_id_key, pipeline_provider_cost_bindings_pkey'
    or(select relkind<>'r'or not relrowsecurity or relforcerowsecurity or relowner<>owner_expected from pg_catalog.pg_class where oid=rel)

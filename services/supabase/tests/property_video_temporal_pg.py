@@ -128,14 +128,24 @@ try:
  assert sorted(set(s1['referenced_by']or[])-set(s0['referenced_by']or[]))==['property_video_job_temporal_verdicts.property_video_job_temporal_verdicts_source_fkey'],'Only the new verdict key references the shot table'
  v=after['verdicts']
  assert v['columns']==['job_id uuid not null','position integer not null','attempt_id uuid not null','limits_sha256 text not null','record jsonb not null','recorded_at timestamp with time zone not null default now()'],v['columns']
- assert v['constraints']==["property_video_job_temporal_verdicts_limits_check: CHECK ((limits_sha256 ~ '^[a-f0-9]{64}$'::text))",'property_video_job_temporal_verdicts_pkey: PRIMARY KEY (job_id, "position", attempt_id, limits_sha256)',
+ server_version=q('server-version-for-verdict-constraints',"select current_setting('server_version_num')::int")
+ expected_constraints=["property_video_job_temporal_verdicts_limits_check: CHECK ((limits_sha256 ~ '^[a-f0-9]{64}$'::text))",'property_video_job_temporal_verdicts_pkey: PRIMARY KEY (job_id, "position", attempt_id, limits_sha256)',
   "property_video_job_temporal_verdicts_record_check: CHECK (((jsonb_typeof(record) = 'object'::text) AND ((record ->> 'attempt_id'::text) = (attempt_id)::text) AND ((record #>> '{limits,sha256}'::text[]) = limits_sha256)))",
-  'property_video_job_temporal_verdicts_source_fkey: FOREIGN KEY (job_id, "position") REFERENCES property_video_job_sources(job_id, "position") ON DELETE CASCADE'],v['constraints']
+  'property_video_job_temporal_verdicts_source_fkey: FOREIGN KEY (job_id, "position") REFERENCES property_video_job_sources(job_id, "position") ON DELETE CASCADE']
+ if server_version>=180000:
+  expected_constraints.extend([
+   'property_video_job_temporal_verdicts_attempt_id_not_null: NOT NULL attempt_id',
+   'property_video_job_temporal_verdicts_job_id_not_null: NOT NULL job_id',
+   'property_video_job_temporal_verdicts_limits_sha256_not_null: NOT NULL limits_sha256',
+   'property_video_job_temporal_verdicts_position_not_null: NOT NULL "position"',
+   'property_video_job_temporal_verdicts_record_not_null: NOT NULL record',
+   'property_video_job_temporal_verdicts_recorded_at_not_null: NOT NULL recorded_at'])
+ assert v['constraints']==sorted(expected_constraints),v['constraints']
  assert v['triggers']==['property_video_temporal_verdict_guard O CREATE TRIGGER property_video_temporal_verdict_guard BEFORE UPDATE ON public.property_video_job_temporal_verdicts FOR EACH ROW EXECUTE FUNCTION property_video_temporal_verdict_guard()'],v['triggers']
  assert v['indexes']==['CREATE UNIQUE INDEX property_video_job_temporal_verdicts_pkey ON public.property_video_job_temporal_verdicts USING btree (job_id, "position", attempt_id, limits_sha256)']and v['policies']==[]and v['rls']is True and v['force_rls']is False and v['owner']=='postgres'and v['referenced_by']is None,v
  # PostgreSQL 17 adds MAINTAIN (`m`) to the table owner's default ACL.
  # Pin the complete ACL for the server version; service_role remains SELECT-only.
- maintain='m' if q('server-version-for-verdict-acl',"select current_setting('server_version_num')::int")>=170000 else ''
+ maintain='m' if server_version>=170000 else ''
  assert v['acl']=='{postgres=arwdDxt%s/postgres,service_role=r/postgres}'%maintain,v['acl']
  assert q('history-snapshot-after-own',DATA_SNAPSHOT)==hist0,'No historical DML: every existing row byte-identical'
  receipt['firstApply']={'changedFunctions':[],'addedFunctions':sorted(added),'addedRelation':REL,'shotTableShapeUnchanged':True,'historyIdentical':True}
@@ -198,6 +208,9 @@ try:
  control('rpc-search-path-dropped','alter function %s reset search_path;'%RPC,"alter function %s set search_path='';"%RPC,HELPER+RPC)
  control('unknown-overload',"create function public.property_video_job_temporal(p_job text)returns jsonb language sql as $$select null::jsonb$$;",'drop function public.property_video_job_temporal(text);',PARTIAL)
  control('extra-column','alter table %(r)s add column extra integer;'%G,'alter table %(r)s drop column extra;'%G,RELATION)
+ if server_version>=180000:
+  control('renamed-not-null-constraint','alter table %(r)s rename constraint property_video_job_temporal_verdicts_record_not_null to temporal_unexpected_not_null;'%G,
+   'alter table %(r)s rename constraint temporal_unexpected_not_null to property_video_job_temporal_verdicts_record_not_null;'%G,RELATION)
  control('client-select-grant','grant select on %(r)s to authenticated;'%G,'revoke select on %(r)s from authenticated;'%G,RELATION)
  control('client-column-grant','grant select(record) on %(r)s to authenticated;'%G,'revoke select(record) on %(r)s from authenticated;'%G,RELATION)
  control('service-write-grant','grant insert,update on %(r)s to service_role;'%G,'revoke insert,update on %(r)s from service_role;'%G,RELATION)
@@ -220,6 +233,13 @@ try:
  run('rollback-refuses-changed-object',[*RB,'-q','-f',ROLLBACK],refuses='PROPERTY-VIDEO-TEMPORAL-ROLLBACK refused: '+RPC+" differs from the migration's own. Nothing changed.")
  assert catalog('rollback-control-after-refusal',RB)==mutated and q('rollback-control-history',DATA_SNAPSHOT,RB)==hist0 and q('rollback-control-verdicts',VERDICTS,RB)==verdict_rows,'A refused rollback changes nothing'
  run('rollback-control-restore',[*RB,'-Atq'],rpc_def+';');assert catalog('rollback-control-restored',RB)==after
+ if server_version>=180000:
+  run('rollback-not-null-mutate',[*RB,'-Atq'],'alter table %s rename constraint property_video_job_temporal_verdicts_record_not_null to temporal_unexpected_not_null;'%REL)
+  mutated=catalog('rollback-not-null-mutated',RB);assert mutated!=after
+  run('rollback-not-null-refuses',[*RB,'-q','-f',ROLLBACK],refuses='PROPERTY-VIDEO-TEMPORAL-ROLLBACK refused: '+REL+' differs from the migration\'s own or has dependants. Nothing changed.')
+  assert catalog('rollback-not-null-after-refusal',RB)==mutated and q('rollback-not-null-history',DATA_SNAPSHOT,RB)==hist0 and q('rollback-not-null-verdicts',VERDICTS,RB)==verdict_rows,'A refused rollback must not normalize a renamed NOT NULL constraint'
+  run('rollback-not-null-restore',[*RB,'-Atq'],'alter table %s rename constraint temporal_unexpected_not_null to property_video_job_temporal_verdicts_record_not_null;'%REL)
+  assert catalog('rollback-not-null-restored',RB)==after
  out=run('rollback',[*RB,'-q','-f',ROLLBACK]);assert 'PROPERTY-VIDEO-TEMPORAL-ROLLBACK done'in out and 'discarded 1 recorded temporal verdicts'in out,out
  assert catalog('after-rollback',RB)==pre,'Rollback must restore the exact predecessor catalog'
  assert q('history-snapshot-after-rollback',DATA_SNAPSHOT,RB)==hist0,'Rollback leaves every existing row untouched'

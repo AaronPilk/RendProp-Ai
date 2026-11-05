@@ -62,7 +62,7 @@ final class PHPhotoLibrary {
 }
 enum PHAssetChangeRequest {
     static func creationRequestForAsset(from image: UIImage) -> Int { PhotoBoundary.shared.create(); return 1 }
-    static func creationRequestForAssetFromImage(atFileURL url: URL) -> Int { PhotoBoundary.shared.create(); return 1 }
+    static func creationRequestForAssetFromImage(atFileURL url: URL) -> Int? { PhotoBoundary.shared.create(); return 1 }
     static func creationRequestForAssetFromVideo(atFileURL url: URL) -> Int { PhotoBoundary.shared.create(); return 1 }
 }
 @MainActor enum Haptics { static var successes = 0; static func selection() {}; static func success() { successes += 1 } }
@@ -122,6 +122,7 @@ struct ListingMediaItem { let url: URL; var isVideo: Bool; var title = "Syntheti
 @MainActor final class AppModel { var listings: [Listing]; let api = API(); init(_ listing: Listing) { listings = [listing] } }
 __SCOPE__
 __CONTEXT__
+__CHANGE_RECEIPT__
 __SAVER__
 @MainActor final class Harness {
     let listing: Listing

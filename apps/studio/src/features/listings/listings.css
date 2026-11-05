@@ -33,6 +33,17 @@
 .lw-tabs button[aria-selected=true] { border-bottom-color: var(--accent);color: var(--accent-text); }
 .lw-tabs button span:not(:empty) { display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background: var(--surface-subtle);color: var(--accent-text);font-size:.7rem; }
 .lw-card { background:var(--surface); border:1px solid var(--line); padding:26px; border-radius:16px; margin-bottom:24px; }
+.lw-saved-source-recovery { margin-top:20px; border-radius:20px; background:var(--accent-soft); }
+.lw-saved-source-recovery > button { margin-top:4px; }
+.lw-saved-source-recovery button { border-radius:999px; }
+.lw-saved-source-progress { margin-top:18px; }
+.lw-saved-source-progress p { margin:0 0 8px; }
+.lw-saved-source-progress progress { width:100%; accent-color:var(--accent); }
+.lw-saved-source-progress button { margin-top:10px; }
+.lw-saved-source-refusals { margin-top:16px; }
+.lw-saved-source-refusals summary { cursor:pointer; min-height:44px; }
+.lw-saved-source-refusals li { margin:6px 0; overflow-wrap:anywhere; }
+@media(max-width:600px) { .lw-saved-source-recovery > button { width:100%; } }
 .lw-card h2,.lw-card h3 { margin:0 0 12px; }.lw-card label { display:block; margin:18px 0 12px; font-size:.85rem; }.lw-card label input,.lw-card label select,.lw-card label textarea { margin-top:8px; }
 .lw-form-grid { display:grid;grid-template-columns:1fr 1fr;gap:0 24px;border:0;padding:0;margin:0;min-width:0; }.lw-span-2 { grid-column:1/-1; }.lw-actions { flex-wrap:wrap;margin-top:20px; }
 .lw-facts { margin-top:14px;padding:20px;border: 1px solid var(--line);border-radius:10px;background: var(--surface-subtle); }.lw-facts strong { line-height:1.5; }

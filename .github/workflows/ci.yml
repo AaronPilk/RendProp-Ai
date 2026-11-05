@@ -652,7 +652,10 @@ jobs:
 
   studio:
     name: Studio contracts, build and property workflows (offline)
-    runs-on: ubuntu-latest
+    # ubuntu-latest is moving to 26.04. On that image the 2026-11-05 Studio
+    # run spent its entire 20-minute FFmpeg step downloading apt dependencies.
+    # Keep this browser/media gate on the known 24.04 image during the rollout.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -1722,7 +1725,7 @@ jobs:
           expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs',
                               'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs'}
           expected_sources.update(f'src/editor/{name}.ts' for name in
-                                  ('export', 'recording-clock', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
+                                  ('export', 'recording-clock', 'mp4-cadence', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
           assert set(receipt['sourceHashes']) == expected_sources
           for path, digest in receipt['sourceHashes'].items():
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path

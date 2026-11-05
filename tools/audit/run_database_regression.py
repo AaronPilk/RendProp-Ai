@@ -217,7 +217,7 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261027234000_trial_shared_launch_budget_guard.sql": ("3497a2fd566e35d27ce0fe2061971425d675ce6b07e127481193a1c450a0c7f6", 'Review shared launch budget guard already installed'),
     "20261027234243_paid_media_budget_cap.sql": ("c6b2f52621a30231aaa716dda46733e7ec1d48d085fbd723122bd56be3e96c38", 'Review paid media budget cap already installed'),
     "20261028010346_reviewer_sandbox_shared_credit_budget.sql": ("e48f600fa411ca5e6a1bd676a1c90554c7e42619a53f65bbbc362feaa336601c", "Review changed paid primary credit authority"),
-    "20261029210132_trial_declutter_assessment.sql": ("946fde58e49ae89113a1777ce18dead10a93fa5eb07ac4f0ec6ad9bab7189bfa", "trial declutter assessment: public.subscription_trial_cost_guard() changed"),
+    "20261029210132_trial_declutter_assessment.sql": ("946fde58e49ae89113a1777ce18dead10a93fa5eb07ac4f0ec6ad9bab7189bfa", "trial declutter assessment: subscription_trial_cost_guard() changed"),
 }
 
 
