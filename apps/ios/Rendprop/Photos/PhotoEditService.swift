@@ -274,10 +274,13 @@ final class PhotoEditService {
             identityIsCurrent: { self.identityIsCurrent }, stopOnError: { error in
                 Task { @MainActor in Analytics.trackAIFailure("photo_edit", step: edit, error: error) }
                 let failure = AIFailure(error)
-                // A busy or held saved review keeps its exact paid request.
+                // An unresolved saved review keeps its exact paid request.
                 // Stop unsent photos instead of buying more pending edits.
+                // A terminal photo_quality_closed response is different: the
+                // server has closed that one photo's review, and edit() has
+                // released its local request slot. Keep working on the other
+                // selected photos without retrying this failed one.
                 let savedReview = AIFailure.requiresSavedPhotoCheck(error)
-                    || (error as? APIError)?.code == "photo_quality_closed"
                 // A refused or unreachable generation service fails every photo
                 // the same way; stop instead of uploading N more to fail N times.
                 return savedReview || failure.isQuota || failure.isUnauthorized || failure.isServiceUnavailable || failure.isTrialCapacityUnavailable
