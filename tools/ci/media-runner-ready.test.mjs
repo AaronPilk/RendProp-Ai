@@ -47,7 +47,7 @@ test("three consecutive eligible samples pass only after two fixed intervals", a
 });
 
 test("transient overload resets the streak rather than extending the original deadline", async () => {
-  const f = fake({ sequence: [sample(), sample({ loadavg: [9, 1, 1] }), sample({ loadavg: [5, 4, 2] })] });
+  const f = fake({ sequence: [sample(), sample({ loadavg: [9, 1, 1] }), sample({ loadavg: [2.5, 4, 2] })] });
   const result = await assessReadiness(f.readiness);
   assert.equal(result.passed, true);
   assert.deepEqual(result.samples.map(s => s.consecutiveValidEligibleSamples), [1, 0, 1, 2, 3]);
@@ -59,7 +59,7 @@ test("a late quiet window after the old cutoff needs three eligible samples", as
   // A runner that settles just after the former 300-second cutoff still
   // needs three consecutive samples within the new fixed deadline.
   const busy = sample({ loadavg: [9, 1, 1] });
-  const quiet = sample({ loadavg: [4.5, 1, 1] });
+  const quiet = sample({ loadavg: [2.5, 1, 1] });
   const f = fake({ sequence: [
     ...Array.from({ length: 38 }, () => busy), quiet, quiet,
     ...Array.from({ length: 18 }, () => busy), quiet, quiet, quiet,
@@ -77,7 +77,7 @@ test("a late quiet window after the old cutoff needs three eligible samples", as
 
 test("two late eligible samples followed by renewed load still refuse admission", async () => {
   const busy = sample({ loadavg: [9, 1, 1] });
-  const quiet = sample({ loadavg: [4.5, 1, 1] });
+  const quiet = sample({ loadavg: [2.5, 1, 1] });
   const f = fake({ sequence: [...Array.from({ length: 58 }, () => busy), quiet, quiet, busy] });
   const result = await assessReadiness(f.readiness);
   assert.equal(result.passed, false);
@@ -89,9 +89,9 @@ test("two late eligible samples followed by renewed load still refuse admission"
 });
 
 test("the fixed load boundary is inclusive and scales only with valid CPU count", async () => {
-  assert.equal((await assessReadiness(fake({ sequence: [sample({ cpus: 6, loadavg: [10, 0, 0] })] }).readiness)).passed, true);
-  assert.equal((await assessReadiness(fake({ sequence: [sample({ loadavg: [5, 0, 0] })] }).readiness)).passed, true);
-  const f = fake({ sequence: [sample({ loadavg: [5.000001, 0, 0] })] });
+  assert.equal((await assessReadiness(fake({ sequence: [sample({ cpus: 6, loadavg: [6, 0, 0] })] }).readiness)).passed, true);
+  assert.equal((await assessReadiness(fake({ sequence: [sample({ loadavg: [3, 0, 0] })] }).readiness)).passed, true);
+  const f = fake({ sequence: [sample({ loadavg: [3.000001, 0, 0] })] });
   const result = await assessReadiness(f.readiness);
   assert.equal(result.passed, false);
   assert.equal(result.busy, true);
@@ -109,6 +109,15 @@ test("the exact-head MP4 host load that old admission accepted cannot enter capt
   assert.equal(result.reason, "ORIGINAL_DEADLINE_REACHED");
   assert.equal(result.busy, true);
   assert.equal(result.samples.length, 120);
+  assert.equal(result.mediaTestInvocations, 0);
+});
+
+test("the November 5 admitted load that skipped encoded frames cannot enter capture", async () => {
+  const observedLoad = 4.2783203125;
+  assert(observedLoad / 3 > POLICY.maximumOneMinuteLoadPerCPU);
+  const result = await assessReadiness(fake({ sequence: [sample({ loadavg: [observedLoad, 19.048828125, 13.28271484375] })] }).readiness);
+  assert.equal(result.passed, false);
+  assert.equal(result.reason, "ORIGINAL_DEADLINE_REACHED");
   assert.equal(result.mediaTestInvocations, 0);
 });
 
@@ -250,7 +259,7 @@ test("policy is frozen and environment or extra injected options do not weaken i
     const f = fake({ sequence: [sample({ loadavg: [9, 0, 0] })] });
     const result = await assessReadiness({ ...f.readiness, policy: { maximumOneMinuteLoadPerCPU: 999999 } });
     assert.equal(result.passed, false);
-    assert.equal(result.policy.maximumOneMinuteLoadPerCPU, 5 / 3);
+    assert.equal(result.policy.maximumOneMinuteLoadPerCPU, 1);
     assert.equal(result.policy.totalMilliseconds, 600_000);
     assert.equal(result.policy.requiredConsecutiveSamples, 3);
     assert.equal(result.policy.maximumSamples, 121);

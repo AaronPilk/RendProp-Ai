@@ -14,9 +14,10 @@ export const POLICY = Object.freeze({
   sampleIntervalMilliseconds: 5_000,
   requiredConsecutiveSamples: 3,
   maximumSamples: 121,
-  // Keep spare CPU for real-time Canvas/MediaRecorder capture: an admitted
-  // three-CPU runner near seven total load lost encoded transition frames.
-  maximumOneMinuteLoadPerCPU: 5 / 3,
+  // The 2026-11-05 three-CPU Mac was admitted at 4.3-4.5 total load, then
+  // exported only 9 frames in one 500 ms window. Wait for a lower observed
+  // load before running the unchanged real-time media and refusal checks.
+  maximumOneMinuteLoadPerCPU: 1,
   supportedPlatform: "darwin",
 });
 
