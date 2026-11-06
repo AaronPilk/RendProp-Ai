@@ -80,8 +80,9 @@ try:
    assert query('historical-followup-replayed-catalog',CATALOG)==historical
    result=query('workspace-historical-followup-replay',(SQL/'tests/workspace_selection.sql').read_text());assert '\n28\n'in result and result.count('|t')==28
  before=query('final-catalog',CATALOG)
- # Build 57 (20261010141500) supersedes select_workspace, the first differing pin of this overlay.
- refused=query('superseded-followup-refused',TARGET.read_text(),3);assert 'Review changed function select_workspace'in refused
+ # The candidate-org migration supersedes workspace_directory, the first
+ # differing pin of this historical overlay.
+ refused=query('superseded-followup-refused',TARGET.read_text(),3);assert 'Review changed function workspace_directory'in refused
  assert query('superseded-followup-refusal-catalog',CATALOG)==before,'Historical overlay must not overwrite newer reviewed functions'
  for phase in ['after','replayed']:
   if phase=='replayed':
@@ -92,7 +93,7 @@ try:
  source=TARGET.read_text()
  helper=query('current-library-access-definition', "select pg_get_functiondef('public.library_content_access(uuid,uuid,boolean)'::regprocedure);")
  header=helper.split('AS $function$',1)[0]
- query('install-missing-membership-control',header+'AS $function$ select true; $function$;')
+ query('install-missing-membership-control',header+'AS $function$ begin return true; end $function$;')
  negative=query('missing-membership-control',(SQL/'tests/workspace_selection.sql').read_text(),3);assert 'WORKSPACE FAIL: directory keeps personal library and excludes shared Team seat' in negative
  query('restore-selection',helper)
  for n in [1,2]:

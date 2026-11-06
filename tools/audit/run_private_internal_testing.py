@@ -287,9 +287,10 @@ try:
  receipt['excludedLiveStateMigrations'] = [p.name for p in FINAL_LIVE_STATE_MIGRATIONS]
  receipt['currentSQLAssertions'] = positive('current-final-private-positive', TEST)
  current_snapshot = json.loads(query('current-final-functions', SNAPSHOT))
- # Build 57 (20261010141500) supersedes select_workspace, the first differing pin of this overlay.
+ # The candidate-org migration supersedes workspace_directory, the first
+ # differing pin of this historical overlay.
  refused = run('superseded-followup-refused', [*psql(), '-q', '-f', FINAL_TARGET], 3)
- assert 'Review changed function select_workspace' in refused
+ assert 'Review changed function workspace_directory' in refused
  assert json.loads(query('superseded-followup-refusal-functions', SNAPSHOT)) == current_snapshot, 'Historical overlay must not overwrite newer reviewed functions'
  receipt['supersededFollowupRefusedAtomic'] = True
  run('replay-current-private-authority', [*psql(), '-q', '-f', FINAL_OVERLAY])
