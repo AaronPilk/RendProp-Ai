@@ -268,9 +268,14 @@ class InventoryTests(RunnerCase):
         guarded = subject_module().GUARDED_ONE_SHOT_MIGRATIONS
         reviewer_migration = '20261028010346_reviewer_sandbox_shared_credit_budget.sql'
         declutter_migration = '20261029210132_trial_declutter_assessment.sql'
-        self.assertEqual(len(guarded) - 2, 39)
+        publication_migrations = {
+            '20261105223709_photo_publication_listing_bound_accepted_20261105.sql',
+            '20261105224531_photo_publication_bound_output_ledger_20261105.sql',
+        }
+        self.assertEqual(len(guarded) - 4, 39)
         self.assertIn(reviewer_migration, guarded)
         self.assertIn(declutter_migration, guarded)
+        self.assertLessEqual(publication_migrations, set(guarded))
         self.assertEqual(set(result.receipt['guardedOneShotRefusals']), set(guarded))
         commands = {row['name']: row for row in result.receipt['commands']}
         for filename in guarded:
