@@ -390,9 +390,40 @@ enum PhotoVersionHistory {
         }
         return index
     }
+    // MARK: Read cache
+    //
+    // The Photos screen reads a listing's history from several computed
+    // properties on every redraw, so one tap used to decode the index and
+    // stat every file in the folder ten or more times on the main thread.
+    // `load` now keeps the last decoded index per folder and reuses it while
+    // the index file (date, size) and the folder (date) are unchanged: two
+    // stats instead of a decode plus a directory listing. Any write through
+    // this type drops the entry as well, and `requireUnchanged` always reads
+    // fresh, so an export still notices a change made while it ran.
+    private struct Fingerprint: Equatable {
+        let indexDate: Date?, indexSize: Int?, directoryDate: Date?
+        init(directory: URL) {
+            let index = try? directory.appendingPathComponent(filename).resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            indexDate = index?.contentModificationDate
+            indexSize = index?.fileSize
+            directoryDate = (try? directory.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        }
+    }
+    private static var cache: [String: (fingerprint: Fingerprint, index: Index)] = [:]   // guarded by `lock`
+    private static let cacheLimit = 32
+    private static func forget(directory: URL) { cache[directory.standardizedFileURL.path] = nil }
+
     static func load(directory: URL) throws -> Index {
         lock.lock(); defer { lock.unlock() }
-        return try loadUnlocked(directory: directory)
+        let key = directory.standardizedFileURL.path
+        let fingerprint = Fingerprint(directory: directory)
+        if let cached = cache[key], cached.fingerprint == fingerprint { return cached.index }
+        let index = try loadUnlocked(directory: directory)
+        if cache.count >= cacheLimit { cache.removeAll() }
+        // Fingerprint taken before the read: a change that lands between the
+        // two is caught on the next load, never hidden behind a newer stamp.
+        cache[key] = (fingerprint, index)
+        return index
     }
     /// Exports work on immutable file copies. A concurrent edit, review or
     /// selection must not make their recorded captions disagree with history.
@@ -441,6 +472,8 @@ enum PhotoVersionHistory {
     }
     private static func save(_ index: Index, directory: URL,
                              write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws {
+        forget(directory: directory)
+        defer { forget(directory: directory) }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         try write(encoder.encode(index), directory.appendingPathComponent(filename))
     }

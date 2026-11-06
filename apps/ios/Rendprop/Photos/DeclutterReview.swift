@@ -102,9 +102,17 @@ import ImageIO
                     items[index].sourceSHA256 = sourceSHA; items[index].preparedSHA256 = prepared
                     items[index].assessment = reply.assessment; items[index].validAssessment = true
                     items[index].costBoundCents = reply.costBoundCents
-                    items[index].selected = reply.assessment.decision == .needed
+                    // The realtor already chose these photos. The assessment only
+                    // steps aside when it is sure there is nothing to remove
+                    // ("already clear"). "Needs review" is the realtor's call, so
+                    // it stays selected and runs; the result goes through the
+                    // same review and feedback as any other edit (owner decision,
+                    // 6 Nov 2026: 9 of 11 photos were left unselected by the
+                    // gate and no declutter ran).
+                    items[index].selected = reply.assessment.decision != .unnecessary
+                    items[index].manualOverride = items[index].selected && reply.assessment.decision != .needed
                 } catch {
-                    items[index].assessment = .uncertain; items[index].selected = false
+                    items[index].assessment = .uncertain; items[index].selected = false; items[index].manualOverride = false
                     items[index].error = "This photo could not be assessed safely. No image edit is selected."
                     if !isCurrent || Task.isCancelled { failure = "Review stopped because its account, consent or listing context changed."; break }
                 }

@@ -35,9 +35,34 @@ import Combine
 
     init() { snapshot = WorkspaceContext.current; loadedOwner = WorkspaceContext.owner() }
 
+    /// The directory read in flight, with the identity it was started for.
+    /// `WorkspaceEntry` is mounted in three places (home, settings, the
+    /// picker) and each one refreshes on appearance, so one launch issued the
+    /// same /me/workspaces request three or four times. Callers for the same
+    /// account and session now wait for the request already running; a
+    /// different account or session always starts its own.
+    private var inFlight: (task: Task<Void, Never>, owner: UUID, revision: UInt64, id: UUID)?
+
     /// Preserve an authorized local selection. A fresh default directory can
     /// recover a removed shared-Team selection into this actor's private library.
     func refresh() async {
+        guard Config.useLiveBackend, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return }
+        let revision = AuthStore.shared.syncSessionRevision
+        if let running = inFlight, running.owner == owner, running.revision == revision {
+            await running.task.value
+            return
+        }
+        let id = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.refreshNow()
+        }
+        inFlight = (task, owner, revision, id)
+        await task.value
+        if inFlight?.id == id { inFlight = nil }
+    }
+
+    private func refreshNow() async {
         guard Config.useLiveBackend, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return }
         if loadedOwner != owner {
             snapshot = WorkspaceContext.read(owner: owner); loadedOwner = owner
