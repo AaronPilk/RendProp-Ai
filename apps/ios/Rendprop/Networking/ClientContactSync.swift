@@ -51,14 +51,19 @@ import Foundation
               WorkspaceContext.selectedOrgID == selected,
               let i = listings.firstIndex(where: { $0.id == id }), listings[i].serverID == server,
               (discardDraft || listings[i].clientContactDirty != true) else { throw ClientContactError.changed }
+        // One assignment, not four: `listings` persists the whole save file and
+        // redraws every observer on each change (didSet). Same fields, same
+        // values, written once.
+        var updated = listings[i]
         // A photo from a replaced card cannot stand in for the client's current photo.
-        if listings[i].clientContact?.photoAssetID != remote?.photoAssetID {
-            listings[i].clientPhotoRelPath = nil
+        if updated.clientContact?.photoAssetID != remote?.photoAssetID {
+            updated.clientPhotoRelPath = nil
         }
-        listings[i].clientContact = remote
-        listings[i].clientContactLoaded = true
-        listings[i].clientContactDirty = false
-        listings[i].clientPhotoDirty = false
+        updated.clientContact = remote
+        updated.clientContactLoaded = true
+        updated.clientContactDirty = false
+        updated.clientPhotoDirty = false
+        listings[i] = updated
     }
 
     /// Before publishing, the actual server card is read, then a dirty local card

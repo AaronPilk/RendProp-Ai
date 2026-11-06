@@ -15,13 +15,14 @@ struct APIError: Error { let status: Int; let code: String? }
     var beforePATCH: (() -> Void)?
     var afterPATCH: (() -> Void)?
     var onPrepare: (() -> Void)?
+    var externalAssets: [UUID: (String, Int64)] = [:]
     var catalog: [PhotoCloudLocalVersion] = []
     var lastOperation: PhotoCloudSelectionOperation?
     func key(_ id: UUID) -> String { "renders/\(physical.uuidString.lowercased())/\(identity.serverListingID.uuidString.lowercased())/gallery-\(id.uuidString.lowercased()).jpg" }
     func digest(_ n: Int) -> String { String(repeating: String(n), count: 64) }
     func reset() {
         ids = [a,b]; legacyEffective = [a,b]; cover = key(b); receipts = [:]; abandoned = [:]; abandonCount = 0; patchCount = 0; getCount = 0; prepareCount = 0; validateCount = 0; rejectTargetValidation = false
-        loseReply = false; failGET = false; refusal = nil; wrongReceipt = false; wrongRequest = false; beforeGET = nil; beforePATCH = nil; afterPATCH = nil; onPrepare = nil; lastOperation = nil
+        loseReply = false; failGET = false; refusal = nil; wrongReceipt = false; wrongRequest = false; beforeGET = nil; beforePATCH = nil; afterPATCH = nil; onPrepare = nil; lastOperation = nil; externalAssets = [:]
         catalog = [local("a", "A", a, 1),local("a2", "A", a2, 2),local("b", "B", b, 3),local("b2", "B", b2, 4)]
     }
     func local(_ id: String, _ family: String, _ asset: UUID?, _ n: Int, complete: Bool = true) -> PhotoCloudLocalVersion {
@@ -31,7 +32,7 @@ struct APIError: Error { let status: Int; let code: String? }
         let assets: [[String: Any]] = (ids ?? legacyEffective).compactMap { id in
             let canonical: (String,Int64)? = id == a ? (digest(1),100) : id == a2 ? (digest(2),200)
                 : id == b ? (digest(3),300) : id == b2 ? (digest(4),400)
-                : catalog.first(where: { $0.knownAssetID == id }).map { ($0.sha256,$0.bytes) }
+                : catalog.first(where: { $0.knownAssetID == id }).map { ($0.sha256,$0.bytes) } ?? externalAssets[id]
             guard let canonical else { return nil }
             return ["asset_id":id.uuidString,"sha256":canonical.0,"bytes":canonical.1,"storage_key":key(id)]
         }
@@ -202,15 +203,68 @@ struct APIError: Error { let status: Int; let code: String? }
         fixture.reset(); (c,store) = make()
         fixture.catalog.append(fixture.local("alias","C",fixture.a,1))
         projection = try await refresh(c)
-        check(projection.mutableFamilyIDs.isEmpty,"Cross-family byte aliases remain unmapped")
+        check(projection.mutableFamilyIDs == ["B"] && projection.selectedVersionIDs == ["b"],
+              "Cross-family byte aliases block both affected families, not independent B")
         await refuses("Ambiguous mapping cannot mutate") { _ = try await change(c) }
         check(fixture.patchCount == 0,"Unmapped family has zero PATCHes")
         fixture.reset(); (c,store) = make(); fixture.ids = [fixture.a,UUID()]
         projection = try await refresh(c)
-        check(projection.mutableFamilyIDs.isEmpty,"Unknown selected cloud asset blocks partial family mutation")
-        fixture.reset(); (c,store) = make(); fixture.catalog[0] = fixture.local("a","A",fixture.a,1,complete:false)
+        check(projection.mutableFamilyIDs.isEmpty,"Selected asset without server metadata still blocks family mutation")
+        fixture.reset(); (c,store) = make()
+        let older = UUID(); fixture.externalAssets[older] = (fixture.digest(9),900)
+        fixture.ids = [older,fixture.a]; fixture.cover = fixture.key(older)
         projection = try await refresh(c)
-        check(projection.mutableFamilyIDs.isEmpty,"Incomplete local history cannot certify cloud footprint")
+        check(projection.mutableFamilyIDs == ["A","B"] && projection.selectedVersionIDs == ["a"],
+              "Older selected cloud photo outside local catalog does not block known families")
+        check(projection.coverVersionIDs.isEmpty && fixture.cover == fixture.key(older),
+              "Older cover remains a cloud fact without inventing a local cover badge")
+        let target = PhotoGridListingSelection.Target(id:"a2",familyID:"A",imageFile:"a2.jpg",requiresReview:false)
+        check(PhotoGridListingSelection.state(target,cloud:true,projection:projection,localSelected:nil).title == "Use on listing",
+              "Known edited version offers a listing choice despite older unmapped photo")
+        projection = try await change(c)
+        check(fixture.ids == [older,fixture.a2] && fixture.cover == fixture.key(older),
+              "Selecting known edit preserves older cloud photo and cover")
+        check(fixture.lastOperation?.request.expectedSelection.galleryAssetIDs == [older,fixture.a] &&
+              fixture.lastOperation?.request.familyAssetIDs == [fixture.a,fixture.a2].sorted(by: { $0.uuidString < $1.uuidString }),
+              "Family CAS includes the older photo but never claims it as a family member")
+        check(projection.selectedVersionIDs == ["a2"] &&
+              PhotoGridListingSelection.state(target,cloud:true,projection:projection,localSelected:nil).title == "On listing",
+              "Accepted exact edited version receives the listing badge")
+        fixture.reset(); (c,store) = make()
+        fixture.externalAssets[older] = (fixture.digest(1),100)
+        fixture.ids = [older,fixture.b]; fixture.cover = fixture.key(older)
+        projection = try await refresh(c)
+        check(projection.mutableFamilyIDs == ["A","B"] && projection.selectedVersionIDs == ["a","b"] &&
+              projection.coverVersionIDs == ["a"],
+              "Unique same-byte older gallery receipt maps to its local original family")
+        check(projection.familyFootprints["A"] == Set([older,fixture.a,fixture.a2]),
+              "Exact older asset joins only its own family footprint")
+        await refuses("Same-family cover still needs explicit follow confirmation") { _ = try await change(c) }
+        check(fixture.patchCount == 0,"Unconfirmed cover change sends no selection PATCH")
+        projection = try await change(c,"b2")
+        check(fixture.ids == [older,fixture.b2] && fixture.cover == fixture.key(older) &&
+              projection.selectedVersionIDs == ["a","b2"],
+              "Independent edited family remains selectable without changing the older photo or cover")
+        check(fixture.lastOperation?.request.familyAssetIDs == [fixture.b,fixture.b2].sorted(by: { $0.uuidString < $1.uuidString }) &&
+              fixture.lastOperation?.request.expectedSelection.galleryAssetIDs == [older,fixture.b],
+              "Safe family footprint never claims same-byte foreign cover")
+        projection = try await change(c,"a2",follow:true)
+        check(fixture.ids == [fixture.a2,fixture.b2] && fixture.cover == fixture.key(fixture.a2) &&
+              projection.selectedVersionIDs == ["a2","b2"],
+              "Explicit same-family choice replaces older alias and follows its cover")
+        check(fixture.lastOperation?.request.familyAssetIDs == [older,fixture.a,fixture.a2].sorted(by: { $0.uuidString < $1.uuidString }) &&
+              fixture.lastOperation?.request.expectedSelection.galleryAssetIDs == [older,fixture.b2],
+              "Same-byte older asset is included in exactly this family's CAS footprint")
+        fixture.reset(); (c,store) = make(); fixture.catalog[0] = fixture.local("a","A",fixture.a,1,complete:false)
+        fixture.cover = fixture.key(fixture.a)
+        projection = try await refresh(c)
+        check(projection.mutableFamilyIDs == ["B"] && projection.selectedVersionIDs == ["b"],
+              "Incomplete local history blocks its family while preserving a separate verified family")
+        await refuses("Incomplete source family cannot authorize mutation") { _ = try await change(c) }
+        check(fixture.patchCount == 0,"Incomplete source family sends no selection PATCH")
+        projection = try await change(c,"b2")
+        check(fixture.ids == [fixture.a,fixture.b2] && fixture.cover == fixture.key(fixture.a),
+              "Safe family choice never replaces the incomplete family's selected photo")
 
         fixture.reset(); (c,store) = make(); fixture.cover = fixture.key(fixture.a)
         await refuses("Cover follow requires explicit confirmation") { _ = try await change(c) }
@@ -286,7 +340,8 @@ struct APIError: Error { let status: Int; let code: String? }
         check(try store.initialIntent(fixture.identity) == nil,"Only complete initial queue is retired")
         fixture.reset(); (c,store) = make(); fixture.catalog[0] = fixture.local("a","A",nil,1)
         projection = try await refresh(c)
-        check(projection.mutableFamilyIDs.isEmpty && projection.selectedVersionIDs.isEmpty,"Uncached digest-only match remains neutral without scoped family receipt")
+        check(projection.mutableFamilyIDs == ["B"] && projection.selectedVersionIDs == ["b"],
+              "Uncached digest-only match blocks its family without erasing independent confirmed facts")
         await refuses("Uncached selected bytes cannot authorize family subtraction") { _ = try await change(c) }
         check(fixture.patchCount == 0,"Missing family receipt has zero PATCHes")
         fixture.reset(); (c,store) = make(); fixture.loseReply = true
@@ -309,6 +364,23 @@ struct APIError: Error { let status: Int; let code: String? }
         fixture.reset(); (c,store) = make(); fixture.wrongRequest = true
         await refuses("Matching operation ID with different frozen request must refuse") { _ = try await change(c) }
         check(try store.load(fixture.identity) != nil,"Changed receipt intent cannot retire journal")
+
+        let uncertainTarget = PhotoGridListingSelection.Target(id:"uncertain",familyID:"U",imageFile:"u.jpg",requiresReview:false)
+        let verifiedTarget = PhotoGridListingSelection.Target(id:"verified",familyID:"V",imageFile:"v.jpg",requiresReview:false)
+        var bulkChosen: Set<String> = []
+        let (partial, partialError) = await PhotoGridListingSelection.selectAll([uncertainTarget,verifiedTarget],
+            requireCurrent: {}, state: { target in
+                target.id == uncertainTarget.id ? .unknown : bulkChosen.contains(target.id) ? .selected : .available
+            }, select: { target in _ = bulkChosen.insert(target.id) })
+        check(partialError == nil && partial.unavailable == 1 && partial.selected == 1 &&
+              bulkChosen == [verifiedTarget.id],
+              "Bulk selection skips an uncertain family and confirms a later verified family")
+        bulkChosen = []
+        let (pendingBulk, pendingError) = await PhotoGridListingSelection.selectAll([uncertainTarget,verifiedTarget],
+            requireCurrent: {}, state: { target in target.id == uncertainTarget.id ? .pending : .available },
+            select: { target in _ = bulkChosen.insert(target.id) })
+        check(pendingError != nil && pendingBulk.selected == 0 && bulkChosen.isEmpty,
+              "A pending saved choice still stops bulk selection before any mutation")
         print("\(count) assertions PASS")
     }
 }

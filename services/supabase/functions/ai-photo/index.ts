@@ -96,10 +96,9 @@ import { adapterFor } from "../_shared/providers/index.ts";
 import { fundingContext, fundedAttempt, mediaAttemptQuote, SavedFundingResponse, completeFundingOperation, abortFundingOperationBeforeDispatch, boundedPhotoChain, assertPhotoHelperSponsorship, inputHash, type FundingContext } from "../_shared/funded-serving.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
 import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput, ownerQaPhotoPro4KStep, prepareOwnerQaPhotoPro4KInput } from "./owner-photo-qa.ts";
-import { preparePhoto4KInput, photo4KChain, assertPhoto4KGeometry, assertPhotoPro4KGeometry } from "./photo-quality.ts";
-import {normalPhotoQualityProfile,normalPhotoQualityRoutes,prepareNormalPhotoPro4KInput,priceNormalPhotoQualityRoute,type NormalPhotoQualityProfile} from "./normal-photo-quality.ts";
+import { preparePhoto2KInput, photo2KChain, assertPhoto2KGeometry, assertPhotoPro4KGeometry } from "./photo-quality.ts";
 import { priceMaskedPhotoChain, isMaskedFillStep } from "./masked-photo-pricing.ts";
-import { supportsStagingReference,submitPreparedGeminiPhoto4K } from "../_shared/providers/gemini.ts";
+import { supportsStagingReference,submitPreparedGeminiPhoto } from "../_shared/providers/gemini.ts";
 import {
   BUDGETS,
   ProviderError,
@@ -951,11 +950,12 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     const maskMime = String(body.mask_mime ?? "image/png").split(";")[0].trim().toLowerCase();
     const routerOn = await routerEnabled();
     let steps: RouteStep[];
-    let normalQualityProfile:NormalPhotoQualityProfile|null=null;
     try {
-      normalQualityProfile=await normalPhotoQualityProfile(task,maskB64!==null);
-      const routeContext={plan,needs:needsForPhotoEdit(edit,maskB64!==null),carries_customer_media:true};
-      steps = normalQualityProfile?await normalPhotoQualityRoutes(normalQualityProfile,routeContext):await resolveChain(
+      // Ordinary photo edits use the priced 2K Flash route. The former
+      // preservation profile selected Pro 4K for Stage/Declutter and could
+      // overflow the response envelope on an ordinary phone photo. Historical
+      // operations replay above; only new edits use this route.
+      steps = await resolveChain(
         task,
         {
           plan,
@@ -1014,16 +1014,15 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       // An explicit comparison is one priced model/size, never a quiet fallback.
       chain = [ownerPhotoStep];
     }
-    const normalPhoto4K = !ownerPhotoStep && !maskB64;
-    const normalPhotoPro4K=normalPhoto4K&&normalQualityProfile!==null;
-    if (normalPhoto4K) {
+    const normalPhoto2K = !ownerPhotoStep && !maskB64;
+    if (normalPhoto2K) {
       try {
-        if(normalPhotoPro4K){genInput=prepareNormalPhotoPro4KInput(genInput,normalQualityProfile!);chain=priceNormalPhotoQualityRoute(chain,genInput);}
-        else{genInput = preparePhoto4KInput(genInput); chain = photo4KChain(chain, genInput);}
+        genInput = preparePhoto2KInput(genInput);
+        chain = photo2KChain(chain, genInput);
       }
       catch(error) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw error; }
     }
-    const timedPhoto4K=normalPhoto4K||!!ownerPhotoPro4KStep;
+    const timedPhoto=normalPhoto2K||!!ownerPhotoPro4KStep;
     // Masked Fill keeps its legacy resolution, but its per-megapixel quote
     // and the successful ledger entry must use the same complete source bound.
     try {
@@ -1074,18 +1073,8 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
         }
         const adapter = adapterFor(step.provider);
         const ref = await fundedAttempt(funding, `${task}:${chain.indexOf(step)}`, step, genInput, mediaAttemptQuote(step, genInput), async() => {
-          if(normalPhotoPro4K){
-            // A fresh reservation is not permission to run a profile/route that
-            // was withdrawn while source preparation or admission was waiting.
-            try{
-              const freshProfile=await normalPhotoQualityProfile(task,false);
-              assert(freshProfile&&freshProfile.profile===normalQualityProfile!.profile,503,"The photo quality profile changed.");
-              const fresh=await normalPhotoQualityRoutes(freshProfile,{plan,needs:needsForPhotoEdit(edit,false),carries_customer_media:true});
-              assert(fresh.some(row=>row.route_id===step.route_id&&row.model===step.model),503,"The eligible photo quality route changed.");
-            }catch{throw new ProviderError(step.provider,"validation","Preservation-quality authorization ended before dispatch. No alternative model was sent.",0,true);}
-          }
-          return timedPhoto4K
-            ? await submitPreparedGeminiPhoto4K(step,genInput,{deadline:requestDeadline-PHOTO_MAIN_PERSIST_RESERVE_MS,signal:req.signal})
+          return timedPhoto
+            ? await submitPreparedGeminiPhoto(step,genInput,{deadline:requestDeadline-PHOTO_MAIN_PERSIST_RESERVE_MS,signal:req.signal})
             : await adapter.submit(step, genInput);
         });
         const done = await awaitJob(adapter, ref, BUDGETS.totalImageMs);
@@ -1114,7 +1103,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     // ONE org-scoped cost_ledger row with job_id = NULL. This is what the owner
     // spend console and the per-org monthly COGS view read for app AI. The
     // provider/model/price come from the step that ACTUALLY ran (contract §4);
-    // Normal unmasked edits price the complete requested4K bound on that route.
+    // Normal unmasked edits price the complete requested 2K bound on that route.
     // Best effort — a failed insert must never fail an edit the caller has paid
     // for (see recordAppAiCost). Only reached on success, so a failure above
     // (which F-E-16 refunds) writes no row: no double-count.
@@ -1123,9 +1112,9 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       feature: "photo_edit",
       step,
       images: 1,
-      meta: { edit, space_type: space, ...((ownerPhotoStep || normalPhoto4K) ? {image_size:timedPhoto4K?"4K":"2K",owner_quality_comparison:!!ownerPhotoStep,cost_basis:ownerPhotoPro4KStep||normalPhotoPro4K?"complete_input_4096_text_2000_pro_image_bound":normalPhoto4K?"complete_input_4096_text_2520_image_bound":"complete_input_4096_text_1680_image_bound",input_token_allowance:genInput.extra?.photo_input_allowance ?? 8192,...(normalPhotoPro4K?{quality_profile:normalQualityProfile!.profile}:{} )} : {}), ...(maskB64&&isMaskedFillStep(step)?{cost_basis:"source_megapixels_rounded_up_5_cents_bound",priced_megapixels:step.unit_cents/5}:{}), request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
+      meta: { edit, space_type: space, ...((ownerPhotoStep || normalPhoto2K) ? {image_size:ownerPhotoPro4KStep?"4K":"2K",owner_quality_comparison:!!ownerPhotoStep,cost_basis:ownerPhotoPro4KStep?"complete_input_4096_text_2000_pro_image_bound":"complete_input_4096_text_1680_image_bound",input_token_allowance:genInput.extra?.photo_input_allowance ?? 8192} : {}), ...(maskB64&&isMaskedFillStep(step)?{cost_basis:"source_megapixels_rounded_up_5_cents_bound",priced_megapixels:step.unit_cents/5}:{}), request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
         ...(referenceB64 ? { input_images: 2, staging_furniture_reference: true,
-          ...(timedPhoto4K ? {} : {cost_basis: "route_output_image_estimate_input_tokens_unmodeled"}) } : {}) },
+          ...(timedPhoto ? {} : {cost_basis: "route_output_image_estimate_input_tokens_unmodeled"}) } : {}) },
     });
     // A confirmed generated image consumes this one quoted customer charge.
     // The same hold continues to fund the saved fixed-feature judge below.
@@ -1141,9 +1130,9 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       phase="evidence_persistence";
       quality=await retainPhotoCandidate(adminClient(),quality,decoded,{stage:`${task}:${chain.indexOf(step)}`,provider:step.provider,model:step.model});
       phase="photo_output_geometry";
-      if(ownerPhotoPro4KStep||normalPhotoPro4K)assertPhotoPro4KGeometry(decoded);
+      if(ownerPhotoPro4KStep)assertPhotoPro4KGeometry(decoded);
       else if(ownerPhotoStep)assertOwnerQaPhotoOutput(outB64,outMime);
-      else if(normalPhoto4K)assertPhoto4KGeometry(decoded);
+      else if(normalPhoto2K)assertPhoto2KGeometry(decoded);
     }catch(error){
       const over=error instanceof HttpError&&error.details?.failure_phase==="photo_output_size";
       quality=await failPhotoQuality(adminClient(),quality,over?"photo_output_size":phase,{provider_cost_incurred:true,retained_output:!!quality.evidence.output_etag,encoded_characters:outB64.length,mime:outMime,provider:step.provider,model:step.model,message:over?"The paid image exceeded the safe25MiB output bound and could not be retained.":"The generated edit could not be confirmed as a usable high-resolution photo. No new generation was started."});
@@ -1198,7 +1187,21 @@ async function suggestEdits(payload:PhotoHelperPayload,assessment?:{value?:Declu
   const raw = await geminiText(payload);
 
   const parsed = parseJsonLoose(raw);
-  if(assessment)assessment.value=parseDeclutterAssessment((parsed as Record<string,unknown>)?.declutter_assessment);
+  if(assessment){
+    const candidate=(parsed as Record<string,unknown>)?.declutter_assessment;
+    assessment.value=parseDeclutterAssessment(candidate);
+    // 4 of 11 assessments on 2026-11-06 came back as the fixed "needs your
+    // review" fallback. Record WHY the strict parser declined, with no image
+    // bytes and no reason text, so the drift can be seen in the logs.
+    if(assessment.value.confidence===0&&assessment.value.decision==="uncertain"){
+      const shape=candidate&&typeof candidate==="object"&&!Array.isArray(candidate)?candidate as Record<string,unknown>:null;
+      console.error(JSON.stringify({event:"declutter_assessment_fallback",parsed:parsed!==null&&typeof parsed==="object",raw_chars:raw.length,
+        keys:shape?Object.keys(shape).sort():null,decision:shape&&typeof shape.decision==="string"?shape.decision.slice(0,16):null,
+        confidence:shape&&typeof shape.confidence==="number"?shape.confidence:null,
+        reason_chars:shape&&typeof shape.reason==="string"?shape.reason.length:null,
+        targets:shape&&Array.isArray(shape.targets)?shape.targets.map(t=>typeof t==="string"?t.slice(0,32):typeof t).slice(0,8):null}));
+    }
+  }
   const list = Array.isArray((parsed as Record<string, unknown>)?.suggestions)
     ? (parsed as { suggestions: unknown[] }).suggestions
     : Array.isArray(parsed)

@@ -4,7 +4,7 @@ const encode=(source:string)=>`data:application/typescript;base64,${btoa(unescap
 const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
 // Complete structural JPEG geometry fixture, not a decoded/visual quality proof.
 const outputJPEG=(width=2048,height=2048)=>btoa(String.fromCharCode(...[255,216,255,192,0,11,8,height>>8,height&255,width>>8,width&255,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]));
-const OUTPUT=outputJPEG(4096,4096);
+const OUTPUT=outputJPEG(2048,2048);
 type SavedStatusFault="selector"|"key_case"|"judge"|"listing"|null;
 async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|"protocol"|"declutter_prompt"|"recipe"|null=null,actualEvidence=false,statusFault:SavedStatusFault=null){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
@@ -26,11 +26,11 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  if(removeAdmission==="input"){
   const anchor='validatePhotoInputs(body.image_b64,mime,body.mask_b64,\n        String(body.mask_mime??"image/png").split(";")[0].trim().toLowerCase());';
   assert(source.includes(anchor));source=source.replace(anchor,"");
-  // The4K preparation independently validates the same bytes. The compiled
+  // The 2K preparation independently validates the same bytes. The compiled
   // unsafe-admission control must bypass both real input guards, not mistake
   // a still-protected redundant guard removal for an observable vulnerability.
-  const second="genInput = preparePhoto4KInput(genInput);";assert(source.includes(second));
-  source=source.replace(second,'genInput = {...genInput,extra:{...genInput.extra,photo_quality_4k:true,photo_input_token_bound:4096,photo_input_allowance:8192}};');
+  const second="genInput = preparePhoto2KInput(genInput);";assert(source.includes(second));
+  source=source.replace(second,'genInput = {...genInput,extra:{...genInput.extra,photo_quality_2k:true,photo_input_token_bound:4096,photo_input_allowance:8192}};');
  }
  if(removeAdmission==="chain"){
   const anchor="chain = await boundedPhotoChain(funding, chain, genInput);";
@@ -49,7 +49,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
   assert(source.includes(anchor));source=source.replace(anchor,"");
  }
  if(removeAdmission==="quality"){
-  const anchor="else if(normalPhoto4K)assertPhoto4KGeometry(decoded);";assert(source.includes(anchor));source=source.replace(anchor,"");
+  const anchor="else if(normalPhoto2K)assertPhoto2KGeometry(decoded);";assert(source.includes(anchor));source=source.replace(anchor,"");
  }
  if(removeAdmission==="declutter_prompt"){
   const anchor="buildRealEstateDeclutterPrompt(LOCK,REFLECTION_CLAUSE)";assertEquals(source.split(anchor).length-1,1);source=source.replace(anchor,'"Remove all clutter and personal items. Keep decor identical. " + LOCK');
@@ -86,7 +86,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {DECLUTTER_ASSESSMENT_PROTOCOL,DECLUTTER_ASSESSMENT_INSTRUCTION,parseDeclutterAssessment,unavailableDeclutterAssessment} from ${url("./declutter-assessment.ts")};
  import {decodeBase64Bytes} from ${url("../_shared/base64-bytes.ts")};
  import {PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from ${url("./photo-qc-wait.ts")};
- import {preparePhoto4KInput,photo4KChain,assertPhoto4KGeometry,assertPhotoPro4KGeometry} from ${url("./photo-quality.ts")};
+ import {preparePhoto2KInput,photo2KChain,assertPhoto2KGeometry,assertPhotoPro4KGeometry} from ${url("./photo-quality.ts")};
  import {normalPhotoQualityProfile as actualNormalProfile,normalPhotoQualityRoutes as actualNormalRoutes,prepareNormalPhotoPro4KInput,priceNormalPhotoQualityRoute} from ${url("./normal-photo-quality.ts")};
  import {orderSteps} from ${url("../_shared/router.ts")};
  const normalPhotoQualityProfile=(task,masked)=>actualNormalProfile(task,masked,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>{state.normalLookups=(state.normalLookups??0)+1;return{data:{value:state.normalWithdraw&&state.normalLookups>1?{enabled:false}:state.normalProfile??null},error:null};}})})})});
@@ -133,7 +133,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const guardEdit=async()=>{state.charges++;return{orgId:state.org,plan:state.plan??"pro",monthlyKey:"monthly",burstKey:"burst"};},refundEditCharge=async()=>{state.refunds++;};
  const finishEditCredit=async()=>{};
  const adapterFor=()=>({submit:async(_step,input)=>{state.events.push("submit");state.submits++;state.prompts.push(input.prompt);state.inputs.push(structuredClone(input));state.afterSubmit?.();if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/jpeg",result_url:"data:image/jpeg;base64,"+state.output};};
- const submitPreparedGeminiPhoto4K=(step,input,budget)=>{state.providerDeadline=budget.deadline;state.providerSignal=budget.signal;return adapterFor().submit(step,input);};
+ const submitPreparedGeminiPhoto=(step,input,budget)=>{state.providerDeadline=budget.deadline;state.providerSignal=budget.signal;return adapterFor().submit(step,input);};
  const recordRoutedAiCost=async(_db,args)=>{state.costs.push(structuredClone(args));},recordProvenance=async()=>({id:"synthetic-provenance",recorded:true,disclosure:"Synthetic disclosure"});
  const admin={from:(table)=>{let filters=[];const q={select:()=>q,eq:(key,value)=>{filters.push([key,[value]]);return q;},is:(key,value)=>{filters.push([key,[value]]);return q;},in:(key,value)=>{filters.push([key,value]);return q;},limit:async()=>({data:state.journal&&filters.every(([key,values])=>values.includes(state.journal[key]))?[state.journal]:[],error:null}),maybeSingle:async()=>({data:table==="private_ai_outputs"?state.journal:{user_id:state.actor,org_id:state.org,role:state.role},error:null})};return q;},rpc:async(name,args)=>{
  if(name==="library_access"||name==="listing_library_scope"){
@@ -322,7 +322,7 @@ Deno.test("actual staging refuses1K fallback while preserving the surgical promp
   const request=f.request({edit:"stage",style:"rustic",prompt:brief}),body=await request.clone().json();
   const response=await f.run(request);assertEquals(response.status,409,await response.text());
   assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.helperDispatch,0);
-  assertEquals(f.state.inputs[0].extra.photo_quality_4k,true);assert(f.state.prompts[0].includes(JSON.stringify(brief)));
+  assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes(JSON.stringify(brief)));
   assert(f.state.prompts[0].includes("solid slabs solid"));assert(f.state.prompts[0].includes("existing open pergolas open"));
   for(const input of f.state.inputs){assertEquals(input.image_b64,body.image_b64);assertEquals(input.image_url,`data:image/jpeg;base64,${body.image_b64}`);}
  }finally{f.close();}
@@ -364,12 +364,12 @@ Deno.test("actual custom handler accepts all 600 accented characters without tru
  const f=await fixture();try{const response=await f.run(f.request({edit:"custom",prompt}));assertEquals(response.status,200,await response.text());assertEquals(f.state.submits,1);assert(f.state.prompts[0].includes(JSON.stringify(prompt)));}
  finally{f.close();}
 });
-Deno.test("actual custom handler cannot quietly fallback to1K after its prepared4K attempt fails",async()=>{
+Deno.test("actual custom handler cannot quietly fallback to1K after its prepared2K attempt fails",async()=>{
  const f=await fixture();try{f.state.router=true;f.state.primaryFail=true;f.state.routes=[
   {route_id:"primary",provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.custom",unit:"output_image",unit_cents:6.7},
   {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.custom",unit:"output_image",unit_cents:4}];
   const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,409,await response.text());
-  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.inputs[0].extra.photo_quality_4k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
  }finally{f.close();}
 });
 Deno.test("legacy photo polisher clarifies before a paid helper and refuses invented same-category work",async()=>{
@@ -520,20 +520,20 @@ Deno.test("actual handler still admits safe glass, wood, painted furniture and f
  }finally{f.close();}}
 });
 
-Deno.test("actual normal4K handler retains wrong-size evidence while withholding1K/2K delivery and keeping incurred cost",async()=>{
- for(const [width,height,valid]of [[4096,4096,true],[3584,4800,true],[1792,2390,false],[896,1195,false]]as const){const f=await fixture();try{
+Deno.test("actual normal2K handler retains wrong-size evidence while withholding1K/4K delivery and keeping incurred cost",async()=>{
+ for(const [width,height,valid]of [[2048,2048,true],[1792,2390,true],[4096,4096,false],[896,1195,false]]as const){const f=await fixture();try{
   f.state.output=outputJPEG(width,height);
   const response=await f.run(f.request({edit:"stage",style:"modern"}));assertEquals(response.status,valid?200:409,await response.text());
   assertEquals(f.state.holds,1);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);
-  assertEquals(f.state.costs[0].step.params.image_size,"4K");assertEquals(f.state.costs[0].step.unit_cents,16.7584);
-  assertEquals(f.state.refunds,0,"A received supplier image cannot erase incurred liability");assertEquals(f.state.costs[0].meta.owner_quality_comparison,false);assertEquals(f.state.costs[0].meta.image_size,"4K");assertEquals(f.state.costs[0].meta.cost_basis,"complete_input_4096_text_2520_image_bound");
-  const hold=f.state.holdArguments[0].p_hold_cents;assert(hold>=16.7584&&hold-16.7584<0.00021,"Complete4K liability with conservative four-decimal rounding");
+  assertEquals(f.state.costs[0].step.params.image_size,"2K");assertEquals(f.state.costs[0].step.unit_cents,11.7184);
+  assertEquals(f.state.refunds,0,"A received supplier image cannot erase incurred liability");assertEquals(f.state.costs[0].meta.owner_quality_comparison,false);assertEquals(f.state.costs[0].meta.image_size,"2K");assertEquals(f.state.costs[0].meta.cost_basis,"complete_input_4096_text_1680_image_bound");
+  const hold=f.state.holdArguments[0].p_hold_cents;assert(hold>=11.7184&&hold-11.7184<0.00021,"Complete2K liability with conservative four-decimal rounding");
   assertEquals(f.state.puts,1,"Valid still bytes are retained privately even when supplier geometry is wrong");assertEquals(f.state.completes,1);
  }finally{f.close();}}
 });
-Deno.test("compiled missing normal4K output floor fails unchanged actual-handler no-delivery oracle",async()=>{
+Deno.test("compiled missing normal2K output floor fails unchanged actual-handler no-delivery oracle",async()=>{
  const oracle=async(remove:boolean)=>{const f=await fixture(false,remove?"quality":null);try{
-  f.state.output=outputJPEG(1792,2390);const response=await f.run(f.request({edit:"stage",style:"modern"}));
+  f.state.output=outputJPEG(896,1195);const response=await f.run(f.request({edit:"stage",style:"modern"}));
   assertEquals(response.status,409,"Undersized supplier output reached delivery");assertEquals(f.state.puts,1);assertEquals(f.state.costs.length,1);
  }finally{f.close();}};
  await oracle(false);await assertRejects(()=>oracle(true),AssertionError,"Undersized supplier output reached delivery");
@@ -560,7 +560,7 @@ Deno.test("masked Fill actual handler records rounded source megapixels once and
  await oracle(false);
  await assertRejects(()=>oracle(true),AssertionError,"must not settle as a5-cent image");
 });
-const sizedOutputJPEG=(size:number,width=3584,height=4780)=>{
+const sizedOutputJPEG=(size:number,width=2048,height=2048)=>{
  const frame=Uint8Array.from(atob(outputJPEG(width,height)),c=>c.charCodeAt(0)),bytes=new Uint8Array(size);
  bytes.set(frame.subarray(0,2));let offset=2,left=size-frame.length;
  while(left){let length=Math.min(65000,left);if(left-length>0&&left-length<4)length-=4;bytes.set([255,224,(length-2)>>8,(length-2)&255],offset);offset+=length;left-=length;}
@@ -727,29 +727,28 @@ Deno.test("actual owner Pro4K rejects Flash-only extreme output after recording 
   const response=await f.run(f.request({edit:"stage",style:"contemporary"}));assert(response.status!==200);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.quality.evidence.state,"hold");assertEquals(f.state.quality.evidence.failure.phase,"photo_output_geometry");
  }finally{f.close();}
 });
-Deno.test("ordinary nonadmin Starter Stage/Declutter use isolated Pro4K without sponsor or owner grant and preserve replay",async()=>{
+Deno.test("ordinary Starter Stage/Declutter use Flash2K even while legacy Pro4K profile remains enabled",async()=>{
  for(const edit of["stage","declutter"]){const f=await fixture(false,null,true);try{
-  f.state.plan="starter";f.state.qa=false;f.state.proAdmin=false;f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage","photo.declutter"]};f.state.output=outputJPEG(3584,4800);
+  f.state.plan="starter";f.state.qa=false;f.state.proAdmin=false;f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage","photo.declutter"]};f.state.output=outputJPEG(2048,2048);
   const request=()=>f.request({edit,...(edit==="stage"?{style:"contemporary"}:{})});
   const response=await f.run(request());assertEquals(response.status,409);assertEquals((await response.json()).code,"photo_quality_pending");
-  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.costs[0].step.task,"photo."+edit);assertEquals(f.state.costs[0].step.route_id,"normal-quality-route");assertEquals(f.state.costs[0].step.model,"gemini-3-pro-image");
-  assertEquals(f.state.costs[0].meta.owner_quality_comparison,false);assertEquals(f.state.costs[0].meta.quality_profile,"gemini-pro-4k-preservation-v1");assertEquals(f.state.costs[0].meta.cost_basis,"complete_input_4096_text_2000_pro_image_bound");
-  assertEquals(f.state.inputs[0].extra.owner_photo_pro_4k,undefined);assertEquals(f.state.inputs[0].extra.photo_preservation_profile,"gemini-pro-4k-preservation-v1");
-  assertEquals(f.state.holdArguments[0].p_tariff_version,"photo-preservation-pro4k-standard-20261015");assertEquals(f.state.quality.evidence.generation_model,"gemini-3-pro-image");
-  f.state.normalProfile={enabled:false};assertEquals((await f.run(request())).status,409);assertEquals(f.state.submits,1,"A pending old operation cannot switch model or regenerate after policy changes");
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.costs[0].step.task,"photo."+edit);assertEquals(f.state.costs[0].step.model,"gemini-3.1-flash-image");assertEquals(f.state.costs[0].step.params.image_size,"2K");
+  assertEquals(f.state.costs[0].meta.owner_quality_comparison,false);assertEquals(f.state.costs[0].meta.quality_profile,undefined);assertEquals(f.state.costs[0].meta.cost_basis,"complete_input_4096_text_1680_image_bound");
+  assertEquals(f.state.inputs[0].extra.owner_photo_pro_4k,undefined);assertEquals(f.state.inputs[0].extra.photo_preservation_profile,undefined);assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);
+  assertEquals(f.state.quality.evidence.generation_model,"gemini-3.1-flash-image");
+  f.state.normalProfile={enabled:false};assertEquals((await f.run(request())).status,409);assertEquals(f.state.submits,1,"A pending operation cannot regenerate after policy changes");
  }finally{f.close();}}
 });
-Deno.test("ordinary disabled profile leaves normal Flash path; enabled missing or withdrawn Pro never sends cheap fallback",async()=>{
+Deno.test("ordinary Flash2K path is independent of withdrawn or missing legacy Pro4K route",async()=>{
  for(const kind of["off","missing","withdrawn"]){const f=await fixture(false,null,true);try{
   f.state.normalProfile={enabled:kind!=="off",profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage","photo.declutter"]};if(kind==="missing")f.state.normalRows=[];if(kind==="withdrawn")f.state.normalWithdraw=true;
   const response=await f.run(f.request({edit:"stage",style:"modern"}));assert(response.status!==200);
-  assertEquals(f.state.submits,kind==="off"?1:0);assertEquals(f.state.costs.length,kind==="off"?1:0);
-  if(kind==="off")assertEquals(f.state.costs[0].step.model,"gemini-3.1-flash-image");
-  else assertEquals(f.state.refunds,1,"Pre-dispatch refusal returns the feature meter; it does not buy a fallback");
+  assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);
+  assertEquals(f.state.costs[0].step.model,"gemini-3.1-flash-image");assertEquals(f.state.costs[0].step.params.image_size,"2K");
  }finally{f.close();}}
 });
-Deno.test("ordinary Pro geometry guard retains paid Flash-only extreme privately and refuses delivery",async()=>{
- const f=await fixture(false,null,true);try{f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage","photo.declutter"]};f.state.output=outputJPEG(2048,8192);
+Deno.test("ordinary 2K geometry guard retains paid 4K result privately and refuses delivery",async()=>{
+ const f=await fixture(false,null,true);try{f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage","photo.declutter"]};f.state.output=outputJPEG(4096,4096);
   assertEquals((await f.run(f.request({edit:"stage",style:"modern"}))).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.quality.evidence.failure.phase,"photo_output_geometry");assertEquals(f.state.quality.evidence.state,"hold");
  }finally{f.close();}
 });
@@ -760,10 +759,10 @@ Deno.test("customer body cannot select Pro, forge profile authority or change un
   assertEquals(f.state.submits,1);assertEquals(f.state.costs[0].step.model,"gemini-3.1-flash-image");assertEquals(f.state.inputs[0].extra.photo_preservation_profile,undefined);assertEquals(f.state.inputs[0].extra.owner_photo_pro_4k,undefined);
  }finally{f.close();}}
 });
-Deno.test("ordinary Stage-only policy does not activate Declutter Pro",async()=>{
+Deno.test("ordinary Stage-only legacy policy activates neither Stage nor Declutter Pro",async()=>{
  for(const edit of["stage","declutter"]){const f=await fixture(false,null,true);try{
-  f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage"]};f.state.output=outputJPEG(3584,4800);
-  await f.run(f.request({edit,...(edit==="stage"?{style:"modern"}:{})}));assertEquals(f.state.submits,1);assertEquals(f.state.costs[0].step.model,edit==="stage"?"gemini-3-pro-image":"gemini-3.1-flash-image");
+  f.state.normalProfile={enabled:true,profile:"gemini-pro-4k-preservation-v1",tasks:["photo.stage"]};f.state.output=outputJPEG(2048,2048);
+  await f.run(f.request({edit,...(edit==="stage"?{style:"modern"}:{})}));assertEquals(f.state.submits,1);assertEquals(f.state.costs[0].step.model,"gemini-3.1-flash-image");
  }finally{f.close();}}
 });
 async function removalPromptHandlerOracle(remove=false){

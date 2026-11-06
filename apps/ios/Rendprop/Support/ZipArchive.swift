@@ -14,7 +14,7 @@ enum ZipArchive {
     struct Entry: Sendable {
         /// The name inside the archive: a plain file name or `folder/name`.
         let name: String
-        /// The bytes to store, read twice (checksum, then copy).
+        /// The bytes to store, read once: checksummed as they are copied.
         let url: URL
     }
 
@@ -48,8 +48,6 @@ enum ZipArchive {
         var centralDirectory = Data()
         var offset: UInt64 = 0
         for entry in entries {
-            let (crc, size) = try checksum(of: entry.url)
-            guard size <= maximumBytes else { throw Failure(message: "\(entry.name) is too large for a ZIP archive.") }
             let name = Data(entry.name.utf8)
             var local = Data(capacity: 30 + name.count)
             local.append(le32(0x0403_4b50))          // local file header
@@ -58,14 +56,21 @@ enum ZipArchive {
             local.append(le16(0))                    // method: store
             local.append(le16(dosTime))
             local.append(le16(dosDate))
-            local.append(le32(crc))
-            local.append(le32(UInt32(size)))         // compressed size (= stored)
-            local.append(le32(UInt32(size)))         // uncompressed size
+            local.append(le32(0))                    // CRC, patched after the copy
+            local.append(le32(0))                    // compressed size (= stored), patched
+            local.append(le32(0))                    // uncompressed size, patched
             local.append(le16(UInt16(name.count)))
             local.append(le16(0))                    // no extra field
             local.append(name)
             try output.write(contentsOf: local)
-            try copy(entry.url, to: output, expectedSize: size, expectedCRC: crc, name: entry.name)
+            // One read per file: the bytes are checksummed as they are copied,
+            // then the header is patched in place. A listing package is often
+            // a gigabyte or more, and reading it twice was half the ZIP time.
+            let (crc, size) = try copy(entry.url, to: output, name: entry.name)
+            let resume = try output.offset()
+            try output.seek(toOffset: offset + 14)
+            try output.write(contentsOf: le32(crc) + le32(UInt32(size)) + le32(UInt32(size)))
+            try output.seek(toOffset: resume)
             var record = Data(capacity: 46 + name.count)
             record.append(le32(0x0201_4b50))         // central directory header
             record.append(le16(20))                  // version made by: 2.0, MS-DOS attributes
@@ -127,34 +132,21 @@ enum ZipArchive {
 
     // MARK: - Bytes
 
-    private static func checksum(of url: URL) throws -> (crc: UInt32, size: UInt64) {
-        let input = try FileHandle(forReadingFrom: url)
-        defer { try? input.close() }
-        var crc: UInt32 = 0xFFFF_FFFF
-        var size: UInt64 = 0
-        while let chunk = try input.read(upToCount: readChunk), !chunk.isEmpty {
-            crc = update(crc: crc, with: chunk)
-            size += UInt64(chunk.count)
-        }
-        return (crc ^ 0xFFFF_FFFF, size)
-    }
-
-    /// Second pass: copy the bytes and re-check them, so a file that changed
-    /// between the checksum and the copy fails instead of shipping corrupt.
-    private static func copy(_ url: URL, to output: FileHandle, expectedSize: UInt64, expectedCRC: UInt32, name: String) throws {
+    /// Copies the file into the archive in one pass, returning the CRC and
+    /// size of exactly the bytes written, so the header always describes the
+    /// bytes that follow it even if the source changes underneath.
+    private static func copy(_ url: URL, to output: FileHandle, name: String) throws -> (crc: UInt32, size: UInt64) {
         let input = try FileHandle(forReadingFrom: url)
         defer { try? input.close() }
         var crc: UInt32 = 0xFFFF_FFFF
         var size: UInt64 = 0
         while let chunk = try input.read(upToCount: readChunk), !chunk.isEmpty {
             size += UInt64(chunk.count)
-            guard size <= expectedSize else { throw Failure(message: "\(name) changed while it was being packaged. Try again.") }
+            guard size <= maximumBytes else { throw Failure(message: "\(name) is too large for a ZIP archive.") }
             crc = update(crc: crc, with: chunk)
             try output.write(contentsOf: chunk)
         }
-        guard size == expectedSize, crc ^ 0xFFFF_FFFF == expectedCRC else {
-            throw Failure(message: "\(name) changed while it was being packaged. Try again.")
-        }
+        return (crc ^ 0xFFFF_FFFF, size)
     }
 
     private static let crcTable: [UInt32] = (0..<256).map { index -> UInt32 in

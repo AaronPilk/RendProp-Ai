@@ -64,7 +64,15 @@ final class PhotoEditService {
         let prior = p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent
         let requested = try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
                                                            priorFile: prior, directory: directory)
-        let context = try PhotoVersionHistory.editContext(for: requested.id, edit: edit, directory: directory)
+        guard requested.imageFile == p.enhancedURL.lastPathComponent else {
+            throw PhotoVersionHistory.Failure.changedVersion
+        }
+        // An Original tile remains available for comparison, but cannot become
+        // the provider input when this family has a verified enhanced capture.
+        let editSource = requested.isRetainedOriginalSource
+            ? try PhotoVersionHistory.enhancedCaptureForEditing(id: requested.id, directory: directory)
+            : requested
+        let context = try PhotoVersionHistory.editContext(for: editSource.id, edit: edit, directory: directory)
         let parent = context.parent, sourceVersion = context.source
         guard let b64 = await AIImagePrep.jpegBase64(at: directory.appendingPathComponent(sourceVersion.imageFile),
                                                    maxDimension: 2048, quality: 0.9,
@@ -127,7 +135,13 @@ final class PhotoEditService {
             if let failure = error as? APIError,
                failure.isValidation || failure.isQuota || failure.code == "photo_quality_refused"
                     || (failure.status == 422 && failure.code == "photo_quality_closed"),
-               let pending { try? PhotoPendingEdit.finish(pending) }
+               let pending {
+                // A terminal result is safe to move past only after its local
+                // request journal is removed. A failed removal leaves recovery
+                // state uncertain, so the batch must stop before another edit.
+                do { try PhotoPendingEdit.finish(pending) }
+                catch { throw PhotoPendingEdit.Failure.unavailable }
+            }
             throw error
         }
         // Sent work may finish after consent is withdrawn. Preserve its exact
@@ -140,10 +154,12 @@ final class PhotoEditService {
     private func requireDeclutterApproval(_ approval: DeclutterGenerationApproval, source: PhotoVersionHistory.Version,
                                           prepared: String, edit: String) async throws {
         try requireUnsentWork()
-        guard edit == "declutter", source.isRetainedOriginalSource, let owner, let workspace,
+        let expected = try PhotoVersionHistory.enhancedCaptureForEditing(id: source.id, directory: EnhancedPhoto.directory(for: listing.id))
+        guard edit == "declutter", expected.id == source.id && expected.imageFile == source.imageFile,
+              let owner, let workspace,
               let bytes = Data(base64Encoded: prepared) else { throw PhotoVersionHistory.Failure.reviewRequired }
         let url = EnhancedPhoto.directory(for: listing.id).appendingPathComponent(source.imageFile)
-        let original = try await Task.detached(priority: .userInitiated) {
+        let sourceHash = try await Task.detached(priority: .userInitiated) {
             let info = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
             guard info.isRegularFile == true, info.isSymbolicLink != true, let count = info.fileSize,
                   count > 0, count <= 80_000_000 else { throw PhotoVersionHistory.Failure.missingImage }
@@ -151,7 +167,7 @@ final class PhotoEditService {
         }.value
         try requireUnsentWork()
         guard approval.permits(actor: owner, library: workspace, listing: listing.id, sourceVersionID: source.id,
-            originalSHA256: original, preparedSHA256: DeclutterGenerationApproval.sha256(bytes),
+            originalSHA256: sourceHash, preparedSHA256: DeclutterGenerationApproval.sha256(bytes),
             consentGranted: AIConsent.shared.isGranted, consentRevision: AIConsent.shared.revocationRevision) else {
             throw PhotoVersionHistory.Failure.reviewRequired
         }
@@ -161,7 +177,7 @@ final class PhotoEditService {
     /// written before the original POST reached the service.
     func recover(_ selected: PhotoPendingEdit.Saved) async throws {
         try requireIdentity()
-        guard !Self.recoveryInProgress, PhotoWorkQueue.shared.job?.running != true else { throw PhotoPendingEdit.Failure.unavailable }
+        guard !Self.recoveryInProgress, !PhotoWorkQueue.shared.hasRunningJobs else { throw PhotoPendingEdit.Failure.unavailable }
         Self.recoveryInProgress = true
         defer { Self.recoveryInProgress = false }
         guard let owner, let workspace, selected.identity.actor == owner,
@@ -267,24 +283,34 @@ final class PhotoEditService {
         if let declutterApprovals {
             guard edit == "declutter", photos.allSatisfy({ declutterApprovals[$0.id] != nil }) else { return false }
         }
+        // Reserve the entire family, not just the currently generating version.
+        // An original and its latest edit have different IDs but share one
+        // current-version parent and one retained-operation journal.
+        let directory = EnhancedPhoto.directory(for: listing.id)
+        guard let history = try? PhotoVersionHistory.load(directory: directory) else { return false }
+        let photoKeys = photos.map { history.versions[$0.id]?.familyID ?? $0.id }
         var background: UIBackgroundTaskIdentifier = .invalid
+        var startedJobID: UUID?
         let queue = PhotoWorkQueue.shared
         let byID = Dictionary(photos.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let started = queue.start(listingID: listing.id, title: title, photoIDs: photos.map(\.id),
+        let started = queue.start(listingID: listing.id, title: title, photoIDs: photos.map(\.id), photoKeys: photoKeys,
             identityIsCurrent: { self.identityIsCurrent }, stopOnError: { error in
                 Task { @MainActor in Analytics.trackAIFailure("photo_edit", step: edit, error: error) }
                 let failure = AIFailure(error)
-                // A busy or held saved review keeps its exact paid request.
+                // An unresolved saved review keeps its exact paid request.
                 // Stop unsent photos instead of buying more pending edits.
+                // A terminal photo_quality_closed response is different: the
+                // server has closed that one photo's review, and edit() has
+                // released its local request slot. Keep working on the other
+                // selected photos without retrying this failed one.
                 let savedReview = AIFailure.requiresSavedPhotoCheck(error)
-                    || (error as? APIError)?.code == "photo_quality_closed"
                 // A refused or unreachable generation service fails every photo
                 // the same way; stop instead of uploading N more to fail N times.
                 return savedReview || failure.isQuota || failure.isUnauthorized || failure.isServiceUnavailable || failure.isTrialCapacityUnavailable
                     || (error as? APIError)?.isPhotoPromptRefusal == true
             }, process: { id in
                 guard let photo = byID[id] else { throw PhotoVersionHistory.Failure.missingImage }
-                guard let jobID = queue.visibleJob?.id else { throw CloudSyncError.identityChanged }
+                guard let jobID = PhotoWorkQueue.executingJobID else { throw CloudSyncError.identityChanged }
                 try await self.edit(photo, edit: edit, style: style, prompt: prompt, batch: photos.count > 1,
                                     stagingReferenceID: stagingReferenceID, declutterApproval: declutterApprovals?[id],
                                     declutterCredit: declutterCredit, stageCredit: stageCredit, progress: { phase in
@@ -296,10 +322,11 @@ final class PhotoEditService {
                 self.notify(result)
             })
         if started {
+            startedJobID = queue.jobs.last?.id
             IdleTimer.hold()
             background = UIApplication.shared.beginBackgroundTask(withName: "rendprop.photo-edit") {
                 Task { @MainActor in
-                    queue.cancel()
+                    if let startedJobID { queue.cancel(jobID: startedJobID) }
                     if background != .invalid { UIApplication.shared.endBackgroundTask(background); background = .invalid }
                 }
             }

@@ -152,6 +152,18 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     # Exact-anchor, md5-pinned rewrite of subscription_trial_cost_guard (admitted
     # Declutter assessments during a funded trial); a second application refuses.
     "20261029210132_trial_declutter_assessment.sql",
+    # These exact accepted-photo publication rewrites replace pinned function
+    # predecessors once. Both fresh databases apply them; their historical
+    # second application must refuse before any replacement is attempted.
+    "20261105223709_photo_publication_listing_bound_accepted_20261105.sql",
+    "20261105224531_photo_publication_bound_output_ledger_20261105.sql",
+    # Applied live under Supabase-assigned versions, these pinned function
+    # rewrites/renames are one-shot at their historical schema point.
+    "20261106222156_listing_access_transaction_memo_20261106.sql",
+    "20261106224239_library_owner_transaction_memo_20261106.sql",
+    "20261106224718_access_chain_plpgsql_plan_cache_20261106.sql",
+    "20261106230302_workspace_directory_candidate_orgs_20261107.sql",
+    "20261106231733_photo_quality_advisory_judge_20261107.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -218,6 +230,13 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261027234243_paid_media_budget_cap.sql": ("c6b2f52621a30231aaa716dda46733e7ec1d48d085fbd723122bd56be3e96c38", 'Review paid media budget cap already installed'),
     "20261028010346_reviewer_sandbox_shared_credit_budget.sql": ("e48f600fa411ca5e6a1bd676a1c90554c7e42619a53f65bbbc362feaa336601c", "Review changed paid primary credit authority"),
     "20261029210132_trial_declutter_assessment.sql": ("946fde58e49ae89113a1777ce18dead10a93fa5eb07ac4f0ec6ad9bab7189bfa", "trial declutter assessment: subscription_trial_cost_guard() changed"),
+    "20261105223709_photo_publication_listing_bound_accepted_20261105.sql": ("1c64912297663ddaf2dd835de06c0497f662afbc907d72cb18423fe7ff0707a6", "Review changed accepted-photo publication authority: public.photo_publication_receipt_shape(jsonb)"),
+    "20261105224531_photo_publication_bound_output_ledger_20261105.sql": ("f27960b88586110dfca8becf46dff933bc6639508d436f0e20b6421af0f04412", "Review changed listing-bound publication source before output custody repair"),
+    "20261106222156_listing_access_transaction_memo_20261106.sql": ("d45beeaaa85104ba7074594850dce4ae838615dc72b829d7dc7783b3b68269fd", "library_content_access changed since 2026-11-06; review the memo before applying"),
+    "20261106224239_library_owner_transaction_memo_20261106.sql": ("5c814b6628248e4e83076e1eea2ba05597d5e102a5eb2408691461c33947b482", "library_team_owner changed since 2026-11-06; review the memo before applying"),
+    "20261106224718_access_chain_plpgsql_plan_cache_20261106.sql": ("e6d3d67c91154c015a7b92b02637fd737d9b77459152742e2ccaf3cf7219f3fd", "changed since 2026-11-06; review before converting"),
+    "20261106230302_workspace_directory_candidate_orgs_20261107.sql": ("d2d72dd1028546161cad47fa338323fc66d8e956e5116bf19134f0a39dc99a62", "workspace_directory changed since 2026-11-06; review the candidate-org rewrite before applying"),
+    "20261106231733_photo_quality_advisory_judge_20261107.sql": ("1bb3ed4fce70a51a2ba8909311994ecb8079968b806067624969eff7f766ec7f", "photo_quality_finish changed since 2026-11-06; review the advisory-judge rewrite before applying"),
 }
 
 
@@ -230,6 +249,16 @@ APPLIED_VERSION_RECONCILIATIONS = {
         "20261028180000", "fa511e40ac5da499def68957f9ecf4d5058efb4b746f42ef402771ed4737e70d"),
     "20261028213014_trial_card_backed_authority.sql": (
         "20261028211732", "3d5d2b8a77cc08f236bdedc844bf3ee1a587df5157ec9aed95313a2f4e42ea3d"),
+    "20261106222156_listing_access_transaction_memo_20261106.sql": (
+        "20261106230000", "d45beeaaa85104ba7074594850dce4ae838615dc72b829d7dc7783b3b68269fd"),
+    "20261106224239_library_owner_transaction_memo_20261106.sql": (
+        "20261106233000", "5c814b6628248e4e83076e1eea2ba05597d5e102a5eb2408691461c33947b482"),
+    "20261106224718_access_chain_plpgsql_plan_cache_20261106.sql": (
+        "20261106234500", "e6d3d67c91154c015a7b92b02637fd737d9b77459152742e2ccaf3cf7219f3fd"),
+    "20261106230302_workspace_directory_candidate_orgs_20261107.sql": (
+        "20261107001500", "d2d72dd1028546161cad47fa338323fc66d8e956e5116bf19134f0a39dc99a62"),
+    "20261106231733_photo_quality_advisory_judge_20261107.sql": (
+        "20261107004500", "1bb3ed4fce70a51a2ba8909311994ecb8079968b806067624969eff7f766ec7f"),
 }
 
 
@@ -580,7 +609,10 @@ def main():
     finally:
         try:
             if started or (data / "postmaster.pid").exists():
-                run("stop", [bins["pg_ctl"], "-D", str(data), "-w", "-t", "30", "-m", "fast", "stop"])
+                # External audit volumes can take longer than 30 seconds to
+                # flush a full replay even after the server has accepted the
+                # shutdown request. This is cleanup, not a test-query budget.
+                run("stop", [bins["pg_ctl"], "-D", str(data), "-w", "-t", "120", "-m", "fast", "stop"])
             receipt["clusterStopped"] = not (data / "postmaster.pid").exists()
             require(receipt["clusterStopped"], "Owned cluster still has a PID file after stop")
         except BaseException as error:

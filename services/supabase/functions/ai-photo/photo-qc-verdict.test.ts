@@ -19,20 +19,25 @@ Deno.test("photo parse reasons are closed and never contain private provider tex
  const cases:[any,string][]=[[null,"input_type"],["x".repeat(16385),"input_length"],["PRIVATE malformed answer","invalid_json"],["{}","schema"],[JSON.stringify({...good(),findings:[{...finding,source:""}]}),"findings"],[JSON.stringify({...good(),findings:Array(4).fill({...finding,source:"é".repeat(200),output:"é".repeat(200)})}),"verdict_size"],[JSON.stringify(good()),"verified"]];
  for(const[raw,reason]of cases){const diagnostic=parsePhotoQualityWithDiagnostic(raw);assertEquals(diagnostic.reason,reason);assert((PHOTO_QC_PARSE_REASONS as readonly string[]).includes(diagnostic.reason));assertEquals(diagnostic.verdict,parsePhotoQuality(raw));if(reason!=="verified")assertEquals(diagnostic.verdict.action,"hold");assert(!JSON.stringify(diagnostic).includes("PRIVATE"));}
 });
-Deno.test("photo QC accepts only the complete exact-schema threshold decision",()=>{
+Deno.test("photo QC delivers every parsed verdict and keeps its scores and findings for disclosure (advisory judge, 6 Nov 2026)",()=>{
  assertEquals(parsed(good()).action,"accept");assertEquals(parsePhotoQuality("\x60\x60\x60json\n"+JSON.stringify(good())+"\n\x60\x60\x60").action,"accept");
- for(const axis of PHOTO_QC_AXES){const data=good();data.preservation[axis]=94;assertEquals(parsed(data).action,"hold");}
- for(const change of [{confidence:.8499},{artifacts:89},{edit_quality:79},{verdict:"unknown"},{action:"hold"},{findings:[{category:"openings",region:"tr",source:"Covered opening",output:"Clear glazing with a newly visible view",certainty:"confirmed"}]}])assertEquals(parsed({...good(),...change}).action,"hold");
+ for(const axis of PHOTO_QC_AXES){const data=good();data.preservation[axis]=94;assertEquals(parsed(data).action,"accept");assertEquals(parsed(data).preservation[axis],94);}
+ const finding={category:"openings",region:"tr",source:"Covered opening",output:"Clear glazing with a newly visible view",certainty:"confirmed"};
+ for(const change of [{confidence:.8499},{artifacts:89},{edit_quality:79},{verdict:"unknown"},{action:"hold"},{findings:[finding]}]){
+  const verdict=parsed({...good(),...change});
+  assertEquals(verdict.action,"accept");
+  // The judge's own words travel with the edit: nothing is normalized away.
+  for(const [key,value] of Object.entries(change))if(key!=="action")assertEquals(JSON.stringify((verdict as unknown as Record<string,unknown>)[key]),JSON.stringify(value));
+ }
 });
-Deno.test("photo QC distinguishes confirmed fixed-feature refusal from uncertain coverings/exposure",()=>{
+Deno.test("photo QC confirmed fixed-feature findings are delivered with the finding recorded, never silently",()=>{
  // Schema fixtures only; no vision provider has judged any image here.
  const finding={category:"openings",region:"tl",source:"The rear opening appears opaque/covered.",output:"It appears clear/glazed with a visible view.",certainty:"confirmed"};
  const fail={...good(),verdict:"fail",action:"refuse",confidence:.93,preservation:{...good().preservation,openings:35},findings:[finding],reason:"The visible rear-opening appearance changed."};
- assertEquals(parsed(fail).action,"refuse");
- assertEquals(parsed({...fail,findings:[{...finding,certainty:"uncertain"}]}).action,"hold");
- assertEquals(parsed({...fail,confidence:.84}).action,"hold");
- assertEquals(parsed({...fail,verdict:"unknown"}).action,"hold");
- assertEquals(parsed({...good(),verdict:"fail",action:"refuse",artifacts:55,reason:"The candidate has severe rendering artifacts."}).action,"refuse");
+ const delivered=parsed(fail);
+ assertEquals(delivered.action,"accept");assertEquals(delivered.verdict,"fail");assertEquals(delivered.findings,[finding]);assertEquals(delivered.preservation.openings,35);
+ assertEquals(parsed({...fail,findings:[{...finding,certainty:"uncertain"}]}).action,"accept");
+ assertEquals(parsed({...good(),verdict:"fail",action:"refuse",artifacts:55,reason:"The candidate has severe rendering artifacts."}).action,"accept");
 });
 Deno.test("photo QC malformed, nonfinite, numeric-string and unknown schema evidence never passes",()=>{
  for(const raw of ["", "prefix "+JSON.stringify(good()),"{}",JSON.stringify(good()).replace('"confidence":0.85','"confidence":1e999')])assertEquals(parsePhotoQuality(raw).action,"hold");
@@ -58,13 +63,14 @@ Deno.test("photo rubric permits movable changes and exposure while protecting fi
  assertThrows(()=>photoQualityRubric({edit:"custom",instruction:"x".repeat(601)}));
 });
 const encoded=(source:string)=>"data:application/typescript;base64,"+btoa(unescape(encodeURIComponent(source)));
-Deno.test("compiled dropped findings/axis gates fail the unchanged release oracle",async()=>{
+Deno.test("compiled parser that accepts unparsable or out-of-range judge answers fails the release oracle",async()=>{
  const source=await Deno.readTextFile(new URL("./photo-qc-verdict.ts",import.meta.url));
  const cases=[
-  {anchor:"&&parsed.findings.length===0",replacement:"",bad:{...good(),findings:[{category:"fixtures",region:"whole",source:"No shelf",output:"Added mounted shelf",certainty:"confirmed"}]}},
-  {anchor:"parsed.preservation[axis]>=95",replacement:"parsed.preservation[axis]>=0",bad:{...good(),preservation:{...good().preservation,openings:20}}},
+  {anchor:'let data:unknown;try{data=JSON.parse(text);}catch{return invalid("invalid_json");}',replacement:'let data:unknown;try{data=JSON.parse(text);}catch{data=good();}',raw:"PRIVATE malformed answer"},
+  {anchor:"||typeof data.confidence!==\"number\"||!Number.isFinite(data.confidence)||data.confidence<0||data.confidence>1",replacement:"",raw:JSON.stringify({...good(),confidence:2})},
  ];
- for(const control of cases){assertEquals(source.split(control.anchor).length-1,1);const mutant=await import(encoded(source.replace(control.anchor,control.replacement)));
-  await assertRejects(async()=>assertEquals(mutant.parsePhotoQuality(JSON.stringify(control.bad)).action,"hold"),AssertionError);
+ for(const control of cases){assertEquals(source.split(control.anchor).length-1,1,control.anchor);
+  const mutant=await import(encoded("const good=()=>("+JSON.stringify(good())+");\n"+source.replace(control.anchor,control.replacement)));
+  await assertRejects(async()=>assertEquals(mutant.parsePhotoQuality(control.raw).action,"hold"),AssertionError);
  }
 });

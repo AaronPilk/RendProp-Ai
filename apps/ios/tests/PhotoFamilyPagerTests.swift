@@ -1,5 +1,10 @@
 import Foundation
-struct EnhancedPhoto: Equatable { let id: String; let originalURL: URL; let enhancedURL: URL }
+struct EnhancedPhoto: Equatable {
+    let id: String; let originalURL: URL; let enhancedURL: URL
+    var savedVersion: PhotoVersionHistory.Version? {
+        try? PhotoVersionHistory.load(directory: enhancedURL.deletingLastPathComponent()).versions[id]
+    }
+}
 struct Listing { let id: UUID; var cloudUnavailable: Bool? = nil }
 @MainActor final class AppModel { var listings: [Listing] = [] }
 @MainActor final class AuthStore { static let shared = AuthStore(); var userID: String? = "owner"; var syncSessionRevision = 1 }
@@ -7,7 +12,12 @@ struct Listing { let id: UUID; var cloudUnavailable: Bool? = nil }
 @MainActor final class FeatureSessionAction { var isWaiting = false; func cancel() { isWaiting = false } }
 @MainActor final class PhotoDeclutterReviewModel { func cancel() {} }
 @MainActor final class PhotoWorkQueue {
-    static let shared = PhotoWorkQueue(); struct Job { var running = true }; var visibleJob: Job?
+    static let shared = PhotoWorkQueue()
+    struct Job { var running = true; var listingID = UUID(); var photoKeys: Set<String> = [] }
+    var visibleJob: Job?
+    func isPhotoBusy(listingID: UUID, key: String) -> Bool {
+        visibleJob.map { $0.running && $0.listingID == listingID && $0.photoKeys.contains(key) } == true
+    }
 }
 __HELPER__
 __CONTEXT__
@@ -68,7 +78,8 @@ __METHODS__
         check(h.enhanced == nil && h.original == nil && h.imageContext == nil && !h.selectedForListing, "family switch clears stale pixels and selection display before decode")
         check(!h.requestedCoverForViewed, "cover intent never follows navigation into another family")
         h.imageContext = NativeMediaExportContext(); h.openSinglePhotoEdit()
-        check(h.editOriginal?.id == "room-2-original", "edit action after navigation targets only displayed family Original")
+        check(h.editOriginal?.id == "room-2" && h.editOriginal?.enhancedURL.lastPathComponent == "enh-room-2.jpg",
+              "edit action after navigation targets only the displayed family's enhanced capture")
         let inFlight = h.viewed.id; h.movePhotoFamily(1)
         check(h.viewed.id == inFlight, "pending edit context fences family navigation")
         h.clearSinglePhotoEdit(); h.chooseVersion(staged); h.imageContext = NativeMediaExportContext(); h.movePhotoFamily(1)

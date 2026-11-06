@@ -165,7 +165,7 @@ async function structuredContractOracle(runner=continuePhotoQuality){
   assertEquals(wire.output_config,{effort:"low",format:PHOTO_QC_OUTPUT_FORMAT});assertEquals(wire.max_tokens,4096);assertEquals(wire.messages[0].content.length,20);
   const files=photoDerivatives(ready),rubric=photoJudgeRubric({edit:"stage",style:"modern",instruction:""}),labels=files.map(file=>`${file.role.toUpperCase()} ${file.region}`).join("\n");
   const inputBound=2*4784+8*1369+new TextEncoder().encode(rubric+labels+JSON.stringify(PHOTO_QC_OUTPUT_FORMAT)).byteLength+1024;
-  const binding={policy:PHOTO_QC_POLICY,judge_contract:"photo-qc-furniture-reflections-v5",check_id:check,evidence_id:evidence,prepared_sha256:f.inputSHA,output_sha256:f.outputSHA,derivative_manifest_sha256:"a".repeat(64),rubric,output_format:PHOTO_QC_OUTPUT_FORMAT,images:files.map(file=>({role:file.role,region:file.region,sha256:file.sha256,bytes:file.bytes,width:file.width,height:file.height})),input_token_bound:inputBound,max_output_tokens:4096};
+  const binding={policy:PHOTO_QC_POLICY,judge_contract:PHOTO_QC_JUDGE_CONTRACT,check_id:check,evidence_id:evidence,prepared_sha256:f.inputSHA,output_sha256:f.outputSHA,derivative_manifest_sha256:"a".repeat(64),rubric,output_format:PHOTO_QC_OUTPUT_FORMAT,images:files.map(file=>({role:file.role,region:file.region,sha256:file.sha256,bytes:file.bytes,width:file.width,height:file.height})),input_token_bound:inputBound,max_output_tokens:4096};
   assertEquals(f.state.operationInputSHA,await inputHash(binding));assertEquals(f.state.attempt.p_input_sha256,await inputHash(binding));assertEquals(f.state.ledger[0].meta.input_token_bound,inputBound);
   assertEquals(f.state.ledger[0].meta.parse_diagnostic,{reason:"verified",response_sha256:await photoBytesHash(new TextEncoder().encode(JSON.stringify(pass))),response_bytes:new TextEncoder().encode(JSON.stringify(pass)).byteLength});
  }finally{globalThis.fetch=previousFetch;resetServingModeCache();if(previousKey===undefined)Deno.env.delete("ANTHROPIC_API_KEY");else Deno.env.set("ANTHROPIC_API_KEY",previousKey);}
@@ -195,20 +195,20 @@ Deno.test("photo verdict contract quotes the complete4096 output budget and fits
  f.state.verdict=JSON.stringify({...pass,verdict:"fail",action:"refuse",preservation:{...pass.preservation,openings:35},findings:Array.from({length:8},()=>finding),reason:"Confirmed fixed-feature differences in the marked regions."});
  assert(new TextEncoder().encode(f.state.verdict).byteLength<=3000);
  try{
-  const result=await f.run(ready);assertEquals(result.check.state,"refuse");assertEquals((result.check.result as PhotoQualityVerdict).findings.length,8);
+  const result=await f.run(ready);assertEquals(result.check.state,"accept","advisory judge: delivered with all eight findings recorded");assertEquals((result.check.result as PhotoQualityVerdict).findings.length,8);
   const cost=f.state.ledger[0];assertEquals(cost.meta.max_output_tokens,4096);assertEquals(cost.meta.judge_contract,PHOTO_QC_JUDGE_CONTRACT);assertEquals(cost.meta.provider_stop_reason,"end_turn");
   assertEquals(f.state.attempt.p_hold_cents,cost.unitCents);assertEquals(f.state.calls,1);
   await f.run(ready);assertEquals(f.state.calls,1,"A confirmed terminal result is never rerolled");
  }finally{globalThis.fetch=before;resetServingModeCache();}
 });
-Deno.test("next photo judge contract distinguishes loose console decor from protected mounted fixtures",()=>{
+Deno.test("photo judge contract distinguishes loose console decor from protected mounted fixtures",()=>{
  const rubric=photoJudgeRubric({edit:"stage",style:"modern",instruction:"Stage this room."});
- assertEquals(PHOTO_QC_JUDGE_CONTRACT,"photo-qc-furniture-reflections-v5");
+ assertEquals(PHOTO_QC_JUDGE_CONTRACT,"photo-qc-window-reveal-v6");
  for(const required of["Loose tabletop/freestanding decor is NOT a fixture","decorative plates, books, vases","picture frames resting on a console","mounted wall art or a built-in installation","Report findings ONLY for suspected fixed-feature","Do not include permitted movable-decor/furniture changes as findings","retain a specific uncertain finding about that fixed feature"]){assert(rubric.includes(required),required);}
  const finding={category:"fixtures",region:"br",source:"Loose picture frame resting on a console.",output:"Different loose tabletop decor.",certainty:"uncertain"};
- // Even an incorrectly classified model answer is NOT silently cleared by
- // this prompt clarification. The existing strict parser still requires HOLD.
- assertEquals(parsePhotoQuality(JSON.stringify({...pass,findings:[finding]})).action,"hold");
+ // Advisory judge (6 Nov 2026): the edit is delivered and the finding is
+ // kept on the disclosure record for the realtor to judge.
+ const kept=parsePhotoQuality(JSON.stringify({...pass,findings:[finding]}));assertEquals(kept.action,"accept");assertEquals(kept.findings,[finding]);
  assert(photoJudgeQuote(step,rubric,"SOURCE whole\nCANDIDATE whole"));
 });
 Deno.test("prospective furniture/reflection context is funded and cannot erase uncertainty or a real redesign",async()=>{
@@ -222,7 +222,25 @@ Deno.test("prospective furniture/reflection context is funded and cannot erase u
   const finding={category:"fixtures",region:"bl",source:kind==="uncertain_structure"?"Existing wall opening partially covered.":"Freestanding glossy console partly occluded.",output:kind==="confirmed_redesign"?"Visible console changed from a rectangular cabinet to a curved bench.":"Different reflection or newly exposed surface.",certainty:kind==="confirmed_redesign"?"confirmed":"uncertain"};
   f.state.verdict=JSON.stringify({...pass,...(kind==="confirmed_redesign"?{verdict:"fail",action:"refuse",edit_quality:35}:{}),findings:[finding]});
   const before=globalThis.fetch;resetServingModeCache();globalThis.fetch=(()=>{throw Error("No external transport in QC fixture");})as any;
-  try{const result=await f.run(f.view());assertEquals(result.check.state,kind==="confirmed_redesign"?"refuse":"hold");assertEquals((result.check.result as PhotoQualityVerdict).findings,[finding]);assertEquals(f.state.ledger[0].meta.judge_contract,"photo-qc-furniture-reflections-v5");await f.run(ready);assertEquals(f.state.calls,1);}finally{globalThis.fetch=before;resetServingModeCache();}
+  try{const result=await f.run(f.view());assertEquals(result.check.state,"accept","advisory judge delivers every parsed verdict");assertEquals((result.check.result as PhotoQualityVerdict).findings,[finding]);assertEquals(f.state.ledger[0].meta.judge_contract,PHOTO_QC_JUDGE_CONTRACT);await f.run(ready);assertEquals(f.state.calls,1);}finally{globalThis.fetch=before;resetServingModeCache();}
+ }
+});
+Deno.test("declutter window rubric allows only more of the same visible window; every verdict is delivered with its finding recorded (advisory judge)",async()=>{
+ const rubric=photoJudgeRubric({edit:"declutter",instruction:"Remove the loose boxes."});
+ for(const required of["MORE of a window already visible in SOURCE","shared visible frame edges, position, perspective and glazing remain consistent","Do not lower the openings score or mark uncertainty solely because loose clutter no longer blocks that same window","A window entirely hidden in SOURCE","a pane visibly opaque in SOURCE becoming clear","an outside view unsupported by SOURCE","changed visible frame, position, size or pane layout"]){assert(rubric.includes(required),required);}
+ assert(!photoJudgeRubric({edit:"stage",instruction:""}).includes("Declutter window clarification"));
+ assert(photoJudgeQuote(step,rubric,"SOURCE whole\nCANDIDATE whole"),"The v6 rubric must fit the funded quote");
+ const scenarios=[
+  {name:"same_visible_window",finding:null,expected:"accept",fail:false},
+  {name:"fully_unseen_window",finding:{category:"openings",region:"tl",source:"The wall area is fully covered; no window is visible.",output:"A complete window is exposed.",certainty:"uncertain"},expected:"accept",fail:false},
+  {name:"invented_view",finding:{category:"openings",region:"tl",source:"No exterior scene is visible in SOURCE.",output:"A new exterior scene appears through glazing.",certainty:"uncertain"},expected:"accept",fail:false},
+  {name:"changed_frame",finding:{category:"openings",region:"tl",source:"The visible frame has three panes.",output:"The frame has one larger pane.",certainty:"confirmed"},expected:"accept",fail:true},
+ ] as const;
+ for(const scenario of scenarios){
+  const f=await fixture(),ready=await f.prepare();f.state.row!.evidence.edit="declutter";f.state.row!.evidence.style=null;f.state.row!.evidence.judge_context={edit:"declutter",style:null,instruction:"Remove the loose boxes."};
+  f.state.verdict=JSON.stringify({...pass,...(scenario.fail?{verdict:"fail",action:"refuse",preservation:{...pass.preservation,openings:40}}:{}),reason:scenario.name,findings:scenario.finding?[scenario.finding]:[]});
+  const before=globalThis.fetch;resetServingModeCache();globalThis.fetch=(()=>{throw Error("No external transport in window QC fixture");})as any;
+  try{const result=await f.run(f.view());assertEquals(result.check.state,scenario.expected,scenario.name);assertEquals(f.state.ledger[0].meta.judge_contract,PHOTO_QC_JUDGE_CONTRACT);assertEquals(f.state.calls,1);await f.run(ready);assertEquals(f.state.calls,1,"Saved verdicts are not retried");}finally{globalThis.fetch=before;resetServingModeCache();}
  }
 });
 Deno.test("one photo judge may use90seconds but leaves10seconds and obeys the actual remaining endpoint budget",async()=>{

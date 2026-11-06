@@ -574,18 +574,26 @@ struct PhotoVersionHistoryTests {
         check(registered.current == beforeOriginals.current && registered.listingSelections == beforeOriginals.listingSelections, "registering Original cannot replace editing/publication choices")
         check((try? Data(contentsOf: originalTabDir.appendingPathComponent(originals[0].imageFile))) == captured, "Original pixels remain exact")
         check((try? Data(contentsOf: originalTabDir.appendingPathComponent("enh-room.jpg"))) == brightened, "enhanced bytes also remain exact")
+        let enhancedSource = try PhotoVersionHistory.enhancedCaptureForEditing(id: originals[0].id, directory: originalTabDir)
+        check(enhancedSource.id == "room" && enhancedSource.imageFile == "enh-room.jpg" && enhancedSource.isVerifiedCaptureEnhancement,
+              "Original tile resolves to the exact verified on-device enhancement for AI work")
         let registeredBytes = try Data(contentsOf: originalTabDir.appendingPathComponent(".photo-history.json"))
         _ = try PhotoVersionHistory.ensureOriginalSources(directory: originalTabDir)
         check((try? Data(contentsOf: originalTabDir.appendingPathComponent(".photo-history.json"))) == registeredBytes, "repeat Original registration is read-only")
         for style in ["modern", "rustic"] {
             let context = try PhotoVersionHistory.editContext(for: originals[0].id, edit: "stage", directory: originalTabDir)
             let input = context.source
-            check(input.id == originals[0].id && input.imageFile == "orig-room.jpg", "a new staging style starts from the real original")
+            check(input.id == enhancedSource.id && input.imageFile == "enh-room.jpg", "a new staging style starts from the enhanced capture")
             _ = try PhotoVersionHistory.saveEdit(jpeg: Data(style.utf8), id: "room-\(style)",
                 parentID: context.parent.id, sourceID: input.id, edit: "stage", style: style, disclosure: nil,
                 provenanceID: nil, provenanceRecorded: false, directory: originalTabDir)
         }
         let styled = try PhotoVersionHistory.load(directory: originalTabDir)
+        check(styled.versions["room-modern"]?.sourceID == "room" && styled.versions["room-rustic"]?.sourceID == "room",
+              "independent styles retain the enhanced source ID even as the concurrency parent advances")
+        let restyleEnhancedSource = try PhotoVersionHistory.enhancedCaptureForEditing(id: "room-rustic", directory: originalTabDir)
+        check(restyleEnhancedSource.id == "room",
+              "reviewing a staged version still begins a new default edit from its enhanced capture")
         check(Set(styled.libraryVersions(.staged).map(\.id)) == Set(["room-modern", "room-rustic"]), "both staging styles remain visible under Staged")
         check(styled.libraryVersions(.original).map(\.id) == ["room-original"], "new AI work cannot replace the Original tile")
         try PhotoVersionHistory.selectForPublication(id: "room-modern", directory: originalTabDir, reviewed: true)
@@ -619,15 +627,36 @@ struct PhotoVersionHistoryTests {
         let pngSource = try PhotoVersionHistory.ensureOriginalSources(directory: rawFormatDir).libraryVersions(.original)[0]
         let pngContext = try PhotoVersionHistory.editContext(for: pngSource.id, edit: "stage", directory: rawFormatDir)
         let rawVersion = try PhotoVersionHistory.saveEdit(jpeg: png, id: "raw-checked-png",
-            parentID: pngContext.parent.id, sourceID: pngSource.id, edit: "stage", style: "modern", disclosure: nil,
+            parentID: pngContext.parent.id, sourceID: pngContext.source.id, edit: "stage", style: "modern", disclosure: nil,
             provenanceID: UUID().uuidString, provenanceRecorded: true, directory: rawFormatDir, imageExtension: "png")
         check(rawVersion.imageFile.hasSuffix(".png"), "checked image keeps the correct browser MIME extension")
         check((try? Data(contentsOf: rawFormatDir.appendingPathComponent(rawVersion.imageFile))) == png, "checked candidate bytes survive local save without recompression")
         check((try? Data(contentsOf: rawFormatDir.appendingPathComponent(pngSource.imageFile))) == captured, "saving checked bytes cannot rewrite the original")
         rejected("image suffix cannot escape the listing folder") {
-            _ = try PhotoVersionHistory.saveEdit(jpeg: png, id: "unsafe-suffix", parentID: pngSource.id,
-                sourceID: pngSource.id, edit: "stage", style: "modern", disclosure: nil, provenanceID: nil,
+            _ = try PhotoVersionHistory.saveEdit(jpeg: png, id: "unsafe-suffix", parentID: rawVersion.id,
+                sourceID: pngContext.source.id, edit: "stage", style: "modern", disclosure: nil, provenanceID: nil,
                 provenanceRecorded: false, directory: rawFormatDir, imageExtension: "../png")
+        }
+        let missingEnhancedDir = root.appendingPathComponent("missing-enhanced")
+        try PhotoVersionHistory.saveCapture(original: captured, enhanced: brightened, id: "room", directory: missingEnhancedDir)
+        try FileManager.default.removeItem(at: missingEnhancedDir.appendingPathComponent("enh-room.jpg"))
+        rejected("missing verified enhancement cannot silently fall back to raw Original") {
+            _ = try PhotoVersionHistory.enhancedCaptureForEditing(id: "room", directory: missingEnhancedDir)
+        }
+        let legacyEditDir = root.appendingPathComponent("legacy-edit")
+        try FileManager.default.createDirectory(at: legacyEditDir, withIntermediateDirectories: true)
+        try captured.write(to: legacyEditDir.appendingPathComponent("orig-legacy.jpg"))
+        try brightened.write(to: legacyEditDir.appendingPathComponent("enh-legacy.jpg"))
+        let legacyForEdit = try PhotoVersionHistory.trackExisting(id: "legacy", imageFile: "enh-legacy.jpg",
+            priorFile: "orig-legacy.jpg", directory: legacyEditDir)
+        let legacyEditSource = try PhotoVersionHistory.enhancedCaptureForEditing(id: legacyForEdit.id, directory: legacyEditDir)
+        check(legacyEditSource.id == legacyForEdit.id,
+              "legacy edited image stays usable without falsely claiming a verified local enhancement")
+        let unverifiedStage = try PhotoVersionHistory.saveEdit(jpeg: captured, id: "legacy-stage",
+            parentID: legacyForEdit.id, sourceID: legacyForEdit.id, edit: "stage", style: "modern",
+            disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: legacyEditDir)
+        rejected("unverified staged pixels cannot replace a missing enhanced capture by default") {
+            _ = try PhotoVersionHistory.enhancedCaptureForEditing(id: unverifiedStage.id, directory: legacyEditDir)
         }
         let removedDir = root.appendingPathComponent("listing-removal")
         for id in ["room", "neighbor"] {

@@ -54,8 +54,9 @@ try:
    for name,count in [('team_private_libraries',93),('workspace_selection',28),('team_readiness',35)]:
     r=q(name+'-historical-followup-replay',(SQL/'tests'/f'{name}.sql').read_text());assert re.search(rf'^({count})$',r,re.M)and len(re.findall(r'\|(?:true|t)$',r,re.M))==count,(name,'complete historical inventory')
  before=json.loads(q('definitions-before-replay',snapshot))
- # Build 57 (20261010141500) supersedes select_workspace, the first differing pin of this overlay.
- refused=q('superseded-followup-refused',TARGET.read_text(),3);assert 'Review changed function select_workspace'in refused
+ # The candidate-org migration supersedes workspace_directory, the first
+ # differing pin of this historical overlay.
+ refused=q('superseded-followup-refused',TARGET.read_text(),3);assert 'Review changed function workspace_directory'in refused
  assert json.loads(q('superseded-followup-refusal-catalog',snapshot))==before,'Historical overlay must not overwrite newer reviewed functions'
  for phase in ['fresh','replay']:
   if phase=='replay':q('migration-exact-final-overlay-replay',FINAL_OVERLAY.read_text());assert json.loads(q('definitions-after-replay',snapshot))==before,'Replay changes authority/ACL/body'
@@ -64,7 +65,7 @@ try:
  # A compiled exact-listing authorization defect is caught by independent raw RLS tests.
  definition=q('read-access-definition',"select pg_get_functiondef('public.listing_content_access(uuid,uuid,boolean)'::regprocedure);")
  header=definition.split('AS $function$',1)[0]
- q('install-sibling-access-control',header+'AS $function$ select true; $function$;')
+ q('install-sibling-access-control',header+'AS $function$ begin return true; end $function$;')
  negative=q('sibling-access-control',(SQL/'tests/team_private_libraries.sql').read_text(),3);assert 'TEAM PRIVATE FAIL:'in negative
  q('restore-access-definition',definition)
  # A compiled per-child reflection meter regression must fail the actual

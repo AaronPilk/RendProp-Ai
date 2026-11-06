@@ -915,7 +915,7 @@ final class AppModel: ObservableObject {
     /// unpublishes its hosted tour (decision A3). Samples are never removed.
     func remove(_ id: UUID) async {
         guard let listing = listings.first(where: { $0.id == id }), !listing.isSample else { return }
-        if PhotoWorkQueue.shared.job?.listingID == id { PhotoWorkQueue.shared.cancel() }
+        PhotoWorkQueue.shared.cancel(listingID: id)
 
         renderCoordinator.cancel(listingID: id)
         ProductionVideoLibrary.shared.cancelForPropertyDeletion(id)
@@ -1121,10 +1121,25 @@ final class AppModel: ObservableObject {
                 self.persist()
                 await self.defaultFirstCloudCoversAfterWorkspaceSync()
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
-                for listing in self.listings where !listing.isSample && self.isInSelectedWorkspace(listing) && listing.serverID != nil {
-                    try? await self.refreshClientContact(for: listing.id)
-                    guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+                // One contact read per listing, four in flight at a time instead
+                // of one after another (a 12-listing library was 12 round trips
+                // in a row). refreshClientContact fences identity and workspace
+                // itself and refuses to touch a listing that changed meanwhile.
+                let contactIDs = self.listings.filter { !$0.isSample && self.isInSelectedWorkspace($0) && $0.serverID != nil }.map(\.id)
+                await withTaskGroup(of: Void.self) { group in
+                    var iterator = contactIDs.makeIterator()
+                    @MainActor func addNext() {
+                        guard !Task.isCancelled, AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                              let id = iterator.next() else { return }
+                        group.addTask { [weak self] in
+                            guard let self else { return }
+                            try? await self.refreshClientContact(for: id)
+                        }
+                    }
+                    for _ in 0..<4 { addNext() }
+                    for await _ in group { addNext() }
                 }
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
                 await self.syncDirtyListings()
                 // Brand reads are independent of media and use the same account
                 // fence. A transient brand error must not roll back listing sync.

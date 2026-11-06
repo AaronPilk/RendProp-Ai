@@ -56,6 +56,9 @@ function photoChain(steps:RouteStep[],input:GenerateInput,size:"2K"|"4K"):Array<
  * a1K or4K supplier response as the requested 2K image. Review is still manual. */
 export function assertPhoto2KOutput(b64:string,mime:string):void{
  const image=validatePhotoInput(b64,mime);
+ assertPhoto2KGeometry(image);
+}
+export function assertPhoto2KGeometry(image:Pick<DecodedStillImage,"width"|"height">):void{
  if(image.width*image.height<3_800_000||image.width*image.height>4_800_000)throw new HttpError(502,"The provider returned an image outside the requested 2K size. That image was not saved as a high-resolution edit.","upstream");
 }
 

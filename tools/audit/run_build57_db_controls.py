@@ -101,7 +101,7 @@ try:
  assert q('current-md5',"select md5(prosrc)from pg_proc where oid='public.select_workspace(uuid,uuid)'::regprocedure;").strip()=='ab14c1f6454c971bef4f62a1d98c995d'
  before=q('final-catalog',CATALOG)
  q('exact-target-replay',TARGET.read_text());assert q('replayed-catalog',CATALOG)==before,'Exact replay must not change bodies or privileges'
- refused=q('superseded-reaudit-overlay-refused',SUPERSEDED.read_text(),3);assert'Review changed function select_workspace'in refused
+ refused=q('superseded-reaudit-overlay-refused',SUPERSEDED.read_text(),3);assert'Review changed function workspace_directory'in refused
  assert q('superseded-refusal-catalog',CATALOG)==before,'Historical replay must not overwrite the newer reviewed function'
  current=definition('select_workspace-current','select_workspace(uuid,uuid)')
  for i,sig in enumerate(['select_workspace(uuid,uuid)']):

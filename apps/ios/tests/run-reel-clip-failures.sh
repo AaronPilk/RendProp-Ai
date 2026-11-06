@@ -116,7 +116,7 @@ __LOOP__
 __PARK__
 }
 '''
-pathlib.Path(sys.argv[2]).write_text('import Foundation\nimport CryptoKit\nenum AIImagePrep { static func error(_ m:String)->Error { NSError(domain: \"synthetic\", code:1,userInfo:[NSLocalizedDescriptionKey:m]) } }\n@MainActor final class AIConsent { static let shared=AIConsent();var isGranted=true;var revocationRevision=0 }\n'+photo_motion+'\n'+apierror+'\n'+error_adapter+'\n'+job+'\n'+camera+'\n'+shot+'\n'+drift+'\n'+quality+'\n'+failure+'\n'+issue+'\n'+pending+'\n'+harness.replace('__LOOP__',loop).replace('__PARK__',park))
+pathlib.Path(sys.argv[2]).write_text('import Foundation\nimport CryptoKit\nenum AIImagePrep { static func error(_ m:String)->Error { NSError(domain: \"synthetic\", code:1,userInfo:[NSLocalizedDescriptionKey:m]) } }\nenum PhotoPendingEdit { enum Failure: Error { case unavailable } }\n@MainActor final class AIConsent { static let shared=AIConsent();var isGranted=true;var revocationRevision=0 }\n'+photo_motion+'\n'+apierror+'\n'+error_adapter+'\n'+job+'\n'+camera+'\n'+shot+'\n'+drift+'\n'+quality+'\n'+failure+'\n'+issue+'\n'+pending+'\n'+harness.replace('__LOOP__',loop).replace('__PARK__',park))
 PY
 xcrun swiftc -swift-version 5 -parse-as-library \
   "$reel_clip_test_dir/Production.swift" \

@@ -21,6 +21,9 @@ struct Listing { var id: UUID; var cloudUnavailable: Bool? = nil; var isSample =
 }
 struct EnhancedPhoto {
     let id: String; let originalURL: URL; let enhancedURL: URL
+    var savedVersion: PhotoVersionHistory.Version? {
+        try? PhotoVersionHistory.load(directory: enhancedURL.deletingLastPathComponent()).versions[id]
+    }
 }
 struct DeclutterGenerationApproval { let sourceVersionID: String }
 struct DeclutterCreditAuthorization { let tariffVersion: String; let environment: String }
@@ -36,8 +39,19 @@ struct PhotoStagingSetup { let pending: PendingBatchEdit; let targets: [Enhanced
 @MainActor final class PhotoWorkQueue {
     static let shared = PhotoWorkQueue()
     struct Failure { let error: Error }
-    struct Job { var id = UUID(); var running = true; var failures: [Failure] = []; var done = 0 }
-    var visibleJob: Job?
+    struct Job {
+        var id = UUID(); var running = true; var failures: [Failure] = []; var done = 0
+        var listingID = UUID(); var photoKeys: Set<String> = []
+    }
+    var jobs: [Job] = []
+    var visibleJob: Job? {
+        get { jobs.last }
+        set { jobs = newValue.map { [$0] } ?? [] }
+    }
+    func job(id: UUID) -> Job? { jobs.first { $0.id == id } }
+    func isPhotoBusy(listingID: UUID, key: String) -> Bool {
+        jobs.contains { $0.running && $0.listingID == listingID && $0.photoKeys.contains(key) }
+    }
 }
 @MainActor final class PhotoEditService {
     struct Call {
@@ -51,7 +65,7 @@ struct PhotoStagingSetup { let pending: PendingBatchEdit; let targets: [Enhanced
     func start(title: String, photos: [EnhancedPhoto], edit: String, style: String?, prompt: String?, stagingReferenceID: String?,
                declutterApprovals: [String: DeclutterGenerationApproval]?,
                declutterCredit: DeclutterCreditAuthorization?, stageCredit: StageCreditAuthorization?) -> Bool {
-        guard PhotoWorkQueue.shared.visibleJob?.running != true else { return false }
+        guard !PhotoWorkQueue.shared.isPhotoBusy(listingID: listing.id, key: photos.first?.savedVersion?.familyID ?? photos.first?.id ?? "") else { return false }
         guard declutterCredit == nil || (edit == "declutter" && declutterApprovals != nil) else { return false }
         guard stageCredit == nil || edit == "stage" else { return false }
         if edit == "declutter" {
@@ -62,7 +76,9 @@ struct PhotoStagingSetup { let pending: PendingBatchEdit; let targets: [Enhanced
                                 prompt: prompt, reference: stagingReferenceID,
                                 approvalIDs: Set(declutterApprovals?.keys.map { $0 } ?? []),
                                 declutterCredit: declutterCredit, stageCredit: stageCredit))
-        PhotoWorkQueue.shared.visibleJob = .init(); return true
+        PhotoWorkQueue.shared.visibleJob = .init(listingID: listing.id,
+            photoKeys: Set(photos.map { $0.savedVersion?.familyID ?? $0.id }))
+        return true
     }
 }
 enum Haptics { static func selection() {} }
@@ -104,34 +120,40 @@ __METHODS__
         let stage = try PhotoVersionHistory.saveEdit(jpeg: Data("saved furniture".utf8), id: "stage", parentID: "room", sourceID: "room", edit: "stage", style: "modern", disclosure: "Virtual staging", provenanceID: "real-receipt", provenanceRecorded: true, directory: dir)
         let stageURL = dir.appendingPathComponent(stage.imageFile)
         let photo = EnhancedPhoto(id: stage.id, originalURL: dir.appendingPathComponent("orig-room.jpg"), enhancedURL: stageURL)
-        let approvedDeclutter = ["room-original": DeclutterGenerationApproval(sourceVersionID: "room-original")]
+        let approvedDeclutter = ["room": DeclutterGenerationApproval(sourceVersionID: "room")]
         let model = AppModel(); model.listings = [.init(id: id)]
         let beforeOpen = try PhotoVersionHistory.load(directory: dir)
         let subject = Harness(photo, model); subject.openSinglePhotoEdit()
-        check(subject.showEditActions && subject.editOriginal?.id == "room-original", "staged review targets exactly its retained Original")
-        check(subject.editOriginal?.enhancedURL == photo.originalURL && subject.editOriginal?.originalURL == photo.originalURL, "Original source URL is never staged output")
+        check(subject.showEditActions && subject.editOriginal?.id == "room", "staged review targets exactly its verified enhanced capture")
+        check(subject.editOriginal?.enhancedURL == dir.appendingPathComponent("enh-room.jpg") && subject.editOriginal?.originalURL == photo.originalURL,
+              "the AI source is enhanced while the retained Original remains available for comparison")
         check((try? Data(contentsOf: stageURL)) == Data("saved furniture".utf8), "opening edit preserves saved output bytes")
         check((try? Data(contentsOf: photo.originalURL)) == original, "opening edit preserves original bytes")
         let afterOpen = try PhotoVersionHistory.load(directory: dir)
         check(afterOpen.current == beforeOpen.current && afterOpen.listingSelections == beforeOpen.listingSelections, "opening single edit changes neither current result nor public selection")
         check(originalIndex.versions["room-original"]?.originalVerified == true, "retained capture registration remains explicit")
+        let mismatched = Harness(EnhancedPhoto(id: stage.id, originalURL: photo.originalURL,
+            enhancedURL: dir.appendingPathComponent("enh-other.jpg")), model)
+        mismatched.openSinglePhotoEdit()
+        check(!mismatched.showEditActions && mismatched.selectionError != nil,
+              "a displayed file from another family cannot borrow this version ID")
         for action in [PhotoReviewEdit.declutter, .twilight, .sky, .lawn] {
             reset(); let h = Harness(photo, model); h.openSinglePhotoEdit(); h.pendingEdit = action; h.continueSinglePhotoEdit(); await settle()
             if action == .declutter {
-                check(PhotoEditService.calls.isEmpty && h.singleDeclutterReview?.photos.map(\.id) == ["room-original"],
-                      "declutter opens an exact Original assessment before any paid image edit")
+                check(PhotoEditService.calls.isEmpty && h.singleDeclutterReview?.photos.map(\.id) == ["room"],
+                      "declutter opens an exact enhanced assessment before any paid image edit")
                 h.singleDeclutterReview = nil
                 h.startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvedDeclutter)
-                check(PhotoEditService.calls.first?.approvalIDs == Set(["room-original"]), "confirmed declutter carries the exact Original approval")
+                check(PhotoEditService.calls.first?.approvalIDs == Set(["room"]), "confirmed declutter carries the exact enhanced version approval")
             }
             check(PhotoEditService.calls.count == 1 && PhotoEditService.calls[0].photos.count == 1, "one action dispatches exactly one photo, never bulk")
-            check(PhotoEditService.calls[0].photos[0].id == "room-original" && PhotoEditService.calls[0].edit == action.edit, "selected operation uses exact retained Original id")
+            check(PhotoEditService.calls[0].photos[0].id == "room" && PhotoEditService.calls[0].edit == action.edit, "selected operation uses exact enhanced capture id")
             check(PhotoEditService.calls[0].listing == id && h.singleEditJobID == PhotoWorkQueue.shared.visibleJob?.id, "one-photo progress binds the actual started job")
         }
         for style in ["modern", "rustic", "minimalist", "contemporary"] {
             reset(); let h = Harness(photo, model); h.openSinglePhotoEdit(); h.pendingEdit = .stage(style); h.continueSinglePhotoEdit(); await settle()
             check(PhotoEditService.calls.isEmpty && h.singleStagingSetup?.pending.style == style, "stage opens existing setup before purchase")
-            check(h.singleStagingSetup?.targets.map(\.id) == ["room-original"] && h.singleStagingSetup?.pending.multiple == false, "stage setup is one exact Original with no preselected siblings")
+            check(h.singleStagingSetup?.targets.map(\.id) == ["room"] && h.singleStagingSetup?.pending.multiple == false, "stage setup is one exact enhanced capture with no preselected siblings")
             h.startSinglePhotoWork(.stage(style), prompt: "oak furnishing brief")
             check(PhotoEditService.calls.count == 1 && PhotoEditService.calls[0].style == style && PhotoEditService.calls[0].prompt == "oak furnishing brief", "stage preserves chosen style and optional brief")
         }
@@ -155,7 +177,7 @@ __METHODS__
               PhotoEditService.calls[0].declutterCredit == nil,
               "single-photo staging forwards exact credit authorization")
         reset(); let custom = Harness(photo, model); custom.openSinglePhotoEdit(); custom.pendingEdit = .custom; custom.continueSinglePhotoEdit(); await settle()
-        check(custom.singleCustomPhoto?.id == "room-original" && PhotoEditService.calls.isEmpty, "custom prompt opens for exact Original without dispatch")
+        check(custom.singleCustomPhoto?.id == "room" && PhotoEditService.calls.isEmpty, "custom prompt opens for exact enhanced capture without dispatch")
         custom.startSinglePhotoWork(.custom, prompt: "remove loose bags only")
         check(PhotoEditService.calls.count == 1 && PhotoEditService.calls[0].prompt == "remove loose bags only", "custom uses existing service with exact prompt")
         reset(); let cancelled = Harness(photo, model); cancelled.openSinglePhotoEdit(); cancelled.continueSinglePhotoEdit(); await settle()
@@ -180,18 +202,20 @@ __METHODS__
         reset(); let waiting = Harness(photo, model); waiting.openSinglePhotoEdit(); waiting.pendingEdit = .declutter; AIConsent.shared.suspend = true; waiting.continueSinglePhotoEdit(); await settle()
         AuthStore.shared.syncSessionRevision += 1; AIConsent.shared.waiting?.resume(returning: true); AIConsent.shared.waiting = nil; await settle()
         check(PhotoEditService.calls.isEmpty && waiting.singleDeclutterReview == nil, "session revision changed while awaiting consent cannot dispatch")
-        reset(); let busy = Harness(photo, model); PhotoWorkQueue.shared.visibleJob = .init(); busy.openSinglePhotoEdit()
-        check(!busy.showEditActions, "another active photo job blocks one-photo entry")
+        reset(); let busy = Harness(photo, model)
+        PhotoWorkQueue.shared.visibleJob = .init(listingID: id, photoKeys: ["room"])
+        busy.openSinglePhotoEdit()
+        check(!busy.showEditActions, "an active edit of the same photo blocks one-photo entry")
         reset(); let missingHome = Harness(photo, model); model.listings = []; missingHome.openSinglePhotoEdit()
         check(!missingHome.showEditActions, "removed home cannot open paid choices"); model.listings = [.init(id: id)]
         reset(); let ready = Harness(photo, model); ready.openSinglePhotoEdit(); ready.editConsentRevision = AIConsent.shared.revocationRevision; ready.startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvedDeclutter)
         let ownJob = ready.singleEditJobID!
         ready.receiveSinglePhotoWork(.init(running: false, done: 1))
         check(ready.chosen == nil && ready.singleEditJobID == ownJob, "another job cannot replace this photo review")
-        let newOutput = try PhotoVersionHistory.saveEdit(jpeg: Data("new clean output".utf8), id: "new-clean", parentID: stage.id, sourceID: "room-original", edit: "declutter", style: nil, disclosure: "Declutter", provenanceID: "new-receipt", provenanceRecorded: true, directory: dir)
+        let newOutput = try PhotoVersionHistory.saveEdit(jpeg: Data("new clean output".utf8), id: "new-clean", parentID: stage.id, sourceID: "room", edit: "declutter", style: nil, disclosure: "Declutter", provenanceID: "new-receipt", provenanceRecorded: true, directory: dir)
         ready.receiveSinglePhotoWork(.init(id: ownJob, running: false, done: 1))
         check(ready.chosen?.id == newOutput.id && ready.singleEditJobID == nil, "only matching successful job opens saved new family version")
-        check(newOutput.effects == ["declutter"] && newOutput.sourceID == "room-original" && newOutput.parentID == stage.id, "new edit records Original input and separate saved concurrency parent")
+        check(newOutput.effects == ["declutter"] && newOutput.sourceID == "room" && newOutput.parentID == stage.id, "new edit records enhanced input and separate saved concurrency parent")
         check((try? Data(contentsOf: photo.originalURL)) == original && (try? Data(contentsOf: stageURL)) == Data("saved furniture".utf8), "new edit never overwrites Original or earlier staged result")
         reset(); let failure = Harness(photo, model); failure.openSinglePhotoEdit(); failure.editConsentRevision = AIConsent.shared.revocationRevision; failure.startSinglePhotoWork(.declutter, prompt: nil, declutterApprovals: approvedDeclutter)
         let beforeFailure = PhotoEditService.calls.count
@@ -207,15 +231,20 @@ __METHODS__
         let old = unverified.versions["old"]!
         unverified.versions["old-source"] = .init(id: "old-source", familyID: old.familyID, imageFile: old.originalFile!, originalFile: old.originalFile, originalVerified: false, parentID: nil, sourceID: nil, stagingBaseID: nil, edit: "legacy", style: nil, effects: [], sourceHistoryKnown: false, disclosure: nil, provenanceID: nil, originalAssetID: nil, serverListingID: nil, provenanceRecorded: false, createdAt: Date())
         try JSONEncoder().encode(unverified).write(to: unknownDir.appendingPathComponent(".photo-history.json"))
-        rejected("unverified earlier source cannot become Original") { _ = try PhotoVersionHistory.originalForEditing(id: "old", directory: unknownDir) }
+        rejected("unverified earlier source cannot become an enhanced capture") { _ = try PhotoVersionHistory.enhancedCaptureForEditing(id: "old-source", directory: unknownDir) }
         var corrupt = try PhotoVersionHistory.load(directory: dir)
-        corrupt.versions.removeValue(forKey: "room-original")
-        // Remove the capture's verification so automatic original registration cannot repair this fault.
-        for (key, v) in corrupt.versions where v.familyID == "room" {
-            corrupt.versions[key] = .init(id: v.id, familyID: v.familyID, imageFile: v.imageFile, originalFile: "orig-other.jpg", originalVerified: false, parentID: v.parentID, sourceID: v.sourceID, stagingBaseID: v.stagingBaseID, edit: v.edit, style: v.style, effects: v.effects, sourceHistoryKnown: v.sourceHistoryKnown, disclosure: v.disclosure, provenanceID: v.provenanceID, originalAssetID: v.originalAssetID, serverListingID: v.serverListingID, provenanceRecorded: v.provenanceRecorded, createdAt: v.createdAt)
-        }
+        // Removing the capture's verification must not make its image an
+        // authorized enhanced source just because its file name still matches.
+        let v = corrupt.versions["room"]!
+        corrupt.versions["room"] = .init(id: v.id, familyID: v.familyID, imageFile: v.imageFile,
+            originalFile: v.originalFile, originalVerified: false, parentID: v.parentID,
+            sourceID: v.sourceID, stagingBaseID: v.stagingBaseID, edit: v.edit, style: v.style,
+            effects: v.effects, sourceHistoryKnown: v.sourceHistoryKnown, disclosure: v.disclosure,
+            provenanceID: v.provenanceID, originalAssetID: v.originalAssetID,
+            serverListingID: v.serverListingID, provenanceRecorded: v.provenanceRecorded,
+            createdAt: v.createdAt)
         try JSONEncoder().encode(corrupt).write(to: dir.appendingPathComponent(".photo-history.json"))
-        rejected("another family cannot impersonate this Original") { _ = try PhotoVersionHistory.originalForEditing(id: "new-clean", directory: dir) }
+        rejected("a broken capture cannot impersonate an enhanced source") { _ = try PhotoVersionHistory.enhancedCaptureForEditing(id: "room-original", directory: dir) }
         print("PASS \(n) actual single-photo review checks")
     }
 }

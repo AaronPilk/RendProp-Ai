@@ -21,20 +21,21 @@ import Combine
         var finalReadback: Bool?
         // Consume the emitted value as the screen must. @Published sends before
         // storage changes: reading queue.visibleJob in this sink is one event late.
-        let subscription = queue.$job.sink { emitted in
-            if let emitted, queue.isContextCurrent {
+        let subscription = queue.$jobs.sink { emittedJobs in
+            if let emitted = emittedJobs.last, queue.isContextCurrent {
                 emissions.append(emitted)
                 if !emitted.running { finalReadback = queue.visibleJob?.running }
             }
         }
         var completed: PhotoWorkQueue.Job?
         var calls: [String] = []
-        check(queue.start(listingID: UUID(), title: "Synthetic navigation-safe edit", photoIDs: ["one", "two", "three"],
+        let firstListing = UUID()
+        check(queue.start(listingID: firstListing, title: "Synthetic navigation-safe edit", photoIDs: ["one", "two", "three"],
             identityIsCurrent: { true }, stopOnError: { _ in false }, process: { id in
                 calls.append(id); await Task.yield()
                 if id == "two" { throw SyntheticError.recoverable }
             }, completion: { completed = $0 }), "Start valid work")
-        check(!queue.start(listingID: UUID(), title: "Blocked", photoIDs: ["other"], identityIsCurrent: { true },
+        check(!queue.start(listingID: firstListing, title: "Blocked same photo", photoIDs: ["one"], identityIsCurrent: { true },
             stopOnError: { _ in false }, process: { _ in preconditionFailure("Must not start overlapping work") }), "Only one batch can own work")
         queue.dismissResult()
         check(queue.job != nil, "Dismiss cannot drop running work")
@@ -61,6 +62,7 @@ import Combine
               "Cancellation never claims a completed output or provider failure")
         check(cancelled?.remaining == 2 && cancelled?.currentPhotoID == nil && cancelled?.running == false,
               "Cancellation clears active state and preserves unattempted count")
+        queue.dismissResult()
 
         var identityCurrent = true
         var scopeChanged: PhotoWorkQueue.Job?
@@ -92,6 +94,48 @@ import Combine
             process: { _ in preconditionFailure("Empty work must not execute") }), "Reject an empty batch")
         check(!queue.start(listingID: UUID(), title: "Wrong scope", photoIDs: ["one"], identityIsCurrent: { false }, stopOnError: { _ in false },
             process: { _ in preconditionFailure("Wrong-scope work must not execute") }), "Reject invalid initial identity")
+
+        let parallel = PhotoWorkQueue()
+        let parallelListing = UUID()
+        let kinds = ["declutter", "lawn", "sky", "stage"]
+        var gates: [String: CheckedContinuation<Void, Never>] = [:]
+        var outcomes: [String: PhotoWorkQueue.Job] = [:]
+        var secondPhotos: [String] = []
+        var unsentPermission: [String: Bool] = [:]
+        for kind in kinds {
+            check(parallel.start(listingID: parallelListing, title: kind, photoIDs: ["\(kind)-first", "\(kind)-next"],
+                photoKeys: ["\(kind)-family-first", "\(kind)-family-next"],
+                identityIsCurrent: { true }, stopOnError: { _ in false }, process: { photoID in
+                    check(PhotoWorkQueue.executingJobID != nil, "Every photo runs under its own job fence")
+                    if photoID.hasSuffix("-first") {
+                        await withCheckedContinuation { gates[kind] = $0 }
+                        unsentPermission[kind] = parallel.permitsUnsentDispatch
+                    } else {
+                        secondPhotos.append(photoID)
+                    }
+                }, completion: { outcomes[kind] = $0 }), "Start independent \(kind) batch")
+        }
+        await settle { gates.count == 4 }
+        check(parallel.visibleJobs.filter(\.running).count == 4, "Four independent photo actions can run together")
+        check(!parallel.start(listingID: parallelListing, title: "duplicate version", photoIDs: ["other-version"],
+            photoKeys: ["declutter-family-first"], identityIsCurrent: { true }, stopOnError: { _ in false },
+            process: { _ in preconditionFailure("Same family must remain reserved") }),
+            "A second version of a claimed family cannot start")
+        check(!parallel.start(listingID: parallelListing, title: "fifth", photoIDs: ["fifth"],
+            identityIsCurrent: { true }, stopOnError: { _ in false },
+            process: { _ in preconditionFailure("A fifth request must wait") }), "Concurrent work stays bounded")
+        let declutterID = parallel.visibleJobs.first { $0.title == "declutter" }!.id
+        parallel.stopRemaining(jobID: declutterID)
+        for kind in kinds { gates.removeValue(forKey: kind)!.resume() }
+        await settle { outcomes.count == 4 }
+        check(outcomes["declutter"]?.done == 1 && outcomes["declutter"]?.remaining == 1
+              && outcomes["declutter"]?.interrupted == true, "Stopping one batch preserves its sent photo and fences its next")
+        check(Set(secondPhotos) == Set(["lawn-next", "sky-next", "stage-next"])
+              && kinds.dropFirst().allSatisfy({ outcomes[$0]?.done == 2 }),
+              "Lawn, sky and staging continue when declutter stops")
+        check(unsentPermission["declutter"] == false
+              && kinds.dropFirst().allSatisfy({ unsentPermission[$0] == true }),
+              "The before-send permission is scoped to the executing job")
         withExtendedLifetime(subscription) {}
         print("PASSED: \(count) actual queue/Combine completion, failure, cancellation and identity assertions; no provider/files/camera")
     }

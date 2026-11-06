@@ -128,6 +128,13 @@ enum PhotoVersionHistory {
         var isRetainedOriginalSource: Bool {
             parentID == nil && effects.isEmpty && imageFile == originalFile
         }
+        /// Only a capture written by this app can certify that its separate
+        /// image is the on-device enhancement of the retained source.
+        var isVerifiedCaptureEnhancement: Bool {
+            edit == "capture" && id == familyID && parentID == nil && sourceID == nil
+                && effects.isEmpty && originalVerified && sourceHistoryKnown
+                && originalFile != nil && imageFile != originalFile
+        }
         var needsStagingReview: Bool { effects.contains("stage") && stagingReviewed != true }
         var canAutomaticallySelectForListing: Bool { !effects.contains("stage") && !needsCustomReview }
 
@@ -383,9 +390,40 @@ enum PhotoVersionHistory {
         }
         return index
     }
+    // MARK: Read cache
+    //
+    // The Photos screen reads a listing's history from several computed
+    // properties on every redraw, so one tap used to decode the index and
+    // stat every file in the folder ten or more times on the main thread.
+    // `load` now keeps the last decoded index per folder and reuses it while
+    // the index file (date, size) and the folder (date) are unchanged: two
+    // stats instead of a decode plus a directory listing. Any write through
+    // this type drops the entry as well, and `requireUnchanged` always reads
+    // fresh, so an export still notices a change made while it ran.
+    private struct Fingerprint: Equatable {
+        let indexDate: Date?, indexSize: Int?, directoryDate: Date?
+        init(directory: URL) {
+            let index = try? directory.appendingPathComponent(filename).resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            indexDate = index?.contentModificationDate
+            indexSize = index?.fileSize
+            directoryDate = (try? directory.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        }
+    }
+    private static var cache: [String: (fingerprint: Fingerprint, index: Index)] = [:]   // guarded by `lock`
+    private static let cacheLimit = 32
+    private static func forget(directory: URL) { cache[directory.standardizedFileURL.path] = nil }
+
     static func load(directory: URL) throws -> Index {
         lock.lock(); defer { lock.unlock() }
-        return try loadUnlocked(directory: directory)
+        let key = directory.standardizedFileURL.path
+        let fingerprint = Fingerprint(directory: directory)
+        if let cached = cache[key], cached.fingerprint == fingerprint { return cached.index }
+        let index = try loadUnlocked(directory: directory)
+        if cache.count >= cacheLimit { cache.removeAll() }
+        // Fingerprint taken before the read: a change that lands between the
+        // two is caught on the next load, never hidden behind a newer stamp.
+        cache[key] = (fingerprint, index)
+        return index
     }
     /// Exports work on immutable file copies. A concurrent edit, review or
     /// selection must not make their recorded captions disagree with history.
@@ -434,6 +472,8 @@ enum PhotoVersionHistory {
     }
     private static func save(_ index: Index, directory: URL,
                              write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws {
+        forget(directory: directory)
+        defer { forget(directory: directory) }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         try write(encoder.encode(index), directory.appendingPathComponent(filename))
     }
@@ -499,6 +539,32 @@ enum PhotoVersionHistory {
               }) else { throw Failure.missingImage }
         try requireImage(source.imageFile, directory: directory)
         return source
+    }
+
+    /// Default AI actions start from the verified on-device enhancement, even
+    /// when the user opened an Original tile or an older AI version. A legacy
+    /// image with no certified enhancement may be edited as the displayed
+    /// image only; an unverified earlier source cannot masquerade as one.
+    static func enhancedCaptureForEditing(id: String, directory: URL) throws -> Version {
+        let index = try load(directory: directory)
+        guard let viewed = index.versions[id], !index.hiddenFamilies.contains(viewed.familyID) else {
+            throw Failure.changedVersion
+        }
+        let captures = index.versions.values.filter {
+            $0.familyID == viewed.familyID && $0.isVerifiedCaptureEnhancement
+                && $0.originalFile == viewed.originalFile
+        }
+        guard captures.count <= 1 else { throw Failure.invalidHistory }
+        if let capture = captures.first {
+            try requireImage(capture.imageFile, directory: directory)
+            try requireImage(capture.originalFile!, directory: directory)
+            return capture
+        }
+        guard !viewed.originalVerified, viewed.edit == "legacy", viewed.effects.isEmpty,
+              !viewed.isRetainedOriginalSource,
+              index.isVisible(viewed.id) else { throw Failure.missingImage }
+        try requireImage(viewed.imageFile, directory: directory)
+        return viewed
     }
 
     /// The first family's retained pre-enhancement source is the only safe
@@ -614,11 +680,14 @@ enum PhotoVersionHistory {
     static func editContext(for id: String, edit: String, directory: URL) throws -> (parent: Version, source: Version) {
         let index = try load(directory: directory)
         guard let requested = index.versions[id], !index.hiddenFamilies.contains(requested.familyID) else { throw Failure.changedVersion }
-        if requested.isRetainedOriginalSource {
+        if requested.isRetainedOriginalSource || requested.isVerifiedCaptureEnhancement {
             guard let currentID = index.current[requested.familyID], let parent = index.versions[currentID],
                   index.isVisible(currentID) else { throw Failure.changedVersion }
-            try requireImage(requested.imageFile, directory: directory)
-            return (parent, requested)
+            let source = requested.isRetainedOriginalSource
+                ? try enhancedCaptureForEditing(id: requested.id, directory: directory)
+                : requested
+            try requireImage(source.imageFile, directory: directory)
+            return (parent, source)
         }
         guard index.isVisible(id) else { throw Failure.changedVersion }
         let parent = requested
@@ -667,7 +736,8 @@ enum PhotoVersionHistory {
         guard let parent = index.versions[parentID], let source = index.versions[sourceID],
               parent.familyID == source.familyID, index.isVisible(parentID) else { throw Failure.changedVersion }
         let expectedSourceID = edit == "stage" ? (parent.stagingBaseID ?? parentID) : parentID
-        guard sourceID == expectedSourceID || source.isRetainedOriginalSource else { throw Failure.changedVersion }
+        guard sourceID == expectedSourceID || source.isRetainedOriginalSource
+            || source.isVerifiedCaptureEnhancement else { throw Failure.changedVersion }
         try requireImage(source.imageFile, directory: directory)
         if let stagingReferenceID {
             guard edit == "stage", let reference = index.versions[stagingReferenceID],

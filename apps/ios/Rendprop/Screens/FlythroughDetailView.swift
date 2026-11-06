@@ -3674,6 +3674,7 @@ struct AIFailure: Identifiable {
     /// Stop unsent photos and reconcile the retained operation, never rebuy it.
     static func requiresSavedPhotoCheck(_ error: Error) -> Bool {
         if error is URLError { return true }
+        if error is PhotoPendingEdit.Failure { return true }
         guard let api = error as? APIError else { return false }
         if ["photo_quality_pending", "photo_quality_hold"].contains(api.code ?? "") { return true }
         guard let status = api.status else { return true }
@@ -5736,7 +5737,7 @@ struct PhotoStudioView: View {
     /// that is a thousand points above the photo you just tapped, which is how
     /// the owner ended up tapping Declutter and having "no idea if it was
     /// working or not until I got that message".
-    @State private var busyPhotoIDs: Set<String> = []
+    @State private var animationBusyPhotoIDs: Set<String> = []
     @State private var showLibrary = false
     @State private var showCamera = false
     @State private var showCaptureGuide = false
@@ -5749,8 +5750,23 @@ struct PhotoStudioView: View {
     /// Loading and saving each account for half of the visible batch progress.
     @State private var libraryImportStep = 0
     @ObservedObject private var photoJobs = PhotoWorkQueue.shared
-    @State private var handledPhotoJob: UUID?
-    private var isProcessing: Bool { localProcessing || checkingSavedPhoto || photoJobs.job?.running == true }
+    @State private var handledPhotoJobs: Set<UUID> = []
+    private var activePhotoJobs: [PhotoWorkQueue.Job] {
+        photoJobs.visibleJobs.filter { $0.listingID == listing.id && $0.running }
+    }
+    private var busyPhotoIDs: Set<String> {
+        animationBusyPhotoIDs.union(activePhotoJobs.compactMap(\.currentPhotoID))
+    }
+    private var batchRun: BatchRun? {
+        guard let job = activePhotoJobs.first else { return nil }
+        return BatchRun(title: job.title, total: job.total, current: job.current,
+                        done: job.done, failed: job.failures.count, phase: job.phase ?? .preparing)
+    }
+    private var isProcessing: Bool { localProcessing || checkingSavedPhoto || !activePhotoJobs.isEmpty }
+    private var isAIActionBlocked: Bool { localProcessing || checkingSavedPhoto }
+    private func photoIsBusy(_ photo: EnhancedPhoto) -> Bool {
+        photoJobs.isPhotoBusy(listingID: listing.id, key: photo.savedVersion?.familyID ?? photo.id)
+    }
     @State private var photoSaveError: String?
     @State private var processingText = "Working on your photo…"
     @State private var compare: PhotoComparePresentation?
@@ -5789,7 +5805,6 @@ struct PhotoStudioView: View {
     /// Photo ids ticked in the grid while `batchEdit` is live.
     @State private var batchSelection: Set<String> = []
     /// The batch currently running, for the progress card. nil when idle.
-    @State private var batchRun: BatchRun?
     /// What the last batch did, in one line, kept on screen until the agent
     /// starts something else. A batch that half-worked has to SAY so.
     @State private var batchNote: BatchNote?
@@ -5882,12 +5897,17 @@ struct PhotoStudioView: View {
         }
         .onAppear {
             loadExisting()
-            receivePhotoWork(photoJobs.visibleJob)
+            receivePhotoWork(photoJobs.visibleJobs)
             syncIdleHold()      // a dismissed cover re-appears mid-animate
             seedPhotosForUIWalk()
             refreshListingPhotoSelection()
         }
-        .onReceive(photoJobs.$job) { job in receivePhotoWork(photoJobs.isContextCurrent ? job : nil) }
+        .onReceive(photoJobs.$jobs) { _ in
+            Task { @MainActor in
+                await Task.yield()
+                receivePhotoWork(photoJobs.visibleJobs)
+            }
+        }
         .onChange(of: isProcessing) { _ in syncIdleHold() }
         .onChange(of: auth.userID) { newOwner in
             libraryImportCancellation?.cancel()
@@ -6049,7 +6069,7 @@ struct PhotoStudioView: View {
                             Label(checkingSavedPhoto ? "Checking saved edit…" : "Check saved edit · \(saved.request.edit.capitalized)",
                                   systemImage: "arrow.clockwise")
                                 .font(.rpBody.weight(.semibold)).frame(minHeight: 44)
-                        }.disabled(isProcessing).accessibilityIdentifier("photos.checkSavedEdit." + saved.id)
+                        }.disabled(isProcessing || photoJobs.hasRunningJobs).accessibilityIdentifier("photos.checkSavedEdit." + saved.id)
                     }
                     if let savedPhotoNote { Text(savedPhotoNote).font(.rpCaption).foregroundStyle(Theme.inkDim) }
                     if let savedPhotoReadError { Text(savedPhotoReadError).font(.rpCaption).foregroundStyle(Theme.warn) }
@@ -6072,9 +6092,11 @@ struct PhotoStudioView: View {
     }
 
     private func checkSavedPhoto(_ saved: PhotoPendingEdit.Saved) {
-        guard !isProcessing else { return }
+        guard !isProcessing, !photoJobs.hasRunningJobs else { return }
         let service = PhotoEditService(model: model, listing: listing, space: space)
-        let reviewedJobID = photoJobs.visibleJob?.id
+        let reviewedJobID = photoJobs.visibleJobs.first {
+            $0.listingID == listing.id && !$0.running && !$0.failures.isEmpty
+        }?.id
         checkingSavedPhoto = true; savedPhotoNote = nil
         Task { @MainActor in
             defer { checkingSavedPhoto = false }
@@ -6101,12 +6123,12 @@ struct PhotoStudioView: View {
 
     private func dismissRecoveredPhotoReview(_ reviewedJobID: UUID?) {
         guard savedPhotoReadError == nil, savedPhotoEdits.isEmpty,
-              let reviewedJobID, let job = photoJobs.visibleJob, job.id == reviewedJobID,
+              let reviewedJobID, let job = photoJobs.job(id: reviewedJobID),
               job.listingID == listing.id, !job.running, !job.failures.isEmpty,
               job.failures.allSatisfy({ failure in
                   AIFailure.requiresSavedPhotoCheck(failure.error)
               }) else { return }
-        photoJobs.dismissResult()
+        photoJobs.dismissResult(jobID: reviewedJobID)
     }
 
     private var studioSpinnerRow: some View {
@@ -6243,7 +6265,7 @@ struct PhotoStudioView: View {
     /// The line above the library grid. Three verbs, all of them free.
     private var photosGridHint: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(libraryKind == .original ? "Tap the wand to edit an original. Tap a photo to review its saved versions."
+            Text(libraryKind == .original ? "Tap the wand to edit the enhanced capture. Tap a photo to review its saved versions."
                  : "Tap a photo to review, share, or select it for your listing. To try a different edit, return to Original.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
@@ -6269,7 +6291,7 @@ struct PhotoStudioView: View {
                     .background(RPGradient.photo,
                                 in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Edit originals with AI")
+                    Text("Edit enhanced photos with AI")
                         .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
                     Text("Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -6823,7 +6845,8 @@ struct PhotoStudioView: View {
                 } else {
                     let (report, error) = await PhotoGridListingSelection.selectAll(targets, requireCurrent: check, state: currentState, select: { try await apply($0, selecting: true) })
                     try check()
-                    listingChoiceNote = "\(report.selected) selected · \(report.unchanged) already on listing · \(report.needsReview) need review."
+                    listingChoiceNote = "\(report.selected) selected · \(report.unchanged) already on listing · \(report.needsReview) need review" +
+                        (report.unavailable == 0 ? "." : " · \(report.unavailable) could not be verified and were left unchanged.")
                     if let error { photoSaveError = "\(report.selected) choices confirmed. Further selection stopped. " + error.localizedDescription }
                 }
             } catch { if context.isCurrent { photoSaveError = error.localizedDescription } }
@@ -6857,7 +6880,7 @@ struct PhotoStudioView: View {
                                         ? (listingPhotoLabel(p.id) ?? "Selection unavailable") : "")
                     .accessibilityIdentifier("photos.version.\(p.id)")
                     .contextMenu { photoMenu(p) }
-                if !busyPhotoIDs.contains(p.id), entry != .photos || libraryKind == .original { wandButton(p) }
+                if !photoIsBusy(p), entry != .photos || libraryKind == .original { wandButton(p) }
                 // THE COVER, on the surface. It was a long-press and nothing
                 // else — an invisible gesture for the one picture that
                 // represents the whole home everywhere it is shared. Only on
@@ -6870,8 +6893,8 @@ struct PhotoStudioView: View {
                     thumb(p).overlay { selectionOverlay(p) }
                 }
                 .buttonStyle(ScalePressStyle())
-                .disabled(isProcessing)
-                .accessibilityLabel(Text(batchSelection.contains(p.id)
+                .disabled(isAIActionBlocked || photoIsBusy(p))
+                .accessibilityLabel(Text(photoIsBusy(p) ? "Photo is already being edited" : batchSelection.contains(p.id)
                                          ? "Photo, selected. Tap to leave it out."
                                          : "Photo, not selected. Tap to include it."))
             }
@@ -6931,23 +6954,33 @@ struct PhotoStudioView: View {
     /// The tick (and the dimming) on a photo while an edit picks its targets.
     private func selectionOverlay(_ p: EnhancedPhoto) -> some View {
         let selected = batchSelection.contains(p.id)
+        let busy = photoIsBusy(p)
         return RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(Color.black.opacity(selected ? 0 : 0.35))
+            .fill(Color.black.opacity(busy ? 0.58 : selected ? 0 : 0.35))
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(selected ? Theme.accent : Color.clear, lineWidth: 3)
+                    .strokeBorder(selected && !busy ? Theme.accent : Color.clear, lineWidth: 3)
             )
+            .overlay {
+                if busy {
+                    Text("Already editing").font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.white).multilineTextAlignment(.center)
+                        .padding(6)
+                }
+            }
             .overlay(alignment: .topTrailing) {
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22, weight: .semibold))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(Color.white, selected ? Theme.accent : Color.black.opacity(0.35))
-                    .padding(8)
+                if !busy {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 22, weight: .semibold))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(Color.white, selected ? Theme.accent : Color.black.opacity(0.35))
+                        .padding(8)
+                }
             }
     }
 
     @ViewBuilder private func photoMenu(_ p: EnhancedPhoto) -> some View {
-        if entry != .photos || libraryKind == .original {
+        if !photoIsBusy(p) && (entry != .photos || libraryKind == .original) {
         Menu {
             Button { aiEdit(p, "twilight") } label: { Label(EditWords.twilight, systemImage: "moon.stars") }
             Button { aiEdit(p, "sky") } label: { Label(EditWords.sky, systemImage: "cloud.sun") }
@@ -6996,6 +7029,7 @@ struct PhotoStudioView: View {
     }
 
     private func openCustomEdit(_ p: EnhancedPhoto, batchTargets: [EnhancedPhoto] = []) {
+        guard !isAIActionBlocked, !photoIsBusy(p) else { return }
         runPhotoAI {
             // Park the batch only after connection succeeds. Cancelling the
             // wait cannot leak these targets into the next single-photo edit.
@@ -7017,7 +7051,7 @@ struct PhotoStudioView: View {
     /// haptic and the compare sheet are all still here, in this order.
     private func aiEdit(_ p: EnhancedPhoto, _ edit: String,
                         style: String? = nil, prompt: String? = nil) {
-        guard !isProcessing else { return }
+        guard !isAIActionBlocked, !photoIsBusy(p) else { return }
         if edit == "stage" {
             runPhotoAI {
                 openStagingSetup(PendingBatchEdit(edit: edit, style: style, title: "Staging", multiple: false), targets: [p])
@@ -7038,7 +7072,11 @@ struct PhotoStudioView: View {
                                 stagingReferenceID: String? = nil, declutterApprovals: [String: DeclutterGenerationApproval]? = nil,
                                 declutterCredit: DeclutterCreditAuthorization? = nil,
                                 stageCredit: StageCreditAuthorization? = nil) {
-        guard !isProcessing, AIConsent.shared.isGranted else { return }
+        guard !isAIActionBlocked, AIConsent.shared.isGranted else { return }
+        guard targets.allSatisfy({ !photoIsBusy($0) }) else {
+            batchNote = BatchNote(text: "A selected photo is already being edited. Choose other photos while it finishes.", ok: false)
+            return
+        }
         if pending.edit == "declutter", declutterApprovals == nil {
             declutterReview = PhotoDeclutterReviewModel(model: model, listing: listing, photos: targets, space: space)
             return
@@ -7050,31 +7088,26 @@ struct PhotoStudioView: View {
                          stageCredit: stageCredit) {
             batchNote = nil; batchEdit = nil; batchSelection.removeAll()
             Haptics.selection()
+        } else {
+            batchNote = BatchNote(text: "This photo edit could not start. Check your saved edits or wait for a running batch to finish.", ok: false)
         }
     }
 
-    private func receivePhotoWork(_ job: PhotoWorkQueue.Job?) {
-        guard let job, job.listingID == listing.id else { batchRun = nil; busyPhotoIDs.removeAll(); return }
-        busyPhotoIDs = job.currentPhotoID.map { Set([$0]) } ?? []
-        if job.running {
-            batchRun = BatchRun(title: job.title, total: job.total, current: job.current,
-                                done: job.done, failed: job.failures.count, phase: job.phase ?? .preparing)
-            return
-        }
-        batchRun = nil
-        loadExisting()
-        guard handledPhotoJob != job.id else { return }
-        handledPhotoJob = job.id
-        if let error = job.failures.first?.error, AIFailure.requiresSavedPhotoCheck(error) {
-            batchNote = BatchNote(text: "The result is not confirmed. Your request is retained. In Photos, use Check saved edit instead of starting another edit.", ok: false)
-            return
-        }
-        let failure = job.failures.first.map { AIFailure($0.error) }
-        let pending = PendingBatchEdit(edit: "", style: nil, title: job.title, multiple: true)
-        finishBatch(pending, total: job.total, done: job.done, failed: job.failures.count,
-                    firstFailure: failure, stoppedEarly: job.interrupted)
-        if job.interrupted && job.failures.isEmpty {
-            batchNote = BatchNote(text: "\(job.done) of \(job.total) photos changed. Work stopped; saved photos and originals are safe. Reopen the app and select the remaining photos to continue.", ok: false)
+    private func receivePhotoWork(_ jobs: [PhotoWorkQueue.Job]) {
+        for job in jobs where job.listingID == listing.id && !job.running && !handledPhotoJobs.contains(job.id) {
+            handledPhotoJobs.insert(job.id)
+            loadExisting()
+            if let error = job.failures.first?.error, AIFailure.requiresSavedPhotoCheck(error) {
+                batchNote = BatchNote(text: "The result is not confirmed. Your request is retained. In Photos, use Check saved edit instead of starting another edit.", ok: false)
+                continue
+            }
+            let failure = job.failures.first.map { AIFailure($0.error) }
+            let pending = PendingBatchEdit(edit: "", style: nil, title: job.title, multiple: true)
+            finishBatch(pending, total: job.total, done: job.done, failed: job.failures.count,
+                        firstFailure: failure, stoppedEarly: job.interrupted)
+            if job.interrupted && job.failures.isEmpty {
+                batchNote = BatchNote(text: "\(job.done) of \(job.total) photos changed. Work stopped; saved photos and originals are safe. Reopen the app and select the remaining photos to continue.", ok: false)
+            }
         }
     }
 
@@ -7162,10 +7195,10 @@ struct PhotoStudioView: View {
                   model.isInSelectedWorkspace(current), current.cloudUnavailable != true else { throw CancellationError() }
         }
         let spaceRawForDrift = space.rawValue
-        busyPhotoIDs.insert(photoID)
+        animationBusyPhotoIDs.insert(photoID)
         animateTask = Task {
             defer {
-                busyPhotoIDs.remove(photoID)
+                animationBusyPhotoIDs.remove(photoID)
                 localProcessing = false
                 refreshSavedAnimations()
             }
@@ -7450,7 +7483,7 @@ struct PhotoStudioView: View {
         }
         .buttonStyle(ScalePressStyle())
         .padding(8)
-        .disabled(isProcessing)
+        .disabled(isAIActionBlocked)
         .accessibilityLabel(Text("Change this photo with AI"))
     }
 
@@ -7496,8 +7529,8 @@ struct PhotoStudioView: View {
             if let pending = batchEdit {
                 batchSelectionBar(pending)
             }
-            if let run = batchRun {
-                batchProgressCard(run)
+            ForEach(activePhotoJobs) { job in
+                batchProgressCard(job)
             }
             if let note = batchNote, batchRun == nil {
                 batchNoteCard(note)
@@ -7607,7 +7640,7 @@ struct PhotoStudioView: View {
         }
         .buttonStyle(RendpropPillButtonStyle(selected: selected, compact: true, horizontalPadding: 12))
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .disabled(isProcessing)
+        .disabled(isAIActionBlocked)
         .accessibilityLabel(Text("\(style.label) — pick the photos and the furniture is added to each one."))
     }
 
@@ -7650,7 +7683,7 @@ struct PhotoStudioView: View {
         }
         .buttonStyle(RendpropPillButtonStyle(selected: selected, compact: true, horizontalPadding: 12))
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .disabled(isProcessing)
+        .disabled(isAIActionBlocked)
         .accessibilityLabel(Text(photos.isEmpty
                                  ? "\(label). Pick a photo and this change is made to it."
                                  : "\(label). Pick the photos and this change is made to each one."))
@@ -7692,11 +7725,11 @@ struct PhotoStudioView: View {
                 // needless overload-resolution puzzle in a file that has run
                 // the type-checker out of budget before.
                 Button {
-                    batchSelection = batchSelection.count == photos.count
-                        ? Set<String>() : Set(photos.map(\.id))
+                    let available = Set(photos.filter { !photoIsBusy($0) }.map(\.id))
+                    batchSelection = batchSelection == available ? [] : available
                     Haptics.selection()
                 } label: {
-                    Text(batchSelection.count == photos.count ? "Clear" : "Select all")
+                    Text(batchSelection == Set(photos.filter { !photoIsBusy($0) }.map(\.id)) ? "Clear" : "Select available")
                         .font(.rpCaption.weight(.semibold))
                         .foregroundStyle(Theme.accent)
                 }
@@ -7718,8 +7751,8 @@ struct PhotoStudioView: View {
                     .background(Theme.accent, in: Capsule())
             }
             .buttonStyle(ScalePressStyle())
-            .disabled(batchSelection.isEmpty || isProcessing)
-            .opacity(batchSelection.isEmpty || isProcessing ? 0.5 : 1)
+            .disabled(batchSelection.isEmpty || isAIActionBlocked)
+            .opacity(batchSelection.isEmpty || isAIActionBlocked ? 0.5 : 1)
             .accessibilityIdentifier("studio.batchApply")
         }
     }
@@ -7727,12 +7760,14 @@ struct PhotoStudioView: View {
     /// A running batch, with counts. A batch is minutes of work and money per
     /// photo, so it says which photo it is on and how many have failed WHILE it
     /// runs, not only at the end.
-    private func batchProgressCard(_ run: BatchRun) -> some View {
-        let stopping = photoJobs.visibleJob?.stopRequested == true
+    private func batchProgressCard(_ job: PhotoWorkQueue.Job) -> some View {
+        let run = BatchRun(title: job.title, total: job.total, current: job.current,
+                           done: job.done, failed: job.failures.count, phase: job.phase ?? .preparing)
+        let stopping = job.stopRequested
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 ProgressView()
-                Text(stopping ? "Stopping remaining edits" : "\(run.phase.title) — photo \(min(run.current, run.total)) of \(run.total)")
+                Text(stopping ? "Stopping remaining edits" : "\(run.title) · \(run.phase.title) — photo \(min(run.current, run.total)) of \(run.total)")
                     .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
                     .lineLimit(2).minimumScaleFactor(0.8)
             }
@@ -7749,7 +7784,7 @@ struct PhotoStudioView: View {
                 .font(.rpCaption)
                 .foregroundStyle(run.failed == 0 ? Theme.inkDim : Theme.warn)
                 .fixedSize(horizontal: false, vertical: true)
-            Button { photoJobs.stopRemaining() } label: {
+            Button { photoJobs.stopRemaining(jobID: job.id) } label: {
                 Label(stopping ? "Remaining edits stopped" : "Stop remaining edits", systemImage: "stop.circle")
                     .font(.rpBody.weight(.semibold)).frame(minHeight: 44)
             }.disabled(stopping)
@@ -7785,7 +7820,7 @@ struct PhotoStudioView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(batchEdit == nil
                  ? "Tap a photo to see before and after. Tap the wand on a photo to change just that one."
-                 : "Tap the photos you want changed — they get a tick.")
+                 : "Tap the photos you want changed — they get a tick. Photos in another edit are unavailable until that batch finishes.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
             // W2-C4: the agent learns this BEFORE they tap, not after
@@ -7814,7 +7849,7 @@ struct PhotoStudioView: View {
     /// remain unchanged.
     private func startEdit(_ edit: String, style: String?, title: String,
                            multiple: Bool = true) {
-        guard !isProcessing else { return }
+        guard !isAIActionBlocked else { return }
         batchNote = nil
         guard !photos.isEmpty else {
             startShowcaseEdit(edit, style: style)
@@ -7824,7 +7859,7 @@ struct PhotoStudioView: View {
         // Pre-tick the whole listing for the fan-out edits: with 17 photos the
         // answer is almost always "all of them", and un-ticking three is less
         // work than ticking fourteen. Never for the one-at-a-time edits.
-        batchSelection = multiple && edit != "stage" ? Set(photos.map(\.id)) : Set<String>()
+        batchSelection = multiple && edit != "stage" ? Set(photos.filter { !photoIsBusy($0) }.map(\.id)) : Set<String>()
         Haptics.selection()
     }
 
@@ -7872,7 +7907,7 @@ struct PhotoStudioView: View {
     /// it — a minute of polling and a separate charge per photo is not something
     /// to fan out by accident.
     private func toggleBatchSelection(_ p: EnhancedPhoto) {
-        guard let pending = batchEdit else { return }
+        guard let pending = batchEdit, !photoIsBusy(p) else { return }
         if !pending.multiple {
             batchSelection = batchSelection.contains(p.id) ? Set<String>() : Set([p.id])
         } else if batchSelection.contains(p.id) {
@@ -7916,7 +7951,7 @@ struct PhotoStudioView: View {
     }
 
     private func openStagingSetup(_ pending: PendingBatchEdit, targets: [EnhancedPhoto]) {
-        guard !isProcessing, !targets.isEmpty else { return }
+        guard !isAIActionBlocked, !targets.isEmpty else { return }
         let directory = EnhancedPhoto.directory(for: listing.id)
         guard let index = try? PhotoVersionHistory.load(directory: directory) else {
             aiFailure = AIFailure(PhotoVersionHistory.Failure.invalidHistory); return
@@ -7948,7 +7983,7 @@ struct PhotoStudioView: View {
     /// line saying how many landed first.
     private func runBatch(_ pending: PendingBatchEdit, targets: [EnhancedPhoto],
                           prompt: String? = nil) {
-        guard !isProcessing else { return }
+        guard !isAIActionBlocked else { return }
         runPhotoAI { runBatchWithSession(pending, targets: targets, prompt: prompt) }
     }
 
@@ -8001,8 +8036,14 @@ struct PhotoStudioView: View {
             let index = try PhotoVersionHistory.ensureOriginalSources(directory: dir)
             if entry == .studio {
                 photos = index.libraryVersions(.original).map { version in
-                    let image = dir.appendingPathComponent(version.imageFile)
-                    return EnhancedPhoto(id: version.id, originalURL: image, enhancedURL: image)
+                    // Studio starts from the recorded local enhancement. The
+                    // retained capture remains the before image and disclosure
+                    // source. A missing enhancement stays visible for review,
+                    // while the edit service refuses to send its raw pixels.
+                    let editSource = (try? PhotoVersionHistory.enhancedCaptureForEditing(id: version.id, directory: dir)) ?? version
+                    let image = dir.appendingPathComponent(editSource.imageFile)
+                    let retained = dir.appendingPathComponent(editSource.originalFile ?? version.imageFile)
+                    return EnhancedPhoto(id: editSource.id, originalURL: retained, enhancedURL: image)
                 }
             }
             selectedPhotoIDs = Set(index.versions.keys.filter(index.isSelectedForListing))
@@ -8460,7 +8501,7 @@ private struct PhotoReviewEditSheet: View {
                 VStack(alignment: .leading, spacing: 14) {
                     DetailPhotoThumb(url: original.enhancedURL, height: 180)
                     Text("Change just this photo").font(.title2.bold()).foregroundStyle(Theme.ink)
-                    Text("Each action starts from this photo’s Original. Your saved edits stay in history. Review the new version before using it on your listing.")
+                    Text("Each action starts from this photo’s enhanced capture. The retained Original and saved edits stay in history. Review the new version before using it on your listing.")
                         .font(.subheadline).foregroundStyle(Theme.inkDim)
                         .fixedSize(horizontal: false, vertical: true)
                     if pickingStyle {
@@ -8489,7 +8530,7 @@ private struct PhotoReviewEditSheet: View {
                 }.padding(16).frame(maxWidth: 760).frame(maxWidth: .infinity)
             }
             .background(Theme.bg.ignoresSafeArea())
-            .navigationTitle("Edit original photo").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Edit enhanced photo").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
     }
@@ -8703,7 +8744,14 @@ struct PhotoCompareView: View {
         .onChange(of: auth.userID) { _ in clearAndDismiss() }
         .onChange(of: auth.syncSessionRevision) { _ in clearAndDismiss() }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in clearAndDismiss() }
-        .onReceive(photoJobs.$job) { receiveSinglePhotoWork($0) }
+        .onReceive(photoJobs.$jobs) { _ in
+            Task { @MainActor in
+                await Task.yield()
+                if let singleEditJobID, let job = photoJobs.job(id: singleEditJobID) {
+                    receiveSinglePhotoWork(job)
+                }
+            }
+        }
         .sheet(isPresented: $showVersionHistory) { reviewHistorySheet }
         .sheet(isPresented: $showAccessibilityFeedback) { accessibilityFeedbackSheet }
         .sheet(isPresented: $showEditActions, onDismiss: continueSinglePhotoEdit) {
@@ -8874,10 +8922,14 @@ struct PhotoCompareView: View {
         guard let id = UUID(uuidString: photo.enhancedURL.deletingLastPathComponent().lastPathComponent) else { return nil }
         return model.listings.first { $0.id == id && $0.cloudUnavailable != true }
     }
+    private var singlePhotoIsBusy: Bool {
+        guard let listing = reviewListing else { return false }
+        return photoJobs.isPhotoBusy(listingID: listing.id, key: viewed.savedVersion?.familyID ?? viewed.id)
+    }
 
     private var singlePhotoEditing: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let job = photoJobs.visibleJob, job.id == singleEditJobID, job.running {
+            if let singleEditJobID, let job = photoJobs.job(id: singleEditJobID), job.running {
                 HStack(alignment: .top, spacing: 10) {
                     ProgressView().tint(Theme.accent)
                     VStack(alignment: .leading, spacing: 4) {
@@ -8886,16 +8938,18 @@ struct PhotoCompareView: View {
                     }
                 }
                 .accessibilityIdentifier("photoVersion.edit.progress")
-                SecondaryButton(title: "Stop photo edit", systemImage: "stop.circle", isCompact: true) { photoJobs.cancel() }
+                SecondaryButton(title: "Stop photo edit", systemImage: "stop.circle", isCompact: true) {
+                    photoJobs.cancel(jobID: singleEditJobID)
+                }
             } else {
                 SecondaryButton(title: "Edit", systemImage: "wand.and.stars",
                     isDisabled: imageContext?.isCurrent != true || selectionWorkID != nil
-                        || photoJobs.visibleJob?.running == true || editConnection.isWaiting || reviewListing == nil,
+                        || singlePhotoIsBusy || editConnection.isWaiting || reviewListing == nil,
                     isCompact: true,
                     action: openSinglePhotoEdit)
                     .accessibilityIdentifier("photoVersion.editOriginal")
-                    .accessibilityLabel("Edit original photo")
-                    .accessibilityHint("Declutter, stage or edit only this photo’s retained Original. Saved versions stay unchanged.")
+                    .accessibilityLabel("Edit enhanced photo")
+                    .accessibilityHint("Declutter, stage or edit this photo’s enhanced capture. Its retained Original stays available for comparison.")
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -8923,12 +8977,17 @@ struct PhotoCompareView: View {
 
     private func openSinglePhotoEdit() {
         guard imageContext?.isCurrent == true, reviewListing != nil,
-              selectionWorkID == nil, photoJobs.visibleJob?.running != true else { return }
+              selectionWorkID == nil, !singlePhotoIsBusy else { return }
         do {
             let directory = viewed.enhancedURL.deletingLastPathComponent()
-            let source = try PhotoVersionHistory.originalForEditing(id: viewed.id, directory: directory)
+            let index = try PhotoVersionHistory.load(directory: directory)
+            guard index.versions[viewed.id]?.imageFile == viewed.enhancedURL.lastPathComponent else {
+                throw PhotoVersionHistory.Failure.changedVersion
+            }
+            let source = try PhotoVersionHistory.enhancedCaptureForEditing(id: viewed.id, directory: directory)
             let url = directory.appendingPathComponent(source.imageFile)
-            editOriginal = EnhancedPhoto(id: source.id, originalURL: url, enhancedURL: url)
+            let retained = directory.appendingPathComponent(source.originalFile ?? source.imageFile)
+            editOriginal = EnhancedPhoto(id: source.id, originalURL: retained, enhancedURL: url)
             editContext = NativeMediaExportContext()
             pendingEdit = nil
             showEditActions = true
@@ -8946,7 +9005,7 @@ struct PhotoCompareView: View {
             editConnection.run { [self] in
                 guard context.isCurrent, editContext?.isCurrent == true, AIConsent.shared.isGranted,
                       AIConsent.shared.revocationRevision == consentRevision,
-                      reviewListing != nil, photoJobs.visibleJob?.running != true else { clearSinglePhotoEdit(); return }
+                      reviewListing != nil, !singlePhotoIsBusy else { clearSinglePhotoEdit(); return }
                 if case .stage = action {
                     singleStagingSetup = PhotoStagingSetup(
                         pending: PendingBatchEdit(edit: action.edit, style: action.style, title: action.title, multiple: false),
@@ -8967,7 +9026,7 @@ struct PhotoCompareView: View {
         guard let source = editOriginal, let context = editContext, context.isCurrent,
               imageContext?.isCurrent == true, AIConsent.shared.isGranted,
               editConsentRevision == AIConsent.shared.revocationRevision,
-              let listing = reviewListing, photoJobs.visibleJob?.running != true else { return }
+              let listing = reviewListing, !singlePhotoIsBusy else { return }
         if action == .declutter, declutterApprovals == nil {
             singleDeclutterReview = PhotoDeclutterReviewModel(model: model, listing: listing, photos: [source],
                 space: listing.isSample ? SpaceType.current : listing.spaceType)
@@ -8979,7 +9038,7 @@ struct PhotoCompareView: View {
                          style: action.style, prompt: prompt, stagingReferenceID: stagingReferenceID,
                          declutterApprovals: declutterApprovals, declutterCredit: declutterCredit,
                          stageCredit: stageCredit) {
-            singleEditJobID = photoJobs.visibleJob?.id
+            singleEditJobID = photoJobs.jobs.last?.id
             Haptics.selection()
         }
     }
@@ -9213,13 +9272,13 @@ struct PhotoCompareView: View {
 
     @ViewBuilder private var useOnListingButton: some View {
         if !showOriginal, viewed.savedVersion != nil {
-            PrimaryButton(title: selectionWorkID != nil ? "Checking…" : isCloudListing && !cloudSelectionKnown ? "Check selection" : cloudCoverRequested ? "Use as cover" : publicationSelected ? "Unselect" : "Use on listing",
+            PrimaryButton(title: selectionWorkID != nil ? "Checking…" : isCloudListing && !cloudSelectionKnown ? (cloudProjection?.pending == true ? "Check saved choice" : "Refresh selection") : cloudCoverRequested ? "Use as cover" : publicationSelected ? "Unselect" : "Use on listing",
                           systemImage: publicationSelected ? "minus.circle" : "checkmark.circle",
                           isDisabled: listingSelectionDisabled, action: changeListingSelection)
             .frame(minHeight: 44)
             .accessibilityIdentifier("photoVersion.useOnListing")
-            .accessibilityLabel(isCloudListing && !cloudSelectionKnown ? "Refresh listing photo selection" : cloudCoverRequested ? "Use this version as the listing cover" : publicationSelected ? "Remove this photo from listing" : "Use this version on listing")
-            .accessibilityHint(publicationSelected ? "Keeps every original and saved edit in Photos." : "Checks this home’s current cloud selection before changing it.")
+            .accessibilityLabel(isCloudListing && !cloudSelectionKnown ? "Refresh listing photo selection without changing it" : cloudCoverRequested ? "Use this version as the listing cover" : publicationSelected ? "Remove this photo from listing" : "Use this version on listing")
+            .accessibilityHint(isCloudListing && !cloudSelectionKnown ? "Checks whether this saved version can be used. Your current listing photos remain unchanged." : publicationSelected ? "Keeps every original and saved edit in Photos." : "Checks this home’s current cloud selection before changing it.")
             .disabled(listingSelectionDisabled)
         }
     }
@@ -9297,7 +9356,14 @@ struct PhotoCompareView: View {
             do {
                 guard context.isCurrent, viewed.id == versionID else { throw PhotoCloudSelectionFailure.identityChanged }
                 if !known {
-                    _ = try await model.refreshCloudPhotoSelection(listingID: listingID)
+                    let refreshed = try await model.refreshCloudPhotoSelection(listingID: listingID)
+                    guard context.isCurrent, viewed.id == versionID else { throw PhotoCloudSelectionFailure.identityChanged }
+                    if refreshed.pending {
+                        selectionError = PhotoCloudSelectionFailure.pending.localizedDescription
+                    } else if let family = viewed.savedVersion?.familyID,
+                              !refreshed.mutableFamilyIDs.contains(family) {
+                        selectionError = PhotoCloudSelectionFailure.unmapped.localizedDescription
+                    }
                     return
                 }
                 if !wasSelected || cloudCoverRequested {
@@ -12287,9 +12353,7 @@ struct ReelStudioView: View {
             NavigationStack { CreditWalletView() }
         }
         .onChange(of: photoMotionReviewKey) { _ in clearPreparedPhotoMotionQuote() }
-        .onReceive(photoWork.$job) { job in
-            if let job, job.listingID == listing.id, !job.running, phase == .setup { refreshVideoPhotos() }
-        }
+        .onReceive(photoWork.$jobs, perform: receivePhotoJobChange)
         .onChange(of: work.serverJob?.request) { request in
             guard let request else { return }
             photoMotion = request.isPhotoMotion
@@ -12818,8 +12882,14 @@ struct ReelStudioView: View {
         .accessibilityAddTraits(photoOrientationFilter == choice ? .isSelected : [])
     }
 
+    private func receivePhotoJobChange(_ jobs: [PhotoWorkQueue.Job]) {
+        guard phase == .setup,
+              jobs.contains(where: { $0.listingID == listing.id && !$0.running }) else { return }
+        refreshVideoPhotos()
+    }
+
     @ViewBuilder private var photoProcessingStatus: some View {
-        if let job = photoWork.visibleJob, job.listingID == listing.id, job.running {
+        if let job = photoWork.visibleJobs.first(where: { $0.listingID == listing.id && $0.running }) {
             HStack(spacing: 8) {
                 ProgressView()
                 Text("Processing photo \(min(max(1, job.current), job.total)) of \(job.total) · \(job.done) saved")

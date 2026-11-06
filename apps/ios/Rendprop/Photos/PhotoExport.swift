@@ -63,8 +63,56 @@ enum PhotoExportRenderer {
         return (data, ext == "jpeg" ? "jpg" : ext)
     }
 
+    /// Reports export progress from worker threads: photos finished so far, and
+    /// how many there are. The sheet shows it; nothing else depends on it.
+    typealias Progress = @Sendable (_ done: Int, _ total: Int) -> Void
+
+    /// How many photos are rendered at once. Rendering and JPEG encoding are
+    /// CPU-bound and were strictly sequential before build 141, which is why a
+    /// whole-listing package took minutes: one core did every crop while the
+    /// others idled. Three workers use the performance cores; two on phones
+    /// with less memory, because each worker holds a decoded full-resolution
+    /// photo plus one rendered crop at a time.
+    static var exportWorkers: Int {
+        let info = ProcessInfo.processInfo
+        let byMemory = info.physicalMemory >= 4_000_000_000 ? 3 : 2
+        return max(1, min(byMemory, info.activeProcessorCount))
+    }
+
+    /// Runs `work` for every index on a small pool of threads and returns the
+    /// results in input order, so the package is byte-for-byte the one the old
+    /// sequential loop produced. The lowest failing index wins; once anything
+    /// fails, no new work starts. `work` must only touch its own photo.
+    static func mapConcurrently<T>(count: Int, workers: Int = exportWorkers, _ work: (Int) throws -> T) throws -> [T] {
+        guard count > 0 else { return [] }
+        let lock = NSLock()
+        var results = [T?](repeating: nil, count: count)
+        var failure: (index: Int, error: Error)?
+        var next = 0
+        DispatchQueue.concurrentPerform(iterations: max(1, min(workers, count))) { _ in
+            while true {
+                lock.lock()
+                guard failure == nil, next < count else { lock.unlock(); return }
+                let index = next
+                next += 1
+                lock.unlock()
+                do {
+                    let value = try work(index)
+                    lock.lock(); results[index] = value; lock.unlock()
+                } catch {
+                    lock.lock()
+                    if failure == nil || index < failure!.index { failure = (index, error) }
+                    lock.unlock()
+                }
+            }
+        }
+        if let failure { throw failure.error }
+        return results.map { $0! }
+    }
+
     static func prepare(_ photos: [EnhancedPhoto], options: Options,
-                        readRetained: (URL) throws -> Data = { try Data(contentsOf: $0) }) throws -> Prepared {
+                        readRetained: (URL) throws -> Data = { try Data(contentsOf: $0) },
+                        progress: Progress? = nil) throws -> Prepared {
         guard !photos.isEmpty else { throw Failure(message: "There are no photos to export.") }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Rendprop-photos-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -72,7 +120,16 @@ enum PhotoExportRenderer {
             var urls: [URL] = []
             var deliveryFiles: [URL] = []
             let numberWidth = max(2, String(photos.count).count)
-            for (offset, photo) in photos.enumerated() {
+            let finished = NSLock()
+            var done = 0
+            // Each photo renders on its own worker and collects its own files;
+            // the per-photo lists are joined in gallery order afterwards, so
+            // the output order is unchanged: originals and versions before
+            // the current edit, photo by photo.
+            let outputs = try mapConcurrently(count: photos.count) { offset -> (url: URL, urls: [URL], deliveryFiles: [URL]) in
+                let photo = photos[offset]
+                var urls: [URL] = []
+                var deliveryFiles: [URL] = []
                 let url = try autoreleasepool {
                     let photoDirectory = photo.enhancedURL.deletingLastPathComponent()
                     let history = try PhotoVersionHistory.load(directory: photoDirectory)
@@ -160,7 +217,13 @@ enum PhotoExportRenderer {
                     try PhotoVersionHistory.requireUnchanged(history, directory: photoDirectory)
                     return target
                 }
-                urls.append(url); deliveryFiles.append(url)
+                finished.lock(); done += 1; let count = done; finished.unlock()
+                progress?(count, photos.count)
+                return (url, urls, deliveryFiles)
+            }
+            for output in outputs {
+                urls += output.urls; deliveryFiles += output.deliveryFiles
+                urls.append(output.url); deliveryFiles.append(output.url)
             }
             // Photos receives each retained original before its edited version,
             // so the current edit is added last. Files keeps predictable names.
@@ -202,22 +265,48 @@ enum PhotoExportRenderer {
     }
 
     static func prepareCoordinator(_ photos: [EnhancedPhoto],
-                                   readRetained: (URL) throws -> Data = { try Data(contentsOf: $0) }) throws -> Prepared {
+                                   readRetained: (URL) throws -> Data = { try Data(contentsOf: $0) },
+                                   progress: Progress? = nil) throws -> Prepared {
         let empty = try prepareEmpty()
         let directory = empty.directory
         do {
             var files: [URL] = [], images: [URL] = []
             var notes = try coordinatorSelectionNotes(photos)
             var families = Set<String>()
-            func write(_ data: Data, _ path: String) throws -> URL {
-                guard coordinatorPathIsSafe(path) else { throw Failure(message: "An export filename is invalid. Nothing was exported.") }
-                let url = directory.appendingPathComponent(path)
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try data.write(to: url, options: .atomic)
-                files.append(url)
-                return url
-            }
+            // First pass, cheap and in gallery order: read each photo's history
+            // and keep one photo per family, exactly as the sequential export
+            // did. The second pass does the image work on several threads.
+            var work: [(offset: Int, photo: EnhancedPhoto)] = []
             for (offset, photo) in photos.enumerated() {
+                let photoDirectory = photo.enhancedURL.deletingLastPathComponent()
+                let history = try PhotoVersionHistory.load(directory: photoDirectory)
+                if let named = history.versions[photo.id], named.imageFile != photo.enhancedURL.lastPathComponent {
+                    throw PhotoVersionHistory.Failure.changedVersion
+                }
+                guard let selected = history.versions.values.first(where: { $0.imageFile == photo.enhancedURL.lastPathComponent }) else {
+                    throw PhotoVersionHistory.Failure.invalidHistory
+                }
+                // One family may appear more than once in an old gallery.
+                // Preserve one complete history rather than duplicate paths.
+                let familyKey = photoDirectory.standardizedFileURL.path + "/" + selected.familyID
+                guard !history.hiddenFamilies.contains(selected.familyID) else { throw PhotoVersionHistory.Failure.changedVersion }
+                guard families.insert(familyKey).inserted else { continue }
+                work.append((offset, photo))
+            }
+            struct Output { var files: [URL] = [], images: [URL] = [], notes: [String] = [] }
+            let finished = NSLock()
+            var done = 0
+            let outputs = try mapConcurrently(count: work.count) { item -> Output in
+                let (offset, photo) = work[item]
+                var output = Output()
+                func write(_ data: Data, _ path: String) throws -> URL {
+                    guard coordinatorPathIsSafe(path) else { throw Failure(message: "An export filename is invalid. Nothing was exported.") }
+                    let url = directory.appendingPathComponent(path)
+                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try data.write(to: url, options: .atomic)
+                    output.files.append(url)
+                    return url
+                }
                 try autoreleasepool {
                     let photoDirectory = photo.enhancedURL.deletingLastPathComponent()
                     let history = try PhotoVersionHistory.load(directory: photoDirectory)
@@ -227,11 +316,7 @@ enum PhotoExportRenderer {
                     guard let selected = history.versions.values.first(where: { $0.imageFile == photo.enhancedURL.lastPathComponent }) else {
                         throw PhotoVersionHistory.Failure.invalidHistory
                     }
-                    // One family may appear more than once in an old gallery.
-                    // Preserve one complete history rather than duplicate paths.
-                    let familyKey = photoDirectory.standardizedFileURL.path + "/" + selected.familyID
                     guard !history.hiddenFamilies.contains(selected.familyID) else { throw PhotoVersionHistory.Failure.changedVersion }
-                    guard families.insert(familyKey).inserted else { return }
                     let number = String(format: "%02d", offset + 1)
                     let saved = history.history(for: selected.id).sorted {
                         $0.createdAt != $1.createdAt ? $0.createdAt < $1.createdAt : $0.id < $1.id
@@ -247,7 +332,7 @@ enum PhotoExportRenderer {
                         try PhotoVersionHistory.requireDownloadReview(imageURL: photo.originalURL)
                         let retained = try retainedImage(at: photo.originalURL, read: readRetained)
                         _ = try write(retained.data, "EarlierSources/" + number + "-source-unverified." + retained.ext)
-                        notes.append("Photo \(offset + 1): earlier source history is unverified; it is in EarlierSources, not Originals.")
+                        output.notes.append("Photo \(offset + 1): earlier source history is unverified; it is in EarlierSources, not Originals.")
                     }
                     for (position, version) in saved.enumerated() {
                         // Custom review is an exact persisted file permission,
@@ -262,7 +347,7 @@ enum PhotoExportRenderer {
                             : (version.effects.contains("declutter") ? "Decluttered" : (version.effects.isEmpty ? "Enhanced" : "Edited"))
                         let stem = number + "-version-" + String(format: "%0*d", versionWidth, position + 1) + "-" + version.exportSlug
                         let master = try write(retained.data, category + "/" + stem + "." + retained.ext)
-                        images.append(master)
+                        output.images.append(master)
                         let selectedNote = publication?.id == version.id ? "Selected for listing."
                             : (selected.id == version.id ? "Latest in Photo Studio; not selected for listing." : "Other saved version; not selected for listing.")
                         let reviewNote = version.needsStagingReview ? "\nSTAGING PREVIEW — review is not recorded. Not approved for publication; no platform copies are included." : ""
@@ -273,28 +358,43 @@ enum PhotoExportRenderer {
                         // Keep the pending preview as a clearly named master,
                         // never as an upload-ready copy or an implicit approval.
                         if version.needsStagingReview { return }
+                        // MLS and Zillow share the landscape preset: one render
+                        // and one encode, written to both folders. Each aspect
+                        // is rendered once per saved version.
+                        var copies: [PhotoExportLayout.Aspect: (encoded: Data, width: Int, height: Int)] = [:]
                         for (platform, aspect) in [("MLS", PhotoExportLayout.Aspect.landscape), ("Zillow", .landscape),
                                                    ("Instagram/Feed4x5", .feed), ("Instagram/Stories9x16", .portrait)] {
-                            let cropped = render(image, aspect: aspect, framing: .crop, label: nil)
-                            guard let encoded = cropped.jpegData(compressionQuality: 0.97), let pixels = cropped.cgImage else {
-                                throw Failure(message: "Couldn't encode an upload photo. Nothing was exported.")
+                            let copy: (encoded: Data, width: Int, height: Int)
+                            if let cached = copies[aspect] { copy = cached } else {
+                                copy = try autoreleasepool {
+                                    let cropped = render(image, aspect: aspect, framing: .crop, label: nil)
+                                    guard let encoded = cropped.jpegData(compressionQuality: 0.97), let pixels = cropped.cgImage else {
+                                        throw Failure(message: "Couldn't encode an upload photo. Nothing was exported.")
+                                    }
+                                    return (encoded, pixels.width, pixels.height)
+                                }
+                                copies[aspect] = copy
                             }
-                            _ = try write(encoded, platform + "/" + category + "/" + stem + ".jpg")
+                            _ = try write(copy.encoded, platform + "/" + category + "/" + stem + ".jpg")
                             let rotated = [.left, .right, .leftMirrored, .rightMirrored].contains(image.imageOrientation)
                             let sourceWidth = rotated ? image.cgImage!.height : image.cgImage!.width
                             let sourceHeight = rotated ? image.cgImage!.width : image.cgImage!.height
-                            let resolution = "Available source: \(sourceWidth)×\(sourceHeight) pixels. Export: \(pixels.width)×\(pixels.height) pixels (\(aspect.rawValue))."
+                            let resolution = "Available source: \(sourceWidth)×\(sourceHeight) pixels. Export: \(copy.width)×\(copy.height) pixels (\(aspect.rawValue))."
                             let cropNote = "Centered crop may remove content at the edges. No white borders, text overlay, enlargement or new detail. Originals and full saved masters are unchanged."
-                            let warning = min(pixels.width, pixels.height) < 1080
+                            let warning = min(copy.width, copy.height) < 1080
                                 ? " Limited available resolution: this copy's short edge is below 1080 pixels; check the destination's requirements. It was not upscaled." : ""
                             _ = try write(Data((disclosure + "\n" + resolution + "\n" + cropNote + warning + "\n").utf8), platform + "/" + category + "/" + stem + "-disclosure.txt")
-                            notes.append(platform + "/" + category + "/" + stem + ".jpg — " + resolution + warning)
+                            output.notes.append(platform + "/" + category + "/" + stem + ".jpg — " + resolution + warning)
                         }
                         }
                     }
                     try PhotoVersionHistory.requireUnchanged(history, directory: photoDirectory)
                 }
+                finished.lock(); done += 1; let count = done; finished.unlock()
+                progress?(count, work.count)
+                return output
             }
+            for output in outputs { files += output.files; images += output.images; notes += output.notes }
             return Prepared(directory: directory, images: images, files: files, notes: notes)
         } catch {
             try? FileManager.default.removeItem(at: directory)
@@ -518,6 +618,10 @@ struct PhotoExportSheet: View {
     @State private var packageNotes: [String] = []
     @State private var preview: UIImage?
     @State private var working = false
+    /// Photos finished so far while `working`; nil before the first one and
+    /// while the ZIP is being written.
+    @State private var photosDone: (done: Int, total: Int)?
+    @State private var packaging = false
     @State private var error: String?
     @State private var saved = false
     @State private var prepared: PhotoExportRenderer.Prepared?
@@ -686,7 +790,7 @@ struct PhotoExportSheet: View {
                      ? "The ZIP keeps the .jpg files and matching disclosure captions together for MLS uploads. Saving to Photos adds the images to your camera roll instead."
                      : "For MLS uploads, choose Share or save to Files to keep the .jpg files and matching disclosure captions. Saving to Photos adds images to your camera roll.")
                     .font(.caption).foregroundStyle(.secondary)
-                if working { ProgressView(wholeListing ? "Preparing listing package…" : "Preparing photos…") }
+                if working { progressView }
                 if saved {
                     Label("Saved to Photos", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     if !original { Text("Copy the disclosure captions above when you upload. Photos does not carry the text files into your listing.").font(.caption) }
@@ -784,7 +888,7 @@ struct PhotoExportSheet: View {
                     Text(error).font(.footnote).foregroundStyle(Theme.bad)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if working { ProgressView("Preparing listing package…").font(.footnote) }
+                if working { progressView.font(.footnote) }
                 PrimaryButton(title: "Share ZIP", systemImage: "square.and.arrow.up", isDisabled: working) {
                     start(saveToPhotos: false)
                 }
@@ -794,6 +898,23 @@ struct PhotoExportSheet: View {
             .frame(maxWidth: .infinity)
             .background(Theme.bg)
             .overlay(alignment: .top) { Divider() }
+        }
+    }
+
+    /// What the export is doing right now. A whole-listing package can take a
+    /// while on a large listing; a bar that moves is the difference between
+    /// waiting and giving up (TestFlight 136: a realtor abandoned a package
+    /// after ninety seconds of a spinner that said nothing).
+    @ViewBuilder private var progressView: some View {
+        if packaging {
+            ProgressView("Writing the ZIP file…")
+        } else if let photosDone, photosDone.total > 0 {
+            ProgressView(value: Double(photosDone.done), total: Double(photosDone.total)) {
+                Text("Preparing photos · \(photosDone.done) of \(photosDone.total) ready")
+            }
+            .accessibilityIdentifier("export.progress")
+        } else {
+            ProgressView(wholeListing || coordinatorPackage ? "Preparing listing package…" : "Preparing photos…")
         }
     }
 
@@ -837,7 +958,7 @@ struct PhotoExportSheet: View {
     @MainActor private func start(saveToPhotos: Bool) {
         guard !working else { return }
         guard currentContext else { error = "Your account or workspace changed. Reopen the photo to export it."; return }
-        working = true; error = nil; saved = false
+        working = true; error = nil; saved = false; photosDone = nil; packaging = false
         let options = PhotoExportRenderer.Options(destination: destination, includeLabel: includeLabel,
             includeOriginals: includeOriginals, original: original, aspect: aspect, framing: framing, levelDegrees: levelDegrees)
         // Package only for a share: Photos receives the images themselves.
@@ -845,14 +966,29 @@ struct PhotoExportSheet: View {
         let coordinator = coordinatorPackage
         let archiveTitle = archiveName
         let packageExtras = saveToPhotos ? [] : extras
+        // The export runs on the phone's own CPU. Keep the screen awake and
+        // ask for background time so a realtor who glances at Messages
+        // halfway through doesn't come back to a package that never finished.
+        IdleTimer.hold()
+        let backgroundTime = ExportBackgroundTime()
+        backgroundTime.begin()
         Task { @MainActor in
-            defer { working = false }
+            defer {
+                working = false; photosDone = nil; packaging = false
+                IdleTimer.release()
+                backgroundTime.end()
+            }
             var output: PhotoExportRenderer.Prepared?
             do {
                 let input = photos
+                let progress: PhotoExportRenderer.Progress = { done, total in
+                    _ = Task { @MainActor in self.photosDone = (done, total) }
+                }
+                let packagingStarted: @Sendable () -> Void = { _ = Task { @MainActor in self.packaging = true } }
                 let (result, archive) = try await Task.detached(priority: .userInitiated) { () -> (PhotoExportRenderer.Prepared, URL?) in
-                    let prepared = coordinator ? try PhotoExportRenderer.prepareCoordinator(input) : (input.isEmpty ? try PhotoExportRenderer.prepareEmpty() : try PhotoExportRenderer.prepare(input, options: options))
+                    let prepared = coordinator ? try PhotoExportRenderer.prepareCoordinator(input, progress: progress) : (input.isEmpty ? try PhotoExportRenderer.prepareEmpty() : try PhotoExportRenderer.prepare(input, options: options, progress: progress))
                     do {
+                        if wantsArchive { packagingStarted() }
                         let archive = wantsArchive ? (coordinator ? try PhotoExportRenderer.packageCoordinator(prepared, archiveName: archiveTitle, extras: packageExtras) : try PhotoExportRenderer.package(prepared, archiveName: archiveTitle, extras: packageExtras)) : nil
                         return (prepared, archive)
                     } catch {
@@ -891,5 +1027,23 @@ struct PhotoExportSheet: View {
                 self.error = error.localizedDescription
             }
         }
+    }
+}
+
+/// Background execution time for an export in flight, ended exactly once:
+/// by the sheet when the export finishes, or by the system when the time
+/// runs out. The export itself keeps running on its worker threads.
+@MainActor private final class ExportBackgroundTime {
+    private var id = UIBackgroundTaskIdentifier.invalid
+
+    func begin() {
+        guard id == .invalid else { return }
+        id = UIApplication.shared.beginBackgroundTask(withName: "Prepare photo export") { [weak self] in self?.end() }
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }

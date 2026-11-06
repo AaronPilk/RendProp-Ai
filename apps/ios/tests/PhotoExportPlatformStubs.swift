@@ -41,5 +41,11 @@ struct PrimaryButton: View {
     var body: some View { EmptyView() }
 }
 extension View { func card() -> some View { self } }
+/// The app's reference-counted screen-awake hold (CameraManager.swift). The
+/// sheet holds it while an export runs; the fixture never presents the sheet.
+@MainActor enum IdleTimer {
+    static func hold() {}
+    static func release() {}
+}
 
 extension Notification.Name { static let rendpropWorkspaceChanged = Notification.Name("testWorkspaceChanged") }

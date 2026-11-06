@@ -5,6 +5,15 @@ import { applyVerifiedMonthlyCredits } from "../_shared/apple-monthly-credits.ts
 import { servingMode } from "../_shared/funded-serving.ts";
 import { teamSeatSaleProducts } from "../_shared/team-seat-sale.ts";
 
+/** Keep independent reads concurrent, but wait for all of them before a
+ * failing response returns. Promise.all rejects early and leaves HTTP reads
+ * running after the request (and after the test fixture restores fetch). */
+async function settledReads<const T extends readonly unknown[]>(reads: T): Promise<{ -readonly [K in keyof T]: Awaited<T[K]> }> {
+  const results = await Promise.allSettled(reads);
+  for (const result of results) if (result.status === "rejected") throw result.reason;
+  return results.map((result) => (result as PromiseFulfilledResult<unknown>).value) as { -readonly [K in keyof T]: Awaited<T[K]> };
+}
+
 /** Best effort: the envelope is informational on /me; the gate itself lives in
  * serving_envelope_admit. Null when the mode is funded or the RPC is unavailable. */
 async function servingEnvelope(admin: { rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }> }, orgId: string): Promise<Record<string, unknown> | null> {
@@ -379,17 +388,40 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   // A new phone has no cached purchase/workspace intent. Let an authorized
   // purchaser compare its verified StoreKit original ID with this workspace's
   // existing bindings before Apple shows an upgrade or another purchase sheet.
+  // The rest of the screen is independent read-only state (every RPC below
+  // is STABLE). Read it concurrently: run sequentially these were nine
+  // database round trips in a row, and GET /me averaged 4.9 s on 6 Nov 2026.
+  const purchaseSubscriptions = canManageSubscription && purchaseRes.data.plan_source === "apple" && purchaseRes.data.plan !== "free";
+  const [
+    subscriptionsRes,
+    servingActivation,
+    photoPackage,
+    trial,
+    heldPurchase,
+    teamSeatProducts,
+    hosting,
+    mode,
+    envelope,
+  ] = await settledReads([
+    purchaseSubscriptions
+      ? admin.from("apple_subscriptions").select("original_transaction_id").eq("org_id", purchaseOrgId).in("status", ["active", "grace"])
+      : Promise.resolve({ data: [], error: null }),
+    subscriptionServingActivation(admin, userId, servingOrgId),
+    photoPackageContext(admin, userId, servingOrgId),
+    canManageSubscription && purchaseOrgId === servingOrgId ? boundedTrialContext(admin, userId, servingOrgId) : Promise.resolve({}),
+    canManageSubscription && purchaseOrgId === servingOrgId ? heldTrialPurchase(admin, userId, servingOrgId) : Promise.resolve(null),
+    canManageSubscription ? teamSeatSaleProducts(admin, purchaseOrgId) : Promise.resolve([]),
+    hostingRetention(admin, orgId),
+    servingMode(),
+    servingEnvelope(admin, servingOrgId),
+  ]);
   let originalTransactionIDs: string[] = [];
-  if (canManageSubscription && purchaseRes.data.plan_source === "apple" && purchaseRes.data.plan !== "free") {
-    const { data: subscriptions, error: subscriptionsError } = await admin.from("apple_subscriptions")
-      .select("original_transaction_id").eq("org_id", purchaseOrgId).in("status", ["active", "grace"]);
-    if (subscriptionsError) throw new HttpError(503, "Subscription workspace could not be verified. Please retry.", "upstream");
-    originalTransactionIDs = (subscriptions ?? []).map((row) => String(row.original_transaction_id));
+  if (purchaseSubscriptions) {
+    if (subscriptionsRes.error) throw new HttpError(503, "Subscription workspace could not be verified. Please retry.", "upstream");
+    originalTransactionIDs = (subscriptionsRes.data ?? []).map((row: { original_transaction_id: unknown }) => String(row.original_transaction_id));
   }
 
   const costCents = round4(libraryUsage.cost_cents);
-  const servingActivation = await subscriptionServingActivation(admin, userId, servingOrgId);
-  const photoPackage = await photoPackageContext(admin, userId, servingOrgId);
   const visibleEntitlement = org.plan_source === "apple" && !servingActivation.available
     ? { ...entitlement, renders_per_month:0, photo_edits_per_month:0, reels_per_month:0, aerials_per_month:0, topaz_per_month:0, degraded:true }
     : entitlement;
@@ -424,10 +456,6 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   byFeature.renders = Math.max(0, byFeature.renders);
 
   const portfolioUrl = org.handle ? `${TOUR_BASE}/a/${org.handle}` : null;
-  const trial = canManageSubscription && purchaseOrgId === servingOrgId ? await boundedTrialContext(admin, userId, servingOrgId) : {};
-  const heldPurchase = canManageSubscription && purchaseOrgId === servingOrgId ? await heldTrialPurchase(admin, userId, servingOrgId) : null;
-  const teamSeatProducts = canManageSubscription
-    ? await teamSeatSaleProducts(admin, purchaseOrgId) : [];
 
   return json({
     user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null,
@@ -437,7 +465,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     org: { id: org.id, name: org.name, handle: org.handle, space_type: org.space_type, plan: org.plan, brand_kit: org.brand_kit },
     plan: entitlement.plan,          // EFFECTIVE (expired trial → free)
     plan_raw: org.plan ?? null,
-    hosting_retention: await hostingRetention(admin, orgId),
+    hosting_retention: hosting,
     trial_ends_at: org.trial_ends_at ?? null,
     ...trial,
     trial_offer: heldPurchase?.trial_offer ?? null,
@@ -450,8 +478,8 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     // funded-serving. `serving_envelope` is the money gate the app shows next
     // to the feature meters: ceiling, counted spend, held liability, what is
     // still available and when the window resets (null outside ceiling mode).
-    serving_mode: await servingMode(),
-    serving_envelope: await servingEnvelope(admin, servingOrgId),
+    serving_mode: mode,
+    serving_envelope: envelope,
     // Additive (launch wave, decision LC-§"Entitlement sync"). Optional in the
     // client: an app build older than migration 0019 simply ignores them.
     plan_source: testingAccess ? "manual" : org.plan_source ?? null,
@@ -961,6 +989,7 @@ async function handleComplianceOrg(
 
 async function handleCompliancePatch(req: Request, userId: string, id: string | undefined): Promise<Response> {
   assert(id && UUID_RE.test(id), 400, "PATCH /me/compliance/:id requires the provenance record's UUID");
+  id = id.toLowerCase();
   const db = userClient(req);
   const body = await readJson<Record<string, unknown>>(req);
 
@@ -973,29 +1002,58 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
     "Send at least one of original_asset_id, altered_asset_id, label",
   );
 
-  const prior = await db.from("media_provenance").select("id,org_id,listing_id").eq("id",id).maybeSingle();
-  assert(!prior.error,503,"Disclosure identity could not be verified.");
-  assert(prior.data,404,"Disclosure record not found.");
-  if (prior.data.listing_id === null) {
+  const visible = await db.from("media_provenance").select("id,org_id,listing_id").eq("id",id).maybeSingle();
+  assert(!visible.error,503,"Disclosure identity could not be verified.");
+  let prior = visible.data;
+  if (!prior) {
+    // Accepted AI evidence can still point at its private ai-router candidate,
+    // which the Presenter SELECT policy correctly hides. Only the exact saved
+    // result attachment may use a service-side identity lookup. Pending,
+    // refused, calibration, foreign-actor and unbound history stay hidden.
+    assert(alteredAsset && !originalAsset && !label && Object.keys(body).length === 1 && Object.hasOwn(body,"altered_asset_id"),404,"Disclosure record not found.");
+    const admin = adminClient();
+    const hidden = await admin.from("media_provenance").select("id,org_id,listing_id,kind,altered_key,qc").eq("id",id).maybeSingle();
+    assert(!hidden.error,503,"Disclosure identity could not be verified.");
+    const row = hidden.data;
+    assert(row && row.id === id && typeof row.listing_id === "string" && UUID_RE.test(row.listing_id) &&
+      typeof row.org_id === "string" && UUID_RE.test(row.org_id) &&
+      ["photo_edit","virtual_stage","declutter"].includes(row.kind) &&
+      typeof row.altered_key === "string" && row.altered_key.startsWith(`ai-router/${row.org_id}/photo-evidence/`) &&
+      row.qc && row.qc.publishable === true && row.qc.action === "accept",404,"Disclosure record not found.");
+    const scope = await listingLibraryScope(admin,userId,row.listing_id,true);
+    const selected = preferredOrg(req);
+    assert((selected === undefined || selected === scope.org_id || selected === scope.library_org_id) && row.org_id === scope.org_id,404,"Disclosure record not found.");
+    const evidence = await admin.from("photo_edit_evidence").select("id,actor_id,org_id,library_org_id,listing_id,provenance_id,state,purpose,output").eq("provenance_id",id).limit(2);
+    assert(!evidence.error,503,"Disclosure evidence could not be verified.");
+    assert(evidence.data?.length === 1 && evidence.data[0].actor_id === userId && evidence.data[0].org_id === scope.org_id &&
+      evidence.data[0].library_org_id === scope.library_org_id && evidence.data[0].listing_id === row.listing_id &&
+      evidence.data[0].provenance_id === id && evidence.data[0].state === "accept" && evidence.data[0].purpose === "prospective" &&
+      evidence.data[0].output?.key === row.altered_key && row.qc.evidence_id === evidence.data[0].id,404,"Disclosure record not found.");
+    const check = await admin.from("photo_quality_checks").select("id,evidence_id,state,automatic").eq("evidence_id",evidence.data[0].id).eq("automatic",true).limit(2);
+    assert(!check.error,503,"Disclosure check could not be verified.");
+    assert(check.data?.length === 1 && check.data[0].state === "accept" && check.data[0].id === row.qc.check_id,404,"Disclosure record not found.");
+    prior = {id:row.id,org_id:row.org_id,listing_id:row.listing_id};
+  }
+  if (prior.listing_id === null) {
     // A recovered edit keeps its original NULL listing. Publish a separate,
     // exact accepted association; never rewrite that paid operation's history.
     assert(alteredAsset && !originalAsset && !label && Object.keys(body).every(key => key === "altered_asset_id"),400,"Choose the exact saved result before preparing its listing disclosure.");
     const selected = preferredOrg(req);
     assert(selected && UUID_RE.test(selected),409,"Choose this home's current library before preparing its photo.");
     const publication = await ensureAcceptedPhotoPublication(adminClient(),
-      {orgId:prior.data.org_id,libraryOrgId:selected,listingId:null},userId,alteredAsset,
-      {provenanceID:id.toLowerCase(),signal:req.signal});
+      {orgId:prior.org_id,libraryOrgId:selected,listingId:null},userId,alteredAsset,
+      {provenanceID:id,signal:req.signal});
     assert(publication,404,"The saved photo disclosure is unavailable.");
     return json({ok:true,source_provenance_id:publication.sourceProvenanceID,
       provenance:{id:publication.id,listing_id:publication.listingID,kind:publication.kind,disclosure:publication.disclosure},
       publication:{output_asset_id:publication.outputAssetID,source_asset_id:publication.sourceAssetID}},200,{"cache-control":"private, no-store"});
   }
-  assert(prior.data && typeof prior.data.listing_id === "string" && UUID_RE.test(prior.data.listing_id),404,"Disclosure record not found.");
-  const listingScope=await listingLibraryScope(adminClient(),userId,prior.data.listing_id,true);
+  assert(typeof prior.listing_id === "string" && UUID_RE.test(prior.listing_id),404,"Disclosure record not found.");
+  const listingScope=await listingLibraryScope(adminClient(),userId,prior.listing_id,true);
   const selected=preferredOrg(req);
   assert(selected===undefined||selected===listingScope.org_id||selected===listingScope.library_org_id,404,"Disclosure not found in this library.");
   const orgId=listingScope.org_id;
-  assert(prior.data.org_id===orgId,503,"Disclosure media identity could not be verified.");
+  assert(prior.org_id===orgId,503,"Disclosure media identity could not be verified.");
 
   const { data, error } = await db.rpc("set_provenance_media", {
     p_id: id,
@@ -1006,8 +1064,8 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
   if (error) throwRpc(error.message);
 
   const row = (data ?? {}) as Record<string, unknown>;
-  assert(row.id===id && row.listing_id===prior.data.listing_id && row.org_id===orgId,503,"Disclosure update returned inconsistent identity.");
-  await listingLibraryScope(adminClient(),userId,prior.data.listing_id);
+  assert(row.id===id && row.listing_id===prior.listing_id && row.org_id===orgId,503,"Disclosure update returned inconsistent identity.");
+  await listingLibraryScope(adminClient(),userId,prior.listing_id);
   const [privateLinks]=await privateProvenanceLinks(adminClient(),orgId,[row],(bucket,key,seconds,listing,physicalOrg)=>privateMediaUrl({actor:userId,org:physicalOrg,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
   return json({
     ok: true,

@@ -2,14 +2,23 @@ import Foundation
 
 // Platform/network/image boundaries are deterministic doubles. The runner
 // injects the actual service identity, start, cleanup and notification methods.
-struct EnhancedPhoto { let id: String }
+struct EnhancedPhoto {
+    let id: String
+    static func directory(for listing: UUID) -> URL { URL(fileURLWithPath: NSTemporaryDirectory()) }
+}
 struct DeclutterGenerationApproval {}
 struct DeclutterCreditAuthorization {}
 struct StageCreditAuthorization {}
 struct Listing { let id: UUID; var cloudUnavailable: Bool? = nil }
 enum SpaceType { case realEstate }
 enum CloudSyncError: Error { case identityChanged }
-enum PhotoVersionHistory { enum Failure: Error { case missingImage } }
+enum PhotoVersionHistory {
+    enum Failure: Error { case missingImage }
+    struct Version { let familyID: String }
+    struct Index { var versions: [String: Version] = [:] }
+    static func load(directory: URL) throws -> Index { .init() }
+}
+enum PhotoPendingEdit { enum Failure: Error { case unavailable } }
 enum SyntheticFailure: Error { case quota, unauthorized, serviceUnavailable, trialCapacityUnavailable, recoverable }
 enum Analytics { static func trackAIFailure(_ event: String, step: String, error: Error) {} }
 struct AIFailure {
@@ -113,7 +122,10 @@ struct UNNotificationRequest {
             preconditionFailure("Synthetic lifecycle did not settle")
         }
         func reset() {
-            PhotoWorkQueue.shared.dismissResult(); UIApplication.shared.reset(); IdleTimer.reset()
+            for job in PhotoWorkQueue.shared.jobs where !job.running {
+                PhotoWorkQueue.shared.dismissResult(jobID: job.id)
+            }
+            UIApplication.shared.reset(); IdleTimer.reset()
             UNUserNotificationCenter.shared.reset()
             AuthStore.shared.userID = "synthetic-owner"; AuthStore.shared.syncSessionRevision = 1
             WorkspaceContext.selectedOrgID = UUID()
@@ -129,7 +141,7 @@ struct UNNotificationRequest {
         })
         check(service!.start(title: "Synthetic", photos: [.init(id: "one")], edit: "declutter", style: nil, prompt: nil), "Start navigation-independent work")
         check(IdleTimer.holds == 1 && UIApplication.shared.began == 1, "One owner acquires idle and background leases")
-        check(!service!.start(title: "Blocked", photos: [.init(id: "other")], edit: "declutter", style: nil, prompt: nil), "A rejected start acquires no leases")
+        check(!service!.start(title: "Blocked", photos: [.init(id: "one")], edit: "declutter", style: nil, prompt: nil), "A rejected same-photo start acquires no leases")
         check(IdleTimer.holds == 1 && UIApplication.shared.began == 1, "No duplicate leases after a rejected start")
         service = nil // The navigation destination drops its reference.
         await settle { continuation != nil }
@@ -148,7 +160,7 @@ struct UNNotificationRequest {
             APIError.server(status: 400, code: "unsupported_edit", message: "We can't repaint a listing photo."),
             APIError.server(status: 409, code: "photo_quality_pending", message: "Your edit is saved privately. Check this same saved edit again; no new generation is needed."),
             APIError.server(status: 409, code: "photo_quality_hold", message: "Your saved edit needs review. Check the saved edit before starting another image."),
-            APIError.server(status: 422, code: "photo_quality_closed", message: "This review is closed. A new explicit edit may use another allowance.")]
+            PhotoPendingEdit.Failure.unavailable]
         for failure in stoppingFailures {
             reset(); model.testAPI.reset(); model.api = model.testAPI; model.listings = [listing]; calls = []
             let refused = PhotoEditService(model: model, listing: listing, process: { photo in
@@ -170,6 +182,34 @@ struct UNNotificationRequest {
                       "Saved quality code and existing-edit follow-up remain visible without a ready claim")
             }
         }
+
+        // A final closed review is confined to its photo. A bulk request must
+        // still attempt its other selected photos without retrying the failed
+        // photo or announcing that the whole batch was stopped.
+        reset(); model.testAPI.reset(); model.api = model.testAPI; model.listings = [listing]; calls = []
+        let closed = APIError.server(status: 422, code: "photo_quality_closed",
+            message: "This edit could not be confirmed and remains private.")
+        let ids = (1...48).map { "photo-\($0)" }
+        let isolated = PhotoEditService(model: model, listing: listing, process: { photo in
+            calls.append(photo.id)
+            if photo.id == ids[0] { throw closed }
+            await Task.yield()
+        })
+        check(isolated.start(title: "48 selected", photos: ids.map { .init(id: $0) },
+            edit: "declutter", style: nil, prompt: nil), "Start 48-photo batch")
+        await settle { IdleTimer.releases == 1 }
+        let isolatedResult = PhotoWorkQueue.shared.job
+        check(calls == ids, "One terminal photo failure does not skip the other 47 selected photos")
+        check(isolatedResult?.done == 47 && isolatedResult?.failures.count == 1 &&
+              isolatedResult?.failures.first?.photoID == ids[0] && isolatedResult?.failures.first?.position == 1,
+              "Report 47 successful edits and the exact failed photo")
+        check(isolatedResult?.attempted == 48 && isolatedResult?.remaining == 0 &&
+              isolatedResult?.percent == 100 && isolatedResult?.interrupted == false,
+              "A fully attempted batch is not reported as stopped")
+        await settle { UNUserNotificationCenter.shared.delivered.count == 1 }
+        check(UNUserNotificationCenter.shared.delivered[0].content.title == "Photo edits finished with an issue" &&
+              UNUserNotificationCenter.shared.delivered[0].content.body.contains("47 of 48 photos changed"),
+              "Completion says 47 of 48 changed rather than claiming all 48 were ready")
 
         for boundary in ["owner", "session", "workspace", "delete", "unavailable"] {
             reset(); model.testAPI.reset(); model.api = model.testAPI; model.listings = [listing]; calls = []

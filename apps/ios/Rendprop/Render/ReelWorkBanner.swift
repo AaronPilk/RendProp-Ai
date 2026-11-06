@@ -372,10 +372,10 @@ struct NativeActivityView: View {
             return { Task { await activity.stopAerial(entry) } }
         }
         if let stop = activity.localStop(for: entry) { return stop }
-        if entry.kind == .photos, let job = PhotoWorkQueue.shared.visibleJob,
+        if entry.kind == .photos, let job = PhotoWorkQueue.shared.visibleJobs.first(where: { "photo:\($0.id)" == entry.id }),
            entry.id == "photo:\(job.id)", job.running, !job.stopRequested { return {
-               guard entry.scope == NativeActivityStore.currentScope, PhotoWorkQueue.shared.visibleJob?.id == job.id else { return }
-               PhotoWorkQueue.shared.stopRemaining()
+               guard entry.scope == NativeActivityStore.currentScope, PhotoWorkQueue.shared.job(id: job.id) != nil else { return }
+               PhotoWorkQueue.shared.stopRemaining(jobID: job.id)
            } }
         if entry.kind == .video, let job = ReelWorkQueue.shared.reviewableJobs.first(where: { NativeActivityStore.reelID($0) == entry.id }) {
             return { Task { guard entry.scope == NativeActivityStore.currentScope, job.isContextCurrent, NativeActivityStore.reelID(job) == entry.id else { return }; if job.serverJob != nil { await PropertyVideoJobRunner.shared.cancel(job) } else { job.cancel() }; activity.synchronize() } }

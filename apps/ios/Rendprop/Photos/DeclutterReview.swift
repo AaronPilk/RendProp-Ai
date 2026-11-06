@@ -8,7 +8,7 @@ import ImageIO
         let id: String
         let photo: EnhancedPhoto
         var assessment = AIPhotoDeclutterAssessment.uncertain
-        var originalSHA256: String?
+        var sourceSHA256: String?
         var preparedSHA256: String?
         var validAssessment = false
         var selected = false
@@ -50,13 +50,15 @@ import ImageIO
                 guard photo.enhancedURL.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL else { throw PhotoVersionHistory.Failure.changedVersion }
                 let prior = photo.originalURL == photo.enhancedURL ? nil : photo.originalURL.lastPathComponent
                 let tracked = try PhotoVersionHistory.trackExisting(id: photo.id, imageFile: photo.enhancedURL.lastPathComponent, priorFile: prior, directory: directory)
-                let source = try PhotoVersionHistory.originalForEditing(id: tracked.id, directory: directory)
+                guard tracked.imageFile == photo.enhancedURL.lastPathComponent else { throw PhotoVersionHistory.Failure.changedVersion }
+                let source = try PhotoVersionHistory.enhancedCaptureForEditing(id: tracked.id, directory: directory)
                 guard seen.insert(source.id).inserted else { continue }
                 let url = directory.appendingPathComponent(source.imageFile)
-                items.append(Item(id: source.id, photo: EnhancedPhoto(id: source.id, originalURL: url, enhancedURL: url)))
+                let retained = source.originalFile.map { directory.appendingPathComponent($0) } ?? url
+                items.append(Item(id: source.id, photo: EnhancedPhoto(id: source.id, originalURL: retained, enhancedURL: url)))
             } catch {
                 guard seen.insert(photo.id).inserted else { continue }
-                items.append(Item(id: photo.id, photo: photo, error: "The retained original could not be verified. No edit can start."))
+                items.append(Item(id: photo.id, photo: photo, error: "The enhanced source could not be verified. No edit can start."))
             }
         }
     }
@@ -64,7 +66,7 @@ import ImageIO
         try Task.checkCancellation()
         guard isCurrent else { throw CloudSyncError.identityChanged }
     }
-    private static func originalHash(_ url: URL) async throws -> String {
+    private static func sourceHash(_ url: URL) async throws -> String {
         try await Task.detached(priority: .userInitiated) {
             let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
             guard values.isRegularFile == true, values.isSymbolicLink != true,
@@ -86,23 +88,31 @@ import ImageIO
                 do {
                     try requireCurrent()
                     guard items[index].error == nil else { completed += 1; continue }
-                    let source = try PhotoVersionHistory.originalForEditing(id: items[index].id, directory: directory)
+                    let source = try PhotoVersionHistory.enhancedCaptureForEditing(id: items[index].id, directory: directory)
                     guard source.id == items[index].id else { throw PhotoVersionHistory.Failure.changedVersion }
-                    let url = directory.appendingPathComponent(source.imageFile), original = try await Self.originalHash(url)
+                    let url = directory.appendingPathComponent(source.imageFile), sourceSHA = try await Self.sourceHash(url)
                     guard let b64 = await AIImagePrep.jpegBase64(at: url, maxDimension: 2048, quality: 0.9, maxBytes: 1_000_000), let bytes = Data(base64Encoded: b64) else { throw PhotoVersionHistory.Failure.missingImage }
                     try requireCurrent()
                     let prepared = DeclutterGenerationApproval.sha256(bytes)
                     let reply = try await api.assessDeclutter(.init(imageBase64: b64, sourceSHA256: prepared, requestID: UUID(), actor: actor, library: library,
                         listingServerID: listing.serverID, consentRevision: consentRevision, spaceType: space.rawValue))
                     try requireCurrent()
-                    guard try await Self.originalHash(url) == original,
-                          try PhotoVersionHistory.originalForEditing(id: source.id, directory: directory).id == source.id else { throw PhotoVersionHistory.Failure.changedVersion }
-                    items[index].originalSHA256 = original; items[index].preparedSHA256 = prepared
+                    guard try await Self.sourceHash(url) == sourceSHA,
+                          try PhotoVersionHistory.enhancedCaptureForEditing(id: source.id, directory: directory).id == source.id else { throw PhotoVersionHistory.Failure.changedVersion }
+                    items[index].sourceSHA256 = sourceSHA; items[index].preparedSHA256 = prepared
                     items[index].assessment = reply.assessment; items[index].validAssessment = true
                     items[index].costBoundCents = reply.costBoundCents
-                    items[index].selected = reply.assessment.decision == .needed
+                    // The realtor already chose these photos. The assessment only
+                    // steps aside when it is sure there is nothing to remove
+                    // ("already clear"). "Needs review" is the realtor's call, so
+                    // it stays selected and runs; the result goes through the
+                    // same review and feedback as any other edit (owner decision,
+                    // 6 Nov 2026: 9 of 11 photos were left unselected by the
+                    // gate and no declutter ran).
+                    items[index].selected = reply.assessment.decision != .unnecessary
+                    items[index].manualOverride = items[index].selected && reply.assessment.decision != .needed
                 } catch {
-                    items[index].assessment = .uncertain; items[index].selected = false
+                    items[index].assessment = .uncertain; items[index].selected = false; items[index].manualOverride = false
                     items[index].error = "This photo could not be assessed safely. No image edit is selected."
                     if !isCurrent || Task.isCancelled { failure = "Review stopped because its account, consent or listing context changed."; break }
                 }
@@ -121,14 +131,16 @@ import ImageIO
         guard finished, !analyzing, let actor, let library else { throw PhotoVersionHistory.Failure.reviewRequired }
         var approvals: [String: DeclutterGenerationApproval] = [:], photos: [EnhancedPhoto] = []
         for item in items where item.selected {
-            guard item.validAssessment, let original = item.originalSHA256, let prepared = item.preparedSHA256,
-                  try await Self.originalHash(item.photo.enhancedURL) == original else { throw PhotoVersionHistory.Failure.changedVersion }
+            guard item.validAssessment, let sourceSHA = item.sourceSHA256, let prepared = item.preparedSHA256,
+                  try await Self.sourceHash(item.photo.enhancedURL) == sourceSHA,
+                  try PhotoVersionHistory.enhancedCaptureForEditing(id: item.id, directory: directory).imageFile
+                      == item.photo.enhancedURL.lastPathComponent else { throw PhotoVersionHistory.Failure.changedVersion }
             try requireCurrent()
             let approval = DeclutterGenerationApproval(actor: actor, library: library, listing: listing.id, sourceVersionID: item.id,
-                originalSHA256: original, preparedSHA256: prepared, consentRevision: consentRevision,
+                originalSHA256: sourceSHA, preparedSHA256: prepared, consentRevision: consentRevision,
                 assessment: item.assessment, manualOverride: item.manualOverride)
             guard approval.permits(actor: actor, library: library, listing: listing.id, sourceVersionID: item.id,
-                originalSHA256: original, preparedSHA256: prepared, consentGranted: AIConsent.shared.isGranted,
+                originalSHA256: sourceSHA, preparedSHA256: prepared, consentGranted: AIConsent.shared.isGranted,
                 consentRevision: AIConsent.shared.revocationRevision) else { throw PhotoVersionHistory.Failure.reviewRequired }
             approvals[item.id] = approval; photos.append(item.photo)
         }
