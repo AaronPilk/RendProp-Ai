@@ -167,3 +167,7 @@ a660afc2b6d624fff565e0f87d9f2c3a46fd39a0:apps/ios/Rendprop/Models/Listing.swift:
 3ca6670b69201cb57b45c00256dc321892595388:tools/release/accepted-photo-publication-worker16-overlay/OVERLAY-SOURCE-PINS-v2.json:generic-api-key:145
 3ca6670b69201cb57b45c00256dc321892595388:tools/release/accepted-photo-publication-worker16-overlay/OVERLAY-SOURCE-PINS-v2.json:generic-api-key:147
 3ca6670b69201cb57b45c00256dc321892595388:tools/release/accepted-photo-publication-worker16-overlay/OVERLAY-SOURCE-PINS-v2.json:generic-api-key:165
+# The same offline fixture UUID moved to lines 16–17 in two subsequent
+# publication-custody commits. These are exact false-positive fingerprints.
+a427433180d4acb91e84bc1a378a46cee8fdbed0:services/supabase/functions/_shared/photo-publication.fixture.ts:generic-api-key:16
+2e766222323135722c295ea9a340320e3be4fc21:services/supabase/functions/_shared/photo-publication.fixture.ts:generic-api-key:17
