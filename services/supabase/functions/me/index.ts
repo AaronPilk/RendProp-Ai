@@ -5,6 +5,15 @@ import { applyVerifiedMonthlyCredits } from "../_shared/apple-monthly-credits.ts
 import { servingMode } from "../_shared/funded-serving.ts";
 import { teamSeatSaleProducts } from "../_shared/team-seat-sale.ts";
 
+/** Keep independent reads concurrent, but wait for all of them before a
+ * failing response returns. Promise.all rejects early and leaves HTTP reads
+ * running after the request (and after the test fixture restores fetch). */
+async function settledReads<const T extends readonly unknown[]>(reads: T): Promise<{ -readonly [K in keyof T]: Awaited<T[K]> }> {
+  const results = await Promise.allSettled(reads);
+  for (const result of results) if (result.status === "rejected") throw result.reason;
+  return results.map((result) => (result as PromiseFulfilledResult<unknown>).value) as { -readonly [K in keyof T]: Awaited<T[K]> };
+}
+
 /** Best effort: the envelope is informational on /me; the gate itself lives in
  * serving_envelope_admit. Null when the mode is funded or the RPC is unavailable. */
 async function servingEnvelope(admin: { rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }> }, orgId: string): Promise<Record<string, unknown> | null> {
@@ -379,17 +388,40 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   // A new phone has no cached purchase/workspace intent. Let an authorized
   // purchaser compare its verified StoreKit original ID with this workspace's
   // existing bindings before Apple shows an upgrade or another purchase sheet.
+  // The rest of the screen is independent read-only state (every RPC below
+  // is STABLE). Read it concurrently: run sequentially these were nine
+  // database round trips in a row, and GET /me averaged 4.9 s on 6 Nov 2026.
+  const purchaseSubscriptions = canManageSubscription && purchaseRes.data.plan_source === "apple" && purchaseRes.data.plan !== "free";
+  const [
+    subscriptionsRes,
+    servingActivation,
+    photoPackage,
+    trial,
+    heldPurchase,
+    teamSeatProducts,
+    hosting,
+    mode,
+    envelope,
+  ] = await settledReads([
+    purchaseSubscriptions
+      ? admin.from("apple_subscriptions").select("original_transaction_id").eq("org_id", purchaseOrgId).in("status", ["active", "grace"])
+      : Promise.resolve({ data: [], error: null }),
+    subscriptionServingActivation(admin, userId, servingOrgId),
+    photoPackageContext(admin, userId, servingOrgId),
+    canManageSubscription && purchaseOrgId === servingOrgId ? boundedTrialContext(admin, userId, servingOrgId) : Promise.resolve({}),
+    canManageSubscription && purchaseOrgId === servingOrgId ? heldTrialPurchase(admin, userId, servingOrgId) : Promise.resolve(null),
+    canManageSubscription ? teamSeatSaleProducts(admin, purchaseOrgId) : Promise.resolve([]),
+    hostingRetention(admin, orgId),
+    servingMode(),
+    servingEnvelope(admin, servingOrgId),
+  ]);
   let originalTransactionIDs: string[] = [];
-  if (canManageSubscription && purchaseRes.data.plan_source === "apple" && purchaseRes.data.plan !== "free") {
-    const { data: subscriptions, error: subscriptionsError } = await admin.from("apple_subscriptions")
-      .select("original_transaction_id").eq("org_id", purchaseOrgId).in("status", ["active", "grace"]);
-    if (subscriptionsError) throw new HttpError(503, "Subscription workspace could not be verified. Please retry.", "upstream");
-    originalTransactionIDs = (subscriptions ?? []).map((row) => String(row.original_transaction_id));
+  if (purchaseSubscriptions) {
+    if (subscriptionsRes.error) throw new HttpError(503, "Subscription workspace could not be verified. Please retry.", "upstream");
+    originalTransactionIDs = (subscriptionsRes.data ?? []).map((row: { original_transaction_id: unknown }) => String(row.original_transaction_id));
   }
 
   const costCents = round4(libraryUsage.cost_cents);
-  const servingActivation = await subscriptionServingActivation(admin, userId, servingOrgId);
-  const photoPackage = await photoPackageContext(admin, userId, servingOrgId);
   const visibleEntitlement = org.plan_source === "apple" && !servingActivation.available
     ? { ...entitlement, renders_per_month:0, photo_edits_per_month:0, reels_per_month:0, aerials_per_month:0, topaz_per_month:0, degraded:true }
     : entitlement;
@@ -424,10 +456,6 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   byFeature.renders = Math.max(0, byFeature.renders);
 
   const portfolioUrl = org.handle ? `${TOUR_BASE}/a/${org.handle}` : null;
-  const trial = canManageSubscription && purchaseOrgId === servingOrgId ? await boundedTrialContext(admin, userId, servingOrgId) : {};
-  const heldPurchase = canManageSubscription && purchaseOrgId === servingOrgId ? await heldTrialPurchase(admin, userId, servingOrgId) : null;
-  const teamSeatProducts = canManageSubscription
-    ? await teamSeatSaleProducts(admin, purchaseOrgId) : [];
 
   return json({
     user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null,
@@ -437,7 +465,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     org: { id: org.id, name: org.name, handle: org.handle, space_type: org.space_type, plan: org.plan, brand_kit: org.brand_kit },
     plan: entitlement.plan,          // EFFECTIVE (expired trial → free)
     plan_raw: org.plan ?? null,
-    hosting_retention: await hostingRetention(admin, orgId),
+    hosting_retention: hosting,
     trial_ends_at: org.trial_ends_at ?? null,
     ...trial,
     trial_offer: heldPurchase?.trial_offer ?? null,
@@ -450,8 +478,8 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     // funded-serving. `serving_envelope` is the money gate the app shows next
     // to the feature meters: ceiling, counted spend, held liability, what is
     // still available and when the window resets (null outside ceiling mode).
-    serving_mode: await servingMode(),
-    serving_envelope: await servingEnvelope(admin, servingOrgId),
+    serving_mode: mode,
+    serving_envelope: envelope,
     // Additive (launch wave, decision LC-§"Entitlement sync"). Optional in the
     // client: an app build older than migration 0019 simply ignores them.
     plan_source: testingAccess ? "manual" : org.plan_source ?? null,

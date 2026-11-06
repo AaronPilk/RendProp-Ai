@@ -59,13 +59,17 @@ export function parsePhotoQualityWithDiagnostic(raw:string):{verdict:PhotoQualit
  }
  if(new TextEncoder().encode(JSON.stringify(data)).byteLength>MAX_PHOTO_QC_VERDICT_BYTES)return invalid("verdict_size");
  const parsed=data as unknown as PhotoQualityVerdict;
- const accepted=parsed.verdict==="pass"&&parsed.action==="accept"&&parsed.confidence>=.85
-  &&PHOTO_QC_AXES.every(axis=>parsed.preservation[axis]>=95)&&parsed.artifacts>=90&&parsed.edit_quality>=80&&parsed.findings.length===0;
- if(accepted)return{verdict:parsed,reason:"verified"};
- const uncertain=parsed.verdict==="unknown"||parsed.confidence<.85||parsed.findings.some(f=>f.certainty==="uncertain");
- const confirmedFailure=parsed.verdict==="fail"&&parsed.action==="refuse"
-  &&(parsed.findings.some(f=>f.certainty==="confirmed")||parsed.artifacts<90||parsed.edit_quality<80);
- return{verdict:{...parsed,action:!uncertain&&confirmedFailure?"refuse":"hold"},reason:"verified"};
+ // Advisory judge (owner decision, 6 Nov 2026). Before this, an edit was
+ // delivered only when every preservation axis scored 95+, artifacts 90+,
+ // edit quality 80+, confidence .85+ and the judge listed NO findings at all;
+ // anything else was held as private and the realtor saw a failure. In the
+ // last two weeks that held 4 of 7 judged edits, including a declutter whose
+ // only finding was a window that became visible after boxes were removed.
+ // Now every parsed verdict delivers the edit. The verdict, scores and
+ // findings are still recorded on the disclosure record (record_media_qc) and
+ // shown to the realtor, who decides, and whose feedback trains the system.
+ // Only an unparsable judge answer (above) stays undetermined.
+ return{verdict:{...parsed,action:"accept"},reason:"verified"};
 }
 /** Photographic preservation, intentionally separate from video motion rules. */
 export function photoQualityRubric(args:{edit:string;style?:string;instruction?:string}):string {

@@ -1187,7 +1187,21 @@ async function suggestEdits(payload:PhotoHelperPayload,assessment?:{value?:Declu
   const raw = await geminiText(payload);
 
   const parsed = parseJsonLoose(raw);
-  if(assessment)assessment.value=parseDeclutterAssessment((parsed as Record<string,unknown>)?.declutter_assessment);
+  if(assessment){
+    const candidate=(parsed as Record<string,unknown>)?.declutter_assessment;
+    assessment.value=parseDeclutterAssessment(candidate);
+    // 4 of 11 assessments on 2026-11-06 came back as the fixed "needs your
+    // review" fallback. Record WHY the strict parser declined, with no image
+    // bytes and no reason text, so the drift can be seen in the logs.
+    if(assessment.value.confidence===0&&assessment.value.decision==="uncertain"){
+      const shape=candidate&&typeof candidate==="object"&&!Array.isArray(candidate)?candidate as Record<string,unknown>:null;
+      console.error(JSON.stringify({event:"declutter_assessment_fallback",parsed:parsed!==null&&typeof parsed==="object",raw_chars:raw.length,
+        keys:shape?Object.keys(shape).sort():null,decision:shape&&typeof shape.decision==="string"?shape.decision.slice(0,16):null,
+        confidence:shape&&typeof shape.confidence==="number"?shape.confidence:null,
+        reason_chars:shape&&typeof shape.reason==="string"?shape.reason.length:null,
+        targets:shape&&Array.isArray(shape.targets)?shape.targets.map(t=>typeof t==="string"?t.slice(0,32):typeof t).slice(0,8):null}));
+    }
+  }
   const list = Array.isArray((parsed as Record<string, unknown>)?.suggestions)
     ? (parsed as { suggestions: unknown[] }).suggestions
     : Array.isArray(parsed)
