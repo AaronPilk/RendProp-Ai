@@ -152,6 +152,11 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     # Exact-anchor, md5-pinned rewrite of subscription_trial_cost_guard (admitted
     # Declutter assessments during a funded trial); a second application refuses.
     "20261029210132_trial_declutter_assessment.sql",
+    # These exact accepted-photo publication rewrites replace pinned function
+    # predecessors once. Both fresh databases apply them; their historical
+    # second application must refuse before any replacement is attempted.
+    "20261105223709_photo_publication_listing_bound_accepted_20261105.sql",
+    "20261105224531_photo_publication_bound_output_ledger_20261105.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -218,6 +223,8 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261027234243_paid_media_budget_cap.sql": ("c6b2f52621a30231aaa716dda46733e7ec1d48d085fbd723122bd56be3e96c38", 'Review paid media budget cap already installed'),
     "20261028010346_reviewer_sandbox_shared_credit_budget.sql": ("e48f600fa411ca5e6a1bd676a1c90554c7e42619a53f65bbbc362feaa336601c", "Review changed paid primary credit authority"),
     "20261029210132_trial_declutter_assessment.sql": ("946fde58e49ae89113a1777ce18dead10a93fa5eb07ac4f0ec6ad9bab7189bfa", "trial declutter assessment: subscription_trial_cost_guard() changed"),
+    "20261105223709_photo_publication_listing_bound_accepted_20261105.sql": ("1c64912297663ddaf2dd835de06c0497f662afbc907d72cb18423fe7ff0707a6", "Review changed accepted-photo publication authority: public.photo_publication_receipt_shape(jsonb)"),
+    "20261105224531_photo_publication_bound_output_ledger_20261105.sql": ("f27960b88586110dfca8becf46dff933bc6639508d436f0e20b6421af0f04412", "Review changed listing-bound publication source before output custody repair"),
 }
 
 
