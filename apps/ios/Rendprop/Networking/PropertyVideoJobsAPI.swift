@@ -12,6 +12,9 @@ import Darwin
     func propertyVideoProcessorContract(context: PropertyVideoJobContext) async throws -> PropertyVideoProcessorContract?
     func propertyVideoOperation(_ saved: PropertyVideoSavedJob, abandon: Bool) async throws -> PropertyVideoOperationLookup
     func propertyVideoJob(_ saved: PropertyVideoSavedJob) async throws -> PropertyVideoJobReply
+    /// Read one already accepted job from a tapped notification on another device.
+    /// No frozen request or paid operation is recreated locally.
+    func notifiedPropertyVideoJob(_ jobID: UUID, context: PropertyVideoJobContext) async throws -> PropertyVideoJobReply
     func cancelPropertyVideoJob(_ saved: PropertyVideoSavedJob) async throws -> PropertyVideoJobReply
     func resumePropertyVideoJob(_ saved: PropertyVideoSavedJob) async throws -> PropertyVideoJobReply
 }
@@ -27,6 +30,7 @@ extension PropertyVideoJobsAPI {
     }
     func propertyVideoProcessorContract(context: PropertyVideoJobContext) async throws -> PropertyVideoProcessorContract? { throw PropertyVideoProcessorFailure.unknownDisclosure }
     func propertyVideoOperation(_ saved: PropertyVideoSavedJob, abandon: Bool) async throws -> PropertyVideoOperationLookup { throw PropertyVideoProcessorFailure.operationPending }
+    func notifiedPropertyVideoJob(_ jobID: UUID, context: PropertyVideoJobContext) async throws -> PropertyVideoJobReply { throw PropertyVideoJobStore.Failure.invalidReceipt }
 }
 
 extension PropertyVideoJobContext {
@@ -252,6 +256,9 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
         guard let jobID = saved.reply?.jobID else { throw PropertyVideoJobStore.Failure.invalidReceipt }
         return try await PropertyVideoJobHTTP.perform("GET", context: saved.context, jobID: jobID)
             .checked(request: saved.request, previous: saved.reply)
+    }
+    @MainActor func notifiedPropertyVideoJob(_ jobID: UUID, context: PropertyVideoJobContext) async throws -> PropertyVideoJobReply {
+        try await PropertyVideoJobHTTP.perform("GET", context: context, jobID: jobID)
     }
     @MainActor func cancelPropertyVideoJob(_ saved: PropertyVideoSavedJob) async throws -> PropertyVideoJobReply {
         guard let jobID = saved.reply?.jobID else { throw PropertyVideoJobStore.Failure.invalidReceipt }

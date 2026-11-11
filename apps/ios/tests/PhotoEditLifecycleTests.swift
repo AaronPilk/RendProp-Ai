@@ -9,7 +9,7 @@ struct EnhancedPhoto {
 struct DeclutterGenerationApproval {}
 struct DeclutterCreditAuthorization {}
 struct StageCreditAuthorization {}
-struct Listing { let id: UUID; var cloudUnavailable: Bool? = nil }
+struct Listing { let id: UUID; var isSample = false; var cloudUnavailable: Bool? = nil }
 enum SpaceType { case realEstate }
 enum CloudSyncError: Error { case identityChanged }
 enum PhotoVersionHistory {
@@ -52,10 +52,13 @@ struct NoPreferencesAPI: LifecycleBaseAPI {}
 @MainActor final class AppModel {
     var listings: [Listing]; let testAPI = LifecycleAPI(); var api: any LifecycleBaseAPI
     init(_ listings: [Listing]) { self.listings = listings; api = testAPI }
+    func isInSelectedWorkspace(_ listing: Listing) -> Bool {
+        WorkspaceContext.selectedOrgID != nil && listings.contains { $0.id == listing.id && $0.cloudUnavailable != true }
+    }
 }
 @MainActor final class AuthStore {
     static let shared = AuthStore()
-    var userID: String? = "synthetic-owner"
+    var userID: String? = "11111111-1111-4111-8111-111111111111"
     var syncSessionRevision: UInt64 = 1
 }
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID() }
@@ -127,7 +130,7 @@ struct UNNotificationRequest {
             }
             UIApplication.shared.reset(); IdleTimer.reset()
             UNUserNotificationCenter.shared.reset()
-            AuthStore.shared.userID = "synthetic-owner"; AuthStore.shared.syncSessionRevision = 1
+            AuthStore.shared.userID = "11111111-1111-4111-8111-111111111111"; AuthStore.shared.syncSessionRevision = 1
             WorkspaceContext.selectedOrgID = UUID()
         }
 
@@ -153,6 +156,10 @@ struct UNNotificationRequest {
         check(UNUserNotificationCenter.shared.delivered[0].content.body.contains("1 of 1 photos changed"), "Notification uses completed output count")
         check(UNUserNotificationCenter.shared.delivered[0].content.userInfo["recipient_user_id"] as? String == AuthStore.shared.userID,
               "Completion notification is tagged to its actual account")
+        check(UNUserNotificationCenter.shared.delivered[0].content.userInfo["category"] as? String == "photo_done" &&
+              UNUserNotificationCenter.shared.delivered[0].content.userInfo["workspace_id"] as? String == WorkspaceContext.selectedOrgID?.uuidString &&
+              UNUserNotificationCenter.shared.delivered[0].content.userInfo["listing_id"] as? String == listing.id.uuidString,
+              "Completion carries the initiating account's exact library and listing target")
 
         let stoppingFailures: [any Error] = [SyntheticFailure.quota, SyntheticFailure.unauthorized,
             SyntheticFailure.serviceUnavailable, SyntheticFailure.trialCapacityUnavailable,
@@ -219,7 +226,7 @@ struct UNNotificationRequest {
             check(scoped.start(title: boundary, photos: [.init(id: "one"), .init(id: "never-start")], edit: "declutter", style: nil, prompt: nil), "Start \(boundary) scenario")
             await settle { continuation != nil }
             switch boundary {
-            case "owner": AuthStore.shared.userID = "different-synthetic-owner"
+            case "owner": AuthStore.shared.userID = "22222222-2222-4222-8222-222222222222"
             case "session": AuthStore.shared.syncSessionRevision += 1
             case "workspace": WorkspaceContext.selectedOrgID = UUID()
             case "delete": model.listings = []

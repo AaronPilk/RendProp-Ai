@@ -350,11 +350,16 @@ final class PhotoEditService {
             let settings = await center.notificationSettings()
             guard self.identityIsCurrent, settings.authorizationStatus == .authorized
                     || settings.authorizationStatus == .provisional else { return }
+            guard let owner = self.owner.flatMap(UUID.init(uuidString:)),
+                  let workspace = self.workspace,
+                  self.model.listings.contains(where: { $0.id == job.listingID && !$0.isSample
+                      && $0.cloudUnavailable != true && self.model.isInSelectedWorkspace($0) }) else { return }
             let content = UNMutableNotificationContent()
             content.title = job.failures.isEmpty ? "Your photos are ready" : "Photo edits finished with an issue"
             content.body = "\(job.title): \(job.done) of \(job.total) photos changed. Open Rendprop to review them."
             content.sound = .default
-            if let owner = self.owner { content.userInfo = ["recipient_user_id": owner] }
+            content.userInfo = ["recipient_user_id": owner.uuidString, "category": "photo_done",
+                                "workspace_id": workspace.uuidString, "listing_id": job.listingID.uuidString]
             try? await center.add(UNNotificationRequest(identifier: "photo-work.\(job.id.uuidString)",
                                                        content: content, trigger: nil))
         }

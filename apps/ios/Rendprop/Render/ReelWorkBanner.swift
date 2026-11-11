@@ -1,4 +1,5 @@
 import SwiftUI
+import AVKit
 
 /// Describes measured shot progress, never progress inside a provider request.
 enum ReelWorkBannerCopy {
@@ -60,9 +61,15 @@ struct ReelWorkBanner: View {
     @State private var reviewListing: Listing?
     @State private var reviewJobID: UUID?
     @State private var pendingReviewJobID: UUID?
+    @State private var remoteReview: RemoteVideoNotificationReview?
 
     var body: some View {
         VStack(spacing: 0) {
+            Color.clear.frame(width: 0, height: 0)
+                .sheet(item: $remoteReview) { review in
+                    RemoteVideoNotificationReviewView(review: review) { remoteReview = nil }
+                        .environmentObject(model)
+                }
             if let job = ReelWorkReviewAdmission.bannerJob(visibleJobs: jobs.visibleJobs, listings: model.listings) {
                 ReelWorkStatusRow(job: job, review: { open(job.id) }, dismiss: {
                     jobs.dismissResult(jobID: job.id)
@@ -77,6 +84,9 @@ struct ReelWorkBanner: View {
             }
         }
         .task(id: push.pendingReelJobID) { await reviewPendingNotification() }
+        .task(id: "\(push.pendingServerVideoReview?.jobID.uuidString ?? "none")|\(WorkspaceContext.selectedOrgID?.uuidString ?? "none")") {
+            await reviewPendingServerVideo()
+        }
         .task(id: pendingReviewJobID) { await reviewPendingBanner() }
         .onChange(of: auth.syncSessionRevision) { _ in invalidateReview() }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in invalidateReview() }
@@ -141,14 +151,24 @@ struct ReelWorkBanner: View {
         reviewListing = nil
         reviewJobID = nil
         pendingReviewJobID = nil
+        remoteReview = nil
         push.clearPendingReelJob()
     }
 
     private func reviewPendingNotification() async {
+        guard push.pendingReelJobID != nil else { return }
+        // RootTabView restores the saved library in its own task. This child
+        // task can start first on a cold tap, while listings are still empty.
+        // Wait for the local restore before applying the exact-job admission.
+        while !model.hasRestoredLibrary && !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard !Task.isCancelled, push.pendingReelJobID != nil else { return }
         jobs.restoreServerJobs(model: model)
         while let id = push.pendingReelJobID, !Task.isCancelled {
             guard ReelWorkReviewAdmission.listing(jobID: id, visibleJobs: jobs.reviewableJobs,
                                                  listings: model.listings) != nil else {
+                push.showUnavailableVideoNotice()
                 push.clearPendingReelJob()
                 return
             }
@@ -161,6 +181,223 @@ struct ReelWorkBanner: View {
             // A capture/share/purchase modal keeps its place. A notification
             // does not interrupt it or discard an edit to show reel progress.
             try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+    }
+
+    private func reviewPendingServerVideo() async {
+        guard let target = push.pendingServerVideoReview else { return }
+        while !model.hasRestoredLibrary && !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard !Task.isCancelled, push.pendingServerVideoReview == target,
+              PushManager.currentIdentity?.owner == target.owner else { return }
+        if WorkspaceContext.selectedOrgID == nil { await workspace.refresh() }
+        guard !Task.isCancelled, push.pendingServerVideoReview == target,
+              PushManager.currentIdentity?.owner == target.owner else { return }
+        guard let selected = WorkspaceContext.selectedOrgID,
+              let api = model.api as? PropertyVideoJobsAPI else {
+            push.showUnavailableVideoNotice()
+            push.clearPendingServerVideoReview()
+            return
+        }
+        // The exact authenticated GET verifies the actor's live listing access.
+        // It does not recreate a frozen request or dispatch paid work.
+        let probe = PropertyVideoJobContext(localListingID: target.listingID, listingID: target.listingID,
+                                            actorID: target.owner, orgID: selected)
+        do {
+            let reply = try await api.notifiedPropertyVideoJob(target.jobID, context: probe)
+            guard !Task.isCancelled, push.pendingServerVideoReview == target,
+                  PushManager.currentIdentity?.owner == target.owner,
+                  WorkspaceContext.selectedOrgID == selected else { return }
+            guard reply.jobID == target.jobID, reply.listingID == target.listingID else {
+                push.showUnavailableVideoNotice()
+                push.clearPendingServerVideoReview()
+                return
+            }
+            if reply.selectedLibraryOrgID != selected {
+                await workspace.refresh()
+                guard !Task.isCancelled, push.pendingServerVideoReview == target,
+                      PushManager.currentIdentity?.owner == target.owner,
+                      WorkspaceContext.selectedOrgID == selected else { return }
+                if let member = workspace.selectionChoices.first(where: { $0.id == reply.selectedLibraryOrgID && $0.canRead == true }) {
+                    push.showSwitchLibraryNotice(member.displayName)
+                } else {
+                    push.showUnavailableVideoNotice()
+                    push.clearPendingServerVideoReview()
+                }
+                return
+            }
+            if !workspace.canViewLibrary(selected) { await workspace.refresh() }
+            if !model.listings.contains(where: { $0.serverID == target.listingID && model.isInSelectedWorkspace($0) }) {
+                await model.refreshCloudWorkspace()
+            }
+            guard !Task.isCancelled, push.pendingServerVideoReview == target,
+                  PushManager.currentIdentity?.owner == target.owner,
+                  WorkspaceContext.selectedOrgID == selected else { return }
+            guard let listing = model.listings.first(where: { $0.serverID == target.listingID && !$0.isSample
+                && $0.cloudUnavailable != true && model.isInSelectedWorkspace($0) }),
+                  RemoteVideoNotificationReview.permits(reply: reply, target: target, listing: listing, selected: selected) else {
+                push.showUnavailableVideoNotice(); push.clearPendingServerVideoReview(); return
+            }
+            jobs.restoreServerJobs(model: model)
+            if ReelWorkReviewAdmission.job(jobID: target.jobID, visibleJobs: jobs.reviewableJobs,
+                                           listings: model.listings) != nil {
+                while push.pendingServerVideoReview == target && !Task.isCancelled {
+                    if reviewListing == nil && !NativePresentationAvailability.hasPresentedController {
+                        open(target.jobID)
+                        push.clearPendingServerVideoReview()
+                        push.clearPendingContextNotice()
+                        return
+                    }
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                }
+                return
+            }
+            while push.pendingServerVideoReview == target && !Task.isCancelled {
+                if reviewListing == nil && remoteReview == nil && !NativePresentationAvailability.hasPresentedController {
+                    let context = PropertyVideoJobContext(localListingID: listing.id, listingID: target.listingID,
+                                                          actorID: target.owner, orgID: selected)
+                    remoteReview = .init(target: target, context: context, listing: listing, reply: reply,
+                                         revision: AuthStore.shared.syncSessionRevision)
+                    push.clearPendingServerVideoReview()
+                    push.clearPendingContextNotice()
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        } catch {
+            guard !Task.isCancelled, push.pendingServerVideoReview == target,
+                  PushManager.currentIdentity?.owner == target.owner,
+                  WorkspaceContext.selectedOrgID == selected else { return }
+            push.showUnavailableVideoNotice()
+            push.clearPendingServerVideoReview()
+        }
+    }
+}
+
+/// A second iPhone has no frozen local recipe to reconnect to. Its notification
+/// can still review the already accepted result through an exact, read-only GET.
+private struct RemoteVideoNotificationReview: Identifiable {
+    let target: ServerVideoReviewTarget
+    let context: PropertyVideoJobContext
+    let listing: Listing
+    let reply: PropertyVideoJobReply
+    let revision: UInt64
+    var id: UUID { target.jobID }
+
+    static func permits(reply: PropertyVideoJobReply, target: ServerVideoReviewTarget,
+                        listing: Listing, selected: UUID) -> Bool {
+        guard reply.jobID == target.jobID, reply.listingID == target.listingID,
+              reply.selectedLibraryOrgID == selected, listing.serverID == target.listingID,
+              listing.serverOrgID == reply.orgID, !listing.isSample, listing.cloudUnavailable != true,
+              reply.state == "ready", (1...100).contains(reply.sourceCount),
+              reply.manifestSHA256.count == 64,
+              reply.manifestSHA256.utf8.allSatisfy({ "0123456789abcdef".utf8.contains($0) }),
+              let result = reply.result, let url = result.downloadURL,
+              url.scheme == "https", url.user == nil, url.password == nil,
+              result.width >= 1080, result.height >= 1080,
+              result.width <= 8192, result.height <= 8192,
+              result.durationS.isFinite, result.durationS > 0, result.durationS <= 600,
+              result.bytes > 0, result.bytes <= 2_000_000_000,
+              result.sha256.count == 64,
+              result.sha256.utf8.allSatisfy({ "0123456789abcdef".utf8.contains($0) }),
+              result.sources.count == reply.sourceCount,
+              result.sources.allSatisfy(\.isComplete),
+              (0...reply.sourceCount).contains(result.originalPhotoCount),
+              result.sourceMode == reply.sourceMode,
+              result.compositionProfile == reply.compositionProfile else { return false }
+        let ratio = Double(result.width) / Double(result.height)
+        return abs(ratio - 16.0 / 9.0) < 0.01 || abs(ratio - 9.0 / 16.0) < 0.01
+    }
+
+    @MainActor func isCurrent(model: AppModel) -> Bool {
+        AuthStore.shared.isIdentified && PushManager.currentIdentity?.owner == target.owner &&
+            AuthStore.shared.syncSessionRevision == revision &&
+            WorkspaceContext.selectedOrgID == context.orgID &&
+            model.listings.contains { $0.id == listing.id && $0.serverID == target.listingID &&
+                $0.serverOrgID == reply.orgID && !$0.isSample && $0.cloudUnavailable != true &&
+                model.isInSelectedWorkspace($0) }
+    }
+}
+
+@MainActor private struct RemoteVideoNotificationReviewView: View {
+    let review: RemoteVideoNotificationReview
+    let done: () -> Void
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
+    @State private var file: URL?
+    @State private var player: AVPlayer?
+    @State private var loading = false
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text(review.listing.address.isEmpty ? "Property video" : review.listing.address)
+                        .font(.rpHeadline).foregroundStyle(Theme.ink)
+                    if let player {
+                        VideoPlayer(player: player)
+                            .aspectRatio(Double(review.reply.result?.width ?? 16) /
+                                         Double(review.reply.result?.height ?? 9), contentMode: .fit)
+                            .accessibilityLabel("Ready property video preview")
+                        Text("This verified result is ready to review. Publishing remains your choice on the device where you created it.")
+                            .font(.rpBody).foregroundStyle(Theme.inkDim)
+                    } else if loading {
+                        ProgressView("Getting your saved video…")
+                            .frame(maxWidth: .infinity, minHeight: 180)
+                    } else if let error {
+                        Label(error, systemImage: "wifi.exclamationmark")
+                            .font(.rpBody).foregroundStyle(Theme.inkDim)
+                        Button("Try again") { Task { await load(refresh: true) } }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Theme.bg)
+            .navigationTitle("Review video")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Done") { done() } } }
+        }
+        .task { await load(refresh: false) }
+        .onChange(of: auth.syncSessionRevision) { _ in if !review.isCurrent(model: model) { done() } }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            if !review.isCurrent(model: model) { done() }
+        }
+        .onDisappear {
+            player?.pause(); player = nil
+            if let file { try? FileManager.default.removeItem(at: file) }
+            file = nil
+        }
+    }
+
+    private func load(refresh: Bool) async {
+        guard !loading, review.isCurrent(model: model), let api = model.api as? PropertyVideoJobsAPI else {
+            error = "This account or listing library changed. Open its listing to review current work."
+            return
+        }
+        loading = true; error = nil
+        defer { loading = false }
+        do {
+            let reply = refresh ? try await api.notifiedPropertyVideoJob(review.target.jobID, context: review.context) : review.reply
+            guard review.isCurrent(model: model),
+                  RemoteVideoNotificationReview.permits(reply: reply, target: review.target,
+                                                       listing: review.listing, selected: review.context.orgID),
+                  let result = reply.result else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+            let temporary = try await PropertyVideoJobHTTP.download(result, requireCurrent: {
+                guard review.isCurrent(model: model) else { throw PropertyVideoJobStore.Failure.identityChanged }
+            })
+            guard review.isCurrent(model: model), !Task.isCancelled else {
+                try? FileManager.default.removeItem(at: temporary)
+                return
+            }
+            file = temporary
+            player = AVPlayer(url: temporary)
+        } catch {
+            guard review.isCurrent(model: model), !Task.isCancelled else { return }
+            self.error = "The saved video could not be checked. Try again when connected, or review it on the device where you created it."
         }
     }
 }

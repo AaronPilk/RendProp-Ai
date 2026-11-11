@@ -24,6 +24,7 @@ struct PhotoWorkBanner: View {
     @ObservedObject private var jobs = PhotoWorkQueue.shared
     @ObservedObject private var auth = AuthStore.shared
     @ObservedObject private var workspace = WorkspaceStore.shared
+    @ObservedObject private var push = PushManager.shared
     @State private var reviewListing: Listing?
 
     var body: some View {
@@ -87,7 +88,10 @@ struct PhotoWorkBanner: View {
                     .accessibilityIdentifier("photoWork.banner")
             }
         }
-        .onChange(of: auth.userID) { _ in jobs.cancel(); reviewListing = nil }
+        .task(id: "\(push.pendingPhotoReview?.listingID.uuidString ?? "none")|\(WorkspaceContext.selectedOrgID?.uuidString ?? "none")") {
+            await reviewPendingNotification()
+        }
+        .onChange(of: auth.userID) { _ in jobs.cancel(); reviewListing = nil; push.clearPendingPhotoReview() }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
             jobs.cancel(); reviewListing = nil
         }
@@ -96,6 +100,49 @@ struct PhotoWorkBanner: View {
                 PhotoStudioView(listing: listing, entry: .photos)
                     .toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("Done") { reviewListing = nil } } }
             }
+        }
+    }
+
+    private func reviewPendingNotification() async {
+        guard let requested = push.pendingPhotoReview else { return }
+        // The batch is in memory, but its edited photos and listing survive a
+        // relaunch. Wait for the saved library before deciding the target is gone.
+        while !model.hasRestoredLibrary && !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard !Task.isCancelled, push.pendingPhotoReview == requested else { return }
+        // A shared team library needs fresh membership before its listing can
+        // be opened. An own offline library can use its saved own selection.
+        if Config.useLiveBackend && (!workspace.canViewLibrary(requested.workspace)
+            || WorkspaceContext.selectedOrgID != requested.workspace) {
+            await workspace.refresh()
+        }
+        while let target = push.pendingPhotoReview, !Task.isCancelled {
+            guard PushManager.currentIdentity?.owner == target.owner else {
+                push.clearPendingPhotoReview()
+                return
+            }
+            if WorkspaceContext.selectedOrgID != target.workspace {
+                if let member = workspace.selectionChoices.first(where: { $0.id == target.workspace && $0.canRead == true }) {
+                    push.showSwitchPhotoLibraryNotice(member.displayName)
+                } else {
+                    push.showUnavailablePhotoNotice()
+                    push.clearPendingPhotoReview()
+                }
+                return
+            }
+            guard let listing = model.listings.first(where: { $0.id == target.listingID && !$0.isSample
+                && $0.cloudUnavailable != true && model.isInSelectedWorkspace($0) }) else {
+                push.showUnavailablePhotoNotice()
+                push.clearPendingPhotoReview()
+                return
+            }
+            if reviewListing == nil, !NativePresentationAvailability.hasPresentedController {
+                reviewListing = listing
+                push.clearPendingPhotoReview()
+                return
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
         }
     }
 }

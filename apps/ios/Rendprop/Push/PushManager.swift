@@ -154,6 +154,82 @@ enum PushRoute: Equatable {
     case leads
 }
 
+/// A local photo completion can survive a cold launch even though its
+/// in-memory batch cannot. Open only its saved listing in the same account
+/// and library that started the edit.
+struct PhotoReviewTarget: Hashable {
+    let owner: UUID
+    let workspace: UUID
+    let listingID: UUID
+}
+
+struct ServerVideoReviewTarget: Hashable {
+    let owner: UUID
+    let jobID: UUID
+    let listingID: UUID
+}
+
+/// Older local completions did not include a route. Keep their tap visible
+/// and honest without guessing which account item to open.
+enum NotificationContextNotice: Equatable {
+    case olderPhoto, unavailablePhoto, switchPhotoLibrary(String)
+    case olderVideo, unavailableVideo, switchLibrary(String), operations, planUsage, uploadStuck, firstTour
+    case other(title: String, body: String)
+
+    enum Destination { case listings, activity, account }
+
+    var title: String {
+        switch self {
+        case .olderPhoto: return "Photo review needs a listing"
+        case .unavailablePhoto: return "Photo review is unavailable"
+        case .switchPhotoLibrary: return "Switch listing library"
+        case .olderVideo: return "Video review needs a listing"
+        case .unavailableVideo: return "Video review is unavailable"
+        case .switchLibrary: return "Switch listing library"
+        case .operations: return "Operational alert"
+        case .planUsage: return "Plan update"
+        case .uploadStuck: return "Upload needs attention"
+        case .firstTour: return "Your first tour"
+        case .other(let title, _): return title
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .olderPhoto: return "This older notification did not identify a listing. Open Listings, then Photos, to review saved edits."
+        case .unavailablePhoto: return "This photo edit can no longer be opened from the notification. Open Listings to check your current saved work."
+        case .switchPhotoLibrary(let name): return "These photos belong to \(name). Open Listings and switch to that library; the saved review will continue."
+        case .olderVideo: return "This older notification did not identify a video job. Open its listing to review saved video work."
+        case .unavailableVideo: return "This video cannot be opened from this notification on this device. Open Listings to check your current saved work."
+        case .switchLibrary(let name): return "This video belongs to \(name). Open Listings, switch to that library, and the saved review will continue."
+        case .operations: return "This alert has no in-app detail. Check the admin email for the finding, or contact support if it did not arrive."
+        case .planUsage: return "Open Account to review your current plan and usage."
+        case .uploadStuck: return "The upload did not finish. Open Activity to find the current listing and retry from its saved file."
+        case .firstTour: return "Open Listings to start or review your first tour."
+        case .other(_, let body):
+            let guidance = "This notification has no direct item to open. Open Activity to check your current work."
+            return body.isEmpty ? guidance : body + "\n\n" + guidance
+        }
+    }
+
+    var destination: Destination? {
+        switch self {
+        case .olderPhoto, .unavailablePhoto, .switchPhotoLibrary, .olderVideo, .unavailableVideo, .switchLibrary, .firstTour: return .listings
+        case .planUsage: return .account
+        case .uploadStuck, .other: return .activity
+        case .operations: return nil
+        }
+    }
+    var actionTitle: String? {
+        switch destination {
+        case .listings: return "Open Listings"
+        case .activity: return "Open Activity"
+        case .account: return "Open Account"
+        case nil: return nil
+        }
+    }
+}
+
 // MARK: - PushManager
 
 @MainActor
@@ -175,6 +251,10 @@ final class PushManager: ObservableObject {
     @Published private(set) var pendingRoute: PushRoute?
     /// A local completion can reopen only its existing queue-owned job.
     @Published private(set) var pendingReelJobID: UUID?
+    @Published private(set) var pendingServerVideoReview: ServerVideoReviewTarget?
+    /// A local photo completion reopens its saved listing's Photos screen.
+    @Published private(set) var pendingPhotoReview: PhotoReviewTarget?
+    @Published private(set) var pendingContextNotice: NotificationContextNotice?
 
     /// True once the app has shown its pre-prompt (or established that there is
     /// nothing to ask). Persisted: "we already asked" must survive a relaunch,
@@ -460,6 +540,9 @@ final class PushManager: ObservableObject {
         deviceRouteMissing = false
         pendingRoute = nil
         pendingReelJobID = nil
+        pendingServerVideoReview = nil
+        pendingPhotoReview = nil
+        pendingContextNotice = nil
         showPrePrompt = false
         if !Self.isSuppressed {
             UIApplication.shared.unregisterForRemoteNotifications()
@@ -497,7 +580,7 @@ final class PushManager: ObservableObject {
         localDataErasureRevision &+= 1
         registrationTask?.cancel(); registrationTask = nil; registrationOperation = nil
         registeredToken = nil; registeredIdentity = nil
-        pendingRoute = nil; pendingReelJobID = nil; showPrePrompt = false
+        pendingRoute = nil; pendingReelJobID = nil; pendingServerVideoReview = nil; pendingPhotoReview = nil; pendingContextNotice = nil; showPrePrompt = false
         guard !Self.isSuppressed else { return }
         UIApplication.shared.unregisterForRemoteNotifications()
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
@@ -573,18 +656,71 @@ final class PushManager: ObservableObject {
         return true
     }
 
-    func handle(payload: [AnyHashable: Any]) {
+    /// The only free text surfaced for an unsupported, recipient-matched push
+    /// is the bounded alert already shown by iOS. Reject controls and formats.
+    private static func safeNotificationCopy(_ raw: Any?, limit: Int) -> String? {
+        guard let value = raw as? String else { return nil }
+        let copy = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !copy.isEmpty, copy.utf8.count <= limit,
+              !copy.unicodeScalars.contains(where: {
+                  [.control, .format, .lineSeparator, .paragraphSeparator].contains($0.properties.generalCategory)
+              }) else { return nil }
+        return copy
+    }
+
+    func handle(payload: [AnyHashable: Any], notificationIdentifier: String? = nil) {
         guard !Self.isSuppressed, Self.accepts(payload: payload, identity: Self.currentIdentity) else { return }
         let bag = (payload["rp"] as? [AnyHashable: Any]) ?? payload
         let type = ((payload["category"] as? String) ?? (bag["type"] as? String))?.lowercased() ?? ""
         let facts = (payload["data"] as? [AnyHashable: Any]) ?? bag
 
-        if type == "reel_done" || (type == "render_ready" && facts["property_video_job_id"] != nil) {
+        if type == "render_ready", facts["property_video_job_id"] != nil {
+            if let ownerRaw = payload["recipient_user_id"] as? String,
+               let owner = UUID(uuidString: ownerRaw),
+               let jobRaw = facts["property_video_job_id"] as? String,
+               let jobID = UUID(uuidString: jobRaw),
+               let alias = facts["reel_job_id"] as? String, UUID(uuidString: alias) == jobID,
+               let listingRaw = facts["listing_id"] as? String,
+               let listingID = UUID(uuidString: listingRaw) {
+                pendingServerVideoReview = .init(owner: owner, jobID: jobID, listingID: listingID)
+            } else { pendingContextNotice = .unavailableVideo }
+            return
+        }
+        if type == "reel_done" {
             if let raw = facts["reel_job_id"] as? String, let jobID = UUID(uuidString: raw) {
                 pendingReelJobID = jobID
+            } else if type == "reel_done", notificationIdentifier?.hasPrefix("reel-done-") == true {
+                pendingContextNotice = .olderVideo
             }
             return
         }
+        if type == "photo_done" {
+            guard let ownerRaw = payload["recipient_user_id"] as? String,
+                  let owner = UUID(uuidString: ownerRaw),
+                  let workspaceRaw = facts["workspace_id"] as? String,
+                  let workspace = UUID(uuidString: workspaceRaw),
+                  let listingRaw = facts["listing_id"] as? String,
+                  let listingID = UUID(uuidString: listingRaw) else {
+                if notificationIdentifier?.hasPrefix("photo-work.") == true { pendingContextNotice = .olderPhoto }
+                return
+            }
+            pendingPhotoReview = PhotoReviewTarget(owner: owner, workspace: workspace, listingID: listingID)
+            return
+        }
+        if type.isEmpty, notificationIdentifier?.hasPrefix("photo-work.") == true {
+            pendingContextNotice = .olderPhoto
+            return
+        }
+        if type == "ops_alert" {
+            pendingContextNotice = .operations
+            return
+        }
+        if type == "free_week_ending" || type == "allowance_low" {
+            pendingContextNotice = .planUsage
+            return
+        }
+        if type == "upload_stuck" { pendingContextNotice = .uploadStuck; return }
+        if type == "first_tour_nudge" { pendingContextNotice = .firstTour; return }
         // A lead belongs to the account's inbox, not to one page — and that is
         // the screen the person actually needs to act on it.
         if type == "lead" || type == "leads" || type == "lead_received" {
@@ -605,12 +741,24 @@ final class PushManager: ObservableObject {
             pendingRoute = .tour(link)
             return
         }
-        // Nothing this app has a screen for. Opening the app is the whole of
-        // what happens — never swallow the tap into a blank screen.
+        if !type.isEmpty {
+            let aps = payload["aps"] as? [AnyHashable: Any]
+            let alert = aps?["alert"] as? [AnyHashable: Any]
+            pendingContextNotice = .other(
+                title: Self.safeNotificationCopy(alert?["title"], limit: 80) ?? "Rendprop update",
+                body: Self.safeNotificationCopy(alert?["body"] ?? aps?["alert"], limit: 240) ?? "")
+        }
     }
 
     func clearPendingRoute() { pendingRoute = nil }
     func clearPendingReelJob() { pendingReelJobID = nil }
+    func clearPendingServerVideoReview() { pendingServerVideoReview = nil }
+    func clearPendingPhotoReview() { pendingPhotoReview = nil }
+    func clearPendingContextNotice() { pendingContextNotice = nil }
+    func showUnavailableVideoNotice() { pendingContextNotice = .unavailableVideo }
+    func showSwitchLibraryNotice(_ name: String) { pendingContextNotice = .switchLibrary(name) }
+    func showUnavailablePhotoNotice() { pendingContextNotice = .unavailablePhoto }
+    func showSwitchPhotoLibraryNotice(_ name: String) { pendingContextNotice = .switchPhotoLibrary(name) }
 
     // MARK: Small facts
 
@@ -736,7 +884,8 @@ final class PushDelegate: NSObject, UNUserNotificationCenterDelegate {
         // Routing hops to the main actor; the completion handler is called here
         // and now. iOS only needs to know the delegate is finished with the
         // response, and holding it open across an actor hop buys nothing.
-        Task { @MainActor in PushManager.shared.handle(payload: payload) }
+        Task { @MainActor in PushManager.shared.handle(payload: payload,
+            notificationIdentifier: response.notification.request.identifier) }
         completionHandler()
     }
 }

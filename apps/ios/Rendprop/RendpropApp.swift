@@ -3,6 +3,7 @@ import UIKit
 import AVFoundation
 import CoreLocation
 import MapKit
+import UserNotifications
 // StoreKit is used for two things: `Storefront.current.countryCode` (see
 // `Storefronts` at the bottom of this file) and the in-app subscriptions in
 // `Purchases/` — six auto-renewable products in the `rendprop_plans` group.
@@ -25,6 +26,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     // bridge below. NEITHER of these prompts: `registerForRemoteNotifications`
     // is silent, and the single system prompt is asked exactly once, at the
     // first successful publish, from `PushManager`.
+
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        // A notification tap may be delivered before the SwiftUI root's task
+        // calls PushManager.start(). Install the delegate at process launch so
+        // the cold tap keeps its recipient and exact job routing payload.
+        UNUserNotificationCenter.current().delegate = PushDelegate.shared
+        return true
+    }
 
     func application(_ application: UIApplication,
                      didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
@@ -113,6 +123,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var isCloudSyncing = false
     @Published private(set) var cloudSyncError: String?
     @Published private(set) var lastCloudSyncAt: Date?
+    /// Set after the saved local library is restored and reconciled. A cold
+    /// notification must wait for this before deciding its job is absent.
+    @Published private(set) var hasRestoredLibrary = false
     private var cloudRefreshTask: Task<Void, Never>?
     private var cloudRefreshOperation: UUID?
     var pendingCloudListingCount: Int {
@@ -506,6 +519,7 @@ final class AppModel: ObservableObject {
         reseedSamples()
         persist()
         if adoptionBindings?.appliedToCurrentState == true { _ = restoreAdoptedProductionLibrary() }
+        hasRestoredLibrary = true
 
         // 3. In the background: push local edits the server hasn't seen and
         //    finish any publish that was interrupted.
@@ -4066,6 +4080,7 @@ struct RootTabView: View {
     @ObservedObject private var workspace = WorkspaceStore.shared
     @ObservedObject private var workspaceAuth = AuthStore.shared
     @ObservedObject private var activity = NativeActivityStore.shared
+    @ObservedObject private var push = PushManager.shared
     @EnvironmentObject var model: AppModel
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var tab = NativeRootTab.home.rawValue
@@ -4115,6 +4130,25 @@ struct RootTabView: View {
         .resolveStorefront()
         .onChange(of: workspaceAuth.syncSessionRevision) { _ in NativeActivityStore.shared.synchronize() }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in NativeActivityStore.shared.synchronize() }
+        .alert(push.pendingContextNotice?.title ?? "Notification", isPresented: Binding(
+            get: { push.pendingContextNotice != nil },
+            set: { if !$0 { push.clearPendingContextNotice() } }
+        )) {
+            if let notice = push.pendingContextNotice, let destination = notice.destination,
+               let title = notice.actionTitle {
+                Button(title) {
+                    push.clearPendingContextNotice()
+                    switch destination {
+                    case .listings: tab = NativeRootTab.listings.rawValue
+                    case .activity: tab = NativeRootTab.activity.rawValue
+                    case .account: tab = NativeRootTab.account.rawValue
+                    }
+                }
+            }
+            Button("OK", role: .cancel) { push.clearPendingContextNotice() }
+        } message: {
+            Text(push.pendingContextNotice?.message ?? "")
+        }
         .onChange(of: spaceTypeRaw) { _ in
             model.reseedSamples()     // venue owners see venues, not houses
             model.syncSpaceTypeIfNeeded()   // the free week is sized by industry, server-side
