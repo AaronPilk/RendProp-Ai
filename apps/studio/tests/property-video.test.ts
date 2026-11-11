@@ -6,6 +6,19 @@ import {PROCESSOR_DISCLOSURE} from "../src/features/sync/processor-consent";
 const actor="11111111-1111-4111-8111-111111111111",org="22222222-2222-4222-8222-222222222222",library="33333333-3333-4333-8333-333333333333",listing="44444444-4444-4444-8444-444444444444",operation="55555555-5555-4555-8555-555555555555",jobID="66666666-6666-4666-8666-666666666666",asset="77777777-7777-4777-8777-777777777777",poster="88888888-8888-4888-8888-888888888888";
 const scope:VideoScope={actor,org,library,listing,identityVersion:1};
 function privateURL(which="uploads",who=actor){return `https://rendprop.com/private-media/${Buffer.from(JSON.stringify({v:1,actor:who,org,listing,bucket:which,key:`${which}/${org}/${listing}/owned.jpg`,exp:Math.floor(Date.now()/1000)+300})).toString("base64url")}.${"a".repeat(64)}`;}
+// Production's free-media transport is a path-style R2 SigV4 GET. These are
+// synthetic URLs; the frontend checks their structure and scope, while R2
+// verifies the real signature when the browser fetches one.
+function directURL(which:"uploads"|"renders"="uploads",key=`${which}/${org}/${listing}/owned.jpg`):string {
+ const url=new URL(`https://${"a".repeat(32)}.r2.cloudflarestorage.com/rendprop-${which}/${key}`);
+ url.searchParams.set("X-Amz-Algorithm","AWS4-HMAC-SHA256");
+ url.searchParams.set("X-Amz-Credential","synthetic/20261111/auto/s3/aws4_request");
+ url.searchParams.set("X-Amz-Date",new Date().toISOString().slice(0,19).replace(/[-:]/g,"")+"Z");
+ url.searchParams.set("X-Amz-Expires","600");
+ url.searchParams.set("X-Amz-SignedHeaders","host");
+ url.searchParams.set("X-Amz-Signature","f".repeat(64));
+ return url.toString();
+}
 const photo=(i:number)=>({photo_id:`photo-${i}`,photo_asset_id:`00000000-0000-4000-8000-${String(i).padStart(12,"0")}`,photo_version_id:`asset:00000000-0000-4000-8000-${String(i).padStart(12,"0")}`,photo_provenance_id:null,preview_url:privateURL(),bytes:100,sha256:"a".repeat(64),eligible:true,reason:null});
 const photos=Array.from({length:100},(_,i)=>photo(i+1));
 const source=selectedSources(photos,[photos[0]!.photo_id])[0]!;
@@ -33,6 +46,37 @@ test("exact selected staged version, empty gallery and ineligible source stay ex
  assert.throws(()=>decodeSources({...raw,org_id:library},scope));
  assert.throws(()=>decodeSources({...raw,sources:[{...photo(1),preview_url:privateURL("uploads",asset)}],selected_count:1},scope));
  assert.throws(()=>decodeSources({...raw,sources:[{...photo(1),photo_version_id:`asset:${asset}`}],selected_count:1},scope));
+});
+
+test("video sources and finished renders accept both scoped private transports",()=>{
+ const raw={listing_id:listing,org_id:org,selected_library_org_id:library,selected_count:1,sources:[photo(1)],next_offset:null};
+ for(const preview of [directURL("uploads"),directURL("renders"),privateURL("uploads"),privateURL("renders")]){
+  assert.equal(decodeSources({...raw,sources:[{...photo(1),preview_url:preview}]},scope)[0]!.preview_url,preview);
+ }
+ for(const download of [directURL("renders",`renders/${org}/${listing}/background/master.mp4`),privateURL("renders")]){
+  const result={...ready().result,download_url:download};
+  assert.equal(decodeJob({...ready(),result},scope).result!.download_url,download);
+ }
+});
+
+test("direct video URLs reject wrong path, transport, expiry and result bucket before use",()=>{
+ const raw={listing_id:listing,org_id:org,selected_library_org_id:library,selected_count:1,sources:[photo(1)],next_offset:null};
+ const broken=(mutate:(url:URL)=>void)=>{const url=new URL(directURL());mutate(url);return url.toString();};
+ const badPreviews=[
+  directURL("uploads",`uploads/${library}/${listing}/owned.jpg`),
+  directURL("uploads",`uploads/${org}/${asset}/owned.jpg`),
+  broken(url=>{url.hostname="example.com";}),
+  broken(url=>{url.protocol="http:";}),
+  broken(url=>{url.searchParams.set("X-Amz-Expires","601");}),
+  broken(url=>{url.searchParams.set("X-Amz-Date",new Date(Date.now()-700_000).toISOString().slice(0,19).replace(/[-:]/g,"")+"Z");}),
+  broken(url=>{url.searchParams.append("x-amz-signature","f".repeat(64));}),
+  broken(url=>{url.searchParams.set("X-Amz-Signature","invalid");}),
+  broken(url=>{url.username="other";}),
+  privateURL("uploads",asset),
+ ];
+ for(const preview of badPreviews)assert.throws(()=>decodeSources({...raw,sources:[{...photo(1),preview_url:preview}]},scope),preview);
+ assert.throws(()=>decodeJob({...ready(),result:{...ready().result,download_url:directURL("uploads")}},scope),/render storage/);
+ assert.throws(()=>decodeJob({...ready(),result:{...ready().result,download_url:privateURL("uploads")}},scope),/private download address/);
 });
 
 test("all100 photos keep exact input order across20-photo plans, even with reversed responses and a legacy reorder preference",async()=>{

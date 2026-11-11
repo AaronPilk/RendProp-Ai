@@ -1,5 +1,6 @@
 import type {StudioServices} from "../../data/services";
-import {privateMediaCapability} from "../../data/private-media";
+import {mediaURL} from "../../data/contracts";
+import {isPrivateMediaURL,privateMediaCapability} from "../../data/private-media";
 import {resolveTourLinks,safeTourLinks} from "../listings/share-link";
 import {CONSENT_V1,decodeVideoPermission,permissionForSavedJob,retainVideoPermissionMetadata,sameVideoPermission,videoPermissionHeaders,type VideoPermission,type VideoPermissionMetadata} from "./processor-consent";
 
@@ -33,6 +34,17 @@ const nullableID=(v:unknown):string|null=>v==null?null:id(v);
 const text=(v:unknown,max=200):string=>{if(typeof v!=="string"||!v||v.length>max||/[\u0000-\u001f]/.test(v))throw Error("The saved photo version is invalid.");return v;};
 const integer=(v:unknown,min:number,max:number):number=>{if(typeof v!=="number"||!Number.isSafeInteger(v)||v<min||v>max)throw Error("The saved video count is invalid.");return v;};
 
+/** Video replies do not declare a separate expiry. `now` is only an upper bound
+ * for mediaURL's declared-expiry check; the capability or SigV4 timestamp is
+ * still checked against the current clock. Only finished videos require renders. */
+function videoMediaURL(raw:string,scope:VideoScope,bucket?:"renders"):string {
+ const now=Date.now();
+ const url=mediaURL(raw,scope.org,scope.listing,new Date(now).toISOString(),now,scope.actor);
+ if(isPrivateMediaURL(url))privateMediaCapability(url,{actor:scope.actor,org:scope.org,listing:scope.listing,...(bucket?{bucket}:{})},now);
+ else if(bucket&&new URL(url).pathname.split("/")[2]!==bucket)throw Error("The finished video is outside its private render storage.");
+ return url;
+}
+
 export function assertVideoScope(services:Pick<StudioServices,"getSnapshot">,scope:VideoScope,signal?:AbortSignal):void {
  const snap=services.getSnapshot();
  if(signal?.aborted||snap.status!=="signed-in"||snap.identity?.isAnonymous||snap.identity?.userId!==scope.actor||snap.identityVersion!==scope.identityVersion)throw Error("Your account changed. Reopen this property's videos.");
@@ -55,7 +67,7 @@ export function decodeSources(raw:unknown,scope:VideoScope,offset=0):VideoSource
   if(needs&&(!asset||version!==`asset:${asset}`||typeof s.sha256!=='string'||!HEX.test(s.sha256)||typeof s.bytes!=='number'||!Number.isSafeInteger(s.bytes)||s.bytes<1||s.bytes>50*1024*1024))throw Error('The selected master is not available for private preparation.');
   if(s.eligible&&(!asset||!preparation&&version!==`asset:${asset}`||typeof s.sha256!=="string"||!HEX.test(s.sha256)||typeof s.bytes!=="number"||!Number.isSafeInteger(s.bytes)||s.bytes<1||s.bytes>8*1024*1024))throw Error("The exact selected photo bytes could not be verified.");
   let preview:string|null=null;
-  if(typeof s.preview_url==="string"){privateMediaCapability(s.preview_url,{actor:scope.actor,org:scope.org,listing:scope.listing});preview=s.preview_url;}
+  if(typeof s.preview_url==="string")preview=videoMediaURL(s.preview_url,scope);
   return{...(geometry??{}),needs_preparation:needs,...(preparation?{preparation}:{}),photo_id:photo,photo_asset_id:asset,photo_version_id:version,photo_provenance_id:provenance,preview_url:preview,bytes:typeof s.bytes==="number"?s.bytes:0,sha256:typeof s.sha256==="string"?s.sha256:null,eligible:s.eligible,reason:typeof s.reason==="string"?s.reason.slice(0,300):null};
  });
 }
@@ -84,7 +96,7 @@ export function decodeJob(raw:unknown,scope:VideoScope,expectedOperation?:string
   const r=object(j.result);id(r.asset_id);id(r.poster_asset_id);
   if(j.state!=="ready"||!Array.isArray(r.sources)||r.sources.length!==count||![[1920,1080],[1080,1920]].some(([w,h])=>r.width===w&&r.height===h)||typeof r.duration_s!=="number"||!Number.isFinite(r.duration_s)||r.duration_s<=0||r.duration_s>(photoMotion?600:500)||typeof r.sha256!=="string"||!HEX.test(r.sha256)||!["unbranded","social"].includes(String(r.branding_policy)))throw Error("The finished video is incomplete or below its promised framing.");
   integer(r.bytes,1,1536*1024*1024);integer(r.original_photo_count,0,count);
-  privateMediaCapability(text(r.download_url,4096),{actor:scope.actor,org:scope.org,listing:scope.listing,bucket:"renders"});
+  videoMediaURL(text(r.download_url,4096),scope,"renders");
   const refs:FinishedSource[]=r.sources.map(v=>{const s=object(v),asset=id(s.photo_asset_id),version=text(s.photo_version_id),photoProv=nullableID(s.photo_provenance_id),request=s.generation_request_id==null?null:text(s.generation_request_id,256),generatedProv=nullableID(s.generation_provenance_id);
    if(photoMotion){
     const frame=integer(s.visible_frames,48,120),bytes=integer(s.source_bytes,1,52428800);
