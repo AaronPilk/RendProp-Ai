@@ -51,6 +51,7 @@ assert 'refreshCloudPhotoSelection(listingID: listingID)' in cloud_task
 assert 'refreshCloudPhotoSelection' not in task
 assert 'context.isCurrent, viewed.id == targetID' in cloud_task
 assert 'selectionWorkID == nil' in cloud_task
+assert 'cloudProjection == nil, selectionError == nil' in cloud_task
 change=block(review,'.onChange(of: showOriginal) {'); change=change[change.index('{'):].replace('{ showing in','{',1)
 methods='\n'.join(block(review,x).replace('private func','func',1) for x in ['private func clearAndDismiss()','private func chooseVersion(','private func isRetainedSource('])
 actual+='''// The decode/privacy fixture takes the local branch. Cloud selection has

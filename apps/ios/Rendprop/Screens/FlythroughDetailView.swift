@@ -8838,7 +8838,8 @@ struct PhotoCompareView: View {
             catch {
                 // A tap may start a newer refresh while this initial read is
                 // still running. Its result owns the message in that case.
-                if context.isCurrent, viewed.id == targetID, selectionWorkID == nil {
+                if context.isCurrent, viewed.id == targetID, selectionWorkID == nil,
+                   cloudProjection == nil, selectionError == nil {
                     selectionError = error.localizedDescription
                 }
             }
