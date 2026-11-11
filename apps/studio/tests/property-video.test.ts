@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
 import {decodeSources,selectedSources,decodeJob,planVideoSources,fallbackVideoMotion,FALLBACK_MOTION_ROTATION,saveVideoJournal,readVideoJournal,enqueueVideo,recoverVideo,inspectVideoOperation,retainRejectedVideo,videoScopeKey,resumeVideo,publishVideo,MUSIC,type VideoScope,type VideoJournal,type VideoInput} from "../src/features/sync/property-video";
+import {PROCESSOR_DISCLOSURE} from "../src/features/sync/processor-consent";
 
 const actor="11111111-1111-4111-8111-111111111111",org="22222222-2222-4222-8222-222222222222",library="33333333-3333-4333-8333-333333333333",listing="44444444-4444-4444-8444-444444444444",operation="55555555-5555-4555-8555-555555555555",jobID="66666666-6666-4666-8666-666666666666",asset="77777777-7777-4777-8777-777777777777",poster="88888888-8888-4888-8888-888888888888";
 const scope:VideoScope={actor,org,library,listing,identityVersion:1};
@@ -94,6 +95,39 @@ test("saved Photo Motion v1, v2 and opening jobs retain exact read-only source a
   assert.deepEqual(result.sources,raw.result.sources);assert.equal(result.sources[0]!.motion_kind,"photo_motion");
   assert.deepEqual(result.opening,raw.result.opening);assert.equal(job.resume_available,false,"an incompatible paid resume is never offered");
  }
+});
+
+test("all seven production video row shapes for one listing decode with identities and hashes redacted",()=>{
+ // Read-only projection of the seven rows on 2026-11-11. All UUIDs, hashes,
+ // media capabilities and recorded consent times below are synthetic. The
+ // profile/state/order, dimensions, frame counts and byte sizes are retained.
+ const rows=[
+  {state:"failed",profile:"fal-kling3-4k-v1",consent:"property-video-jobs-v1"},
+  {state:"failed",profile:"kie-kling3-4k-steady-v1",consent:"property-video-jobs-v2"},
+  {state:"failed",profile:"kie-kling3-4k-steady-v1",consent:"property-video-jobs-v2"},
+  {state:"ready",profile:"photo-motion-v1-cfr24",consent:"photo-motion-v1",width:1080,height:1920,bytes:4026120},
+  {state:"failed",profile:"photo-motion-v2-cfr24",consent:"photo-motion-v1"},
+  {state:"ready",profile:"photo-motion-v2-cfr24",consent:"photo-motion-v1",width:1080,height:1920,bytes:4484200},
+  {state:"ready",profile:"photo-motion-v2-cfr24",consent:"photo-motion-v1",width:1920,height:1080,bytes:3983411},
+ ] as const;
+ const uuid=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,"0")}`;
+ const consentRecord={token:"property-video-jobs-v2",disclosure_revision:PROCESSOR_DISCLOSURE.disclosure_revision,processors:["kie"],recorded_at:"2026-10-01T00:00:00Z"};
+ const decoded=rows.map((row,index)=>{
+  const photoMotion=row.profile.startsWith("photo-motion-");
+  const raw:any={...queued(),job_id:uuid(100+index),operation_id:uuid(200+index),source_count:3,completed_sources:row.state==="ready"?3:0,state:row.state,quality_profile:row.profile,consent_revision:row.consent,processor_consent:row.consent==="property-video-jobs-v2"?consentRecord:null,resume_available:false};
+  if(photoMotion){raw.source_mode="photo_motion_v1";raw.composition_profile=row.profile;}
+  if(row.state==="ready"){
+   const frames=[48,72,72],hashes=frames.map((_,i)=>String(i+1).repeat(64));
+   const sources=frames.map((frame,i)=>({photo_asset_id:uuid(300+i),photo_version_id:`asset:${uuid(300+i)}`,photo_provenance_id:uuid(400+i),generation_request_id:null,generation_provenance_id:null,motion_kind:"photo_motion",source_bound:true,source_sha256:hashes[i],source_bytes:[6710736,7363183,7389550][i],visible_frames:frame,...(row.profile==="photo-motion-v1-cfr24"?{}:{motion:"push_in"})}));
+   raw.result={asset_id:uuid(500+index),poster_asset_id:uuid(600+index),download_url:privateURL("renders"),width:row.width,height:row.height,duration_s:8,bytes:row.bytes,sha256:"f".repeat(64),branding_policy:row.width===1920?"unbranded":"social",sources,original_photo_count:0,music:null,source_mode:"photo_motion_v1",composition_profile:row.profile,fps:24,total_frames:192,source_frames:frames,source_sha256s:hashes,...(row.profile==="photo-motion-v1-cfr24"?{}:{source_motions:["push_in","push_in","push_in"]})};
+  }
+  return decodeJob(raw,scope);
+ });
+ assert.equal(decoded.length,7);
+ assert.deepEqual(decoded.map(job=>job.state),rows.map(row=>row.state));
+ assert.deepEqual(decoded.map(job=>job.result?.width??null),[null,null,null,1080,null,1080,1920]);
+ assert(decoded.filter(job=>job.source_mode==="photo_motion_v1"&&job.result).every(job=>job.result!.sources.every(source=>source.motion_kind==="photo_motion"&&source.photo_provenance_id!==null)));
+ assert(decoded.every(job=>job.resume_available!==true),"historical failed work never creates a new paid resume path");
 });
 
 test("Photo Motion decode refuses altered profile, source, physical receipt and timeline before publication",()=>{
