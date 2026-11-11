@@ -60,10 +60,12 @@ assert 'actor.flatMap(UUID.init(uuidString:)).map { [.appAccountToken($0)] }' in
 assert 'introductoryOfferEligibility(compactJWS: standardPriceAuthorization.compactJWS)' in purchase
 assert 'standardPrice: true' in paywall and 'standardPriceChoice' in paywall
 assert 'auth.syncSessionRevision == choice.sessionRevision' in paywall
+assert 'No real charge will be made' in paywall
 prepare_needle = 'func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,\n                              environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation {'
-standard_needle = 'func prepareStandardPricePurchase(orgID: UUID, productID: String,\n                                      signedAppTransaction: String) async throws -> StandardPricePurchaseAuthorization {'
+standard_needle = 'func prepareStandardPricePurchase(orgID: UUID, productID: String,\n                                      signedAppTransaction: String,\n                                      environment: PurchaseEnvironment) async throws -> StandardPricePurchaseAuthorization {'
 assert 'retriesUnauthorized: false, requiredCurrentOrg: orgID' in block(api, prepare_needle)
 assert 'retriesUnauthorized: false, requiredCurrentOrg: orgID' in block(api, standard_needle)
+assert '"sandbox-prepare"' in block(api, standard_needle)
 assert '"purchase_environment": environment.rawValue' in block(api, prepare_needle)
 assert check.index('verifiedTrialPurchaseEnvironment()') < check.index('validateHeldTrialPurchase(')
 assert purchase.index('verifiedTrialPurchaseEnvironment()') < purchase.index('validateHeldTrialPurchase(')
@@ -193,12 +195,13 @@ enum VerificationResult<T> { case verified(T), unverified(T)
         return overrideHold ?? held!
     }
     func prepareStandardPricePurchase(orgID: UUID, productID: String,
-                                      signedAppTransaction: String) async throws -> StandardPricePurchaseAuthorization {
+                                      signedAppTransaction: String,
+                                      environment: PurchaseEnvironment) async throws -> StandardPricePurchaseAuthorization {
         standardPrepareCalls += 1; standardOnPrepare?()
         return standardOverride ?? .init(actorID: actor, orgID: orgID, productID: productID,
               appTransactionID: "synthetic-app-transaction",
               compactJWS: String(repeating: "a", count: 40) + "." + String(repeating: "b", count: 40) + "." + String(repeating: "c", count: 40),
-              issuedAt: Int64(Date().timeIntervalSince1970))
+              issuedAt: Int64(Date().timeIntervalSince1970), purchaseEnvironment: environment)
     }
 }
 @MainActor final class PurchaseFixture {
@@ -206,7 +209,7 @@ enum VerificationResult<T> { case verified(T), unverified(T)
     var activePlan: String?; var activeProductID: String?; var activeBillingOwner: UUID?
     var activeOriginalTransactionID: String?; var unsyncedCount = 0
     var billingContext: SubscriptionBillingContext?; var billingError: String?
-    var standardPriceProductionReady = false
+    var verifiedStandardPriceEnvironment: PurchaseEnvironment?
     var preparedTrialReservation: TrialPurchaseReservation?; var preparedTrialSnapshot: TrialPurchaseSnapshot?
     var introOfferEligible: [String: Bool] = [:]; let api: HeldAPI?
     private var billingRefreshGeneration: UInt64 = 0
@@ -233,7 +236,8 @@ def generated(b, a, m):
     source += request + '\nfinal class TrialPurchaseRedirectPolicy {}\n'
     source += '@MainActor extension PurchaseFixture {\n'
     for needle in ['func showsIntroOffer(', 'func trialEligibility(', 'private func hasFreeIntroductoryOffer(',
-                   'func canOfferStandardPrice(',
+                   'private static func purchaseEnvironment(',
+                   'func standardPriceCheckoutEnvironment(', 'func canOfferStandardPrice(',
                    'private func hasSevenDayTrial(', 'func canStartNewPurchase(', 'func heldTrialOffer(',
                    'func ceilingModePurchaseAllowed(', 'func ceilingShowsIntroOffer(',
                    'func canCheckTrialAvailability(', 'private func trialRegionSupported(',

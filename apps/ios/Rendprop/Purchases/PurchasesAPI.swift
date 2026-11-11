@@ -104,7 +104,7 @@ struct EntitlementSync: Codable, Hashable, Sendable {
 
 /// A verified StoreKit app environment is required for a new trial preflight.
 /// The server still verifies the eventual signed Apple transaction independently.
-enum PurchaseEnvironment: String, Sendable {
+enum PurchaseEnvironment: String, Codable, Sendable {
     case production = "Production"
     case sandbox = "Sandbox"
 }
@@ -119,14 +119,17 @@ struct StandardPricePurchaseAuthorization: Decodable, Sendable {
     let appTransactionID: String
     let compactJWS: String
     let issuedAt: Int64
+    let purchaseEnvironment: PurchaseEnvironment
     enum CodingKeys: String, CodingKey {
         case actorID = "actor_id", orgID = "org_id", productID = "product_id"
         case appTransactionID = "app_transaction_id", compactJWS = "compact_jws", issuedAt = "issued_at"
+        case purchaseEnvironment = "purchase_environment"
     }
     func checked(actor: UUID, org: UUID, product: String, appTransaction: String,
-                 now: Date = Date()) -> Self? {
+                 environment: PurchaseEnvironment, now: Date = Date()) -> Self? {
         let parts = compactJWS.split(separator: ".", omittingEmptySubsequences: false)
         guard actorID == actor, orgID == org, productID == product,
+              purchaseEnvironment == environment,
               appTransactionID == appTransaction, !appTransaction.isEmpty,
               compactJWS.count >= 100, compactJWS.count <= 8_192,
               parts.count == 3, parts.allSatisfy({ !$0.isEmpty }),
@@ -143,7 +146,8 @@ protocol PurchasesAPI {
     func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,
                               environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation
     func prepareStandardPricePurchase(orgID: UUID, productID: String,
-                                      signedAppTransaction: String) async throws -> StandardPricePurchaseAuthorization
+                                      signedAppTransaction: String,
+                                      environment: PurchaseEnvironment) async throws -> StandardPricePurchaseAuthorization
     /// POST /me/entitlement — hand Apple's signed transaction to the server and
     /// get back the plan it wrote. Throws `APIError` on a non-2xx.
     func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync
@@ -153,12 +157,16 @@ protocol PurchasesAPI {
 
 extension LiveAPIClient: PurchasesAPI {
     func prepareStandardPricePurchase(orgID: UUID, productID: String,
-                                      signedAppTransaction: String) async throws -> StandardPricePurchaseAuthorization {
+                                      signedAppTransaction: String,
+                                      environment: PurchaseEnvironment) async throws -> StandardPricePurchaseAuthorization {
         guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil,
               WorkspaceContext.billingOrgID == orgID,
               productID == "com.rendprop.app.pro29.monthly",
               !signedAppTransaction.isEmpty else { throw CloudSyncError.identityChanged }
-        let data = try await PurchasesRequest.post(path: ["me", "subscription", "standard-price", "prepare"], json: [
+        let path = environment == .sandbox
+            ? ["me", "subscription", "standard-price", "sandbox-prepare"]
+            : ["me", "subscription", "standard-price", "prepare"]
+        let data = try await PurchasesRequest.post(path: path, json: [
             "org_id": orgID.uuidString.lowercased(), "product_id": productID,
             "signed_app_transaction": signedAppTransaction
         ], retriesUnauthorized: false, requiredCurrentOrg: orgID)
@@ -322,7 +330,8 @@ private final class TrialPurchaseRedirectPolicy: NSObject, URLSessionTaskDelegat
 
 extension MockAPIClient: PurchasesAPI {
     func prepareStandardPricePurchase(orgID: UUID, productID: String,
-                                      signedAppTransaction: String) async throws -> StandardPricePurchaseAuthorization {
+                                      signedAppTransaction: String,
+                                      environment: PurchaseEnvironment) async throws -> StandardPricePurchaseAuthorization {
         throw APIError.notConfigured
     }
     func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,

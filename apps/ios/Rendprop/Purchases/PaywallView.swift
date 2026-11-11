@@ -38,6 +38,7 @@ struct PaywallView: View {
         let actorID: String?
         let sessionRevision: UInt64
         let selectedOrgID: UUID?
+        let environment: PurchaseEnvironment
     }
 
     var body: some View {
@@ -63,22 +64,32 @@ struct PaywallView: View {
                 }
             }
         }
-        .alert("Subscribe at standard price?", isPresented: $showsStandardPriceConfirmation,
+        .alert(standardPriceChoice?.environment == .sandbox
+               ? "Test Pro subscription?" : "Subscribe at standard price?",
+               isPresented: $showsStandardPriceConfirmation,
                presenting: standardPriceChoice) { choice in
-            Button("Continue at \(choice.product.displayPrice)\(choice.period.priceSuffix)") {
+            Button(choice.environment == .sandbox
+                   ? "Continue test at \(choice.product.displayPrice)\(choice.period.priceSuffix)"
+                   : "Continue at \(choice.product.displayPrice)\(choice.period.priceSuffix)") {
                 Task {
                     guard selectedOffer.product?.id == choice.product.id,
-                          purchases.billingContext?.orgID == choice.orgID,
-                          auth.userID == choice.actorID,
-                          auth.syncSessionRevision == choice.sessionRevision,
-                          WorkspaceContext.selectedOrgID == choice.selectedOrgID else { return }
+                      purchases.billingContext?.orgID == choice.orgID,
+                      purchases.standardPriceCheckoutEnvironment(for: choice.product) == choice.environment,
+                      auth.userID == choice.actorID,
+                      auth.syncSessionRevision == choice.sessionRevision,
+                      WorkspaceContext.selectedOrgID == choice.selectedOrgID else { return }
                     await purchases.purchase(choice.product, expectedOrgID: choice.orgID,
-                                             standardPrice: true)
+                                             standardPrice: true,
+                                             standardPriceEnvironment: choice.environment)
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: { choice in
-            Text("Pro starts at \(choice.product.displayPrice)\(choice.period.priceSuffix) without the free trial. It applies to \(choice.workspaceName) · Library ID \(choice.orgID.uuidString.lowercased().suffix(8)). Apple shows the final charge and renewal terms before you confirm.")
+            if choice.environment == .sandbox {
+                Text("This is a TestFlight subscription test at \(choice.product.displayPrice)\(choice.period.priceSuffix), without the free trial. No real charge will be made. It applies to \(choice.workspaceName) · Library ID \(choice.orgID.uuidString.lowercased().suffix(8)). Apple shows the test terms before you confirm.")
+            } else {
+                Text("Pro starts at \(choice.product.displayPrice)\(choice.period.priceSuffix) without the free trial. It applies to \(choice.workspaceName) · Library ID \(choice.orgID.uuidString.lowercased().suffix(8)). Apple shows the final charge and renewal terms before you confirm.")
+            }
         }
         .task(id: "\(auth.userID ?? "none"):\(auth.syncSessionRevision)") {
             PurchaseManager.shared.start()
@@ -431,18 +442,24 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.ink)
                     .accessibilityIdentifier("paywall.selection")
                 buyButton(product)
-                if purchases.canOfferStandardPrice(for: product),
+                if let environment = purchases.standardPriceCheckoutEnvironment(for: product),
                    let billing = purchases.billingContext {
-                    SecondaryButton(title: "Subscribe at \(product.displayPrice)\(offer.period.priceSuffix) now",
-                                    systemImage: "creditcard") {
+                    SecondaryButton(title: environment == .sandbox
+                                      ? "Test Pro at \(product.displayPrice)\(offer.period.priceSuffix)"
+                                      : "Subscribe at \(product.displayPrice)\(offer.period.priceSuffix) now",
+                                    systemImage: "creditcard",
+                                    isDisabled: purchases.isPurchasing || purchases.isRestoring) {
                         standardPriceChoice = .init(product: product, orgID: billing.orgID,
                                                     workspaceName: billing.name, period: offer.period,
                                                     actorID: auth.userID, sessionRevision: auth.syncSessionRevision,
-                                                    selectedOrgID: WorkspaceContext.selectedOrgID)
+                                                    selectedOrgID: WorkspaceContext.selectedOrgID,
+                                                    environment: environment)
                         showsStandardPriceConfirmation = true
                     }
                     .accessibilityIdentifier("paywall.standardPrice")
-                    Text("Pay the standard price now, without a free trial. Apple confirms the charge before subscribing.")
+                    Text(environment == .sandbox
+                         ? "TestFlight test purchase only. No real charge will be made. Apple confirms the test subscription before it begins."
+                         : "Pay the standard price now, without a free trial. Apple confirms the charge before subscribing.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                         .multilineTextAlignment(.center)
                 }

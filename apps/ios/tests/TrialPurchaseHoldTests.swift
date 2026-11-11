@@ -500,21 +500,26 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
         }
         let paidSKU = "com.rendprop.app.pro29.monthly"
         let compactJWS = String(repeating: "a", count: 40) + "." + String(repeating: "b", count: 40) + "." + String(repeating: "c", count: 40)
-        func paidFixture() -> (PurchaseFixture, HeldAPI, Product) {
+        func paidFixture(environment: PurchaseEnvironment = .production,
+                         ready: Bool = true) -> (PurchaseFixture, HeldAPI, Product) {
             _ = fixture()
             let api = HeldAPI(org: org, actor: actor, product: paidSKU)
             var context = SubscriptionBillingContext(orgID: org, orgName: "Synthetic workspace", role: "owner", canManageSubscription: true, source: nil)
-            context.servingMode = "ceiling"; context.standardPriceCheckoutReady = true
+            context.servingMode = "ceiling"
+            context.standardPriceCheckoutReady = environment == .production && ready
+            context.standardPriceSandboxTestReady = environment == .sandbox && ready
             api.overrideContext = context
             let manager = PurchaseFixture(api); manager.billingContext = context
-            manager.standardPriceProductionReady = true
+            manager.verifiedStandardPriceEnvironment = environment
+            AppTransaction.value = environment == .sandbox ? .sandbox : .production
             manager.introOfferEligible[paidSKU] = true
             return (manager, api, Product(id: paidSKU))
         }
         do {
             let (manager, api, product) = paidFixture()
             check(manager.canOfferStandardPrice(for: product), "Verified paid option was hidden")
-            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
             check(Product.sheetCalls == 1 && api.standardPrepareCalls == 1 && api.prepareCalls == 0,
                   "Signed standard-price path did not reach exactly one Apple sheet")
             check(Product.receivedOptions == [.appAccountToken(actor), .introductoryOfferEligibility(compactJWS: compactJWS)],
@@ -523,17 +528,49 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
                   "Cancelled paid Apple sheet retained newly created binding")
         }
         do {
+            let (manager, api, product) = paidFixture(environment: .sandbox)
+            check(manager.standardPriceCheckoutEnvironment(for: product) == .sandbox,
+                  "Current funded Sandbox test option was hidden")
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .sandbox)
+            check(Product.sheetCalls == 1 && api.standardPrepareCalls == 1 && api.prepareCalls == 0,
+                  "Signed Sandbox test did not reach exactly one Apple test sheet")
+            check(Product.receivedOptions == [.appAccountToken(actor), .introductoryOfferEligibility(compactJWS: compactJWS)],
+                  "Sandbox test omitted token or signed intro suppression")
+        }
+        do {
+            let (manager, api, product) = paidFixture(environment: .sandbox, ready: false)
+            check(manager.standardPriceCheckoutEnvironment(for: product) == nil,
+                  "Expired Sandbox review authority exposed test checkout")
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .sandbox)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 0,
+                  "Expired Sandbox review authority reached Apple or server preparation")
+        }
+        do {
             let (manager, api, product) = paidFixture(); AppTransaction.value = .sandbox
-            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
             check(Product.sheetCalls == 0 && api.standardPrepareCalls == 0,
                   "Sandbox AppTransaction reached the paid Apple sheet")
+        }
+        do {
+            let (manager, api, product) = paidFixture(environment: .sandbox)
+            api.standardOverride = .init(actorID: actor, orgID: org, productID: paidSKU,
+                appTransactionID: AppTransaction.currentID, compactJWS: compactJWS,
+                issuedAt: Int64(Date().timeIntervalSince1970), purchaseEnvironment: .production)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .sandbox)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
+                  "Production response echo authorized a Sandbox test sheet")
         }
         do {
             let (manager, api, product) = paidFixture()
             api.standardOverride = .init(actorID: other, orgID: org, productID: paidSKU,
                 appTransactionID: AppTransaction.currentID, compactJWS: compactJWS,
-                issuedAt: Int64(Date().timeIntervalSince1970))
-            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+                issuedAt: Int64(Date().timeIntervalSince1970), purchaseEnvironment: .production)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
             check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
                   "Foreign actor signed option reached the paid Apple sheet")
         }
@@ -541,22 +578,25 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             let (manager, api, product) = paidFixture()
             api.standardOverride = .init(actorID: actor, orgID: org, productID: paidSKU,
                 appTransactionID: AppTransaction.currentID, compactJWS: compactJWS,
-                issuedAt: Int64(Date().timeIntervalSince1970) - 301)
-            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+                issuedAt: Int64(Date().timeIntervalSince1970) - 301, purchaseEnvironment: .production)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
             check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
                   "Stale signed option reached the paid Apple sheet")
         }
         do {
             let (manager, api, product) = paidFixture()
             AppTransaction.onRead = { if AppTransaction.reads == 2 { AppTransaction.currentID = "changed-app-transaction" } }
-            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
             check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
                   "Changed Apple app transaction reached the paid Apple sheet")
         }
         do {
             let (manager, api, product) = paidFixture()
             _ = try PurchaseWorkspaceBindingStore.prepare(owner: actor, productID: paidSKU, orgID: other)
-            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
             let retainedBinding = try PurchaseWorkspaceBindingStore.load(owner: actor, productID: paidSKU)
             check(Product.sheetCalls == 0 && api.standardPrepareCalls == 0 &&
                   retainedBinding?.orgID == other,
@@ -565,7 +605,8 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
         do {
             let (manager, api, product) = paidFixture()
             api.standardOnPrepare = { AuthStore.shared.syncSessionRevision += 1 }
-            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
             check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
                   "Changed session after signed prepare reached Apple")
         }
@@ -574,13 +615,15 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             URLSession.reply = try JSONSerialization.data(withJSONObject: [
                 "actor_id": actor.uuidString.lowercased(), "org_id": org.uuidString.lowercased(),
                 "product_id": paidSKU, "app_transaction_id": AppTransaction.currentID,
-                "compact_jws": compactJWS, "issued_at": Int64(Date().timeIntervalSince1970)
+                "compact_jws": compactJWS, "issued_at": Int64(Date().timeIntervalSince1970),
+                "purchase_environment": "Production"
             ])
             let signedAppTransaction = "synthetic.apple.app.transaction"
             let prepared = try await LiveAPIClient().prepareStandardPricePurchase(
-                orgID: org, productID: paidSKU, signedAppTransaction: signedAppTransaction)
+                orgID: org, productID: paidSKU, signedAppTransaction: signedAppTransaction,
+                environment: .production)
             check(prepared.checked(actor: actor, org: org, product: paidSKU,
-                                   appTransaction: AppTransaction.currentID) != nil,
+                                   appTransaction: AppTransaction.currentID, environment: .production) != nil,
                   "Standard-price response lost actor, workspace, product, or app transaction")
             check(URLSession.requests.count == 1, "Standard-price prepare was retried")
             let request = URLSession.requests[0]
@@ -595,9 +638,28 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
                   "Standard-price POST route or library header differed")
         }
         do {
+            _ = paidFixture(environment: .sandbox)
+            URLSession.reply = try JSONSerialization.data(withJSONObject: [
+                "actor_id": actor.uuidString.lowercased(), "org_id": org.uuidString.lowercased(),
+                "product_id": paidSKU, "app_transaction_id": AppTransaction.currentID,
+                "compact_jws": compactJWS, "issued_at": Int64(Date().timeIntervalSince1970),
+                "purchase_environment": "Sandbox"
+            ])
+            let prepared = try await LiveAPIClient().prepareStandardPricePurchase(
+                orgID: org, productID: paidSKU, signedAppTransaction: "synthetic.apple.app.transaction",
+                environment: .sandbox)
+            check(prepared.checked(actor: actor, org: org, product: paidSKU,
+                                   appTransaction: AppTransaction.currentID, environment: .sandbox) != nil,
+                  "Sandbox test response lost its verified environment")
+            check(URLSession.requests.count == 1
+                  && URLSession.requests[0].url?.path.hasSuffix("/me/subscription/standard-price/sandbox-prepare") == true,
+                  "Sandbox test used the Production endpoint or retried")
+        }
+        do {
             _ = paidFixture(); URLSession.status = 401; URLSession.reply = Data()
             do { _ = try await LiveAPIClient().prepareStandardPricePurchase(
-                orgID: org, productID: paidSKU, signedAppTransaction: "synthetic.apple.app.transaction") }
+                orgID: org, productID: paidSKU, signedAppTransaction: "synthetic.apple.app.transaction",
+                environment: .production) }
             catch {}
             check(URLSession.requests.count == 1 && AuthStore.shared.refreshes == 0,
                   "Standard-price prepare retried after 401")

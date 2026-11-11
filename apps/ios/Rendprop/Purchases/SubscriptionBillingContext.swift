@@ -365,6 +365,9 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
     /// Server readiness for a separately confirmed, standard-price Pro29
     /// checkout. Missing on older servers is closed, never an Apple sheet.
     var standardPriceCheckoutReady: Bool? = nil
+    /// Separate bounded App Review Sandbox purchase test. An expired grant or
+    /// older server leaves this closed independently of Production checkout.
+    var standardPriceSandboxTestReady: Bool? = nil
     /// "ceiling" meters paid work. A seven-day Apple intro still needs the
     /// exact funded server reservation before StoreKit can begin it.
     var servingMode: String? = nil
@@ -379,6 +382,7 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
         case servingOrgID = "serving_org_id"
         case originalTransactionIDs = "original_transaction_ids"
         case standardPriceCheckoutReady = "standard_price_checkout_ready"
+        case standardPriceSandboxTestReady = "standard_price_sandbox_test_ready"
     }
     var name: String { orgName?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "Your workspace" }
     var unavailableMessage: String {
