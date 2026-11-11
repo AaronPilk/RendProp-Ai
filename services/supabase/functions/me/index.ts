@@ -124,6 +124,8 @@ import { hostingRetention } from "../_shared/hosting-retention.ts";
 import { photoPackageContext } from "../_shared/photo-package-context.ts";
 import { boundedTrialContext, subscriptionServingActivation, trialServingActivationForSync } from "../_shared/bounded-trial.ts";
 import { heldTrialPurchase, prepareTrialPurchase } from "../_shared/trial-purchase.ts";
+import { noActiveAppleChain, prepareSandboxStandardPrice, prepareStandardPrice, sandboxStandardPriceAuthority,
+  standardPriceContext, standardPriceOwnerContext, standardPriceSigningReady } from "./standard-price.ts";
 import { brandLogo } from "./brand-logo.ts";
 import { requestedWorkspace, selectWorkspace, workspaceDirectory, workspaceID } from "../_shared/workspaces.ts";
 import { assertExpectedSubscriptionWorkspace, assertVerifiedPurchaseOwner } from "./billing.ts";
@@ -259,6 +261,19 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg.length === 2 && seg[0] === "trial" && seg[1] === "prepare") {
       const directory = await workspaceDirectory(adminClient(), user.id, requestedWorkspace(req));
       return json(await prepareTrialPurchase(adminClient(), user.id, directory.active_org_id, await readJsonLimited(req, 2048)));
+    }
+    if (req.method === "POST" && seg.length === 3 && seg[0] === "subscription" && seg[1] === "standard-price" &&
+        (seg[2] === "prepare" || seg[2] === "sandbox-prepare")) {
+      const selected = requestedWorkspace(req);
+      assert(selected, 409, "Choose a workspace before purchasing.", "conflict");
+      const admin = adminClient();
+      const directory = await workspaceDirectory(admin, user.id, selected);
+      assert(await durableRateLimit(`standard-price:${user.id}`, 8, 300), 429,
+        "Please wait before preparing another purchase.", "rate_limited");
+      const body = await readJsonLimited(req, 80 * 1024);
+      return json(await (seg[2] === "sandbox-prepare" ?
+        prepareSandboxStandardPrice(admin, user.id, directory, body) : prepareStandardPrice(admin, user.id, directory, body)),
+        200, { "cache-control": "no-store" });
     }
     if (seg[0] === "credits" && seg.length <= 3) {
       return await creditsRoute(req, adminClient(), user.id, seg[1], seg[2]);
@@ -456,6 +471,19 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   byFeature.renders = Math.max(0, byFeature.renders);
 
   const portfolioUrl = org.handle ? `${TOUR_BASE}/a/${org.handle}` : null;
+  let standardPriceCheckoutReady = false;
+  let standardPriceSandboxTestReady = false;
+  if (canManageSubscription && purchaseOrgId === orgId && await standardPriceSigningReady()) {
+    if (standardPriceContext(userId, directory, orgId, billingAccess, entitlement.plan, purchaseRes.data.plan_source ?? null)) {
+      try { standardPriceCheckoutReady = await noActiveAppleChain(admin, userId, orgId); }
+      catch { standardPriceCheckoutReady = false; }
+    } else if (entitlement.plan === "pro" &&
+      standardPriceOwnerContext(userId, directory, orgId, billingAccess, purchaseRes.data.plan_source ?? null)) {
+      try { standardPriceSandboxTestReady = await noActiveAppleChain(admin, userId, orgId) &&
+        await sandboxStandardPriceAuthority(admin, userId, orgId); }
+      catch { standardPriceSandboxTestReady = false; }
+    }
+  }
 
   return json({
     user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null,
@@ -497,6 +525,8 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       org_name: purchaseRes.data.name,
       role: billingAccess.role,
       can_manage_subscription: canManageSubscription,
+      standard_price_checkout_ready: standardPriceCheckoutReady,
+      standard_price_sandbox_test_ready: standardPriceSandboxTestReady,
       original_transaction_ids: originalTransactionIDs,
       source: purchaseOrgId === orgId && testingAccess ? "manual" : purchaseRes.data.plan_source ?? null,
     },

@@ -414,9 +414,9 @@ export interface VerifyAppleJWSOptions {
    * applejws.test.ts can mint a throwaway chain instead of shipping a copy of
    * Apple's private key (which does not exist).
    *
-   * This is safe because it is UNREACHABLE FROM A REQUEST: nothing in
-   * functions/me or functions/apple-subscriptions passes an options object at
-   * all, the field is typed as a Uint8Array (JSON.parse can never produce one),
+   * This is safe because it is UNREACHABLE FROM A REQUEST: production callers
+   * never pass trustRoot (me/standard-price passes only a bounded `now` Date),
+   * the field is typed as a Uint8Array (JSON.parse can never produce one),
    * and the runtime check below refuses anything else. Do not add a code path
    * that derives this value from a request, an env var, or a database row.
    */
