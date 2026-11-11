@@ -2,7 +2,7 @@
 //  RendpropUITests.swift
 //  The automated UI walk (docs/LAUNCH-CONTRACT.md § UI walk).
 //
-//  ONE test — `testWalk()` — drives a booted simulator through every main
+//  ONE test — `testWalk()` — drives closed simulator fixtures through every main
 //  screen and attaches a `keepAlways` screenshot of each. The owner reviews
 //  those PNGs before ad spend, so the walk is built around one rule:
 //
@@ -33,6 +33,9 @@ final class RendpropUITests: XCTestCase {
     private var app: XCUIApplication!
     private var fixtureDirectory: URL!
     private var capturedScreens = Set<String>()
+    private var walkLaunchArguments: [String] = []
+    private enum WalkSurface { case normal, homeFixture, ownerFixture }
+    private var walkSurface = WalkSurface.normal
 
     /// Longest wait for a screen to come up. The first launch on a cold
     /// simulator has to compile shaders and seed the sample listings.
@@ -54,7 +57,7 @@ final class RendpropUITests: XCTestCase {
         fixtureDirectory = try makeSyntheticPhotos()
 
         app = XCUIApplication()
-        app.launchArguments += [
+        walkLaunchArguments = [
             // Mock API client — see Config.isUITesting.
             "-uiTesting",
             // `-key value` pairs land in UserDefaults' NSArgumentDomain, which
@@ -74,6 +77,7 @@ final class RendpropUITests: XCTestCase {
             "-ai.thirdPartyProcessing.consent.v3", "YES",
             "-ui.seedPhotosDir", fixtureDirectory.path,
         ]
+        app.launchArguments = walkLaunchArguments
         app.launch()
     }
 
@@ -272,12 +276,17 @@ final class RendpropUITests: XCTestCase {
     func testWalk() {
         step01Home()
         step02AddHome()
+        launchWalkSurface(.homeFixture)
         let inPhotoStudio = step03PhotoStudio()
         step04ReelStudioVoice(reachedPhotoStudio: inPhotoStudio)
+        launchWalkSurface(.normal)
         step05Settings()
+        launchWalkSurface(.ownerFixture)
         step06OwnerConsole()
         step07Routing()
+        launchWalkSurface(.normal)
         step08Paywall()
+        launchWalkSurface(.ownerFixture)
         step09HealthProbe()
         let required = Set(["01-home", "02-add-home", "03-photo-studio",
                             "04-reel-studio-voice", "05-settings", "06-owner-console",
@@ -358,10 +367,9 @@ final class RendpropUITests: XCTestCase {
 
     // MARK: 04 — Reel Studio, the Voice step
 
-    /// Home's current reel feature opens ReelStudioView directly, using the
-    /// same listing-photo input as the toolbox. Two generated fixtures must
-    /// have completed local ingest before opening that presentation.
-    /// Select them locally, then expose Voice without recording or generating.
+    /// Home's video feature opens the real three-step setup. Select two locally
+    /// seeded photos, choose the social shape, then inspect optional narration
+    /// without recording or generating.
     private func step04ReelStudioVoice(reachedPhotoStudio: Bool) {
         activity("04 — Reel Studio · Voice step") {
             guard reachedPhotoStudio else {
@@ -381,17 +389,11 @@ final class RendpropUITests: XCTestCase {
             tap(card)
             nameFirstProjectIfAsked()
 
-            guard app.navigationBars["Make a video"].waitForExistence(timeout: screenTimeout) else {
-                note("SKIPPED: Reel Studio did not open.")
+            guard app.navigationBars["Photos"].waitForExistence(timeout: screenTimeout),
+                  app.buttons["video.setup.back"].exists else {
+                note("SKIPPED: video setup's Photos step did not open.")
                 return
             }
-
-            let social = app.buttons["video.purpose.social_media"]
-            guard social.waitForExistence(timeout: screenTimeout), social.isHittable else {
-                note("Required Social media video destination did not open.")
-                return
-            }
-            tap(social)
             let photos = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reel.photo."))
             guard photos.element(boundBy: 1).waitForExistence(timeout: screenTimeout) else {
                 note("Reel Studio has fewer than two synthetic photos; test-only seed import failed.")
@@ -405,8 +407,53 @@ final class RendpropUITests: XCTestCase {
                 }
                 tap(visible)
             }
-            XCTAssertTrue(waitForAny(ids: [], labels: ["2/100"], timeout: shortTimeout),
+            XCTAssertTrue(waitForAny(ids: [], labels: ["2 photos selected"], timeout: shortTimeout),
                           "Reel Studio did not select both synthetic photos")
+            guard let next = scrollTo(ids: ["video.setup.next"], labels: [], swipes: 4), next.isEnabled else {
+                note("The selected photos did not enable Choose the look.")
+                return
+            }
+            tap(next)
+            guard app.navigationBars["Look"].waitForExistence(timeout: shortTimeout) else {
+                note("Video setup did not advance to Look.")
+                return
+            }
+            guard let social = scrollTo(ids: ["video.purpose.social_media"], labels: [], swipes: 5) else {
+                note("The current Look step did not offer Social media.")
+                return
+            }
+            tap(social)
+            let review = app.buttons["video.setup.next"]
+            XCTAssertTrue(review.isEnabled, "Social shape must enable Review video")
+            tap(review)
+            guard app.navigationBars["Review"].waitForExistence(timeout: shortTimeout),
+                  let advanced = scrollTo(ids: ["video.advanced"], labels: [], swipes: 8) else {
+                note("Video review did not expose Voice & music.")
+                return
+            }
+            // The review's floating price action overlaps the bottom of the
+            // scroll view. A partially visible row can be "hittable" even
+            // though XCTest's center tap lands on that floating action.
+            let floatingAction = app.buttons["phase1.reelGenerate"]
+            guard floatingAction.exists else {
+                note("Video review's floating price action is missing.")
+                return
+            }
+            for _ in 0..<4 where advanced.frame.maxY > floatingAction.frame.minY - 8 {
+                app.swipeUp()
+                settle(0.2)
+            }
+            guard advanced.isHittable,
+                  advanced.frame.maxY <= floatingAction.frame.minY - 8 else {
+                note("Voice & music remained beneath the floating price action.")
+                return
+            }
+            shot("04-reel-review-clearance")
+            tap(advanced)
+            guard app.navigationBars["Voice & music"].waitForExistence(timeout: shortTimeout) else {
+                note("Voice & music sheet did not open.")
+                return
+            }
             guard let myVoice = scrollTo(ids: [], labels: ["My voice"], swipes: 8) else {
                 note("Required My voice segment did not scroll into view.")
                 return
@@ -418,10 +465,6 @@ final class RendpropUITests: XCTestCase {
             }
             settle()
             shot("04-reel-studio-voice")
-
-            dismissTopScreen()          // Close → Home dashboard
-            let home = app.tabBars.buttons["Home"]
-            if home.exists && home.isHittable { home.tap() }
         }
     }
 
@@ -513,7 +556,7 @@ final class RendpropUITests: XCTestCase {
             guard waitForAny(ids: ["paywall.root"],
                              labels: ["Choose a plan", "Plans"],
                              timeout: shortTimeout + 4) else {
-                note("SKIPPED: tapped \"Upgrade plan\" but no `paywall.root` appeared within "
+                note("SKIPPED: tapped the plan action but no `paywall.root` appeared within "
                      + "\(Int(shortTimeout) + 4)s.")
                 return
             }
@@ -571,8 +614,10 @@ final class RendpropUITests: XCTestCase {
     /// Confirm its exact navigation title before looking for Home feature IDs.
     private func returnToHomeDashboard() -> Bool {
         for _ in 0..<4 {
-            let tab = app.tabBars.buttons["Home"]
-            if tab.exists && tab.isHittable { tab.tap() }
+            if walkSurface == .normal {
+                let tab = app.tabBars.buttons["Home"]
+                if tab.exists && tab.isHittable { tab.tap() }
+            }
             if app.navigationBars["Home"].waitForExistence(timeout: 1) {
                 scrollToTop()
                 return true
@@ -585,26 +630,31 @@ final class RendpropUITests: XCTestCase {
 
     @discardableResult
     private func openSettingsTab() -> Bool {
-        // A previous step may have left a sheet or pushed screen open.
-        for _ in 0..<3 where !app.tabBars.buttons["Settings"].isHittable {
-            dismissTopScreen()
+        if app.navigationBars["Settings"].exists { return true }
+        switch walkSurface {
+        case .homeFixture:
+            return false
+        case .normal:
+            // Settings is a sheet from the current Account tab.
+            for _ in 0..<3 where !app.tabBars.buttons["Account"].isHittable {
+                dismissTopScreen()
+            }
+            let account = app.tabBars.buttons["Account"]
+            guard account.waitForExistence(timeout: shortTimeout) else { return false }
+            account.tap()
+            let settings = app.buttons["account.settings"]
+            guard settings.waitForExistence(timeout: shortTimeout), settings.isHittable else { return false }
+            settings.tap()
+        case .ownerFixture:
+            // The existing offline owner host supplies a synthetic actor and
+            // private library, then opens the real Settings screen from detail.
+            for _ in 0..<4 {
+                let settings = app.buttons["build58.fixture.settings"]
+                if settings.exists && settings.isHittable { settings.tap(); break }
+                dismissTopScreen()
+            }
         }
-        // Already there?
-        if find(ids: [], labels: ["Plan & usage"], timeout: 0.5) != nil {
-            scrollToTop()
-            return true
-        }
-        let tab = app.tabBars.buttons["Settings"]
-        guard tab.waitForExistence(timeout: shortTimeout) else { return false }
-        tab.tap()
-        scrollToTop()
-        // A tab tap while a screen is pushed only pops to the tab's root, so
-        // tap again when the root did not surface.
-        if !waitForAny(ids: [], labels: ["Plan & usage", "Business type"], timeout: shortTimeout) {
-            if tab.isHittable { tab.tap() }
-            return waitForAny(ids: [], labels: ["Plan & usage", "Business type"], timeout: shortTimeout)
-        }
-        return true
+        return app.navigationBars["Settings"].waitForExistence(timeout: shortTimeout)
     }
 
     /// Opens the first REAL project listed on Home, if there is one. Samples
@@ -634,7 +684,8 @@ final class RendpropUITests: XCTestCase {
     private func nameFirstProjectIfAsked() {
         if app.navigationBars["Pick a home"].waitForExistence(timeout: 1) {
             // These are the only addresses authored by the two release walks.
-            guard let fixture = scrollTo(ids: [], labels: [walkAddress, "24 Willow Bend Court"], swipes: 6) else {
+            guard let fixture = scrollTo(ids: [], labels: ["100 First Fixture Lane", walkAddress,
+                                                           "24 Willow Bend Court"], swipes: 6) else {
                 note("Project picker has no known synthetic walk project; refusing to choose another listing.")
                 return
             }
@@ -655,6 +706,35 @@ final class RendpropUITests: XCTestCase {
             tap(save)
         } else {
             note("New-project Save and continue control is missing")
+        }
+    }
+
+    /// Reuse the app's simulator-only offline hosts. Each seeds its own fixed
+    /// actor and private library; no launch reaches a customer or live route.
+    private func launchWalkSurface(_ surface: WalkSurface) {
+        if app.state == .runningForeground { app.terminate() }
+        walkSurface = surface
+        switch surface {
+        case .normal:
+            app.launchArguments = walkLaunchArguments
+        case .homeFixture:
+            app.launchArguments = walkLaunchArguments + ["-ui.homeProjectCreationFixture", "two-homes"]
+        case .ownerFixture:
+            app.launchArguments = walkLaunchArguments + ["-ui.detailMetadataFixture", "republish"]
+        }
+        app.launch()
+        switch surface {
+        case .normal:
+            XCTAssertTrue(waitForHome(timeout: screenTimeout), "Normal Home did not appear")
+        case .homeFixture:
+            let count = app.staticTexts["home.fixture.projectCount"]
+            XCTAssertTrue(count.waitForExistence(timeout: screenTimeout), "Synthetic Home fixture did not load")
+            XCTAssertEqual(count.label, "2 synthetic homes")
+        case .ownerFixture:
+            XCTAssertTrue(app.navigationBars["Detail fixture republish"].waitForExistence(timeout: screenTimeout),
+                          "Synthetic owner fixture did not load")
+            XCTAssertTrue(app.buttons["build58.fixture.settings"].exists,
+                          "The owner fixture must expose real Settings")
         }
     }
 
