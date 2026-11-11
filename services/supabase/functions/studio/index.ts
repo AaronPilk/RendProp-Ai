@@ -12,7 +12,7 @@ import {
 } from "../_shared/supabase.ts";
 import { assert, HttpError, json, pathSegments, readJsonLimited } from "../_shared/http.ts";
 import { listingLibraryScope } from "../_shared/library-access.ts";
-import { privateMediaUrl } from "../_shared/private-media.ts";
+import { privateMediaUrl, createPrivateMediaRequestSigner } from "../_shared/private-media.ts";
 
 import { handleOptions } from "../_shared/cors.ts";
 import { handleProjectMedia } from "./project-media.ts";
@@ -42,13 +42,16 @@ export async function handleStudio(req: Request): Promise<Response> {
     response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     return response;
   }
-  if (seg.length === 1 && seg[0] === "media") return await createStudioHandler({
+  if (seg.length === 1 && seg[0] === "media") {
+    const mediaSigner = createPrivateMediaRequestSigner(new URL(req.url).searchParams.get("org_id") ?? "");
+    return await createStudioHandler({
     ...createStudioRepository(req, {
       getUser,
       assertNotDeleting,
       activeOrg: async (org) => await adminClient().from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle(),
       listingScope: (actor, listing) => listingLibraryScope(adminClient(), actor, listing),
       userClient,
+      adminClient,
     }),
     async rateLimit(scope) {
       const { data, error } = await adminClient().rpc("bump_rate", {
@@ -62,11 +65,14 @@ export async function handleStudio(req: Request): Promise<Response> {
       }
       return data === true;
     },
-    sign: (bucket, key, seconds, scope) => privateMediaUrl({
+    sign: (bucket, key, seconds, scope) => mediaSigner.sign({
       actor:scope.userId,org:scope.orgId,listing:scope.listingId,bucket,key,
     },seconds),
+    assertSigningPolicyFresh: () => mediaSigner.assertFresh(),
     now: () => Date.now(),
+    observeTiming: timing => console.info(JSON.stringify(timing)),
   })(req);
+  }
   try {
     const user = await getUser(req);
     assert(!user.is_anonymous, 403, "Connect your Apple account to sync your work.");
@@ -91,7 +97,7 @@ export async function handleStudio(req: Request): Promise<Response> {
     const db = userClient(req), admin = adminClient();
     const active = await admin.from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle();
     assert(!active.error && active.data, 403, "This workspace is unavailable.");
-    const repository = createStudioRepository(req, { getUser, assertNotDeleting, activeOrg: async (org) => await adminClient().from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle(), listingScope: (actor, listing) => listingLibraryScope(adminClient(), actor, listing), userClient });
+    const repository = createStudioRepository(req, { getUser, assertNotDeleting, activeOrg: async (org) => await adminClient().from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle(), listingScope: (actor, listing) => listingLibraryScope(adminClient(), actor, listing), userClient, adminClient });
     const context: StudioContext = { userId: user.id, orgId: org, listingId: listingId ?? null, db, admin,
       async authorizeListing(id) {
         assert(/^[0-9a-f-]{36}$/i.test(id), 400, "Choose a valid listing.");

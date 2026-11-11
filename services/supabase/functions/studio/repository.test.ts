@@ -9,6 +9,7 @@ import {
   type StudioRepositoryDependencies,
 } from "./repository.ts";
 import { HttpError } from "../_shared/http.ts";
+import { admitMediaRead } from "../_shared/media-delivery-admission.ts";
 import { createStudioHandler, PAGE_SIZE, type PhotoRow } from "./handler.ts";
 
 const user = "10000000-0000-4000-8000-000000000001";
@@ -32,8 +33,10 @@ function logic(row:Record<string,unknown>,term:string):boolean {
  return negated?(actual!=null&&!match):match;
 }
 
-function fixture() {
+function fixture(fixtureRequest = req) {
   const events: string[] = [];
+  const rpcNames: string[] = [];
+  let publicationRows: unknown;
   const queries: { table: string; operations: [string, ...unknown[]][] }[] = [];
   const results: Record<string, Result> = {
     orgs: { data: { id: org }, error: null },
@@ -44,7 +47,11 @@ function fixture() {
     media_provenance: { data: [], error: null },
   };
   const client = {
-    rpc(_name: string, args: Record<string, string[]>) { return Promise.resolve({ data: { assets: Object.fromEntries(args.p_assets.map(id => [id, true])), renders: Object.fromEntries(args.p_renders.map(id => [id, true])), keys: Object.fromEntries(args.p_keys.map(key => [key, true])) }, error: null }); },
+    rpc(name: string, args: Record<string, string[]>) {
+      rpcNames.push(name);
+      if (name !== "studio_presenter_media_visibility") return Promise.resolve({ data: null, error: { message: "permission denied for authenticated" } });
+      return Promise.resolve({ data: { assets: Object.fromEntries(args.p_assets.map(id => [id, true])), renders: Object.fromEntries(args.p_renders.map(id => [id, true])), keys: Object.fromEntries(args.p_keys.map(key => [key, true])), ...(publicationRows === undefined ? {} : { photo_publications: publicationRows }) }, error: null });
+    },
     from(table: string) {
       events.push(table);
       const operations: [string, ...unknown[]][] = [];
@@ -111,13 +118,14 @@ function fixture() {
   } as unknown as SupabaseClient;
   let clientCalls = 0;
   const deps: StudioRepositoryDependencies = {
+    adminClient: () => client,
     userClient(request) {
-      assertEquals(request, req);
+      assertEquals(request, fixtureRequest);
       clientCalls++;
       return client;
     },
     async getUser(request) {
-      assertEquals(request, req);
+      assertEquals(request, fixtureRequest);
       events.push("auth");
       return { id: user } as User;
     },
@@ -126,7 +134,7 @@ function fixture() {
       events.push("deletion");
     },
     async activeOrg(id) {
-      return await client.from("orgs").select("id").eq("id",id).is("deleted_at",null).abortSignal(req.signal).maybeSingle() as {data:{id:string}|null;error:unknown};
+      return await client.from("orgs").select("id").eq("id",id).is("deleted_at",null).abortSignal(fixtureRequest.signal).maybeSingle() as {data:{id:string}|null;error:unknown};
     },
     async listingScope(subject, requested) {
       assertEquals([subject, requested], [user, listing]);
@@ -134,7 +142,7 @@ function fixture() {
       return {actor_id:user,org_id:org,library_org_id:org,can_read:true};
     },
   };
-  return { deps, events, queries, results, clientCalls: () => clientCalls };
+  return { deps, events, queries, results, rpcNames, publicationRows: (rows: unknown) => { publicationRows = rows; }, clientCalls: () => clientCalls };
 }
 
 Deno.test("real adapter checks Auth, deletion, membership, live org then scoped live listing", async () => {
@@ -176,40 +184,194 @@ Deno.test("real adapter checks Auth, deletion, membership, live org then scoped 
   );
 });
 
-Deno.test("deletion and removed membership failures prevent tenant reads", async () => {
+Deno.test("independent authorization reads overlap only inside their existing trust boundaries", async () => {
+  const f = fixture();
+  let finishDeletion!: () => void;
+  let finishScope!: (scope: Awaited<ReturnType<StudioRepositoryDependencies["listingScope"]>>) => void;
+  let finishOrg!: (result: Awaited<ReturnType<StudioRepositoryDependencies["activeOrg"]>>) => void;
+  const deletion = new Promise<void>(resolve => finishDeletion = resolve);
+  const membership = new Promise<Awaited<ReturnType<StudioRepositoryDependencies["listingScope"]>>>(resolve => finishScope = resolve);
+  const workspace = new Promise<Awaited<ReturnType<StudioRepositoryDependencies["activeOrg"]>>>(resolve => finishOrg = resolve);
+  f.deps.assertNotDeleting = async subject => { assertEquals(subject, user); f.events.push("deletion"); await deletion; };
+  f.deps.listingScope = async (subject, requested) => {
+    assertEquals([subject, requested], [user, listing]);
+    f.events.push("listing-scope");
+    return await membership;
+  };
+  f.deps.activeOrg = async id => { assertEquals(id, org); f.events.push("orgs"); return await workspace; };
+  let completed = false;
+  const pending = createStudioRepository(req, f.deps).authorize(req, org, listing)
+    .then(value => { completed = true; return value; });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assertEquals(f.events, ["auth", "deletion", "listing-scope"]);
+  assertEquals(f.clientCalls(), 0);
+  finishDeletion();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assertEquals(f.events, ["auth", "deletion", "listing-scope"]);
+  finishScope({ actor_id: user, org_id: org, library_org_id: org, can_read: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assertEquals(f.events, ["auth", "deletion", "listing-scope", "orgs", "listings"]);
+  assertEquals(completed, false, "the RLS listing result cannot bypass the live workspace check");
+  finishOrg({ data: { id: org }, error: null });
+  assertEquals(await pending, { userId: user, orgId: org, listingId: listing });
+});
+
+Deno.test("published Studio photo uses authenticated visibility and service-only delivery admission", async () => {
+  const mediaRequest = new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
+  const f = fixture(mediaRequest);
+  const source = "40000000-0000-4000-8000-000000000004";
+  const output = "50000000-0000-4000-8000-000000000005";
+  const publication = "60000000-0000-4000-8000-000000000006";
+  const original = `renders/${org}/${listing}/original-${source}.jpg`;
+  const altered = `renders/${org}/${listing}/gallery-${output}.jpg`;
+  const evidence = `ai-router/${org}/photo-evidence/${source}/${output}/`;
+  const objects = [original, altered, `${evidence}input.jpg`, `${evidence}candidate.jpg`]
+    .map(key => ({ key, bucket: "renders", bytes: 100, mime: "image/jpeg", etag: '"exact"' }));
+  f.publicationRows([{ publication_id: publication, org_id: org, listing_id: listing,
+    assets: [source, output], keys: [original, altered], objects }]);
+  f.results.photos.data = [{ id: output, listing_id: listing, original_key: original,
+    enhanced_key: altered, caption: "Published", is_staged: true, sort: 0,
+    created_at: "2026-10-20T00:00:00Z" }];
+  const serviceRPCs: string[] = [];
+  f.deps.adminClient = () => ({ rpc: async (name: string, args: Record<string, unknown>) => {
+    serviceRPCs.push(name);
+    assertEquals(name, "media_delivery_admit");
+    assertEquals(args, { p_org: org, p_bytes: 0, p_required: false });
+    return { data: { admitted: true, legacy_unbudgeted: false }, error: null };
+  } }) as unknown as SupabaseClient;
+  f.deps.publicationHeadIO = {
+    head: async object => ({ exists: true, bytes: object.bytes, contentType: object.mime, etag: object.etag }),
+    admit: (db, billingOrg) => admitMediaRead(db, billingOrg, 0, false),
+  };
+  const signed: string[] = [];
+  const handler = createStudioHandler({ ...createStudioRepository(mediaRequest, f.deps),
+    rateLimit: async () => true,
+    sign: async (_bucket, key) => { signed.push(key); return `https://fixture.invalid/${encodeURIComponent(key)}`; },
+    assertSigningPolicyFresh: async () => {},
+    now: () => 0,
+  });
+  const response = await handler(mediaRequest);
+  const body = await response.json();
+  assertEquals(response.status, 200);
+  assertEquals(body.photos.map((photo: { id: string }) => photo.id), [output]);
+  assertEquals(body.photos[0].original_verified, false);
+  assertEquals(signed, [altered, original]);
+  assertEquals(serviceRPCs.length, 8); // Four exact objects at each visibility fence.
+  assertEquals(f.rpcNames, Array(4).fill("studio_presenter_media_visibility"));
+  assertEquals(f.events.filter(event => event === "listing-scope").length, 2);
+});
+
+Deno.test("deletion and removed membership failures prevent reads, signing, and data responses", async () => {
   for (const denied of ["assertNotDeleting", "listingScope"] as const) {
-    const f = fixture();
+    const mediaRequest = new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
+    const f = fixture(mediaRequest);
     f.deps[denied] = async () => {
       throw new HttpError(denied === "listingScope" ? 403 : 409, "Denied.");
     };
-    await assertRejects(
-      () => createStudioRepository(req, f.deps).authorize(req, org, listing),
-      HttpError,
-    );
+    let reads = 0, signs = 0;
+    const handler = createStudioHandler({ ...createStudioRepository(mediaRequest, f.deps),
+      rateLimit: async () => true,
+      read: async () => { reads++; return { photos: [], assets: [], renders: [] }; },
+      sign: async () => { signs++; return "https://fixture.invalid/signed"; },
+      assertSigningPolicyFresh: async () => {},
+      now: () => 0,
+    });
+    const response = await handler(mediaRequest);
+    assertEquals(response.status, denied === "listingScope" ? 403 : 409);
+    assert(!(await response.text()).includes("photos"));
+    assertEquals(reads, 0);
+    assertEquals(signs, 0);
     assertEquals(f.clientCalls(), 0);
     assertEquals(f.queries, []);
   }
 });
 
-Deno.test("deleted org or listing and inconsistent rows never authorize", async () => {
+Deno.test("deleted org or listing and inconsistent rows never release data or signed URLs", async () => {
   for (
-    const [table, result] of [
-      ["orgs", { data: null, error: null }],
-      ["listings", { data: null, error: null }],
-      ["listings", { data: { id: listing, org_id: user }, error: null }],
-      ["orgs", { data: { id: user }, error: null }],
-      ["orgs", { data: null, error: { message: "internal" } }],
-    ] as [string, Result][]
+    const [table, result, status] of [
+      ["orgs", { data: null, error: null }, 404],
+      ["listings", { data: null, error: null }, 404],
+      ["listings", { data: { id: listing, org_id: user }, error: null }, 503],
+      ["orgs", { data: { id: user }, error: null }, 503],
+      ["orgs", { data: null, error: { message: "internal" } }, 503],
+    ] as [string, Result, number][]
   ) {
-    const f = fixture();
+    const mediaRequest = new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
+    const f = fixture(mediaRequest);
     f.results[table] = result;
-    await assertRejects(
-      () => createStudioRepository(req, f.deps).authorize(req, org, listing),
-      HttpError,
-    );
-    if (table === "orgs" && !result.data) {
-      assert(!f.events.includes("listings"));
-    }
+    let reads = 0, signs = 0;
+    const handler = createStudioHandler({ ...createStudioRepository(mediaRequest, f.deps),
+      rateLimit: async () => true,
+      read: async () => { reads++; return { photos: [], assets: [], renders: [] }; },
+      sign: async () => { signs++; return "https://fixture.invalid/signed"; },
+      assertSigningPolicyFresh: async () => {},
+      now: () => 0,
+    });
+    const response = await handler(mediaRequest);
+    assertEquals(response.status, status);
+    assert(!(await response.text()).includes("photos"));
+    assertEquals(reads, 0);
+    assertEquals(signs, 0);
+    assertEquals(f.events, ["auth", "deletion", "listing-scope", "orgs", "listings"]);
+  }
+});
+
+Deno.test("authorization keeps deletion and workspace error precedence when concurrent reads disagree", async () => {
+  const first = fixture();
+  first.deps.assertNotDeleting = async () => { throw new HttpError(409, "Deletion pending."); };
+  first.deps.listingScope = async () => { throw new HttpError(403, "Membership removed."); };
+  const denied = await assertRejects(() => createStudioRepository(req, first.deps).authorize(req, org, listing), HttpError);
+  assertEquals((denied as HttpError).status, 409);
+  assertEquals(first.queries, []);
+
+  const second = fixture();
+  second.results.orgs = { data: null, error: null };
+  second.results.listings = { data: null, error: { message: "RLS unavailable" } };
+  const missing = await assertRejects(() => createStudioRepository(req, second.deps).authorize(req, org, listing), HttpError);
+  assertEquals((missing as HttpError).status, 404);
+  assertEquals(second.events, ["auth", "deletion", "listing-scope", "orgs", "listings"]);
+});
+
+Deno.test("every final authorization guard discards a signed page when access changes", async () => {
+  for (const withdrawn of ["deletion", "membership", "workspace", "listing"] as const) {
+    const mediaRequest = new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
+    const f = fixture(mediaRequest);
+    const photoKey = `uploads/${org}/${listing}/room.jpg`;
+    f.results.photos.data = [{ id: "40000000-0000-4000-8000-000000000004", listing_id: listing,
+      original_key: photoKey, enhanced_key: null, caption: null, is_staged: false, sort: 0,
+      created_at: "2026-10-20T00:00:00Z" }];
+    const originalDeletion = f.deps.assertNotDeleting;
+    const originalScope = f.deps.listingScope;
+    const originalOrg = f.deps.activeOrg;
+    let signs = 0;
+    f.deps.assertNotDeleting = async id => {
+      await originalDeletion(id);
+      if (withdrawn === "deletion" && signs) throw new HttpError(409, "Deletion pending.");
+    };
+    f.deps.listingScope = async (id, requested) => {
+      const scope = await originalScope(id, requested);
+      return withdrawn === "membership" && signs ? { ...scope, can_read: false } : scope;
+    };
+    f.deps.activeOrg = async id => {
+      if (withdrawn === "workspace" && signs) return { data: null, error: null };
+      return await originalOrg(id);
+    };
+    const handler = createStudioHandler({ ...createStudioRepository(mediaRequest, f.deps),
+      rateLimit: async () => true,
+      sign: async () => {
+        signs++;
+        if (withdrawn === "listing") f.results.listings = { data: null, error: null };
+        return "https://fixture.invalid/signed-private-media";
+      },
+      assertSigningPolicyFresh: async () => {},
+      now: () => 0,
+    });
+    const response = await handler(mediaRequest);
+    assertEquals(response.status, withdrawn === "deletion" ? 409 : withdrawn === "membership" ? 403 : 404);
+    assertEquals(signs, 1);
+    const body = await response.text();
+    assert(!body.includes("signed-private-media") && !body.includes("photos"));
+    assertEquals(f.events.filter(event => event === "auth").length, 2);
   }
 });
 
@@ -262,7 +424,7 @@ Deno.test("real repository and media merge preserve saved gallery order over cap
     ...[1, 2, 3].map(n => ({ id: id(n + 10), listing_id: listing, storage_key: key(`photo-${n}`), kind: "photo", bucket: "renders", uploaded: true, duration_s: null, created_at: "2026-09-14T00:00:00Z" })),
     { id: id(20), listing_id: listing, storage_key: key("untouched", "uploads"), kind: "photo", bucket: "uploads", uploaded: true, duration_s: null, created_at: "2026-09-14T00:00:00Z" },
   ];
-  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async (_bucket, key) => `https://fixture.invalid/read/${encodeURIComponent(key)}`, now: () => 0 });
+  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async (_bucket, key) => `https://fixture.invalid/read/${encodeURIComponent(key)}`, assertSigningPolicyFresh: async () => {}, now: () => 0 });
   const request = () => new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
   const before = await (await handler(request())).json();
   assertEquals(before.photos.map((photo: { id: string }) => photo.id), [id(1), id(2), id(3), id(20)]);
@@ -285,7 +447,7 @@ Deno.test("saved gallery sort determines page boundaries without cross-page capt
   const count = PAGE_SIZE + 3;
   f.results.photos.data = Array.from({ length: count }, (_, n) => ({ id: id(n), listing_id: listing, original_key: `renders/${org}/${listing}/${n}.jpg`, enhanced_key: null, caption: null, is_staged: false, sort: n < 3 ? 1 : 0, created_at: "2026-09-14T00:00:00Z" })).reverse();
   f.results.capture_assets.data = Array.from({ length: count }, (_, n) => ({ id: id(n + 100), listing_id: listing, storage_key: `renders/${org}/${listing}/${n}.jpg`, kind: "photo", bucket: "renders", uploaded: true, duration_s: null, created_at: "2026-09-14T00:00:00Z" }));
-  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async () => "https://fixture.invalid/read", now: () => 0 });
+  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async () => "https://fixture.invalid/read", assertSigningPolicyFresh: async () => {}, now: () => 0 });
   const request = (offset: number) => new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}&offset=${offset}`);
   const first = await (await handler(request(0))).json();
   const second = await (await handler(request(first.next_offset))).json();
@@ -328,7 +490,7 @@ Deno.test("selected-key provenance projection classifies saved results and refus
   const original = `uploads/${org}/${listing}/original.jpg`, altered = `renders/${org}/${listing}/result.jpg`;
   f.results.photos.data = [{ id: user, listing_id: listing, original_key: original, enhanced_key: altered, caption: "Decluttered · misleading editable caption", is_staged: true, sort: 0, created_at: "2026-10-14T00:00:00Z" }];
   f.results.media_provenance.data = [{ org_id: org, listing_id: listing, altered_key: altered, original_key: original, kind: "virtual_stage", edit: "stage", qc: { publishable: true } }];
-  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async (_bucket, key) => `https://fixture.invalid/read/${encodeURIComponent(key)}`, now: () => 0 });
+  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async (_bucket, key) => `https://fixture.invalid/read/${encodeURIComponent(key)}`, assertSigningPolicyFresh: async () => {}, now: () => 0 });
   const request = () => new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
   const body = await (await handler(request())).json();
   assertEquals(body.photos[0].edit_kind, "stage"); assertEquals(body.photos[0].original_verified, true);
@@ -353,7 +515,7 @@ Deno.test("video working JPEGs and generated posters never become photos; untouc
  const f=fixture(),repository=createStudioRepository(req,f.deps),id=(n:number)=>`50000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
  const keys=[`uploads/${org}/${listing}/prepared-video/${id(10)}/${id(11)}.jpg`,`renders/${org}/${listing}/background/${id(12)}/${id(13)}/first-clip.jpg`,`uploads/${org}/${listing}/${id(14)}.jpg`,`renders/${org}/${listing}/gallery-${id(15)}.jpg`];
  f.results.capture_assets.data=keys.map((storage_key,n)=>({id:id(n),listing_id:listing,storage_key,kind:'photo',bucket:n===0||n===2?'uploads':'renders',uploaded:true,duration_s:null,created_at:'2026-10-15T00:00:00Z'}));
- const signed:string[]=[],handler=createStudioHandler({...repository,authorize:async()=>({userId:user,orgId:org,listingId:listing}),rateLimit:async()=>true,sign:async(_bucket,key)=>{signed.push(key);return'https://fixture.invalid/read/'+encodeURIComponent(key);},now:()=>0});
+ const signed:string[]=[],handler=createStudioHandler({...repository,authorize:async()=>({userId:user,orgId:org,listingId:listing}),rateLimit:async()=>true,sign:async(_bucket,key)=>{signed.push(key);return'https://fixture.invalid/read/'+encodeURIComponent(key);},assertSigningPolicyFresh:async()=>{},now:()=>0});
  const response=await handler(new Request(`https://fixture.invalid/studio/media?org_id=${org}&listing_id=${listing}`)),body=await response.json();assertEquals(response.status,200);assertEquals(body.photos.map((p:{id:string})=>p.id),[id(2),id(3)]);assertEquals(signed,keys.slice(2));assertEquals(body.next_offset,null);assert(!JSON.stringify(body).includes('prepared-video')&&!JSON.stringify(body).includes('first-clip'));
 });
 

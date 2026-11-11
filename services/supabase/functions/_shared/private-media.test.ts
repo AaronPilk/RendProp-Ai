@@ -1,8 +1,9 @@
 import {assert,assertEquals,assertRejects} from "https://deno.land/std@0.224.0/assert/mod.ts";
-import {privateMediaUrl,privateMediaIdentity,verifyPrivateCapability,privateMediaAuthority,paidMediaGatewayRequired} from "./private-media.ts";
+import {privateMediaUrl,privateMediaIdentity,verifyPrivateCapability,privateMediaAuthority,paidMediaGatewayRequired,createPrivateMediaRequestSigner} from "./private-media.ts";
 import {HttpError} from "./http.ts";
 const actor="10000000-0000-4000-8000-000000000001",org="20000000-0000-4000-8000-000000000002",listing="30000000-0000-4000-8000-000000000003",other="40000000-0000-4000-8000-000000000004",key=`renders/${org}/${listing}/photo.jpg`;
 async function setup<T>(fn:()=>Promise<T>){const prior=Deno.env.get("MEDIA_GATEWAY_SECRET"),flag=Deno.env.get("PRIVATE_MEDIA_DELIVERY");Deno.env.set("MEDIA_GATEWAY_SECRET","a".repeat(64));Deno.env.set("PRIVATE_MEDIA_DELIVERY","gateway-v1");try{return await fn();}finally{for(const[name,value]of [["MEDIA_GATEWAY_SECRET",prior],["PRIVATE_MEDIA_DELIVERY",flag]])value===undefined?Deno.env.delete(name!):Deno.env.set(name!,value!);}}
+async function direct<T>(fn:()=>Promise<T>){const prior=Deno.env.get("PRIVATE_MEDIA_DELIVERY");Deno.env.set("PRIVATE_MEDIA_DELIVERY","off");try{return await fn();}finally{prior===undefined?Deno.env.delete("PRIVATE_MEDIA_DELIVERY"):Deno.env.set("PRIVATE_MEDIA_DELIVERY",prior);}}
 async function token(extra:Record<string,unknown>={}){return new URL(await privateMediaUrl({actor,org,listing,bucket:"renders",key,...extra} as any)).pathname.slice(15);}
 Deno.test("paid media gateway lookup fails closed and never trusts tenant claims",async()=>{
  const calls:Array<{name:string;args:Record<string,unknown>}>=[];
@@ -13,6 +14,40 @@ Deno.test("paid media gateway lookup fails closed and never trusts tenant claims
   await assertRejects(()=>paidMediaGatewayRequired(db(data,error),org),HttpError);
  assert(calls.every(call=>call.name==="paid_media_gateway_required"&&call.args.p_org===org));
 });
+Deno.test("request-local direct signing checks one org policy for 50 concurrent objects and rechecks before release",()=>direct(async()=>{
+ let checks=0,signs=0;
+ const signer=createPrivateMediaRequestSigner(org,{
+  gatewayRequired:async target=>{assertEquals(target,org);checks++;await Promise.resolve();return false;},
+  directSign:async(_bucket,objectKey)=>{signs++;return `https://fixture.invalid/${encodeURIComponent(objectKey)}`;},
+ });
+ const urls=await Promise.all(Array.from({length:50},(_,i)=>signer.sign({actor,org,listing,bucket:"renders",key:`renders/${org}/${listing}/photo-${i}.jpg`})));
+ assertEquals(new Set(urls).size,50);assertEquals(signs,50);assertEquals(checks,1);
+ await signer.assertFresh();assertEquals(checks,2);
+}));
+Deno.test("request-local transport policy never crosses orgs or requests",()=>direct(async()=>{
+ const seen:string[]=[];
+ const io={gatewayRequired:async(target:string)=>{seen.push(target);return false;},directSign:async()=>"https://fixture.invalid/read"};
+ const first=createPrivateMediaRequestSigner(org,io),second=createPrivateMediaRequestSigner(org,io),third=createPrivateMediaRequestSigner(other,io);
+ const scope={actor,org,listing,bucket:"renders" as const,key};
+ await first.sign(scope);await first.assertFresh();await second.sign(scope);await second.assertFresh();
+ await third.sign({...scope,org:other,key:`renders/${other}/${listing}/photo.jpg`});await third.assertFresh();
+ await assertRejects(()=>first.sign({...scope,org:other}),HttpError);
+ assertEquals(seen,[org,org,org,org,other,other]);
+}));
+Deno.test("direct signing denies required or uncertain gateway policy before any object capability",()=>direct(async()=>{
+ let signed=0;
+ for(const gatewayRequired of [async()=>true,async():Promise<boolean>=>{throw Error("policy unavailable");}]){
+  const signer=createPrivateMediaRequestSigner(org,{gatewayRequired,directSign:async()=>{signed++;return"https://fixture.invalid/read";}});
+  await assertRejects(()=>signer.sign({actor,org,listing,bucket:"renders",key}));
+ }
+ assertEquals(signed,0);
+}));
+Deno.test("gateway mode retains local capability signing and needs no direct-R2 policy lookup",()=>setup(async()=>{
+ const signer=createPrivateMediaRequestSigner(org,{gatewayRequired:async()=>{throw Error("direct policy must not run");},directSign:async()=>{throw Error("direct R2 must not run");}});
+ const url=await signer.sign({actor,org,listing,bucket:"renders",key});
+ assert(url.startsWith("https://rendprop.com/private-media/"));
+ await signer.assertFresh();
+}));
 function admin(fault="",mediaKey=key){
  let reads=0,admits=0;const order:string[]=[];
  const rpc=async(name:string,args:any)=>{order.push(name);if(name==="library_media_delivery_admit"){admits++;assertEquals(args.p_org,org);assertEquals(args.p_actor,actor);assertEquals(args.p_required,true);return fault==="budget"?{data:null,error:{message:"RP429: Media serving allowance exhausted"}}:{data:{admitted:true,legacy_unbudgeted:false},error:null};}
