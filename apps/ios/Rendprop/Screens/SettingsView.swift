@@ -2442,7 +2442,8 @@ struct AgentCard {
 
     /// Workspace identity and logos remain scoped to the selected workspace.
     /// Personal identity is ingested only from the verified account receipt.
-    @MainActor static func acceptCloud(_ brand: CloudBrand, personalReadVersion: Int? = nil) {
+    @MainActor static func acceptCloud(_ brand: CloudBrand, personalReadVersion: Int? = nil,
+                                       applySpaceType: Bool = true) {
         guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == brand.userID,
               WorkspaceContext.selectedOrgID == brand.orgID,
               let type = SpaceType(rawValue: brand.spaceType) else { return }
@@ -2452,8 +2453,10 @@ struct AgentCard {
         }
         let defaults = UserDefaults.standard
         defaults.set(true, forKey: WorkspaceContext.storagePrefix + "brand.initialized")
-        defaults.set(type.rawValue, forKey: WorkspaceContext.storagePrefix + "space.type.synced")
-        defaults.set(type.rawValue, forKey: "space.type")
+        if applySpaceType {
+            defaults.set(type.rawValue, forKey: WorkspaceContext.storagePrefix + "space.type.synced")
+            defaults.set(type.rawValue, forKey: "space.type")
+        }
         if let personal = brand.personalCard, personal.userID == brand.userID,
            personalReadVersion == nil || personalReadVersion == Self.personalReadVersion {
             try? PersonalCardStore.accept(personal)
@@ -3896,6 +3899,8 @@ struct BusinessTypeView: View {
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(SpaceType.allCases) { type in
                         Button {
+                            guard spaceTypeRaw != type.rawValue else { return }
+                            BusinessTypeSelectionRevision.recordChoice()
                             spaceTypeRaw = type.rawValue
                             model.reseedSamples()
                             Haptics.selection()

@@ -85,6 +85,153 @@ BODY
   console.log('Brand workspace evidence: ' + out);
 });
 
+test('actual cloud brand preserves a newer business selection and rejects an old identity', () => {
+  const app = readFileSync(new URL('../../apps/ios/Rendprop/RendpropApp.swift', import.meta.url), 'utf8');
+  const settings = readFileSync(new URL('../../apps/ios/Rendprop/Screens/SettingsView.swift', import.meta.url), 'utf8');
+  const onboarding = readFileSync(new URL('../../apps/ios/Rendprop/Screens/OnboardingView.swift', import.meta.url), 'utf8');
+  assert.match(app, /let brandRead = CloudBrandReadContext\(/);
+  assert.match(app, /self\.acceptCloudBrand\(brand, personalReadVersion: personalReadVersion, read: brandRead\)/);
+  assert.match(block(app, '    func syncSpaceTypeIfNeeded()'), /spaceTypeSyncGeneration &\+= 1/);
+  assert.match(block(app, '    private var businessTypeMenu:'), /BusinessTypeSelectionRevision\.recordChoice\(\)/);
+  assert.match(settings, /BusinessTypeSelectionRevision\.recordChoice\(\)/);
+  assert.match(onboarding, /BusinessTypeSelectionRevision\.recordChoice\(\)/);
+  const revision = '@MainActor\n' + block(app, 'enum BusinessTypeSelectionRevision');
+  const context = '@MainActor\n' + block(app, 'private struct CloudBrandReadContext');
+  const apply = block(app, '    private func acceptCloudBrand(');
+  const accept = block(settings, '    @MainActor static func acceptCloud(_ brand: CloudBrand,');
+  const scaffold = String.raw`
+import Foundation
+struct PersonalCard { let userID: UUID }
+struct CloudBrand { let userID: UUID; let orgID: UUID; let spaceType: String; let fields: [String: String]; let personalCard: PersonalCard? }
+enum SpaceType: String {
+ case realEstate = "real_estate", venue, restaurant, retail, fitness, other
+ static var current: Self { Self(rawValue: UserDefaults.standard.string(forKey: "space.type") ?? "") ?? .realEstate }
+}
+@MainActor final class AuthStore {
+ static let shared = AuthStore(); var userID: String?; var syncSessionRevision: UInt64 = 1
+}
+@MainActor enum WorkspaceContext {
+ static var selectedOrgID: UUID?
+ static var storagePrefix: String { "workspace.\(AuthStore.shared.userID ?? "none").\(selectedOrgID?.uuidString ?? "none")." }
+}
+@MainActor enum ProfileLogoStore {
+ static var accepted = 0
+ static func acceptHostedURL(_ value: String?, prefix: String) { accepted += 1 }
+}
+@MainActor enum PersonalCardStore {
+ static var accepted = 0
+ static func accept(_ card: PersonalCard) throws { accepted += 1 }
+}
+extension Notification.Name { static let rendpropCloudBrandUpdated = Notification.Name("brand.updated") }
+REVISION
+CONTEXT
+struct AgentCard {
+ static var personalReadVersion = 0
+ static func migrateLegacyIfNeeded(owner: UUID, org: UUID) {}
+ACCEPT
+}
+@MainActor final class AppModel {
+ var spaceTypeSyncOperation: UUID?
+ var spaceTypeSyncGeneration: UInt64 = 0
+ var syncCalls = 0
+ func syncSpaceTypeIfNeeded() {
+  if UserDefaults.standard.string(forKey: WorkspaceContext.storagePrefix + "space.type.synced") != SpaceType.current.rawValue { syncCalls += 1 }
+ }
+APPLY
+ func read(_ brand: CloudBrand, after: () -> Void = {}) async {
+  let read = CloudBrandReadContext(actorID: AuthStore.shared.userID,
+                                   sessionRevision: AuthStore.shared.syncSessionRevision,
+                                   syncOperation: spaceTypeSyncOperation,
+                                   syncGeneration: spaceTypeSyncGeneration)
+  await Task.yield()
+  after()
+  acceptCloudBrand(brand, personalReadVersion: AgentCard.personalReadVersion, read: read)
+ }
+}
+@main @MainActor enum Main {
+ static var checks = 0
+ static func check(_ ok: Bool, _ why: String) throws { checks += 1; if !ok { throw NSError(domain: why, code: 1) } }
+ static func main() async { do { try await tests(); print("PASS: \(checks) actual brand type/identity checks") } catch { print("FAIL: \(error)"); exit(1) } }
+ static func tests() async throws {
+  let owner = UUID(), other = UUID(), org = UUID(), anotherOrg = UUID()
+  let auth = AuthStore.shared, defaults = UserDefaults.standard
+  let brand = CloudBrand(userID: owner, orgID: org, spaceType: SpaceType.restaurant.rawValue,
+                         fields: ["business_logo_url": "https://fixture.invalid/logo"], personalCard: PersonalCard(userID: owner))
+  func reset(initialized: Bool = true, raw: String = SpaceType.realEstate.rawValue, marker: String? = SpaceType.realEstate.rawValue) -> AppModel {
+   auth.userID = owner.uuidString; auth.syncSessionRevision += 1; WorkspaceContext.selectedOrgID = org
+   defaults.set(raw, forKey: "space.type")
+   let prefix = WorkspaceContext.storagePrefix
+   defaults.set(initialized, forKey: prefix + "brand.initialized")
+   if let marker { defaults.set(marker, forKey: prefix + "space.type.synced") }
+   else { defaults.removeObject(forKey: prefix + "space.type.synced") }
+   ProfileLogoStore.accepted = 0; PersonalCardStore.accepted = 0
+   return AppModel()
+  }
+  var model = reset()
+  await model.read(brand)
+  try check(SpaceType.current == .restaurant && defaults.string(forKey: WorkspaceContext.storagePrefix + "space.type.synced") == SpaceType.restaurant.rawValue, "unchanged brand read hydrates selected type")
+  try check(model.syncCalls == 0 && ProfileLogoStore.accepted == 1 && PersonalCardStore.accepted == 1, "unchanged read accepts personal brand without extra sync")
+
+  model = reset()
+  await model.read(brand) { defaults.set(SpaceType.venue.rawValue, forKey: "space.type") }
+  try check(SpaceType.current == .venue && defaults.string(forKey: WorkspaceContext.storagePrefix + "space.type.synced") == SpaceType.realEstate.rawValue, "same-account newer selection cannot be overwritten or falsely acknowledged")
+  try check(model.syncCalls == 1 && ProfileLogoStore.accepted == 1 && PersonalCardStore.accepted == 1, "stale type still accepts scoped logo/card and queues selected type sync")
+
+  model = reset(raw: SpaceType.venue.rawValue)
+  await model.read(brand)
+  try check(SpaceType.current == .venue && model.syncCalls == 1, "an already pending local choice stays authoritative")
+
+  model = reset()
+  model.spaceTypeSyncOperation = UUID()
+  await model.read(brand) { model.spaceTypeSyncOperation = nil }
+  try check(SpaceType.current == .realEstate && model.syncCalls == 0, "overlapping type PATCH prevents older GET from rolling back its selection")
+
+  model = reset()
+  await model.read(brand) { defaults.set(SpaceType.venue.rawValue, forKey: WorkspaceContext.storagePrefix + "space.type.synced") }
+  try check(SpaceType.current == .realEstate && model.syncCalls == 1, "changed acceptance marker blocks an out-of-order GET")
+
+  model = reset()
+  await model.read(brand) {
+   BusinessTypeSelectionRevision.recordChoice()
+   defaults.set(SpaceType.venue.rawValue, forKey: "space.type")
+   BusinessTypeSelectionRevision.recordChoice()
+   defaults.set(SpaceType.realEstate.rawValue, forKey: "space.type")
+  }
+  try check(SpaceType.current == .realEstate && model.syncCalls == 0, "A-to-B-to-A user choices remain visible even when SwiftUI coalesces change callbacks")
+
+  model = reset()
+  await model.read(brand) { model.spaceTypeSyncGeneration &+= 2 }
+  try check(SpaceType.current == .realEstate && model.syncCalls == 0, "two completed PATCHes returning the original raw value still invalidate an older GET")
+
+  model = reset()
+  await model.read(brand) { auth.userID = other.uuidString; auth.syncSessionRevision += 1 }
+  try check(SpaceType.current == .realEstate && ProfileLogoStore.accepted == 0 && PersonalCardStore.accepted == 0 && model.syncCalls == 0, "account change blocks all old brand fields")
+
+  model = reset()
+  await model.read(brand) { auth.syncSessionRevision += 1 }
+  try check(SpaceType.current == .realEstate && ProfileLogoStore.accepted == 0 && model.syncCalls == 0, "same actor with a new session rejects old brand read")
+
+  model = reset()
+  await model.read(brand) { WorkspaceContext.selectedOrgID = anotherOrg }
+  try check(SpaceType.current == .realEstate && ProfileLogoStore.accepted == 0 && model.syncCalls == 0, "workspace change rejects old brand read")
+
+  model = reset(initialized: false, marker: nil)
+  await model.read(brand)
+  try check(SpaceType.current == .restaurant && model.syncCalls == 0, "first brand hydration can recover a server business type")
+ }
+}
+`;
+  const render = (r, c, a, x) => scaffold.replace('REVISION', r).replace('CONTEXT', c).replace('APPLY', a).replace('ACCEPT', x);
+  const out = mkdtempSync(join(tmpdir(), 'rendprop-brand-type-race-'));
+  run(out, 'actual-brand-type', render(revision, context, apply, accept), 0);
+  run(out, 'missing-local-selection-fence', render(revision, context.replace('localType == SpaceType.current.rawValue &&', 'true &&'), apply, accept), 1);
+  run(out, 'missing-choice-generation', render(revision, context.replace('selectionRevision == BusinessTypeSelectionRevision.current &&', 'true &&'), apply, accept), 1);
+  run(out, 'missing-sync-generation', render(revision, context.replace('syncGeneration == currentSyncGeneration &&', 'true &&'), apply, accept), 1);
+  run(out, 'missing-identity-fence', render(revision, context, apply.replace('guard read.matches(brand) else { return }', ''), accept), 1);
+  run(out, 'forced-cloud-type-overwrite', render(revision, context, apply, accept.replace('if applySpaceType {', 'if true {')), 1);
+  console.log('Brand type race evidence: ' + out);
+});
+
 test('actual portfolio selection and files cannot mix or overwrite another workspace export', () => {
   const source = readFileSync(new URL('../../apps/ios/Rendprop/Screens/SettingsView.swift', import.meta.url), 'utf8');
   const properties = ['private var workspaceListings:', 'private var shareable:', 'private var realCount:'].map(signature => block(source, signature).replace('private var', 'var')).join('\n');

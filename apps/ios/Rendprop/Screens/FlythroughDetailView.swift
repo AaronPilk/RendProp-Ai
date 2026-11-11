@@ -5687,6 +5687,7 @@ struct PhotoStudioView: View {
     private var stagingLabel: String { space == .realEstate ? "Virtual staging" : "Furnish & style" }
 
     @State private var photos: [EnhancedPhoto] = []
+    @State private var localPhotoLibraryLoaded = false
     @State private var libraryKind: PhotoVersionHistory.LibraryKind = .original
     @State private var photoOrientationFilter: PhotoOrientation?
     @State private var photoOrientations: [PhotoGeometryInput: PhotoOrientation] = [:]
@@ -5904,6 +5905,7 @@ struct PhotoStudioView: View {
             syncIdleHold()      // a dismissed cover re-appears mid-animate
             seedPhotosForUIWalk()
             refreshListingPhotoSelection()
+            localPhotoLibraryLoaded = true
         }
         .onReceive(photoJobs.$jobs) { _ in
             Task { @MainActor in
@@ -6182,22 +6184,25 @@ struct PhotoStudioView: View {
     /// them here first.
     private var photosEmptyState: some View {
         VStack(spacing: 10) {
-            Image(systemName: "photo.stack")
-                .font(.system(size: 30, weight: .medium))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(Color.white)
-                .frame(width: 60, height: 60)
-                .background(RPGradient.photo,
-                            in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            Text(cloudRecoveryListing == nil ? "Add your photos" : "Find your cloud photos")
-                .font(.rpHeadline).foregroundStyle(Theme.ink)
-                .multilineTextAlignment(.center)
-            Text(cloudRecoveryListing == nil
-                 ? "Every photo is brightened and sharpened the moment it lands \u{2014} free, on this phone, no waiting. Then AI Photo Studio can change any of them."
-                 : "This iPhone has no local photos for this listing. Photos uploaded from the previous install may still be in your cloud workspace.")
-                .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+            if let current = cloudRecoveryListing {
+                if localPhotoLibraryLoaded { CloudPhotoLibraryPreview(listing: current) }
+                else { ProgressView("Loading saved photos…") }
+            } else {
+                Image(systemName: "photo.stack")
+                    .font(.system(size: 30, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Color.white)
+                    .frame(width: 60, height: 60)
+                    .background(RPGradient.photo,
+                                in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                Text("Add your photos")
+                    .font(.rpHeadline).foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center)
+                Text("Every photo is brightened and sharpened the moment it lands \u{2014} free, on this phone, no waiting. Then AI Photo Studio can change any of them.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             cloudRecoveryLink
         }
         .padding(.vertical, 18)
@@ -6217,7 +6222,7 @@ struct PhotoStudioView: View {
                       systemImage: "arrow.down.icloud")
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .modifier(RendpropActionAppearance(primary: true))
+            .modifier(RendpropActionAppearance(primary: false))
             .disabled(restoringNativePhotos)
             .accessibilityIdentifier("photos.restorePrivateVersions")
             if let nativeRestoreError {
@@ -7341,7 +7346,7 @@ struct PhotoStudioView: View {
     /// home's studio you are standing in.
     private var studioTitleBar: some View {
         VStack(spacing: 1) {
-            Text(entry == .photos ? "Photos · \(galleryFamilyPhotos.count)" : "AI Photo Studio")
+            Text(entry == .photos ? (photos.isEmpty && cloudRecoveryListing != nil ? "Photos" : "Photos · \(galleryFamilyPhotos.count)") : "AI Photo Studio")
                 .accessibilityIdentifier("photos.libraryCount")
                 .font(.rpBody.weight(.semibold))
                 .foregroundStyle(Theme.ink)

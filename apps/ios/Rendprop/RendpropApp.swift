@@ -69,6 +69,60 @@ extension Notification.Name {
     static let rendpropSpaceTypeOutOfSync = Notification.Name("RendpropSpaceTypeOutOfSync")
 }
 
+/// A user choice stays observable even when its raw value goes A → B → A
+/// while an older brand request is awaiting the network.
+@MainActor
+enum BusinessTypeSelectionRevision {
+    private(set) static var current: UInt64 = 0
+    static func recordChoice() { current &+= 1 }
+}
+
+/// A brand GET can finish after the owner picks another business type. Keep
+/// its personal card and logo, but do not let that older type replace the
+/// newer local choice or acknowledge an unrelated PATCH as its own response.
+@MainActor
+private struct CloudBrandReadContext {
+    let actorID: String?
+    let sessionRevision: UInt64
+    let orgID: UUID?
+    let localType: String
+    let syncedType: String?
+    let brandInitialized: Bool
+    let selectionRevision: UInt64
+    let syncOperation: UUID?
+    let syncGeneration: UInt64
+
+    init(actorID: String?, sessionRevision: UInt64, syncOperation: UUID?, syncGeneration: UInt64) {
+        self.actorID = actorID
+        self.sessionRevision = sessionRevision
+        self.orgID = WorkspaceContext.selectedOrgID
+        self.localType = SpaceType.current.rawValue
+        self.syncedType = UserDefaults.standard.string(forKey: WorkspaceContext.storagePrefix + "space.type.synced")
+        self.brandInitialized = UserDefaults.standard.bool(forKey: WorkspaceContext.storagePrefix + "brand.initialized")
+        self.selectionRevision = BusinessTypeSelectionRevision.current
+        self.syncOperation = syncOperation
+        self.syncGeneration = syncGeneration
+    }
+
+    func matches(_ brand: CloudBrand) -> Bool {
+        AuthStore.shared.userID == actorID &&
+        AuthStore.shared.syncSessionRevision == sessionRevision &&
+        WorkspaceContext.selectedOrgID == orgID &&
+        actorID.flatMap(UUID.init(uuidString:)) == brand.userID &&
+        orgID == brand.orgID
+    }
+
+    func mayApplyType(currentSyncOperation: UUID?, currentSyncGeneration: UInt64) -> Bool {
+        let defaults = UserDefaults.standard
+        return localType == SpaceType.current.rawValue &&
+            syncedType == defaults.string(forKey: WorkspaceContext.storagePrefix + "space.type.synced") &&
+            selectionRevision == BusinessTypeSelectionRevision.current &&
+            syncGeneration == currentSyncGeneration &&
+            syncOperation == nil && currentSyncOperation == nil &&
+            (!brandInitialized || syncedType == localType)
+    }
+}
+
 // MARK: - App state
 @MainActor
 final class AppModel: ObservableObject {
@@ -185,6 +239,18 @@ final class AppModel: ObservableObject {
     /// two sync points firing together send one request, not two.
     private var spaceTypeSyncInFlight: String?
     private var spaceTypeSyncOperation: UUID?
+    /// Never reset after completion: an A → B → A pair of PATCHes must still
+    /// invalidate a brand GET started before either request.
+    private var spaceTypeSyncGeneration: UInt64 = 0
+
+    private func acceptCloudBrand(_ brand: CloudBrand, personalReadVersion: Int,
+                                  read: CloudBrandReadContext) {
+        guard read.matches(brand) else { return }
+        let applyType = read.mayApplyType(currentSyncOperation: spaceTypeSyncOperation,
+                                          currentSyncGeneration: spaceTypeSyncGeneration)
+        AgentCard.acceptCloud(brand, personalReadVersion: personalReadVersion, applySpaceType: applyType)
+        if !applyType { syncSpaceTypeIfNeeded() }
+    }
 
     init() {
         AccountExportFiles.purge()
@@ -644,6 +710,7 @@ final class AppModel: ObservableObject {
         guard UserDefaults.standard.string(forKey: Self.syncedSpaceTypeKey) != raw else { return }
         guard spaceTypeSyncInFlight != raw else { return }
         spaceTypeSyncInFlight = raw
+        spaceTypeSyncGeneration &+= 1
         let operation = UUID(); spaceTypeSyncOperation = operation
         Task { [weak self] in
             guard let self else { return }
@@ -1273,9 +1340,12 @@ final class AppModel: ObservableObject {
                 // Brand reads are independent of media and use the same account
                 // fence. A transient brand error must not roll back listing sync.
                 let personalReadVersion = AgentCard.personalReadVersion
+                let brandRead = CloudBrandReadContext(actorID: actor, sessionRevision: revision,
+                                                      syncOperation: self.spaceTypeSyncOperation,
+                                                      syncGeneration: self.spaceTypeSyncGeneration)
                 if let brand = try? await cloud.cloudBrand(), !Task.isCancelled,
                    AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision {
-                    AgentCard.acceptCloud(brand, personalReadVersion: personalReadVersion)
+                    self.acceptCloudBrand(brand, personalReadVersion: personalReadVersion, read: brandRead)
                 }
             } catch is CancellationError {
                 return
@@ -4614,7 +4684,14 @@ struct HomeDashboardView: View {
     /// RootTabView re-derives the samples on the change.
     private var businessTypeMenu: some View {
         Menu {
-            Picker("Business type", selection: $spaceTypeRaw) {
+            Picker("Business type", selection: Binding(
+                get: { spaceTypeRaw },
+                set: { choice in
+                    guard choice != spaceTypeRaw else { return }
+                    BusinessTypeSelectionRevision.recordChoice()
+                    spaceTypeRaw = choice
+                }
+            )) {
                 ForEach(SpaceType.allCases) { type in
                     Label(type.displayName, systemImage: type.systemImage)
                         .tag(type.rawValue)

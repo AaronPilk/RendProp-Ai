@@ -2,6 +2,168 @@ import SwiftUI
 import AVKit
 import UIKit
 
+/// Metadata only. Previewing never restores originals, writes history, or
+/// changes the listing's selected gallery. Keep private links in this scope.
+@MainActor final class CloudPhotoPreviewLoader: ObservableObject {
+    struct Context: Hashable {
+        let actorID: UUID
+        let revision: UInt64
+        let libraryID: UUID
+        let localListingID: UUID
+        let listingID: UUID
+        let orgID: UUID
+    }
+    @Published private(set) var context: Context?
+    @Published private(set) var photos: [CloudMediaPage.Photo] = []
+    @Published private(set) var hasMore = false
+    @Published private(set) var unavailable = 0
+    @Published private(set) var loading = false
+    @Published private(set) var error: String?
+    private var generation = UUID()
+    private var loaded = false
+
+    func reset() {
+        generation = UUID(); context = nil; photos = []; hasMore = false
+        unavailable = 0; loading = false; error = nil; loaded = false
+    }
+
+    func load(_ requested: Context, force: Bool = false,
+              fetch: (Int) async throws -> CloudMediaPage,
+              isCurrent: () -> Bool) async {
+        guard context != requested || !loading else { return }
+        guard force || context != requested || !loaded else { return }
+        reset()
+        let operation = generation
+        context = requested; loading = true
+        defer { if generation == operation { loading = false } }
+        func check() throws {
+            try Task.checkCancellation()
+            guard generation == operation, isCurrent() else { throw CloudSyncError.identityChanged }
+        }
+        do {
+            var found: [CloudMediaPage.Photo] = [], seen = Set<UUID>(), offset = 0, missing = 0
+            // At most four metadata pages; only six display previews are shown.
+            // If more pages exist, the count is explicitly a lower bound.
+            for pageNumber in 0..<4 {
+                try check()
+                let page = try await fetch(offset)
+                try check()
+                _ = try page.checked(listingID: requested.listingID, orgID: requested.orgID,
+                                     offset: offset, actorID: requested.actorID)
+                guard page.photos.allSatisfy({ seen.insert($0.id).inserted }) else { throw CloudSyncError.incomplete }
+                found += page.photos; missing += page.unavailable_count
+                try check()
+                photos = found; hasMore = page.next_offset != nil; unavailable = missing; loaded = true
+                if found.count < 6, let next = page.next_offset, pageNumber < 3 { offset = next; continue }
+                return
+            }
+        } catch is CancellationError { if generation == operation { reset() }; return }
+        catch {
+            guard generation == operation else { return }
+            guard isCurrent() else { reset(); return }
+            loaded = false
+            self.error = "Cloud photo loading couldn't finish. Your files and listing choices are unchanged. Try again when connected."
+        }
+    }
+}
+
+/// The empty local gallery still shows the account's available display copies.
+/// Import and save remain explicit in the existing scoped Cloud files screen.
+struct CloudPhotoLibraryPreview: View {
+    let listing: Listing
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @StateObject private var loader = CloudPhotoPreviewLoader()
+
+    private var scope: CloudPhotoPreviewLoader.Context? {
+        guard auth.isIdentified, let actor = auth.userID.flatMap(UUID.init(uuidString:)),
+              let library = WorkspaceContext.selectedOrgID,
+              let current = model.listings.first(where: { $0.id == listing.id }),
+              !current.isSample, current.cloudUnavailable != true, model.isInSelectedWorkspace(current),
+              let sid = current.serverID, let org = current.serverOrgID else { return nil }
+        return .init(actorID: actor, revision: auth.syncSessionRevision, libraryID: library,
+                     localListingID: current.id, listingID: sid, orgID: org)
+    }
+    private var visiblePhotos: [CloudMediaPage.Photo] { loader.context == scope && scope != nil ? loader.photos : [] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(visiblePhotos.isEmpty ? "Cloud photos" : "Cloud photos · \(visiblePhotos.count)\(loader.hasMore ? "+" : "")",
+                  systemImage: "icloud")
+                .font(.rpHeadline).foregroundStyle(Theme.ink)
+                .accessibilityIdentifier("photos.cloudCount")
+            if loader.context == scope, loader.loading {
+                ProgressView("Loading cloud photos…")
+            }
+            if !visiblePhotos.isEmpty {
+                LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 140))], spacing: 12) {
+                    ForEach(Array(visiblePhotos.prefix(6).enumerated()), id: \.element.id) { item in
+                        let photo = item.element
+                        NavigationLink { CloudMediaView(listing: listing) } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                AsyncImage(url: photo.url) { phase in
+                                    if let image = phase.image { image.resizable().scaledToFill() }
+                                    else { ZStack { Theme.fillSubtle; Image(systemName: "photo") } }
+                                }
+                                .frame(height: 140).frame(maxWidth: .infinity).clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                Text(photo.caption?.isEmpty == false ? photo.caption! : "Listing photo")
+                                    .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                                Text(photo.original_url == nil && photo.is_altered != false
+                                     ? "Cloud copy · original unavailable" : "Cloud photo · review available files")
+                                    .font(.caption).foregroundStyle(Theme.inkDim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if photo.is_staged { Text("Virtually staged").font(.caption).foregroundStyle(Theme.warn) }
+                            }.padding(10).background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 18))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(photoAccessibilityLabel(photo, ordinal: item.offset + 1))
+                        .accessibilityHint("Opens available cloud files and saving options.")
+                        .accessibilityIdentifier("photos.cloudPreview.\(photo.id.uuidString)")
+                    }
+                }
+                Text("Open a cloud photo to view available files and saving options. A cloud copy does not restore its original or edit history.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
+            } else if loader.context == scope, !loader.loading, loader.error == nil, scope != nil {
+                Text(loader.hasMore ? "More cloud files are available in Cloud files." : "No available cloud photos were found for this listing.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+            if loader.context == scope, loader.unavailable > 0 {
+                Text("Some account files are still processing or unavailable.").font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+            if loader.context == scope, let error = loader.error {
+                Text(error).font(.rpCaption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                Button("Retry cloud photos") { Task { await load(force: true) } }
+                    .buttonStyle(.bordered).buttonBorderShape(.capsule)
+                    .accessibilityIdentifier("photos.retryCloudPreview")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("photos.cloudPreview")
+        .task(id: scope) { await load() }
+    }
+
+    private func photoAccessibilityLabel(_ photo: CloudMediaPage.Photo, ordinal: Int) -> String {
+        var parts = ["Cloud photo \(ordinal)"]
+        if photo.is_altered == true { parts.append("Altered image") }
+        if photo.is_staged { parts.append("Virtually staged") }
+        if photo.original_url == nil && photo.is_altered != false { parts.append("Original and edit history unavailable") }
+        return parts.joined(separator: ". ")
+    }
+
+    @MainActor private func load(force: Bool = false) async {
+        guard let requested = scope, let api = model.api as? WorkspaceSyncAPI,
+              let access = try? CloudMediaAccessContext.capture(orgID: requested.orgID) else { loader.reset(); return }
+        await loader.load(requested, force: force, fetch: { offset in
+            try await api.cloudMedia(listingID: requested.listingID, orgID: requested.orgID, offset: offset)
+        }, isCurrent: {
+            scope == requested && (try? access.check()) != nil
+        })
+    }
+}
+
 /// On-demand access keeps an office's large originals off cellular until the
 /// agent chooses a file. Successful imports use the existing Photo/Review tools.
 struct CloudMediaView: View {
