@@ -184,6 +184,38 @@ Deno.test("real adapter checks Auth, deletion, membership, live org then scoped 
   );
 });
 
+Deno.test("independent authorization reads overlap only inside their existing trust boundaries", async () => {
+  const f = fixture();
+  let finishDeletion!: () => void;
+  let finishScope!: (scope: Awaited<ReturnType<StudioRepositoryDependencies["listingScope"]>>) => void;
+  let finishOrg!: (result: Awaited<ReturnType<StudioRepositoryDependencies["activeOrg"]>>) => void;
+  const deletion = new Promise<void>(resolve => finishDeletion = resolve);
+  const membership = new Promise<Awaited<ReturnType<StudioRepositoryDependencies["listingScope"]>>>(resolve => finishScope = resolve);
+  const workspace = new Promise<Awaited<ReturnType<StudioRepositoryDependencies["activeOrg"]>>>(resolve => finishOrg = resolve);
+  f.deps.assertNotDeleting = async subject => { assertEquals(subject, user); f.events.push("deletion"); await deletion; };
+  f.deps.listingScope = async (subject, requested) => {
+    assertEquals([subject, requested], [user, listing]);
+    f.events.push("listing-scope");
+    return await membership;
+  };
+  f.deps.activeOrg = async id => { assertEquals(id, org); f.events.push("orgs"); return await workspace; };
+  let completed = false;
+  const pending = createStudioRepository(req, f.deps).authorize(req, org, listing)
+    .then(value => { completed = true; return value; });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assertEquals(f.events, ["auth", "deletion", "listing-scope"]);
+  assertEquals(f.clientCalls(), 0);
+  finishDeletion();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assertEquals(f.events, ["auth", "deletion", "listing-scope"]);
+  finishScope({ actor_id: user, org_id: org, library_org_id: org, can_read: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assertEquals(f.events, ["auth", "deletion", "listing-scope", "orgs", "listings"]);
+  assertEquals(completed, false, "the RLS listing result cannot bypass the live workspace check");
+  finishOrg({ data: { id: org }, error: null });
+  assertEquals(await pending, { userId: user, orgId: org, listingId: listing });
+});
+
 Deno.test("published Studio photo uses authenticated visibility and service-only delivery admission", async () => {
   const mediaRequest = new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
   const f = fixture(mediaRequest);
@@ -229,40 +261,117 @@ Deno.test("published Studio photo uses authenticated visibility and service-only
   assertEquals(f.events.filter(event => event === "listing-scope").length, 2);
 });
 
-Deno.test("deletion and removed membership failures prevent tenant reads", async () => {
+Deno.test("deletion and removed membership failures prevent reads, signing, and data responses", async () => {
   for (const denied of ["assertNotDeleting", "listingScope"] as const) {
-    const f = fixture();
+    const mediaRequest = new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
+    const f = fixture(mediaRequest);
     f.deps[denied] = async () => {
       throw new HttpError(denied === "listingScope" ? 403 : 409, "Denied.");
     };
-    await assertRejects(
-      () => createStudioRepository(req, f.deps).authorize(req, org, listing),
-      HttpError,
-    );
+    let reads = 0, signs = 0;
+    const handler = createStudioHandler({ ...createStudioRepository(mediaRequest, f.deps),
+      rateLimit: async () => true,
+      read: async () => { reads++; return { photos: [], assets: [], renders: [] }; },
+      sign: async () => { signs++; return "https://fixture.invalid/signed"; },
+      assertSigningPolicyFresh: async () => {},
+      now: () => 0,
+    });
+    const response = await handler(mediaRequest);
+    assertEquals(response.status, denied === "listingScope" ? 403 : 409);
+    assert(!(await response.text()).includes("photos"));
+    assertEquals(reads, 0);
+    assertEquals(signs, 0);
     assertEquals(f.clientCalls(), 0);
     assertEquals(f.queries, []);
   }
 });
 
-Deno.test("deleted org or listing and inconsistent rows never authorize", async () => {
+Deno.test("deleted org or listing and inconsistent rows never release data or signed URLs", async () => {
   for (
-    const [table, result] of [
-      ["orgs", { data: null, error: null }],
-      ["listings", { data: null, error: null }],
-      ["listings", { data: { id: listing, org_id: user }, error: null }],
-      ["orgs", { data: { id: user }, error: null }],
-      ["orgs", { data: null, error: { message: "internal" } }],
-    ] as [string, Result][]
+    const [table, result, status] of [
+      ["orgs", { data: null, error: null }, 404],
+      ["listings", { data: null, error: null }, 404],
+      ["listings", { data: { id: listing, org_id: user }, error: null }, 503],
+      ["orgs", { data: { id: user }, error: null }, 503],
+      ["orgs", { data: null, error: { message: "internal" } }, 503],
+    ] as [string, Result, number][]
   ) {
-    const f = fixture();
+    const mediaRequest = new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
+    const f = fixture(mediaRequest);
     f.results[table] = result;
-    await assertRejects(
-      () => createStudioRepository(req, f.deps).authorize(req, org, listing),
-      HttpError,
-    );
-    if (table === "orgs" && !result.data) {
-      assert(!f.events.includes("listings"));
-    }
+    let reads = 0, signs = 0;
+    const handler = createStudioHandler({ ...createStudioRepository(mediaRequest, f.deps),
+      rateLimit: async () => true,
+      read: async () => { reads++; return { photos: [], assets: [], renders: [] }; },
+      sign: async () => { signs++; return "https://fixture.invalid/signed"; },
+      assertSigningPolicyFresh: async () => {},
+      now: () => 0,
+    });
+    const response = await handler(mediaRequest);
+    assertEquals(response.status, status);
+    assert(!(await response.text()).includes("photos"));
+    assertEquals(reads, 0);
+    assertEquals(signs, 0);
+    assertEquals(f.events, ["auth", "deletion", "listing-scope", "orgs", "listings"]);
+  }
+});
+
+Deno.test("authorization keeps deletion and workspace error precedence when concurrent reads disagree", async () => {
+  const first = fixture();
+  first.deps.assertNotDeleting = async () => { throw new HttpError(409, "Deletion pending."); };
+  first.deps.listingScope = async () => { throw new HttpError(403, "Membership removed."); };
+  const denied = await assertRejects(() => createStudioRepository(req, first.deps).authorize(req, org, listing), HttpError);
+  assertEquals((denied as HttpError).status, 409);
+  assertEquals(first.queries, []);
+
+  const second = fixture();
+  second.results.orgs = { data: null, error: null };
+  second.results.listings = { data: null, error: { message: "RLS unavailable" } };
+  const missing = await assertRejects(() => createStudioRepository(req, second.deps).authorize(req, org, listing), HttpError);
+  assertEquals((missing as HttpError).status, 404);
+  assertEquals(second.events, ["auth", "deletion", "listing-scope", "orgs", "listings"]);
+});
+
+Deno.test("every final authorization guard discards a signed page when access changes", async () => {
+  for (const withdrawn of ["deletion", "membership", "workspace", "listing"] as const) {
+    const mediaRequest = new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
+    const f = fixture(mediaRequest);
+    const photoKey = `uploads/${org}/${listing}/room.jpg`;
+    f.results.photos.data = [{ id: "40000000-0000-4000-8000-000000000004", listing_id: listing,
+      original_key: photoKey, enhanced_key: null, caption: null, is_staged: false, sort: 0,
+      created_at: "2026-10-20T00:00:00Z" }];
+    const originalDeletion = f.deps.assertNotDeleting;
+    const originalScope = f.deps.listingScope;
+    const originalOrg = f.deps.activeOrg;
+    let signs = 0;
+    f.deps.assertNotDeleting = async id => {
+      await originalDeletion(id);
+      if (withdrawn === "deletion" && signs) throw new HttpError(409, "Deletion pending.");
+    };
+    f.deps.listingScope = async (id, requested) => {
+      const scope = await originalScope(id, requested);
+      return withdrawn === "membership" && signs ? { ...scope, can_read: false } : scope;
+    };
+    f.deps.activeOrg = async id => {
+      if (withdrawn === "workspace" && signs) return { data: null, error: null };
+      return await originalOrg(id);
+    };
+    const handler = createStudioHandler({ ...createStudioRepository(mediaRequest, f.deps),
+      rateLimit: async () => true,
+      sign: async () => {
+        signs++;
+        if (withdrawn === "listing") f.results.listings = { data: null, error: null };
+        return "https://fixture.invalid/signed-private-media";
+      },
+      assertSigningPolicyFresh: async () => {},
+      now: () => 0,
+    });
+    const response = await handler(mediaRequest);
+    assertEquals(response.status, withdrawn === "deletion" ? 409 : withdrawn === "membership" ? 403 : 404);
+    assertEquals(signs, 1);
+    const body = await response.text();
+    assert(!body.includes("signed-private-media") && !body.includes("photos"));
+    assertEquals(f.events.filter(event => event === "auth").length, 2);
   }
 });
 

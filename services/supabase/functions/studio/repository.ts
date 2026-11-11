@@ -43,19 +43,35 @@ export function createStudioRepository(
     }),
     async authorize(request, orgId, listingId) {
       const user = await deps.getUser(request);
-      await deps.assertNotDeleting(user.id);
-      const scope = await deps.listingScope(user.id, listingId);
+      // These actor checks do not depend on each other. Drain both before
+      // advancing; deletion still takes precedence if both reject.
+      const [deletion, membership] = await Promise.allSettled([
+        deps.assertNotDeleting(user.id),
+        deps.listingScope(user.id, listingId),
+      ]);
+      if (deletion.status === "rejected") throw deletion.reason;
+      if (membership.status === "rejected") throw membership.reason;
+      const scope = membership.value;
       const org = scope.org_id;
       if (scope.actor_id !== user.id || !scope.can_read || (org !== orgId && scope.library_org_id !== orgId)) {
         throw new HttpError(403, "Workspace authorization failed.");
       }
-      const { data: activeOrg, error: orgError } = await deps.activeOrg(org);
+      // The live workspace and listing reads are independent once the actor's
+      // scope is known. Keep workspace failure precedence and require both
+      // results before returning an authorized scope.
+      const [workspace, scopedListing] = await Promise.allSettled([
+        Promise.resolve().then(() => deps.activeOrg(org)),
+        Promise.resolve().then(() => db()
+          .from("listings").select("id,org_id")
+          .eq("id", listingId).eq("org_id", org)
+          .is("deleted_at", null).abortSignal(req.signal).maybeSingle()),
+      ]);
+      if (workspace.status === "rejected") throw workspace.reason;
+      const { data: activeOrg, error: orgError } = workspace.value;
       if (orgError) throw new HttpError(503, "Workspace lookup unavailable.");
       if (!activeOrg) throw new HttpError(404, "Workspace unavailable.");
-      const { data: listing, error } = await db()
-        .from("listings").select("id,org_id")
-        .eq("id", listingId).eq("org_id", org)
-        .is("deleted_at", null).abortSignal(req.signal).maybeSingle();
+      if (scopedListing.status === "rejected") throw scopedListing.reason;
+      const { data: listing, error } = scopedListing.value;
       if (error) throw new HttpError(503, "Listing lookup unavailable.");
       if (!listing) {
         throw new HttpError(404, "Space not found in this workspace.");
