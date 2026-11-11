@@ -62,7 +62,10 @@ set local session_replication_role=origin;
 create function pg_temp.direct(i integer,asset uuid default'f8540000-0000-4000-8000-000000000001',prov uuid default null,sha text default repeat('a',64),qc text default repeat('a',32))returns jsonb language sql as $$
  select public.record_direct_property_video_source(actor,org,'direct-fixture:'||i,listing,asset,prov,'accepted-'||i,sha,qc,'Kitchen','side_glide','Bounded requested movement')from vf$$;
 create function pg_temp.fault(change text,i integer default 5)returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$begin
- perform set_config('session_replication_role','replica',true);execute change;perform set_config('session_replication_role','origin',true);return pg_temp.direct(i);end$$;
+ perform set_config('session_replication_role','replica',true);execute change;perform set_config('session_replication_role','origin',true);
+ -- Replica mode suppresses the access-cache trigger; advance its fixture epoch before rechecking authority.
+ perform pg_catalog.set_config('rp.access_epoch',coalesce(pg_catalog.current_setting('rp.access_epoch',true),'')||'x',true);
+ return pg_temp.direct(i);end$$;
 create function pg_temp.photo_fault()returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$begin
  update media_provenance set qc='{"publishable":false}'where id='f8580000-0000-4000-8000-000000000002';
  return pg_temp.direct(5,'f8540000-0000-4000-8000-000000000002','f8580000-0000-4000-8000-000000000002',repeat('b',64));end$$;
