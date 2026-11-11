@@ -61,6 +61,18 @@ Deno.test("actual drain suppresses both promotional push categories without send
  assert(out.marked.every(c=>c.p_state==="skipped"));
  assert(!out.calls.some(c=>!new URL(c.url).hostname.endsWith("fixture.invalid")));
 });
+Deno.test("actual drain closes destinationless admin push as skipped and still sends its email",async()=>{
+ const payload={code:"trial_pool_ending",title:"Admin alert: Trial sponsor pool ends within 7 days",body:"Record a new trial allocation.",data:{}};
+ const push={...row("ops_alert"),id:"fixture-outbox-ops-push",channel:"push",payload};
+ const mail={...row("ops_alert"),id:"fixture-outbox-ops-email",channel:"email",payload};
+ const out=await invoke([push,mail]);
+ assertEquals(out.status,200);assertEquals(out.body.skipped,1);assertEquals(out.body.sent,1);assertEquals(out.body.failed,0);
+ const skipped=out.marked.find(c=>c.p_id===push.id),sent=out.marked.find(c=>c.p_id===mail.id);
+ assertEquals(skipped?.p_state,"skipped");assert(String(skipped?.p_error).includes("no mobile review destination"));
+ assertEquals(sent?.p_state,"sent");
+ assertEquals(out.calls.filter(c=>new URL(c.url).hostname==="api.resend.com").length,1);
+ assert(!out.calls.some(c=>new URL(c.url).hostname.includes("push.apple.com")));
+});
 Deno.test("recipient verification has its own frozen destination and no buyer snapshot",async()=>{
  const verification={...row("client_recipient_verification"),user_id:null,to_email:"client@fixture.invalid",client_verification_id:VERIFY};
  const out=await invoke([row(),verification],{lookupError:true});assertEquals(out.body.sent,1);assertEquals(out.body.failed,1);

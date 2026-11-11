@@ -69,6 +69,13 @@ export async function deliverPush(
   fetchImpl: typeof fetch = fetch,
   authorizeDevice?: (device:DeviceRow)=>Promise<boolean>,
 ): Promise<Outcome> {
+  // Operational findings live in server configuration and provider accounts.
+  // The native app has no review destination for them; the paired admin email
+  // carries the actionable details. Do not send a generic "review it" push
+  // that opens Home with no context.
+  if (row.category === "ops_alert") {
+    return { state: "skipped", reason: "Operational alert has no mobile review destination; admin email remains available.", providerId: null, deadTokens: [] };
+  }
   // THE INERT PATH. Not an error and not a retry: this row has nowhere to go
   // until somebody sets three secrets, and naming them in last_error is how
   // they find out. E-mail rows in the same batch are unaffected.

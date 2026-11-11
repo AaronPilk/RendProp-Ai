@@ -171,6 +171,38 @@ Deno.test("one channel's missing secret does not block the other", async () => {
   clearSecrets();
 });
 
+Deno.test("an operational finding skips APNs without retry while its admin email remains actionable", async () => {
+  clearSecrets();
+  await withApnsSecrets();
+  Deno.env.set("RESEND_API_KEY", "re_test_key");
+  Deno.env.set("NOTIFY_FROM_EMAIL", "Rendprop <hello@rendprop.test>");
+  const alert = row({
+    category: "ops_alert",
+    payload: {
+      code: "trial_pool_ending",
+      title: "Admin alert: Trial sponsor pool ends within 7 days",
+      body: "The owner-approved trial AI allocation ends soon. Record a new allocation.",
+    },
+  });
+
+  const push = await deliverPush(alert, [device], BASE, forbiddenFetch);
+  assertEquals(push.state, "skipped");
+  assertEquals(push.providerId, null);
+  assertEquals(push.deadTokens, []);
+  assertStringIncludes(push.reason ?? "", "no mobile review destination");
+
+  let mailBody: Record<string, unknown> = {};
+  const fakeResend: typeof fetch = (_url, init) => {
+    mailBody = JSON.parse(String((init as RequestInit).body));
+    return Promise.resolve(new Response(JSON.stringify({ id: "ops-email-1" }), { status: 200 }));
+  };
+  const emailOutcome = await deliverEmail({ ...alert, channel: "email" }, "owner@example.invalid", BASE, fakeResend);
+  assertEquals(emailOutcome.state, "sent");
+  assertEquals(mailBody.subject, "Admin alert: Trial sponsor pool ends within 7 days");
+  assertStringIncludes(String(mailBody.text), "Record a new allocation.");
+  clearSecrets();
+});
+
 Deno.test("sendEmail with no provider configured resolves rather than throwing", async () => {
   clearSecrets();
   const result = await email.sendEmail({ to: "a@b.co", subject: "s", text: "t" }, forbiddenFetch);
