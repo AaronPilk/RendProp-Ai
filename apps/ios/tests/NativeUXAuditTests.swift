@@ -22,6 +22,14 @@ import Foundation
         for _ in 0..<NativeIncomingQueue.limit { expect(queue.takeNext(canPresent: true) != nil, "retained burst drains") }
         expect(queue.takeNext(canPresent: true) == .invalidLink, "overflow reported")
         expect(!queue.hasPending, "overflow consumed once")
+        var notificationQueue = NativeIncomingQueue()
+        notificationQueue.enqueue(.notificationLink(.tour(slug: "earlier-push"), revision: 1))
+        notificationQueue.enqueue(.link(link))
+        notificationQueue.enqueue(.pushPermission)
+        notificationQueue.enqueue(.notificationLeads(revision: 2))
+        notificationQueue.discardNotifications(before: 2)
+        expect(notificationQueue.routes == [.link(link), .pushPermission, .notificationLeads(revision: 2)],
+               "new tap removes only older queued notifications and preserves links and permission intent")
         expect(DeepLink.parse(URL(string: "https://rendprop.com/u/synthetic")!) == nil, "MLS unbranded stays external")
         expect(DeepLink.parse(URL(string: "https://untrusted.invalid/f/synthetic")!) == nil, "external host cannot become tour")
 
@@ -183,6 +191,14 @@ import Foundation
         routes.incomingLinkError = false; routes.incomingQueue.enqueue(.leads); AuthStore.shared.isSignedIn = false
         routes.drainIncomingRoutes()
         expect(routes.incomingQueue.hasPending && routes.rootSheet == nil, "signout regates subsequent root routes")
+        let latestTap = RootRouteFixture()
+        AuthStore.shared.isSignedIn = true;latestTap.hasOnboarded = true
+        latestTap.push.notificationTapRevision = 2
+        latestTap.incomingQueue.enqueue(.notificationLink(.tour(slug: "superseded-push"), revision: 1))
+        latestTap.incomingQueue.enqueue(.notificationLeads(revision: 2))
+        latestTap.drainIncomingRoutes()
+        expect(latestTap.incomingLink == nil && latestTap.rootSheet == .leadsInbox && !latestTap.incomingQueue.hasPending,
+               "root presents only the latest accepted queued notification")
 
         print("Native UX actual bodies: \(assertions) assertions passed")
     }

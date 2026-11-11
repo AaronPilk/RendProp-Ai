@@ -125,7 +125,7 @@ actual += block(wall, 'enum PaywallReason:') + '\n' + block(wall, 'final class P
 actual += '\n' + block(app, 'enum NativeAccountLaunchAdmission {') + '\n'
 actual += block(app, 'private enum RootSheet:').replace('private ', '', 1) + '\n'
 actual += '''enum ScenePhase { case active, inactive, background }
-@MainActor final class PushFixture { var showPrePrompt = true }
+@MainActor final class PushFixture { var showPrePrompt = true;var notificationTapRevision:UInt64=0 }
 @MainActor final class RootRouteFixture {
  let analyticsAuth = AuthStore.shared; let push = PushFixture()
  var hasOnboarded = false; var scenePhase = ScenePhase.active
@@ -167,6 +167,7 @@ controls = [
  ('drop-onboarding-route-admission', 'accountReady && hasOnboarded', 'accountReady', 'business onboarding keeps queued private routes unpresented'),
  ('drop-identified-route-admission', 'offlineFixture || (signedIn && identified && actorID.flatMap(UUID.init(uuidString:)) != nil)', 'offlineFixture || signedIn', 'legacy guest keeps queued private routes unpresented'),
  ('drop-deferred-link', 'guard canPresent else { return nil }', 'guard true else { return nil }', 'capture modal retains link'),
+ ('retain-superseded-notification', 'routes.removeAll { $0.notificationRevision.map { $0 < revision } ?? false }', 'routes.removeAll { _ in false }', 'new tap removes only older queued notifications and preserves links and permission intent'),
  ('replay-deferred-link', 'return routes.removeFirst()', 'return routes.first', 'lead resumes second'),
  ('child-modal-ignored', 'controller.children.contains { hasPresentedController(in: $0) }', 'false', 'nested capture controller keeps incoming route deferred'),
  ('modal-paywall-swallowed', 'activeHost = hosts.last', 'activeHost = hosts.first', 'modal owns upgrade'),

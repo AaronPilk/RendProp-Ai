@@ -131,6 +131,16 @@ struct PhotoWorkBanner: View {
                 }
                 return
             }
+            if Config.useLiveBackend && !model.listings.contains(where: { $0.id == target.listingID && !$0.isSample
+                && $0.cloudUnavailable != true && model.isInSelectedWorkspace($0) }) {
+                // A library switch can still be refreshing a previously
+                // unavailable saved listing. Join that read before retiring
+                // the notification's exact local-photo intent.
+                await model.refreshCloudWorkspace()
+            }
+            guard !Task.isCancelled, push.pendingPhotoReview == target,
+                  PushManager.currentIdentity?.owner == target.owner,
+                  WorkspaceContext.selectedOrgID == target.workspace else { return }
             guard let listing = model.listings.first(where: { $0.id == target.listingID && !$0.isSample
                 && $0.cloudUnavailable != true && model.isInSelectedWorkspace($0) }) else {
                 push.showUnavailablePhotoNotice()
@@ -143,6 +153,88 @@ struct PhotoWorkBanner: View {
                 return
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+    }
+}
+
+/// A notification may belong to another agent's authorized library. Verify
+/// current membership and the exact server listing before showing its inbox.
+struct LeadNotificationReview: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var push = PushManager.shared
+    @ObservedObject private var workspace = WorkspaceStore.shared
+    @ObservedObject private var auth = AuthStore.shared
+    @State private var reviewListing: Listing?
+
+    var body: some View {
+        Color.clear.frame(width: 0, height: 0)
+            .task(id: "\(push.pendingLeadReview?.listingID.uuidString ?? "none")|\(WorkspaceContext.selectedOrgID?.uuidString ?? "none")|\(auth.syncSessionRevision)") {
+                await reviewPendingLeadNotification()
+            }
+            .onChange(of: auth.syncSessionRevision) { _ in reviewListing = nil }
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in reviewListing = nil }
+            .sheet(item: $reviewListing) { listing in
+                NavigationStack {
+                    LeadsView(listing: listing)
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { reviewListing = nil } } }
+                }
+                .environmentObject(model)
+            }
+    }
+
+    private func reviewPendingLeadNotification() async {
+        guard let target = push.pendingLeadReview else { return }
+        while !model.hasRestoredLibrary && !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard !Task.isCancelled, push.pendingLeadReview == target,
+              PushManager.currentIdentity?.owner == target.owner else { return }
+        await workspace.refresh()
+        guard !Task.isCancelled, push.pendingLeadReview == target,
+              PushManager.currentIdentity?.owner == target.owner else { return }
+        let revision = auth.syncSessionRevision
+        guard let cloud = model.api as? WorkspaceSyncAPI else {
+            push.showUnavailableLeadNotice(); push.clearPendingLeadReview(); return
+        }
+        do {
+            // This complete authenticated read includes only listings this
+            // actor can currently access, across their offered libraries.
+            let listings = try await cloud.cloudListings()
+            guard !Task.isCancelled, push.pendingLeadReview == target,
+                  PushManager.currentIdentity?.owner == target.owner,
+                  auth.syncSessionRevision == revision else { return }
+            guard let listing = listings.first(where: { $0.serverID == target.listingID && !$0.isSample
+                && $0.cloudUnavailable != true }),
+                  let library = listing.serverLibraryOrgID ?? listing.serverOrgID,
+                  workspace.canViewLibrary(library) else {
+                push.showUnavailableLeadNotice(); push.clearPendingLeadReview(); return
+            }
+            guard WorkspaceContext.selectedOrgID == library else {
+                if let member = workspace.selectionChoices.first(where: { $0.id == library && $0.canRead == true }) {
+                    push.showSwitchLeadLibraryNotice(member.displayName)
+                } else {
+                    push.showUnavailableLeadNotice(); push.clearPendingLeadReview()
+                }
+                return
+            }
+            while push.pendingLeadReview == target && !Task.isCancelled {
+                guard PushManager.currentIdentity?.owner == target.owner,
+                      auth.syncSessionRevision == revision,
+                      WorkspaceContext.selectedOrgID == library,
+                      workspace.canViewLibrary(library) else { return }
+                if reviewListing == nil && !NativePresentationAvailability.hasPresentedController {
+                    reviewListing = listing
+                    push.clearPendingLeadReview()
+                    push.clearPendingContextNotice()
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        } catch {
+            guard !Task.isCancelled, push.pendingLeadReview == target,
+                  PushManager.currentIdentity?.owner == target.owner,
+                  auth.syncSessionRevision == revision else { return }
+            push.showUnavailableLeadNotice(); push.clearPendingLeadReview()
         }
     }
 }

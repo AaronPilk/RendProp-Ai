@@ -351,6 +351,7 @@ private struct RemoteVideoNotificationReview: Identifiable {
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
                         Button("Try again") { Task { await load(refresh: true) } }
                             .buttonStyle(.borderedProminent)
+                            .buttonBorderShape(.capsule)
                     }
                 }
                 .padding(20)

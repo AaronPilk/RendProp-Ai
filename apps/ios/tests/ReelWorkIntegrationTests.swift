@@ -17,7 +17,7 @@ enum PhotoMotionContract {
  var configuration:String?;var phase=Phase.setup
  let id:UUID; let listingID:UUID; init(_ id:UUID,_ listingID:UUID){self.id=id;self.listingID=listingID}
 }
-struct Listing { let id:UUID; var isSample=false; var cloudUnavailable:Bool?; var workspaceID:UUID?; var serverID:UUID?; var serverOrgID:UUID? }
+struct Listing { let id:UUID; var isSample=false; var cloudUnavailable:Bool?; var workspaceID:UUID?; var serverID:UUID?; var serverOrgID:UUID?;var serverLibraryOrgID:UUID? }
 struct ListingVideoSource { let isComplete:Bool }
 struct PropertyVideoJobResult {
  let downloadURL:URL?;let width:Int;let height:Int;let durationS:Double;let bytes:Int64;let sha256:String
@@ -326,6 +326,79 @@ enum PushRoute:Equatable {case leads,tour(DeepLink)}
   await wrongLibrary.reviewPendingNotification()
   check(wrongLibrary.reviewListing?.id==listingID && launchPush.pendingPhotoReview==nil,
         "the saved photo review continues after switching to the authorized library")
+  let stalePhoto=PhotoReviewHarness()
+  stalePhoto.workspace.allowed=[workspaceID];stalePhoto.model.hasRestoredLibrary=true
+  stalePhoto.model.listings=[.init(id:listingID,cloudUnavailable:true,workspaceID:workspaceID)]
+  stalePhoto.model.afterRefreshListings=[photoListing]
+  launchPush.handle(payload:photoPayload);await stalePhoto.reviewPendingNotification()
+  check(stalePhoto.model.refreshCount==1 && stalePhoto.reviewListing?.id==listingID && launchPush.pendingPhotoReview==nil,
+        "photo review waits for the switched library to refresh a previously unavailable listing")
+
+  let leadPayload:[AnyHashable:Any]=["recipient_user_id":owner.owner.uuidString,"category":"lead_received",
+      "deep_link":"https://rendprop.com/f/unrelated-tour","data":["listing_id":listingID.uuidString,"lead_id":UUID().uuidString]]
+  let leadListing=Listing(id:UUID(),workspaceID:workspaceID,serverID:listingID,serverOrgID:physical,serverLibraryOrgID:workspaceID)
+  let coldLead=LeadReviewHarness();coldLead.workspace.afterRefresh=[workspaceID];coldLead.model.api.listings=[leadListing]
+  launchPush.handle(payload:leadPayload)
+  check(launchPush.pendingLeadReview == .init(owner:owner.owner,listingID:listingID) && launchPush.pendingRoute==nil,
+        "emitted inquiry targets its exact listing instead of the tour or current account inbox")
+  let coldLeadTask=Task{await coldLead.reviewPendingLeadNotification()};await tick()
+  check(coldLead.reviewListing==nil && launchPush.pendingLeadReview != nil,"cold inquiry tap waits for library restoration")
+  coldLead.model.hasRestoredLibrary=true;await coldLeadTask.value
+  check(coldLead.reviewListing?.serverID==listingID && launchPush.pendingLeadReview==nil,
+        "a fresh authorized listing read opens that exact listing's inbox")
+  let crossLead=LeadReviewHarness();crossLead.model.hasRestoredLibrary=true;crossLead.workspace.afterRefresh=[workspaceID,otherWorkspace]
+  crossLead.model.api.listings=[leadListing];WorkspaceContext.selectedOrgID=otherWorkspace
+  launchPush.handle(payload:leadPayload);await crossLead.reviewPendingLeadNotification()
+  check(crossLead.reviewListing==nil && launchPush.pendingLeadReview?.listingID==listingID &&
+        launchPush.pendingContextNotice == .switchLeadLibrary("Test library"),
+        "an inquiry in another authorized library names that library and retains its exact intent")
+  WorkspaceContext.selectedOrgID=workspaceID;launchPush.clearPendingContextNotice()
+  await crossLead.reviewPendingLeadNotification()
+  check(crossLead.reviewListing?.serverID==listingID && launchPush.pendingLeadReview==nil,
+        "switching to the verified library continues the exact listing inbox")
+  let revokedLead=LeadReviewHarness();revokedLead.model.hasRestoredLibrary=true;revokedLead.model.api.listings=[leadListing]
+  launchPush.handle(payload:leadPayload);await revokedLead.reviewPendingLeadNotification()
+  check(revokedLead.reviewListing==nil && launchPush.pendingLeadReview==nil && launchPush.pendingContextNotice == .unavailableLead,
+        "revoked membership cannot open a cached listing inbox")
+  launchPush.clearPendingContextNotice()
+  let missingLead=LeadReviewHarness();missingLead.model.hasRestoredLibrary=true;missingLead.workspace.afterRefresh=[workspaceID]
+  missingLead.model.api.listings=[.init(id:UUID(),workspaceID:workspaceID,serverID:wrongID,serverOrgID:physical,serverLibraryOrgID:workspaceID)]
+  launchPush.handle(payload:leadPayload);await missingLead.reviewPendingLeadNotification()
+  check(missingLead.reviewListing==nil && launchPush.pendingLeadReview==nil,
+        "a different accessible listing cannot substitute for the notified listing")
+  launchPush.clearPendingContextNotice()
+  let switchedLead=LeadReviewHarness();switchedLead.model.hasRestoredLibrary=true;switchedLead.workspace.afterRefresh=[workspaceID]
+  switchedLead.model.api.listings=[leadListing];switchedLead.model.api.hold=true
+  launchPush.handle(payload:leadPayload);let switchedLeadTask=Task{await switchedLead.reviewPendingLeadNotification()};await tick()
+  PushManager.currentIdentity=other;launchPush.clearPendingLeadReview()
+  switchedLead.model.api.continuation?.resume();await switchedLeadTask.value
+  check(switchedLead.reviewListing==nil,"an account replacement during the inquiry read cannot open the earlier actor's inbox")
+  PushManager.currentIdentity=owner
+  launchPush.handle(payload:["recipient_user_id":other.owner.uuidString,"category":"lead_received","data":["listing_id":listingID.uuidString]])
+  check(launchPush.pendingLeadReview==nil,"another recipient cannot stage a listing inbox")
+  launchPush.handle(payload:["recipient_user_id":owner.owner.uuidString,"category":"lead_received","data":["listing_id":"invalid"]])
+  check(launchPush.pendingLeadReview==nil && launchPush.pendingContextNotice == .unavailableLead && launchPush.pendingRoute==nil,
+        "a malformed inquiry listing cannot fall through to a tour or unrelated inbox")
+  let supersededPhoto=PhotoReviewHarness();supersededPhoto.workspace.allowed=[workspaceID];supersededPhoto.model.hasRestoredLibrary=true
+  supersededPhoto.model.listings=[.init(id:listingID,cloudUnavailable:true,workspaceID:workspaceID)]
+  supersededPhoto.model.afterRefreshListings=[photoListing];supersededPhoto.model.holdRefresh=true
+  launchPush.handle(payload:photoPayload)
+  let stalePhotoTask=Task{await supersededPhoto.reviewPendingNotification()};await tick()
+  launchPush.handle(payload:leadPayload)
+  supersededPhoto.model.refreshContinuation?.resume();await stalePhotoTask.value
+  check(supersededPhoto.reviewListing==nil && launchPush.pendingLeadReview?.listingID==listingID && launchPush.pendingContextNotice==nil,
+        "an earlier photo read cannot present after a newer accepted notification tap")
+  let latestRevision=launchPush.notificationTapRevision
+  launchPush.handle(payload:["recipient_user_id":other.owner.uuidString,"category":"upload_stuck"])
+  check(launchPush.notificationTapRevision==latestRevision && launchPush.pendingLeadReview?.listingID==listingID,
+        "a wrong-recipient tap cannot cancel the current actor's pending intent")
+  launchPush.pendingRoute = .leads;launchPush.pendingReelJobID=id
+  launchPush.pendingServerVideoReview = .init(owner:owner.owner,jobID:id,listingID:listingID)
+  launchPush.pendingPhotoReview = .init(owner:owner.owner,workspace:workspaceID,listingID:listingID)
+  launchPush.handle(payload:["recipient_user_id":owner.owner.uuidString,"category":"upload_stuck"])
+  check(launchPush.pendingRoute==nil && launchPush.pendingReelJobID==nil && launchPush.pendingServerVideoReview==nil &&
+        launchPush.pendingPhotoReview==nil && launchPush.pendingLeadReview==nil && launchPush.pendingContextNotice == .uploadStuck,
+        "the newest accepted tap supersedes all earlier notification intents")
   print("PASS: \(checks) actual reel banner, review admission and notification routing assertions; closed OS boundaries")
  }
 }

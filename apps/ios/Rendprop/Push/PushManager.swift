@@ -163,6 +163,12 @@ struct PhotoReviewTarget: Hashable {
     let listingID: UUID
 }
 
+struct LeadReviewTarget: Hashable {
+    let owner: UUID
+    /// Server listing identity from the emitted inquiry notification.
+    let listingID: UUID
+}
+
 struct ServerVideoReviewTarget: Hashable {
     let owner: UUID
     let jobID: UUID
@@ -173,16 +179,20 @@ struct ServerVideoReviewTarget: Hashable {
 /// and honest without guessing which account item to open.
 enum NotificationContextNotice: Equatable {
     case olderPhoto, unavailablePhoto, switchPhotoLibrary(String)
+    case olderLead, unavailableLead, switchLeadLibrary(String)
     case olderVideo, unavailableVideo, switchLibrary(String), operations, planUsage, uploadStuck, firstTour
     case other(title: String, body: String)
 
-    enum Destination { case listings, activity, account }
+    enum Destination { case listings, leads, activity, account }
 
     var title: String {
         switch self {
         case .olderPhoto: return "Photo review needs a listing"
         case .unavailablePhoto: return "Photo review is unavailable"
         case .switchPhotoLibrary: return "Switch listing library"
+        case .olderLead: return "Lead notification needs a listing"
+        case .unavailableLead: return "Listing inquiries are unavailable"
+        case .switchLeadLibrary: return "Switch listing library"
         case .olderVideo: return "Video review needs a listing"
         case .unavailableVideo: return "Video review is unavailable"
         case .switchLibrary: return "Switch listing library"
@@ -199,6 +209,9 @@ enum NotificationContextNotice: Equatable {
         case .olderPhoto: return "This older notification did not identify a listing. Open Listings, then Photos, to review saved edits."
         case .unavailablePhoto: return "This photo edit can no longer be opened from the notification. Open Listings to check your current saved work."
         case .switchPhotoLibrary(let name): return "These photos belong to \(name). Open Listings and switch to that library; the saved review will continue."
+        case .olderLead: return "This older notification did not identify a listing. Open Leads to review your current inbox."
+        case .unavailableLead: return "This listing's inquiries can no longer be opened from the notification. Open Leads to check your current inbox."
+        case .switchLeadLibrary(let name): return "These inquiries belong to \(name). Open Listings and switch to that library; the listing's inbox will open."
         case .olderVideo: return "This older notification did not identify a video job. Open its listing to review saved video work."
         case .unavailableVideo: return "This video cannot be opened from this notification on this device. Open Listings to check your current saved work."
         case .switchLibrary(let name): return "This video belongs to \(name). Open Listings, switch to that library, and the saved review will continue."
@@ -215,6 +228,8 @@ enum NotificationContextNotice: Equatable {
     var destination: Destination? {
         switch self {
         case .olderPhoto, .unavailablePhoto, .switchPhotoLibrary, .olderVideo, .unavailableVideo, .switchLibrary, .firstTour: return .listings
+        case .switchLeadLibrary: return .listings
+        case .olderLead, .unavailableLead: return .leads
         case .planUsage: return .account
         case .uploadStuck, .other: return .activity
         case .operations: return nil
@@ -223,6 +238,7 @@ enum NotificationContextNotice: Equatable {
     var actionTitle: String? {
         switch destination {
         case .listings: return "Open Listings"
+        case .leads: return "Open Leads"
         case .activity: return "Open Activity"
         case .account: return "Open Account"
         case nil: return nil
@@ -254,7 +270,9 @@ final class PushManager: ObservableObject {
     @Published private(set) var pendingServerVideoReview: ServerVideoReviewTarget?
     /// A local photo completion reopens its saved listing's Photos screen.
     @Published private(set) var pendingPhotoReview: PhotoReviewTarget?
+    @Published private(set) var pendingLeadReview: LeadReviewTarget?
     @Published private(set) var pendingContextNotice: NotificationContextNotice?
+    @Published private(set) var notificationTapRevision: UInt64 = 0
 
     /// True once the app has shown its pre-prompt (or established that there is
     /// nothing to ask). Persisted: "we already asked" must survive a relaunch,
@@ -542,6 +560,7 @@ final class PushManager: ObservableObject {
         pendingReelJobID = nil
         pendingServerVideoReview = nil
         pendingPhotoReview = nil
+        pendingLeadReview = nil
         pendingContextNotice = nil
         showPrePrompt = false
         if !Self.isSuppressed {
@@ -580,7 +599,7 @@ final class PushManager: ObservableObject {
         localDataErasureRevision &+= 1
         registrationTask?.cancel(); registrationTask = nil; registrationOperation = nil
         registeredToken = nil; registeredIdentity = nil
-        pendingRoute = nil; pendingReelJobID = nil; pendingServerVideoReview = nil; pendingPhotoReview = nil; pendingContextNotice = nil; showPrePrompt = false
+        pendingRoute = nil; pendingReelJobID = nil; pendingServerVideoReview = nil; pendingPhotoReview = nil; pendingLeadReview = nil; pendingContextNotice = nil; showPrePrompt = false
         guard !Self.isSuppressed else { return }
         UIApplication.shared.unregisterForRemoteNotifications()
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
@@ -670,6 +689,15 @@ final class PushManager: ObservableObject {
 
     func handle(payload: [AnyHashable: Any], notificationIdentifier: String? = nil) {
         guard !Self.isSuppressed, Self.accepts(payload: payload, identity: Self.currentIdentity) else { return }
+        // Only an accepted tap supersedes earlier notification intent. Async
+        // consumers also compare their captured target before presenting.
+        notificationTapRevision &+= 1
+        pendingRoute = nil
+        pendingReelJobID = nil
+        pendingServerVideoReview = nil
+        pendingPhotoReview = nil
+        pendingLeadReview = nil
+        pendingContextNotice = nil
         let bag = (payload["rp"] as? [AnyHashable: Any]) ?? payload
         let type = ((payload["category"] as? String) ?? (bag["type"] as? String))?.lowercased() ?? ""
         let facts = (payload["data"] as? [AnyHashable: Any]) ?? bag
@@ -721,9 +749,20 @@ final class PushManager: ObservableObject {
         }
         if type == "upload_stuck" { pendingContextNotice = .uploadStuck; return }
         if type == "first_tour_nudge" { pendingContextNotice = .firstTour; return }
-        // A lead belongs to the account's inbox, not to one page — and that is
-        // the screen the person actually needs to act on it.
-        if type == "lead" || type == "leads" || type == "lead_received" {
+        // A private team inbox is scoped to the exact listing's library.
+        // A tour URL cannot identify or authorize that inbox.
+        if type == "lead_received" {
+            if let ownerRaw = payload["recipient_user_id"] as? String,
+               let owner = UUID(uuidString: ownerRaw),
+               let listingRaw = facts["listing_id"] as? String,
+               let listingID = UUID(uuidString: listingRaw) {
+                pendingLeadReview = .init(owner: owner, listingID: listingID)
+            } else {
+                pendingContextNotice = facts["listing_id"] == nil ? .olderLead : .unavailableLead
+            }
+            return
+        }
+        if type == "lead" || type == "leads" {
             pendingRoute = .leads
             return
         }
@@ -754,11 +793,14 @@ final class PushManager: ObservableObject {
     func clearPendingReelJob() { pendingReelJobID = nil }
     func clearPendingServerVideoReview() { pendingServerVideoReview = nil }
     func clearPendingPhotoReview() { pendingPhotoReview = nil }
+    func clearPendingLeadReview() { pendingLeadReview = nil }
     func clearPendingContextNotice() { pendingContextNotice = nil }
     func showUnavailableVideoNotice() { pendingContextNotice = .unavailableVideo }
     func showSwitchLibraryNotice(_ name: String) { pendingContextNotice = .switchLibrary(name) }
     func showUnavailablePhotoNotice() { pendingContextNotice = .unavailablePhoto }
     func showSwitchPhotoLibraryNotice(_ name: String) { pendingContextNotice = .switchPhotoLibrary(name) }
+    func showUnavailableLeadNotice() { pendingContextNotice = .unavailableLead }
+    func showSwitchLeadLibraryNotice(_ name: String) { pendingContextNotice = .switchLeadLibrary(name) }
 
     // MARK: Small facts
 

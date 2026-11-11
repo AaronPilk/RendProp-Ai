@@ -179,13 +179,26 @@ enum DeepLink: Equatable, Identifiable {
 enum NativeIncomingRoute: Equatable {
     case link(DeepLink)
     case leads
+    case notificationLink(DeepLink, revision: UInt64)
+    case notificationLeads(revision: UInt64)
     case pushPermission
     case invalidLink
+
+    var notificationRevision: UInt64? {
+        switch self {
+        case .notificationLink(_, let revision), .notificationLeads(let revision): return revision
+        default: return nil
+        }
+    }
 }
 struct NativeIncomingQueue: Equatable {
     private(set) var routes: [NativeIncomingRoute] = []
     private(set) var overflowed = false
     static let limit = 32
+
+    mutating func discardNotifications(before revision: UInt64) {
+        routes.removeAll { $0.notificationRevision.map { $0 < revision } ?? false }
+    }
 
     @discardableResult mutating func enqueue(_ route: NativeIncomingRoute) -> Bool {
         if routes.contains(route) { return true }

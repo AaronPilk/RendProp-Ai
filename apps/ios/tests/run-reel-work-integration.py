@@ -28,7 +28,7 @@ def block(s,anchor):
  raise RuntimeError('Unclosed '+anchor)
 # These consumer bindings accompany extracted-body execution. Actual SwiftUI
 # rendering and the queue engine remain separate real build/engine proofs.
-assert 'PhotoWorkBanner()\n            ReelWorkBanner()\n            tabs.id' in app
+assert 'PhotoWorkBanner()\n            ReelWorkBanner()\n            LeadNotificationReview()\n            tabs.id' in app
 assert 'UNUserNotificationCenter.current().delegate = PushDelegate.shared' in block(app,'didFinishLaunchingWithOptions launchOptions:')
 assert 'hasRestoredLibrary = true' in block(app,'    func load() async {')
 assert 'push.pendingContextNotice?.message' in app and 'notice.actionTitle' in app
@@ -66,16 +66,17 @@ assert 'showUnavailableVideoNotice()' in remote_review
 assert 'try await PropertyVideoJobHTTP.perform("GET", context: context, jobID: jobID)' in block(video_api,'    @MainActor func notifiedPropertyVideoJob(')
 assert 'PropertyVideoJobHTTP.download(result, requireCurrent:' in block(banner,'    private func load(refresh: Bool)')
 body='import Foundation\n'+block(banner,'enum ReelWorkBannerCopy {')+'\n'+block(banner,'@MainActor enum ReelWorkReviewAdmission {')+'\n'+block(push,'struct PhotoReviewTarget: Hashable {')+'\n'+block(push,'enum NotificationContextNotice: Equatable {')+'\n'+block(push,'enum ReelCompletionNotice {')+'\n'
-body+=block(push,'struct ServerVideoReviewTarget: Hashable {')+'\n'
+body+=block(push,'struct ServerVideoReviewTarget: Hashable {')+'\n'+block(push,'struct LeadReviewTarget: Hashable {')+'\n'
 body+='@MainActor enum RemoteVideoNotificationReview {\n'+block(banner,'    static func permits(reply:')+'\n}\n'
 body+='''@MainActor final class PushManager {
  static let shared=PushManager()
  static var currentIdentity:PushAccountIdentity?
  static let isSuppressed=false
  var localDataErasureRevision:UInt64=0
- var pendingRoute:PushRoute?;var pendingReelJobID:UUID?;var pendingServerVideoReview:ServerVideoReviewTarget?;var pendingPhotoReview:PhotoReviewTarget?;var pendingContextNotice:NotificationContextNotice?
+ var notificationTapRevision:UInt64=0
+ var pendingRoute:PushRoute?;var pendingReelJobID:UUID?;var pendingServerVideoReview:ServerVideoReviewTarget?;var pendingPhotoReview:PhotoReviewTarget?;var pendingLeadReview:LeadReviewTarget?;var pendingContextNotice:NotificationContextNotice?
 '''
-for anchor in ['    static func accepts(payload:','    private static func safeNotificationCopy(','    func handle(payload:','    func clearPendingReelJob()','    func clearPendingServerVideoReview()','    func clearPendingPhotoReview()','    func clearPendingContextNotice()','    func showUnavailableVideoNotice()','    func showUnavailablePhotoNotice()','    func showSwitchPhotoLibraryNotice(']:
+for anchor in ['    static func accepts(payload:','    private static func safeNotificationCopy(','    func handle(payload:','    func clearPendingReelJob()','    func clearPendingServerVideoReview()','    func clearPendingPhotoReview()','    func clearPendingLeadReview()','    func clearPendingContextNotice()','    func showUnavailableVideoNotice()','    func showUnavailablePhotoNotice()','    func showSwitchPhotoLibraryNotice(','    func showUnavailableLeadNotice()','    func showSwitchLeadLibraryNotice(']:
  body+=block(push,anchor)+'\n'
 body+='}\n'
 body+='''@MainActor final class ReviewJobs {
@@ -94,11 +95,19 @@ struct ReviewMembership {let id:UUID;let canRead:Bool;let displayName:String}
 }
 @MainActor final class ReviewModel {
  var listings:[Listing]=[];var hasRestoredLibrary=false;var workspace:ReviewWorkspace?
+ let api=ReviewCloud();var afterRefreshListings:[Listing]?;var refreshCount=0;var holdRefresh=false;var refreshContinuation:CheckedContinuation<Void,Never>?
+ func refreshCloudWorkspace()async{refreshCount+=1;if holdRefresh{await withCheckedContinuation{refreshContinuation=$0}};await Task.yield();if let afterRefreshListings{listings=afterRefreshListings}}
  func isInSelectedWorkspace(_ listing:Listing)->Bool{
   guard let selected=WorkspaceContext.selectedOrgID else{return false}
   return listing.workspaceID==selected && workspace?.canViewLibrary(selected)==true
  }
 }
+@MainActor protocol WorkspaceSyncAPI {func cloudListings()async throws->[Listing]}
+@MainActor final class ReviewCloud:WorkspaceSyncAPI {
+ var listings:[Listing]=[];var fail=false;var hold=false;var continuation:CheckedContinuation<Void,Never>?
+ func cloudListings()async throws->[Listing]{if hold{await withCheckedContinuation{continuation=$0}};if fail{throw CocoaError(.fileReadUnknown)};return listings}
+}
+@MainActor final class AuthStore {static let shared=AuthStore();var syncSessionRevision:UInt64{PushManager.currentIdentity?.revision ?? 0}}
 @MainActor enum NativePresentationAvailability {static var hasPresentedController=false}
 @MainActor final class BannerReviewHarness {
 let jobs=ReviewJobs();let model=ReviewModel()
@@ -110,6 +119,11 @@ body+='''@MainActor final class PhotoReviewHarness {
  var reviewListing:Listing?
  init(){model.workspace=workspace}
 '''+block(photo_banner,'    private func reviewPendingNotification()').replace('private func','func',1)+'\n}\n'
+body+='''@MainActor final class LeadReviewHarness {
+ let workspace=ReviewWorkspace();let model=ReviewModel();let push=PushManager.shared;let auth=AuthStore.shared
+ var reviewListing:Listing?
+ init(){model.workspace=workspace}
+'''+block(photo_banner,'    private func reviewPendingLeadNotification()').replace('private func','func',1)+'\n}\n'
 screen=paths[7].read_text();reel=screen[screen.index('struct ReelStudioView:'):]
 initializer=block(reel,'    init(listing: Listing, photos: [EnhancedPhoto], extraClipURLs: [URL] = [], reviewingJob: ReelWorkJob? = nil)')
 last=block(reel,'if !reviewingExistingJob { lastReel = Self.newestReel(for: listing.id) }')
@@ -170,6 +184,12 @@ controls=[
  ('remote-incomplete-source', 'result.sources.allSatisfy(\\.isComplete)', 'true', 'an incomplete source cannot authorize a remote preview'),
  ('remote-insecure-url', 'url.scheme == "https"', 'true', 'remote review refuses an insecure media URL'),
  ('unsafe-unknown-copy', 'copy.utf8.count <= limit', 'true', 'control characters and oversized OS copy cannot become in-app notice text'),
+ ('lead-ignored-listing-route', 'if type == "lead_received" {', 'if false {', 'emitted inquiry targets its exact listing instead of the tour or current account inbox'),
+ ('lead-wrong-listing', 'listings.first(where: { $0.serverID == target.listingID', 'listings.first(where: { true', 'a different accessible listing cannot substitute for the notified listing'),
+ ('lead-skipped-membership', 'workspace.canViewLibrary(library) else {', 'true else {', 'revoked membership cannot open a cached listing inbox'),
+ ('photo-skipped-switched-refresh', 'await model.refreshCloudWorkspace()', 'await Task.yield()', 'photo review waits for the switched library to refresh a previously unavailable listing'),
+ ('photo-presents-superseded-target', 'push.pendingPhotoReview == target,', 'true,', 'an earlier photo read cannot present after a newer accepted notification tap'),
+ ('retained-older-notification', '        pendingPhotoReview = nil\n        pendingLeadReview = nil', '        pendingLeadReview = nil', 'an earlier photo read cannot present after a newer accepted notification tap'),
 ]
 def inject_control(name, old, new):
  # The exact-job adapter deliberately repeats the same identity predicate.
@@ -179,6 +199,12 @@ def inject_control(name, old, new):
   target=block(body,'    static func listing(')
   assert old in target
   return body.replace(target,target.replace(old,new,1),1)
+ if name == 'bypassed-team-authority':
+  # The switched-library refresh now repeats this admission before and
+  # after the read. Corrupt both checks in the actual photo consumer.
+  photo_harness=body[body.index('@MainActor final class PhotoReviewHarness'):]
+  target=block(photo_harness,'    func reviewPendingNotification()')
+  return body.replace(target,target.replace(old,new),1)
  return body.replace(old,new,1)
 variants=[('actual',body,None)]+[(n,inject_control(n,old,new),reason)for n,old,new,reason in controls]
 receipt={'passed':False,'sourceHashes':before,'runs':[],'externalRequests':0,'limitations':['Actual copy/admission/notice/tap methods with closed OS and listing/job doubles. No live APNs, actual OS suspension, SwiftUI rendering or queue execution proof; those require separate app/engine/phone checks.']}

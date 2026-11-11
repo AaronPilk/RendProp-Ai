@@ -141,9 +141,10 @@ import Foundation
   check(!PushManager.accepts(payload:["recipient_user_id":b.uuidString],identity:nil),"Signed-out notification accepted")
   check(PushManager.accepts(payload:["recipient_user_id":b.uuidString],identity:bid),"Current account notification rejected")
   check(!PushManager.accepts(payload:["recipient_user_id":"malformed"],identity:bid),"Malformed recipient accepted")
-  let actualPayload:[AnyHashable:Any] = ["recipient_user_id":b.uuidString,"category":"lead_received","deep_link":"https://rendprop.com/f/synthetic-listing","data":["slug":"synthetic-listing"]]
+  let notifiedListing=UUID()
+  let actualPayload:[AnyHashable:Any] = ["recipient_user_id":b.uuidString,"category":"lead_received","deep_link":"https://rendprop.com/f/synthetic-listing","data":["slug":"synthetic-listing","listing_id":notifiedListing.uuidString]]
   let routes=PushManager();routes.handle(payload:actualPayload)
-  check(routes.pendingRoute == .leads,"Actual emitted lead notification did not open inbox")
+  check(routes.pendingLeadReview == .init(owner:b,listingID:notifiedListing) && routes.pendingRoute==nil,"Actual emitted lead notification did not open inbox")
   routes.pendingRoute=nil
   routes.handle(payload:["recipient_user_id":a.uuidString,"category":"lead_received","deep_link":"https://rendprop.com/f/synthetic-listing"])
   check(routes.pendingRoute==nil,"Foreign emitted lead notification opened a route")

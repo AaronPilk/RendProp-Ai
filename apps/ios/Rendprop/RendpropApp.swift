@@ -3909,6 +3909,10 @@ struct RendpropApp: App {
             // already set before this scene exists and no change is ever
             // delivered.
             .onChange(of: push.pendingRoute) { _ in consumePushRoute() }
+            .onChange(of: push.notificationTapRevision) { revision in
+                incomingQueue.discardNotifications(before: revision)
+                consumePushRoute()
+            }
             .task {
                 if push.showPrePrompt { incomingQueue.enqueue(.pushPermission) }
                 consumePushRoute()
@@ -3983,8 +3987,8 @@ struct RendpropApp: App {
         guard let route = push.pendingRoute else { return }
         let accepted: Bool
         switch route {
-        case .tour(let link): accepted = incomingQueue.enqueue(.link(link))
-        case .leads: accepted = incomingQueue.enqueue(.leads)
+        case .tour(let link): accepted = incomingQueue.enqueue(.notificationLink(link, revision: push.notificationTapRevision))
+        case .leads: accepted = incomingQueue.enqueue(.notificationLeads(revision: push.notificationTapRevision))
         }
         if accepted { push.clearPendingRoute() }
     }
@@ -4007,6 +4011,7 @@ struct RendpropApp: App {
     }
 
     @MainActor private func drainIncomingRoutes() {
+        incomingQueue.discardNotifications(before: push.notificationTapRevision)
         let canPresent = mayPresentIncomingRoutes && scenePhase == .active && incomingLink == nil && rootSheet == nil
             && !incomingLinkError && !PaywallRouter.shared.isPresented
             && !NativePresentationAvailability.hasPresentedController
@@ -4014,6 +4019,10 @@ struct RendpropApp: App {
         switch next {
         case .link(let link): incomingLink = link
         case .leads: rootSheet = .leadsInbox
+        case .notificationLink(let link, let revision):
+            if revision == push.notificationTapRevision { incomingLink = link }
+        case .notificationLeads(let revision):
+            if revision == push.notificationTapRevision { rootSheet = .leadsInbox }
         case .pushPermission: if push.showPrePrompt { rootSheet = .pushPrePrompt }
         case .invalidLink: incomingLinkError = true
         }
@@ -4114,6 +4123,7 @@ struct RootTabView: View {
         VStack(spacing: 0) {
             PhotoWorkBanner()
             ReelWorkBanner()
+            LeadNotificationReview()
             tabs.id(NativePresentationScope(actorID: workspaceAuth.userID,
                                             orgID: workspace.snapshot?.selectedOrgID))
         }
@@ -4140,6 +4150,7 @@ struct RootTabView: View {
                     push.clearPendingContextNotice()
                     switch destination {
                     case .listings: tab = NativeRootTab.listings.rawValue
+                    case .leads: tab = NativeRootTab.leads.rawValue
                     case .activity: tab = NativeRootTab.activity.rawValue
                     case .account: tab = NativeRootTab.account.rawValue
                     }
