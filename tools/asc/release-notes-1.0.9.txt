@@ -1,1 +1,1 @@
-Improved library loading, faster photo review, more reliable workspace updates, and clearer video export recovery.
+Improved library loading, more reliable photo and video recovery, and notifications that open the relevant saved work.
