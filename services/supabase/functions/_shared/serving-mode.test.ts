@@ -172,7 +172,7 @@ Deno.test("shared trial capacity refusal stops dispatch and emits availability i
     assert(!dispatched);
     assertEquals(error.status, 402);
     assertEquals(error.code, "trial_capacity_unavailable");
-    assertEquals(error.message, "Trial AI is temporarily unavailable. Nothing was charged. Please try again later or contact support.");
+    assertEquals(error.message, "Trial access is temporarily unavailable. Please contact support if Apple already confirmed a purchase.");
     assertEquals(f.calls.map(call => call.name), ["serving_cost_reserve", "serving_operation_no_dispatch"]);
   }
 });
@@ -246,6 +246,15 @@ Deno.test("ceiling mode converts exact signed Production free-intro receipt befo
   const refusal=await assertRejects(()=>fundVerifiedAppleTransaction(async name=>{calls.push(name);return {data:{funded:false,reason:"trial_purchase_not_reserved"},error:null};},"o",tx as never),HttpError);
   assertEquals(refusal.status,503);
   assertEquals(calls,["fund_reserved_subscription_trial","fund_reserved_subscription_trial"]);
+  const missingSnapshot=await assertRejects(()=>fundVerifiedAppleTransaction(async name=>{
+    calls.push(name);return {data:null,error:{message:"RP402: Cash-held trial media snapshot is unavailable"}};
+  },"o",tx as never),HttpError);
+  assertEquals(missingSnapshot.status,402);
+  assertEquals(missingSnapshot.code,"trial_capacity_unavailable");
+  const unrelatedRpc=await assertRejects(()=>fundVerifiedAppleTransaction(async name=>{
+    calls.push(name);return {data:null,error:{message:"RP402: Other subscription gate"}};
+  },"o",tx as never),HttpError);
+  assertEquals(unrelatedRpc.status,503);
   const refund=await fundVerifiedAppleTransaction(async name=>{calls.push(name);return {data:{funded:false,reason:"revoked"},error:null};},"o",{...tx,revocationDate:now.toISOString()} as never);
   assertEquals(refund,{funded:false,reason:"revoked"});assertEquals(calls.at(-1),"fund_reserved_subscription_trial");
   assertEquals(await fundVerifiedAppleTransaction(async()=>{throw Error("Sandbox dispatch");},"o",{...tx,environment:"Sandbox"} as never),{funded:false,reason:"sandbox"});

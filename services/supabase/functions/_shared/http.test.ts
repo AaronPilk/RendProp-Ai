@@ -60,9 +60,20 @@ Deno.test("trial pool RPC refusals retain a distinct availability code in the wi
     assertEquals(response.status, 402);
     assertEquals(await response.json(), {
       code: "trial_capacity_unavailable",
-      error: "Trial AI is temporarily unavailable. Nothing was charged. Please try again later or contact support.",
+      error: "Trial access is temporarily unavailable. Please contact support if Apple already confirmed a purchase.",
     });
   }
+  for (const message of [
+    "Cash-held trial media snapshot is unavailable",
+    "Test-trial sponsor allocation is closed or too short",
+    "Test-trial sponsor allocation has less than one trial envelope",
+  ]) {
+    const error = assertThrows(() => throwRpc(`RP402: ${message}`), HttpError);
+    assertEquals(error.status, 402);
+    assertEquals(error.code, "trial_capacity_unavailable");
+  }
+  const unrelated = assertThrows(() => throwRpc("RP402: Subscription plan required"), HttpError);
+  assertEquals(unrelated.code, "plan_required");
   for (const kind of ["free", "trial", "retail"]) {
     const error = assertThrows(() => throwRpc(`RP402: AI usage limit reached [kind=${kind}]`), HttpError);
     assertEquals(error.code, "quota_exceeded");

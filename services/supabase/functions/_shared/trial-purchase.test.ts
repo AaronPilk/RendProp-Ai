@@ -20,6 +20,26 @@ Deno.test("new Pro SKU can reserve and recover its own exact seven-day trial",as
  const recover={rpc:(name:string,args:unknown)=>{assertEquals(name,"subscription_trial_reserved_workspace");assertEquals(args,{p_actor:actor,p_product:pro});return Promise.resolve({data:org,error:null});}};
  assertEquals(await reservedTrialWorkspace(recover,{...tx(),productId:pro}),org);
 });
+Deno.test("explicit StoreKit environment routes Sandbox through preflight and leaves Production and legacy replay unchanged",async()=>{
+ const names:string[]=[];const data=receipt();
+ const admin={rpc:(name:string,args:unknown)=>{names.push(name);assertEquals(args,{p_actor:actor,p_org:org,p_product:product});return Promise.resolve({data,error:null});}};
+ assertEquals(await prepareTrialPurchase(admin,actor,org,{...body(),purchase_environment:"Sandbox"}),data);
+ assertEquals(await prepareTrialPurchase(admin,actor,org,{...body(),purchase_environment:"Production"}),data);
+ assertEquals(await prepareTrialPurchase(admin,actor,org,body()),data);
+ assertEquals(names,["prepare_sandbox_intro_trial_purchase","prepare_production_intro_trial_purchase","prepare_subscription_trial_purchase"]);
+ for(const value of [null,"TestFlight","sandbox",123]){
+  const error=await assertRejects(()=>prepareTrialPurchase(admin,actor,org,{...body(),purchase_environment:value}),HttpError);
+  assertEquals(error.status,400);
+ }
+ assertEquals(names.length,3);
+});
+Deno.test("Sandbox sponsor preflight refusal is typed before any held purchase response",async()=>{
+ const calls:string[]=[];
+ const admin={rpc:(name:string)=>{calls.push(name);return Promise.resolve({data:null,error:{message:"RP402: Test-trial sponsor allocation is closed or too short"}});}};
+ const error=await assertRejects(()=>prepareTrialPurchase(admin,actor,org,{...body(),purchase_environment:"Sandbox"}),HttpError);
+ assertEquals(error.status,402);assertEquals(error.code,"trial_capacity_unavailable");
+ assertEquals(calls,["prepare_sandbox_intro_trial_purchase"]);
+});
 Deno.test("trial held and prepare preserve each exact five-to-twenty photo reservation without new authority",async()=>{
  for(const cap of [5,6,20]){
   const data=receipt();data.trial_offer.photo_edits=cap;const calls:string[]=[];

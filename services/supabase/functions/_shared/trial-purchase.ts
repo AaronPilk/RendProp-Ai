@@ -1,4 +1,4 @@
-import { assert, HttpError } from "./http.ts";
+import { assert, HttpError, throwRpc } from "./http.ts";
 import type { AppleTransaction } from "./applejws.ts";
 const products = ["com.rendprop.app.pro29.monthly","com.rendprop.app.starter.monthly","com.rendprop.app.starter.annual","com.rendprop.app.pro.monthly","com.rendprop.app.pro.annual","com.rendprop.app.team.monthly"];
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -14,14 +14,16 @@ export async function heldTrialPurchase(admin:any,actor:string,org:string):Promi
  assert(!error,503,unavailable);return data===null?null:held(data,actor,org);
 }
 export async function prepareTrialPurchase(admin:any,actor:string,org:string,body:unknown):Promise<HeldTrialPurchase> {
- const request=body as {actor_id?:unknown;app_account_token?:unknown;org_id?:unknown;product_id?:unknown}|null;
+ const request=body as {actor_id?:unknown;app_account_token?:unknown;org_id?:unknown;product_id?:unknown;purchase_environment?:unknown}|null;
  assert(request&&request.actor_id===actor&&request.app_account_token===actor,403,"The trial must be prepared by its authenticated buying account.");
  assert(request.org_id===org,409,"Your workspace changed. Refresh before preparing a trial purchase.");
  assert(typeof request.product_id==="string"&&products.includes(request.product_id),400,"Choose a supported subscription product.");
- const {data,error}=await admin.rpc("prepare_subscription_trial_purchase",{p_actor:actor,p_org:org,p_product:request.product_id});
+ assert(request.purchase_environment===undefined||request.purchase_environment==="Production"||request.purchase_environment==="Sandbox",400,"A supported Apple purchase environment is required.");
+ const rpc=request.purchase_environment==="Sandbox"?"prepare_sandbox_intro_trial_purchase":request.purchase_environment==="Production"?"prepare_production_intro_trial_purchase":"prepare_subscription_trial_purchase";
+ const {data,error}=await admin.rpc(rpc,{p_actor:actor,p_org:org,p_product:request.product_id});
  if(error) {
   const match=/RP(\d{3}):\s*(.*)/.exec(String(error.message??""));
-  if(match && [402,403,409].includes(Number(match[1])))throw new HttpError(Number(match[1]),match[2]);
+  if(match && [402,403,409].includes(Number(match[1])))throwRpc(error.message);
   throw new HttpError(503,unavailable,"upstream");
  }
  return held(data,actor,org,request.product_id);

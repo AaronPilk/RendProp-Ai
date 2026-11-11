@@ -1,6 +1,6 @@
 // Invoked only after signature verification and successful entitlement chronology.
 import type { AppleTransaction } from "./applejws.ts";
-import { HttpError } from "./http.ts";
+import { HttpError, isTrialCapacityRefusal, throwRpc } from "./http.ts";
 import { inputHash, servingMode, type FundingContext } from "./funded-serving.ts";
 export async function fundVerifiedAppleTransaction(rpc:FundingContext["rpc"],orgId:string,tx:AppleTransaction):Promise<unknown> {
  if(tx.environment!=="Production")return {funded:false,reason:"sandbox"};
@@ -28,6 +28,7 @@ export async function fundVerifiedAppleTransaction(rpc:FundingContext["rpc"],org
  const boundRetail=typeof tx.priceMilliunits === "number" && tx.priceMilliunits>0 && tx.appAccountToken!==null;
  const proof={...facts,...(reservedTrial||boundRetail?{p_actor:tx.appAccountToken??null}:{})};
  const result=await rpc(reservedTrial?"fund_reserved_subscription_trial":boundRetail?"fund_verified_retail_apple_transaction":"fund_verified_apple_transaction",{...proof,p_evidence_sha256:await inputHash(proof)});
+ if(reservedTrial&&result.error&&isTrialCapacityRefusal(String(result.error.message??"")))throwRpc(result.error.message);
  if(result.error||(reservedTrial&&!tx.revocationDate&&tx.expiresDate!==null&&Date.parse(tx.expiresDate)>Date.now()&&
    (typeof result.data!=="object"||result.data===null||(result.data as Record<string,unknown>).funded!==true))||(newCreditPeriod&&
    (typeof result.data!=="object"||result.data===null||
