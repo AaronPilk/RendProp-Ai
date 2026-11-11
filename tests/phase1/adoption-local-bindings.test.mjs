@@ -59,6 +59,8 @@ test('actual AppModel method bodies + complete PersistentStore execute durable l
     'func forgetServerIdentities(', 'func prepareLocalAdoption(', 'func confirmLocalAdoption(',
     'func restoreAdoptedProductionLibrary(', 'func pendingAdoptionBlocksServerListing(', 'func discardLocalAdoption(', 'var workspaceSwitchIsBusy:', 'func prepareWorkspaceSwitch(', 'func isInSelectedWorkspace(', 'func ensureServerListing(', 'func index(of ', 'func load()',
     'func reconcileAfterRestore()', 'func reseedSamples()', 'func persist()'].map(declaration).join('\n');
+  const planMessage = modelSource.match(/^    static let draftCreationPlanMessage = .+$/gm);
+  assert.equal(planMessage?.length, 1, 'extract the one actual draft creation plan message');
   const store = app.slice(app.indexOf('enum PersistentStore {'), app.indexOf('// MARK: - Entry'));
   assert.ok(store.includes('extension PersistentStore.PersistedState'));
   const videoStore = readFileSync(root + 'apps/ios/Rendprop/Models/ListingVideo.swift', 'utf8');
@@ -76,6 +78,7 @@ enum WorkspaceContext {
  static func read(owner: UUID) -> Snapshot? { ownerSelections[owner].map { Snapshot(selectedOrgID: $0) } }
 }
 enum AccountExportFiles { static func purge() {} }
+enum APIError: Error { case server(status: Int, code: String?, message: String) }
 enum ListingVideoStore { ${pendingFile[0]} }
 @MainActor final class WorkspaceStore { static let shared = WorkspaceStore(); func refresh() async {}; func canViewLibrary(_ org: UUID) -> Bool { org == WorkspaceContext.selectedOrgID } }
 enum FileStore {
@@ -115,6 +118,7 @@ enum FileStore {
  func deleteListing(serverID:UUID) async throws { deleted.append(serverID) }
 }
 @MainActor final class AppModel {
+${planMessage[0]}
  var listings:[Listing]=[] { didSet { persist() } }
  var assets:[UUID:CaptureAsset]=[:]; var tours:[UUID:RenderedTour]=[:]; var renders:[UUID:Render]=[:]
  var uploadedRenderAssets:[UUID:UploadedRenderAsset]=[:]; var pendingPublish:[UUID]=[]
