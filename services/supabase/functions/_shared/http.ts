@@ -275,9 +275,9 @@ export function round4(n: number): number {
 // A shared trial allocation is an operator availability boundary, not the
 // customer's usage quota. Keep its wire code distinct from upgrade prompts.
 export const TRIAL_CAPACITY_UNAVAILABLE_MESSAGE =
-  "Trial AI is temporarily unavailable. Nothing was charged. Please try again later or contact support.";
+  "Trial access is temporarily unavailable. Please contact support if Apple already confirmed a purchase.";
 export function isTrialCapacityRefusal(message: string): boolean {
-  return /RP402:\s*Free-trial AI limit reached \[pool=(?:cap|closed)\]/.test(message);
+  return /RP402:\s*(?:Free-trial AI limit reached \[pool=(?:cap|closed)\]|Cash-held trial media snapshot is unavailable|Test-trial sponsor allocation (?:is closed or too short|has less than one trial envelope))$/.test(message);
 }
 
 /**
