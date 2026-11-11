@@ -89,8 +89,8 @@ assert 'sandbox_testing_required' in block(src['Purchases/PurchaseManager.swift'
 floor_view = src['Screens/CloudMediaView.swift']
 assert 'mediaContext == context(org: org, listingID: sid)' in block(floor_view, 'private var floorPlanURL:')
 assert 'CloudFloorPlanLink.resolve' in block(floor_view, 'private var floorPlanURL:')
-assert 'current.serverOrgID == org' in block(floor_view, '@MainActor private func load(')
-assert 'mediaContext = context(org: org, listingID: sid)' in block(floor_view, '@MainActor private func load(')
+assert 'current.serverOrgID == org' in block(floor_view, '@MainActor private func load(more:')
+assert 'mediaContext = context(org: org, listingID: sid)' in block(floor_view, '@MainActor private func load(more:')
 
 interfaces = '''
 import Foundation
