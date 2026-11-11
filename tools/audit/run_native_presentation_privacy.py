@@ -117,12 +117,18 @@ CONTACT
     inputs = [app_path, detail_path, test_path, Path(__file__).resolve()]
     receipt = {"accepted": False, "network": 0, "camera": 0, "sourceRoot": str(root), "sourceHashes": {
         str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs}, "runs": []}
-    # The cloud read adds an earlier guard. These scan controls must remove the
-    # exact post-scan guard, so an unchanged later guard cannot mask the fault.
+    # Both guards now have the same text. Bind the negative controls to the
+    # guard after the scan, where a stale result could update visible files.
+    post_scan_guard = ("guard let scan = await ListingMediaItem.scan(request, since: since) else { return }\n"
+                       "            guard !Task.isCancelled, expectedScope == presentationScope,\n"
+                       "                  hasCurrentPresentationContext else { return }")
+    require(generated.count(post_scan_guard) == 1, "Post-scan presentation guard must occur exactly once")
     controls = [
         ("no-account-fence", "self.actorID == actorID && self.orgID == orgID", "self.orgID == orgID", "Another account invalidates presentation"),
         ("no-workspace-fence", "self.actorID == actorID && self.orgID == orgID", "self.actorID == actorID", "Another workspace invalidates presentation"),
-        ("late-scan-publishes", "!Task.isCancelled, expectedScope == presentationScope,\n                  hasCurrentPresentationContext else { return }", "!Task.isCancelled, expectedScope == presentationScope,\n                  true else { return }", "Late file scan cannot publish after account switch"),
+        ("late-scan-publishes", post_scan_guard,
+         post_scan_guard.replace("hasCurrentPresentationContext else", "true else"),
+         "Late file scan cannot publish after account switch"),
         ("keeps-local-files", "mediaItems = []; availableRerenderSource", "availableRerenderSource", "Invalidation clears old local-file presentation"),
         ("keeps-package-extras", "filePackageExtras = []; packageError = nil", "packageError = nil", "Account invalidation clears old listing package extras"),
         ("keeps-package-error", "filePackageExtras = []; packageError = nil", "filePackageExtras = []", "Account invalidation clears old listing package error"),
@@ -141,7 +147,9 @@ CONTACT
         ("keeps-verified-link", "linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "linkShareTarget = nil; resolvingBuyerLinkKey = nil", "Invalidation clears the old verified buyer link"),
         ("keeps-link-lookup", "linkShareTarget = nil; verifiedBuyerLink = nil; resolvingBuyerLinkKey = nil", "linkShareTarget = nil; verifiedBuyerLink = nil", "Invalidation clears the old buyer-link lookup identity"),
         ("keeps-withdrawn-link", "withdrawnBuyerLinkKey = nil", "// omitted withdrawn buyer-link reset", "Invalidation clears the old withdrawn buyer link identity"),
-        ("ignores-scan-cancellation", "!Task.isCancelled, expectedScope == presentationScope,\n                  hasCurrentPresentationContext else { return }", "true, expectedScope == presentationScope,\n                  hasCurrentPresentationContext else { return }", "Cancelled scan cannot restore files after invalidation"),
+        ("ignores-scan-cancellation", post_scan_guard,
+         post_scan_guard.replace("!Task.isCancelled, expectedScope", "true, expectedScope"),
+         "Cancelled scan cannot restore files after invalidation"),
         ("stale-contact-dispatch", "!Task.isCancelled, hasCurrentPresentationContext, !currentListing.isSample", "!Task.isCancelled, !currentListing.isSample", "Stale account cannot dispatch listing contact request"),
         ("actor-global-indexing", 'return "\\(actor.lowercased()):\\(org.uuidString.lowercased())"', 'return actor.lowercased()', "Indexing opt-in cannot carry into another workspace"),
         ("workspace-global-indexing", 'return "\\(actor.lowercased()):\\(org.uuidString.lowercased())"', 'return org.uuidString.lowercased()', "Indexing opt-in cannot carry into another account"),
