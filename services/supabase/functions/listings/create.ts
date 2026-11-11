@@ -1,6 +1,10 @@
-import { HttpError } from "../_shared/http.ts";
+import { HttpError, throwRpc } from "../_shared/http.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LISTING_PLAN_REFUSALS = new Set([
+  "RP402: Listing creation starts after the free week",
+  "RP402: Unpaid access includes one listing",
+]);
 
 /** Only the explicit per-draft contract opts in; older callers keep their
  * existing create behavior. The server, never the payload, chooses the ID. */
@@ -26,8 +30,15 @@ export async function createListingRow(db: any, patch: Record<string, unknown>, 
   // STABLE listing SELECT policies re-read the row. INSERT RETURNING cannot
   // see that new row in its statement snapshot; a fresh caller-RLS read can.
   const inserted = await db.from("listings").insert(row);
-  if (inserted.error && !(id && inserted.error.code === "23505"))
+  if (inserted.error && !(id && inserted.error.code === "23505")) {
+    // Only the listing admission trigger's known plan refusals are safe to
+    // surface as typed purchase boundaries. Other SQL failures stay opaque.
+    if (inserted.error.code === "P0001" &&
+        typeof inserted.error.message === "string" &&
+        LISTING_PLAN_REFUSALS.has(inserted.error.message.trim()))
+      throwRpc(inserted.error.message);
     throw new HttpError(400, "The listing could not be created. Check your workspace access and listing details.");
+  }
   const saved = await db.from("listings").select("*").eq("id", target).eq("org_id", orgId).eq("agent_id", ownerId).is("deleted_at", null).maybeSingle();
   if (saved.error) throw new HttpError(503, "The saved listing could not be checked. Refresh before trying again.");
   if (!saved.data) throw new HttpError(409, "This listing was deleted or is no longer available. Create a new listing to start again.");
