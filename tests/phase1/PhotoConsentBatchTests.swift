@@ -103,6 +103,9 @@ protocol NotificationPrefsAPI { func notificationPrefs() async throws -> Notific
     var listings: [Listing]
     let api = ConsentAPI()
     init(_ listing: Listing) { listings = [listing] }
+    // Notification routing is outside this offline consent/queue fixture and
+    // has its own source-bound account and library admission tests.
+    func isInSelectedWorkspace(_ listing: Listing) -> Bool { true }
     func serverListingIDForCompliance(_ id: UUID) async -> UUID? {
         let photo = PhotoBoundary.entered.last?.components(separatedBy: ":").last ?? "unknown"
         await PhotoBoundary.suspend("listing", photo)

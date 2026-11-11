@@ -124,7 +124,7 @@ enum FileStore {
  var cloudPhotoStates:[UUID:CloudPhotoState]=[:]
  var cloudPhotoNotices:[UUID:String]=[:]
  var cloudPhotoReadGeneration:[UUID:UUID]=[:]
- var hasLoaded=false; var isRestoring=false; var syncInFlight:Set<UUID>=[]; var publishInFlight:Set<UUID>=[]
+ var hasLoaded=false; var hasRestoredLibrary=false; var isRestoring=false; var syncInFlight:Set<UUID>=[]; var publishInFlight:Set<UUID>=[]
  var clientContactSyncInFlight:Set<UUID>=[]
  var cloudRefreshTask:Task<Void,Never>?; var cloudRefreshOperation:UUID?
  var cloudSyncError:String?; var lastCloudSyncAt:Date?
