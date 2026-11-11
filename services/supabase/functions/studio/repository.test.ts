@@ -9,6 +9,7 @@ import {
   type StudioRepositoryDependencies,
 } from "./repository.ts";
 import { HttpError } from "../_shared/http.ts";
+import { admitMediaRead } from "../_shared/media-delivery-admission.ts";
 import { createStudioHandler, PAGE_SIZE, type PhotoRow } from "./handler.ts";
 
 const user = "10000000-0000-4000-8000-000000000001";
@@ -32,8 +33,10 @@ function logic(row:Record<string,unknown>,term:string):boolean {
  return negated?(actual!=null&&!match):match;
 }
 
-function fixture() {
+function fixture(fixtureRequest = req) {
   const events: string[] = [];
+  const rpcNames: string[] = [];
+  let publicationRows: unknown;
   const queries: { table: string; operations: [string, ...unknown[]][] }[] = [];
   const results: Record<string, Result> = {
     orgs: { data: { id: org }, error: null },
@@ -44,7 +47,11 @@ function fixture() {
     media_provenance: { data: [], error: null },
   };
   const client = {
-    rpc(_name: string, args: Record<string, string[]>) { return Promise.resolve({ data: { assets: Object.fromEntries(args.p_assets.map(id => [id, true])), renders: Object.fromEntries(args.p_renders.map(id => [id, true])), keys: Object.fromEntries(args.p_keys.map(key => [key, true])) }, error: null }); },
+    rpc(name: string, args: Record<string, string[]>) {
+      rpcNames.push(name);
+      if (name !== "studio_presenter_media_visibility") return Promise.resolve({ data: null, error: { message: "permission denied for authenticated" } });
+      return Promise.resolve({ data: { assets: Object.fromEntries(args.p_assets.map(id => [id, true])), renders: Object.fromEntries(args.p_renders.map(id => [id, true])), keys: Object.fromEntries(args.p_keys.map(key => [key, true])), ...(publicationRows === undefined ? {} : { photo_publications: publicationRows }) }, error: null });
+    },
     from(table: string) {
       events.push(table);
       const operations: [string, ...unknown[]][] = [];
@@ -111,13 +118,14 @@ function fixture() {
   } as unknown as SupabaseClient;
   let clientCalls = 0;
   const deps: StudioRepositoryDependencies = {
+    adminClient: () => client,
     userClient(request) {
-      assertEquals(request, req);
+      assertEquals(request, fixtureRequest);
       clientCalls++;
       return client;
     },
     async getUser(request) {
-      assertEquals(request, req);
+      assertEquals(request, fixtureRequest);
       events.push("auth");
       return { id: user } as User;
     },
@@ -126,7 +134,7 @@ function fixture() {
       events.push("deletion");
     },
     async activeOrg(id) {
-      return await client.from("orgs").select("id").eq("id",id).is("deleted_at",null).abortSignal(req.signal).maybeSingle() as {data:{id:string}|null;error:unknown};
+      return await client.from("orgs").select("id").eq("id",id).is("deleted_at",null).abortSignal(fixtureRequest.signal).maybeSingle() as {data:{id:string}|null;error:unknown};
     },
     async listingScope(subject, requested) {
       assertEquals([subject, requested], [user, listing]);
@@ -134,7 +142,7 @@ function fixture() {
       return {actor_id:user,org_id:org,library_org_id:org,can_read:true};
     },
   };
-  return { deps, events, queries, results, clientCalls: () => clientCalls };
+  return { deps, events, queries, results, rpcNames, publicationRows: (rows: unknown) => { publicationRows = rows; }, clientCalls: () => clientCalls };
 }
 
 Deno.test("real adapter checks Auth, deletion, membership, live org then scoped live listing", async () => {
@@ -174,6 +182,50 @@ Deno.test("real adapter checks Auth, deletion, membership, live org then scoped 
     2,
     "listing authority must never be cached across rechecks",
   );
+});
+
+Deno.test("published Studio photo uses authenticated visibility and service-only delivery admission", async () => {
+  const mediaRequest = new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
+  const f = fixture(mediaRequest);
+  const source = "40000000-0000-4000-8000-000000000004";
+  const output = "50000000-0000-4000-8000-000000000005";
+  const publication = "60000000-0000-4000-8000-000000000006";
+  const original = `renders/${org}/${listing}/original-${source}.jpg`;
+  const altered = `renders/${org}/${listing}/gallery-${output}.jpg`;
+  const evidence = `ai-router/${org}/photo-evidence/${source}/${output}/`;
+  const objects = [original, altered, `${evidence}input.jpg`, `${evidence}candidate.jpg`]
+    .map(key => ({ key, bucket: "renders", bytes: 100, mime: "image/jpeg", etag: '"exact"' }));
+  f.publicationRows([{ publication_id: publication, org_id: org, listing_id: listing,
+    assets: [source, output], keys: [original, altered], objects }]);
+  f.results.photos.data = [{ id: output, listing_id: listing, original_key: original,
+    enhanced_key: altered, caption: "Published", is_staged: true, sort: 0,
+    created_at: "2026-10-20T00:00:00Z" }];
+  const serviceRPCs: string[] = [];
+  f.deps.adminClient = () => ({ rpc: async (name: string, args: Record<string, unknown>) => {
+    serviceRPCs.push(name);
+    assertEquals(name, "media_delivery_admit");
+    assertEquals(args, { p_org: org, p_bytes: 0, p_required: false });
+    return { data: { admitted: true, legacy_unbudgeted: false }, error: null };
+  } }) as unknown as SupabaseClient;
+  f.deps.publicationHeadIO = {
+    head: async object => ({ exists: true, bytes: object.bytes, contentType: object.mime, etag: object.etag }),
+    admit: (db, billingOrg) => admitMediaRead(db, billingOrg, 0, false),
+  };
+  const signed: string[] = [];
+  const handler = createStudioHandler({ ...createStudioRepository(mediaRequest, f.deps),
+    rateLimit: async () => true,
+    sign: async (_bucket, key) => { signed.push(key); return `https://fixture.invalid/${encodeURIComponent(key)}`; },
+    now: () => 0,
+  });
+  const response = await handler(mediaRequest);
+  const body = await response.json();
+  assertEquals(response.status, 200);
+  assertEquals(body.photos.map((photo: { id: string }) => photo.id), [output]);
+  assertEquals(body.photos[0].original_verified, false);
+  assertEquals(signed, [altered, original]);
+  assertEquals(serviceRPCs.length, 8); // Four exact objects at each visibility fence.
+  assertEquals(f.rpcNames, Array(4).fill("studio_presenter_media_visibility"));
+  assertEquals(f.events.filter(event => event === "listing-scope").length, 2);
 });
 
 Deno.test("deletion and removed membership failures prevent tenant reads", async () => {

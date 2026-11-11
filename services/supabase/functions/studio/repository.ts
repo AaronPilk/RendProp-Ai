@@ -1,10 +1,13 @@
 import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2.116.0";
 import { mediaVisibility } from "../_shared/media-source-access.ts";
+import type { PublicationHeadIO } from "../_shared/photo-publication-visibility.ts";
 import { HttpError } from "../_shared/http.ts";
 import { PAGE_SIZE, type StudioDependencies, type PhotoEditProof } from "./handler.ts";
 
 export interface StudioRepositoryDependencies {
   userClient(req: Request): SupabaseClient;
+  adminClient(): SupabaseClient;
+  publicationHeadIO?: PublicationHeadIO;
   getUser(req: Request): Promise<User>;
   assertNotDeleting(userId: string): Promise<void>;
   activeOrg(orgId: string): Promise<{data: {id:string}|null;error: unknown}>;
@@ -34,7 +37,10 @@ export function createStudioRepository(
   let client: SupabaseClient | undefined;
   const db = () => client ??= deps.userClient(req);
   return {
-    mediaVisibility: (scope, refs) => mediaVisibility(db(), scope.listingId, refs),
+    mediaVisibility: (scope, refs) => mediaVisibility(db(), scope.listingId, refs, {
+      admissionClient: deps.adminClient(),
+      headIO: deps.publicationHeadIO,
+    }),
     async authorize(request, orgId, listingId) {
       const user = await deps.getUser(request);
       await deps.assertNotDeleting(user.id);
