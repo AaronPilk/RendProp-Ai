@@ -335,6 +335,21 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         // Inspect only: package rendering and the system share action are not invoked.
     }
 
+    func testRichListingShowsLocallyScannedFiles() {
+        launch("rich")
+        let files = app.staticTexts["YOUR FILES"]
+        scrollTo(files)
+        XCTAssertTrue(files.isHittable, app.debugDescription)
+        let count = app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", "[1-9][0-9]* files?"))
+            .firstMatch
+        XCTAssertTrue(count.waitForExistence(timeout: 5),
+                      "The local scan should publish a nonempty file count: \(app.debugDescription)")
+        XCTAssertEqual(count.label, "5 files", "Three photos, the tour, and aerial intro should be visible")
+        XCTAssertTrue(app.buttons["detail.files.shareAllPhotos"].exists,
+                      "The scanned photos should expose the local share action")
+        attach("detail-rich-local-files")
+    }
+
     func testRepublishSameLinkAndRecentlyDeletedNavigation() {
         launch("republish")
         let publish = app.buttons["detail.republish"]; scrollTo(publish)
