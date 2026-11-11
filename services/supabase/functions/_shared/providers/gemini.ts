@@ -10,8 +10,8 @@
 //    2026-10-02; the 3.1 migration has to be a row edit in ai_routes, not a
 //    deploy. Nothing in this file names a default model.
 //  • Normal 3.x routes explicitly request imageConfig.imageSize = "1K".
-//    Server-prepared, prospectively priced ai-photo edits explicitly request 2K;
-//    owner-only comparisons retain their separate resolution contracts.
+//    Server-prepared, prospectively priced ai-photo edits explicitly request4K;
+//    the existing owner comparison retains its separate2K contract.
 //    The 3.x image models bill by output resolution and their default is not 1K
 //    on every surface — an implicit default is how you silently start paying 4K
 //    rates for a 1K product.
@@ -38,29 +38,21 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // The legacy GenerateContent hard cutoff includes thoughts and output. The
 // serving quote reads the same generation config that is sent to the provider.
 export const GEMINI_IMAGE_MAX_OUTPUT_TOKENS = 4096;
-// The native Developer API cannot request JPEG compression. Supplier image
-// bytes retain their exact pixels/format within the tested output envelope.
-// Prepared 2K/4K photo requests opt in to a bounded response reader.
+// The native Developer API cannot request JPEG compression. A real4K PNG
+// retains its exact pixels/format within the separately tested output envelope.
+// Only prospective normal4K submits opt in; old provider paths are unchanged.
 export const GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES=PHOTO_OUTPUT_MAX_WIRE_BYTES;
-// Server-verified, prospectively priced 2K/4K routes receive this longer
-// header+body deadline. Other image/provider submits keep the shared 30s budget.
+// Only the server-verified, prospectively priced4K route receives this longer
+// header+body deadline. Other image/provider submits keep the shared30s budget.
 export const GEMINI_PHOTO_4K_SUBMIT_MS=90_000;
-interface PreparedPhotoRequestBudget {deadline:number;signal:AbortSignal}
+interface Photo4KRequestBudget {deadline:number;signal:AbortSignal}
 /** Timing is request-local, never serialized into the immutable funded input. */
-export async function submitPreparedGeminiPhoto(step:RouteStep,input:GenerateInput,budget:PreparedPhotoRequestBudget):Promise<JobRef>{
- const size=paramsOf(step)?.image_size;
- if(step.provider!==PROVIDER||!
-   (size==="2K"&&input.extra?.photo_quality_2k===true&&photo2KInputAllowance(input)!==null||
-    size==="4K"&&photo4KInputAllowance(input)!==null))
-  throw new ProviderError(PROVIDER,"validation","The timed photo submit requires its verified priced route.");
+export async function submitPreparedGeminiPhoto4K(step:RouteStep,input:GenerateInput,budget:Photo4KRequestBudget):Promise<JobRef>{
+ if(step.provider!==PROVIDER||paramsOf(step)?.image_size!=="4K"||photo4KInputAllowance(input)===null)
+  throw new ProviderError(PROVIDER,"validation","The timed4K submit requires its verified priced route.");
  if(!Number.isSafeInteger(budget.deadline)||budget.deadline<=Date.now()||budget.signal.aborted)
   throw new ProviderError(PROVIDER,"timeout","The photo request deadline ended before dispatch.",0,true);
  return submitGeminiImage(step,input,budget);
-}
-/** Existing owner comparison callers retain this exact 4K-only selector. */
-export async function submitPreparedGeminiPhoto4K(step:RouteStep,input:GenerateInput,budget:PreparedPhotoRequestBudget):Promise<JobRef>{
- if(paramsOf(step)?.image_size!=="4K")throw new ProviderError(PROVIDER,"validation","The timed 4K submit requires its verified priced route.");
- return submitPreparedGeminiPhoto(step,input,budget);
 }
 
 function geminiKey(): string {
@@ -139,7 +131,7 @@ function textParts(data: any): string[] {
   return out;
 }
 
-async function submitGeminiImage(step:RouteStep,input:GenerateInput,budget?:PreparedPhotoRequestBudget):Promise<JobRef>{
+async function submitGeminiImage(step:RouteStep,input:GenerateInput,budget?:Photo4KRequestBudget):Promise<JobRef>{
     const imageB64 = input.image_b64 ??
       (input.image_url?.startsWith("data:") ? input.image_url.split(",")[1] : undefined);
     if (!imageB64) throw new ProviderError(PROVIDER, "validation", "gemini image edit needs image_b64");
@@ -169,9 +161,7 @@ async function submitGeminiImage(step:RouteStep,input:GenerateInput,budget?:Prep
     if (step.model === "gemini-3-pro-image" && (imageSize !== "4K" || photoPro4KInputAllowance(input) === null))
       throw new ProviderError(PROVIDER,"validation","The Pro4K edit requires its verified server-prepared input.");
     const verified4K=imageSize==="4K"&&photo4KInputAllowance(input)!==null;
-    const verified2K=imageSize==="2K"&&photo2KInputAllowance(input)!==null;
-    const timedPrepared=verified4K||(verified2K&&budget!==undefined);
-    const timeoutMs=timedPrepared?Math.min(GEMINI_PHOTO_4K_SUBMIT_MS,budget?Math.max(1,budget.deadline-Date.now()):GEMINI_PHOTO_4K_SUBMIT_MS):BUDGETS.submitMs;
+    const timeoutMs=verified4K?Math.min(GEMINI_PHOTO_4K_SUBMIT_MS,budget?Math.max(1,budget.deadline-Date.now()):GEMINI_PHOTO_4K_SUBMIT_MS):BUDGETS.submitMs;
     let data:Record<string,unknown>;
     try{data = await fetchJson<Record<string, unknown>>(
       PROVIDER,
@@ -183,7 +173,7 @@ async function submitGeminiImage(step:RouteStep,input:GenerateInput,budget?:Prep
       },
       timeoutMs,
       classifyGemini,
-      verified4K||verified2K?{maxResponseBytes:GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES,signal:budget?.signal}:undefined,
+      verified4K?{maxResponseBytes:GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES,signal:budget?.signal}:undefined,
     );}catch(error){
       // fetch's signal remains attached to its body stream after headers. Keep
       // timeout/abort classified as uncertain dispatch, never a free retry.
