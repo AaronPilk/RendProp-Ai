@@ -164,8 +164,9 @@ try:
     run("restore-prepare-definition",[*psql,"-q"],definition)
     receipt["cashNegativeControl"]={"removed":"converted funding from pool commitment sum","actualOvercommitDetectedCents":1000}
     # Simulate owner loss after the initial check inside the actual function.
-    # The final authority guard must abort the cash insert; deleting only that
-    # guard must make the same real database operation commit a bad hold.
+    # The final authority guard must abort the cash insert. A later held-offer
+    # response fence independently rejects a hold for the now-agent actor, so
+    # the negative control must remove both guards to expose the bad commit.
     actor3="f1000000-0000-4000-8000-000000000003";org3="f2000000-0000-4000-8000-000000000003"
     run("owner-loss-fixture",[*psql,"-q"],f"""
       insert into auth.users(id,email,is_anonymous,email_confirmed_at)values('{actor3}','cash-owner-loss@example.invalid',false,now());
@@ -181,14 +182,29 @@ try:
     instrumented=definition.replace(before,before+"\n update public.memberships set role='agent'where user_id=p_actor and org_id=p_org;")
     run("instrument-final-owner-loss",[*psql,"-q"],instrumented)
     run("owner-loss-refused",[*psql,"-Atq"],f"set role service_role;select prepare_subscription_trial_purchase('{actor3}','{org3}','com.rendprop.app.pro.monthly');",refuses="RP403")
+    original_holds=run("owner-loss-original-holds",[*psql,"-Atq"],f"select count(*)from subscription_trial_purchase_reservations where actor_id='{actor3}';").strip()
+    assert original_holds=="0",original_holds
     guard_start=instrumented.index(" if not exists(select 1 from public.orgs where id=p_org and deleted_at is null)")
     guard_end=instrumented.index("end if;",guard_start)+len("end if;")
-    run("negative-remove-final-owner-guard",[*psql,"-q"],instrumented[:guard_start]+instrumented[guard_end:])
-    run("negative-owner-loss-accepted",[*psql,"-Atq"],f"set role service_role;select prepare_subscription_trial_purchase('{actor3}','{org3}','com.rendprop.app.pro.monthly');")
+    without_owner_guard=instrumented[:guard_start]+instrumented[guard_end:]
+    run("negative-remove-final-owner-guard",[*psql,"-q"],without_owner_guard)
+    run("negative-owner-loss-held-offer-refused",[*psql,"-Atq"],f"set role service_role;select prepare_subscription_trial_purchase('{actor3}','{org3}','com.rendprop.app.pro.monthly');",refuses="RP402")
+    singly_guarded_holds=run("negative-owner-loss-single-guard-holds",[*psql,"-Atq"],f"select count(*)from subscription_trial_purchase_reservations where actor_id='{actor3}';").strip()
+    assert singly_guarded_holds=="0",singly_guarded_holds
+    null_guard="if offer is null then raise exception 'RP402: Cash-held trial media snapshot is unavailable';end if;"
+    assert without_owner_guard.count(null_guard)==2, "Expected replay and post-insert held-offer fences"
+    post_insert=without_owner_guard.rfind(null_guard)
+    assert post_insert>without_owner_guard.index("insert into public.subscription_trial_purchase_reservations"), "Remove only the post-insert held-offer fence"
+    without_both_guards=without_owner_guard[:post_insert]+without_owner_guard[post_insert+len(null_guard):]
+    run("negative-remove-post-insert-held-offer-guard",[*psql,"-q"],without_both_guards)
+    accepted=run("negative-owner-loss-accepted",[*psql,"-Atq"],f"set role service_role;select prepare_subscription_trial_purchase('{actor3}','{org3}','com.rendprop.app.pro.monthly');")
+    assert accepted.strip()=="", "The now-agent held-offer projection must remain null"
     bad=run("negative-owner-loss-readback",[*psql,"-Atq"],f"select count(*)from subscription_trial_purchase_reservations h join memberships m on m.org_id=h.org_id and m.user_id=h.actor_id where h.actor_id='{actor3}'and m.role='agent';").strip()
     assert bad=="1",bad
     run("restore-final-owner-guard",[*psql,"-q"],definition)
-    receipt["finalOwnerNegativeControl"]={"actualLossAfterInitialCheckRefused":True,"removedFinalGuardCommitsBadHold":True}
+    restored=run("verify-restored-prepare-definition",[*psql,"-Atq"],"select pg_get_functiondef('prepare_subscription_trial_purchase(uuid,uuid,text)'::regprocedure);")
+    assert restored==definition, "Original production prepare definition was not restored exactly"
+    receipt["finalOwnerNegativeControl"]={"actualLossAfterInitialCheckRefused":True,"singleOwnerGuardRemovalStillRefused":True,"combinedGuardRemovalCommitsBadHold":True,"originalDefinitionRestored":True}
     receipt["passed"]=True
 
 finally:
