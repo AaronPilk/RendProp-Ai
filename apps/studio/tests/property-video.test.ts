@@ -12,6 +12,11 @@ const input:VideoInput={operation_id:operation,listing_id:listing,expected_org_i
 const journal:VideoJournal={schema:1,actor,org,library,listing,input,preparation:{planned:true,voiceComplete:true,voice:"off",voiceID:"",script:"",automatic:true,camera:"automatic"}};
 const queued=()=>({job_id:jobID,operation_id:operation,listing_id:listing,org_id:org,selected_library_org_id:library,source_count:1,manifest_sha256:"a".repeat(64),state:"queued",completed_sources:0,result:null});
 const ready=()=>({...queued(),state:"ready",completed_sources:1,result:{asset_id:asset,poster_asset_id:poster,download_url:privateURL("renders"),width:1920,height:1080,duration_s:5,bytes:100,sha256:"b".repeat(64),branding_policy:"unbranded",sources:[{photo_asset_id:source.photo_asset_id,photo_version_id:source.photo_version_id,photo_provenance_id:null,generation_request_id:"provider-request-hex",generation_provenance_id:asset,motion_kind:"ai"}],original_photo_count:0,music:null}});
+const photoMotionReady=(profile:"photo-motion-v1-cfr24"|"photo-motion-v2-cfr24"|"photo-motion-v2-opening-cfr24"="photo-motion-v2-cfr24")=>{
+ const modern=profile!=="photo-motion-v1-cfr24",opening=profile==="photo-motion-v2-opening-cfr24"?{kind:"aerial_opening",position:0,aspect:"16:9",fps:24,visible_frames:120,available_frames:120,asset_id:asset,sha256:"c".repeat(64)}:undefined;
+ const receipt={photo_asset_id:source.photo_asset_id,photo_version_id:source.photo_version_id,photo_provenance_id:null,generation_request_id:null,generation_provenance_id:null,motion_kind:"photo_motion",source_bound:true,source_sha256:"a".repeat(64),source_bytes:4096,visible_frames:48,...(modern?{motion:"push_in"}:{})};
+ return{...queued(),state:"ready",completed_sources:1,source_mode:"photo_motion_v1",composition_profile:profile,quality_profile:profile,consent_revision:"photo-motion-v1",processor_consent:null,resume_available:false,result:{asset_id:asset,poster_asset_id:poster,download_url:privateURL("renders"),width:1920,height:1080,duration_s:opening?7:2,bytes:100,sha256:"b".repeat(64),branding_policy:"unbranded",sources:[receipt],original_photo_count:0,music:null,source_mode:"photo_motion_v1",composition_profile:profile,fps:24,total_frames:opening?168:48,source_frames:[48],source_sha256s:["a".repeat(64)],...(modern?{source_motions:["push_in"]}:{}),...(opening?{opening}:{})}};
+};
 function storage(){const values=new Map<string,string>();return{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value);},values};}
 function service(api:(path:string,options:any)=>Promise<unknown>){return{api,getSnapshot:()=>({status:"signed-in" as const,identityVersion:1,identity:{userId:actor,isAnonymous:false}}),listingReadScope:async()=>()=>{}} as any;}
 
@@ -81,6 +86,41 @@ test("ready receipt needs actual geometry/all sources/current actor capability; 
  for(const bad of [{...ready(),listing_id:asset},{...ready(),result:{...ready().result,width:1280}},{...ready(),result:{...ready().result,sources:[]}},{...ready(),result:{...ready().result,download_url:privateURL("renders",asset)}},{...queued(),state:"ready"}])assert.throws(()=>decodeJob(bad,scope));
 });
 
+test("saved Photo Motion v1, v2 and opening jobs retain exact read-only source and timeline receipts",()=>{
+ for(const profile of ["photo-motion-v1-cfr24","photo-motion-v2-cfr24","photo-motion-v2-opening-cfr24"] as const){
+  const raw=photoMotionReady(profile),job=decodeJob(raw,scope),result=job.result!;
+  assert.equal(job.source_mode,"photo_motion_v1");assert.equal(job.composition_profile,profile);assert.equal(result.composition_profile,profile);
+  assert.equal(result.fps,24);assert.equal(result.total_frames,raw.result.total_frames);
+  assert.deepEqual(result.sources,raw.result.sources);assert.equal(result.sources[0]!.motion_kind,"photo_motion");
+  assert.deepEqual(result.opening,raw.result.opening);assert.equal(job.resume_available,false,"an incompatible paid resume is never offered");
+ }
+});
+
+test("Photo Motion decode refuses altered profile, source, physical receipt and timeline before publication",()=>{
+ const base=photoMotionReady();
+ for(const mutate of [
+  (j:any)=>j.composition_profile="photo-motion-v1-cfr24",
+  (j:any)=>j.quality_profile="legacy",
+  (j:any)=>j.resume_available=true,
+  (j:any)=>j.result.source_mode="ai",
+  (j:any)=>j.result.composition_profile="photo-motion-v1-cfr24",
+  (j:any)=>j.result.fps=30,
+  (j:any)=>j.result.total_frames=49,
+  (j:any)=>j.result.source_frames=[72],
+  (j:any)=>j.result.source_sha256s=["b".repeat(64)],
+  (j:any)=>j.result.source_motions=["slide_left"],
+  (j:any)=>j.result.sources[0].motion="spiral",
+  (j:any)=>j.result.sources[0].visible_frames=47,
+  (j:any)=>j.result.sources[0].source_sha256="bad",
+  (j:any)=>j.result.sources[0].source_bytes=0,
+  (j:any)=>j.result.sources[0].source_bound=false,
+  (j:any)=>j.result.sources[0].generation_request_id="provider-request",
+  (j:any)=>j.result.sources[0].photo_version_id="other",
+ ]){const j=structuredClone(base);mutate(j);assert.throws(()=>decodeJob(j,scope));}
+ const v1=photoMotionReady("photo-motion-v1-cfr24") as any;v1.result.sources[0].motion="push_in";assert.throws(()=>decodeJob(v1,scope),"the v1 publication receipt never adds a motion field");
+ const opening=photoMotionReady("photo-motion-v2-opening-cfr24") as any;opening.result.opening.visible_frames=121;assert.throws(()=>decodeJob(opening,scope));
+});
+
 test("only exact durable refusal proof permits a new operation; unknown or accepted requests stay fenced",async()=>{
  const proof={operation_id:operation,listing_id:listing,selected_library_org_id:library,operation_closed:true,job:null};
  assert.deepEqual(await inspectVideoOperation(service(async()=>proof),scope,journal),{job:null,closed:true});
@@ -108,6 +148,22 @@ test("website selection is explicit, scoped and repeats the same publication ide
  assert.equal((await publishVideo(svc,scope,job,pub,undefined,async()=>({links:{branded:"https://rendprop.com/property/10-oak-street/20261027.other",unbranded:"https://rendprop.com/u/owned123"},verified:true,addressOnly:false}))).url,"https://rendprop.com/f/owned123",'a different publication is never opened');
  await assert.rejects(()=>publishVideo(service(async()=>{throw Error("must not publish social");}),scope,decodeJob({...ready(),result:{...ready().result,width:1080,height:1920,branding_policy:"social"}},scope),pub));
  await assert.rejects(()=>publishVideo(service(async()=>({listing_id:asset})),scope,job,pub),/not confirmed/);
+});
+
+test("reviewed Photo Motion publication carries the exact server profile and source receipts",async()=>{
+ for(const profile of ["photo-motion-v1-cfr24","photo-motion-v2-cfr24","photo-motion-v2-opening-cfr24"] as const){
+  const job=decodeJob(photoMotionReady(profile),scope);let calls=0;
+  const svc=service(async(path,options)=>{calls++;assert.equal(path,"/functions/v1/renders/publish-app");const body=options.body;
+   assert.equal(body.publication_id,poster);assert.equal(body.composition.source_mode,"photo_motion_v1");assert.equal(body.composition.composition_profile,profile);
+   assert.equal(body.composition.fps,24);assert.equal(body.composition.total_frames,job.result!.total_frames);
+   assert.deepEqual(body.composition.sources,job.result!.sources);assert.deepEqual(body.composition.opening,job.result!.opening);
+   assert.equal(JSON.stringify(body.composition).includes("download_url"),false,"private capability does not enter the publication manifest");
+   return{listing_id:listing,org_id:org,library_org_id:library,presentation_kind:"photo_video",presentation_asset_id:asset,publication_id:poster,slug:"owned123",share_url:"https://rendprop.com/f/owned123"};});
+  const out=await publishVideo(svc,scope,job,poster,undefined,async()=>null);assert.equal(out.url,"https://rendprop.com/f/owned123");assert.equal(calls,1);
+ }
+ let sends=0;const svc=service(async()=>{sends++;throw Error("An unsupported Photo Motion receipt must not publish.");});
+ const incomplete=decodeJob(photoMotionReady(),scope) as any;incomplete.result.source_frames=[72];
+ await assert.rejects(()=>publishVideo(svc,scope,incomplete,poster));assert.equal(sends,0);
 });
 
 test("a refreshed listing read or changed account cannot surface a stale post-publish website link",async()=>{
