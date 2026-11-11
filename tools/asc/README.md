@@ -14,11 +14,14 @@ need Xcode and XcodeGen. The Python utility uses the standard library only.
 
 ## Exact 1.0.9 release preparation (11 November 2026)
 
-The public US App Store currently serves **1.0.8 (141)**. Build **1.0.9 (142)**
-is processed and attached to the unsubmitted 1.0.9 draft. Phone verification
-found a trial preflight and recovery issue, so the next candidate is **1.0.9
-(143)**. Apple readback confirmed 143 is unoccupied. Recheck before upload and
-replace the draft's attached build only after verifying the exact candidate.
+The public US App Store currently serves **1.0.8 (141)**. Build **1.0.9 (143)**
+is VALID and attached to the unsubmitted 1.0.9 draft. Phone verification exposed
+an unavailable-trial checkout trap; the next candidate is **1.0.9 (144)** with
+separately confirmed, server-signed standard-price checkout and a bounded
+TestFlight verification route. Apple readback confirmed 144 is unoccupied on
+11 November 2026. Recheck before upload and replace the draft's attached build
+only after verifying the exact candidate. Reviewer access and physical-device
+acceptance remain release gates.
 
 The tracked `metadata/en-US` copy below was prepared for 1.0.5 and differs from
 the approved 1.0.8 listing. The narrow command below copies only the released
@@ -41,14 +44,14 @@ python3 tools/asc/asc.py --version 1.0.9 status
 ```
 
 Every `asc.py` write requires explicit `--version` before the subcommand.
-`build attach` also requires `--build 143` (or the exact Apple build ID), and
+`build attach` also requires `--build 144` (or the exact Apple build ID), and
 checks that the selected processed build belongs to 1.0.9. The general
 `bridge-600-archive-upload.sh` uses `exportOptions.plist`, which permits Apple
 to renumber the build. For this bound release use the existing
 `exportOptions-appstore.plist` with
 `manageAppVersionAndBuildNumber=false` and
 `testFlightInternalTestingOnly=false`; verify the signed archive, exported IPA
-and Apple's uploaded build all say 1.0.9 (143) before attachment. The broad
+and Apple's uploaded build all say 1.0.9 (144) before attachment. The broad
 `bridge-610-asc-apply.sh` remains unsuitable for this exact-version release.
 
 The public 1.0.8 version has seven complete 6.9-inch screenshots, but their
