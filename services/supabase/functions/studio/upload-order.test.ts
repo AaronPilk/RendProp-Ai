@@ -55,7 +55,7 @@ function media(photos: PhotoRow[], assets: Row[]) {
     },
   } as unknown as SupabaseClient;
   const deps = {
-    userClient: () => client, getUser: async () => ({ id: user }) as User, assertNotDeleting: async () => {},
+    userClient: () => client, adminClient: () => client, getUser: async () => ({ id: user }) as User, assertNotDeleting: async () => {},
     activeOrg: async () => ({ data: { id: org }, error: null }), listingScope: async () => ({ actor_id: user, org_id: org, library_org_id: org, can_read: true }),
   } as unknown as StudioRepositoryDependencies;
   const repository = createStudioRepository(req, deps);

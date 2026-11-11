@@ -49,6 +49,7 @@ export async function handleStudio(req: Request): Promise<Response> {
       activeOrg: async (org) => await adminClient().from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle(),
       listingScope: (actor, listing) => listingLibraryScope(adminClient(), actor, listing),
       userClient,
+      adminClient,
     }),
     async rateLimit(scope) {
       const { data, error } = await adminClient().rpc("bump_rate", {
@@ -91,7 +92,7 @@ export async function handleStudio(req: Request): Promise<Response> {
     const db = userClient(req), admin = adminClient();
     const active = await admin.from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle();
     assert(!active.error && active.data, 403, "This workspace is unavailable.");
-    const repository = createStudioRepository(req, { getUser, assertNotDeleting, activeOrg: async (org) => await adminClient().from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle(), listingScope: (actor, listing) => listingLibraryScope(adminClient(), actor, listing), userClient });
+    const repository = createStudioRepository(req, { getUser, assertNotDeleting, activeOrg: async (org) => await adminClient().from("orgs").select("id").eq("id", org).is("deleted_at", null).maybeSingle(), listingScope: (actor, listing) => listingLibraryScope(adminClient(), actor, listing), userClient, adminClient });
     const context: StudioContext = { userId: user.id, orgId: org, listingId: listingId ?? null, db, admin,
       async authorizeListing(id) {
         assert(/^[0-9a-f-]{36}$/i.test(id), 400, "Choose a valid listing.");
