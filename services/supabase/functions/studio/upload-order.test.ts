@@ -59,7 +59,7 @@ function media(photos: PhotoRow[], assets: Row[]) {
     activeOrg: async () => ({ data: { id: org }, error: null }), listingScope: async () => ({ actor_id: user, org_id: org, library_org_id: org, can_read: true }),
   } as unknown as StudioRepositoryDependencies;
   const repository = createStudioRepository(req, deps);
-  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async (_bucket, key) => `https://fixture.invalid/read/${encodeURIComponent(key)}`, now: () => 0 } as Parameters<typeof createStudioHandler>[0]);
+  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async (_bucket, key) => `https://fixture.invalid/read/${encodeURIComponent(key)}`, assertSigningPolicyFresh: async () => {}, now: () => 0 } as Parameters<typeof createStudioHandler>[0]);
   return async () => {
     const ids: string[] = []; let offset: number | null = 0;
     while (offset !== null) {

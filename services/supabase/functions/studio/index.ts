@@ -12,7 +12,7 @@ import {
 } from "../_shared/supabase.ts";
 import { assert, HttpError, json, pathSegments, readJsonLimited } from "../_shared/http.ts";
 import { listingLibraryScope } from "../_shared/library-access.ts";
-import { privateMediaUrl } from "../_shared/private-media.ts";
+import { privateMediaUrl, createPrivateMediaRequestSigner } from "../_shared/private-media.ts";
 
 import { handleOptions } from "../_shared/cors.ts";
 import { handleProjectMedia } from "./project-media.ts";
@@ -42,7 +42,9 @@ export async function handleStudio(req: Request): Promise<Response> {
     response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     return response;
   }
-  if (seg.length === 1 && seg[0] === "media") return await createStudioHandler({
+  if (seg.length === 1 && seg[0] === "media") {
+    const mediaSigner = createPrivateMediaRequestSigner(new URL(req.url).searchParams.get("org_id") ?? "");
+    return await createStudioHandler({
     ...createStudioRepository(req, {
       getUser,
       assertNotDeleting,
@@ -63,12 +65,14 @@ export async function handleStudio(req: Request): Promise<Response> {
       }
       return data === true;
     },
-    sign: (bucket, key, seconds, scope) => privateMediaUrl({
+    sign: (bucket, key, seconds, scope) => mediaSigner.sign({
       actor:scope.userId,org:scope.orgId,listing:scope.listingId,bucket,key,
     },seconds),
+    assertSigningPolicyFresh: () => mediaSigner.assertFresh(),
     now: () => Date.now(),
     observeTiming: timing => console.info(JSON.stringify(timing)),
   })(req);
+  }
   try {
     const user = await getUser(req);
     assert(!user.is_anonymous, 403, "Connect your Apple account to sync your work.");

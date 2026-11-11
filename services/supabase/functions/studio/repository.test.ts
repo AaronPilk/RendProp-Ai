@@ -215,6 +215,7 @@ Deno.test("published Studio photo uses authenticated visibility and service-only
   const handler = createStudioHandler({ ...createStudioRepository(mediaRequest, f.deps),
     rateLimit: async () => true,
     sign: async (_bucket, key) => { signed.push(key); return `https://fixture.invalid/${encodeURIComponent(key)}`; },
+    assertSigningPolicyFresh: async () => {},
     now: () => 0,
   });
   const response = await handler(mediaRequest);
@@ -314,7 +315,7 @@ Deno.test("real repository and media merge preserve saved gallery order over cap
     ...[1, 2, 3].map(n => ({ id: id(n + 10), listing_id: listing, storage_key: key(`photo-${n}`), kind: "photo", bucket: "renders", uploaded: true, duration_s: null, created_at: "2026-09-14T00:00:00Z" })),
     { id: id(20), listing_id: listing, storage_key: key("untouched", "uploads"), kind: "photo", bucket: "uploads", uploaded: true, duration_s: null, created_at: "2026-09-14T00:00:00Z" },
   ];
-  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async (_bucket, key) => `https://fixture.invalid/read/${encodeURIComponent(key)}`, now: () => 0 });
+  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async (_bucket, key) => `https://fixture.invalid/read/${encodeURIComponent(key)}`, assertSigningPolicyFresh: async () => {}, now: () => 0 });
   const request = () => new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
   const before = await (await handler(request())).json();
   assertEquals(before.photos.map((photo: { id: string }) => photo.id), [id(1), id(2), id(3), id(20)]);
@@ -337,7 +338,7 @@ Deno.test("saved gallery sort determines page boundaries without cross-page capt
   const count = PAGE_SIZE + 3;
   f.results.photos.data = Array.from({ length: count }, (_, n) => ({ id: id(n), listing_id: listing, original_key: `renders/${org}/${listing}/${n}.jpg`, enhanced_key: null, caption: null, is_staged: false, sort: n < 3 ? 1 : 0, created_at: "2026-09-14T00:00:00Z" })).reverse();
   f.results.capture_assets.data = Array.from({ length: count }, (_, n) => ({ id: id(n + 100), listing_id: listing, storage_key: `renders/${org}/${listing}/${n}.jpg`, kind: "photo", bucket: "renders", uploaded: true, duration_s: null, created_at: "2026-09-14T00:00:00Z" }));
-  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async () => "https://fixture.invalid/read", now: () => 0 });
+  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async () => "https://fixture.invalid/read", assertSigningPolicyFresh: async () => {}, now: () => 0 });
   const request = (offset: number) => new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}&offset=${offset}`);
   const first = await (await handler(request(0))).json();
   const second = await (await handler(request(first.next_offset))).json();
@@ -380,7 +381,7 @@ Deno.test("selected-key provenance projection classifies saved results and refus
   const original = `uploads/${org}/${listing}/original.jpg`, altered = `renders/${org}/${listing}/result.jpg`;
   f.results.photos.data = [{ id: user, listing_id: listing, original_key: original, enhanced_key: altered, caption: "Decluttered · misleading editable caption", is_staged: true, sort: 0, created_at: "2026-10-14T00:00:00Z" }];
   f.results.media_provenance.data = [{ org_id: org, listing_id: listing, altered_key: altered, original_key: original, kind: "virtual_stage", edit: "stage", qc: { publishable: true } }];
-  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async (_bucket, key) => `https://fixture.invalid/read/${encodeURIComponent(key)}`, now: () => 0 });
+  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async (_bucket, key) => `https://fixture.invalid/read/${encodeURIComponent(key)}`, assertSigningPolicyFresh: async () => {}, now: () => 0 });
   const request = () => new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
   const body = await (await handler(request())).json();
   assertEquals(body.photos[0].edit_kind, "stage"); assertEquals(body.photos[0].original_verified, true);
@@ -405,7 +406,7 @@ Deno.test("video working JPEGs and generated posters never become photos; untouc
  const f=fixture(),repository=createStudioRepository(req,f.deps),id=(n:number)=>`50000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
  const keys=[`uploads/${org}/${listing}/prepared-video/${id(10)}/${id(11)}.jpg`,`renders/${org}/${listing}/background/${id(12)}/${id(13)}/first-clip.jpg`,`uploads/${org}/${listing}/${id(14)}.jpg`,`renders/${org}/${listing}/gallery-${id(15)}.jpg`];
  f.results.capture_assets.data=keys.map((storage_key,n)=>({id:id(n),listing_id:listing,storage_key,kind:'photo',bucket:n===0||n===2?'uploads':'renders',uploaded:true,duration_s:null,created_at:'2026-10-15T00:00:00Z'}));
- const signed:string[]=[],handler=createStudioHandler({...repository,authorize:async()=>({userId:user,orgId:org,listingId:listing}),rateLimit:async()=>true,sign:async(_bucket,key)=>{signed.push(key);return'https://fixture.invalid/read/'+encodeURIComponent(key);},now:()=>0});
+ const signed:string[]=[],handler=createStudioHandler({...repository,authorize:async()=>({userId:user,orgId:org,listingId:listing}),rateLimit:async()=>true,sign:async(_bucket,key)=>{signed.push(key);return'https://fixture.invalid/read/'+encodeURIComponent(key);},assertSigningPolicyFresh:async()=>{},now:()=>0});
  const response=await handler(new Request(`https://fixture.invalid/studio/media?org_id=${org}&listing_id=${listing}`)),body=await response.json();assertEquals(response.status,200);assertEquals(body.photos.map((p:{id:string})=>p.id),[id(2),id(3)]);assertEquals(signed,keys.slice(2));assertEquals(body.next_offset,null);assert(!JSON.stringify(body).includes('prepared-video')&&!JSON.stringify(body).includes('first-clip'));
 });
 

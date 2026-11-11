@@ -21,6 +21,7 @@ export type StudioMediaTiming = {
   video_count?: number;
   authorize_final_ms?: number;
   visibility_final_ms?: number;
+  signing_policy_final_ms?: number;
 };
 export type PhotoEditKind = "declutter" | "stage" | "sky" | "twilight" | "lawn" | "custom";
 export type PhotoEditProof = { edit: PhotoEditKind | null; originalKey: string | null };
@@ -69,6 +70,7 @@ export interface StudioDependencies {
     seconds: number,
     scope: MediaScope,
   ): Promise<string>;
+  assertSigningPolicyFresh(): Promise<void>;
   now(): number;
   observeTiming?(timing: StudioMediaTiming): void;
 }
@@ -393,6 +395,7 @@ export function createStudioHandler(deps: StudioDependencies) {
       );
       const finalAccess = await measured("visibility_final_ms", () => deps.mediaVisibility(scope, { assets: usedAssets, renders: usedRenders, keys: [...exposedKeys] }));
       assert(usedAssets.every(id => finalAccess.assets[id] === true) && usedRenders.every(id => finalAccess.renders[id] === true) && [...exposedKeys].every(key => finalAccess.keys[key] === true), 404, "Media access changed. Refresh the library.");
+      await measured("signing_policy_final_ms", () => deps.assertSigningPolicyFresh());
       assert(
         deps.now() < Date.parse(expires_at),
         503,

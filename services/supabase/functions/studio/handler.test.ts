@@ -5,6 +5,7 @@ import {
 import { bucketForKey, createStudioHandler, PAGE_SIZE } from "./handler.ts";
 import type { MediaScope, PhotoRow, StudioDependencies, StudioMediaTiming } from "./handler.ts";
 import { HttpError } from "../_shared/http.ts";
+import { createPrivateMediaRequestSigner } from "../_shared/private-media.ts";
 const org = "10000000-0000-4000-8000-000000000001",
   listing = "20000000-0000-4000-8000-000000000002",
   user = "30000000-0000-4000-8000-000000000003";
@@ -25,6 +26,7 @@ function fixture() {
       signed.push(`${bucket}:${key}:${ttl}`);
       return "https://objects.example/read";
     },
+    assertSigningPolicyFresh: async () => {},
     now: () => Date.parse("2026-09-12T12:00:00Z"),
   };
   return { deps, signed, reads: () => reads };
@@ -96,7 +98,7 @@ Deno.test("media timing records fixed phases and status without tenant or object
   assertEquals(timing.photo_count, 1);
   assertEquals(timing.video_count, 0);
   assertEquals(timing.unavailable_count, 0);
-  for (const phase of ["total_ms", "authorize_initial_ms", "rate_limit_ms", "read_ms", "visibility_initial_ms", "signing_ms", "authorize_final_ms", "visibility_final_ms"] as const) {
+  for (const phase of ["total_ms", "authorize_initial_ms", "rate_limit_ms", "read_ms", "visibility_initial_ms", "signing_ms", "authorize_final_ms", "visibility_final_ms", "signing_policy_final_ms"] as const) {
     assert(Number.isSafeInteger(timing[phase]) && timing[phase]! >= 0);
   }
   assert(!JSON.stringify(timing).includes(org));
@@ -111,6 +113,36 @@ Deno.test("media timing records fixed phases and status without tenant or object
   assertEquals(errors[0].status, 403);
   assertEquals(errors[0].sign_calls, undefined);
   assert(Number.isSafeInteger(errors[0].authorize_initial_ms));
+});
+Deno.test("a mid-request transport-policy switch or failed final lookup discards every signed Studio URL", async () => {
+  const prior = Deno.env.get("PRIVATE_MEDIA_DELIVERY");
+  Deno.env.set("PRIVATE_MEDIA_DELIVERY", "off");
+  try {
+    for (const final of [true, new Error("policy unavailable")]) {
+      const f = fixture();
+      f.deps.read = async () => ({ photos: [photo, { ...photo, id: "50000000-0000-4000-8000-000000000005", original_key: `uploads/${org}/${listing}/second.jpg` }], assets: [], renders: [] });
+      let checks = 0, signs = 0;
+      const order: string[] = [];
+      f.deps.authorize = async () => { order.push("authorize"); return scope; };
+      const visibility = f.deps.mediaVisibility;
+      f.deps.mediaVisibility = (authorized, refs) => { order.push("visibility"); return visibility(authorized, refs); };
+      const signer = createPrivateMediaRequestSigner(org, {
+        gatewayRequired: async () => { order.push("policy"); checks++; if (checks === 1) return false; if (final instanceof Error) throw final; return final; },
+        directSign: async () => { signs++; return "https://fixture.invalid/private-object"; },
+      });
+      f.deps.sign = (bucket, objectKey, seconds, authorized) => signer.sign({ actor: authorized.userId, org: authorized.orgId, listing: authorized.listingId, bucket, key: objectKey }, seconds);
+      f.deps.assertSigningPolicyFresh = () => signer.assertFresh();
+      const response = await createStudioHandler(f.deps)(request());
+      const body = await response.text();
+      assertEquals(response.status, 503);
+      assertEquals(checks, 2);
+      assertEquals(signs, 2);
+      assertEquals(order, ["authorize", "visibility", "policy", "authorize", "visibility", "policy"]);
+      assert(!body.includes("fixture.invalid") && !body.includes("photos"));
+    }
+  } finally {
+    prior === undefined ? Deno.env.delete("PRIVATE_MEDIA_DELIVERY") : Deno.env.set("PRIVATE_MEDIA_DELIVERY", prior);
+  }
 });
 
 Deno.test("revoked gallery links are filtered before signing", async () => {
