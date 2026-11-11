@@ -130,14 +130,6 @@ export function createStudioHandler(deps: StudioDependencies) {
       try { return await work(); }
       finally { phases[phase] = elapsed(at); }
     }
-    async function signWithTiming(bucket: "uploads" | "renders", key: string, scope: MediaScope): Promise<string> {
-      const at = performance.now();
-      try { return await deps.sign(bucket, key, MEDIA_TTL_SECONDS, scope); }
-      finally {
-        phases.signing_ms = (phases.signing_ms ?? 0) + elapsed(at);
-        phases.sign_calls = (phases.sign_calls ?? 0) + 1;
-      }
-    }
     function complete(response: Response): Response {
       // Diagnostic values and fixed field names only. Never log account, media,
       // request URL, token, or storage identity. Observation cannot alter serving.
@@ -228,12 +220,14 @@ export function createStudioHandler(deps: StudioDependencies) {
       const photos: Record<string, unknown>[] = [],
         videos: Record<string, unknown>[] = [];
       const signed = new Set<string>(), exposedKeys = new Set<string>();
+      const signJobs: { bucket: "uploads" | "renders"; key: string; original?: { bucket: "uploads" | "renders"; key: string } }[] = [];
       let unavailable = 0;
-      async function sign(
+      const queueSign = (bucket: "uploads" | "renders", key: string): number => signJobs.push({ bucket, key }) - 1;
+      function sign(
         key: unknown,
         listing: string,
         expectedBucket?: string,
-      ): Promise<string | null> {
+      ): number | null {
         assert(listing === listingId, 500, "Media scope did not match.");
         const bucket = bucketForKey(key, scope);
         if (!bucket || (expectedBucket && expectedBucket !== bucket)) {
@@ -244,38 +238,28 @@ export function createStudioHandler(deps: StudioDependencies) {
         if (signed.has(key as string)) return null;
         signed.add(key as string);
         exposedKeys.add(key as string);
-        return await signWithTiming(bucket, key as string, scope);
+        return queueSign(bucket, key as string);
       }
-      // Sequential signing is intentionally bounded (at most 200 objects per page).
-      // It does no object download, provider work, mutation, or publication.
+      const photoPlans: { row: PhotoRow; urlJob: number; originalSource: "same" | "secondary" | null }[] = [];
       for (const photo of pagePhotos) {
         if (internalVideoPhoto(photo.enhanced_key || photo.original_key || "", scope)) continue;
-        const url = await sign(
+        const urlJob = sign(
           photo.enhanced_key || photo.original_key,
           photo.listing_id,
         );
-        if (url) {
+        if (urlJob !== null) {
           const originalBucket = bucketForKey(photo.original_key, scope);
-          const originalURL = originalBucket && photo.original_key && access.keys[photo.original_key] === true
-            ? photo.original_key === (photo.enhanced_key || photo.original_key) ? url
-              : await signWithTiming(originalBucket, photo.original_key, scope)
+          const originalSource = originalBucket && photo.original_key && access.keys[photo.original_key] === true
+            ? photo.original_key === (photo.enhanced_key || photo.original_key) ? "same"
+              : "secondary"
             : null;
-          if (originalURL && photo.original_key) exposedKeys.add(photo.original_key);
-          photos.push({
-            id: photo.id,
-            listing_id: listingId,
-            url,
-            expires_at,
-            caption: photo.caption,
-            is_staged: photo.is_staged === true,
-            is_altered: photo.is_staged === true || Boolean(photo.enhanced_key && photo.enhanced_key !== photo.original_key),
-            original_url: originalURL,
-            edit_kind: rows.photoEdits?.[photo.enhanced_key || photo.original_key || ""]?.edit ?? null,
-            original_verified: !!originalURL && rows.photoEdits?.[photo.enhanced_key || photo.original_key || ""]?.originalKey === photo.original_key,
-            sort: photo.sort,
-          });
+          if (originalSource === "secondary" && originalBucket && photo.original_key) {
+            signJobs[urlJob].original = { bucket: originalBucket, key: photo.original_key };
+          }
+          photoPlans.push({ row: photo, urlJob, originalSource });
         }
       }
+      const assetPlans: { row: AssetRow; urlJob: number }[] = [];
       for (const asset of pageAssets) {
         if (/\/contact-[^/]+$/.test(asset.storage_key)) continue;
         if (access.assets[asset.id] !== true) { unavailable++; continue; }
@@ -287,11 +271,72 @@ export function createStudioHandler(deps: StudioDependencies) {
         // card whose only difference is the backing capture UUID.
         if (asset.kind === "photo" && photoAssetAliases.has(asset.storage_key)) continue;
         if (asset.kind === "photo" && internalVideoPhoto(asset.storage_key, scope)) continue;
-        const url = await sign(
+        const urlJob = sign(
           asset.storage_key,
           asset.listing_id,
           asset.bucket,
         );
+        if (urlJob !== null) assetPlans.push({ row: asset, urlJob });
+      }
+      const renderPlans: { row: RenderRow; urlJob: number }[] = [];
+      for (const render of pageRenders) {
+        if (access.renders[render.id] !== true) { unavailable++; continue; }
+        if (!render.video_key) {
+          unavailable++;
+          continue;
+        }
+        const urlJob = sign(render.video_key, render.listing_id, "renders");
+        if (urlJob !== null) renderPlans.push({ row: render, urlJob });
+      }
+      // Every job was admitted by the listing and visibility checks above.
+      // Bound independent URL signing calls, then assemble in original row order.
+      // A failure drains in-flight work before the generic error response; no
+      // capability is released without the final membership and source fence.
+      const urls = signJobs.length ? await measured("signing_ms", async () => {
+        const results = new Array<{ url: string; originalURL: string | null }>(signJobs.length);
+        let next = 0;
+        let failure: unknown, failed = false;
+        await Promise.all(Array.from({ length: Math.min(4, signJobs.length) }, async () => {
+          while (!failed) {
+            const index = next++;
+            if (index >= signJobs.length) return;
+            const job = signJobs[index];
+            try {
+              phases.sign_calls = (phases.sign_calls ?? 0) + 1;
+              const url = await deps.sign(job.bucket, job.key, MEDIA_TTL_SECONDS, scope);
+              let originalURL: string | null = null;
+              if (url && job.original) {
+                phases.sign_calls = (phases.sign_calls ?? 0) + 1;
+                originalURL = await deps.sign(job.original.bucket, job.original.key, MEDIA_TTL_SECONDS, scope);
+              }
+              results[index] = { url, originalURL };
+            } catch (error) { failure = error; failed = true; return; }
+          }
+        }));
+        if (failed) throw failure;
+        return results;
+      }) : [];
+      for (const { row: photo, urlJob, originalSource } of photoPlans) {
+        const url = urls[urlJob].url;
+        if (!url) continue;
+        const originalURL = originalSource === "same" ? url : originalSource === "secondary" ? urls[urlJob].originalURL : null;
+        if (originalURL && photo.original_key) exposedKeys.add(photo.original_key);
+        photos.push({
+          id: photo.id,
+          listing_id: listingId,
+          url,
+          expires_at,
+          caption: photo.caption,
+          is_staged: photo.is_staged === true,
+          is_altered: photo.is_staged === true || Boolean(photo.enhanced_key && photo.enhanced_key !== photo.original_key),
+          original_url: originalURL,
+          edit_kind: rows.photoEdits?.[photo.enhanced_key || photo.original_key || ""]?.edit ?? null,
+          original_verified: !!originalURL && rows.photoEdits?.[photo.enhanced_key || photo.original_key || ""]?.originalKey === photo.original_key,
+          sort: photo.sort,
+        });
+      }
+      for (const { row: asset, urlJob } of assetPlans) {
+        const url = urls[urlJob].url;
         if (!url) continue;
         usedAssets.push(asset.id);
         if (asset.kind === "photo") {
@@ -322,25 +367,19 @@ export function createStudioHandler(deps: StudioDependencies) {
           });
         }
       }
-      for (const render of pageRenders) {
-        if (access.renders[render.id] !== true) { unavailable++; continue; }
-        if (!render.video_key) {
-          unavailable++;
-          continue;
-        }
-        const url = await sign(render.video_key, render.listing_id, "renders");
-        if (url) {
-          usedRenders.push(render.id);
-          videos.push({
-            id: render.id,
-            listing_id: listingId,
-            url,
-            expires_at,
-            kind: "video",
-            created_at: render.created_at,
-            duration_s: render.duration_s,
-          });
-        }
+      for (const { row: render, urlJob } of renderPlans) {
+        const url = urls[urlJob].url;
+        if (!url) continue;
+        usedRenders.push(render.id);
+        videos.push({
+          id: render.id,
+          listing_id: listingId,
+          url,
+          expires_at,
+          kind: "video",
+          created_at: render.created_at,
+          duration_s: render.duration_s,
+        });
       }
       // Membership/deletion can change while the page is being read or signed.
       // Recheck live state before releasing any capabilities, never reuse JWT
