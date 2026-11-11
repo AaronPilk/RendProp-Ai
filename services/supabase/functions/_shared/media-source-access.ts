@@ -8,7 +8,7 @@ export type MediaAccessClient = { rpc(name: string, args: Record<string, unknown
 /** Request-local intermediate proof only. Never pass this to a final response
  * fence: that fence must recheck every physical object after page assembly. */
 export type PublicationProofs = Map<string, string>;
-type VisibilityOptions = { intermediateProofs?: PublicationProofs; headIO?: PublicationHeadIO };
+type VisibilityOptions = { intermediateProofs?: PublicationProofs; headIO?: PublicationHeadIO; admissionClient?: MediaAccessClient };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function refs(input: MediaSourceRefs): MediaVisibility {
@@ -42,7 +42,9 @@ export async function mediaVisibility(db: MediaAccessClient, listing: string, in
     if(publications.length){
       const proofs=options.intermediateProofs;
       const toVerify=proofs ? publications.filter(p=>proofs.get(p.publication_id)!==JSON.stringify(p)) : publications;
-      const denied=await publicationHeadDenials(db,toVerify,options.headIO);
+      // Visibility stays on the caller's RLS client. Media delivery admission is
+      // a service-only RPC and may use a separate, server-held client.
+      const denied=await publicationHeadDenials(options.admissionClient??db,toVerify,options.headIO);
       // Authority or source withdrawal during the physical reads cannot be
       // released using an earlier accepted metadata snapshot.
       const fresh=await db.rpc("studio_presenter_media_visibility",payload);
