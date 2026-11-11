@@ -13,7 +13,7 @@ const calls:{path:string;method:string;body:any}[]=[],docs=new Map<string,any>()
 const shotHandoffs:ShotPlanHandoff[]=[],agentHandoffs:AgentPlanHandoff[]=[],editorHandoffs:string[]=[];
 const png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=";
 const url=(name:string)=>`https://012345678901234567890123456789ab.r2.cloudflarestorage.com/rendprop-renders/renders/${org}/${listing}/${name}?X-Amz-Signature=fixture`;
-let counter=0, identityVersion=1;
+let counter=0, identityVersion=1, holdNextVideoStatus=false, abortedVideoStatus=0;
 const photoResponses:{image_b64:string;disclosure:string}[]=[], uploadedFiles:{url:string;sha256:string;size:number}[]=[];
 const workspace:Workspace={user:{id:user,email:"agent@example.invalid",name:"Agent",avatarUrl:null},org:{id:org,name:"Fixture office",handle:"office",spaceType:"real_estate"},memberships:[{orgId:org,orgName:"Fixture office",role:"owner",spaceType:"real_estate"}],plan:"team",planRaw:"team",planDegraded:false,planExpiresAt:null,trialEndsAt:null,usage:{listings:2,leads:0,leadsNew:0,renders:1}};
 const listings:Listing[]=[listing,other].map((id,i)=>({id,orgId:org,spaceType:"real_estate",address:i?"22 Pine Street":"10 Oak Street",tagline:"Bright rooms and a patio",details:{access_code:"private-must-not-send"},status:"ready",createdAt:"2026-09-14T12:00:00Z",mainPhotoKey:null,beds:3,baths:2,sqft:2000,priceCents:null}));
@@ -50,7 +50,13 @@ const services={subscribe:()=>()=>{},getSnapshot:()=>({status:"signed-in",identi
  if(path.endsWith("ai-voice/voices"))return {voices:[{voice_id:"voice_fixture",name:"Sam",labels:"warm · conversational"}]};
  if(path.endsWith("studio/voice")){const result={id:"99999999-9999-4999-8999-999999999999",kind:"voice",state:"completed",url:url("voice.mp3"),voice_name:"Sam",words:[{text:"Bright",start:0,end:.5}],disclosure:"AI generated narration.",duration_s:10};results.unshift(result);return {result};}
  if(path.endsWith("studio/video")){const result={id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",kind:"video",state:"processing",video_kind:body.kind,label:body.label,disclosure:"This clip was generated with AI.",request_id:"fixture-video-request",provenance_id:provenance,source_asset_id:body.asset_id};results.unshift(result);return {result};}
- if(path.endsWith("studio/video-status")){const result=results.find(r=>r.id===body.result_id);Object.assign(result,{state:"completed",url:url("generated.mp4"),source_url:url("source.png"),asset_id:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",qc_required:true,qc_publishable:false,qc_message:"Review property accuracy before publishing."});return {result:structuredClone(result)};}
+ if(path.endsWith("studio/video-status")){
+  if(holdNextVideoStatus){holdNextVideoStatus=false;await new Promise<void>((_resolve,reject)=>{
+   const aborted=()=>{abortedVideoStatus++;reject(new DOMException("Polling stopped when Creative closed.","AbortError"));};
+   if(options.signal?.aborted)aborted();else options.signal?.addEventListener("abort",aborted,{once:true});
+  });}
+  const result=results.find(r=>r.id===body.result_id);Object.assign(result,{state:"completed",url:url("generated.mp4"),source_url:url("source.png"),asset_id:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",qc_required:true,qc_publishable:false,qc_message:"Review property accuracy before publishing."});return {result:structuredClone(result)};
+ }
  if(path.endsWith("studio/sign-media"))return {result:structuredClone(results.find(r=>r.id===body.result_id))};
  if(path.endsWith("ai-video/drift")){const result=results.find(r=>r.request_id===body.request_id);Object.assign(result,{qc_publishable:true,qc_message:"Property accuracy review passed."});return {drift:{status:"pass",publishable:true,message:"Property accuracy review passed."}};}
  if(path.endsWith("ai-chapters"))return {chapters:[{label:"Entry",start_s:0},{label:"Kitchen",start_s:5}],summary:"Two rooms identified."};
@@ -61,6 +67,7 @@ const services={subscribe:()=>()=>{},getSnapshot:()=>({status:"signed-in",identi
 function Controls(){return <div style={{padding:16,background:"#14161d"}}><button onClick={()=>{const key=`creative:${listing}`,previous=docs.get(key);docs.set(key,{key,kind:"creative",listing_id:listing,revision:(previous?.revision??0)+1,payload:{...EMPTY_DRAFT,script:"Newer phone script"},updated_at:new Date().toISOString()});}}>Simulate phone edit</button><button onClick={()=>{const node=document.querySelector("#fixture-calls")!;node.textContent=JSON.stringify({calls,docs:[...docs.values()],results,shotHandoffs,agentHandoffs,editorHandoffs});}}>Show fixture receipts</button><pre id="fixture-calls" style={{display:"none"}}/></div>}
 function Fixture(){
  const [entryRequest,setEntryRequest]=useState<CreativeEntryRequest>();
+ const [active,setActive]=useState(true);
  Object.assign(window,{creativeFixture:{
   entry:(tool:CreativeTool,options:{id?:string;listingId?:string;preset?:CreativeEntryRequest["preset"]}={})=>setEntryRequest({id:options.id??crypto.randomUUID(),listingId:options.listingId??listing,tool,preset:options.preset}),
   calls:()=>structuredClone(calls),
@@ -69,7 +76,10 @@ function Fixture(){
   photos:(next:StudioPhoto[])=>photos.splice(0,photos.length,...next),
   changeIdentity:()=>{identityVersion++;},
   mediaCalls:()=>structuredClone(mediaCalls),
+  setActive:(value:boolean)=>setActive(value),
+  holdNextVideoStatus:()=>{holdNextVideoStatus=true;},
+  abortedVideoStatus:()=>abortedVideoStatus,
  }});
- return <><Controls/><main style={{padding:32}}><CreativeWorkspace services={services} workspace={workspace} listings={listings} entryRequest={entryRequest} onChanged={()=>{}} onOpenEditor={id=>editorHandoffs.push(id)} onUseShotPlan={plan=>shotHandoffs.push(plan)} onUseAgentPlan={plan=>agentHandoffs.push(plan)}/></main></>;
+ return <><Controls/><main hidden={!active} style={{padding:32}}><CreativeWorkspace active={active} services={services} workspace={workspace} listings={listings} entryRequest={entryRequest} onChanged={()=>{}} onOpenEditor={id=>editorHandoffs.push(id)} onUseShotPlan={plan=>shotHandoffs.push(plan)} onUseAgentPlan={plan=>agentHandoffs.push(plan)}/></main></>;
 }
 createRoot(document.getElementById("root")!).render(<div className="studio-shell" style={{display:"block"}}><Fixture/></div>);

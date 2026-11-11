@@ -51,6 +51,7 @@ const PresenterPanel = lazy(() => import("../presenter/PresenterPanel"));
 const PromptLibrary = lazy(() => import("../prompts/PromptLibrary"));
 
 type Props = {
+  active?: boolean;
   services: StudioServices;
   workspace: Workspace;
   listings: Listing[];
@@ -156,6 +157,7 @@ export default function CreativeWorkspace(props: Props) {
 }
 function ListingCreative(
   {
+    active = true,
     services,
     workspace,
     listings,
@@ -294,6 +296,7 @@ function ListingCreative(
         idempotencyKey?: string;
         timeoutMs?: number;
         maxResponseBytes?: number;
+        signal?: AbortSignal;
       },
     ) =>
       services.api(`/functions/v1/${path}`, {
@@ -528,11 +531,13 @@ function ListingCreative(
     r.kind === "video" && ["processing", "importing"].includes(r.state)
   ).map((r) => r.id).join(",");
   useEffect(() => {
-    if (!pendingResults) return;
+    if (!active || !pendingResults) return;
     let cancelled = false;
+    const controller = new AbortController();
+    const pollSignal = AbortSignal.any([signal, controller.signal]);
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
-      if (cancelled || signal.aborted) return;
+      if (cancelled || pollSignal.aborted) return;
       if (!document.hidden && !pollBusy.current) {
         pollBusy.current = true;
         try {
@@ -540,6 +545,7 @@ function ListingCreative(
             const result = record(
               await api("studio/video-status", { result_id: id }, {
                 timeoutMs: 180_000,
+                signal: pollSignal,
               }),
             );
             if (!cancelled) {
@@ -559,8 +565,9 @@ function ListingCreative(
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      controller.abort();
     };
-  }, [pendingResults, api, signal]);
+  }, [active, pendingResults, api, signal]);
   useEffect(() => {
     if (panel !== "voice" || voices.length) return;
     let cancelled = false;

@@ -1064,7 +1064,7 @@ export default function App({ servicesFactory }: {
             <ListingWorkflow active={page === "properties"} entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} onContactGuardChange={contactGuardChanged} />
           </SafeLoad> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening creative tools…</p>}>
-            <CreativeWorkspace entryRequest={entry?.creative} onOpenEditor={id=>openFeature("reel",id)} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={id => selectListing(id, true)} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} onPresenterPendingChange={presenterPendingChanged} />
+            <CreativeWorkspace active={page === "creative"} entryRequest={entry?.creative} onOpenEditor={id=>openFeature("reel",id)} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={id => selectListing(id, true)} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} onPresenterPendingChange={presenterPendingChanged} />
           </SafeLoad> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "editor" || editorOpened) && (
             <section
