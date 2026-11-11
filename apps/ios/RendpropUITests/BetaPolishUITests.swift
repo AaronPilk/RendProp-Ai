@@ -1902,3 +1902,80 @@ final class BetaPolishUITests: XCTestCase {
         snapshot.name = name; snapshot.lifetime = .keepAlways; add(snapshot)
     }
 }
+
+/// Loaded 1600px JPEGs in the production cloud-photo card/grid views. A
+/// placeholder-only fixture cannot detect intrinsic image width leaking into
+/// adaptive columns, which caused the physical build 146 overlap.
+final class CloudPhotoCardLayoutUITests: XCTestCase {
+    private let photoIDs = [
+        "F1C70000-0000-4000-8000-000000000001",
+        "F1C70000-0000-4000-8000-000000000002"
+    ]
+
+    func testLoadedPhotosAndCloudFilesFit() { verify(largeText: false) }
+    func testLoadedPhotosAndCloudFilesFitAtAccessibilityText() { verify(largeText: true) }
+
+    private func verify(largeText: Bool) {
+        continueAfterFailure = false
+        executionTimeAllowance = 150
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTesting", "-ui.cloudPhotoLayoutFixture", "-appearance", "light"]
+        if largeText { app.launchArguments.append("-ui.cloudPhotoLayoutLargeText") }
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["photo.fixture.imagesLoaded"].waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["photo.fixture.failure"].exists)
+
+        let previews = photoIDs.map { element(app, "photo.fixture.previewLink.\($0)") }
+        attach(app, "cloud-photos-\(largeText ? "accessibility" : "normal")")
+        let previewGeometry = "Screen: \(app.frame)\nPreview 1: \(previews[0].frame)\nPreview 2: \(previews[1].frame)\n\(app.debugDescription)"
+        print("Photo preview frames: \(app.frame), \(previews[0].frame), \(previews[1].frame)")
+        let geometryAttachment = XCTAttachment(string: previewGeometry)
+        geometryAttachment.name = "cloud-photo-preview-geometry"; geometryAttachment.lifetime = .keepAlways; add(geometryAttachment)
+        for preview in previews {
+            XCTAssertTrue(preview.waitForExistence(timeout: 5), app.debugDescription)
+            assertFitsScreen(preview, in: app)
+        }
+        XCTAssertFalse(previews[0].frame.intersects(previews[1].frame), "Preview cards overlap")
+        let cards = photoIDs.map { element(app, "cloud.mediaCard.\($0)") }
+        let scroll = app.scrollViews.firstMatch
+        XCTAssertTrue(scroll.exists)
+        for index in cards.indices {
+            let card = cards[index]
+            for _ in 0..<8 where !card.exists || !card.isHittable { scroll.swipeUp() }
+            XCTAssertTrue(card.exists, app.debugDescription)
+            assertFitsScreen(card, in: app)
+            let action = element(app, "cloud.\(index == 0 ? "saveCopy" : "importPhoto").\(photoIDs[index])")
+            XCTAssertTrue(action.exists, app.debugDescription)
+            XCTAssertGreaterThanOrEqual(action.frame.height, 43, "Cloud file action touch height")
+            XCTAssertGreaterThanOrEqual(action.frame.minX, card.frame.minX - 1)
+            XCTAssertLessThanOrEqual(action.frame.maxX, card.frame.maxX + 1, "Cloud file action clips past card")
+            for _ in 0..<8 {
+                if action.isHittable, action.frame.minY >= app.navigationBars.firstMatch.frame.maxY,
+                   action.frame.maxY <= app.frame.maxY - 20 { break }
+                scroll.swipeUp()
+            }
+            XCTAssertTrue(action.isHittable, "Cloud file action must be reachable")
+            XCTAssertLessThanOrEqual(action.frame.maxY, app.frame.maxY - 20,
+                                     "Cloud file action must clear the viewport footer")
+            if index == 0 { attach(app, "cloud-files-\(largeText ? "accessibility" : "normal")") }
+        }
+        XCTAssertFalse(cards[0].frame.intersects(cards[1].frame), "Cloud file cards overlap")
+    }
+
+    private func element(_ app: XCUIApplication, _ id: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: id).firstMatch
+    }
+
+    private func assertFitsScreen(_ card: XCUIElement, in app: XCUIApplication,
+                                  file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertGreaterThanOrEqual(card.frame.minX, app.frame.minX + 12, "Card extends left", file: file, line: line)
+        XCTAssertLessThanOrEqual(card.frame.maxX, app.frame.maxX - 12, "Card extends right", file: file, line: line)
+        XCTAssertLessThanOrEqual(card.frame.width, app.frame.width - 24, "Card exceeds viewport width", file: file, line: line)
+    }
+
+    private func attach(_ app: XCUIApplication, _ name: String) {
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = name; shot.lifetime = .keepAlways; add(shot)
+    }
+}

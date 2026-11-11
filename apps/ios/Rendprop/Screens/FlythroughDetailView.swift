@@ -6041,7 +6041,7 @@ struct PhotoStudioView: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).card()
             }
-            photoGrid
+            if !photos.isEmpty { photoGrid }
             if !photos.isEmpty && libraryPhotos.isEmpty {
                 Text(libraryKind == .original ? "No retained originals are available here. Add the original photos to start a new edit."
                      : libraryKind == .decluttered ? "No decluttered photos saved yet. Start from Original and choose Declutter."

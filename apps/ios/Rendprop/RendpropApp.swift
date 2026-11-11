@@ -558,7 +558,7 @@ final class AppModel: ObservableObject {
         // The Home creation regression owns only transient synthetic listings.
         // Neither this root task nor Home's own task may restore or persist a
         // previous simulator library while that closed fixture is running.
-        if HomeProjectCreationFixtureHost.isRequested { return }
+        if HomeProjectCreationFixtureHost.isRequested || CloudPhotoCardLayoutFixtureHost.isRequested { return }
 #endif
         guard !hasLoaded else { return }
         hasLoaded = true
@@ -3879,6 +3879,8 @@ private struct RendpropLaunchContent: View {
                 DetailMetadataRegressionHost()
             } else if HomeProjectCreationFixtureHost.isRequested {
                 HomeProjectCreationFixtureHost()
+            } else if CloudPhotoCardLayoutFixtureHost.isRequested {
+                CloudPhotoCardLayoutFixtureHost()
             } else {
                 normalContent
             }
@@ -4420,6 +4422,78 @@ struct NativeAccountView: View {
 
 // MARK: - Home dashboard
 #if targetEnvironment(simulator)
+/// Loaded, large bundled JPEGs exercise the production cloud-photo card views
+/// without an account, private URL, photo write, or network request.
+private struct CloudPhotoCardLayoutFixtureHost: View {
+    static var isRequested: Bool {
+        Config.isOfflineAccountFixture &&
+            ProcessInfo.processInfo.arguments.contains("-ui.cloudPhotoLayoutFixture")
+    }
+
+    private let listingID = UUID(uuidString: "f1c70000-0000-4000-8000-000000000000")!
+    private let photoIDs = [
+        UUID(uuidString: "f1c70000-0000-4000-8000-000000000001")!,
+        UUID(uuidString: "f1c70000-0000-4000-8000-000000000002")!
+    ]
+
+    private var largeText: Bool {
+        ProcessInfo.processInfo.arguments.contains("-ui.cloudPhotoLayoutLargeText")
+    }
+
+    private func photo(_ index: Int) -> CloudMediaPage.Photo {
+        CloudMediaPage.Photo(
+            id: photoIDs[index], listing_id: listingID,
+            url: URL(fileURLWithPath: "/dev/null"), expires_at: "2099-01-01T00:00:00Z",
+            caption: index == 0 ? "Fictional exterior with a long description that wraps" : nil,
+            is_staged: false, is_altered: index == 0,
+            original_url: index == 0 ? nil : URL(fileURLWithPath: "/dev/null"))
+    }
+
+    var body: some View {
+        Group {
+            if let exterior = UIImage(named: "BrandHomeHero"),
+               let interior = UIImage(named: "BrandPhotoTools") {
+                let photos = [photo(0), photo(1)]
+                let thumbnails = [Image(uiImage: exterior), Image(uiImage: interior)]
+                let typeSize: DynamicTypeSize = largeText ? .accessibility2 : .large
+                NavigationStack {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            Text("2 large JPEGs loaded")
+                                .accessibilityIdentifier("photo.fixture.imagesLoaded")
+                            Text("Photos preview").font(.headline)
+                            LazyVGrid(columns: CloudPhotoCardColumns.preview(for: typeSize), spacing: 12) {
+                                ForEach(0..<photos.count, id: \.self) { index in
+                                    NavigationLink { Text("Offline cloud files fixture") } label: {
+                                        CloudPhotoPreviewCard(photo: photos[index], thumbnail: thumbnails[index])
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityElement(children: .ignore)
+                                    .accessibilityLabel("Cloud photo \(index + 1)")
+                                    .accessibilityIdentifier("photo.fixture.previewLink.\(photos[index].id.uuidString)")
+                                }
+                            }
+                            Text("Cloud files").font(.headline)
+                            LazyVGrid(columns: CloudPhotoCardColumns.media(for: typeSize), spacing: 16) {
+                                ForEach(0..<photos.count, id: \.self) { index in
+                                    CloudMediaPhotoCard(
+                                        photo: photos[index], busy: false, savedCopy: false, imported: false,
+                                        thumbnail: thumbnails[index], saveCopy: {}, importPhoto: {})
+                                }
+                            }
+                        }
+                        .padding(16)
+                    }
+                    .navigationTitle("Photo layout fixture")
+                }
+                .environment(\.dynamicTypeSize, typeSize)
+            } else {
+                Text("Bundled JPEGs unavailable").accessibilityIdentifier("photo.fixture.failure")
+            }
+        }
+    }
+}
+
 /// The actual Home dashboard and creation sheets with exactly two synthetic
 /// listings. It accepts no arbitrary actor, library or network client, and is
 /// absent from physical archives. AppModel.load deliberately remains inactive.

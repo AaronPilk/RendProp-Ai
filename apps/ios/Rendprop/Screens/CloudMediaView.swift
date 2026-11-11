@@ -2,6 +2,129 @@ import SwiftUI
 import AVKit
 import UIKit
 
+enum CloudPhotoCardColumns {
+    static func preview(for size: DynamicTypeSize) -> [GridItem] {
+        size.isAccessibilitySize ? [GridItem(.flexible(minimum: 0), alignment: .top)] : [GridItem(.adaptive(minimum: 140), alignment: .top)]
+    }
+    static func media(for size: DynamicTypeSize) -> [GridItem] {
+        size.isAccessibilitySize ? [GridItem(.flexible(minimum: 0), alignment: .top)] : [GridItem(.adaptive(minimum: 155), alignment: .top)]
+    }
+}
+
+/// The proposed cell width sizes the rectangle. Image pixels only draw inside
+/// that rectangle; their intrinsic width cannot expand the grid column.
+private struct CloudPhotoCardThumbnail: View {
+    let url: URL
+    let height: CGFloat
+    var thumbnail: Image?
+
+    var body: some View {
+        Rectangle().fill(Theme.fillSubtle)
+            .frame(minWidth: 0, maxWidth: .infinity)
+            .frame(height: height)
+            .overlay {
+                GeometryReader { bounds in
+                    Group {
+                        if let thumbnail { thumbnail.resizable().scaledToFill() }
+                        else {
+                            AsyncImage(url: url) { phase in
+                                if let image = phase.image { image.resizable().scaledToFill() }
+                                else { Image(systemName: "photo").foregroundStyle(Theme.inkDim) }
+                            }
+                        }
+                    }
+                    .frame(width: bounds.size.width, height: bounds.size.height)
+                    .clipped()
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .accessibilityHidden(true)
+    }
+}
+
+struct CloudPhotoPreviewCard: View {
+    let photo: CloudMediaPage.Photo
+    var thumbnail: Image? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            CloudPhotoCardThumbnail(url: photo.url, height: 140, thumbnail: thumbnail)
+            Text(photo.caption?.isEmpty == false ? photo.caption! : "Listing photo")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            Text(photo.original_url == nil && photo.is_altered != false
+                 ? "Cloud copy · original unavailable" : "Cloud photo · review available files")
+                .font(.caption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            if photo.is_staged { Text("Virtually staged").font(.caption).foregroundStyle(Theme.warn) }
+        }
+        .padding(10)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 18))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("cloud.previewCard.\(photo.id.uuidString)")
+    }
+}
+
+struct CloudMediaPhotoCard: View {
+    let photo: CloudMediaPage.Photo
+    let busy: Bool
+    let savedCopy: Bool
+    let imported: Bool
+    var thumbnail: Image? = nil
+    let saveCopy: () -> Void
+    let importPhoto: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CloudPhotoCardThumbnail(url: photo.url, height: 145, thumbnail: thumbnail)
+            Text(photo.caption?.isEmpty == false ? photo.caption! : "Listing photo")
+                .font(.subheadline.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            if photo.is_staged { Text("Virtually staged").font(.caption).foregroundStyle(.orange) }
+            if photo.original_url == nil && photo.is_altered != false {
+                Text("Only this cloud copy is available. Saving it to iPhone Photos does not restore its original or edit history.")
+                    .font(.caption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                Button(action: saveCopy) {
+                    Label(savedCopy ? "Saved to iPhone Photos" : "Save available copy to Photos",
+                          systemImage: savedCopy ? "checkmark" : "square.and.arrow.down")
+                        .font(.caption.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 44)
+                }
+                .modifier(RendpropActionAppearance(primary: true, compact: true))
+                .disabled(busy || savedCopy)
+                .accessibilityIdentifier("cloud.saveCopy.\(photo.id.uuidString)")
+            } else {
+                Button(action: importPhoto) {
+                    Label(imported ? "Saved in Photo Studio" : "Save to Photo Studio",
+                          systemImage: imported ? "checkmark" : "arrow.down.circle")
+                        .font(.caption.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 44)
+                }
+                .modifier(RendpropActionAppearance(primary: true, compact: true))
+                .disabled(busy || imported)
+                .accessibilityIdentifier("cloud.importPhoto.\(photo.id.uuidString)")
+            }
+        }
+        .padding(12)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("cloud.mediaCard.\(photo.id.uuidString)")
+    }
+}
+
 /// Metadata only. Previewing never restores originals, writes history, or
 /// changes the listing's selected gallery. Keep private links in this scope.
 @MainActor final class CloudPhotoPreviewLoader: ObservableObject {
@@ -97,25 +220,11 @@ struct CloudPhotoLibraryPreview: View {
                 ProgressView("Loading cloud photos…")
             }
             if !visiblePhotos.isEmpty {
-                LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 140))], spacing: 12) {
+                LazyVGrid(columns: CloudPhotoCardColumns.preview(for: dynamicTypeSize), spacing: 12) {
                     ForEach(Array(visiblePhotos.prefix(6).enumerated()), id: \.element.id) { item in
                         let photo = item.element
                         NavigationLink { CloudMediaView(listing: listing) } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                AsyncImage(url: photo.url) { phase in
-                                    if let image = phase.image { image.resizable().scaledToFill() }
-                                    else { ZStack { Theme.fillSubtle; Image(systemName: "photo") } }
-                                }
-                                .frame(height: 140).frame(maxWidth: .infinity).clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                                Text(photo.caption?.isEmpty == false ? photo.caption! : "Listing photo")
-                                    .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
-                                Text(photo.original_url == nil && photo.is_altered != false
-                                     ? "Cloud copy · original unavailable" : "Cloud photo · review available files")
-                                    .font(.caption).foregroundStyle(Theme.inkDim)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                if photo.is_staged { Text("Virtually staged").font(.caption).foregroundStyle(Theme.warn) }
-                            }.padding(10).background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 18))
+                            CloudPhotoPreviewCard(photo: photo)
                         }
                         .buttonStyle(.plain)
                         .accessibilityElement(children: .ignore)
@@ -168,6 +277,7 @@ struct CloudPhotoLibraryPreview: View {
 /// agent chooses a file. Successful imports use the existing Photo/Review tools.
 struct CloudMediaView: View {
     let listing: Listing
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
     @State private var photos: [CloudMediaPage.Photo] = []
@@ -217,36 +327,11 @@ struct CloudMediaView: View {
                 }
                 if !photos.isEmpty {
                     Text("Photos").font(.headline)
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 155))], spacing: 16) {
+                    LazyVGrid(columns: CloudPhotoCardColumns.media(for: dynamicTypeSize), spacing: 16) {
                         ForEach(photos) { photo in
-                            VStack(alignment: .leading, spacing: 10) {
-                                AsyncImage(url: photo.url) { image in image.resizable().scaledToFill() }
-                                    placeholder: { ZStack { Theme.fillSubtle; Image(systemName: "photo") } }
-                                    .frame(height: 145).frame(maxWidth: .infinity).clipped().clipShape(RoundedRectangle(cornerRadius: 12))
-                                Text(photo.caption?.isEmpty == false ? photo.caption! : "Listing photo").font(.subheadline.weight(.medium))
-                                if photo.is_staged { Text("Virtually staged").font(.caption).foregroundStyle(.orange) }
-                                if photo.original_url == nil && photo.is_altered != false {
-                                    Text("Only this cloud copy is available. Saving it to iPhone Photos does not restore its original or edit history.")
-                                        .font(.caption).foregroundStyle(Theme.inkDim)
-                                    Button { saveAvailableCopy(photo) } label: {
-                                        Label(savedCopies.contains(photo.id) ? "Saved to iPhone Photos" : "Save available copy to Photos",
-                                              systemImage: savedCopies.contains(photo.id) ? "checkmark" : "square.and.arrow.down")
-                                            .font(.caption.weight(.semibold))
-                                            .frame(maxWidth: .infinity, minHeight: 44)
-                                    }
-                                    .modifier(RendpropActionAppearance(primary: true, compact: true))
-                                    .disabled(importing != nil || savedCopies.contains(photo.id))
-                                } else {
-                                    Button { importPhoto(photo) } label: {
-                                        Label(imported.contains(photo.id) ? "Saved in Photo Studio" : "Save to Photo Studio",
-                                              systemImage: imported.contains(photo.id) ? "checkmark" : "arrow.down.circle")
-                                            .font(.caption.weight(.semibold))
-                                            .frame(maxWidth: .infinity, minHeight: 44)
-                                    }
-                                    .modifier(RendpropActionAppearance(primary: true, compact: true))
-                                    .disabled(importing != nil || imported.contains(photo.id))
-                                }
-                            }.padding(12).background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14))
+                            CloudMediaPhotoCard(photo: photo, busy: importing != nil,
+                                savedCopy: savedCopies.contains(photo.id), imported: imported.contains(photo.id),
+                                saveCopy: { saveAvailableCopy(photo) }, importPhoto: { importPhoto(photo) })
                         }
                     }
                 }
