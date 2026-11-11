@@ -65,7 +65,7 @@ enum PHAssetChangeRequest {
 }
 @MainActor enum Haptics { static var count = 0; static func success() { count += 1 } }
 
-private enum PhotosLibrarySaver {
+enum PhotosLibrarySaver {
 __DENIED__
 __CONTEXT_CHANGED__
 __SAVE_IMAGE__
