@@ -2,7 +2,7 @@ import{mapCatalogueRows}from'./catalogue-map.ts';
 import{selectedGallerySources}from'./source-selection.ts';
 import{assert}from'../_shared/http.ts';
 import{adminClient,contentOrgForUser}from'../_shared/supabase.ts';
-import{privateMediaUrl}from'../_shared/private-media.ts';
+import{createPrivateMediaRequestSigner}from'../_shared/private-media.ts';
 import{preparationReply}from'./prepared.ts';
 import{ownedHead,rpc,reply}from'./runtime.ts';
 /** Listing selection is authority. Editing-history latest rows never replace it. */
@@ -12,16 +12,19 @@ export async function selectedSources(actor:string,listing:string,expected:strin
  let selectedRows=0,preparedRows=0,referenceAttempts=0,headAttempts=0,signAttempts=0,success=false;
  async function timed<T>(phase:keyof typeof phases,work:()=>PromiseLike<T>):Promise<T>{const at=performance.now();try{return await work();}finally{phases[phase]+=Math.max(0,performance.now()-at);}}
  try{
-  const org=await timed('authorize_ms',()=>contentOrgForUser(actor,expected,listing,true)),db=adminClient();
+  const org=await timed('authorize_ms',()=>contentOrgForUser(actor,expected,listing,true)),db=adminClient(),signer=createPrivateMediaRequestSigner(org);
   const row=await timed('listing_ms',()=>db.from('listings').select('gallery_asset_ids').eq('id',listing).maybeSingle());assert(!row.error&&row.data,404,'This property is unavailable.');const gallery=row.data.gallery_asset_ids as string[]|null;
   const {selected,count}=await timed('gallery_ms',()=>selectedGallerySources(db,listing,gallery,offset));selectedRows=selected.length;
   const sources=await timed('catalogue_ms',()=>mapCatalogueRows(selected,async({asset:a,photo})=>{
    let verifiedBytes:number|null=a.bytes??null,verifiedSHA:string|null=a.sha256??null;let referenceVerified=false;let provenance:string|null=null,eligible=false,reason='This selected image needs a retained prepared JPEG upload.',preview_url:string|null=null;
    if(a.storage_key){const p=await timed('provenance_ms',()=>db.from('media_provenance').select('id').eq('listing_id',listing).eq('altered_key',a.storage_key).in('kind',['photo_edit','virtual_stage','declutter']).order('created_at',{ascending:false}).limit(1).maybeSingle());assert(!p.error,503,'Selected photo provenance could not be read.');provenance=p.data?.id??null;}
-   if(a.id){try{referenceAttempts++;const owned=await timed('reference_ms',()=>rpc('property_photo_reference',{p_actor:actor,p_listing:listing,p_asset:a.id,p_provenance:provenance}));headAttempts++;await timed('head_ms',()=>ownedHead(owned));referenceVerified=true;signAttempts++;preview_url=await timed('sign_ms',()=>privateMediaUrl({actor,org,listing,bucket:owned.bucket,key:owned.storage_key}));verifiedBytes=owned.bytes;verifiedSHA=owned.sha256;eligible=['image/jpeg','image/png','image/webp'].includes(owned.content_type)&&owned.bytes<=8*1024*1024&&typeof owned.sha256==='string';reason=eligible?'':'Prepare this exact selected version as an8MiB-or-smaller JPEG for video.';}catch{referenceVerified=false;reason='This selected version is unavailable or has not passed its photo review.';}}
-   const prep=referenceVerified?await timed('prepared_lookup_ms',()=>db.from('property_video_preparations').select('id').eq('actor_id',actor).eq('listing_id',listing).eq('original_asset_id',a.id??'00000000-0000-0000-0000-000000000000').eq('version_id','asset:'+a.id).eq('state','ready').order('created_at',{ascending:false}).limit(1).maybeSingle()):{data:null,error:null};assert(!prep.error,503,'Prepared video inputs could not be read.');if(prep.data){const prepId=prep.data.id;preparedRows++;const p=await timed('prepared_reply_ms',async()=>preparationReply(await rpc('property_video_preparation_scope',{p_id:prepId,p_actor:actor})));if(p.source)return p.source;}
+   if(a.id){try{referenceAttempts++;const owned=await timed('reference_ms',()=>rpc('property_photo_reference',{p_actor:actor,p_listing:listing,p_asset:a.id,p_provenance:provenance}));headAttempts++;await timed('head_ms',()=>ownedHead(owned));referenceVerified=true;signAttempts++;preview_url=await timed('sign_ms',()=>signer.sign({actor,org,listing,bucket:owned.bucket,key:owned.storage_key}));verifiedBytes=owned.bytes;verifiedSHA=owned.sha256;eligible=['image/jpeg','image/png','image/webp'].includes(owned.content_type)&&owned.bytes<=8*1024*1024&&typeof owned.sha256==='string';reason=eligible?'':'Prepare this exact selected version as an8MiB-or-smaller JPEG for video.';}catch{referenceVerified=false;reason='This selected version is unavailable or has not passed its photo review.';}}
+   const prep=referenceVerified?await timed('prepared_lookup_ms',()=>db.from('property_video_preparations').select('id').eq('actor_id',actor).eq('listing_id',listing).eq('original_asset_id',a.id??'00000000-0000-0000-0000-000000000000').eq('version_id','asset:'+a.id).eq('state','ready').order('created_at',{ascending:false}).limit(1).maybeSingle()):{data:null,error:null};assert(!prep.error,503,'Prepared video inputs could not be read.');if(prep.data){const prepId=prep.data.id;preparedRows++;const p=await timed('prepared_reply_ms',async()=>preparationReply(await rpc('property_video_preparation_scope',{p_id:prepId,p_actor:actor}),signer.sign));if(p.source)return p.source;}
    eligible=false;if(referenceVerified)reason='Prepare this exact selected master for video; its original stays unchanged.';
    return{needs_preparation:referenceVerified&&!!a.id&&typeof verifiedSHA==='string'&&verifiedBytes!==null&&verifiedBytes<=50*1024*1024,photo_id:photo,photo_asset_id:a.id,photo_version_id:a.id?'asset:'+a.id:'photo:'+photo,photo_provenance_id:provenance,preview_url,bytes:verifiedBytes,sha256:verifiedSHA,eligible,...(!eligible?{reason}:{})};}));
+  const currentOrg=await timed('authorize_ms',()=>contentOrgForUser(actor,expected,listing,true));
+  assert(currentOrg===org,403,'Current workspace access changed during this source request.');
+  await timed('sign_ms',()=>signer.assertFresh());
   success=true;
   return{listing_id:listing,org_id:org,selected_library_org_id:expected,selected_count:count,sources,next_offset:offset+100<count?offset+100:null};
  }finally{
