@@ -494,6 +494,8 @@ enum PurchaseDispatchAdmission {
 
 enum TrialPurchaseAdmission {
     static let unavailableMessage = "Free trials are not available in this workspace yet. No Apple billing has started. Your saved work remains available under your workspace's access and retention terms."
+    static let capacityUnavailableMessage = "Trial access is unavailable in this Apple purchase environment. No new Apple purchase has started. Any existing reservation and Apple transaction remain with this workspace. Do not purchase again or switch accounts. Contact support in Settings → Legal & support; tap Restore purchases after support confirms access."
+    static let unknownEnvironmentMessage = "Apple's purchase environment could not be verified. No new Apple purchase has started. Any existing reservation remains with this workspace. Reopen the app and check this plan again, or contact support in Settings → Legal & support."
     static let unsupportedRegionMessage = "Funded trials are currently supported only in the United States with a USD subscription. No Apple purchase has started. Any existing reservation remains retained. Restore and subscription management remain available."
     static func supportsTrialRegion(country: String?, currency: String) -> Bool {
         country == "USA" && currency == "USD"

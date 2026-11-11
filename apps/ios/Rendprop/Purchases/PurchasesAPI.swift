@@ -102,11 +102,19 @@ struct EntitlementSync: Codable, Hashable, Sendable {
     }
 }
 
+/// A verified StoreKit app environment is required for a new trial preflight.
+/// The server still verifies the eventual signed Apple transaction independently.
+enum PurchaseEnvironment: String, Sendable {
+    case production = "Production"
+    case sandbox = "Sandbox"
+}
+
 /// The one call the purchase flow makes. `PurchaseManager` holds the client as
 /// this protocol so the offline (Mock) build walks the whole paywall.
 protocol PurchasesAPI {
     func billingContext() async throws -> SubscriptionBillingContext
-    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID) async throws -> TrialPurchaseReservation
+    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,
+                              environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation
     /// POST /me/entitlement — hand Apple's signed transaction to the server and
     /// get back the plan it wrote. Throws `APIError` on a non-2xx.
     func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync
@@ -115,13 +123,14 @@ protocol PurchasesAPI {
 // MARK: - Live
 
 extension LiveAPIClient: PurchasesAPI {
-    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID) async throws -> TrialPurchaseReservation {
+    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,
+                              environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation {
         guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == appAccountToken,
               WorkspaceContext.billingOrgID == orgID else { throw CloudSyncError.identityChanged }
         let data = try await PurchasesRequest.post(path: ["me", "trial", "prepare"], json: [
             "org_id": orgID.uuidString.lowercased(),
             "actor_id": appAccountToken.uuidString.lowercased(), "app_account_token": appAccountToken.uuidString.lowercased(),
-            "product_id": productID
+            "product_id": productID, "purchase_environment": environment.rawValue
         ], retriesUnauthorized: false, requiredCurrentOrg: orgID)
         return try TrialPurchaseReservation.decode(data, actor: appAccountToken, org: orgID, product: productID)
     }
@@ -270,7 +279,8 @@ private final class TrialPurchaseRedirectPolicy: NSObject, URLSessionTaskDelegat
 // MARK: - Mock (offline dev + the UI walk)
 
 extension MockAPIClient: PurchasesAPI {
-    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID) async throws -> TrialPurchaseReservation {
+    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,
+                              environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation {
         // Offline preview must not manufacture a funded trial promise.
         throw SubscriptionBillingContext.TrialPresentationError.invalidResponse
     }

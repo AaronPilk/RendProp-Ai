@@ -57,13 +57,17 @@ assert purchase.index('guard PurchaseDispatchAdmission.allows(') < purchase.inde
 assert 'await ' not in purchase.split('guard PurchaseDispatchAdmission.allows(', 1)[1].split('try await product.purchase(', 1)[0]
 assert purchase.count('verifiedHeldTrialForDispatch = true') == 1
 assert 'actor.flatMap(UUID.init(uuidString:)).map { [.appAccountToken($0)] }' in purchase
-prepare_needle = 'func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID) async throws -> TrialPurchaseReservation {'
+prepare_needle = 'func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,\n                              environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation {'
 assert 'retriesUnauthorized: false, requiredCurrentOrg: orgID' in block(api, prepare_needle)
+assert '"purchase_environment": environment.rawValue' in block(api, prepare_needle)
+assert check.index('verifiedTrialPurchaseEnvironment()') < check.index('validateHeldTrialPurchase(')
+assert purchase.index('verifiedTrialPurchaseEnvironment()') < purchase.index('validateHeldTrialPurchase(')
 assert 'completionHandler(nil)' in block(api, 'private final class TrialPurchaseRedirectPolicy:')
 
 interfaces = r'''
 import Foundation
-enum APIError: Error { case decoding, notConfigured, invalidURL, badResponse(Int) }
+enum APIError: Error { case decoding, notConfigured, invalidURL, badResponse(Int), server(status: Int, code: String?, message: String)
+    var code: String? { if case .server(_, let code, _) = self { return code }; return nil } }
 enum CloudSyncError: Error { case identityChanged, invalidResponse }
 enum Config { static var useLiveBackend = true; static var isUITesting = false; static let enableAuth = true
     static let apiBaseURL: URL? = URL(string: "https://fixture.invalid/functions/v1")
@@ -134,11 +138,24 @@ enum SheetError: Error { case cancelled, timeout }
         return value.map { .init(countryCode: $0) }
     } }
 }
+enum VerificationResult<T> { case verified(T), unverified(T) }
+@MainActor struct AppTransaction {
+    enum Environment { case production, sandbox, other }
+    let environment: Environment
+    static var value: Environment? = .production; static var verified = true; static var reads = 0
+    static var onRead: (() -> Void)?
+    static var shared: VerificationResult<AppTransaction> { get async throws {
+        reads += 1; onRead?()
+        let app = AppTransaction(environment: value ?? .other)
+        return verified ? .verified(app) : .unverified(app)
+    } }
+}
 @MainActor enum PaywallEvents { static func track(_ event: String, product: Product, extra: [String: String]? = nil) {} }
 @MainActor final class HeldAPI {
     let org: UUID; let actor: UUID; let product: String
     var held: TrialPurchaseReservation?; var prepareCalls = 0; var billingCalls = 0
-    var failPrepare = false; var converted = false; var onPrepare: (() -> Void)?; var onBilling: (() -> Void)?
+    var failPrepare = false; var rejectSandbox = false; var converted = false; var onPrepare: (() -> Void)?; var onBilling: (() -> Void)?
+    var seenEnvironments: [PurchaseEnvironment] = []
     var overrideHold: TrialPurchaseReservation?; var overrideContext: SubscriptionBillingContext?
     init(org: UUID, actor: UUID, product: String) { self.org = org; self.actor = actor; self.product = product }
     func billingContext() async throws -> SubscriptionBillingContext {
@@ -149,8 +166,13 @@ enum SheetError: Error { case cancelled, timeout }
         value.trialOffer = converted ? nil : held?.trialOffer
         return value
     }
-    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID) async throws -> TrialPurchaseReservation {
+    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,
+                              environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation {
         prepareCalls += 1
+        seenEnvironments.append(environment)
+        if rejectSandbox && environment == .sandbox {
+            throw APIError.server(status: 402, code: "trial_capacity_unavailable", message: "Synthetic capacity refusal")
+        }
         if held == nil { held = makeHold(actor: actor, org: org, product: product) }
         onPrepare?()
         if failPrepare { throw SheetError.timeout }
@@ -178,6 +200,7 @@ interfaces=interfaces.replace('func forceRefresh() async -> Bool { refreshes += 
 def generated(b, a, m):
     source = interfaces + '\n}\n' + b + '\n' + money + '\n'
     source += block(products, 'struct TeamSeatVariant:') + '\n'
+    source += block(a, 'enum PurchaseEnvironment:') + '\n'
     source += '@MainActor extension LiveAPIClient {\n' + block(a, prepare_needle) + '\n}\n'
     request = block(a, '@MainActor private enum PurchasesRequest {')
     # Real redirect delegate is checked above and by the SDK compile. Closed
@@ -188,6 +211,7 @@ def generated(b, a, m):
                    'private func hasSevenDayTrial(', 'func canStartNewPurchase(', 'func heldTrialOffer(',
                    'func ceilingModePurchaseAllowed(', 'func ceilingShowsIntroOffer(',
                    'func canCheckTrialAvailability(', 'private func trialRegionSupported(',
+                   'private func verifiedTrialPurchaseEnvironment(',
                    'private func validateHeldTrialPurchase(', 'private func validateCurrentHeldTrialPurchase(',
                    'func checkTrialAvailability(', 'private func validateTrialPurchase(',
                    'func refreshBillingContext(', 'func purchase(']:
@@ -212,10 +236,12 @@ faults = [
     ('same-reservation', 'expectedReservationID.map({ held.reservationId == $0 }) ?? true', 'true', 'Replacement reservation accepted'),
     ('eligibility-at-continue', 'guard eligible == true, let heldAtTap,', 'guard let heldAtTap,', 'Changed held eligibility opened Apple sheet'),
     ('eligibility-after-hold', 'guard finalEligibility == true, hasSevenDayTrial(for: product)', 'guard hasSevenDayTrial(for: product)', 'Late eligibility change opened Apple sheet'),
-    ('retain-cancel', 'if !retainTrialBinding, createdBinding, let binding = preparedBinding', 'if createdBinding, let binding = preparedBinding', 'Cancellation discarded trial workspace binding'),
+    ('retain-cancel', 'if !retainTrialBinding, createdBinding, let binding = preparedBinding', 'if createdBinding, let binding = preparedBinding', 'Sandbox capacity refusal discarded the original workspace binding'),
     ('api-token', 'AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == appAccountToken,', 'true,', 'Foreign appAccountToken dispatched'),
     ('api-workspace', 'WorkspaceContext.billingOrgID == orgID else', 'true else', 'Foreign API workspace dispatched'),
     ('api-401-retry', 'retriesUnauthorized: false,', 'retriesUnauthorized: true,', 'Reservation retried after 401'),
+    ('api-environment-wire', '"purchase_environment": environment.rawValue', '"purchase_environment": "Production"', 'Sandbox purchase environment was not forwarded'),
+    ('app-environment', 'if app.environment == .sandbox { return .sandbox }', 'if app.environment == .sandbox { return .production }', 'Sandbox trial capacity refusal opened Apple or lost its environment'),
     ('api-response-snapshot', 'let (data, resp) = try await session.data(for: req)\n        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,\n              WorkspaceContext.selectedOrgID == viewedOrg,\n              requiredCurrentOrg.map({ WorkspaceContext.billingOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }',
      'let (data, resp) = try await session.data(for: req)', 'Late API response accepted'),
     ('fresh-authority-order', None, None, 'Late server authority during Apple await opened sheet'),

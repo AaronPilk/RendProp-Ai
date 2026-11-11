@@ -13,6 +13,9 @@ import Foundation
    await m.retryUnsynced(automatically:true);check(api.requests==1,"Permanent refusal automatically retried")
    let relaunched=PurchaseManager();relaunched.api=api
    check(!(await relaunched.handle(.verified(t),event:"entitlement")),"Relaunch ignored persisted refusal");check(api.requests==1,"Relaunch automatically retried refusal")
+   check(relaunched.lastError?.contains("Do not purchase again or switch accounts")==true && relaunched.lastError?.contains("Contact support")==true,
+         "Persisted refusal lost neutral retained-transaction guidance")
+   check(relaunched.lastError?.contains("Return to its original account")==false,"Persisted refusal blamed the original account")
    api.error=nil;check(await relaunched.handle(.verified(t),event:"restore"),"Explicit Restore failed to recover");check(t.finishes==1,"Accepted Restore did not finish once");check(relaunched.unsyncedCount==0,"Accepted Restore retained queue")
   }
   for status in [408,429,500,503] {let(m,api,t)=fixture(UInt64(status));api.error=APIError.badResponse(status);check(!(await m.handle(.verified(t),event:"entitlement")),"Temporary refusal accepted");await m.retryUnsynced(automatically:true);check(api.requests==2,"Temporary failure was never retried");check(t.finishes==0,"Temporary failure finished receipt")}

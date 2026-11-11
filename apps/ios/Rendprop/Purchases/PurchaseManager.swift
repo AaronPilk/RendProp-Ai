@@ -44,6 +44,9 @@ enum PurchaseFulfilmentRecovery {
         if api?.code == "trial_capacity_unavailable" {
             return "Your Apple trial and its workspace are retained, but trial access is unavailable. Do not purchase again or switch accounts. Contact support in Settings → Legal & support; tap Restore purchases after support confirms access. Manage or cancel the subscription with Apple if needed. It is not retried automatically."
         }
+        if api?.code == "fulfilment_refused" {
+            return "Your Apple transaction and its workspace are retained. Rendprop paused automatic retries after a server refusal. Do not purchase again or switch accounts. Contact support in Settings → Legal & support, then tap Restore purchases after support confirms access. Manage or cancel the subscription with Apple if needed."
+        }
         if automaticallyRetry(error) {
             return "Your Apple purchase is retained while Rendprop is temporarily unavailable. It will retry when you reopen the app, or you can tap Restore purchases."
         }
@@ -362,13 +365,26 @@ final class PurchaseManager: ObservableObject {
             country: storefront?.countryCode, currency: product.priceFormatStyle.currencyCode)
     }
 
+    /// AppTransaction is available before any subscription sheet, including in
+    /// TestFlight. Never infer this from the build configuration: only Apple's
+    /// verified app transaction can distinguish Sandbox from Production here.
+    private func verifiedTrialPurchaseEnvironment() async -> PurchaseEnvironment? {
+        guard let result = try? await AppTransaction.shared,
+              case .verified(let app) = result else { return nil }
+        if app.environment == .production { return .production }
+        if app.environment == .sandbox { return .sandbox }
+        return nil
+    }
+
     private func validateHeldTrialPurchase(productID: String, captured: TrialPurchaseSnapshot,
-                                          expectedReservationID: UUID?) async throws -> TrialPurchaseReservation {
+                                          expectedReservationID: UUID?,
+                                          environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation {
         guard let api, let owner = captured.actor.flatMap(UUID.init(uuidString:)), let org = captured.purchaseOrg else { throw APIError.notConfigured }
         let before = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
             revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
         guard before == captured else { throw CloudSyncError.identityChanged }
-        let held = try await api.prepareTrialPurchase(orgID: org, productID: productID, appAccountToken: owner)
+        let held = try await api.prepareTrialPurchase(orgID: org, productID: productID,
+            appAccountToken: owner, environment: environment)
         let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
             revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
         guard TrialPurchaseAdmission.allowsHeld(held, product: productID, captured: captured, current: current),
@@ -420,9 +436,13 @@ final class PurchaseManager: ObservableObject {
             guard await trialRegionSupported(for: product, captured: captured) else {
                 lastError = TrialPurchaseAdmission.unsupportedRegionMessage; return
             }
+            guard let environment = await verifiedTrialPurchaseEnvironment() else {
+                lastError = TrialPurchaseAdmission.unknownEnvironmentMessage; return
+            }
             _ = try PurchaseWorkspaceBindingStore.prepare(owner: owner, productID: product.id, orgID: org)
             let held = try await validateHeldTrialPurchase(productID: product.id, captured: captured,
-                expectedReservationID: heldTrialOffer(for: product) == nil ? nil : preparedTrialReservation?.reservationId)
+                expectedReservationID: heldTrialOffer(for: product) == nil ? nil : preparedTrialReservation?.reservationId,
+                environment: environment)
             preparedTrialReservation = held; preparedTrialSnapshot = captured
             introOfferEligible[product.id] = true
             await refreshBillingContext()
@@ -434,7 +454,14 @@ final class PurchaseManager: ObservableObject {
             let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
                 revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
             guard current == captured else { return }
-            lastError = Self.message(for: error, fallback: "Trial availability could not be confirmed. A reservation may still be pending. No Apple billing has started. Restore or explicitly check this same plan again; no reservation is automatically released or restarted.")
+            if (error as? APIError)?.code == "trial_capacity_unavailable" {
+                // The durable hold and workspace binding remain intact. Drop
+                // only the cached funded-looking offer so Continue stays off.
+                preparedTrialReservation = nil; preparedTrialSnapshot = nil
+                lastError = TrialPurchaseAdmission.capacityUnavailableMessage
+            } else {
+                lastError = Self.message(for: error, fallback: "Trial availability could not be confirmed. A reservation may still be pending. No Apple billing has started. Restore or explicitly check this same plan again; no reservation is automatically released or restarted.")
+            }
         }
     }
 
@@ -569,10 +596,13 @@ final class PurchaseManager: ObservableObject {
                     guard await trialRegionSupported(for: product, captured: captured) else {
                         lastError = TrialPurchaseAdmission.unsupportedRegionMessage; return
                     }
+                    guard let environment = await verifiedTrialPurchaseEnvironment() else {
+                        lastError = TrialPurchaseAdmission.unknownEnvironmentMessage; return
+                    }
                     // A replay confirms the same durable hold; it cannot
                     // release, replace, or mint another reservation.
                     let held = try await validateHeldTrialPurchase(productID: product.id, captured: captured,
-                        expectedReservationID: heldAtTap.reservationId)
+                        expectedReservationID: heldAtTap.reservationId, environment: environment)
                     guard held == heldAtTap else { throw SubscriptionBillingContext.TrialPresentationError.invalidResponse }
                     let finalEligibility = await product.subscription?.isEligibleForIntroOffer
                     guard finalEligibility == true, hasSevenDayTrial(for: product) else {
@@ -600,7 +630,12 @@ final class PurchaseManager: ObservableObject {
                 }
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision,
                       WorkspaceContext.selectedOrgID == viewedOrgID, WorkspaceContext.billingOrgID == expectedOrgID else { return }
-                lastError = retainTrialBinding ? "The same trial reservation could not be confirmed. No Apple purchase has started. The reservation is retained; Restore or explicitly check this same plan again." : TrialPurchaseAdmission.unavailableMessage
+                if (error as? APIError)?.code == "trial_capacity_unavailable" {
+                    preparedTrialReservation = nil; preparedTrialSnapshot = nil
+                    lastError = TrialPurchaseAdmission.capacityUnavailableMessage
+                } else {
+                    lastError = retainTrialBinding ? "The same trial reservation could not be confirmed. No Apple purchase has started. The reservation is retained; Restore or explicitly check this same plan again." : TrialPurchaseAdmission.unavailableMessage
+                }
                 return
             }
         }

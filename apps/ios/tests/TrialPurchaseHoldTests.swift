@@ -30,6 +30,8 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             WorkspaceContext.selectedOrgID = org
             UserDefaults.standard.values = [:]
             Storefront.values = ["USA"]; Storefront.reads = 0; Storefront.onRead = nil
+            AppTransaction.value = .production; AppTransaction.verified = true
+            AppTransaction.reads = 0; AppTransaction.onRead = nil
             Product.sheetCalls = 0; Product.receivedOptions = []; Product.result = .userCancelled; Product.error = nil
             URLSession.requests = []; URLSession.status = 200; URLSession.onResponse = nil
             let api = HeldAPI(org: org, actor: actor, product: sku)
@@ -176,6 +178,7 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             let (manager, api, product) = fixture()
             await manager.checkTrialAvailability(product, expectedOrgID: org)
             check(api.prepareCalls == 1 && Product.sheetCalls == 0, "Checking availability opened Apple sheet")
+            check(api.seenEnvironments == [.production], "Production trial preflight did not use verified Apple environment")
             check(manager.preparedTrialReservation == api.held && manager.heldTrialOffer(for: product)?.photoEdits == 5,
                   "Prepared terms not displayed from exact hold")
             check(manager.canStartNewPurchase(for: product), "Held terms could not continue")
@@ -183,8 +186,53 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             check(Product.sheetCalls == 1 && Product.receivedOptions == [.appAccountToken(actor)], "Held purchase did not bind captured actor")
             check(api.prepareCalls == 2 && manager.preparedTrialReservation?.reservationId == api.held?.reservationId,
                   "Continue replaced the original reservation")
+            check(api.seenEnvironments == [.production, .production], "Production trial replay lost the verified environment")
             check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku)?.orgID == org,
                   "Cancellation discarded trial workspace binding")
+        }
+        do {
+            let (manager, api, product) = fixture(); AppTransaction.value = .sandbox
+            api.rejectSandbox = true
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.seenEnvironments == [.sandbox] && Product.sheetCalls == 0,
+                  "Sandbox trial capacity refusal opened Apple or lost its environment")
+            check(manager.lastError == TrialPurchaseAdmission.capacityUnavailableMessage,
+                  "Sandbox preflight refusal lacked retained-transaction recovery guidance")
+            check(manager.preparedTrialReservation == nil,
+                  "Refused Sandbox preflight was presented as a funded hold")
+        }
+        do {
+            let (manager, api, product) = fixture(ready: true); AppTransaction.value = .sandbox
+            api.rejectSandbox = true
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(api.seenEnvironments == [.sandbox] && Product.sheetCalls == 0,
+                  "Stale Sandbox hold reached Apple despite capacity refusal")
+            check(manager.lastError == TrialPurchaseAdmission.capacityUnavailableMessage,
+                  "Sandbox replay refusal hid the support and Restore path")
+            check(manager.preparedTrialReservation == nil && !manager.canStartNewPurchase(for: product),
+                  "Refused Sandbox hold remained visible as a funded Continue action")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku)?.orgID == org,
+                  "Sandbox capacity refusal discarded the original workspace binding")
+        }
+        for verified in [true, false] {
+            let (manager, api, product) = fixture(ready: true)
+            AppTransaction.value = verified ? .other : .sandbox
+            AppTransaction.verified = verified
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(api.prepareCalls == 0 && Product.sheetCalls == 0,
+                  "Unknown or unverified Apple environment reached trial preflight or sheet")
+            check(manager.lastError == TrialPurchaseAdmission.unknownEnvironmentMessage,
+                  "Unknown Apple environment lacked actionable guidance")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku)?.orgID == org,
+                  "Unknown environment discarded a retained hold")
+        }
+        do {
+            let (manager, api, product) = fixture(); AppTransaction.verified = false
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 0 && Product.sheetCalls == 0 && manager.preparedTrialReservation == nil,
+                  "Unverified app transaction created a trial reservation")
+            check(manager.lastError == TrialPurchaseAdmission.unknownEnvironmentMessage,
+                  "Unverified app environment lacked a clear preflight message")
         }
         for country in ["CAN", "GBR", nil] as [String?] {
             let (manager, api, product) = fixture(); Storefront.values = [country]
@@ -357,7 +405,7 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
         do {
             let (manager, api, _) = fixture()
             let captured = snapshot(); AuthStore.shared.syncSessionRevision += 1
-            do { _ = try await manager.validateHeldTrialPurchase(productID: sku, captured: captured, expectedReservationID: nil) }
+            do { _ = try await manager.validateHeldTrialPurchase(productID: sku, captured: captured, expectedReservationID: nil, environment: .production) }
             catch {}
             check(api.prepareCalls == 0, "Changed pre-prepare snapshot dispatched")
         }
@@ -369,7 +417,7 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
                 if change == 2 { WorkspaceContext.selectedOrgID = other }
             }
             var accepted = false
-            do { _ = try await manager.validateHeldTrialPurchase(productID: sku, captured: captured, expectedReservationID: nil); accepted = true }
+            do { _ = try await manager.validateHeldTrialPurchase(productID: sku, captured: captured, expectedReservationID: nil, environment: .production); accepted = true }
             catch {}
             check(!accepted && api.prepareCalls == 1, "Late hold response accepted")
         }
@@ -377,7 +425,7 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             let (manager, api, _) = fixture()
             api.overrideHold = makeHold(actor: actor, org: org, product: sku, reservation: other)
             var accepted = false
-            do { _ = try await manager.validateHeldTrialPurchase(productID: sku, captured: snapshot(), expectedReservationID: hold.reservationId); accepted = true }
+            do { _ = try await manager.validateHeldTrialPurchase(productID: sku, captured: snapshot(), expectedReservationID: hold.reservationId, environment: .production); accepted = true }
             catch {}
             check(!accepted, "Replacement reservation accepted")
         }
@@ -386,44 +434,53 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
         // closed URLSession. No actual credentials or transport are used.
         do {
             _ = fixture(); URLSession.reply = wire
-            let value = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor)
+            let value = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor, environment: .sandbox)
             check(value == hold && URLSession.requests.count == 1, "Exact API receipt refused")
             let request = URLSession.requests[0]
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
-            check(Set(body.keys) == Set(["org_id", "actor_id", "app_account_token", "product_id"]), "Reservation payload has unexpected keys")
+            check(Set(body.keys) == Set(["org_id", "actor_id", "app_account_token", "product_id", "purchase_environment"]), "Reservation payload has unexpected keys")
             check(body["actor_id"] == actor.uuidString.lowercased() && body["app_account_token"] == body["actor_id"] && body["org_id"] == org.uuidString.lowercased() && body["product_id"] == sku,
                   "Exact actor token workspace product payload missing")
+            check(body["purchase_environment"] == "Sandbox", "Sandbox purchase environment was not forwarded")
             check(request.value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased() && request.httpMethod == "POST" && request.timeoutInterval == 20,
                   "Reservation request scope or timeout differs")
         }
         do {
             _ = fixture(); URLSession.reply = wire
-            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: other) }
+            _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku,
+                appAccountToken: actor, environment: .production)
+            let request = URLSession.requests[0]
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+            check(body["purchase_environment"] == "Production", "Production hold replay lost its verified environment")
+        }
+        do {
+            _ = fixture(); URLSession.reply = wire
+            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: other, environment: .sandbox) }
             catch {}
             check(URLSession.requests.isEmpty, "Foreign appAccountToken dispatched")
         }
         do {
             _ = fixture(); URLSession.reply = wire
-            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: other, productID: sku, appAccountToken: actor) }
+            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: other, productID: sku, appAccountToken: actor, environment: .sandbox) }
             catch {}
             check(URLSession.requests.isEmpty, "Foreign API workspace dispatched")
         }
         do {
             _ = fixture(); URLSession.status = 401; URLSession.reply = Data()
-            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor) }
+            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor, environment: .sandbox) }
             catch {}
             check(URLSession.requests.count == 1 && AuthStore.shared.refreshes == 0, "Reservation retried after 401")
         }
         do {
             _ = fixture(); URLSession.reply = wire; URLSession.onResponse = { AuthStore.shared.syncSessionRevision += 1 }
             var accepted = false
-            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor); accepted = true }
+            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor, environment: .sandbox); accepted = true }
             catch {}
             check(!accepted && URLSession.requests.count == 1, "Late API response accepted")
         }
         do {
             _ = fixture(); AuthStore.token = nil; URLSession.reply = wire
-            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor) }
+            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor, environment: .sandbox) }
             catch {}
             check(URLSession.requests.isEmpty, "Unauthenticated reservation dispatched")
         }
