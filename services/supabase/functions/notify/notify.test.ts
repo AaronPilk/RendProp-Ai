@@ -185,11 +185,14 @@ Deno.test("an operational finding skips APNs without retry while its admin email
     },
   });
 
-  const push = await deliverPush(alert, [device], BASE, forbiddenFetch);
-  assertEquals(push.state, "skipped");
-  assertEquals(push.providerId, null);
-  assertEquals(push.deadTokens, []);
-  assertStringIncludes(push.reason ?? "", "no mobile review destination");
+  for (const pairedEmail of ["sent", "queued", "failed", "missing", "lookup_unavailable"] as const) {
+    const push = await deliverPush(alert, [device], BASE, forbiddenFetch, undefined, pairedEmail);
+    assertEquals(push.state, pairedEmail === "sent" ? "skipped" : "failed");
+    assertEquals(push.providerId, null);
+    assertEquals(push.deadTokens, []);
+    assertStringIncludes(push.reason ?? "", "no mobile review destination");
+    assertStringIncludes(push.reason ?? "", pairedEmail);
+  }
 
   let mailBody: Record<string, unknown> = {};
   const fakeResend: typeof fetch = (_url, init) => {

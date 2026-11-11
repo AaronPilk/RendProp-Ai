@@ -54,6 +54,9 @@ export interface Outcome {
   deadTokens: string[];
 }
 
+/** The paired admin email is the only actionable destination for an ops alert. */
+export type OperationalEmailState = "sent" | "queued" | "sending" | "failed" | "skipped" | "expired" | "missing" | "lookup_unavailable";
+
 /**
  * Push one row to every live device the person has.
  *
@@ -68,13 +71,21 @@ export async function deliverPush(
   base: string,
   fetchImpl: typeof fetch = fetch,
   authorizeDevice?: (device:DeviceRow)=>Promise<boolean>,
+  operationalEmailState: OperationalEmailState = "lookup_unavailable",
 ): Promise<Outcome> {
   // Operational findings live in server configuration and provider accounts.
   // The native app has no review destination for them; the paired admin email
   // carries the actionable details. Do not send a generic "review it" push
   // that opens Home with no context.
   if (row.category === "ops_alert") {
-    return { state: "skipped", reason: "Operational alert has no mobile review destination; admin email remains available.", providerId: null, deadTokens: [] };
+    return {
+      state: operationalEmailState === "sent" ? "skipped" : "failed",
+      reason: operationalEmailState === "sent"
+        ? "Operational alert has no mobile review destination; paired admin email was sent."
+        : `Operational alert has no mobile review destination; paired admin email is ${operationalEmailState}.`,
+      providerId: null,
+      deadTokens: [],
+    };
   }
   // THE INERT PATH. Not an error and not a retry: this row has nowhere to go
   // until somebody sets three secrets, and naming them in last_error is how

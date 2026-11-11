@@ -43,7 +43,7 @@ import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts"
 import { adminClient, isServiceRole } from "../_shared/supabase.ts";
 import * as apns from "./apns.ts";
 import * as email from "./email.ts";
-import { deliverEmail, deliverPush, type DeviceRow, type OutboxRow } from "./deliver.ts";
+import { deliverEmail, deliverPush, type DeviceRow, type OperationalEmailState, type OutboxRow } from "./deliver.ts";
 import { prepareClientMessage } from "./client-delivery.ts";
 import { hostingNoticeCurrent } from "../_shared/hosting-retention.ts";
 import { opsAlertCurrent } from "../_shared/ops-alert.ts";
@@ -115,6 +115,10 @@ async function handleDrain(limit: number): Promise<Response> {
     ...r,
     payload: (r.payload && typeof r.payload === "object" ? r.payload : {}) as Record<string, unknown>,
   }));
+  // An ops push has no native destination. If its paired email was claimed in
+  // this batch, deliver that actionable channel first so the push can close
+  // only after the email has a confirmed provider receipt.
+  rows.sort((a, b) => Number(b.category === "ops_alert" && b.channel === "email") - Number(a.category === "ops_alert" && a.channel === "email"));
   if (rows.length === 0) {
     return json({
       ok: true,
@@ -193,8 +197,21 @@ async function handleDrain(limit: number): Promise<Response> {
       if(!await opsAlertCurrent(admin,row)){skipped++;continue;}
       if(!await propertyVideoNoticeCurrent(admin,row)){await mark(row.id,"skipped","The private video job or account access changed.",null);skipped++;continue;}
       if(!await leadNoticeCurrent(admin,row)){await mark(row.id,"skipped","Inquiry or account access changed.",null);skipped++;continue;}
+      let operationalEmailState: OperationalEmailState = "missing";
+      if (row.channel === "push" && row.category === "ops_alert" && row.user_id && row.dedupe_key.endsWith(":push")) {
+        const emailKey = row.dedupe_key.slice(0, -":push".length) + ":email";
+        const { data: pair, error: pairError } = await admin.from("notification_outbox")
+          .select("state,sent_at")
+          .eq("dedupe_key", emailKey).eq("user_id", row.user_id)
+          .eq("category", "ops_alert").eq("channel", "email").maybeSingle();
+        if (pairError) operationalEmailState = "lookup_unavailable";
+        else if (pair?.state === "sent") operationalEmailState = pair.sent_at ? "sent" : "lookup_unavailable";
+        else if (pair && ["queued", "sending", "failed", "skipped", "expired"].includes(pair.state)) {
+          operationalEmailState = pair.state as OperationalEmailState;
+        }
+      }
       const outcome = row.channel === "push"
-        ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE,fetch,propertyVideoJob(row)?device=>propertyVideoDeviceCurrent(admin,row,device):row.category==="lead_received"?()=>leadNoticeCurrent(admin,row):undefined)
+        ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE,fetch,propertyVideoJob(row)?device=>propertyVideoDeviceCurrent(admin,row,device):row.category==="lead_received"?()=>leadNoticeCurrent(admin,row):undefined,operationalEmailState)
         // to_email wins. An invitee has no profile to look an address up
         // from — that is precisely what is being invited — so the row carries
         // the destination itself (migration 0053). Ordinary rows leave it null
