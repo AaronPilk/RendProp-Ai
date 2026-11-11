@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { assertBaselineCadence, assertBaselineStall, encodedCadenceStall } from "./export-baseline-refusal.mjs";
+import { assertBaselineCadence, assertBaselineStall, assertClockBaselineCadence, assertDeadlineOnlyCadence, encodedCadenceStall } from "./export-baseline-refusal.mjs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, extname } from "node:path";
@@ -206,7 +206,10 @@ document.querySelector("#run").onclick=async()=>{
     assert(!code.match(seam)[0].includes("awaitAudioStartup"), "Frame-clock control must preserve independent startup readiness");
     // Reproduce the historical exporter, including its missing capture/audio
     // guard. The fixed and late-frames variants always use the actual guard.
-    return code.replace('const recordingClock = new RecordingClock();', 'const recordingClock = {read() {}};').replace(seam, `export function nextExportFrame(signal: AbortSignal, _remainingMs: number): Promise<number> {
+    const captureGuard='const captureCadence = new CaptureCadenceClock(hasPrevious ? transitionSeconds(clip) * 1000 : 0);';
+    assert.equal(code.split(captureGuard).length-1,1,"Historical frame-clock control must isolate only the later capture guard");
+    return code.replace('const recordingClock = new RecordingClock();', 'const recordingClock = {read() {}};')
+      .replace(captureGuard,'const captureCadence = {capture() {}};').replace(seam, `export function nextExportFrame(signal: AbortSignal, _remainingMs: number): Promise<number> {
       throwIfAborted(signal);
       return new Promise((resolve, reject) => {
         const aborted = () => {cancelAnimationFrame(frame); reject(signal.reason);};
@@ -311,14 +314,14 @@ document.querySelector("#run").onclick=async()=>{
       try {
         await page.locator("#run").click();
         const outcome = () => page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending"));
-        if (variant === "baseline") await expect.poll(outcome, { timeout: 20000 }).not.toBe("pending");
+        if (["baseline", "clock-baseline", "cadence-baseline"].includes(variant)) await expect.poll(outcome, { timeout: 20000 }).not.toBe("pending");
         else await expect.poll(outcome, { timeout: 20000 }).toBe("done");
       } finally {
         // Retain failures before rethrowing the unchanged completion assertion.
         // In particular, a broken control must never erase the event that caused
-        // a genuine production stall refusal. Only the restored old-await
-        // baseline may classify a fully evidenced refusal as a detected fault;
-        // every current-exporter variant must finish and pass its media oracles.
+        // a genuine production stall refusal. Only the historical controls
+        // may classify a fully evidenced refusal as a detected fault; every
+        // current-exporter variant must finish and pass its media oracles.
         await observers.finish();
         attempt = await page.evaluate(() => ({ error: window.fixture.error, errorName: window.fixture.errorName, errorCause: window.fixture.errorCause, result: window.fixture.result,
           trace: window.fixture.trace, downloadHidden: document.querySelector("#download").hidden,
@@ -335,6 +338,27 @@ document.querySelector("#run").onclick=async()=>{
           assertBaselineStall(attempt, resumeNotificationDelayMs);
           receipt.checks.push(`Old resume-await negative control (${narrated ? "narrated" : "original"}) is detected by an evidenced original-audio stall refusal, with no download and all tracks stopped`);
         }
+        await closeFixture(context, attemptName);
+        await persist();
+        continue;
+      }
+      if (variant === "clock-baseline" && attempt.error) {
+        // The current post-recording verifier can catch this deliberately
+        // sparse historical clock before its bad MP4 reaches the pixel oracle.
+        // Require the exact refusal plus the measured photo overrun and clean
+        // recorder shutdown; no other export may be accepted through here.
+        assertClockBaselineCadence(attempt);
+        receipt.checks.push(`Animation-only photo-clock control (${narrated ? "narrated" : "original"}) overruns its first segment and is refused by the encoded-frame cadence verifier, with no download and all tracks stopped`);
+        await closeFixture(context, attemptName);
+        await persist();
+        continue;
+      }
+      if (variant === "cadence-baseline" && attempt.error) {
+        // With every animation callback held, the old single end-of-segment
+        // timer leaves a measured 500 ms capture gap. The current capture
+        // guard correctly refuses the historical control before MP4 encoding.
+        assertDeadlineOnlyCadence(attempt);
+        receipt.checks.push(`Deadline-only cadence control (${narrated ? "narrated" : "original"}) measures a held 500 ms frame gap and is refused by the capture cadence guard, with no download and all tracks stopped`);
         await closeFixture(context, attemptName);
         await persist();
         continue;
@@ -543,13 +567,13 @@ document.querySelector("#run").onclick=async()=>{
   assert.deepEqual(receipt.browserIsolation.opened, expectedSessions);
   assert.deepEqual(receipt.browserIsolation.closed, expectedSessions);
   if(!onlyFixed){
-  receipt.checks.push("Held export animation callbacks retain the same MP4 timing, held-frame transitions and opening speech; the animation-only clock misses whip timing and the deadline-only control misses progressing dissolve frames");
+  receipt.checks.push("Held export animation callbacks retain the same MP4 timing, transitions and opening speech in the current exporter; historical animation-only and deadline-only controls are either visibly wrong or refused by measured cadence guards");
   receipt.checks.push("Late decoder readiness, cancellation during initial preparation, stale revision during lookahead and decoder failure reject without a blob, source handles or live tracks");
   receipt.checks.push("Old resume-await negative control is detected by the unchanged bad-MP4 timing/audio oracles or by its exact original-audio refusal with two distinct >2/30s loss readings, no download and stopped tracks; fixed and late-frames still require all MP4/AAC quality oracles");
   receipt.checks.push("Sequential-decoder negative control violates readiness before handoff; fixed export prepares the second source before start and third during the second segment despite identical 600 ms decoder delays");
   }
   receipt.checks.push("Fixed exports keep the existing 400 ms duration tolerance without cutting source spans or changing playback speed");
-  receipt.checks.push("Decoded MP4 frames retain the real dissolve and whip at their intended timeline positions");
+  receipt.checks.push("Decoded fixed-export MP4 frames retain the real dissolve and whip at their intended timeline positions");
   receipt.checks.push("AAC retains 660 Hz narration, leading photo silence, the distinctive 990 Hz opening sound in adjacent bounded samples after resume, and continuous 440 Hz original audio");
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); throw error; }

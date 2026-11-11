@@ -34,7 +34,13 @@ const check=name=>receipt.checks.push(name);
 const control=(name,...args)=>page.evaluate(({name,args})=>window.libraryFixture[name](...args),{name,args});
 const calls=()=>control("calls");
 const mediaCalls=async()=> (await calls()).filter(x=>x.path==="/functions/v1/studio/media");
-const focus=()=>page.evaluate(()=>window.dispatchEvent(new Event("focus")));
+// Exercise the real passive-focus path after its 120-second directory interval
+// is due. Restore the clock before React schedules the resulting network read.
+const focus=()=>page.evaluate(()=>{
+ const now=Date.now;
+ try{Date.now=()=>now()+121_000;window.dispatchEvent(new Event("focus"));}
+ finally{Date.now=now;}
+});
 const settled=()=>expect(page.getByText(/^Updated /)).toBeVisible();
 async function open(){
  await context?.close();context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:"block"});
