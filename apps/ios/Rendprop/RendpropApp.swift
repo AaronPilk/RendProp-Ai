@@ -1115,10 +1115,11 @@ final class AppModel: ObservableObject {
                 protected.formUnion(self.listings.filter { $0.status == .processing || $0.status == .uploading }.map(\.id))
                 protected.formUnion(self.listings.filter { $0.serverID != (bindingsAtRead[$0.id] ?? nil) }.map(\.id))
                 let merged = try CloudListingMerge.merge(local: self.listings, remote: remote, protected: protected, ownerID: actor.flatMap(UUID.init(uuidString:)))
-                self.listings = merged
+                // `listings` persists on assignment. Bind the snapshot to its
+                // owner first, then write both values in that one save.
                 self.identityOwnerUserID = actor.flatMap(UUID.init(uuidString:))
+                self.listings = merged
                 self.lastCloudSyncAt = Date()
-                self.persist()
                 await self.defaultFirstCloudCoversAfterWorkspaceSync()
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
                 // One contact read per listing, four in flight at a time instead

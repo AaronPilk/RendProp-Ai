@@ -2638,8 +2638,11 @@ struct FlythroughDetailView: View {
         let since = force ? nil : filesStamp
         filesTask?.cancel()
         filesTask = Task {
-            if live.serverID != nil { _ = try? await model.refreshCloudPhotoSelection(listingID: live.id) }
-            guard !Task.isCancelled, expectedScope == presentationScope, hasCurrentPresentationContext else { return }
+            // This card is a scan of files already on this phone. Cloud photo
+            // selection reads hash the whole version catalog and do not change
+            // these local files, so they must not delay the first Files result.
+            guard !Task.isCancelled, expectedScope == presentationScope,
+                  hasCurrentPresentationContext else { return }
             guard let scan = await ListingMediaItem.scan(request, since: since) else { return }
             guard !Task.isCancelled, expectedScope == presentationScope,
                   hasCurrentPresentationContext else { return }
@@ -8808,12 +8811,6 @@ struct PhotoCompareView: View {
             let target = viewed
             let directory = target.enhancedURL.deletingLastPathComponent()
             selectedForListing = !isCloudListing && (try? PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)) == true
-            if isCloudListing, let listingID = photoListingID {
-                do { _ = try await model.refreshCloudPhotoSelection(listingID: listingID) }
-                catch is CancellationError { return }
-                catch { if context.isCurrent, viewed.id == target.id { selectionError = error.localizedDescription } }
-            }
-            guard context.isCurrent, viewed.id == target.id, !Task.isCancelled else { return }
             stagingReview = PhotoVersionHistory.StagingReview()
             customReview = PhotoVersionHistory.CustomReview()
             enhanced = nil; original = nil; imageLoadComplete = false
@@ -8828,6 +8825,22 @@ struct PhotoCompareView: View {
             if showOriginal, before != nil, target.originalURL != target.enhancedURL {
                 stagingReview.comparedSource = true
                 customReview.comparedSource = true
+            }
+        }
+        .task(id: photoListingID) {
+            // Selection is listing-wide. Read it once for this review while the
+            // current image decodes independently. Every change action still
+            // revalidates the exact version and remote selection on the server.
+            guard isCloudListing, let listingID = photoListingID else { return }
+            let context = NativeMediaExportContext(), targetID = viewed.id
+            do { _ = try await model.refreshCloudPhotoSelection(listingID: listingID) }
+            catch is CancellationError { return }
+            catch {
+                // A tap may start a newer refresh while this initial read is
+                // still running. Its result owns the message in that case.
+                if context.isCurrent, viewed.id == targetID, selectionWorkID == nil {
+                    selectionError = error.localizedDescription
+                }
             }
         }
         .onChange(of: showOriginal) { showing in

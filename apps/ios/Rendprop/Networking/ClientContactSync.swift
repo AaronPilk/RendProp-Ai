@@ -30,10 +30,14 @@ import Foundation
         guard let i = listings.firstIndex(where: { $0.id == id }), !listings[i].isSample,
               isInSelectedWorkspace(listings[i]), listings[i].cloudUnavailable != true else { throw ClientContactError.changed }
         try ClientContactPolicy.validate(contact)
-        listings[i].clientContact = contact
-        listings[i].clientPhotoRelPath = photoPath
-        listings[i].clientPhotoDirty = photoDirty
-        listings[i].clientContactDirty = true
+        // One assignment persists the complete listing snapshot once. Mutating
+        // four nested fields separately writes that same file four times.
+        var updated = listings[i]
+        updated.clientContact = contact
+        updated.clientPhotoRelPath = photoPath
+        updated.clientPhotoDirty = photoDirty
+        updated.clientContactDirty = true
+        listings[i] = updated
     }
 
     /// Hydration is separate from property facts; failure never clears a saved card.

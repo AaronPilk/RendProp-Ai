@@ -41,7 +41,7 @@ body = 'import Foundation\nimport CryptoKit\n' + block(api.read_text(), 'struct 
 body += '''@MainActor final class MovingPhotoHarness {
     let model: AnimationModel, listing: AnimationListing, dir: URL
     let auth = AuthStore.shared, space = AnimationSpace()
-    var localProcessing = false, processingText = "", busyPhotoIDs = Set<String>()
+    var localProcessing = false, processingText = "", animationBusyPhotoIDs = Set<String>()
     var animateTask: Task<Void, Never>?, clips: [SavedClip] = [], animatedClip: AnimatedClip?, aiFailure: AIFailure?
     var isProcessing: Bool { localProcessing }
     func refreshSavedAnimations() {}

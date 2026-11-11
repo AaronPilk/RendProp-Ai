@@ -146,7 +146,7 @@ enum MovingPhotoClock {
         check(normal.animatedClip != nil && normal.aiFailure == nil, "current moving photo displays its checked result")
         let normalBytes = try Data(contentsOf: normal.animatedClip!.url)
         check(normalBytes == Data("synthetic moving clip bytes".utf8), "moving photo preserves exact downloaded bytes")
-        check(normal.busyPhotoIDs.isEmpty && !normal.localProcessing, "moving photo completes its local progress state")
+        check(normal.animationBusyPhotoIDs.isEmpty && !normal.localProcessing, "moving photo completes its local progress state")
 
         let sameFinished = normal.animatedClip!.url
         normal.animatedClip = nil
