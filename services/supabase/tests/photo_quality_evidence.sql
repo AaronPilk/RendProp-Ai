@@ -93,8 +93,11 @@ select pg_temp.no($q$select photo_quality_finish((select actor from f),(select(x
 select pg_temp.no($q$update media_provenance set altered_key='unrelated-object'where id=(select(x#>>'{evidence,provenance_id}')::uuid from b)$q$,'RP409','accepted provenance cannot attach unrelated bytes');
 create temporary table bad as select pg_temp.bind(pg_temp.prepared(pg_temp.candidate(pg_temp.seed('door-drift'))))x;grant select,update on bad to service_role;
 update bad set x=pg_temp.finish(x,jsonb_set(jsonb_set(pg_temp.verdict(),'{preservation,openings}','70'),'{findings}','[{"category":"openings","region":"br","source":"Covered opening","output":"Clear glazing and a new view","certainty":"confirmed"}]'));
-select pg_temp.ok((select x#>>'{check,state}'='hold'from bad),'contradictory pass plus changed door stays held');
-select pg_temp.ok((select count(*)=0 from private_ai_outputs where storage_key=(select x#>>'{evidence,output,key}'from bad)),'door drift cannot become ready media');
+-- The owner-approved advisory policy delivers a well-formed accepted result
+-- while retaining the judge's finding for realtor review.
+select pg_temp.ok((select x#>>'{check,state}'='accept'from bad),'advisory judge accepts a well-formed result with an opening finding');
+select pg_temp.ok((select count(*)=1 from private_ai_outputs where storage_key=(select x#>>'{evidence,output,key}'from bad)),'advisory result becomes exact ready media');
+select pg_temp.ok((select qc#>>'{preservation,openings}'='70' and qc#>>'{findings,0,category}'='openings' and qc->>'publishable'='true' from media_provenance where id=(select(x#>>'{evidence,provenance_id}')::uuid from bad)),'opening finding remains visible on the promoted provenance');
 create temporary table unpaid as select pg_temp.bind(pg_temp.prepared(pg_temp.candidate(pg_temp.seed('no-qc-ledger'))))x;grant select,update on unpaid to service_role;
 update unpaid set x=pg_temp.finish(x,pg_temp.verdict(),false);
 select pg_temp.ok((select x#>>'{check,state}'='hold'from unpaid),'passing text without settled paid QC receipt is held');
@@ -114,7 +117,7 @@ select pg_temp.ok((photo_quality_status((select actor from f),(select(x#>>'{chec
 select pg_temp.ok(photo_quality_claim((select(x#>>'{check,id}')::uuid from cpu))->>'action'='wait','exhausted CPU cannot restart generation/judge');
 select pg_temp.ok((select count(*)=0 from serving_cost_reservations where request_key='photo-qc:'||(select x#>>'{check,id}'from cpu)),'CPU failures never create paid judge');
 select pg_temp.ok(jsonb_array_length(photo_quality_media_targets(array[(select org from f)],(select listing from f)))>=10,'held evidence and derivative keys in erasure inventory');
-select pg_temp.ok(exists(select 1 from jsonb_array_elements(account_private_output_targets(array[(select org from f)],'fixture-uploads','fixture-renders'))v where v->>'key'=(select x#>>'{evidence,output,key}'from bad)and v->>'bucket'='fixture-renders'),'account erasure includes non-ready candidate');
+select pg_temp.ok(exists(select 1 from jsonb_array_elements(account_private_output_targets(array[(select org from f)],'fixture-uploads','fixture-renders'))v where v->>'key'=(select x#>>'{evidence,output,key}'from bad)and v->>'bucket'='fixture-renders'),'account erasure includes advisory-approved candidate');
 -- Historical saved output with no prospective journal remains byte-for-byte replayable.
 select register_private_ai_output((select actor from f),(select org from f),(select listing from f),'renders','ai-router/'||(select org from f)||'/completed-photo/'||repeat('9',64)||'.jpg',222222);
 select pg_temp.ok((select bytes=222222 from private_ai_outputs where storage_key='ai-router/'||(select org from f)||'/completed-photo/'||repeat('9',64)||'.jpg'),'historical2Kpointerless replay unchanged');
@@ -159,7 +162,7 @@ select pg_temp.ok((select count(*)=1 from serving_cost_reservations where reques
 select pg_temp.ok((select count(*)=1 from private_ai_outputs where storage_key=(select o->>'source_key'from calibration_output)and bytes=222222),'originalhistoricaloutputreceiptunchanged');
 reset role;
 update listings set deleted_at=now()where id=(select listing from f);
-select pg_temp.ok(exists(select 1 from privacy_cleanup_jobs j cross join lateral jsonb_array_elements(j.payload->'r2')v where j.source_id=(select listing from f)and v->>'key'=(select x#>>'{evidence,output,key}'from bad)),'listing erasure freezes held candidate before row deletion');
+select pg_temp.ok(exists(select 1 from privacy_cleanup_jobs j cross join lateral jsonb_array_elements(j.payload->'r2')v where j.source_id=(select listing from f)and v->>'key'=(select x#>>'{evidence,output,key}'from bad)),'listing erasure freezes advisory-approved candidate before row deletion');
 select pg_temp.ok((select not_before>=now()+interval'1 hour'from privacy_cleanup_jobs where source_id=(select listing from f)),'erasure waits finite evidence/CPUwrite lease');
 set local role service_role;
 select pg_temp.no($q$select photo_quality_status((select actor from f),(select(x#>>'{check,id}')::uuid from b))$q$,'RP404','withdrawn listing revokes even accepted evidence read');

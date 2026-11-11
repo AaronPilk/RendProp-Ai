@@ -50,18 +50,48 @@ export async function paidMediaGatewayRequired(
 }
 /** Caller has already authorized this exact row. A capability carries identity,
  * not final byte authority: the gateway checks current records on every read. */
-export async function privateMediaUrl(scope:PrivateMediaScope,seconds=600):Promise<string>{
+type GatewayPolicy=(org:string)=>Promise<boolean>;
+type DirectSigner=(bucket:string,key:string,seconds:number)=>Promise<string>;
+async function privateMediaUrlWithPolicy(scope:PrivateMediaScope,seconds:number,gatewayRequired:GatewayPolicy,directSign:DirectSigner):Promise<string>{
  assert(Number.isSafeInteger(seconds)&&seconds>0&&seconds<=600,503,"Media expiry could not be verified.");
  const flag=Deno.env.get("PRIVATE_MEDIA_DELIVERY");assert(flag===undefined||flag===""||flag==="off"||flag==="gateway-v1",503,"Media service configuration unavailable.");
  if(flag!=="gateway-v1"){
-  assert(!(await paidMediaGatewayRequired(adminClient(),scope.org)),503,"Media gateway activation pending.");
-  return await presignGet(scope.bucket==="uploads"?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS,scope.key,Math.min(seconds,600));
+  assert(!(await gatewayRequired(scope.org)),503,"Media gateway activation pending.");
+  return await directSign(scope.bucket==="uploads"?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS,scope.key,Math.min(seconds,600));
  }
  const now=Math.floor(Date.now()/1000),c:Capability={v:1,...scope,exp:now+Math.min(seconds,600)};
  assert(valid(c,now),503,"Media identity could not be verified.");
  const body=btoa(unescape(encodeURIComponent(JSON.stringify(c)))).replaceAll("+","-").replaceAll("/","_").replace(/=+$/,"");
  assert(body.length+65<=4096,503,"Media identity exceeded its bound.");
  return `${origin}/private-media/${body}.${await mac(body)}`;
+}
+export async function privateMediaUrl(scope:PrivateMediaScope,seconds=600):Promise<string>{
+ return privateMediaUrlWithPolicy(scope,seconds,org=>paidMediaGatewayRequired(adminClient(),org),presignGet);
+}
+/** A Studio media request can sign many objects under one org. Memoize only
+ * this request's transport policy, then recheck it after the final source and
+ * membership fences. A paid-budget activation during signing discards every
+ * direct R2 capability before any URL reaches the caller. */
+export function createPrivateMediaRequestSigner(org:string,io:{gatewayRequired?:GatewayPolicy;directSign?:DirectSigner}={}){
+ const gatewayRequired=io.gatewayRequired??(target=>paidMediaGatewayRequired(adminClient(),target));
+ const directSign=io.directSign??presignGet;
+ let first:Promise<boolean>|undefined,directUsed=false;
+ const once:GatewayPolicy=()=>{
+  directUsed=true;
+  return first??=Promise.resolve().then(()=>gatewayRequired(org));
+ };
+ return {
+  async sign(scope:PrivateMediaScope,seconds=600):Promise<string>{
+   assert(scope.org===org,503,"Media workspace changed during signing.");
+   return privateMediaUrlWithPolicy(scope,seconds,once,directSign);
+  },
+  async assertFresh():Promise<void>{
+   if(!directUsed)return;
+   // Never reuse the initial promise: a funding transition can happen while
+   // independent object signatures are being prepared.
+   assert(!(await gatewayRequired(org)),503,"Media gateway activation pending.");
+  },
+ };
 }
 export async function verifyPrivateCapability(token:unknown):Promise<Capability>{
  assert(typeof token==="string"&&token.length<=4096,404,"Media unavailable.");
