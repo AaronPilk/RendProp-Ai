@@ -65,10 +65,10 @@ function installMediaTimingFixture() {
 async function captureMediaTiming() {
   for(const device of timingDevices){
     if(device.tab.isClosed())continue;
-    try{device.trace=await device.tab.evaluate(()=>window.mediaTimingFixture.snapshot());device.clockRefusals=await device.tab.evaluate(()=>window.exportClockRefusals??[]);}
+    try{device.trace=await device.tab.evaluate(()=>window.mediaTimingFixture.snapshot());device.clockRefusals=await device.tab.evaluate(()=>window.exportClockRefusals??[]);device.cadenceRefusals=await device.tab.evaluate(()=>window.exportCadenceRefusals??[]);}
     catch(error){device.captureError=String(error);}
   }
-  receipt.mediaTiming=timingDevices.map(({id,listing,trace,clockRefusals,captureError})=>({id,listing,trace,clockRefusals,captureError}));
+  receipt.mediaTiming=timingDevices.map(({id,listing,trace,clockRefusals,cadenceRefusals,captureError})=>({id,listing,trace,clockRefusals,cadenceRefusals,captureError}));
 }
 async function captureAudioOutputDevice(tab){
   const device=timingDevices.find(device=>device.tab===tab);
@@ -82,11 +82,11 @@ const pro=async tab=>{await tab.getByRole("button",{name:"Advanced desktop edito
 const advancedTools=async tab=>{const details=tab.locator("details.creation-advanced").filter({has:tab.locator("summary",{hasText:"Capture plan & extra editing tools"})});if(!await details.evaluate(node=>node.open))await details.locator("summary").click();};
 // Retain the actual guard's cause on a refused export. No clock arguments,
 // scheduling, thresholds or thrown errors change; successful reads are untouched.
-const clockReceiptPlugin={name:"cloud-clock-refusal-receipt",enforce:"pre",transform(code,id){
-  if(!id.endsWith('/src/editor/recording-clock.ts'))return;
-  const seam='export class RecordingClock {';
-  assert.equal(code.split(seam).length,2,"Actual recording-clock observation anchor missing");
-  return code.replace(seam,'class ShippingRecordingClock {')+`
+const exportRefusalReceiptPlugin={name:"cloud-export-refusal-receipt",enforce:"pre",transform(code,id){
+  if(id.endsWith('/src/editor/recording-clock.ts')){
+    const seam='export class RecordingClock {';
+    assert.equal(code.split(seam).length,2,"Actual recording-clock observation anchor missing");
+    return code.replace(seam,'class ShippingRecordingClock {')+`
 export class RecordingClock extends ShippingRecordingClock {
   read(wall: number, timeline: number, audio?: number): void {
     try { super.read(wall,timeline,audio); }
@@ -97,9 +97,25 @@ export class RecordingClock extends ShippingRecordingClock {
     }
   }
 }`;
+  }
+  if(id.endsWith('/src/editor/mp4-cadence.ts')){
+    const seam='export async function verifyMp4FrameCadence(';
+    assert.equal(code.split(seam).length,2,"Actual encoded-cadence observation anchor missing");
+    return code.replace(seam,'async function shippingVerifyMp4FrameCadence(')+`
+export async function verifyMp4FrameCadence(blob: Blob, transitions: EncodedTransition[], signal?: AbortSignal): Promise<void> {
+  try { await shippingVerifyMp4FrameCadence(blob, transitions, signal); }
+  catch(error) {
+    if ((error as Error).message === "Encoded video frames were skipped. No download was created. Close other busy tabs and retry.") {
+      const observations = (window as any).exportCadenceRefusals ??= [];
+      if (observations.length < 4) observations.push({atMs:performance.now(),message:(error as Error).message,cause:(error as Error).cause ?? null});
+    }
+    throw error;
+  }
+}`;
+  }
 }};
 try {
-  await build({ configFile: false, root, publicDir: false, logLevel: "error", plugins:[clockReceiptPlugin], build: { outDir: dist, rollupOptions: { input: join(root, "tests/cloud-editor-fixture.html") } } });
+  await build({ configFile: false, root, publicDir: false, logLevel: "error", plugins:[exportRefusalReceiptPlugin], build: { outDir: dist, rollupOptions: { input: join(root, "tests/cloud-editor-fixture.html") } } });
   server = createServer(async (request, response) => { const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`); if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end(); try { response.setHeader("Content-Type", ({ ".html": "text/html", ".js": "application/javascript", ".css": "text/css" })[extname(path)] ?? "application/octet-stream"); response.end(await readFile(path)); } catch { response.writeHead(404).end(); } });
   await new Promise((done) => server.listen(0, "127.0.0.1", done)); const origin = `http://127.0.0.1:${server.address().port}`;
   const sourceVideo = join(artifacts, "source-blue.mp4"), agentVideo = join(artifacts, "agent-green.mp4"), voiceFile = join(artifacts, "narration.wav");
@@ -209,8 +225,20 @@ try {
   assert.equal((await third.evaluate(() => window.cloudFixture.snapshot())).tickets,advanced.tickets);
   await closeDevice(third); await second.bringToFront();
   receipt.checks.push("Fresh device restores narration by trusted result ID, exact video bytes, speed, styled captions and both transition choices");
+  receipt.loadBeforeExport.push({export:"narrated-studio",attempt:1,...quickLoad()});
   await second.getByRole("button", { name: "Export MP4", exact: true }).click();
-  await expect(second.getByRole("button", { name: "Save video to listing", exact: true })).toBeVisible({ timeout: 20000 });
+  const firstSave=second.getByRole("button", { name: "Save video to listing", exact: true });
+  await expect.poll(async()=>{
+    if(await firstSave.isVisible())return "ready";
+    const notice=(await second.locator(".rp-editor-notice").textContent())??"";
+    return notice.includes("No download was created.")?"refused":"pending";
+  },{timeout:20000,message:"Narrated Studio MP4 export should become available or report its refusal"}).toMatch(/^(ready|refused)$/);
+  if(!await firstSave.isVisible()){
+    const notice=((await second.locator(".rp-editor-notice").textContent())??"").trim();
+    const cadence=await second.evaluate(()=>(window.exportCadenceRefusals??[]).at(-1)?.cause??null);
+    receipt.firstExportRefusal={notice,cadence,runner:quickLoad()};
+    throw new Error(`Narrated Studio MP4 export refused: ${notice}; encoded cadence: ${JSON.stringify(cadence)}`);
+  }
   const download = second.waitForEvent("download"); await second.getByRole("link",{name:/Download MP4/}).click(); const exported = join(artifacts,"narrated-studio.mp4"); await (await download).saveAs(exported);
   const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_streams","-show_format","-of","json",exported],{encoding:"utf8"}));
   await saveExportDiagnostics("narrated-studio",exported,probe);

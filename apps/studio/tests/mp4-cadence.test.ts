@@ -37,6 +37,17 @@ function flatFixture(durations: number[], compositionOffsets?: number[]): Blob {
   return new Blob([box("ftyp", Buffer.from("isom")), box("mdat", Buffer.from([0])),
     box("moov", trak)], {type: "video/mp4"});
 }
+async function assertSkippedFrames(blob: Blob, rule: string, observed: number, limit: number, unit: string) {
+  await assert.rejects(verifyMp4FrameCadence(blob, [{startSeconds: .5, durationSeconds: .28}]), error => {
+    assert(error instanceof Error);
+    assert.equal(error.message, "Encoded video frames were skipped. No download was created. Close other busy tabs and retry.");
+    assert.deepEqual(error.cause, {
+      kind: "encoded-frame-cadence", rule, frameIndex: rule === "density" ? 8 : 15,
+      frameCount: rule === "density" ? 43 : 74, observed, limit, unit,
+    });
+    return true;
+  });
+}
 
 test("encoded 30 fps MP4 retains enough real video samples across a dissolve", async () => {
   await verifyMp4FrameCadence(fixture(Array.from({length: 90}, () => 1000)),
@@ -57,18 +68,21 @@ test("nonfragmented Safari-style sample table verifies healthy frame cadence", a
 test("nonfragmented sample table rejects a 552 ms encoded gap", async () => {
   const durations = [...Array.from({length: 15}, () => 1000), 16_575,
     ...Array.from({length: 58}, () => 1000)];
-  await assert.rejects(verifyMp4FrameCadence(flatFixture(durations),
-    [{startSeconds: .5, durationSeconds: .28}]), /Encoded video frames were skipped.*No download/);
+  await assertSkippedFrames(flatFixture(durations), "sample-duration", 552.5, 150, "milliseconds");
 });
 test("encoded MP4 with a 552 ms video gap cannot be downloaded despite requested paints", async () => {
   const durations = [...Array.from({length: 15}, () => 1000), 16_575,
     ...Array.from({length: 58}, () => 1000)];
-  await assert.rejects(verifyMp4FrameCadence(fixture(durations),
-    [{startSeconds: .5, durationSeconds: .28}]), /Encoded video frames were skipped.*No download/);
+  await assertSkippedFrames(fixture(durations), "sample-duration", 552.5, 150, "milliseconds");
+});
+test("encoded start gap reports its timing without media payload", async () => {
+  const durations = Array.from({length: 74}, () => 1000);
+  const offsets = durations.map((_, index) => index < 15 ? 0 : 6000);
+  await assertSkippedFrames(flatFixture(durations, offsets), "start-gap", 233.333, 150, "milliseconds");
 });
 test("encoded 14 fps MP4 is refused even when individual gaps stay under 150 ms", async () => {
-  await assert.rejects(verifyMp4FrameCadence(fixture(Array.from({length: 43}, () => 2100)),
-    [{startSeconds: .5, durationSeconds: .28}]), /Encoded video frames were skipped.*No download/);
+  await assertSkippedFrames(fixture(Array.from({length: 43}, () => 2100)),
+    "density", 8, 11, "frames-per-500ms");
 });
 test("unreadable MP4 metadata fails closed and abort remains cancellable", async () => {
   await assert.rejects(verifyMp4FrameCadence(new Blob([Buffer.from("broken")]), []), /could not be verified/);

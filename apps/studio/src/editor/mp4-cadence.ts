@@ -13,6 +13,17 @@ const MAX_TRANSITION_GAP_SECONDS = .13;
 const MIN_TRANSITION_FPS = 20;
 const DENSITY_WINDOW_SECONDS = .5;
 const MIN_FRAMES_PER_WINDOW = 11;
+const SKIPPED_FRAMES_MESSAGE = "Encoded video frames were skipped. No download was created. Close other busy tabs and retry.";
+
+// Keep refusal evidence to a fixed set of numbers from MP4 timing metadata.
+// No frame bytes, media content or unbounded sample lists enter the error.
+function skippedFrames(rule: "sample-duration" | "start-gap" | "density", frameIndex: number,
+  frameCount: number, observed: number, limit: number, unit: "milliseconds" | "frames-per-500ms"): Error {
+  return new Error(SKIPPED_FRAMES_MESSAGE, {cause: {
+    kind: "encoded-frame-cadence", rule, frameIndex, frameCount,
+    observed: Math.round(observed * 1000) / 1000, limit, unit,
+  }});
+}
 
 function unreadable(): never {
   throw new Error("The browser's MP4 frames could not be verified. No download was created. Retry the export.");
@@ -200,13 +211,19 @@ export async function verifyMp4FrameCadence(blob: Blob, transitions: EncodedTran
   let windowStart = 0;
   for (let index = 0; index < frames.length; index++) {
     const frame = frames[index];
-    if (frame.end - frame.start > MAX_ENCODED_GAP_SECONDS ||
-        index && frame.start - frames[index - 1].start > MAX_ENCODED_GAP_SECONDS)
-      throw new Error("Encoded video frames were skipped. No download was created. Close other busy tabs and retry.");
+    const duration = frame.end - frame.start;
+    if (duration > MAX_ENCODED_GAP_SECONDS)
+      throw skippedFrames("sample-duration", index, frames.length, duration * 1000,
+        MAX_ENCODED_GAP_SECONDS * 1000, "milliseconds");
+    const startGap = index ? frame.start - frames[index - 1].start : 0;
+    if (startGap > MAX_ENCODED_GAP_SECONDS)
+      throw skippedFrames("start-gap", index, frames.length, startGap * 1000,
+        MAX_ENCODED_GAP_SECONDS * 1000, "milliseconds");
     while (frames[windowStart].start < frame.start - DENSITY_WINDOW_SECONDS) windowStart++;
     if (frame.start - frames[0].start >= DENSITY_WINDOW_SECONDS &&
         index - windowStart + 1 < MIN_FRAMES_PER_WINDOW)
-      throw new Error("Encoded video frames were skipped. No download was created. Close other busy tabs and retry.");
+      throw skippedFrames("density", index, frames.length, index - windowStart + 1,
+        MIN_FRAMES_PER_WINDOW, "frames-per-500ms");
   }
   for (const transition of transitions) {
     if (!Number.isFinite(transition.startSeconds) || !Number.isFinite(transition.durationSeconds) ||
