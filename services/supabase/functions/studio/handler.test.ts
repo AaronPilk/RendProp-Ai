@@ -3,7 +3,7 @@ import {
   assertEquals,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { bucketForKey, createStudioHandler, PAGE_SIZE } from "./handler.ts";
-import type { MediaScope, PhotoRow, StudioDependencies } from "./handler.ts";
+import type { MediaScope, PhotoRow, StudioDependencies, StudioMediaTiming } from "./handler.ts";
 import { HttpError } from "../_shared/http.ts";
 const org = "10000000-0000-4000-8000-000000000001",
   listing = "20000000-0000-4000-8000-000000000002",
@@ -80,6 +80,37 @@ Deno.test("OPTIONS requires no authorization or media read", async () => {
   const r = await createStudioHandler(f.deps)(request("", "OPTIONS"));
   assertEquals(r.status, 200);
   assertEquals(f.reads(), 0);
+});
+
+Deno.test("media timing records fixed phases and status without tenant or object identities", async () => {
+  const f = fixture(), samples: StudioMediaTiming[] = [];
+  f.deps.read = async () => ({ photos: [photo], assets: [], renders: [] });
+  f.deps.observeTiming = sample => samples.push(sample);
+  const response = await createStudioHandler(f.deps)(request());
+  assertEquals(response.status, 200);
+  assertEquals(samples.length, 1);
+  const timing = samples[0];
+  assertEquals(timing.event, "studio_media_timing");
+  assertEquals(timing.status, 200);
+  assertEquals(timing.sign_calls, 1);
+  assertEquals(timing.photo_count, 1);
+  assertEquals(timing.video_count, 0);
+  assertEquals(timing.unavailable_count, 0);
+  for (const phase of ["total_ms", "authorize_initial_ms", "rate_limit_ms", "read_ms", "visibility_initial_ms", "signing_ms", "authorize_final_ms", "visibility_final_ms"] as const) {
+    assert(Number.isSafeInteger(timing[phase]) && timing[phase]! >= 0);
+  }
+  assert(!JSON.stringify(timing).includes(org));
+  assert(!JSON.stringify(timing).includes(listing));
+  assert(!JSON.stringify(timing).includes(key));
+
+  const denied = fixture(), errors: StudioMediaTiming[] = [];
+  denied.deps.authorize = async () => { throw new HttpError(403, "Not a member."); };
+  denied.deps.observeTiming = sample => errors.push(sample);
+  assertEquals((await createStudioHandler(denied.deps)(request())).status, 403);
+  assertEquals(errors.length, 1);
+  assertEquals(errors[0].status, 403);
+  assertEquals(errors[0].sign_calls, undefined);
+  assert(Number.isSafeInteger(errors[0].authorize_initial_ms));
 });
 
 Deno.test("revoked gallery links are filtered before signing", async () => {

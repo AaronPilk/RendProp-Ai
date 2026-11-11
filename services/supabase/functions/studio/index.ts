@@ -67,6 +67,7 @@ export async function handleStudio(req: Request): Promise<Response> {
       actor:scope.userId,org:scope.orgId,listing:scope.listingId,bucket,key,
     },seconds),
     now: () => Date.now(),
+    observeTiming: timing => console.info(JSON.stringify(timing)),
   })(req);
   try {
     const user = await getUser(req);

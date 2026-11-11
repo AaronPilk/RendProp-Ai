@@ -6,6 +6,22 @@ export const PAGE_SIZE = 50;
 export const MEDIA_TTL_SECONDS = 600;
 export const MAX_CAPTION_CHARS = 4_096;
 export type MediaScope = { userId: string; orgId: string; listingId: string };
+export type StudioMediaTiming = {
+  event: "studio_media_timing";
+  status: number;
+  total_ms: number;
+  authorize_initial_ms?: number;
+  rate_limit_ms?: number;
+  read_ms?: number;
+  visibility_initial_ms?: number;
+  signing_ms?: number;
+  sign_calls?: number;
+  unavailable_count?: number;
+  photo_count?: number;
+  video_count?: number;
+  authorize_final_ms?: number;
+  visibility_final_ms?: number;
+};
 export type PhotoEditKind = "declutter" | "stage" | "sky" | "twilight" | "lawn" | "custom";
 export type PhotoEditProof = { edit: PhotoEditKind | null; originalKey: string | null };
 export type PhotoRow = {
@@ -54,6 +70,7 @@ export interface StudioDependencies {
     scope: MediaScope,
   ): Promise<string>;
   now(): number;
+  observeTiming?(timing: StudioMediaTiming): void;
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const headers = {
@@ -105,6 +122,29 @@ export function internalVideoPhoto(key: string, scope: MediaScope): boolean {
 export function createStudioHandler(deps: StudioDependencies) {
   return async (req: Request): Promise<Response> => {
     if (req.method === "OPTIONS") return handleOptions();
+    const started = performance.now();
+    const phases: Partial<Omit<StudioMediaTiming, "event" | "status" | "total_ms">> = {};
+    const elapsed = (at: number) => Math.max(0, Math.round(performance.now() - at));
+    async function measured<T>(phase: keyof typeof phases, work: () => Promise<T>): Promise<T> {
+      const at = performance.now();
+      try { return await work(); }
+      finally { phases[phase] = elapsed(at); }
+    }
+    async function signWithTiming(bucket: "uploads" | "renders", key: string, scope: MediaScope): Promise<string> {
+      const at = performance.now();
+      try { return await deps.sign(bucket, key, MEDIA_TTL_SECONDS, scope); }
+      finally {
+        phases.signing_ms = (phases.signing_ms ?? 0) + elapsed(at);
+        phases.sign_calls = (phases.sign_calls ?? 0) + 1;
+      }
+    }
+    function complete(response: Response): Response {
+      // Diagnostic values and fixed field names only. Never log account, media,
+      // request URL, token, or storage identity. Observation cannot alter serving.
+      try { deps.observeTiming?.({ event: "studio_media_timing", status: response.status, total_ms: elapsed(started), ...phases }); }
+      catch { /* Observability must not break media reads. */ }
+      return response;
+    }
     try {
       assert(req.method === "GET", 405, "Studio media is read-only.");
       const seg = pathSegments(req, "studio");
@@ -134,18 +174,18 @@ export function createStudioHandler(deps: StudioDependencies) {
         400,
         "Invalid media page.",
       );
-      const scope = await deps.authorize(req, orgId, listingId);
+      const scope = await measured("authorize_initial_ms", () => deps.authorize(req, orgId, listingId));
       assert(
         scope.orgId === orgId && scope.listingId === listingId,
         403,
         "Workspace authorization failed.",
       );
       assert(
-        await deps.rateLimit(scope),
+        await measured("rate_limit_ms", () => deps.rateLimit(scope)),
         429,
         "Too many library refreshes. Please wait a minute.",
       );
-      const rows = await deps.read(scope, offset);
+      const rows = await measured("read_ms", () => deps.read(scope, offset));
       // Validate the complete page (including its lookahead) before creating
       // even the first capability. A broken query must fail, not be truncated.
       for (const list of [rows.photos, rows.assets, rows.renders]) {
@@ -176,11 +216,11 @@ export function createStudioHandler(deps: StudioDependencies) {
         "This space exceeds the Studio library paging limit. Contact support to access the remaining media.",
       );
       const pagePhotos = rows.photos.slice(0, PAGE_SIZE), pageAssets = rows.assets.slice(0, PAGE_SIZE), pageRenders = rows.renders.slice(0, PAGE_SIZE);
-      const access = await deps.mediaVisibility(scope, {
+      const access = await measured("visibility_initial_ms", () => deps.mediaVisibility(scope, {
         assets: pageAssets.map(row => row.id), renders: pageRenders.map(row => row.id),
         keys: [...pagePhotos.flatMap(row => [row.original_key, row.enhanced_key]), ...pageAssets.map(row => row.storage_key), ...pageRenders.map(row => row.video_key)]
           .filter((key): key is string => bucketForKey(key, scope) !== null),
-      });
+      }));
       const usedAssets: string[] = [], usedRenders: string[] = [];
       const expires_at = new Date(
         deps.now() + MEDIA_TTL_SECONDS * 1000,
@@ -204,7 +244,7 @@ export function createStudioHandler(deps: StudioDependencies) {
         if (signed.has(key as string)) return null;
         signed.add(key as string);
         exposedKeys.add(key as string);
-        return await deps.sign(bucket, key as string, MEDIA_TTL_SECONDS,scope);
+        return await signWithTiming(bucket, key as string, scope);
       }
       // Sequential signing is intentionally bounded (at most 200 objects per page).
       // It does no object download, provider work, mutation, or publication.
@@ -218,7 +258,7 @@ export function createStudioHandler(deps: StudioDependencies) {
           const originalBucket = bucketForKey(photo.original_key, scope);
           const originalURL = originalBucket && photo.original_key && access.keys[photo.original_key] === true
             ? photo.original_key === (photo.enhanced_key || photo.original_key) ? url
-              : await deps.sign(originalBucket, photo.original_key, MEDIA_TTL_SECONDS,scope)
+              : await signWithTiming(originalBucket, photo.original_key, scope)
             : null;
           if (originalURL && photo.original_key) exposedKeys.add(photo.original_key);
           photos.push({
@@ -305,21 +345,24 @@ export function createStudioHandler(deps: StudioDependencies) {
       // Membership/deletion can change while the page is being read or signed.
       // Recheck live state before releasing any capabilities, never reuse JWT
       // metadata or the initial lookup as a revocation cache.
-      const finalScope = await deps.authorize(req, orgId, listingId);
+      const finalScope = await measured("authorize_final_ms", () => deps.authorize(req, orgId, listingId));
       assert(
         finalScope.userId === scope.userId && finalScope.orgId === orgId &&
           finalScope.listingId === listingId,
         403,
         "Workspace authorization failed.",
       );
-      const finalAccess = await deps.mediaVisibility(scope, { assets: usedAssets, renders: usedRenders, keys: [...exposedKeys] });
+      const finalAccess = await measured("visibility_final_ms", () => deps.mediaVisibility(scope, { assets: usedAssets, renders: usedRenders, keys: [...exposedKeys] }));
       assert(usedAssets.every(id => finalAccess.assets[id] === true) && usedRenders.every(id => finalAccess.renders[id] === true) && [...exposedKeys].every(key => finalAccess.keys[key] === true), 404, "Media access changed. Refresh the library.");
       assert(
         deps.now() < Date.parse(expires_at),
         503,
         "Media signing took too long.",
       );
-      return json(
+      phases.unavailable_count = unavailable;
+      phases.photo_count = photos.length;
+      phases.video_count = videos.length;
+      return complete(json(
         {
           org_id: orgId,
           listing_id: listingId,
@@ -330,11 +373,11 @@ export function createStudioHandler(deps: StudioDependencies) {
         },
         200,
         headers,
-      );
+      ));
     } catch (error) {
       // Database/provider details may contain object keys or query data; do not echo them.
       const known = error instanceof HttpError && error.status < 500;
-      return json(
+      return complete(json(
         {
           error: known
             ? error.message
@@ -343,7 +386,7 @@ export function createStudioHandler(deps: StudioDependencies) {
         },
         error instanceof HttpError ? error.status : 503,
         headers,
-      );
+      ));
     }
   };
 }
