@@ -53,6 +53,7 @@ APP_NAME = "Rendprop"
 APP_NAME_FALLBACK = "Rendprop: AI Property Tours"
 PRIMARY_LOCALE = "en-US"
 VERSION_STRING = "1.0.5"
+TRACKED_METADATA_VERSION = "1.0.5"
 COPYRIGHT = "2026 Rendprop"
 PLATFORM = "IOS"
 
@@ -2759,6 +2760,12 @@ def read_listing_metadata():
 
 
 def cmd_metadata(client, args, out):
+    if not args.dry_run and VERSION_STRING != TRACKED_METADATA_VERSION:
+        raise AscError(
+            "Tracked metadata/en-US files were prepared for %s, not target %s; "
+            "use `version-copy` to preserve the released listing."
+            % (TRACKED_METADATA_VERSION, VERSION_STRING)
+        )
     plan = Plan(dry_run=args.dry_run, out=out)
     values = read_listing_metadata()
     out.write("Metadata files validated against Apple's limits:\n")
@@ -2810,6 +2817,93 @@ def cmd_metadata(client, args, out):
     ensure_version_localization(client, version_id, listing, plan)
 
     summarise(plan, out, "metadata")
+    return 0
+
+
+def cmd_version_copy(client, args, out):
+    """Copy only public en-US version copy from a released version to the target.
+
+    App information, screenshots, privacy answers, App Review details and demo
+    credentials are deliberately outside this narrow operation. The source
+    fingerprint must be repeated on apply, so a changed Apple record cannot be
+    copied from an earlier plan without a fresh inspection.
+    """
+    source_number = args.from_version
+    if source_number == VERSION_STRING:
+        raise AscError("The source and target App Store versions must differ.")
+    notes_path = Path(args.whats_new_file)
+    try:
+        whats_new = notes_path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as exc:
+        raise AscError("Could not read What's New from %s: %s" % (notes_path, exc))
+    if not whats_new or len(whats_new) > METADATA_LIMITS["release_notes"][1]:
+        raise AscError("What's New must contain 1-4000 characters in %s." % notes_path)
+
+    app = require_app(client)
+    versions = client.get_all("/v1/apps/%s/appStoreVersions" % app["id"],
+                              params={"filter[platform]": PLATFORM, "limit": 200})
+    source_matches = [v for v in versions
+                      if attributes_of(v).get("versionString") == source_number]
+    target_matches = [v for v in versions
+                      if attributes_of(v).get("versionString") == VERSION_STRING]
+    if len(source_matches) != 1 or "READY_FOR_SALE" not in (
+            attributes_of(source_matches[0]).get("appStoreState"),
+            attributes_of(source_matches[0]).get("appVersionState")):
+        raise AscError("Source version %s must be the unique released iOS App Store version." % source_number)
+    if len(target_matches) > 1:
+        raise AscError("More than one target App Store version %s was returned." % VERSION_STRING)
+    if target_matches and version_state(target_matches[0]) not in {
+            "PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED",
+            "METADATA_REJECTED", "INVALID_BINARY"}:
+        raise AscError("Target version %s is %s; refusing to change a staged or released version."
+                       % (VERSION_STRING, version_state(target_matches[0])))
+
+    source = source_matches[0]
+    localizations = client.get_all(
+        "/v1/appStoreVersions/%s/appStoreVersionLocalizations" % source["id"])
+    source_localizations = [loc for loc in localizations
+                            if attributes_of(loc).get("locale") == PRIMARY_LOCALE]
+    if len(source_localizations) != 1:
+        raise AscError("Source version %s needs exactly one %s localization."
+                       % (source_number, PRIMARY_LOCALE))
+    source_loc = source_localizations[0]
+    source_attrs = attributes_of(source_loc)
+    listing = {name: source_attrs.get(name) or "" for name in
+               ("description", "keywords", "promotionalText", "supportUrl", "marketingUrl")}
+    for name in ("description", "keywords", "supportUrl"):
+        if not listing[name]:
+            raise AscError("Released source version %s has no %s." % (source_number, name))
+    copyright_text = attributes_of(source).get("copyright") or COPYRIGHT
+    source_binding = {
+        "versionId": source["id"], "localizationId": source_loc["id"],
+        "copyright": copyright_text, "listing": listing,
+    }
+    source_digest = hashlib.sha256(json.dumps(source_binding, sort_keys=True,
+                                              separators=(",", ":")).encode("utf-8")).hexdigest()
+    listing["whatsNew"] = whats_new
+    plan_binding = {
+        "appId": app["id"], "source": source_binding,
+        "targetVersionId": target_matches[0]["id"] if target_matches else None,
+        "targetState": version_state(target_matches[0]) if target_matches else None,
+        "whatsNew": whats_new,
+    }
+    plan_digest = hashlib.sha256(json.dumps(plan_binding, sort_keys=True,
+                                            separators=(",", ":")).encode("utf-8")).hexdigest()
+    out.write("Source iOS version %s: READY_FOR_SALE\n" % source_number)
+    out.write("Target iOS version %s: %s\n" %
+              (VERSION_STRING, version_state(target_matches[0]) if target_matches else "absent"))
+    out.write("Source metadata SHA-256: %s\n" % source_digest)
+    out.write("Exact release plan SHA-256: %s\n" % plan_digest)
+    out.write("Copying %s; new What's New: %d characters from %s.\n" %
+              (", ".join(sorted(listing)), len(whats_new), notes_path))
+    out.write("App Privacy, review credentials, screenshots and subscriptions are untouched.\n")
+    if not args.dry_run and args.plan_sha256 != plan_digest:
+        raise AscError("Apply requires --plan-sha256 %s from a fresh plan." % plan_digest)
+
+    plan = Plan(dry_run=args.dry_run, out=out)
+    version_id = ensure_app_store_version(client, app["id"], plan, copyright_text)
+    ensure_version_localization(client, version_id, listing, plan)
+    summarise(plan, out, "version copy")
     return 0
 
 
@@ -3703,7 +3797,8 @@ def pick_build(builds, marketing, wanted, plan):
     candidates = builds
     if wanted:
         candidates = [b for b in builds
-                      if attributes_of(b).get("version") == wanted
+                      if b.get("id") == wanted
+                      or attributes_of(b).get("version") == wanted
                       or marketing.get(b["id"]) == wanted]
         if not candidates:
             raise AscError("No build matches --build %r.\n  Uploaded builds (newest first):\n%s"
@@ -3771,6 +3866,13 @@ def cmd_build_attach(client, args, out):
     build = pick_build(builds, marketing, getattr(args, "build", None), plan)
     build_id = build["id"]
     build_number = attributes_of(build).get("version")
+    build_marketing_version = marketing.get(build_id)
+    if build_marketing_version != version_string:
+        raise AscError(
+            "Build %s belongs to marketing version %s, not target App Store version %s; "
+            "refusing to attach it." % (build_number, build_marketing_version or "unknown",
+                                       version_string)
+        )
 
     out.write("\nVersion %s (%s)\n"
               % (version_string,
@@ -3952,9 +4054,11 @@ def cmd_status(client, args, out):
     versions = client.get_all(
         "/v1/apps/%s/appStoreVersions" % app["id"], params={"filter[platform]": PLATFORM}
     )
-    version = find_editable_version(client, app["id"])
+    version = next((v for v in versions
+                    if attributes_of(v).get("versionString") == VERSION_STRING), None)
     if not versions:
         out.write("  none\n")
+    if version is None:
         missing.append("App Store version %s" % VERSION_STRING)
     for item in versions[:5]:
         item_attrs = attributes_of(item)
@@ -4326,6 +4430,8 @@ def build_parser():
     )
     parser.add_argument("--key-dir", default=None,
                         help="override the directory holding AuthKey_*.p8 and config")
+    parser.add_argument("--version", dest="target_version", metavar="VERSION", default=None,
+                        help="explicit App Store version to inspect or change (required for writes)")
     parser.add_argument("--json", action="store_true", help="also print machine-readable JSON")
     parser.add_argument("--quiet", action="store_true", help="do not log HTTP requests")
     parser.add_argument("--debug", action="store_true",
@@ -4335,6 +4441,16 @@ def build_parser():
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("app", help="find the app record, or print the New App form values")
+
+    copy = sub.add_parser("version-copy", help="copy only released en-US version text into an exact target")
+    copy.add_argument("action", nargs="?", choices=["plan", "apply"], default="plan",
+                      help="plan by default; apply requires --version and a source digest")
+    copy.add_argument("--from-version", required=True, metavar="VERSION",
+                      help="released source App Store version, e.g. 1.0.8")
+    copy.add_argument("--whats-new-file", required=True, metavar="PATH",
+                      help="new target version's What's New text")
+    copy.add_argument("--plan-sha256", default=None, metavar="SHA256",
+                      help="exact source, target and What's New fingerprint printed by plan; required for apply")
 
     for name, help_text in (
         ("subscriptions", "create the subscription group, products, prices, trials"),
@@ -4397,13 +4513,11 @@ def build_parser():
     # `build attach` links the newest processed build to the release version. It is
     # not part of the bridge because a build only exists after
     # bridge-600-archive-upload.sh has run and Apple has finished processing.
-    build = sub.add_parser("build", help="attach the newest processed build to version %s"
-                                         % VERSION_STRING)
+    build = sub.add_parser("build", help="attach an explicitly named processed build to the target version")
     build.add_argument("action", choices=["attach"],
-                       help="attach = link the newest VALID build to the editable version")
+                       help="attach = link the named VALID build to the editable target version")
     build.add_argument("--build", dest="build", metavar="BUILD", default=None,
-                       help="a build number (e.g. 1) or version (e.g. 1.0) to attach "
-                            "instead of the newest VALID build")
+                       help="exact build number or Apple build ID; required for a write")
     build.add_argument("--dry-run", action="store_true",
                        help="show what would change without writing anything")
 
@@ -4423,6 +4537,7 @@ def build_parser():
 
 COMMANDS = {
     "app": cmd_app,
+    "version-copy": cmd_version_copy,
     "subscriptions": cmd_subscriptions,
     "metadata": cmd_metadata,
     "screenshots": cmd_screenshots,
@@ -4433,6 +4548,7 @@ COMMANDS = {
 
 
 def main(argv=None, out=None, client=None):
+    global VERSION_STRING
     out = out or sys.stdout
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -4447,7 +4563,31 @@ def main(argv=None, out=None, client=None):
     # `plan` is the same thing as `apply --dry-run`.
     args.dry_run = bool(getattr(args, "dry_run", False)) or getattr(args, "action", None) == "plan"
 
+    if args.target_version and not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,2}", args.target_version):
+        out.write("FAILED: --version must be a numeric App Store version such as 1.0.9.\n")
+        return 2
+    if args.command == "version-copy" and not args.target_version:
+        out.write("FAILED: version-copy requires an explicit target --version.\n")
+        return 2
+    action = getattr(args, "action", None)
+    writing = action in {"apply", "stage", "submit", "send", "unprice", "attach"} and not args.dry_run
+    if writing and not args.target_version:
+        out.write("FAILED: App Store writes require explicit --version before the subcommand.\n")
+        return 2
+    if args.command == "build" and action == "attach" and not args.dry_run:
+        wanted = getattr(args, "build", None)
+        build_id = re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+            r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", wanted or "")
+        if not (wanted and (wanted.isdigit() or build_id)):
+            out.write("FAILED: build attach requires an exact --build number or Apple build ID; "
+                      "marketing-version selection is not allowed for a write.\n")
+            return 2
+
+    prior_version = VERSION_STRING
     try:
+        if args.target_version:
+            VERSION_STRING = args.target_version
         if client is None:
             credentials = load_credentials(args.key_dir)
             client = Client(credentials, verbose=not args.quiet, out=out,
@@ -4460,6 +4600,8 @@ def main(argv=None, out=None, client=None):
     except KeyboardInterrupt:
         sys.stderr.write("\nInterrupted.\n")
         return 130
+    finally:
+        VERSION_STRING = prior_version
 
 
 if __name__ == "__main__":

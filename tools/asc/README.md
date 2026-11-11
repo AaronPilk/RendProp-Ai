@@ -12,6 +12,53 @@ Owner-operated release tooling lives here:
 The scripts run on a Mac with Python 3.9+ and `openssl` installed; archives also
 need Xcode and XcodeGen. The Python utility uses the standard library only.
 
+## Exact 1.0.9 release preparation (11 November 2026)
+
+The public US App Store currently serves **1.0.8 (141)**. The next unoccupied
+build number observed in App Store Connect is **142**; the release checkout must
+use marketing version **1.0.9** and build **142** before archive. No 1.0.9 App
+Store version or build existed at this readback. Recheck Apple before upload.
+
+The tracked `metadata/en-US` copy below was prepared for 1.0.5 and differs from
+the approved 1.0.8 listing. The narrow command below copies only the released
+1.0.8 en-US version text and uses a new What's New file. Its default action is
+read-only `plan`; `apply` requires the SHA-256 of the complete source, target
+state and What's New printed by a fresh plan. It does
+not touch App Privacy, review credentials, screenshots, subscriptions, app
+information, pricing or agreements.
+
+```bash
+python3 tools/asc/asc.py --version 1.0.9 version-copy \
+  --from-version 1.0.8 \
+  --whats-new-file tools/asc/release-notes-1.0.9.txt
+# After reviewing the exact candidate and current Apple state:
+python3 tools/asc/asc.py --version 1.0.9 version-copy apply \
+  --from-version 1.0.8 \
+  --whats-new-file tools/asc/release-notes-1.0.9.txt \
+  --plan-sha256 <digest printed by the fresh plan>
+python3 tools/asc/asc.py --version 1.0.9 status
+```
+
+Every `asc.py` write requires explicit `--version` before the subcommand.
+`build attach` also requires `--build 142` (or the exact Apple build ID), and
+checks that the selected processed build belongs to 1.0.9. The general
+`bridge-600-archive-upload.sh` uses `exportOptions.plist`, which permits Apple
+to renumber the build. For this bound release use the existing
+`exportOptions-appstore.plist` with
+`manageAppVersionAndBuildNumber=false` and
+`testFlightInternalTestingOnly=false`; verify the signed archive, exported IPA
+and Apple's uploaded build all say 1.0.9 (142) before attachment. The broad
+`bridge-610-asc-apply.sh` remains unsuitable for this exact-version release.
+
+The public 1.0.8 version has seven complete 6.9-inch screenshots, but their
+final PNG files are not in this checkout. After 1.0.9 creation, read back its
+screenshots and inspect them against the release device. If Apple does not
+carry them forward, provide exact approved capture files before upload. Check
+the 1.0.9 App Review detail and demo login in App Store Connect's private UI;
+never copy credentials into source or command arguments. Reconcile published
+privacy answers with the final provider/data paths, and inspect Agreements,
+Tax and Banking in the Apple UI before submission.
+
 ## Current release target and catalog gate (28 October 2026)
 
 `asc.py` targets editable version **1.0.5**. The proposed monthly catalog is

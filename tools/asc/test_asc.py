@@ -3404,6 +3404,90 @@ class ExactReleaseVersionTests(unittest.TestCase):
         self.assertIn("create App Store version " + asc.VERSION_STRING, out.getvalue())
         self.assertEqual(fake.writes, [])
 
+    def test_status_marks_the_selected_version_missing_with_historical_versions_present(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        fake.add_version("1.0.8", "READY_FOR_SALE")
+        out = io.StringIO()
+        client = self.client(fake)
+        self.assertEqual(asc.main(["--version", "1.0.9", "status"], out=out, client=client), 1)
+        self.assertIn("App Store version 1.0.9", out.getvalue())
+
+
+class VersionCopyTests(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeAsc()
+        self.fake.whats_new_editable = True
+        self.fake.add_version("1.0.8", "READY_FOR_SALE", localization={
+            "description": "Approved public description", "keywords": "homes,video",
+            "promotionalText": "", "supportUrl": "https://rendprop.com/support",
+            "marketingUrl": "https://rendprop.com", "whatsNew": "Older release notes",
+        })
+        self.client = asc.Client(credentials=None, transport=self.fake, verbose=False,
+                                 out=io.StringIO())
+        self.temp = tempfile.TemporaryDirectory()
+        self.notes = Path(self.temp.name) / "whats-new.txt"
+        self.notes.write_text("Faster photo review and more reliable video exports.\n")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def argv(self, action="plan", digest=None):
+        argv = ["--version", "1.0.9", "version-copy", action,
+                "--from-version", "1.0.8", "--whats-new-file", str(self.notes)]
+        if digest:
+            argv += ["--plan-sha256", digest]
+        return argv
+
+    def test_plan_is_read_only_and_copy_requires_matching_plan_digest(self):
+        out = io.StringIO()
+        self.assertEqual(asc.main(self.argv(), out=out, client=self.client), 0)
+        self.assertEqual(self.fake.writes, [])
+        self.assertIn("WOULD create App Store version 1.0.9", out.getvalue())
+        digest = next(line.split(": ", 1)[1] for line in out.getvalue().splitlines()
+                      if line.startswith("Exact release plan SHA-256:"))
+        self.assertEqual(len(digest), 64)
+        stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            self.assertEqual(asc.main(self.argv("apply", "0" * 64), out=io.StringIO(),
+                                      client=self.client), 1)
+            self.assertIn("Apply requires --plan-sha256", sys.stderr.getvalue())
+        finally:
+            sys.stderr = stderr
+        self.assertEqual(self.fake.writes, [])
+        self.assertEqual(asc.main(self.argv("apply", digest), out=io.StringIO(),
+                                  client=self.client), 0)
+        target = next(v for v in self.fake.store["appStoreVersions"].values()
+                      if v["attributes"]["versionString"] == "1.0.9")
+        target_loc = next(loc for loc in self.fake.store["appStoreVersionLocalizations"].values()
+                          if loc["_parents"].get("appStoreVersion") == target["id"])
+        self.assertEqual(target_loc["attributes"]["description"], "Approved public description")
+        self.assertEqual(target_loc["attributes"]["whatsNew"],
+                         "Faster photo review and more reliable video exports.")
+        self.assertEqual(asc.VERSION_STRING, "1.0.5")
+
+    def test_released_target_is_rejected_before_any_write(self):
+        self.fake.add_version("1.0.9", "READY_FOR_SALE")
+        out = io.StringIO()
+        stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            self.assertEqual(asc.main(self.argv("apply", "0" * 64), out=out,
+                                      client=self.client), 1)
+            self.assertIn("refusing to change", sys.stderr.getvalue())
+        finally:
+            sys.stderr = stderr
+        self.assertEqual(self.fake.writes, [])
+
+    def test_old_tracked_metadata_cannot_overwrite_the_new_release(self):
+        stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            self.assertEqual(asc.main(["--version", "1.0.9", "metadata", "apply"],
+                                      out=io.StringIO(), client=self.client), 1)
+            self.assertIn("use `version-copy`", sys.stderr.getvalue())
+        finally:
+            sys.stderr = stderr
+        self.assertEqual(self.fake.writes, [])
+
 
 class BuildAttachTests(unittest.TestCase):
     """`build attach` links a processed build to the configured release version."""
@@ -3522,7 +3606,7 @@ class BuildAttachTests(unittest.TestCase):
              {"data": {"type": "builds", "id": build_id}}),
         ])
 
-    def test_a_build_can_be_named_by_number_or_by_version(self):
+    def test_a_build_must_belong_to_the_target_version(self):
         fake = self.build(dict(version="1", uploaded="2026-09-05T08:00:00-07:00"),
                           dict(version="2", uploaded="2026-09-05T09:00:00-07:00"),
                           dict(version="3", marketing_version="1.1",
@@ -3531,8 +3615,12 @@ class BuildAttachTests(unittest.TestCase):
         self.assertEqual(self.attached_build_number(fake), "1")
         self.run_attach(fake, build=asc.VERSION_STRING)  # newest VALID build of the release version
         self.assertEqual(self.attached_build_number(fake), "2")
-        self.run_attach(fake, build="1.1")
-        self.assertEqual(self.attached_build_number(fake), "3")
+        writes_before = len(fake.writes)
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_attach(fake, build="3")
+        self.assertIn("not target App Store version", str(caught.exception))
+        self.assertEqual(len(fake.writes), writes_before)
+        self.assertEqual(self.attached_build_number(fake), "2")
 
     def test_an_unknown_build_is_refused(self):
         fake = self.build(dict(version="1"))
@@ -3576,8 +3664,42 @@ class BuildAttachTests(unittest.TestCase):
         fake = self.build(dict(version="1"))
         out = io.StringIO()
         client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
-        self.assertEqual(asc.main(["build", "attach"], out=out, client=client), 0)
+        self.assertEqual(asc.main(["--version", asc.VERSION_STRING,
+                                   "build", "attach", "--build", "1"],
+                                  out=out, client=client), 0)
         self.assertEqual(self.attached_build_number(fake), "1")
+
+    def test_cli_requires_explicit_version_and_build_before_any_write(self):
+        fake = self.build(dict(version="1"))
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=io.StringIO())
+        cases = [
+            ["build", "attach", "--build", "1"],
+            ["--version", asc.VERSION_STRING, "build", "attach"],
+            ["--version", asc.VERSION_STRING, "build", "attach", "--build", asc.VERSION_STRING],
+            ["metadata", "apply"],
+            ["review", "send", "--yes"],
+        ]
+        for argv in cases:
+            with self.subTest(argv=argv):
+                out = io.StringIO()
+                self.assertEqual(asc.main(argv, out=out, client=client), 2)
+                self.assertIn("FAILED", out.getvalue())
+        self.assertEqual(fake.writes, [])
+
+    def test_cli_version_override_targets_only_the_named_draft(self):
+        fake = FakeAsc()
+        fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION")
+        target_id = fake.add_version("1.0.9", "PREPARE_FOR_SUBMISSION")
+        fake.add_build(version="141", marketing_version="1.0.8")
+        fake.add_build(version="142", marketing_version="1.0.9")
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=io.StringIO())
+        out = io.StringIO()
+        self.assertEqual(asc.main(["--version", "1.0.9", "build", "attach", "--build", "142"],
+                                  out=out, client=client), 0)
+        self.assertEqual(fake.store["appStoreVersions"][target_id]["_parents"].get("build"),
+                         next(bid for bid, b in fake.store["builds"].items()
+                              if b["attributes"]["version"] == "142"))
+        self.assertEqual(asc.VERSION_STRING, "1.0.5")
 
     def test_status_sees_the_attached_build(self):
         fake = self.build(dict(version="1"))
