@@ -171,6 +171,7 @@ final class AppModel: ObservableObject {
     private var syncInFlight: Set<UUID> = []
     private var publishInFlight: Set<UUID> = []
     private var serverCreationInFlight: Set<UUID> = []
+    private var draftCreationPlanBatch: (id: UUID, owner: String?, revision: UInt64, library: UUID?, hasRead: Bool, entitlement: Entitlements?)?
     var clientContactSyncInFlight: Set<UUID> = []
     var realEstateRoleSyncOwners: Set<String> = []
     private var identityOwnerUserID: UUID?
@@ -179,6 +180,7 @@ final class AppModel: ObservableObject {
     private var uploadObserver: NSObjectProtocol?
     private var spaceTypeObserver: NSObjectProtocol?
     private var workspaceObserver: NSObjectProtocol?
+    private var planObserver: NSObjectProtocol?
     /// The `space.type` raw value a PATCH /me/brand is carrying right now, so
     /// two sync points firing together send one request, not two.
     private var spaceTypeSyncInFlight: String?
@@ -220,6 +222,9 @@ final class AppModel: ObservableObject {
                 self.objectWillChange.send()
                 await self.refreshCloudWorkspace()
             }
+        }
+        planObserver = NotificationCenter.default.addObserver(forName: .rendpropPlanChanged, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in await self?.refreshCloudWorkspaceAfterCurrent(retryPlanRequired: false) }
         }
         // Somebody found out the server does not have the business type (an
         // account switch, `/me` naming a different industry) — send it again.
@@ -986,6 +991,7 @@ final class AppModel: ObservableObject {
                   CloudDraftCreation.canAutoSync(draft, userID: owner) else { return }
             let revision = AuthStore.shared.syncSessionRevision
             let library = WorkspaceContext.selectedOrgID
+            guard await canRetryDraftCreation(draft.id, owner: owner, revision: revision, library: library) else { return }
             do { _ = try await ensureServerListing(draft) }
             catch {
                 noteDraftCreationFailure(error, snapshot: draft, owner: owner, revision: revision, library: library)
@@ -1070,10 +1076,111 @@ final class AppModel: ObservableObject {
 
     /// Push every dirty listing (called on launch and by pull-to-refresh).
     func syncDirtyListings() async {
+        let batch = beginDraftCreationPlanBatch()
+        defer { endDraftCreationPlanBatch(batch) }
         let dirty = listings.filter { !$0.isSample && ($0.needsServerSync == true || $0.measurementSync?.pending == true || $0.serverID == nil) }.map { $0.id }
         for id in dirty {
             await syncListing(id)
         }
+    }
+
+    static let draftCreationPlanMessage = "Your listing and photos are saved on this iPhone. Choose a plan to sync this listing with Studio, then retry."
+
+    private func beginDraftCreationPlanBatch() -> UUID? {
+        guard draftCreationPlanBatch == nil else { return nil }
+        let id = UUID()
+        draftCreationPlanBatch = (id, AuthStore.shared.userID, AuthStore.shared.syncSessionRevision, WorkspaceContext.selectedOrgID, false, nil)
+        return id
+    }
+
+    private func endDraftCreationPlanBatch(_ id: UUID?) {
+        if let id, draftCreationPlanBatch?.id == id { draftCreationPlanBatch = nil }
+    }
+
+    var planBlockedCloudListingCount: Int {
+        guard AuthStore.shared.isIdentified, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return 0 }
+        return listings.filter { $0.serverID == nil && $0.cloudCreatePlanBlocked == true && CloudDraftCreation.canAutoSync($0, userID: owner) && isInSelectedWorkspace($0) }.count
+    }
+
+    /// Usage changes and repeated foreground/refresh events do not retry a
+    /// known refusal. A changed fresh server plan or an explicit retry can.
+    private func canRetryDraftCreation(_ id: UUID, owner: UUID, revision: UInt64, library: UUID?) async -> Bool {
+        guard AuthStore.shared.isIdentified,
+              AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner,
+              AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == library,
+              let before = index(of: id), listings[before].serverID == nil,
+              CloudDraftCreation.canAutoSync(listings[before], userID: owner),
+              isInSelectedWorkspace(listings[before]) else { return false }
+        guard listings[before].cloudCreatePlanBlocked == true else { return true }
+        let batch = draftCreationPlanBatch
+        let sharesBatch = batch?.owner.flatMap(UUID.init(uuidString:)) == owner && batch?.revision == revision && batch?.library == library
+        let entitlement: Entitlements?
+        if sharesBatch, let batch, batch.hasRead { entitlement = batch.entitlement }
+        else { entitlement = (try? await api.me())?.entitlements }
+        guard AuthStore.shared.isIdentified,
+              AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner,
+              AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == library,
+              let i = index(of: id), listings[i].serverID == nil,
+              CloudDraftCreation.canAutoSync(listings[i], userID: owner),
+              isInSelectedWorkspace(listings[i]) else { return false }
+        if sharesBatch, let batch, draftCreationPlanBatch?.id == batch.id {
+            draftCreationPlanBatch?.hasRead = true
+            draftCreationPlanBatch?.entitlement = entitlement
+        }
+        let signature = entitlement.flatMap { value -> String? in
+            let fields = [value.plan, value.planRaw ?? "", value.planSource ?? "",
+                          value.trialEndsAt.map { String($0.timeIntervalSince1970) } ?? ""]
+            return (try? JSONEncoder().encode(fields)).flatMap { String(data: $0, encoding: .utf8) }
+        }
+        if listings[i].cloudCreatePlanBlocked == true {
+            let previous = listings[i].cloudCreatePlanSignature
+            // A purchase/grant may complete before the first paused refresh.
+            // This permits one server-checked attempt; it never grants access.
+            let newlyObservedPaidPlan = previous == nil && entitlement.map { ["starter", "solo", "legacy_pro", "pro", "max", "ultra", "team"].contains($0.plan) } == true
+            guard let signature, newlyObservedPaidPlan || (previous != nil && previous != signature) else {
+                // An unavailable initial read followed by Free does not count
+                // as a plan change. Repeated reads keep the same pause.
+                if listings[i].cloudCreatePlanSignature == nil, let signature { listings[i].cloudCreatePlanSignature = signature }
+                return false
+            }
+            listings[i].cloudCreatePlanBlocked = nil
+            if listings[i].lastError == Self.draftCreationPlanMessage { listings[i].lastError = nil }
+        }
+        if let signature, listings[i].cloudCreatePlanSignature != signature { listings[i].cloudCreatePlanSignature = signature }
+        return true
+    }
+
+    func retryCloudWorkspace() async {
+        await refreshCloudWorkspaceAfterCurrent(retryPlanRequired: true)
+    }
+
+    private func refreshCloudWorkspaceAfterCurrent(retryPlanRequired: Bool) async {
+        guard AuthStore.shared.isIdentified, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return }
+        let revision = AuthStore.shared.syncSessionRevision
+        let library = WorkspaceContext.selectedOrgID
+        // An explicit retry must run after an existing refresh, rather than
+        // joining a pass that may already have finished syncing its drafts.
+        let operation = cloudRefreshOperation
+        if let existing = cloudRefreshTask {
+            await existing.value
+            if cloudRefreshOperation == operation { cloudRefreshTask = nil; cloudRefreshOperation = nil }
+        }
+        guard AuthStore.shared.isIdentified,
+              AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner,
+              AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == library else { return }
+        if !retryPlanRequired, let batch = draftCreationPlanBatch,
+           batch.owner.flatMap(UUID.init(uuidString:)) == owner, batch.revision == revision, batch.library == library {
+            draftCreationPlanBatch = nil
+        }
+        if retryPlanRequired {
+            for i in listings.indices where listings[i].serverID == nil && listings[i].cloudCreatePlanBlocked == true && CloudDraftCreation.canAutoSync(listings[i], userID: owner) && isInSelectedWorkspace(listings[i]) {
+                listings[i].cloudCreatePlanBlocked = nil
+            }
+        }
+        await refreshCloudWorkspace()
     }
 
     /// Keep the actual create refusal on the draft that requested it. A late
@@ -1087,8 +1194,13 @@ final class AppModel: ObservableObject {
               listings[i].cloudUnavailable != true, listings[i].cloudDetachedServerID == nil,
               listings[i].cloudSyncOwnerID == nil || listings[i].cloudSyncOwnerID == owner,
               listings[i].cloudDraftOrgID == (snapshot.cloudDraftOrgID ?? library) else { return }
-        listings[i].lastError = "Studio sync couldn't finish. Your listing and photos are saved on this iPhone. "
-            + Self.userMessage(for: error)
+        if (error as? APIError)?.isListingCreationPlanRequired == true {
+            listings[i].cloudCreatePlanBlocked = true
+            listings[i].lastError = Self.draftCreationPlanMessage
+        } else {
+            listings[i].lastError = "Studio sync couldn't finish. Your listing and photos are saved on this iPhone. "
+                + Self.userMessage(for: error)
+        }
     }
 
     /// Two-way refresh for launch, foreground, sign-in and pull-to-refresh.
@@ -1105,6 +1217,8 @@ final class AppModel: ObservableObject {
         let operation = UUID()
         let task = Task { [weak self] in
             guard let self else { return }
+            let planBatch = self.beginDraftCreationPlanBatch()
+            defer { self.endDraftCreationPlanBatch(planBatch) }
             self.isCloudSyncing = true
             self.cloudSyncError = nil
             defer { if self.cloudRefreshOperation == operation { self.isCloudSyncing = false } }
@@ -1233,6 +1347,9 @@ final class AppModel: ObservableObject {
         if let existing = listings.first(where: { $0.id == localID })?.serverID {
             return existing
         }
+        if listings.first(where: { $0.id == localID })?.cloudCreatePlanBlocked == true {
+            throw APIError.server(status: 402, code: "plan_required", message: Self.draftCreationPlanMessage)
+        }
         guard !serverCreationInFlight.contains(localID) else { throw PublishError.serverIdentityBusy }
         serverCreationInFlight.insert(localID)
         defer { serverCreationInFlight.remove(localID) }
@@ -1261,6 +1378,9 @@ final class AppModel: ObservableObject {
             save: { updated in
                 if let i = self.index(of: localID) {
                     var bound = updated
+                    bound.cloudCreatePlanBlocked = nil
+                    bound.cloudCreatePlanSignature = nil
+                    if bound.lastError == Self.draftCreationPlanMessage { bound.lastError = nil }
                     if bound.lastError?.hasPrefix("Studio sync couldn't finish. ") == true { bound.lastError = nil }
                     self.listings[i] = bound
                 }
@@ -4371,40 +4491,47 @@ struct HomeDashboardView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                WorkspaceEntry(showsRecoveryChoice: false)
-                heroCard
-                    .modifier(Reveal(index: 0, on: revealed))
-                showroomSection
-                    .modifier(Reveal(index: 1, on: revealed))
-                // Plan state remains one tap away, below the creation and listing
-                // sections. Its existing loader and purchase flow are unchanged.
-                PlanBanner()
-                    .modifier(Reveal(index: 2, on: revealed))
-                appGuideSection
-                    .modifier(Reveal(index: 3, on: revealed))
-                demoSection
-                    .modifier(Reveal(index: 4, on: revealed))
-                howItWorksSection
-                    .modifier(Reveal(index: 4, on: revealed))
-                // Tutorials are hidden until the videos are filmed — no "coming
-                // soon" placeholder ships to App Review (2.1). Flip the flag once
-                // tutorialSlot destinations play real content.
-                if Config.showTutorials {
-                    tutorialsSection
-                        .modifier(Reveal(index: 5, on: revealed))
+        GeometryReader { viewport in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 18) {
+                    WorkspaceEntry(showsRecoveryChoice: false)
+                    heroCard
+                        .modifier(Reveal(index: 0, on: revealed))
+                    showroomSection
+                        .modifier(Reveal(index: 1, on: revealed))
+                    // Plan state remains one tap away, below the creation and listing
+                    // sections. Its existing loader and purchase flow are unchanged.
+                    PlanBanner()
+                        .modifier(Reveal(index: 2, on: revealed))
+                    appGuideSection
+                        .modifier(Reveal(index: 3, on: revealed))
+                    demoSection
+                        .modifier(Reveal(index: 4, on: revealed))
+                    howItWorksSection
+                        .modifier(Reveal(index: 4, on: revealed))
+                    // Tutorials are hidden until the videos are filmed — no "coming
+                    // soon" placeholder ships to App Review (2.1). Flip the flag once
+                    // tutorialSlot destinations play real content.
+                    if Config.showTutorials {
+                        tutorialsSection
+                            .modifier(Reveal(index: 5, on: revealed))
+                    }
+                    partnersSection
+                        .modifier(Reveal(index: 6, on: revealed))
+                    // Amazon Associates gear list — GearHomeLink renders nothing
+                    // until GearStore.isAvailable (Gear/GearView.swift).
+                    GearHomeLink()
+                        .modifier(Reveal(index: 7, on: revealed))
                 }
-                partnersSection
-                    .modifier(Reveal(index: 6, on: revealed))
-                // Amazon Associates gear list — GearHomeLink renders nothing
-                // until GearStore.isAvailable (Gear/GearView.swift).
-                GearHomeLink()
-                    .modifier(Reveal(index: 7, on: revealed))
+                // A vertical ScrollView can accept sideways rubber-banding if
+                // a child reports a wider ideal size during layout. Keep the
+                // dashboard exactly as wide as its live viewport, including
+                // its 16-point margins, so cards never drag under the chrome.
+                .frame(width: max(0, viewport.size.width - 32))
+                .padding(16)
+                // The whole tab re-themes when the business type changes (top-left menu).
+                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: spaceTypeRaw)
             }
-            .padding()
-            // The whole tab re-themes when the business type changes (top-left menu).
-            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: spaceTypeRaw)
         }
         .background(HomeStyle.canvas)
         .navigationTitle("Home")

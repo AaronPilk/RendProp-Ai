@@ -3,9 +3,11 @@ import CryptoKit
 
 // No real documents, credentials, networking or camera APIs exist in this fixture.
 enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/isolated/\(path)") } }
-enum APIError: Error { case decoding, server(Int); var isConflict: Bool { if case .server(409) = self { return true }; return false } }
+enum APIError: Error { case decoding, server(Int); var isConflict: Bool { if case .server(409) = self { return true }; return false }; var isListingCreationPlanRequired: Bool { false } }
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID(uuidString: "22222222-2222-4222-8222-222222222222") }
 @MainActor final class WorkspaceStore { static let shared = WorkspaceStore(); func canViewLibrary(_ org: UUID) -> Bool { org == WorkspaceContext.selectedOrgID } }
+struct Entitlements { var plan = "free"; var planRaw: String?; var planSource: String?; var trialEndsAt: Date? }
+struct UsageSummary { var entitlements: Entitlements? = nil }
 enum FixtureError: Error { case failed }
 struct AssertionFailure: Error { let message: String }
 func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
@@ -48,6 +50,7 @@ __LOCAL_STATUS__
     func release() { let saved = continuation; continuation = nil; saved?.resume() }
 }
 @MainActor final class SyncAPI: WorkspaceSyncAPI {
+    func me() async throws -> UsageSummary { UsageSummary() }
     var snapshots: [Listing] = []
     var measurementSnapshots: [Listing] = []
     var measurementUpdate: (Listing) async throws -> Listing = { $0 }
@@ -83,6 +86,7 @@ enum Config { static let useLiveBackend = true; static let enableAuth = true }
 @MainActor final class SyncModel {
     var listings: [Listing]
     var syncInFlight = Set<UUID>()
+__BATCH_STATE__
     let api = SyncAPI()
     init(_ listing: Listing) { listings = [listing] }
     func index(of id: UUID) -> Int? { listings.firstIndex(where: { $0.id == id }) }
@@ -98,6 +102,8 @@ __LOAD_FACTS_REVIEW__
 __RESOLVE_FACTS__
 __MARK_DIRTY__
 __IS_IN_WORKSPACE__
+__DRAFT_PLAN_MESSAGE__
+__CAN_RETRY_DRAFT__
 __NOTE_DRAFT_FAILURE__
 __SYNC_LISTING__
 }

@@ -190,6 +190,7 @@ struct HomeListingsView: View {
     @State private var isLoading = true
     @State private var search = ""
     @State private var pendingDelete: Listing?
+    @State private var showSyncPlan = false
     @ObservedObject private var workspaceStore = WorkspaceStore.shared
 
     private var needsWorkspaceSelection: Bool {
@@ -254,6 +255,9 @@ struct HomeListingsView: View {
                 await model.load()
                 isLoading = false
             }
+            .sheet(isPresented: $showSyncPlan, onDismiss: { Task { await model.refreshCloudWorkspace() } }) {
+                PaywallView(reason: .upgrade)
+            }
             .confirmationDialog(deleteTitle,
                                 isPresented: Binding(get: { pendingDelete != nil },
                                                      set: { if !$0 { pendingDelete = nil } }),
@@ -288,6 +292,17 @@ struct HomeListingsView: View {
             } else {
                 WorkspaceEntry()
             }
+            if model.planBlockedCloudListingCount > 0 {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Draft saved on this iPhone", systemImage: "icloud.slash")
+                        .font(.subheadline.weight(.semibold))
+                    Text(AppModel.draftCreationPlanMessage).font(.footnote)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) { syncPlanActions }
+                        VStack(alignment: .leading, spacing: 10) { syncPlanActions }
+                    }
+                }.foregroundStyle(Theme.inkDim).listRowBackground(Color.clear)
+            }
             if let error = model.cloudSyncError {
                 Label(error, systemImage: "icloud.slash")
                     .font(.footnote).foregroundStyle(Theme.inkDim)
@@ -295,10 +310,11 @@ struct HomeListingsView: View {
             } else if model.isCloudSyncing {
                 HStack { ProgressView(); Text("Syncing with Studio…").font(.footnote) }
                     .listRowBackground(Color.clear)
-            } else if model.pendingCloudListingCount > 0 {
+            } else if model.pendingCloudListingCount > 0 && model.planBlockedCloudListingCount == 0 {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("\(model.pendingCloudListingCount) listing update\(model.pendingCloudListingCount == 1 ? " is" : "s are") waiting to sync.").font(.footnote)
-                    Button("Retry Studio sync") { Task { await model.refreshCloudWorkspace() } }.font(.footnote.weight(.semibold))
+                    Button("Retry Studio sync") { Task { await model.retryCloudWorkspace() } }.font(.footnote.weight(.semibold))
+                        .disabled(model.isCloudSyncing)
                 }.foregroundStyle(Theme.inkDim).listRowBackground(Color.clear)
             }
             if !hasRealListing && search.isEmpty {
@@ -359,6 +375,14 @@ struct HomeListingsView: View {
         .listStyle(.plain)
         .searchable(text: $search, prompt: "Search \(noun)s")
         .refreshable { await model.refreshCloudWorkspace() }
+    }
+
+    @ViewBuilder private var syncPlanActions: some View {
+        Button("Choose a plan") { showSyncPlan = true }
+            .buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+        Button("Retry Studio sync") { Task { await model.retryCloudWorkspace() } }
+            .buttonStyle(.bordered).buttonBorderShape(.capsule)
+            .disabled(model.isCloudSyncing)
     }
 
     private var workspaceSelectionPrompt: some View {

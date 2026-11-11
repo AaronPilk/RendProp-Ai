@@ -354,6 +354,7 @@ jobs:
           done
       - name: Ordinary listing intent and shared-version review
         run: |
+          python3 apps/ios/tests/run-listing-create-plan-refusal.py
           python3 tools/audit/listing-facts-sync-20261004/run.py
           for fault in broad-wire wrong-workspace late-conflict drop-receipt-scope drop-archive-restore sold-strings-only sold-wide-tolerance sold-canonical-baseline sold-clear-newer; do
             python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault "$fault"
@@ -506,6 +507,8 @@ jobs:
             /tmp/rendprop-floor-measurement-sync-*/*.log
             /tmp/rendprop-listing-create-intent-*/receipt.json
             /tmp/rendprop-listing-create-intent-*/*.log
+            ${{ runner.temp }}/rendprop-listing-create-plan-*/receipt.json
+            ${{ runner.temp }}/rendprop-listing-create-plan-*/*.log
             /tmp/rendprop-listing-facts-sync-*/receipt.json
             /tmp/rendprop-listing-facts-sync-*/*.log
             ${{ runner.temp }}/rendprop-listing-facts-review-*/receipt.json

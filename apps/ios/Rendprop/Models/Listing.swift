@@ -65,6 +65,10 @@ struct Listing: Identifiable, Codable, Hashable {
     var serverLibraryOrgID: UUID? = nil
     /// The selected workspace when this local draft was created; retries never retarget it.
     var cloudDraftOrgID: UUID? = nil
+    /// A typed create refusal pauses background retries; local work stays saved.
+    var cloudCreatePlanBlocked: Bool? = nil
+    /// Last fresh server plan observed before the refused create (not usage).
+    var cloudCreatePlanSignature: String? = nil
     /// True for a row first discovered on another device. Optional for old snapshots.
     var cloudImported: Bool? = nil
     /// A complete cloud read no longer returned this listing. Keep local files,
@@ -342,7 +346,7 @@ extension Listing {
     enum CodingKeys: String, CodingKey {
         case id, address, beds, baths, sqft, price, status, isSample, spaceTypeRaw,
              createdAt, soldAt, cloudArchived, zillowURL, mainPhotoRelPath, cloudMainPhotoKey, latitude, longitude,
-             tagline, details, floorMeasurements, serverID, serverOrgID, serverLibraryOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateFactsFingerprint, cloudCreateReplayed, shareSlug, shareURL,
+             tagline, details, floorMeasurements, serverID, serverOrgID, serverLibraryOrgID, cloudDraftOrgID, cloudCreatePlanBlocked, cloudCreatePlanSignature, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateFactsFingerprint, cloudCreateReplayed, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
              lastError, needsServerSync, factsSync, measurementSync, publishedRenderID, lastRepublishedAt,
              unbrandedShareURL, stateCode, allowSearchIndexing,
@@ -396,6 +400,8 @@ extension Listing {
         serverOrgID      = try c.decodeIfPresent(UUID.self,   forKey: .serverOrgID)
         serverLibraryOrgID = try c.decodeIfPresent(UUID.self, forKey: .serverLibraryOrgID)
         cloudDraftOrgID  = try c.decodeIfPresent(UUID.self, forKey: .cloudDraftOrgID)
+        cloudCreatePlanBlocked = try c.decodeIfPresent(Bool.self, forKey: .cloudCreatePlanBlocked)
+        cloudCreatePlanSignature = try c.decodeIfPresent(String.self, forKey: .cloudCreatePlanSignature)
         cloudImported    = try c.decodeIfPresent(Bool.self,   forKey: .cloudImported)
         cloudUnavailable = try c.decodeIfPresent(Bool.self,   forKey: .cloudUnavailable)
         cloudSyncOwnerID = try c.decodeIfPresent(UUID.self, forKey: .cloudSyncOwnerID)

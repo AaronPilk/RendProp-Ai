@@ -114,6 +114,32 @@ final class HomeProjectCreationUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["home.fixture.projectCount"].label, "2 synthetic homes")
     }
 
+    func testHomeContentFitsViewportAfterHorizontalDrags() {
+        // The reported screen includes this long banner; the default offline
+        // fixture omits it and can hide an over-wide Home child.
+        app.terminate()
+        app.launchArguments += ["-ui.planBanner", "ended"]
+        app.launch()
+        XCTAssertTrue(app.buttons["home.getStarted"].waitForExistence(timeout: 20))
+        let banner = app.descendants(matching: .any)["home.planBanner"].firstMatch
+        XCTAssertTrue(banner.waitForExistence(timeout: 5), app.debugDescription)
+        let tile = app.buttons["home.feature.photos"]
+        XCTAssertTrue(tile.waitForExistence(timeout: 5), app.debugDescription)
+        let startX = tile.frame.minX
+        let window = app.windows.firstMatch
+        XCTAssertLessThanOrEqual(banner.frame.maxX, window.frame.maxX + 1,
+                                 "The plan banner must fit inside the Home viewport")
+        let right = window.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.55))
+        let left = window.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.55))
+
+        for (from, to) in [(right, left), (left, right), (right, left)] {
+            from.press(forDuration: 0.1, thenDragTo: to, withVelocity: .slow,
+                       thenHoldForDuration: 0.3)
+            XCTAssertLessThan(abs(tile.frame.minX - startX), 3,
+                              "Home's vertical content must settle at its original horizontal position after a sideways drag")
+        }
+    }
+
     private func openPicker() {
         let tour = app.buttons["home.feature.tour"]
         if !tour.isHittable { app.swipeUp() }

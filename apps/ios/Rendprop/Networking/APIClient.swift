@@ -1625,6 +1625,8 @@ enum APIError: Error, LocalizedError {
     /// A free intent clarification/refusal is resolved by changing the request,
     /// never by repeating the same batch or opening the purchase screen.
     var isPhotoPromptRefusal: Bool { code == "photo_clarification_required" || code == "unsupported_edit" }
+    /// Only a typed plan refusal may pause automatic draft creation.
+    var isListingCreationPlanRequired: Bool { status == 402 && code == "plan_required" }
     /// 402 — a customer's plan boundary / allowance reached → the in-app
     /// StoreKit paywall. A typed trial capacity refusal never opens it.
     var isQuota: Bool { !isTrialCapacityUnavailable && (status == 402 || code == "quota_exceeded" || code == "plan_required") }
