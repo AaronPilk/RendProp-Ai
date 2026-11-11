@@ -27,6 +27,18 @@ struct PaywallView: View {
     @State private var period: BillingPeriod = .monthly
     @State private var selectedPlan: RendpropPlan = .max
     @State private var selectedTeamVariant: TeamSeatVariant?
+    @State private var standardPriceChoice: StandardPriceChoice?
+    @State private var showsStandardPriceConfirmation = false
+
+    private struct StandardPriceChoice {
+        let product: Product
+        let orgID: UUID
+        let workspaceName: String
+        let period: BillingPeriod
+        let actorID: String?
+        let sessionRevision: UInt64
+        let selectedOrgID: UUID?
+    }
 
     var body: some View {
         NavigationStack {
@@ -51,8 +63,26 @@ struct PaywallView: View {
                 }
             }
         }
+        .alert("Subscribe at standard price?", isPresented: $showsStandardPriceConfirmation,
+               presenting: standardPriceChoice) { choice in
+            Button("Continue at \(choice.product.displayPrice)\(choice.period.priceSuffix)") {
+                Task {
+                    guard selectedOffer.product?.id == choice.product.id,
+                          purchases.billingContext?.orgID == choice.orgID,
+                          auth.userID == choice.actorID,
+                          auth.syncSessionRevision == choice.sessionRevision,
+                          WorkspaceContext.selectedOrgID == choice.selectedOrgID else { return }
+                    await purchases.purchase(choice.product, expectedOrgID: choice.orgID,
+                                             standardPrice: true)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { choice in
+            Text("Pro starts at \(choice.product.displayPrice)\(choice.period.priceSuffix) without the free trial. It applies to \(choice.workspaceName) · Library ID \(choice.orgID.uuidString.lowercased().suffix(8)). Apple shows the final charge and renewal terms before you confirm.")
+        }
         .task(id: "\(auth.userID ?? "none"):\(auth.syncSessionRevision)") {
             PurchaseManager.shared.start()
+            Task { await purchases.refreshStandardPriceEnvironment() }
             await purchases.refreshBillingContext()
             // `source`, not `reason`: the server's per-event props whitelist
             // (services/supabase/functions/events/schema.ts) allows only
@@ -401,6 +431,21 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.ink)
                     .accessibilityIdentifier("paywall.selection")
                 buyButton(product)
+                if purchases.canOfferStandardPrice(for: product),
+                   let billing = purchases.billingContext {
+                    SecondaryButton(title: "Subscribe at \(product.displayPrice)\(offer.period.priceSuffix) now",
+                                    systemImage: "creditcard") {
+                        standardPriceChoice = .init(product: product, orgID: billing.orgID,
+                                                    workspaceName: billing.name, period: offer.period,
+                                                    actorID: auth.userID, sessionRevision: auth.syncSessionRevision,
+                                                    selectedOrgID: WorkspaceContext.selectedOrgID)
+                        showsStandardPriceConfirmation = true
+                    }
+                    .accessibilityIdentifier("paywall.standardPrice")
+                    Text("Pay the standard price now, without a free trial. Apple confirms the charge before subscribing.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.center)
+                }
                 if purchases.activeProductID != product.id, !purchases.canStartNewPurchase(for: product) {
                     Text(purchases.canCheckTrialAvailability(for: product)
                          ? "Check availability to reserve this plan's trial terms before Apple's confirmation. Checking does not start Apple billing."

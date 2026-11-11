@@ -362,6 +362,9 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
     /// start. Missing on an older server means none; StoreKit alone is never
     /// permission to begin a charge for a dormant variant.
     var teamSeatProducts: [String] = []
+    /// Server readiness for a separately confirmed, standard-price Pro29
+    /// checkout. Missing on older servers is closed, never an Apple sheet.
+    var standardPriceCheckoutReady: Bool? = nil
     /// "ceiling" meters paid work. A seven-day Apple intro still needs the
     /// exact funded server reservation before StoreKit can begin it.
     var servingMode: String? = nil
@@ -375,6 +378,7 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
         case contentOrgID = "content_org_id"
         case servingOrgID = "serving_org_id"
         case originalTransactionIDs = "original_transaction_ids"
+        case standardPriceCheckoutReady = "standard_price_checkout_ready"
     }
     var name: String { orgName?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "Your workspace" }
     var unavailableMessage: String {
@@ -480,10 +484,14 @@ enum PurchaseDispatchAdmission {
 
     static func allows(liveBackend: Bool, uiTesting: Bool, ceilingMode: Bool = false,
                        eligibleIntro: Bool? = nil, continuingHeldTrial: Bool = false, verifiedHeldTrial: Bool,
+                       standardPrice: Bool = false, verifiedStandardPrice: Bool = false,
                        captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
         guard liveBackend && !uiTesting else { return true }
         guard captured == current, current.actor.flatMap(UUID.init(uuidString:)) != nil,
               current.org != nil, current.purchaseOrg != nil else { return false }
+        // An explicit full-price choice is a separate server-signed StoreKit
+        // option. Merely changing the cached eligibility must never reach Apple.
+        if standardPrice { return !continuingHeldTrial && ceilingMode && verifiedStandardPrice }
         // Apple can silently apply a free intro to an eligible subscription.
         // Only its exact, freshly rechecked server hold may start that week.
         if continuingHeldTrial || eligibleIntro == true { return verifiedHeldTrial }
@@ -532,7 +540,7 @@ enum PurchaseWorkspaceBindingStore {
         let productID: String
         let orgID: UUID
     }
-    enum Failure: Error { case unreadable, conflict, storage }
+    enum Failure: Error, Equatable { case unreadable, conflict, storage }
     static func key(owner: UUID, productID: String) -> String {
         "purchase-workspace.v1.\(owner.uuidString.lowercased()).\(productID)"
     }

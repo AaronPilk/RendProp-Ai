@@ -32,6 +32,8 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             Storefront.values = ["USA"]; Storefront.reads = 0; Storefront.onRead = nil
             AppTransaction.value = .production; AppTransaction.verified = true
             AppTransaction.reads = 0; AppTransaction.onRead = nil
+            AppTransaction.currentBundleID = Bundle.main.bundleIdentifier
+            AppTransaction.currentID = "synthetic-app-transaction"
             Product.sheetCalls = 0; Product.receivedOptions = []; Product.result = .userCancelled; Product.error = nil
             URLSession.requests = []; URLSession.status = 200; URLSession.onResponse = nil
             let api = HeldAPI(org: org, actor: actor, product: sku)
@@ -71,6 +73,18 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
         check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
               eligibleIntro: true, verifiedHeldTrial: true, captured: bound, current: bound),
               "Exact held intro can reach Apple in ceiling mode")
+        check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: true, verifiedHeldTrial: false, standardPrice: true,
+              verifiedStandardPrice: false, captured: bound, current: bound),
+              "Unsigned standard-price intent reached Apple")
+        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: true, verifiedHeldTrial: false, standardPrice: true,
+              verifiedStandardPrice: true, captured: bound, current: bound),
+              "Signed exact standard-price intent was refused")
+        check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: true, continuingHeldTrial: true, verifiedHeldTrial: true,
+              standardPrice: true, verifiedStandardPrice: true, captured: bound, current: bound),
+              "Combined trial and standard-price intent reached Apple")
         for changed in [TrialPurchaseSnapshot(actor: other.uuidString, revision: bound.revision, org: org),
                         TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision + 1, org: org),
                         TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision, org: other)] {
@@ -483,6 +497,110 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor, environment: .sandbox) }
             catch {}
             check(URLSession.requests.isEmpty, "Unauthenticated reservation dispatched")
+        }
+        let paidSKU = "com.rendprop.app.pro29.monthly"
+        let compactJWS = String(repeating: "a", count: 40) + "." + String(repeating: "b", count: 40) + "." + String(repeating: "c", count: 40)
+        func paidFixture() -> (PurchaseFixture, HeldAPI, Product) {
+            _ = fixture()
+            let api = HeldAPI(org: org, actor: actor, product: paidSKU)
+            var context = SubscriptionBillingContext(orgID: org, orgName: "Synthetic workspace", role: "owner", canManageSubscription: true, source: nil)
+            context.servingMode = "ceiling"; context.standardPriceCheckoutReady = true
+            api.overrideContext = context
+            let manager = PurchaseFixture(api); manager.billingContext = context
+            manager.standardPriceProductionReady = true
+            manager.introOfferEligible[paidSKU] = true
+            return (manager, api, Product(id: paidSKU))
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            check(manager.canOfferStandardPrice(for: product), "Verified paid option was hidden")
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            check(Product.sheetCalls == 1 && api.standardPrepareCalls == 1 && api.prepareCalls == 0,
+                  "Signed standard-price path did not reach exactly one Apple sheet")
+            check(Product.receivedOptions == [.appAccountToken(actor), .introductoryOfferEligibility(compactJWS: compactJWS)],
+                  "Paid Apple sheet omitted token or signed intro suppression")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: paidSKU) == nil,
+                  "Cancelled paid Apple sheet retained newly created binding")
+        }
+        do {
+            let (manager, api, product) = paidFixture(); AppTransaction.value = .sandbox
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 0,
+                  "Sandbox AppTransaction reached the paid Apple sheet")
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            api.standardOverride = .init(actorID: other, orgID: org, productID: paidSKU,
+                appTransactionID: AppTransaction.currentID, compactJWS: compactJWS,
+                issuedAt: Int64(Date().timeIntervalSince1970))
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
+                  "Foreign actor signed option reached the paid Apple sheet")
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            api.standardOverride = .init(actorID: actor, orgID: org, productID: paidSKU,
+                appTransactionID: AppTransaction.currentID, compactJWS: compactJWS,
+                issuedAt: Int64(Date().timeIntervalSince1970) - 301)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
+                  "Stale signed option reached the paid Apple sheet")
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            AppTransaction.onRead = { if AppTransaction.reads == 2 { AppTransaction.currentID = "changed-app-transaction" } }
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
+                  "Changed Apple app transaction reached the paid Apple sheet")
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            _ = try PurchaseWorkspaceBindingStore.prepare(owner: actor, productID: paidSKU, orgID: other)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            let retainedBinding = try PurchaseWorkspaceBindingStore.load(owner: actor, productID: paidSKU)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 0 &&
+                  retainedBinding?.orgID == other,
+                  "Foreign legacy binding was overwritten or reached Apple")
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            api.standardOnPrepare = { AuthStore.shared.syncSessionRevision += 1 }
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
+                  "Changed session after signed prepare reached Apple")
+        }
+        do {
+            _ = paidFixture()
+            URLSession.reply = try JSONSerialization.data(withJSONObject: [
+                "actor_id": actor.uuidString.lowercased(), "org_id": org.uuidString.lowercased(),
+                "product_id": paidSKU, "app_transaction_id": AppTransaction.currentID,
+                "compact_jws": compactJWS, "issued_at": Int64(Date().timeIntervalSince1970)
+            ])
+            let signedAppTransaction = "synthetic.apple.app.transaction"
+            let prepared = try await LiveAPIClient().prepareStandardPricePurchase(
+                orgID: org, productID: paidSKU, signedAppTransaction: signedAppTransaction)
+            check(prepared.checked(actor: actor, org: org, product: paidSKU,
+                                   appTransaction: AppTransaction.currentID) != nil,
+                  "Standard-price response lost actor, workspace, product, or app transaction")
+            check(URLSession.requests.count == 1, "Standard-price prepare was retried")
+            let request = URLSession.requests[0]
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+            check(Set(body.keys) == Set(["org_id", "product_id", "signed_app_transaction"])
+                  && body["org_id"] == org.uuidString.lowercased()
+                  && body["product_id"] == paidSKU
+                  && body["signed_app_transaction"] == signedAppTransaction,
+                  "Standard-price POST body did not preserve signed Apple transaction and exact scope")
+            check(request.url?.path.hasSuffix("/me/subscription/standard-price/prepare") == true
+                  && request.value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(),
+                  "Standard-price POST route or library header differed")
+        }
+        do {
+            _ = paidFixture(); URLSession.status = 401; URLSession.reply = Data()
+            do { _ = try await LiveAPIClient().prepareStandardPricePurchase(
+                orgID: org, productID: paidSKU, signedAppTransaction: "synthetic.apple.app.transaction") }
+            catch {}
+            check(URLSession.requests.count == 1 && AuthStore.shared.refreshes == 0,
+                  "Standard-price prepare retried after 401")
         }
         print("Native trial hold: \(checks) checks passed")
     }

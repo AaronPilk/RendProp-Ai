@@ -109,12 +109,41 @@ enum PurchaseEnvironment: String, Sendable {
     case sandbox = "Sandbox"
 }
 
+/// A one-attempt, server-signed instruction to omit Apple's introductory offer.
+/// This authorizes neither a charge nor an entitlement by itself. Apple still
+/// presents the price, and the server verifies the resulting paid receipt.
+struct StandardPricePurchaseAuthorization: Decodable, Sendable {
+    let actorID: UUID
+    let orgID: UUID
+    let productID: String
+    let appTransactionID: String
+    let compactJWS: String
+    let issuedAt: Int64
+    enum CodingKeys: String, CodingKey {
+        case actorID = "actor_id", orgID = "org_id", productID = "product_id"
+        case appTransactionID = "app_transaction_id", compactJWS = "compact_jws", issuedAt = "issued_at"
+    }
+    func checked(actor: UUID, org: UUID, product: String, appTransaction: String,
+                 now: Date = Date()) -> Self? {
+        let parts = compactJWS.split(separator: ".", omittingEmptySubsequences: false)
+        guard actorID == actor, orgID == org, productID == product,
+              appTransactionID == appTransaction, !appTransaction.isEmpty,
+              compactJWS.count >= 100, compactJWS.count <= 8_192,
+              parts.count == 3, parts.allSatisfy({ !$0.isEmpty }),
+              Double(issuedAt) >= now.timeIntervalSince1970 - 300,
+              Double(issuedAt) <= now.timeIntervalSince1970 + 60 else { return nil }
+        return self
+    }
+}
+
 /// The one call the purchase flow makes. `PurchaseManager` holds the client as
 /// this protocol so the offline (Mock) build walks the whole paywall.
 protocol PurchasesAPI {
     func billingContext() async throws -> SubscriptionBillingContext
     func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,
                               environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation
+    func prepareStandardPricePurchase(orgID: UUID, productID: String,
+                                      signedAppTransaction: String) async throws -> StandardPricePurchaseAuthorization
     /// POST /me/entitlement — hand Apple's signed transaction to the server and
     /// get back the plan it wrote. Throws `APIError` on a non-2xx.
     func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync
@@ -123,6 +152,19 @@ protocol PurchasesAPI {
 // MARK: - Live
 
 extension LiveAPIClient: PurchasesAPI {
+    func prepareStandardPricePurchase(orgID: UUID, productID: String,
+                                      signedAppTransaction: String) async throws -> StandardPricePurchaseAuthorization {
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil,
+              WorkspaceContext.billingOrgID == orgID,
+              productID == "com.rendprop.app.pro29.monthly",
+              !signedAppTransaction.isEmpty else { throw CloudSyncError.identityChanged }
+        let data = try await PurchasesRequest.post(path: ["me", "subscription", "standard-price", "prepare"], json: [
+            "org_id": orgID.uuidString.lowercased(), "product_id": productID,
+            "signed_app_transaction": signedAppTransaction
+        ], retriesUnauthorized: false, requiredCurrentOrg: orgID)
+        do { return try JSONDecoder().decode(StandardPricePurchaseAuthorization.self, from: data) }
+        catch { throw APIError.decoding }
+    }
     func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,
                               environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation {
         guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == appAccountToken,
@@ -266,8 +308,8 @@ extension LiveAPIClient: PurchasesAPI {
     }
 }
 
-/// A cash reservation POST cannot be redirected to another route or host.
-/// A redirect/error is retained as an unresolved outcome, without a new POST.
+/// Trial and signed standard-price preparation cannot redirect to another host.
+/// A redirect/error is an unresolved result; neither POST is retried silently.
 private final class TrialPurchaseRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
@@ -279,6 +321,10 @@ private final class TrialPurchaseRedirectPolicy: NSObject, URLSessionTaskDelegat
 // MARK: - Mock (offline dev + the UI walk)
 
 extension MockAPIClient: PurchasesAPI {
+    func prepareStandardPricePurchase(orgID: UUID, productID: String,
+                                      signedAppTransaction: String) async throws -> StandardPricePurchaseAuthorization {
+        throw APIError.notConfigured
+    }
     func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,
                               environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation {
         // Offline preview must not manufacture a funded trial promise.

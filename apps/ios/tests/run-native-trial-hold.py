@@ -57,8 +57,13 @@ assert purchase.index('guard PurchaseDispatchAdmission.allows(') < purchase.inde
 assert 'await ' not in purchase.split('guard PurchaseDispatchAdmission.allows(', 1)[1].split('try await product.purchase(', 1)[0]
 assert purchase.count('verifiedHeldTrialForDispatch = true') == 1
 assert 'actor.flatMap(UUID.init(uuidString:)).map { [.appAccountToken($0)] }' in purchase
+assert 'introductoryOfferEligibility(compactJWS: standardPriceAuthorization.compactJWS)' in purchase
+assert 'standardPrice: true' in paywall and 'standardPriceChoice' in paywall
+assert 'auth.syncSessionRevision == choice.sessionRevision' in paywall
 prepare_needle = 'func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,\n                              environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation {'
+standard_needle = 'func prepareStandardPricePurchase(orgID: UUID, productID: String,\n                                      signedAppTransaction: String) async throws -> StandardPricePurchaseAuthorization {'
 assert 'retriesUnauthorized: false, requiredCurrentOrg: orgID' in block(api, prepare_needle)
+assert 'retriesUnauthorized: false, requiredCurrentOrg: orgID' in block(api, standard_needle)
 assert '"purchase_environment": environment.rawValue' in block(api, prepare_needle)
 assert check.index('verifiedTrialPurchaseEnvironment()') < check.index('validateHeldTrialPurchase(')
 assert purchase.index('verifiedTrialPurchaseEnvironment()') < purchase.index('validateHeldTrialPurchase(')
@@ -120,8 +125,9 @@ enum SheetError: Error { case cancelled, timeout }
 }
 @MainActor struct Product {
     let id: String; var subscription: Subscription? = Subscription()
+    var price: Decimal = 29.99; var displayPrice = "$29.99"
     struct PriceStyle { var currencyCode = "USD" }; var priceFormatStyle = PriceStyle()
-    enum PurchaseOption: Hashable { case appAccountToken(UUID) }
+    enum PurchaseOption: Hashable { case appAccountToken(UUID), introductoryOfferEligibility(compactJWS: String) }
     enum PurchaseResult { case success(Bool), pending, userCancelled, unresolved }
     static var sheetCalls = 0; static var receivedOptions: Set<PurchaseOption> = []
     static var result: PurchaseResult = .userCancelled; static var error: SheetError?
@@ -138,15 +144,21 @@ enum SheetError: Error { case cancelled, timeout }
         return value.map { .init(countryCode: $0) }
     } }
 }
-enum VerificationResult<T> { case verified(T), unverified(T) }
+enum VerificationResult<T> { case verified(T), unverified(T)
+    var jwsRepresentation: String { "" + String(repeating: "a", count: 40) + "." + String(repeating: "b", count: 40) + "." + String(repeating: "c", count: 40) }
+}
 @MainActor struct AppTransaction {
     enum Environment { case production, sandbox, other }
     let environment: Environment
+    let bundleID: String?
+    let appTransactionID: String
     static var value: Environment? = .production; static var verified = true; static var reads = 0
+    static var currentBundleID: String? = Bundle.main.bundleIdentifier
+    static var currentID = "synthetic-app-transaction"
     static var onRead: (() -> Void)?
     static var shared: VerificationResult<AppTransaction> { get async throws {
         reads += 1; onRead?()
-        let app = AppTransaction(environment: value ?? .other)
+        let app = AppTransaction(environment: value ?? .other, bundleID: currentBundleID, appTransactionID: currentID)
         return verified ? .verified(app) : .unverified(app)
     } }
 }
@@ -156,6 +168,8 @@ enum VerificationResult<T> { case verified(T), unverified(T) }
     var held: TrialPurchaseReservation?; var prepareCalls = 0; var billingCalls = 0
     var failPrepare = false; var rejectSandbox = false; var converted = false; var onPrepare: (() -> Void)?; var onBilling: (() -> Void)?
     var seenEnvironments: [PurchaseEnvironment] = []
+    var standardPrepareCalls = 0; var standardOnPrepare: (() -> Void)?
+    var standardOverride: StandardPricePurchaseAuthorization?
     var overrideHold: TrialPurchaseReservation?; var overrideContext: SubscriptionBillingContext?
     init(org: UUID, actor: UUID, product: String) { self.org = org; self.actor = actor; self.product = product }
     func billingContext() async throws -> SubscriptionBillingContext {
@@ -178,12 +192,21 @@ enum VerificationResult<T> { case verified(T), unverified(T) }
         if failPrepare { throw SheetError.timeout }
         return overrideHold ?? held!
     }
+    func prepareStandardPricePurchase(orgID: UUID, productID: String,
+                                      signedAppTransaction: String) async throws -> StandardPricePurchaseAuthorization {
+        standardPrepareCalls += 1; standardOnPrepare?()
+        return standardOverride ?? .init(actorID: actor, orgID: orgID, productID: productID,
+              appTransactionID: "synthetic-app-transaction",
+              compactJWS: String(repeating: "a", count: 40) + "." + String(repeating: "b", count: 40) + "." + String(repeating: "c", count: 40),
+              issuedAt: Int64(Date().timeIntervalSince1970))
+    }
 }
 @MainActor final class PurchaseFixture {
     var isPurchasing = false; var isRestoring = false; var lastError: String?; var notice: String?
     var activePlan: String?; var activeProductID: String?; var activeBillingOwner: UUID?
     var activeOriginalTransactionID: String?; var unsyncedCount = 0
     var billingContext: SubscriptionBillingContext?; var billingError: String?
+    var standardPriceProductionReady = false
     var preparedTrialReservation: TrialPurchaseReservation?; var preparedTrialSnapshot: TrialPurchaseSnapshot?
     var introOfferEligible: [String: Bool] = [:]; let api: HeldAPI?
     private var billingRefreshGeneration: UInt64 = 0
@@ -201,13 +224,16 @@ def generated(b, a, m):
     source = interfaces + '\n}\n' + b + '\n' + money + '\n'
     source += block(products, 'struct TeamSeatVariant:') + '\n'
     source += block(a, 'enum PurchaseEnvironment:') + '\n'
+    source += block(a, 'struct StandardPricePurchaseAuthorization:') + '\n'
     source += '@MainActor extension LiveAPIClient {\n' + block(a, prepare_needle) + '\n}\n'
+    source += '@MainActor extension LiveAPIClient {\n' + block(a, standard_needle) + '\n}\n'
     request = block(a, '@MainActor private enum PurchasesRequest {')
     # Real redirect delegate is checked above and by the SDK compile. Closed
     # URLSession has no requests/redirects beyond the recorded direct dispatch.
     source += request + '\nfinal class TrialPurchaseRedirectPolicy {}\n'
     source += '@MainActor extension PurchaseFixture {\n'
     for needle in ['func showsIntroOffer(', 'func trialEligibility(', 'private func hasFreeIntroductoryOffer(',
+                   'func canOfferStandardPrice(',
                    'private func hasSevenDayTrial(', 'func canStartNewPurchase(', 'func heldTrialOffer(',
                    'func ceilingModePurchaseAllowed(', 'func ceilingShowsIntroOffer(',
                    'func canCheckTrialAvailability(', 'private func trialRegionSupported(',
@@ -252,6 +278,10 @@ faults = [
     ('paid-ui-eligibility', 'guard trialEligibility(for: product) == true, heldTrialOffer(for: product) != nil else',
      'guard heldTrialOffer(for: product) != nil else', 'Ineligible paywall enabled a new paid purchase'),
     ('paid-last-dispatch', None, None, 'Unfunded direct paid purchase reached Apple'),
+    ('standard-price-proof', 'if standardPrice { return !continuingHeldTrial && ceilingMode && verifiedStandardPrice }',
+     'if standardPrice { return true }', 'Unsigned standard-price intent reached Apple'),
+    ('standard-price-option', 'options.insert(.introductoryOfferEligibility(compactJWS: standardPriceAuthorization.compactJWS))',
+     'options.insert(.appAccountToken(actor.flatMap(UUID.init(uuidString:))!))', 'Paid Apple sheet omitted token or signed intro suppression'),
 ]
 results = []
 for name, old, new, expected in faults:
