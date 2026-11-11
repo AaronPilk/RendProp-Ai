@@ -29,6 +29,19 @@ import Foundation
   do {let(m,api,_)=fixture();let t=Transaction(930,product:"unknown.paid.product",owner:owner);check(!(await m.handle(.verified(t),event:"updates")),"Unknown product guessed");check(t.finishes==0,"Unknown product discarded");check(api.requests==0,"Unknown product submitted");check(m.lastError?.contains("support")==true,"Unknown product lacks support")}
   do {let(m,api,_)=fixture();check(!(await m.handle(.unverified,event:"updates")),"Unverified receipt accepted");check(api.requests==0,"Unverified receipt submitted")}
   do {let(m,api,t)=fixture();api.error=APIError.server(status:403,code:"sandbox_testing_required",message:"refused");_ = await m.handle(.verified(t),event:"updates");check(m.lastError?.contains("authorize this testing workspace")==true,"Sandbox recovery not actionable")}
+  do {
+   let(m,api,t)=fixture(907)
+   api.error=APIError.server(status:402,code:"trial_capacity_unavailable",message:"Trial access unavailable")
+   check(!(await m.handle(.verified(t),event:"purchase")),"Unfunded trial accepted")
+   check(t.finishes==0 && m.unsyncedCount==1,"Unfunded trial receipt discarded")
+   let message=m.lastError ?? ""
+   check(message.contains("trial access is unavailable") && message.contains("workspace are retained") && message.contains("Do not purchase again or switch accounts") && message.contains("Contact support") && message.contains("Manage or cancel"),"Trial funding recovery is not actionable")
+   check(!message.contains("Return to its original account"),"Trial capacity refusal blamed the original account")
+   await m.retryUnsynced(automatically:true)
+   check(api.requests==1,"Unfunded trial automatically retried")
+   api.error=nil
+   check(await m.handle(.verified(t),event:"restore") && t.finishes==1,"Explicit Restore did not recover retained trial")
+  }
   // Actual HTTP methods reject substituted JWTs and same-actor session/workspace
   // changes, including the force-refresh 401 boundary. No network is used.
   reset();AuthStore.token=token(other)

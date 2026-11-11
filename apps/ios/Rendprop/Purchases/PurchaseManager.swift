@@ -41,6 +41,9 @@ enum PurchaseFulfilmentRecovery {
         if api?.code == "sandbox_testing_required" {
             return "Your test purchase is retained. Ask support to authorize this testing workspace, then tap Restore purchases. It is not retried automatically."
         }
+        if api?.code == "trial_capacity_unavailable" {
+            return "Your Apple trial and its workspace are retained, but trial access is unavailable. Do not purchase again or switch accounts. Contact support in Settings → Legal & support; tap Restore purchases after support confirms access. Manage or cancel the subscription with Apple if needed. It is not retried automatically."
+        }
         if automaticallyRetry(error) {
             return "Your Apple purchase is retained while Rendprop is temporarily unavailable. It will retry when you reopen the app, or you can tap Restore purchases."
         }
