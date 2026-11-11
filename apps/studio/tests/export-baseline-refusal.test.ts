@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertBaselineStall, originalAudioStall } from "./export-baseline-refusal.mjs";
+import { assertBaselineCadence, assertBaselineStall, encodedCadenceStall, originalAudioStall } from "./export-baseline-refusal.mjs";
 
 function closedTrace() {
   const readings = [
@@ -64,4 +64,28 @@ for (const [name, mutate] of controls) test(`refusal oracle rejects ${name}`, ()
   const attempt = closedTrace();
   mutate(attempt);
   assert.throws(() => assertBaselineStall(attempt, 1000));
+});
+
+function cadenceTrace() {
+  const attempt = closedTrace();
+  attempt.error = encodedCadenceStall;
+  attempt.trace = attempt.trace.filter(value => value.event !== "original.audio.loss" && value.event !== "original.audio.refusal");
+  return attempt;
+}
+
+test("historical negative control accepts an encoded cadence refusal after its delayed resume", () => {
+  assert.doesNotThrow(() => assertBaselineCadence(cadenceTrace(), 1000));
+});
+for (const [name, mutate] of [
+  ["current exporter", (a: Attempt) => { a.variant = "fixed"; }],
+  ["different error", (a: Attempt) => { a.error = originalAudioStall; }],
+  ["missing delayed event", (a: Attempt) => { a.trace = a.trace.filter(value => value.event !== "resume.delivered"); }],
+  ["undelayed event", (a: Attempt) => { event(a, "resume.delivered").at = 500; }],
+  ["playback before resume", (a: Attempt) => { event(a, "play.call").at = 999; }],
+  ["live track", (a: Attempt) => { a.tracks[0] = "live"; }],
+  ["offered output", (a: Attempt) => { (a as any).result = { bytes: 1 }; }],
+] as Array<[string, (attempt: Attempt) => void]>) test(`cadence refusal oracle rejects ${name}`, () => {
+  const attempt = cadenceTrace();
+  mutate(attempt);
+  assert.throws(() => assertBaselineCadence(attempt, 1000));
 });

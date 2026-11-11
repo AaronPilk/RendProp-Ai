@@ -23,8 +23,8 @@ function fixture(){
  const row=(library=selected)=>({id:LISTING,org_id:ORG,library_org_id:library,space_type:"real_estate",address:"Synthetic only",tagline:null,details:{},status:"draft",created_at:"2026-10-16T00:00:00Z",deleted_at:null,main_photo_key:null,beds:null,baths:null,sqft:null,price_cents:null});
  const page=(rows=[row()])=>({actor_id:current.user.id,listings:rows,total:rows.length,next_offset:null});
  const seen:Array<{path:string;query:URLSearchParams;method:string;body:any;headers:Headers;wire:RequestInit}>=[];
- let directoryGate:ReturnType<typeof deferred<Response>>|undefined,mappingGate:ReturnType<typeof deferred<Response>>|undefined,mediaGate:ReturnType<typeof deferred<Response>>|undefined;
- let directoryStarted=deferred<void>(),mappingStarted=deferred<void>(),mediaStarted=deferred<void>(),uploaded=false,complete=false,operation:string|undefined;
+ let directoryGate:ReturnType<typeof deferred<Response>>|undefined,mappingGate:ReturnType<typeof deferred<Response>>|undefined,mediaGate:ReturnType<typeof deferred<Response>>|undefined,actionGate:ReturnType<typeof deferred<Response>>|undefined,uploadGate:ReturnType<typeof deferred<Response>>|undefined;
+ let directoryStarted=deferred<void>(),mappingStarted=deferred<void>(),mediaStarted=deferred<void>(),actionStarted=deferred<void>(),uploadStarted=deferred<void>(),uploaded=false,complete=false,operation:string|undefined;
  const media=(org=ORG,listing=LISTING)=>({org_id:org,listing_id:listing,photos:[],videos:[],next_offset:null,unavailable_count:0});
  function copy(){const exp=Math.floor(Date.now()/1000)+590,payload={v:1,actor:ACTOR,org:ORG,listing:LISTING,bucket:"renders",key,exp};return{schema:1,actor_id:ACTOR,org_id:ORG,library_org_id:LIBRARY,listing_id:LISTING,operation_id:operation,source:{asset_id:SOURCE,key,bytes:PHOTO.length,sha256:SHA,mime:"image/jpeg",kind:"original",provenance:null},destination_asset_id:uploaded?DEST:null,complete,photo:complete?{id:DEST,listing_id:LISTING}:null,download:complete?null:{url:`https://rendprop.com/private-media/${Buffer.from(JSON.stringify(payload)).toString("base64url")}.${"f".repeat(64)}`,expires_at:new Date(exp*1000).toISOString()}};}
  const services=createStudioServices({supabaseUrl:"https://closed-refresh.supabase.co",publishableKey:"sb_publishable_OFFLINE_FIXTURE_NOT_A_REAL_KEY",redirectTo:"http://localhost:5173/"},{auth,fetch:async(input,options={})=>{
@@ -36,8 +36,8 @@ function fixture(){
   if(url.pathname==="/functions/v1/studio/photo-copy"){operation??=body.operation_id;assert.equal(body.operation_id,operation);if(body.action==="bind")uploaded=true;if(body.action==="finish")complete=true;return json(copy());}
   if(url.pathname==="/functions/v1/uploads"||url.pathname.endsWith("/renew"))return json({asset_id:DEST,storage_key:destinationKey,mode:"single",uploaded,put_url:putURL});
   if(url.pathname.endsWith("/complete")){uploaded=true;return json({id:DEST,storage_key:destinationKey,listing_id:LISTING,uploaded:true});}
-  if(url.origin==="https://uploads.rendprop.com"){assert.equal(headers.get("Authorization"),null);assert.equal(options.credentials,"omit");assert.deepEqual(new Uint8Array(await (options.body as Blob).arrayBuffer()),PHOTO);return new Response(null,{headers:{ETag:"same-bytes"}});}
-  if(url.pathname==="/functions/v1/studio/probe")return json({ok:true});
+  if(url.origin==="https://uploads.rendprop.com"){assert.equal(headers.get("Authorization"),null);assert.equal(options.credentials,"omit");assert.deepEqual(new Uint8Array(await (options.body as Blob).arrayBuffer()),PHOTO);uploadStarted.resolve();return uploadGate?.promise??new Response(null,{headers:{ETag:"same-bytes"}});}
+  if(url.pathname==="/functions/v1/studio/probe"){actionStarted.resolve();return actionGate?.promise??json({ok:true});}
   throw Error(`Unexpected closed transport ${url.pathname}`);
  }});
  const storageMap=new Map<string,string>(),storage={getItem:(k:string)=>storageMap.get(k)??null,setItem:(k:string,v:string)=>void storageMap.set(k,v),removeItem:(k:string)=>void storageMap.delete(k)}as Storage;
@@ -47,6 +47,8 @@ function fixture(){
   gates(){directoryStarted=deferred();mappingStarted=deferred();directoryGate=deferred();mappingGate=deferred();return{directory:directoryGate,mapping:mappingGate,directoryStarted:directoryStarted.promise,mappingStarted:mappingStarted.promise};},
   clearGates(){directoryGate=undefined;mappingGate=undefined;},
   holdMedia(){mediaStarted=deferred();mediaGate=deferred();return{response:mediaGate,started:mediaStarted.promise};},
+  holdAction(){actionStarted=deferred();actionGate=deferred();return{response:actionGate,started:actionStarted.promise};},
+  holdUpload(){uploadStarted=deferred();uploadGate=deferred();return{response:uploadGate,started:uploadStarted.promise};},
   emit(user:string,token?:string){current=session(user,token);callback(user===ACTOR&&token?"TOKEN_REFRESHED":"SIGNED_IN",current);},
   actions(){return seen.filter(r=>r.method!=="GET");},
  };
@@ -111,6 +113,55 @@ test("same actor token refresh during mapping keeps the one operation and uses o
  const f=fixture();try{await f.open();const gates=f.gates(),refresh=f.services.loadWorkspace(undefined,LIBRARY);await gates.directoryStarted;const action=f.services.api("/functions/v1/studio/probe",options);
  gates.directory.resolve(json(f.directory()));await refresh;await gates.mappingStarted;f.emit(ACTOR,"new-closed-token");gates.mapping.resolve(json(f.page()));await action;
  assert.equal(f.actions().length,1);assert.equal(f.actions()[0].headers.get("Authorization"),"Bearer new-closed-token");assert.deepEqual(f.actions()[0].body,options.body);
+ }finally{f.services.dispose();}
+});
+
+test("a confirmed mutation survives a same-library directory refresh while its response is in flight",async()=>{
+ const f=fixture();try{await f.open();const held=f.holdAction();
+  const pending=f.services.api("/functions/v1/studio/probe",options);
+  await held.started;
+  await f.services.loadWorkspace(undefined,LIBRARY);
+  await f.services.listListings(LIBRARY);
+  held.response.resolve(json({ok:true}));
+  assert.deepEqual(await pending,{ok:true});
+  assert.equal(f.actions().length,1,"A background read must not retry an accepted mutation");
+ }finally{f.services.dispose();}
+});
+
+test("a completed replacement mapping that removes the exact listing fences a late mutation response",async()=>{
+ const f=fixture();try{await f.open();const held=f.holdAction();
+  const pending=assert.rejects(f.services.api("/functions/v1/studio/probe",{...options,expectedListingId:LISTING}));
+  await held.started;
+  const gates=f.gates(),refresh=f.services.loadWorkspace(undefined,LIBRARY);
+  await gates.directoryStarted;gates.directory.resolve(json(f.directory()));await refresh;
+  const mapped=f.services.listListings(LIBRARY);
+  await gates.mappingStarted;gates.mapping.resolve(json(f.page([])));await mapped;
+  held.response.resolve(json({ok:true}));
+  await pending;
+  assert.equal(f.actions().length,1,"The accepted action is not retried after access changes");
+ }finally{f.services.dispose();}
+});
+
+test("a confirmed upload survives a same-library directory refresh while its receipt is in flight",async()=>{
+ const f=fixture();try{await f.open();const held=f.holdUpload();
+  const pending=f.services.upload(putURL,new Blob([PHOTO]),{orgId:ORG,expectedLibraryOrgId:LIBRARY});
+  await held.started;
+  await f.services.loadWorkspace(undefined,LIBRARY);
+  held.response.resolve(new Response(null,{headers:{ETag:"confirmed"}}));
+  assert.deepEqual(await pending,{etag:"confirmed"});
+  assert.equal(f.actions().length,1);
+ }finally{f.services.dispose();}
+});
+
+for(const changed of["library-switch","actor-returned"]as const)test(`a late mutation response is fenced after ${changed}`,async()=>{
+ const f=fixture();try{await f.open();const held=f.holdAction();
+  const pending=assert.rejects(f.services.api("/functions/v1/studio/probe",options));
+  await held.started;
+  if(changed==="library-switch")await f.services.loadWorkspace(undefined,OTHER_LIBRARY);
+  else{f.emit(OTHER_ACTOR);f.emit(ACTOR);}
+  held.response.resolve(json({ok:true}));
+  await pending;
+  assert.equal(f.actions().length,1);
  }finally{f.services.dispose();}
 });
 

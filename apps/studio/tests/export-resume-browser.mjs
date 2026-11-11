@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { assertBaselineStall } from "./export-baseline-refusal.mjs";
+import { assertBaselineCadence, assertBaselineStall, encodedCadenceStall } from "./export-baseline-refusal.mjs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, extname } from "node:path";
@@ -154,7 +154,7 @@ document.querySelector("#run").onclick=async()=>{
     // As in the historical photo-clock control, exclude the later independent
     // recording guard only in this deliberately faulty compiled variant. Keep
     // actual startup readiness, original-audio loss admission and all clocks.
-    const cadenceGuard='const captureCadence = new CaptureCadenceClock();';
+    const cadenceGuard='const captureCadence = new CaptureCadenceClock(hasPrevious ? transitionSeconds(clip) * 1000 : 0);';
     assert.equal(code.split(cadenceGuard).length-1,1,"Historical resume control must isolate only the new capture guard");
     const isolated=code.replace(guard,'const recordingClock = {read() {}};')
       .replace(cadenceGuard,'const captureCadence = {capture() {}};');
@@ -328,8 +328,13 @@ document.querySelector("#run").onclick=async()=>{
         receipt.attempts.push(attempt); await persist();
       }
       if (variant === "baseline" && attempt.error) {
-        assertBaselineStall(attempt, resumeNotificationDelayMs);
-        receipt.checks.push(`Old resume-await negative control (${narrated ? "narrated" : "original"}) is detected by an evidenced original-audio stall refusal, with no download and all tracks stopped`);
+        if (attempt.error === encodedCadenceStall) {
+          assertBaselineCadence(attempt, resumeNotificationDelayMs);
+          receipt.checks.push(`Old resume-await negative control (${narrated ? "narrated" : "original"}) is detected by the encoded-frame cadence verifier after a delayed resume, with no download and all tracks stopped`);
+        } else {
+          assertBaselineStall(attempt, resumeNotificationDelayMs);
+          receipt.checks.push(`Old resume-await negative control (${narrated ? "narrated" : "original"}) is detected by an evidenced original-audio stall refusal, with no download and all tracks stopped`);
+        }
         await closeFixture(context, attemptName);
         await persist();
         continue;

@@ -229,6 +229,9 @@ export function createStudioServices(
   const activeRequests = new Set<AbortController>();
   let memberships: Membership[] = [];
   let workspaceReadGeneration = 0;
+  // A same-library directory refresh is a read generation, not a new user
+  // selection. Mutations keep their original selection until the server replies.
+  let workspaceSelectionVersion = 0;
   const listingScopes = new Map<string, {orgId:string; libraryOrgId:string}>();
   type WorkspaceRead = {
     version: number; generation: number; target?: string; signal?: AbortSignal;
@@ -393,7 +396,8 @@ export function createStudioServices(
     orgId?: string,
     page?: ReadPage,
     options?: StudioRequestOptions,
-    scopeCurrent?: () => void,
+    scopeCurrent?: () => void | Promise<void>,
+    mutationSelectionCurrent?: () => void,
   ): Promise<unknown> {
     assertCurrent(version, signal);
     const controller = new AbortController();
@@ -406,7 +410,8 @@ export function createStudioServices(
           const method = options?.method ?? "GET";
           for (let attempt = 0; attempt < (method === "GET" ? 2 : 1); attempt++) {
             assertCurrent(version, controller.signal);
-            scopeCurrent?.();
+            await scopeCurrent?.();
+            mutationSelectionCurrent?.();
             const token = session?.access_token;
             if (!token)
               throw new StudioError(
@@ -436,7 +441,8 @@ export function createStudioServices(
               redirect: "error",
             });
             assertCurrent(version, controller.signal);
-            scopeCurrent?.();
+            if (method === "GET") await scopeCurrent?.();
+            else mutationSelectionCurrent?.();
             if (response.status === 401 && attempt === 0 && method === "GET") {
               void response.body?.cancel().catch(() => {});
               await refresh(version, token);
@@ -489,7 +495,7 @@ export function createStudioServices(
               } else void response.body?.cancel().catch(() => {});
               throw new StudioError(failureCode, message, response.status, failureDetails);
             }
-            if (response.status === 204) { assertCurrent(version, controller.signal); return null; }
+            if (response.status === 204) { assertCurrent(version, controller.signal); mutationSelectionCurrent?.(); return null; }
             let result: unknown;
             try {
               result = await boundedJson(response, controller.signal, options?.maxResponseBytes);
@@ -501,7 +507,8 @@ export function createStudioServices(
               );
             }
             assertCurrent(version, controller.signal);
-            scopeCurrent?.();
+            if (method === "GET") await scopeCurrent?.();
+            else mutationSelectionCurrent?.();
             return page ? decodePage(result, response, page) : result;
           }
           throw new StudioError(
@@ -654,6 +661,53 @@ export function createStudioServices(
     return current;
   }
 
+  async function mutationScope(actor: {version:number;userId:string}, selected: string, expectedLibrary: string | undefined, signal?: AbortSignal, expectedListing?: string) {
+    const selectedRead = workspaceRead;
+    const selectedVersion = workspaceSelectionVersion;
+    let verifiedRead = selectedRead;
+    let verified = await requestScope(actor, selected, expectedLibrary, signal, expectedListing);
+    const selectedLibrary = selectedRead?.target;
+    const completed = () => {
+      assertCurrent(actor.version, signal);
+      if (selectedVersion !== workspaceSelectionVersion ||
+          selectedLibrary && workspaceRead?.target && workspaceRead.target !== selectedLibrary)
+        throw new StudioError("identity-changed", "Your listing selection changed while this action was running. Reopen the property to check its result.");
+      // A completed replacement mapping is conclusive. A directory/mapping
+      // still in flight must not turn an accepted server action into a false
+      // failure just because this browser cleared its temporary read cache.
+      const read = workspaceRead;
+      if (read?.mapped) {
+        const exact = expectedListing
+          ? listingScopes.get(expectedListing)?.orgId === selected &&
+            listingScopes.get(expectedListing)?.libraryOrgId === read.target
+          : selected === read.target
+            ? memberships.some(member => member.orgId === selected)
+            : [...listingScopes.values()].some(scope => scope.orgId === selected && scope.libraryOrgId === read.target);
+        if (!exact)
+          throw new StudioError("membership-required", "Your listing access changed while this action was running. Reopen the property to check its result.");
+      }
+    };
+    const before = async () => {
+      completed();
+      // A new same-library directory read must be fully mapped before any new
+      // dispatch. It cannot invalidate a successful server response later.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const read = workspaceRead;
+        if (read !== verifiedRead) {
+          verified = await requestScope(actor, selected, expectedLibrary, signal, expectedListing);
+          verifiedRead = read;
+        }
+        try { verified(); completed(); return; }
+        catch (error) {
+          if (workspaceRead !== read && selectedVersion === workspaceSelectionVersion) continue;
+          throw error;
+        }
+      }
+      throw new StudioError("identity-changed", "Your listings refreshed while this action was starting. Try again.");
+    };
+    return { before, completed };
+  }
+
   return {
     /** Read-only local scope check. Join a fresh directory/map only when needed;
      * the returned synchronous guard must be used immediately, never across awaits. */
@@ -679,7 +733,9 @@ export function createStudioServices(
       const selected = uuid(options.orgId, "selected organization");
       const actor = await identity(options.signal);
       const expectedListing = options.expectedListingId === undefined ? undefined : uuid(options.expectedListingId, "selected listing");
-      const scopeCurrent = await requestScope(actor, selected, options.expectedLibraryOrgId, options.signal, expectedListing);
+      const method = options.method ?? "GET";
+      const actionScope = method === "GET" ? null : await mutationScope(actor, selected, options.expectedLibraryOrgId, options.signal, expectedListing);
+      const scopeCurrent = actionScope ? actionScope.before : await requestScope(actor, selected, options.expectedLibraryOrgId, options.signal, expectedListing);
       if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 600_000))
         throw new StudioError("configuration", "The request timeout is invalid.");
       if (options.maxResponseBytes !== undefined && (!Number.isSafeInteger(options.maxResponseBytes) || options.maxResponseBytes < 1 || options.maxResponseBytes > (path === "/functions/v1/ai-photo-v2" && options.method === "POST" && options.photoQualityProtocol === "retained-operation-v1" ? PHOTO_OUTPUT_WIRE_BYTES : 32 * 1024 * 1024)))
@@ -696,7 +752,7 @@ export function createStudioServices(
         throw new StudioError("request-size", "This request is too large. Choose a smaller image.");
       if (options.body !== undefined && (!options.method || options.method === "GET"))
         throw new StudioError("request-method", "A read request cannot change data.");
-      return request(path, actor.version, options.signal, selected, undefined, options, scopeCurrent);
+      return request(path, actor.version, options.signal, selected, undefined, options, scopeCurrent, actionScope?.completed);
     },
     async upload(rawUrl: string, body: Blob, options: {
       orgId: string; expectedLibraryOrgId?: string; signal?: AbortSignal; contentType?: string;
@@ -704,7 +760,7 @@ export function createStudioServices(
     }): Promise<{ etag: string | null }> {
       const actor = await identity(options.signal);
       const selected = uuid(options.orgId, "selected organization");
-      const scopeCurrent = await requestScope(actor, selected, options.expectedLibraryOrgId, options.signal);
+      const actionScope = await mutationScope(actor, selected, options.expectedLibraryOrgId, options.signal);
       const url = validateUploadUrl(rawUrl);
       if (!body.size || body.size > 64 * 1024 * 1024)
         throw new StudioError("upload-size", "Upload each file in parts of 64 MB or smaller.");
@@ -715,19 +771,20 @@ export function createStudioServices(
       try {
         return await deadline(async () => {
           assertCurrent(actor.version, controller.signal);
-          scopeCurrent();
+          await actionScope.before();
           options.onProgress?.(0, body.size);
-          scopeCurrent();
+          await actionScope.before();
+          actionScope.completed();
           const response = await fetcher(url, {
             method: "PUT", body, headers: { "Content-Type": options.contentType || body.type || "application/octet-stream" },
             credentials: "omit", redirect: "error", signal: controller.signal,
           });
           assertCurrent(actor.version, controller.signal);
-          scopeCurrent();
+          actionScope.completed();
           void response.body?.cancel().catch(() => {});
           if (!response.ok) throw new StudioError("upload-failed", "Upload was not confirmed. Resume it to reconcile its saved parts.", response.status);
           options.onProgress?.(body.size, body.size);
-          scopeCurrent();
+          actionScope.completed();
           return { etag: response.headers.get("ETag") };
         }, 600_000, "The upload was interrupted. Resume it to check which parts reached Rendprop.", () => controller.abort());
       } catch (error) {
@@ -803,9 +860,11 @@ export function createStudioServices(
     },
     async loadWorkspace(signal?: AbortSignal, preferredOrgId?: string) {
       const actor = await identity(signal);
+      const previousTarget = workspaceRead?.target;
       const generation = ++workspaceReadGeneration;
       memberships = []; listingScopes.clear();
       const selected = preferredOrgId ? uuid(preferredOrgId, "selected organization") : undefined;
+      if (previousTarget && selected && selected !== previousTarget) workspaceSelectionVersion++;
       const read: WorkspaceRead = {version:actor.version,generation,target:selected,signal,pending:true,mapped:false,directory:Promise.resolve(null as unknown as Workspace)};
       workspaceRead = read;
       read.directory = (async () => {
@@ -815,6 +874,7 @@ export function createStudioServices(
         if (selected && !found.some(m => m.orgId === selected))
           throw new StudioError("membership-required", "You no longer have access to those listings. Reconnect to open your own listings.");
         const target = selected ?? (directory.canSwitchAgentLibraries ? directory.activeOrgId : directory.ownOrgId);
+        if (previousTarget && !selected && target !== previousTarget) workspaceSelectionVersion++;
         read.target = target;
         const me = await request("/functions/v1/me", actor.version, signal, target);
         const workspace = decodeWorkspace(me, actor.userId, found, target, directory);

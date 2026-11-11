@@ -718,8 +718,8 @@ function ListingCreative(
     setNotice(
       "Version saved to this property's history with its original and AI disclosure. Use on listing in Media selects it for the website.",
     );
-    onChanged();
     await loadPhotos();
+    onChanged();
   }
   async function generateCopy(kind: "script" | "shotlist") {
     const photoList = chosenPhotos.map((p) => ({

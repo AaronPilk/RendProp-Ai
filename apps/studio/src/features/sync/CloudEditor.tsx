@@ -89,6 +89,8 @@ export default function CloudEditor(props: CloudEditorProps) {
   const [narrationChoices, setNarrationChoices] = useState<NonNullable<VideoEditorProps["narrationChoices"]>>([]);
   const [recovery, setRecovery] = useState(false), [outputBusy, setOutputBusy] = useState(false);
   const session = useRef<DocumentSync | null>(null), controller = useRef(new AbortController());
+  const activeRef = useRef(props.active !== false), wasActive = useRef(props.active !== false);
+  activeRef.current = props.active !== false;
   const currentDraft = useRef<EditDraft | undefined>(undefined), sources = useRef<Source[]>([]), files = useRef<{ file: File; sha256: string }[]>([]);
   const selected = useRef(listingId); selected.current = listingId;
   const uploadFlight = useRef(false), restoring = useRef(false), outputFlight = useRef(false);
@@ -134,7 +136,7 @@ export default function CloudEditor(props: CloudEditorProps) {
     const unload = (event: BeforeUnloadEvent) => {
       if (sync.hasUnsavedWork || musicFlight.current || musicNeedsSave() || uploadFlight.current || outputFlight.current || pendingFiles(selected.current).length) { event.preventDefault(); event.returnValue = ""; }
     };
-    const focus = () => { if (document.visibilityState === "visible") void sync.checkRemote(); };
+    const focus = () => { if (activeRef.current && document.visibilityState === "visible") void sync.checkRemote(); };
     window.addEventListener("beforeunload", unload); window.addEventListener("focus", focus); document.addEventListener("visibilitychange", focus);
     void sync.open().then(async doc => {
       if (abort.signal.aborted) return;
@@ -210,6 +212,11 @@ export default function CloudEditor(props: CloudEditorProps) {
     }).catch(error => { if (!abort.signal.aborted) { setMessage(error instanceof Error ? error.message : "Saved work could not be restored."); setSourceBusy(false); } });
     return () => { abort.abort(); recoveryChoice.current?.(null); sync.dispose(); window.removeEventListener("beforeunload", unload); window.removeEventListener("focus", focus); document.removeEventListener("visibilitychange", focus); };
   }, [services, workspace.user.id, workspace.org.id, localKey, legacyKey, documentKey, pendingFiles]);
+  useEffect(() => {
+    const active = props.active !== false;
+    if (active && !wasActive.current) void session.current?.checkRemote();
+    wasActive.current = active;
+  }, [props.active]);
   useEffect(() => {
     if (!listingId || props.active === false) return;
     const abort = new AbortController();

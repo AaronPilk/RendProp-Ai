@@ -26,7 +26,7 @@ import { INDUSTRY_FIELDS, detailFormValue } from "./industry";
 import {filterByOrientation,orientationCounts,orientationLabel,orientationSummary,PHOTO_ORIENTATIONS,photoOrientation,recordPreviewGeometry,type PhotoGeometry,type PhotoOrientationFilter} from "../sync/video-framing";
 
 export type ListingEntryRequest = {id:string;listingId:string;tab:Tab};
-type Props = { entryRequest?:ListingEntryRequest; createRequest?:string; onOpenFeature?:(feature:FeatureId,listingId:string)=>void; services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string; onChanged: () => void; onSelectListing?: (id: string) => boolean | void; onContactGuardChange?: (guard: ContactNavigationGuard | null) => void };
+type Props = { active?: boolean; entryRequest?:ListingEntryRequest; createRequest?:string; onOpenFeature?:(feature:FeatureId,listingId:string)=>void; services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string; onChanged: () => void; onSelectListing?: (id: string) => boolean | void; onContactGuardChange?: (guard: ContactNavigationGuard | null) => void };
 type Tab = "media" | "tour" | "floorplan" | "details";
 const terminal = new Set(["ready", "failed", "completed", "published", "cancelled"]);
 const message = (error: unknown) => error instanceof Error ? error.message : "This action could not finish. Please try again.";
@@ -186,7 +186,7 @@ function PropertyForm({ services, workspace, listing, onSaved, onCancel, onRefre
   </fieldset><div className="lw-actions"><button className="primary" type="submit" disabled={busy || lookupBusy || readOnly || remoteChanged}>{busy ? "Saving…" : spaceType === "real_estate" ? listing ? "Save property" : "Create property" : listing ? "Save business details" : "Create location"}</button>{onCancel && <button type="button" onClick={() => { forget(); onCancel(); }} disabled={busy}>Cancel</button>}</div></form>;
 }
 
-function PropertyWorkspace({ services, workspace, listing, onChanged, entryRequest, onOpenFeature, onContactGuardChange }: Props & { listing: Listing }) {
+function PropertyWorkspace({ services, workspace, listing, onChanged, entryRequest, onOpenFeature, onContactGuardChange, active }: Props & { listing: Listing }) {
   const contactNavigation = useRef<ContactNavigationGuard | null>(null), factsNavigation = useRef<ContactNavigationGuard | null>(null);
   const forwardNavigation = useCallback(() => onContactGuardChange?.({ canLeave: () => factsNavigation.current?.canLeave() !== false && contactNavigation.current?.canLeave() !== false }), [onContactGuardChange]);
   const contactNavigationChanged = useCallback((guard: ContactNavigationGuard | null) => { contactNavigation.current = guard; forwardNavigation(); }, [forwardNavigation]);
@@ -226,7 +226,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
         let all: ListingState = { ...EMPTY_STATE, assets: [], jobs: [], renders: [], chapters: [] }, offset = 0;
         do {
           const query = new URLSearchParams({ org_id: workspace.org.id, listing_id: listing.id, offset: String(offset) });
-          const page = decodeListingState(await services.api(`/functions/v1/studio/listing-state?${query}`, { orgId: workspace.org.id, signal: current.signal }), workspace.org.id, listing.id, offset);
+          const page = decodeListingState(await services.api(`/functions/v1/studio/listing-state?${query}`, { orgId: workspace.org.id, expectedLibraryOrgId: workspace.libraryOrgId ?? workspace.org.id, expectedListingId: listing.id, signal: current.signal }), workspace.org.id, listing.id, offset);
           all = { assets: [...all.assets, ...page.assets], jobs: [...all.jobs, ...page.jobs], renders: [...all.renders, ...page.renders], photos: [...all.photos, ...page.photos], chapters: [...all.chapters, ...page.chapters], nextOffset: page.nextOffset };
           offset = page.nextOffset ?? 0;
           if (all.assets.length + all.jobs.length + all.renders.length + all.photos.length > 10_000) throw new Error("This property has too much activity to open at once. Contact support.");
@@ -255,13 +255,31 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
     } catch (reason) { if (!current.signal.aborted && alive.current) { setReadError(message(reason)); setLoadFailed(true); } }
     finally { if (!current.signal.aborted && alive.current) setLoading(false); }
   }, [services, workspace.org.id, workspace.libraryOrgId, workspace.user.id, listing.id]);
+  const refreshPropertyAndDirectory = async (showLoading = false) => {
+    // Finish the property read against the current mapping before App starts a
+    // new directory generation for the saved metadata.
+    await refresh(showLoading);
+    onChanged();
+  };
   useEffect(() => {
-    alive.current = true; void refresh(true);
-    const focus = () => { if (document.visibilityState === "visible") void refresh(); };
-    window.addEventListener("focus", focus); document.addEventListener("visibilitychange", focus);
-    const timer = setInterval(focus, 30_000);
-    return () => { alive.current = false; action.current?.abort(); load.current?.abort(); clearInterval(timer); window.removeEventListener("focus", focus); document.removeEventListener("visibilitychange", focus); };
-  }, [refresh]);
+    alive.current = true;
+    return () => { alive.current = false; action.current?.abort(); load.current?.abort(); };
+  }, []);
+  useEffect(() => {
+    if (active === false) { load.current?.abort(); setLoading(false); return; }
+    void refresh(true);
+    let lastAutomaticRead = Date.now();
+    const refreshVisible = () => {
+      const now = Date.now();
+      if (document.visibilityState !== "visible" || !navigator.onLine || action.current || now - lastAutomaticRead < 30_000) return;
+      lastAutomaticRead = now;
+      void refresh();
+    };
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    const timer = setInterval(refreshVisible, 30_000);
+    return () => { load.current?.abort(); clearInterval(timer); window.removeEventListener("focus", refreshVisible); document.removeEventListener("visibilitychange", refreshVisible); };
+  }, [refresh, active]);
   const persist = (next: UploadJournal[]) => {
     // Metadata only: no file bytes, signed capabilities, or tokens enter the recovery journal.
     localStorage.setItem(journalKey, JSON.stringify(next)); journalsRef.current = next; setJournals(next);
@@ -303,7 +321,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
         await refresh();
       throw reason;
     }
-    if (!signal.aborted) { setNotice(purpose === "floorplan" ? "Floor plan saved to this property." : "Your media is uploaded and available in the workspace."); onChanged(); await refresh(); }
+    if (!signal.aborted) { setNotice(purpose === "floorplan" ? "Floor plan saved to this property." : "Your media is uploaded and available in the workspace."); await refreshPropertyAndDirectory(); }
   });
   const photos = media?.photos ?? [], videos = media?.videos ?? [];
   const gallery = orderedGallery(state.photos);
@@ -334,18 +352,19 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
   const videoAssets = state.assets.filter((asset) => asset.uploaded && asset.kind === "video");
   const chosenAsset = videoAssets.find((asset) => asset.id === assetId);
   const published = state.renders.filter((render) => render.published_at);
-  const [shareProofs, setShareProofs] = useState<{ scope: string; links: Record<string, TourShareProof> }>({ scope: "", links: {} });
+  const [shareProofs, setShareProofs] = useState<{ scope: string; ready: boolean; links: Record<string, TourShareProof> }>({ scope: "", ready: false, links: {} });
   const shareGuard = useRef<(() => void) | null>(null);
   const shareVersion = services.getSnapshot().identityVersion;
   const shareScope = JSON.stringify([workspace.user.id, workspace.org.id, workspace.libraryOrgId ?? workspace.org.id, listing.id,
     shareVersion, published.map(row => [row.id, row.slug, row.published_at])]);
   useEffect(() => {
     const controller = new AbortController(); shareGuard.current = null;
-    setShareProofs({ scope: shareScope, links: {} });
+    setShareProofs({ scope: shareScope, ready: false, links: {} });
     void (async () => {
       const guard = await services.listingReadScope(workspace.org.id, listing.id, workspace.libraryOrgId ?? workspace.org.id, controller.signal);
       if (controller.signal.aborted) return;
       guard(); shareGuard.current = guard;
+      setShareProofs(current => current.scope === shareScope ? { ...current, ready: true } : current);
       const rows = published.filter(row => row.published_at && tourLinks(row.slug));
       let next = 0;
       const worker = async () => {
@@ -354,7 +373,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
           if (resolved === null || controller.signal.aborted) continue;
           guard();
           setShareProofs(current => current.scope === shareScope
-            ? { scope: shareScope, links: { ...current.links, [row.slug]: resolved } } : current);
+            ? { ...current, links: { ...current.links, [row.slug]: resolved } } : current);
         }
       };
       await Promise.all(Array.from({ length: Math.min(4, rows.length) }, worker));
@@ -372,7 +391,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
   const activeJobs = state.jobs.filter((job) => !terminal.has(job.status));
   const floorplanPhoto = photos.find((photo) => photo.id === listing.details.floorplan_asset_id);
   const floorplanURL = floorplanPhoto?.url ?? safeHTTPS(listing.details.floorplan_url);
-  const api = (path: string, body: unknown, signal: AbortSignal, method: "POST" | "PUT" | "PATCH" | "DELETE" = "POST", idempotencyKey?: string) => services.api(`/functions/v1/${path}`, { method, orgId: workspace.org.id, body, signal, idempotencyKey, timeoutMs: 120_000 });
+  const api = (path: string, body: unknown, signal: AbortSignal, method: "POST" | "PUT" | "PATCH" | "DELETE" = "POST", idempotencyKey?: string) => services.api(`/functions/v1/${path}`, { method, orgId: workspace.org.id, expectedLibraryOrgId: workspace.libraryOrgId ?? workspace.org.id, expectedListingId: listing.id, body, signal, idempotencyKey, timeoutMs: 120_000 });
   const saveFacts = async (changes: Record<string, unknown>, signal: AbortSignal) => {
     const body = listingFactsBody(listing, changes);
     const raw = await api(`listings/${listing.id}/facts`, body, signal, "PUT");
@@ -385,17 +404,17 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
     let saved = false;
     await run("gallery", async signal => {
       await api("studio/photos", { listing_id: listing.id, ...body }, signal, "PATCH");
-      if (!signal.aborted) { saved = true; onChanged(); await refresh(); if (!signal.aborted) setNotice(success); }
+      if (!signal.aborted) { saved = true; await refreshPropertyAndDirectory(); if (!signal.aborted) setNotice(success); }
     });
     return saved;
   };
   const selectPhoto=async(body:{action:"use"|"use_cover";photo_id:string;reviewed:boolean}|{action:"remove";photo_id:string;operation_id:string}|{action:"reorder_selected";expected_order:string[];photo_ids:string[]},success:string,coverKey?:string)=>{
-    await run("gallery",async signal=>{if(!selection)throw new Error("Refresh this property before choosing listing photos.");const saved=await changeListingSelection(services,galleryScope,selection,body,signal,coverKey);if(!signal.aborted){setSelection(saved);onChanged();await refresh();if(!signal.aborted)setNotice(success);}});
+    await run("gallery",async signal=>{if(!selection)throw new Error("Refresh this property before choosing listing photos.");const saved=await changeListingSelection(services,galleryScope,selection,body,signal,coverKey);if(!signal.aborted){setSelection(saved);await refreshPropertyAndDirectory();if(!signal.aborted)setNotice(success);}});
   };
   const isGallerySource=(id:string)=>state.assets.some(asset=>asset.id===id&&asset.storage_key.startsWith(`renders/${workspace.org.id}/${listing.id}/gallery-`));
   const preparePhoto=(sourceId:string,caption:string)=>void run("gallery",async signal=>{
     const prepared=await prepareGalleryCopy(services,galleryScope,sourceId,caption,signal,{progress:setNotice});
-    if(!signal.aborted){onChanged();await refresh();if(!signal.aborted)setNotice(prepared.source.kind==="altered"?"Version ready for review with its original and disclosure. Compare them, then choose Use on listing when you are ready.":"Photo ready in saved versions. Choose Use on listing when you are ready; it has not been selected automatically.");}
+    if(!signal.aborted){await refreshPropertyAndDirectory();if(!signal.aborted)setNotice(prepared.source.kind==="altered"?"Version ready for review with its original and disclosure. Compare them, then choose Use on listing when you are ready.":"Photo ready in saved versions. Choose Use on listing when you are ready; it has not been selected automatically.");}
   });
   const prepareSavedSources=()=>void run("saved-sources",async signal=>{
     setSavedSourceProgress(null);
@@ -403,7 +422,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
     const result=await prepareSavedSourceBatch(services,galleryScope,savedSources,signal,setSavedSourceProgress);
     if(signal.aborted)return;
     setSavedSourceResult(result);
-    onChanged();await refresh();
+    await refreshPropertyAndDirectory();
     if(!signal.aborted)setNotice(`${result.prepared} saved photo${result.prepared===1?"":"s"} ready in property history. ${result.unavailable} could not pass the source check. Choose and review versions individually before using them on the listing.`);
   });
   const movePhoto = (photoId: string, direction: -1 | 1) => {
@@ -421,7 +440,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
     requestAnimationFrame(() => document.getElementById(`lw-tab-${destination.tab}`)?.focus());
   };
   return <div className="lw-property">
-    <header className="lw-property-heading"><div><h2>{listing.address || "Untitled property"}</h2><p>{listing.tagline || "Everything you need to bring this property to market."}</p></div><button onClick={() => { onChanged(); void refresh(true); }} disabled={loading}>↻ {loading ? "Refreshing…" : "Refresh"}</button></header>
+    <header className="lw-property-heading"><div><h2>{listing.address || "Untitled property"}</h2><p>{listing.tagline || "Everything you need to bring this property to market."}</p></div><button onClick={() => void refreshPropertyAndDirectory(true)} disabled={loading}>↻ {loading ? "Refreshing…" : "Refresh"}</button></header>
     <FinishListing finish={finish} canWrite={canWrite} busy={!!busy} onNavigate={navigateFinish} onPhotos={onOpenFeature ? () => onOpenFeature("studio", listing.id) : undefined}
       onPublicLinkClick={event => { if (!canUseShare()) { event.preventDefault(); setActionError("Your property selection changed. Reopen this property before sharing."); } }} />
     <ListingKit services={services} workspace={workspace} listingId={listing.id} />
@@ -480,16 +499,17 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
                 const seconds = Number(duration); if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 7200) throw new Error("Enter the video’s duration in seconds before publishing.");
                 await api("renders/publish-app", { listing_id: listing.id, asset_id: chosenAsset.id, duration_s: seconds, speed_factor: 1, tier: "smooth", enhancements: { declutter: false, style: "as_is" }, chapters: parseChapterText(chapters, seconds), ...(posterAssetId ? { poster_asset_id: posterAssetId } : {}) }, signal, "POST", `publish:${listing.id}:${chosenAsset.id}`);
               } else await api("renders", { listing_id: listing.id, asset_id: chosenAsset.id, tier, enhancements: { declutter: false, style: "as_is" } }, signal, "POST", `studio-render:${listing.id}:${chosenAsset.id}:${tier}`);
-              if (!signal.aborted) { setNotice(chosenAsset.bucket === "renders" ? `Your tour is live. Share its branded or ${listing.spaceType === "real_estate" ? "MLS" : "unbranded"} link below.` : "Rendering started. The finished tour will publish automatically; you can check progress on either device."); onChanged(); await refresh(); }
+              if (!signal.aborted) { setNotice(chosenAsset.bucket === "renders" ? `Your tour is live. Share its branded or ${listing.spaceType === "real_estate" ? "MLS" : "unbranded"} link below.` : "Rendering started. The finished tour will publish automatically; you can check progress on either device."); await refreshPropertyAndDirectory(); }
             })}>{busy === "render" ? "Working…" : chosenAsset.bucket === "renders" ? "Publish tour" : "Render & publish tour"}</button>
           </>}
 
         </div><aside className="lw-card lw-guide"><h3>A smooth phone-to-office workflow</h3>{listing.spaceType === "real_estate" ? <><ol><li><strong>Add your home.</strong> Enter the address and property details.</li><li><strong>Add landscape photos.</strong> Use 0.5× only when needed to fit a room.</li><li><strong>Review your photos.</strong> AI edits are optional. Compare saved edits with Original before choosing them.</li><li><strong>Make a video.</strong> Choose Listing for a landscape 16:9 video, then review the finished video privately.</li><li><strong>Publish and share.</strong> Choose your gallery and cover, check contact details, then publish your website. Share its link and follow up in Leads. Check your MLS rules before using the unbranded link in an MLS field.</li></ol><p>A recorded walkthrough and room tags are optional and separate.</p></> : <ol><li><strong>Add photos.</strong> Import photos here or from your iPhone. A recorded walkthrough and room tags are optional.</li><li><strong>Review your media.</strong> Choose the photos you want to share and compare any AI edits with their originals.</li><li><strong>Make a video.</strong> Create one from reviewed photos or use an optional walkthrough, then check the result.</li><li><strong>Publish and share.</strong> Use the branded link for marketing. {listing.spaceType === "real_estate" ? "Check your MLS rules before using the unbranded link in an MLS field." : "The unbranded link hides contact details and marketing."}</li></ol>}<p>Video and website publishing require paid access.</p></aside></div>
-        {state.jobs.length > 0 && <div className="lw-card"><h3>Renders across your devices</h3>{state.jobs.map((job) => <div className="lw-job" key={job.id}><div><strong>{job.tier === "premium4k" ? "4K Premium" : job.tier === "cinematic" ? "Cinematic AI" : "Smooth tour"}</strong><span>{job.current_step?.replaceAll("_", " ") || job.status.replaceAll("_", " ")}</span></div>{!terminal.has(job.status) && <progress max={1} value={Math.max(0, Math.min(1, job.progress > 1 ? job.progress / 100 : job.progress))} />}{job.error && <p className="lw-error">{job.error}</p>}{job.status === "ready" && !state.renders.some((render) => render.job_id === job.id && render.published_at) && <button disabled={!!busy || !canWrite || contactBlocked || state.assets.some(a => a.id === job.capture_asset_id && !canPublishAsset(a))} onClick={() => void run("publish", async (signal) => { if (contactBlocked) throw new Error("Save the listing contact before publishing."); await api(`renders/${job.id}/publish`, { chapters: state.chapters.filter(c => c.asset_id === job.capture_asset_id).sort((a, b) => a.t_ms - b.t_ms).map((c, sort) => ({ label: c.label, t_ms: c.t_ms, sort })), speed_factor: 1 }, signal); if (!signal.aborted) { setNotice("Your tour is live."); onChanged(); await refresh(); } })}>Publish finished tour</button>}</div>)}{activeJobs.length > 0 && <p className="lw-help">Progress refreshes automatically. Rendering continues after you close Studio.</p>}</div>}
+        {state.jobs.length > 0 && <div className="lw-card"><h3>Renders across your devices</h3>{state.jobs.map((job) => <div className="lw-job" key={job.id}><div><strong>{job.tier === "premium4k" ? "4K Premium" : job.tier === "cinematic" ? "Cinematic AI" : "Smooth tour"}</strong><span>{job.current_step?.replaceAll("_", " ") || job.status.replaceAll("_", " ")}</span></div>{!terminal.has(job.status) && <progress max={1} value={Math.max(0, Math.min(1, job.progress > 1 ? job.progress / 100 : job.progress))} />}{job.error && <p className="lw-error">{job.error}</p>}{job.status === "ready" && !state.renders.some((render) => render.job_id === job.id && render.published_at) && <button disabled={!!busy || !canWrite || contactBlocked || state.assets.some(a => a.id === job.capture_asset_id && !canPublishAsset(a))} onClick={() => void run("publish", async (signal) => { if (contactBlocked) throw new Error("Save the listing contact before publishing."); await api(`renders/${job.id}/publish`, { chapters: state.chapters.filter(c => c.asset_id === job.capture_asset_id).sort((a, b) => a.t_ms - b.t_ms).map((c, sort) => ({ label: c.label, t_ms: c.t_ms, sort })), speed_factor: 1 }, signal); if (!signal.aborted) { setNotice("Your tour is live."); await refreshPropertyAndDirectory(); } })}>Publish finished tour</button>}</div>)}{activeJobs.length > 0 && <p className="lw-help">Progress refreshes automatically. Rendering continues after you close Studio.</p>}</div>}
         <div className="lw-card">
           <h3>Published tours</h3>
           {published.length === 0 ? <p>Your branded and {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} links will appear here when you publish.</p> : published.map(tour => {
             const links = linksFor(tour.slug), proof = proofFor(tour.slug);
+            const shareReady = shareProofs.scope === shareScope && shareProofs.ready && canUseShare();
             if (!links) return <p key={tour.id}>Tour unavailable.</p>;
             const requireCurrent = () => {
               if (canUseShare()) return true;
@@ -506,12 +526,12 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
               <div><strong>Live tour · {new Date(tour.published_at!).toLocaleDateString()}</strong>{tour.staged && <span>Altered media disclosure included</span>}</div>
               <div className="lw-share-links">
                 <a href={links.branded} target="_blank" rel="noreferrer" onClick={event => { if (!requireCurrent()) event.preventDefault(); }}>Open branded tour ↗</a>
-                <button onClick={() => copy(links.branded, "Marketing link")}>Copy marketing link</button>
+                <button disabled={!shareReady} onClick={() => copy(links.branded, "Marketing link")}>Copy marketing link</button>
                 <a href={links.unbranded} target="_blank" rel="noreferrer" onClick={event => { if (!requireCurrent()) event.preventDefault(); }}>Open {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} tour ↗</a>
-                <button onClick={() => copy(links.unbranded, "Unbranded link")}>Copy {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} link</button>
+                <button disabled={!shareReady} onClick={() => copy(links.unbranded, "Unbranded link")}>Copy {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} link</button>
               </div>
-              <button onClick={() => { if (requireCurrent()) void downloadTourQR(tour.slug, "branded", proof, canUseShare).then(() => { if (canUseShare()) setNotice("Marketing QR code downloaded."); }, reason => { if (canUseShare()) setActionError(message(reason)); }); }}>Download marketing QR</button>
-              <button onClick={() => { if (requireCurrent()) void downloadTourQR(tour.slug, "unbranded", proof, canUseShare).then(() => { if (canUseShare()) setNotice("Unbranded MLS QR code downloaded."); }, reason => { if (canUseShare()) setActionError(message(reason)); }); }}>Download {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} QR</button>
+              <button disabled={!shareReady} onClick={() => { if (requireCurrent()) void downloadTourQR(tour.slug, "branded", proof, canUseShare).then(() => { if (canUseShare()) setNotice("Marketing QR code downloaded."); }, reason => { if (canUseShare()) setActionError(message(reason)); }); }}>Download marketing QR</button>
+              <button disabled={!shareReady} onClick={() => { if (requireCurrent()) void downloadTourQR(tour.slug, "unbranded", proof, canUseShare).then(() => { if (canUseShare()) setNotice("Unbranded MLS QR code downloaded."); }, reason => { if (canUseShare()) setActionError(message(reason)); }); }}>Download {listing.spaceType === "real_estate" ? "MLS" : "unbranded"} QR</button>
               <button disabled={!canWrite} onClick={() => { const job = state.jobs.find(j => j.id === tour.job_id); setEditTour(tour); setChapters(formatChapters(state.chapters.filter(c => c.asset_id === job?.capture_asset_id))); }}>Edit room chapters</button>
             </div>;
           })}

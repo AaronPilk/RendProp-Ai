@@ -1,6 +1,23 @@
 import assert from "node:assert/strict";
 
 export const originalAudioStall = "Original audio playback stalled during export. No download was created. Try a shorter clip or export with audio explicitly muted.";
+export const encodedCadenceStall = "Encoded video frames were skipped. No download was created. Close other busy tabs and retry.";
+export function assertBaselineCadence(attempt, resumeNotificationDelayMs) {
+  assert.equal(attempt.variant, "baseline");
+  assert.equal(attempt.errorName, "Error");
+  assert.equal(attempt.error, encodedCadenceStall);
+  assert.equal(attempt.result, null);
+  assert.equal(attempt.downloadHidden, true);
+  assert.equal(attempt.tracks.length, 2);
+  assert(attempt.tracks.every(state => state === "ended"));
+  const resumed = attempt.trace.filter(event => event.event === "resume.return");
+  const delivered = attempt.trace.filter(event => event.event === "resume.delivered");
+  assert(resumed.length > 0 && delivered.length > 0 && delivered.length <= resumed.length);
+  assert(delivered.every((event, index) => resumed[index].state === "recording" &&
+    event.at - resumed[index].at >= resumeNotificationDelayMs - 1));
+  assert(attempt.trace.find(event => event.event === "play.call")?.at >= delivered[0].at,
+    "The old resume await must precede original playback");
+}
 export function assertBaselineStall(attempt, resumeNotificationDelayMs) {
   assert.equal(attempt.variant, "baseline");
   assert.equal(attempt.errorName, "Error");

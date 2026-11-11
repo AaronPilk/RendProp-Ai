@@ -43,9 +43,9 @@ function fixture(mode:Mode){
  }});
  return{services,scope,caller,calls,snapshot,counts:()=>({reads,patches,mappingReads}),setIds:(next:string[])=>{ids=[...next];},async switchLibrary(){await services.loadWorkspace(undefined,OTHER_LIBRARY);await services.listListings(OTHER_LIBRARY);},async returnActor(){user=OTHER_ACTOR;callback("SIGNED_IN",session());user=ACTOR;callback("SIGNED_IN",session());await services.loadWorkspace(undefined,LIBRARY);await services.listListings(LIBRARY);},async open(){await services.loadWorkspace(undefined,LIBRARY);await services.listListings(LIBRARY);version=services.getSnapshot().identityVersion;},version:()=>version};
 }
-for(const mode of["lost-reply","refresh-reply"]as const)test(`actual selection ${mode} confirms committed effect by GET without a second PATCH`,async()=>{
+for(const mode of["lost-reply","refresh-reply"]as const)test(`actual selection ${mode} confirms committed effect without a second PATCH`,async()=>{
  const f=fixture(mode);try{await f.open();const result=await changeListingSelection(f.services,f.scope,f.snapshot(),{action:"use",photo_id:PHOTO,reviewed:false},f.caller.signal);
-  assert.deepEqual(result.gallery_asset_ids,[ASSET]);assert.equal(result.photos[0].selected,true);assert.equal(result.main_photo_key,null);assert.equal(f.counts().patches,1);assert.equal(f.counts().reads,2);assert.equal(f.counts().mappingReads,mode==="refresh-reply"?2:1);assert(f.calls.filter(c=>c.path.endsWith("/photos")).every(c=>c.headers.get("X-Org-Id")===ORG));
+  assert.deepEqual(result.gallery_asset_ids,[ASSET]);assert.equal(result.photos[0].selected,true);assert.equal(result.main_photo_key,null);assert.equal(f.counts().patches,1);assert.equal(f.counts().reads,mode==="refresh-reply"?1:2);assert.equal(f.counts().mappingReads,1);assert(f.calls.filter(c=>c.path.endsWith("/photos")).every(c=>c.headers.get("X-Org-Id")===ORG));
  }finally{f.services.dispose();}
 });
 
@@ -63,7 +63,7 @@ function componentHarness(f:ReturnType<typeof fixture>){
  const ui={actionError:"",readError:"",notice:"",busy:"",selection:f.snapshot()as ReturnType<typeof f.snapshot>|null};
  const context={services:f.services,workspace:{user:{id:ACTOR},org:{id:ORG},libraryOrgId:LIBRARY},listing:{id:LISTING},galleryScope:f.scope,selection:f.snapshot(),useCallback:(fn:unknown)=>fn,load:{current:null},action:{current:null},alive:{current:true},uncertainSelection:{current:null as UnconfirmedGallerySelection|null},actionErrorOwner:{current:null as unknown},canWrite:true,EMPTY_STATE,decodeListingState,changeListingSelection,confirmsGallerySelection,UnconfirmedGallerySelection,readGallerySelection,
   message:(error:unknown)=>error instanceof Error?error.message:"Failed",setState:()=>{},setMedia:()=>{},setLoading:()=>{},setLoadFailed:()=>{},setSelection:(value:any)=>{ui.selection=value;},setReadError:(value:string)=>{ui.readError=value;},setActionError:(value:string|((previous:string)=>string))=>{ui.actionError=typeof value==="function"?value(ui.actionError):value;},setNotice:(value:string)=>{ui.notice=value;},setBusy:(value:string)=>{ui.busy=value;},setUploadingName:()=>{},onChanged:()=>{}};
- const program=ts.transpileModule(`${actualStatement("refresh")}\n${actualStatement("run")}\n${actualStatement("selectPhoto")}\nreturn{refresh,run,selectPhoto};`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
+ const program=ts.transpileModule(`${actualStatement("refresh")}\n${actualStatement("refreshPropertyAndDirectory")}\n${actualStatement("run")}\n${actualStatement("selectPhoto")}\nreturn{refresh,run,selectPhoto};`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
  const actual=new Function(...Object.keys(context),program)(...Object.values(context))as{refresh:()=>Promise<void>;run:(name:string,work:(signal:AbortSignal)=>Promise<void>)=>Promise<void>;selectPhoto:(body:{action:"use";photo_id:string;reviewed:boolean},success:string)=>Promise<void>};
  return{ui,context,...actual};
 }

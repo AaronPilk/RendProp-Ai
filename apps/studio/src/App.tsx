@@ -122,6 +122,7 @@ export default function App({ servicesFactory }: {
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const directoryRefreshStartedAt = useRef(0);
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
   const [noticeValue, setNoticeValue] = useState("");
   const [noticeScope, setNoticeScope] = useState("");
@@ -400,6 +401,7 @@ export default function App({ servicesFactory }: {
       setBusy(false);
       return () => controller.abort();
     }
+    directoryRefreshStartedAt.current = Date.now();
     setBusy(true);
     // Keep the same verified scope mounted while refreshing. Identity and org
     // selection already fence the rendered data; blanking this state here also
@@ -467,13 +469,21 @@ export default function App({ servicesFactory }: {
   }, [selected?.id, workspace?.org.id]);
   useEffect(() => {
     if (!isConnected) return;
-    const refreshVisible = () => { if (document.visibilityState === "visible" && navigator.onLine) setRefresh(v => v + 1); };
-    const timer = setInterval(refreshVisible, 30000);
+    // The editor, Creative, and Properties own their visible data. A directory
+    // reload there would clear the action mapping while a save is in flight.
+    if (page !== "overview" && page !== "library") return;
+    const refreshVisible = () => {
+      if (document.visibilityState === "visible" && navigator.onLine &&
+          Date.now() - directoryRefreshStartedAt.current >= 120_000)
+        setRefresh(v => v + 1);
+    };
+    refreshVisible();
+    const timer = setInterval(refreshVisible, 30_000);
     window.addEventListener("focus", refreshVisible);
     window.addEventListener("online", refreshVisible);
     document.addEventListener("visibilitychange", refreshVisible);
     return () => { clearInterval(timer); window.removeEventListener("focus", refreshVisible); window.removeEventListener("online", refreshVisible); document.removeEventListener("visibilitychange", refreshVisible); };
-  }, [isConnected]);
+  }, [isConnected, page]);
   useEffect(() => {
     if (page === "editor") setEditorOpened(true);
     if (page === "planner") setPlannerOpened(true);
@@ -512,6 +522,7 @@ export default function App({ servicesFactory }: {
     setMediaBusy(false);
     const controller = new AbortController();
     const scope = mediaScopeKey;
+    if (page !== "library") return () => controller.abort();
     if (!selected || !workspace || !services || !mediaWorkspaceVerified) {
       if (mediaDepth.current.scope !== scope) mediaDepth.current = {scope, pages: 1};
       setMedia(null);
@@ -556,7 +567,7 @@ export default function App({ servicesFactory }: {
     }).finally(() => { if (current()) setMediaBusy(false); });
     return () => controller.abort();
     // Object identity changes after directory refresh must not restart this read.
-  }, [services, mediaScopeKey, mediaWorkspaceVerified, refresh]);
+  }, [services, mediaScopeKey, mediaWorkspaceVerified, refresh, page]);
   useEffect(
     () => () => {
       transfer.current?.abort();
@@ -1050,7 +1061,7 @@ export default function App({ servicesFactory }: {
           {page === "overview" && <Dashboard services={services} workspace={workspace} listings={listings} selectedId={selected?.id} busy={busy} spatialAvailable={spatialFlag?.scope===editScope&&spatialFlag.enabled} onSelect={selectListing} onFeature={openFeature} onCreate={createProperty} onStartCreating={()=>navigate("editor")} onProperties={()=>navigate("properties")} onLeads={()=>openBusiness("leads")} onPlanner={()=>navigate("planner")} onConnect={()=>setShowLogin(true)} onLibrary={()=>navigate("library")}/>}
           {entry?.gate && workspace && <FeatureGate feature={entry.gate} listings={listings} spaceType={workspace.org.spaceType} onChoose={id=>openFeature(entry.gate!,id)} onCancel={()=>setFeatureEntry(undefined)} onCreate={createProperty}/>}
           {(page === "properties" || propertiesOpened) && <section hidden={page !== "properties"} aria-label="Your property workspace">{workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening your properties…</p>}>
-            <ListingWorkflow entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} onContactGuardChange={contactGuardChanged} />
+            <ListingWorkflow active={page === "properties"} entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} onContactGuardChange={contactGuardChanged} />
           </SafeLoad> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening creative tools…</p>}>
             <CreativeWorkspace entryRequest={entry?.creative} onOpenEditor={id=>openFeature("reel",id)} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={id => selectListing(id, true)} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} onPresenterPendingChange={presenterPendingChanged} />
@@ -1278,7 +1289,7 @@ export default function App({ servicesFactory }: {
             ) : (
               <p role="status">Opening this workspace’s content plan…</p>
             )}</section>}
-          {(page === "workspace" || businessOpened) && workspace && services && <section hidden={page !== "workspace"} aria-label="Business workspace"><SafeLoad resetKey={editScope} fallback={<p role="status">Opening your business workspace…</p>}><BusinessWorkspace sectionRequest={entry?.business} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing}/></SafeLoad></section>}
+          {(page === "workspace" || businessOpened) && workspace && services && <section hidden={page !== "workspace"} aria-label="Business workspace"><SafeLoad resetKey={editScope} fallback={<p role="status">Opening your business workspace…</p>}><BusinessWorkspace active={page === "workspace"} sectionRequest={entry?.business} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing}/></SafeLoad></section>}
           {page === "workspace" && (
             <div className="settings-grid">
               <section className="panel">

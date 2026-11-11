@@ -18,6 +18,8 @@ const factKeys = { address: "address", tagline: "tagline", space_type: "spaceTyp
 const wire = (row: Listing) => ({ id: row.id, org_id: row.orgId, address: row.address, tagline: row.tagline, space_type: row.spaceType, details: structuredClone(row.details), status: row.status, created_at: row.createdAt, main_photo_key: row.mainPhotoKey, sold_at: row.soldAt ?? null, beds: row.beds, baths: row.baths, sqft: row.sqft, price_cents: row.priceCents, deleted_at: null });
 let failNextFacts = false, holdNextFacts = false, mismatchFacts = false, failReload = false;
 let releaseFacts: (() => void) | undefined;
+let holdNextShareRead = false, releaseShareRead: (() => void) | undefined;
+let refreshSequence: string[] = [];
 const applyFacts = (row: Listing, changes: Record<string, unknown>): Listing => {
   const updated = { ...row };
   for (const [key, value] of Object.entries(changes)) {
@@ -37,9 +39,22 @@ const image = canvas.toDataURL();
 const galleryContract=gallerySelectionFixture({actor:user,org},{photos:()=>photos,assets:()=>assets,listing:id=>listings.find(l=>l.id===id)!,setPhotos:rows=>{photos=rows;},setCover:(id,key)=>{listings=listings.map(l=>l.id===id?{...l,mainPhotoKey:key}:l);}});
 const services = {
   getSnapshot: () => ({ status: "signed-in", identityVersion: 1, identity: { userId: user, isAnonymous: false } }),
+  listingReadScope: async (physicalOrg: string, listingId: string, libraryOrg: string, signal?: AbortSignal) => {
+    const guard = () => {
+      if (signal?.aborted || physicalOrg !== org || libraryOrg !== org || listingId !== listing)
+        throw new Error("Property selection changed.");
+    };
+    guard();
+    if (holdNextShareRead) {
+      holdNextShareRead = false;
+      await new Promise<void>(resolve => { releaseShareRead = resolve; });
+      guard();
+    }
+    return guard;
+  },
   listListings: async () => { if (failReload) { failReload = false; throw new Error("Synthetic refresh failed; your field edits are kept."); } return structuredClone(listings); },
   upload: async (_url: string, body: Blob, options: { onProgress?: (n: number, total: number) => void }) => { options.onProgress?.(body.size, body.size); return { etag: "fixture-receipt" }; },
-  listMedia: async (_org: string, id: string) => ({ orgId: org, listingId: id, photos: assets.filter((a) => a.listing_id === id && a.kind === "photo" && a.uploaded).map((a) => ({ id: a.id, listingId: id, url: image, expiresAt: "2099-09-14T12:00:00Z", caption: photos.find(photo => photo.id === a.id)?.caption ?? "Property photo", isStaged: photos.find(photo => photo.id === a.id)?.is_staged??false, isAltered:photos.find(photo=>photo.id===a.id)?.is_staged??false, originalUrl:photos.find(photo=>photo.id===a.id)?.is_staged?image:null, sort: photos.find(photo => photo.id === a.id)?.sort ?? 0 })), videos: [], nextOffset: null, unavailableCount: 0 }),
+  listMedia: async (_org: string, id: string) => { refreshSequence.push("property-media"); return { orgId: org, listingId: id, photos: assets.filter((a) => a.listing_id === id && a.kind === "photo" && a.uploaded).map((a) => ({ id: a.id, listingId: id, url: image, expiresAt: "2099-09-14T12:00:00Z", caption: photos.find(photo => photo.id === a.id)?.caption ?? "Property photo", isStaged: photos.find(photo => photo.id === a.id)?.is_staged??false, isAltered:photos.find(photo=>photo.id===a.id)?.is_staged??false, originalUrl:photos.find(photo => photo.id === a.id)?.is_staged?image:null, sort: photos.find(photo => photo.id === a.id)?.sort ?? 0 })), videos: [], nextOffset: null, unavailableCount: 0 }; },
   api: async (path: string, options: { method?: string; orgId: string; body?: Record<string, unknown> }) => {
     if (options.orgId !== org) throw new Error("Wrong fixture workspace");
     const method = options.method ?? "GET", body = options.body; calls.push({ path, method, body });
@@ -105,6 +120,12 @@ const services = {
 function Fixture() {
   const [items, setItems] = useState(listings), [current, setCurrent] = useState(listing), [mount, setMount] = useState(0);
   Object.assign(window, { listingFixture: { addOriginalSource:()=>{const id=crypto.randomUUID();assets.push({id,listing_id:listing,storage_key:`renders/${org}/${listing}/gallery-${id}.png`,kind:"photo",bucket:"renders",uploaded:true,duration_s:0,bytes:10,created_at:"2026-10-15T22:00:00Z"});return id;}, selection:()=>galleryContract.read(listing),setSelection:(ids:string[]|null)=>galleryContract.set(listing,ids),loseSelectionReply:()=>galleryContract.loseReply(),changeSelectionOnRead:(ids:string[]|null)=>galleryContract.changeRead(ids),addReviewedEdit:(caption="Reviewed edited version")=>{const id=crypto.randomUUID(),key=`renders/${org}/${listing}/gallery-${id}.png`,original=photos[0]?.original_key;if(!original)throw Error("Fixture needs original");assets.push({id,listing_id:listing,storage_key:key,kind:"photo",bucket:"renders",uploaded:true,duration_s:0,bytes:10,created_at:"2026-10-15T23:00:00Z"});photos.push({id,listing_id:listing,original_key:original,enhanced_key:key,caption,is_staged:true,is_main:false,sort:Math.max(-1,...photos.map(p=>p.sort))+1,created_at:"2026-10-15T23:00:00Z"});return id;},holdPhoto:(id:string)=>galleryContract.block(id), calls: () => structuredClone(calls), snapshot: () => structuredClone({ listings, assets, jobs, renders, chapters, photos }), reopen: () => { setMount(mount + 1); setItems([...listings]); }, phoneCaption: (id: string, caption: string) => { photos = photos.map(photo => photo.id === id ? { ...photo, caption } : photo); }, phoneChange: () => { listings = listings.map(item => item.id === current ? { ...item, tagline: "Updated on the phone" } : item); setItems([...listings]); }, phoneDetails: (changes: Record<string,unknown>) => {listings=listings.map(row=>row.id===current?{...row,details:{...row.details,...changes}}:row);}, phoneFacts: (changes: Record<string, unknown>, refresh = false) => { listings = listings.map(row => row.id === current ? applyFacts(row, changes) : row); if (refresh) setItems([...listings]); }, failNextFacts: () => { failNextFacts = true; }, holdNextFacts: () => { holdNextFacts = true; }, releaseFacts: () => { releaseFacts?.(); releaseFacts = undefined; }, mismatchFacts: () => { mismatchFacts = true; }, failReload: () => { failReload = true; } } });
-  return <div style={{ padding: 30 }}><ListingWorkflow key={mount} services={services} workspace={workspace} listings={items} listingId={current} onSelectListing={setCurrent} onChanged={() => setItems([...listings])} /></div>;
+  Object.assign((window as unknown as { listingFixture: Record<string, unknown> }).listingFixture, {
+    holdNextShareRead: () => { holdNextShareRead = true; },
+    releaseShareRead: () => { releaseShareRead?.(); releaseShareRead = undefined; },
+    resetRefreshSequence: () => { refreshSequence = []; },
+    refreshSequence: () => [...refreshSequence],
+  });
+  return <div style={{ padding: 30 }}><ListingWorkflow key={mount} services={services} workspace={workspace} listings={items} listingId={current} onSelectListing={setCurrent} onChanged={() => { refreshSequence.push("directory"); setItems([...listings]); }} /></div>;
 }
 createRoot(document.getElementById("root")!).render(<div className="studio-shell" style={{display:"block"}}><Fixture /></div>);

@@ -17,7 +17,7 @@ import { PhotoPackageAllowance } from "./PhotoPackageAllowance";
 import { ServingEnvelopeCard } from "./ServingEnvelopeCard";
 
 export type BusinessWorkspaceProps = {
-  services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string;
+  active?: boolean; services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string;
   onChanged: () => void; onSelectListing?: (id: string) => void;
   sectionRequest?: BusinessSectionRequest;
 };
@@ -31,11 +31,12 @@ const displayDate = (value: string | null) => value ? new Intl.DateTimeFormat(un
 
 const failure = (error: unknown) => error instanceof Error ? error.message : "That could not be completed. Please try again.";
 
-function useResource<T>(read: (signal: AbortSignal) => Promise<T>, refreshOnFocus = true, keepLoadedForm = false) {
+function useResource<T>(read: (signal: AbortSignal) => Promise<T>, refreshOnFocus = true, keepLoadedForm = false, active = true) {
   const [data, setData] = useState<T | null>(null), [error, setError] = useState<string | null>(null), [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
   const reload = useCallback(() => setVersion((n) => n + 1), []);
   useEffect(() => {
+    if (!active) return;
     const controller = new AbortController();
     setLoading(true); setError(null);
     if (!keepLoadedForm) setData(null);
@@ -44,14 +45,14 @@ function useResource<T>(read: (signal: AbortSignal) => Promise<T>, refreshOnFocu
     }).catch((error: unknown) => { if (!controller.signal.aborted) setError(failure(error)); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [read, version, keepLoadedForm]);
+  }, [read, version, keepLoadedForm, active]);
   useEffect(() => {
-    if (!refreshOnFocus) return;
+    if (!refreshOnFocus || !active) return;
     const refresh = () => { if (document.visibilityState === "visible") reload(); };
     window.addEventListener("focus", refresh);
     const timer = window.setInterval(refresh, 60_000);
     return () => { window.removeEventListener("focus", refresh); window.clearInterval(timer); };
-  }, [refreshOnFocus, reload]);
+  }, [refreshOnFocus, reload, active]);
   return { data, error, loading, reload };
 }
 function useAction() {
@@ -127,23 +128,23 @@ function BusinessWorkspaceContent(props: BusinessWorkspaceProps) {
     <header className="business-intro"><div><span className="business-eyebrow">Your business</span><h2>{sections.find((item) => item.id === section)?.label}</h2><p>{workspace.user.realEstateRole === "photographer_videographer" ? "Your clients’ listing contacts, leads and production stay together on your phone and in Studio." : "Your agent card, leads and team stay together on your phone and in Studio."}</p></div><span className="business-chip">{workspace.org.name}</span></header>
     <nav className="business-nav" aria-label="Business tools">{sections.filter((s) => s.id !== "activity" || isManager).map((item) => <button key={item.id} aria-current={section === item.id ? "page" : undefined} onClick={() => openSection(item.id)}>{item.label}</button>)}</nav>
     {sections.map((item) => visited.has(item.id) && <div key={item.id} hidden={section !== item.id}><div className="business-content">
-      {item.id === "leads" && <LeadsPanel {...props} api={api} />}
-      {item.id === "brand" && <BrandPanel {...props} api={api} />}
-      {item.id === "team" && <TeamPanel {...props} api={api} />}
-      {item.id === "activity" && isManager && <ActivityPanel api={api} />}
-      {item.id === "disclosures" && <DisclosurePanel {...props} api={api} />}
-      {item.id === "account" && <AccountPanel {...props} api={api} />}
+      {item.id === "leads" && <LeadsPanel {...props} active={props.active !== false && section === item.id} api={api} />}
+      {item.id === "brand" && <BrandPanel {...props} active={props.active !== false && section === item.id} api={api} />}
+      {item.id === "team" && <TeamPanel {...props} active={props.active !== false && section === item.id} api={api} />}
+      {item.id === "activity" && isManager && <ActivityPanel api={api} active={props.active !== false && section === item.id} />}
+      {item.id === "disclosures" && <DisclosurePanel {...props} active={props.active !== false && section === item.id} api={api} />}
+      {item.id === "account" && <AccountPanel {...props} active={props.active !== false && section === item.id} api={api} />}
     </div></div>)}
   </div>;
 }
 type PanelProps = BusinessWorkspaceProps & { api: BusinessApi };
 
-function LeadsPanel({ api, workspace, listings, listingId, onChanged, onSelectListing }: PanelProps) {
+function LeadsPanel({ api, workspace, listings, listingId, onChanged, onSelectListing, active }: PanelProps) {
   const [listing, setListing] = useState(listingId ?? ""), [status, setStatus] = useState<LeadStatus | "">(""), [since, setSince] = useState(""), [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null), [overrides, setOverrides] = useState<Record<string, Lead>>({});
   useEffect(() => { setListing(listingId ?? ""); setSelected(null); }, [listingId]);
   const read = useCallback((signal: AbortSignal) => api.leads({ listingId: listing || undefined, status: status || undefined, since: since || undefined }, signal), [api, listing, status, since]);
-  const resource = useResource(read), action = useAction();
+  const resource = useResource(read, true, false, active), action = useAction();
   // A fresh server read always wins over an earlier save on this screen.
   useEffect(() => setOverrides({}), [resource.data]);
   const all = (resource.data ?? []).map((l) => overrides[l.id] ?? l).filter((l) => !status || l.status === status);
@@ -170,7 +171,7 @@ function LeadsPanel({ api, workspace, listings, listingId, onChanged, onSelectLi
 
 function BrandPanel(props: PanelProps) {
   const read = useCallback((signal: AbortSignal) => props.api.account(signal), [props.api]);
-  const resource = useResource(read, false, true);
+  const resource = useResource(read, false, true, props.active);
   return <><PersonalCardEditor services={props.services} workspace={props.workspace} /><HostedPortfolioEditor services={props.services} workspace={props.workspace} listings={props.listings} /><div className="business-heading"><div><h3>Workspace branding</h3><p>Workspace owners and admins maintain the shared business name and color below.</p></div></div><ResourceState {...resource} />{resource.data && <BrandForm {...props} account={resource.data} />}</>;
 }
 function BrandForm({ api, workspace, onChanged, account }: PanelProps & { account: Account }) {
@@ -198,8 +199,8 @@ function BrandForm({ api, workspace, onChanged, account }: PanelProps & { accoun
   </form>;
 }
 
-function TeamPanel({ api, workspace, onChanged }: PanelProps) {
-  const read = useCallback((signal: AbortSignal) => api.team(signal), [api]), resource = useResource(read, false), action = useAction();
+function TeamPanel({ api, workspace, onChanged, active }: PanelProps) {
+  const read = useCallback((signal: AbortSignal) => api.team(signal), [api]), resource = useResource(read, false, false, active), action = useAction();
   const [emails, setEmails] = useState(""), [role, setRole] = useState("agent"), [code, setCode] = useState("");
   const [issued, setIssued] = useState<InviteResult[]>([]), [confirmed, setConfirmed] = useState(false);
   const [removal, setRemoval] = useState<{ kind: "member" | "invite"; id: string; name: string } | null>(null);
@@ -222,22 +223,22 @@ function TeamPanel({ api, workspace, onChanged }: PanelProps) {
   </>;
 }
 
-function ActivityPanel({ api }: { api: BusinessApi }) {
+function ActivityPanel({ api, active }: { api: BusinessApi; active: boolean }) {
   const [window, setWindow] = useState<"7d" | "30d" | "90d">("30d");
-  const read = useCallback((signal: AbortSignal) => api.overview(window, signal), [api, window]), resource = useResource(read);
+  const read = useCallback((signal: AbortSignal) => api.overview(window, signal), [api, window]), resource = useResource(read, true, false, active);
   return <><div className="business-heading"><div><h3>Team activity</h3><p>See what your agents have published and where someone may need a hand.</p></div><label>Period<select value={window} onChange={(e) => setWindow(e.target.value as typeof window)}><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="90d">Last 90 days</option></select></label></div><ResourceState {...resource} />{resource.data && <>
     <p className="business-subtle">{displayDate(resource.data.from)} – {displayDate(resource.data.to)}</p><div className="business-metrics"><div><strong>{resource.data.totals.listings}</strong><span>Current listings</span></div><div><strong>{resource.data.totals.tours}</strong><span>Tours published in period</span></div><div><strong>{resource.data.totals.ai}</strong><span>AI assets published in period</span></div><div><strong>{resource.data.totals.inactive}</strong><span>Members without a tour in period</span></div></div>
     <div className="business-table-scroll"><table><caption className="business-sr-only">Publishing activity by agent</caption><thead><tr><th scope="col">Agent</th><th scope="col">Listings</th><th scope="col">Tours published</th><th scope="col">AI assets</th><th scope="col">Last activity</th></tr></thead><tbody>{resource.data.members.map((m) => <tr key={m.id}><td>{m.name}<small className="business-capitalize">{m.role}</small></td><td>{m.listings}</td><td>{m.tours}</td><td>{m.ai}</td><td>{displayDate(m.lastActive)}</td></tr>)}</tbody></table></div><p className="business-subtle">Tour counts reflect published versions, so publishing a listing twice counts as two tours. AI totals include assets with a published result.</p>
   </>}</>;
 }
 
-function DisclosurePanel({ api, workspace, listings, listingId, onSelectListing }: PanelProps) {
+function DisclosurePanel({ api, workspace, listings, listingId, onSelectListing, active }: PanelProps) {
   const [listing, setListing] = useState(listingId ?? ""), [scope, setScope] = useState<"user" | "org">("user"), [from, setFrom] = useState(""), [to, setTo] = useState("");
   const read = useCallback((signal: AbortSignal) => {
     if (from && to && from > to) return Promise.reject(new Error("Choose an end date on or after the start date."));
     return api.compliance({ listingId: listing || undefined, scope, from: from || undefined, to: to || undefined }, signal);
   }, [api, listing, scope, from, to]);
-  const resource = useResource(read, false), action = useAction();
+  const resource = useResource(read, false, false, active), action = useAction();
   const [editing, setEditing] = useState<ComplianceRow | null>(null), [label, setLabel] = useState("");
   return <><div className="business-heading"><div><h3>AI disclosure records</h3><p>Review each alteration, its disclosure and the original image available to viewers.</p></div><div className="business-actions"><button disabled={resource.loading || action.busy} onClick={resource.reload}>Refresh</button><button disabled={!resource.data?.rows.length} onClick={() => downloadCSV("rendprop-ai-disclosures.csv", [["Created", "Listing", "Agent", "Label", "Kind", "Edit", "Model", "Disclosure", "Original available", "Original URL", "Altered URL", "Prompt summary"], ...resource.data!.rows.map((r) => [r.createdAt, r.address, r.agent, r.label, r.kind, r.edit, r.model, r.disclosure, r.originalAvailable, r.originalUrl, r.alteredUrl, r.prompt])])}>Export records</button></div></div>
     <div className="business-filters"><ListingFilter listings={listings} value={listing} onChange={setListing} />{managesTeamAccount(workspace) && <label>Scope<select value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}><option value="user">Workspace records</option><option value="org">Team records with agent attribution</option></select></label>}<label>From (UTC)<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label><label>Through (UTC)<input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label></div>
@@ -248,7 +249,7 @@ function DisclosurePanel({ api, workspace, listings, listingId, onSelectListing 
 }
 
 function AccountPanel(props: PanelProps) {
-  const read = useCallback((signal: AbortSignal) => props.api.account(signal), [props.api]), resource = useResource(read, false, true);
+  const read = useCallback((signal: AbortSignal) => props.api.account(signal), [props.api]), resource = useResource(read, false, true, props.active);
   return <><div className="business-heading"><div><h3>Account & plan</h3><p>Your Apple sign-in, subscription and allowances are shared with Rendprop on your iPhone.</p></div><button disabled={resource.loading} onClick={resource.reload}>Refresh allowance</button></div><ResourceState {...resource} />{resource.data && <AccountDetails {...props} account={resource.data} allowanceUnavailable={!!resource.error} />}</>;
 }
 function AccountDetails({ account, workspace, services, api, onChanged, allowanceUnavailable }: PanelProps & { account: Account; allowanceUnavailable: boolean }) {

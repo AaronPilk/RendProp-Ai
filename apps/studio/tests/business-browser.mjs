@@ -133,6 +133,15 @@ try {
   await expect(page.getByRole("textbox", { name: "Invitation link for agent@example.invalid" })).toHaveValue("https://rendprop.com/join/ABCD-EFGH-JKLM");
   receipt.checks.push("Invite email requires explicit form opt-in and displays one-time share link");
   await nav("Team activity").click(); await expect(page.getByRole("table")).toContainText("Tours published");
+  const focusReads = await page.evaluate(() => {
+    const calls = window.businessFixture.calls();
+    const count = (part) => calls.filter(call => call.method === "GET" && call.path.includes(part)).length;
+    return { leads: count("leads?"), activity: count("team/overview") };
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => page.evaluate(() => window.businessFixture.calls().filter(call => call.method === "GET" && call.path.includes("team/overview")).length)).toBe(focusReads.activity + 1);
+  assert.equal(await page.evaluate(() => window.businessFixture.calls().filter(call => call.method === "GET" && call.path.includes("leads?")).length), focusReads.leads, "A visited hidden Leads panel must not refresh on focus");
+  receipt.checks.push("Only the visible business panel refreshes on focus after visiting other tabs");
   await nav("AI disclosures").click(); await expect(page.getByText("Virtually staged with AI", { exact: true })).toBeVisible();
   receipt.checks.push("Team publishing and disclosure records render without raw payloads");
   await page.evaluate(() => window.businessFixture.marketing()); await nav("Leads").click();

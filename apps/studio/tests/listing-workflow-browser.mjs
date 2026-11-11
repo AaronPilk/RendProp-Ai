@@ -15,7 +15,11 @@ try {
   await new Promise((done) => server.listen(0, "127.0.0.1", done)); const origin = `http://127.0.0.1:${server.address().port}`;
   browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, serviceWorkers: "block" });
-  await context.route("**/*", (route) => { if (new URL(route.request().url()).origin === origin && route.request().method() === "GET") return route.continue(); receipt.externalRequests.push(route.request().url()); return route.abort(); });
+  await context.route("**/*", (route) => {
+    if (route.request().url() === "https://rendprop.com/f/fixture-tour/share-link") return route.fulfill({ status: 503, body: "" });
+    if (new URL(route.request().url()).origin === origin && route.request().method() === "GET") return route.continue();
+    receipt.externalRequests.push(route.request().url()); return route.abort();
+  });
   page = await context.newPage(); page.on("pageerror", (error) => receipt.errors.push(error.message)); page.setDefaultTimeout(6000);
   const tab = (name) => page.getByRole("tab", { name: new RegExp(name) });
   await page.goto(`${origin}/tests/listing-workflow-fixture.html`);
@@ -135,8 +139,16 @@ try {
   await expect(page.getByLabel("Video duration (seconds)", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Room chapters (optional)", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Saved rooms: Entry · Kitchen", {exact: true})).toBeVisible();
+  await page.evaluate(() => window.listingFixture.resetRefreshSequence());
   await page.getByRole("button", { name: "Render & publish tour", exact: true }).click(); await expect(page.getByRole("button", { name: "Publish finished tour" })).toBeVisible();
+  const refreshSequence = await page.evaluate(() => window.listingFixture.refreshSequence());
+  assert.ok(refreshSequence.indexOf("property-media") >= 0 && refreshSequence.indexOf("property-media") < refreshSequence.indexOf("directory"), "A saved render must refresh property media before starting a directory replacement");
+  receipt.checks.push("Saved property activity refreshes before directory replacement");
+  await page.evaluate(() => window.listingFixture.holdNextShareRead());
   await page.getByRole("button", { name: "Publish finished tour" }).click(); await expect(page.getByRole("link", { name: "Open branded tour" })).toHaveAttribute("href", "https://rendprop.com/f/fixture-tour"); await expect(page.getByRole("link", { name: "Open MLS tour" })).toHaveAttribute("href", "https://rendprop.com/u/fixture-tour");
+  await expect(page.getByRole("button", { name: "Download marketing QR" })).toBeDisabled();
+  await page.evaluate(() => window.listingFixture.releaseShareRead());
+  await expect(page.getByRole("button", { name: "Download marketing QR" })).toBeEnabled();
   receipt.checks.push("Existing phone source requests render-and-publish; ready unpublished job can be published with marketing and MLS links");
   const downloadPromise = page.waitForEvent("download"); await page.getByRole("button", { name: "Download marketing QR" }).click(); const download = await downloadPromise; await download.saveAs(join(artifacts, "tour-qr.svg")); const svg = await readFile(join(artifacts, "tour-qr.svg"), "utf8"); assert.match(svg, /<svg/);
   const qrPng = await page.evaluate(async svg => { const img = new Image(); img.src = `data:image/svg+xml;base64,${btoa(svg)}`; await img.decode(); const canvas = document.createElement("canvas"); canvas.width = canvas.height = 1024; const ctx = canvas.getContext("2d"); ctx.fillStyle = "white"; ctx.fillRect(0,0,1024,1024); ctx.drawImage(img,0,0,1024,1024); return canvas.toDataURL("image/png").split(",")[1]; }, svg);
