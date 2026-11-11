@@ -5,7 +5,7 @@ import {HttpError} from "../_shared/http.ts";
 const USER="d0100103-0000-4000-8000-000000000001", ORG="d0100103-0000-4000-8000-000000000002", OTHER="d0100103-0000-4000-8000-000000000003";
 type Handler=(req:Request)=>Promise<Response>;
 let handler:Handler;
-type Options={teamParent?:string;delegatedOwner?:boolean;role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;intro?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean;servingMode?:string;servingEnvelope?:unknown};
+type Options={teamParent?:string;delegatedOwner?:boolean;role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;noAppleChain?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;intro?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean;servingMode?:string;servingEnvelope?:unknown};
 async function invoke(o:Options={}) {
  const values={SUPABASE_URL:"https://billing-fixture.invalid",SUPABASE_SERVICE_ROLE_KEY:"fixture-service",SUPABASE_ANON_KEY:"fixture-anon",
   SUPABASE_SECRET_KEYS:JSON.stringify({default:"sb_secret_synthetic_billing_fixture"}),
@@ -80,7 +80,7 @@ async function invoke(o:Options={}) {
     }
     return row({id:url.searchParams.get("id")?.replace(/^eq\./,"")??o.selector??ORG,name:"Fixture Workspace",plan:o.rawPlan??o.plan??"free",plan_source:o.source??null});
    }
-   if(table==="apple_subscriptions")return o.subscriptionError?json({message:"fixture unavailable"},400):json([{original_transaction_id:"fixture-original-transaction"}]);
+   if(table==="apple_subscriptions")return o.subscriptionError?json({message:"fixture unavailable"},400):json(o.noAppleChain?[]:[{original_transaction_id:"fixture-original-transaction"}]);
    if(table==="profiles")return row({id:USER,name:"Fixture Person"});
    if(req.method==="HEAD")return new Response(null,{headers:{"content-range":"*/0"}});
    if(["cost_ledger","rate_limits"].includes(table??""))return json([]);
@@ -105,7 +105,7 @@ Deno.test("/me reports the serving mode the paywall keys on (ceiling → ordinar
  const funded=await invoke({servingMode:"funded"});assertEquals(funded.body.serving_mode,"funded");assertEquals(funded.body.serving_envelope,null);
 });
 Deno.test("billing context belongs to the same selected workspace as entitlement",async()=>{
- const r=await invoke({selector:OTHER});assertEquals(r.response.status,200);assertEquals(r.body.org.id,OTHER);assertEquals(r.body.billing,{actor_id:USER,content_org_id:OTHER,org_id:OTHER,serving_org_id:OTHER,org_name:"Fixture Workspace",role:"owner",can_manage_subscription:true,original_transaction_ids:[],source:null});
+ const r=await invoke({selector:OTHER});assertEquals(r.response.status,200);assertEquals(r.body.org.id,OTHER);assertEquals(r.body.billing,{actor_id:USER,content_org_id:OTHER,org_id:OTHER,serving_org_id:OTHER,org_name:"Fixture Workspace",role:"owner",can_manage_subscription:true,standard_price_checkout_ready:false,original_transaction_ids:[],source:null});
  assert(r.queries.filter(u=>u.pathname.endsWith("memberships")).every(u=>u.searchParams.get("org_id")==="eq."+OTHER));
  // Execute the actual handler with different content, serving and purchase
  // roots. Only the real Team owner may manage the parent while viewing Sally.
@@ -117,6 +117,21 @@ Deno.test("billing context belongs to the same selected workspace as entitlement
  const agent=await invoke({selector:OTHER,teamParent:ORG,plan:"team",source:"apple"});
  assertEquals(agent.response.status,200);assertEquals(agent.body.billing.org_id,ORG);assertEquals(agent.body.billing.can_manage_subscription,false);
  assertEquals(agent.body.billing.original_transaction_ids,[]);assertEquals(agent.body.usage.renders,owner.body.usage.renders);
+});
+Deno.test("standard-price billing action is visible only with a usable dedicated IAP key and no paid chain",async()=>{
+ const keys=["APPLE_IAP_KEY_ID","APPLE_IAP_ISSUER_ID","APPLE_IAP_PRIVATE_KEY_P8"];
+ const old=keys.map(key=>Deno.env.get(key));
+ try {
+  const absent=await invoke({noAppleChain:true});assertEquals(absent.body.billing.standard_price_checkout_ready,false);
+  const pair=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},true,["sign","verify"]);
+  const pkcs8=new Uint8Array(await crypto.subtle.exportKey("pkcs8",pair.privateKey));
+  let binary="";for(const byte of pkcs8)binary+=String.fromCharCode(byte);
+  Deno.env.set(keys[0],"TESTKEY123");Deno.env.set(keys[1],"f0000000-0000-4000-8000-000000000001");
+  Deno.env.set(keys[2],`-----BEGIN PRIVATE KEY-----\n${btoa(binary)}\n-----END PRIVATE KEY-----`);
+  const ready=await invoke({noAppleChain:true});assertEquals(ready.body.billing.standard_price_checkout_ready,true);
+  const existing=await invoke({});assertEquals(existing.body.billing.standard_price_checkout_ready,false);
+  const agent=await invoke({role:"agent",noAppleChain:true});assertEquals(agent.body.billing.standard_price_checkout_ready,false);
+ } finally {keys.forEach((key,i)=>old[i]===undefined?Deno.env.delete(key):Deno.env.set(key,old[i]!));}
 });
 Deno.test("guest owner may explicitly subscribe; membership does not require a named identity",async()=>{const r=await invoke({anonymous:true});assertEquals(r.response.status,200);assertEquals(r.body.billing.can_manage_subscription,true);});
 Deno.test("actual me returns only the selected workspace's verified photo allowance",async()=>{

@@ -115,6 +115,7 @@ import { hostingRetention } from "../_shared/hosting-retention.ts";
 import { photoPackageContext } from "../_shared/photo-package-context.ts";
 import { boundedTrialContext, subscriptionServingActivation, trialServingActivationForSync } from "../_shared/bounded-trial.ts";
 import { heldTrialPurchase, prepareTrialPurchase } from "../_shared/trial-purchase.ts";
+import { noActiveAppleChain, prepareStandardPrice, standardPriceContext, standardPriceSigningReady } from "./standard-price.ts";
 import { brandLogo } from "./brand-logo.ts";
 import { requestedWorkspace, selectWorkspace, workspaceDirectory, workspaceID } from "../_shared/workspaces.ts";
 import { assertExpectedSubscriptionWorkspace, assertVerifiedPurchaseOwner } from "./billing.ts";
@@ -250,6 +251,16 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg.length === 2 && seg[0] === "trial" && seg[1] === "prepare") {
       const directory = await workspaceDirectory(adminClient(), user.id, requestedWorkspace(req));
       return json(await prepareTrialPurchase(adminClient(), user.id, directory.active_org_id, await readJsonLimited(req, 2048)));
+    }
+    if (req.method === "POST" && seg.length === 3 && seg[0] === "subscription" && seg[1] === "standard-price" && seg[2] === "prepare") {
+      const selected = requestedWorkspace(req);
+      assert(selected, 409, "Choose a workspace before purchasing.", "conflict");
+      const admin = adminClient();
+      const directory = await workspaceDirectory(admin, user.id, selected);
+      assert(await durableRateLimit(`standard-price:${user.id}`, 8, 300), 429,
+        "Please wait before preparing another purchase.", "rate_limited");
+      return json(await prepareStandardPrice(admin, user.id, directory, await readJsonLimited(req, 80 * 1024)),
+        200, { "cache-control": "no-store" });
     }
     if (seg[0] === "credits" && seg.length <= 3) {
       return await creditsRoute(req, adminClient(), user.id, seg[1], seg[2]);
@@ -428,6 +439,12 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   const heldPurchase = canManageSubscription && purchaseOrgId === servingOrgId ? await heldTrialPurchase(admin, userId, servingOrgId) : null;
   const teamSeatProducts = canManageSubscription
     ? await teamSeatSaleProducts(admin, purchaseOrgId) : [];
+  let standardPriceCheckoutReady = false;
+  if (canManageSubscription && purchaseOrgId === orgId && await standardPriceSigningReady() &&
+      standardPriceContext(userId, directory, orgId, billingAccess, entitlement.plan, purchaseRes.data.plan_source ?? null)) {
+    try { standardPriceCheckoutReady = await noActiveAppleChain(admin, userId, orgId); }
+    catch { standardPriceCheckoutReady = false; }
+  }
 
   return json({
     user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null,
@@ -469,6 +486,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       org_name: purchaseRes.data.name,
       role: billingAccess.role,
       can_manage_subscription: canManageSubscription,
+      standard_price_checkout_ready: standardPriceCheckoutReady,
       original_transaction_ids: originalTransactionIDs,
       source: purchaseOrgId === orgId && testingAccess ? "manual" : purchaseRes.data.plan_source ?? null,
     },
