@@ -357,6 +357,69 @@ Deno.test("returns literal contract, short lifetime, no cache", async () => {
   assertEquals(f.signed, [`uploads:${key}:600`]);
   assert(!JSON.stringify(body).includes(key));
 });
+Deno.test("the three final checks overlap, are all drained, and fail in membership, access, policy order", async () => {
+  const gate = () => { let open!: () => void; const wait = new Promise<void>(resolve => open = resolve); return { open, wait }; };
+  const f = fixture(), authorizeGate = gate();
+  f.deps.read = async () => ({ photos: [photo], assets: [], renders: [] });
+  const started: string[] = [];
+  let authorizations = 0, visibilities = 0;
+  f.deps.authorize = async () => { if (++authorizations === 2) { started.push("authorize"); await authorizeGate.wait; } return scope; };
+  const visibility = f.deps.mediaVisibility;
+  f.deps.mediaVisibility = (authorized, refs) => { if (++visibilities === 2) started.push("visibility"); return visibility(authorized, refs); };
+  f.deps.assertSigningPolicyFresh = async () => { started.push("policy"); };
+  const pending = createStudioHandler(f.deps)(request());
+  await new Promise(resolve => setTimeout(resolve, 5));
+  // Membership is still being rechecked, yet the other two checks have begun.
+  assertEquals(started, ["authorize", "visibility", "policy"]);
+  authorizeGate.open();
+  assertEquals((await pending).status, 200);
+
+  // Every combination of failing checks: nothing is released, and the reported
+  // failure is the first in the old sequential order.
+  for (const failing of [["authorize", "visibility", "policy"], ["visibility", "policy"], ["authorize", "policy"], ["policy"], ["authorize"], ["visibility"]]) {
+    const g = fixture(); let auth = 0, seen = 0, drained = 0;
+    g.deps.read = async () => ({ photos: [photo], assets: [], renders: [] });
+    g.deps.authorize = async () => { if (++auth === 2) { await new Promise(resolve => setTimeout(resolve, 3)); drained++; if (failing.includes("authorize")) throw new HttpError(403, "Access changed."); } return scope; };
+    g.deps.mediaVisibility = async (_scope, refs) => { const final = ++seen === 2; if (final) drained++; return { assets: {}, renders: {}, keys: Object.fromEntries((refs.keys ?? []).map(key => [key, !(final && failing.includes("visibility"))])) }; };
+    g.deps.assertSigningPolicyFresh = async () => { await new Promise(resolve => setTimeout(resolve, 1)); drained++; if (failing.includes("policy")) throw new HttpError(503, "Media gateway activation pending."); };
+    const response = await createStudioHandler(g.deps)(request());
+    assertEquals(response.status, failing.includes("authorize") ? 403 : failing.includes("visibility") ? 404 : 503);
+    assertEquals(drained, 3, "no final check may be left running after the reply");
+    assert(!(await response.text()).includes("objects.example"));
+  }
+});
+Deno.test("a short first page signs only what was asked for and never pages", async () => {
+  const f = fixture(), previews: unknown[] = [];
+  const photos = Array.from({ length: 3 }, (_, index) => ({ ...photo, id: `photo-${index}`, original_key: `uploads/${org}/${listing}/${index}.jpg` }));
+  f.deps.read = async (...args) => { previews.push(args.length === 2 ? "ordinary" : args[2]); return { photos: photos.slice(0, args[2] ? args[2].limit + 1 : 3), assets: [], renders: [] }; };
+  const one = await createStudioHandler(f.deps)(request("&limit=1&cover=1"));
+  assertEquals(one.status, 200);
+  const body = await one.json();
+  assertEquals(body.photos.map((row: { id: string }) => row.id), ["photo-0"]);
+  assertEquals(body.next_offset, null); assertEquals(body.has_more, true);
+  assertEquals(f.signed.length, 1);
+  const two = await (await createStudioHandler(f.deps)(request("&limit=2"))).json();
+  assertEquals(two.photos.length, 2); assertEquals(two.has_more, true); assertEquals(two.next_offset, null);
+  // The ordinary page, and an explicit limit of 50, read exactly as before.
+  for (const query of ["", "&limit=50"]) {
+    const full = await (await createStudioHandler(f.deps)(request(query))).json();
+    assertEquals(full.photos.length, 3); assertEquals(full.next_offset, null); assertEquals(full.has_more, undefined);
+  }
+  assertEquals(previews, [{ limit: 1, cover: true }, { limit: 2, cover: false }, "ordinary", "ordinary"]);
+  // More rows than the preview asked for is a broken query, not a longer page.
+  const broken = fixture();
+  broken.deps.read = async () => ({ photos, assets: [], renders: [] });
+  assertEquals((await createStudioHandler(broken.deps)(request("&limit=1"))).status, 500);
+  assertEquals(broken.signed, []);
+});
+Deno.test("malformed preview sizes and a preview at a later offset are rejected before auth or read", async () => {
+  for (const query of ["&limit=0", "&limit=51", "&limit=1.5", "&limit=abc", "&limit=", "&limit=01", "&cover=0", "&cover=true", "&limit=1&offset=50", "&cover=1&offset=50"]) {
+    const f = fixture();
+    f.deps.authorize = () => { throw Error("should not run"); };
+    assertEquals((await createStudioHandler(f.deps)(request(query))).status, 400, query);
+    assertEquals(f.reads(), 0);
+  }
+});
 Deno.test(
   "unsigned references and pending captures never become URLs",
   async () => {

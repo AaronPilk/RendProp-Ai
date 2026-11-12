@@ -98,7 +98,10 @@ function fixture(fixtureRequest = req) {
           // Model PostgREST ordering/range semantics, so end-to-end adapter tests
           // fail if a persisted gallery order is never included in the query.
           const order = operations.filter(op => op[0] === "order");
+          // Exact-match filters the cover preview adds; the ordinary page never emits them.
+          const exact = ["kind", "storage_key", "enhanced_key", "original_key"];
           let data = [...result.data].filter(row => operations.every(op => (op[0] !== "in" || (op[2] as unknown[]).includes(row[String(op[1])])) &&
+            (op[0] !== "eq" || !exact.includes(String(op[1])) || row[String(op[1])] === op[2]) &&
             (op[0] !== "not" || logic(row,`${op[1]}.not.${op[2]}.${op[3]}`)) &&
             (op[0] !== "or" || splitLogic(String(op[1])).some(term=>logic(row,term))))).sort((a, b) => {
             for (const [, column, options] of order) {
@@ -439,6 +442,67 @@ Deno.test("real repository and media merge preserve saved gallery order over cap
   assertEquals(after.photos[1].original_url, after.photos[3].url);
   assertEquals(after.photos[3].is_altered, false);
   assertEquals(after.next_offset, null);
+});
+
+Deno.test("a cover preview reads photos only and puts the listing's chosen cover first", async () => {
+  const f = fixture(), repository = createStudioRepository(req, f.deps);
+  const id = (n: number) => `45000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const key = (name: string, bucket = "uploads") => `${bucket}/${org}/${listing}/${name}.jpg`;
+  const scope = { userId: user, orgId: org, listingId: listing };
+  const asset = (n: number, name: string, kind = "photo") => ({ id: id(n), listing_id: listing, storage_key: kind === "photo" ? key(name) : `uploads/${org}/${listing}/${name}.mp4`, kind, bucket: "uploads", uploaded: true, duration_s: kind === "photo" ? null : 9, created_at: `2026-09-14T00:00:0${n % 10}Z` });
+  // The walkthrough video was uploaded first; the chosen cover is the fourth photo.
+  f.results.capture_assets.data = [asset(10, "walkthrough", "video"), asset(11, "one"), asset(12, "two"), asset(13, "three"), asset(14, "four")];
+  f.results.renders.data = [{ id: id(30), listing_id: listing, video_key: `renders/${org}/${listing}/tour.mp4`, duration_s: 20, created_at: "2026-09-14T00:00:00Z" }];
+  f.results.listings.data = { id: listing, org_id: org, main_photo_key: key("four") };
+  const rows = await repository.read(scope, 0, { limit: 1, cover: true });
+  assertEquals(rows.renders, []);
+  assertEquals(rows.assets.map(row => row.id), [id(14), id(11)]);
+  assert(!f.queries.some(query => query.table === "renders"), "a cover preview never reads videos");
+  const page = f.queries.find(query => query.table === "capture_assets")!;
+  assert(page.operations.some(op => op[0] === "eq" && op[1] === "kind" && op[2] === "photo"));
+  assertEquals(page.operations.find(op => op[0] === "range"), ["range", 0, 1]);
+  const chosen = f.queries.find(query => query.table === "listings")!;
+  assert(chosen.operations.some(op => op[0] === "eq" && op[1] === "id" && op[2] === listing) && chosen.operations.some(op => op[0] === "eq" && op[1] === "org_id" && op[2] === org));
+  for (const query of f.queries.filter(query => query.table !== "listings")) assert(query.operations.some(op => op[0] === "eq" && op[1] === "listing_id" && op[2] === listing));
+
+  // End to end: one signed link, the cover, not the first upload and not a video.
+  const signed: string[] = [];
+  const handler = createStudioHandler({ ...repository, authorize: async () => scope, rateLimit: async () => true, sign: async (_bucket, signedKey) => { signed.push(signedKey); return `https://fixture.invalid/read/${encodeURIComponent(signedKey)}`; }, assertSigningPolicyFresh: async () => {}, now: () => 0 });
+  const request = (query: string) => new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}${query}`);
+  const cover = await (await handler(request("&limit=1&cover=1"))).json();
+  assertEquals(cover.photos.map((photo: { id: string }) => photo.id), [id(14)]);
+  assertEquals(cover.videos, []);
+  assertEquals(cover.next_offset, null); assertEquals(cover.has_more, true);
+  assertEquals(signed, [key("four")]);
+
+  // A gallery row showing the cover file wins over its capture alias, wherever it sorts.
+  f.results.photos.data = [
+    { id: id(1), listing_id: listing, original_key: key("one"), enhanced_key: null, caption: "First", is_staged: false, sort: 0, created_at: "2026-09-14T00:00:00Z" },
+    { id: id(2), listing_id: listing, original_key: key("four"), enhanced_key: `renders/${org}/${listing}/four-staged.jpg`, caption: "Staged", is_staged: true, sort: 1, created_at: "2026-09-14T00:00:00Z" },
+    { id: id(3), listing_id: listing, original_key: key("four"), enhanced_key: null, caption: "Cover", is_staged: false, sort: 2, created_at: "2026-09-14T00:00:00Z" },
+  ];
+  const gallery = await (await handler(request("&limit=1&cover=1"))).json();
+  assertEquals(gallery.photos.map((photo: { id: string }) => photo.id), [id(3)]);
+  assertEquals(gallery.photos[0].caption, "Cover");
+
+  // No chosen cover: the first gallery photo, exactly what a full page lists first.
+  f.results.listings.data = { id: listing, org_id: org, main_photo_key: null };
+  const fallback = await (await handler(request("&limit=1&cover=1"))).json();
+  const full = await (await handler(request(""))).json();
+  assertEquals(fallback.photos[0].id, id(1)); assertEquals(full.photos[0].id, id(1));
+  assertEquals(full.has_more, undefined);
+
+  // A failed cover lookup is an error, never an empty or wrong card.
+  f.results.listings = { data: null, error: { message: "internal" } };
+  assertEquals((await handler(request("&limit=1&cover=1"))).status, 503);
+});
+
+Deno.test("an ordinary page still emits exactly the three original queries", async () => {
+  const f = fixture();
+  await createStudioRepository(req, f.deps).read({ userId: user, orgId: org, listingId: listing }, 0);
+  assertEquals(f.queries.map(query => query.table), ["photos", "capture_assets", "renders"]);
+  assert(!f.queries.some(query => query.operations.some(op => op[0] === "eq" && op[1] === "kind")));
+  for (const query of f.queries) assertEquals(query.operations.find(op => op[0] === "range"), ["range", 0, PAGE_SIZE]);
 });
 
 Deno.test("saved gallery sort determines page boundaries without cross-page capture aliases", async () => {

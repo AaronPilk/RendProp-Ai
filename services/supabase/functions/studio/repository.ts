@@ -87,8 +87,11 @@ export function createStudioRepository(
       }
       return { userId: user.id, orgId: org, listingId: listing.id };
     },
-    async read(scope, offset) {
-      const [photos, assets, renders] = await Promise.all([
+    async read(scope, offset, preview) {
+      // An ordinary page reads 50 rows of each kind. A preview (Home card) reads
+      // `size` rows; with `cover` it reads photos only and the chosen cover.
+      const size = preview?.limit ?? PAGE_SIZE, coverFirst = preview?.cover === true;
+      const [photos, assets, renders, chosen] = await Promise.all([
         db().from("photos")
           .select(
             "id,listing_id,original_key,enhanced_key,caption,is_staged,sort,created_at",
@@ -102,22 +105,31 @@ export function createStudioRepository(
           .order("sort", { ascending: true })
           .order("created_at", { ascending: true })
           .order("id", { ascending: true })
-          .range(offset, offset + PAGE_SIZE).abortSignal(req.signal),
-        db().from("capture_assets")
-          .select(
-            "id,listing_id,storage_key,kind,bucket,uploaded,duration_s,created_at",
-          )
-          .eq("listing_id", scope.listingId).eq("uploaded", true)
-          .not("storage_key", "like", "%/contact-%")
-          .not("storage_key", "like", videoPhotoPatterns(scope)[0])
-          .not("storage_key", "like", videoPhotoPatterns(scope)[1])
-          // Source photos follow upload order; UUID only breaks exact ties.
-          .order("created_at", { ascending: true }).order("id", { ascending: true }).range(offset, offset + PAGE_SIZE)
-          .abortSignal(req.signal),
-        db().from("renders")
+          .range(offset, offset + size).abortSignal(req.signal),
+        (() => {
+          const page = db().from("capture_assets")
+            .select(
+              "id,listing_id,storage_key,kind,bucket,uploaded,duration_s,created_at",
+            )
+            .eq("listing_id", scope.listingId).eq("uploaded", true)
+            .not("storage_key", "like", "%/contact-%")
+            .not("storage_key", "like", videoPhotoPatterns(scope)[0])
+            .not("storage_key", "like", videoPhotoPatterns(scope)[1]);
+          return (coverFirst ? page.eq("kind", "photo") : page)
+            // Source photos follow upload order; UUID only breaks exact ties.
+            .order("created_at", { ascending: true }).order("id", { ascending: true }).range(offset, offset + size)
+            .abortSignal(req.signal);
+        })(),
+        // A cover preview shows one picture: it never reads or signs a video.
+        coverFirst ? { data: [], error: null } : db().from("renders")
           .select("id,listing_id,video_key,duration_s,created_at")
           .eq("listing_id", scope.listingId).order("id", { ascending: true })
-          .range(offset, offset + PAGE_SIZE).abortSignal(req.signal),
+          .range(offset, offset + size).abortSignal(req.signal),
+        // The cover is the server's own record, read through the caller's RLS;
+        // no storage key is ever accepted from the browser.
+        coverFirst ? db().from("listings").select("id,org_id,main_photo_key")
+          .eq("id", scope.listingId).eq("org_id", scope.orgId)
+          .is("deleted_at", null).abortSignal(req.signal).maybeSingle() : null,
       ]);
       if (photos.error || assets.error || renders.error) {
         throw new HttpError(503, "Media lookup unavailable.");
@@ -128,6 +140,39 @@ export function createStudioRepository(
         !Array.isArray(renders.data)
       ) {
         throw new HttpError(503, "Media lookup returned inconsistent data.");
+      }
+      if (chosen) {
+        if (chosen.error) throw new HttpError(503, "Media lookup unavailable.");
+        const coverKey = chosen.data?.main_photo_key;
+        // A chosen cover may sit anywhere in the gallery. Read its own rows and
+        // put them first, so one row is enough to show the right picture. Each
+        // row is still fenced and re-checked by the handler like any other.
+        if (typeof coverKey === "string" && coverKey && coverKey.length <= 1024) {
+          const coverPhotos = (column: "enhanced_key" | "original_key") => db().from("photos")
+            .select("id,listing_id,original_key,enhanced_key,caption,is_staged,sort,created_at")
+            .eq("listing_id", scope.listingId).eq(column, coverKey)
+            .order("sort", { ascending: true }).order("created_at", { ascending: true }).order("id", { ascending: true })
+            // A source photo can have several saved edits; only the row that
+            // shows this exact file is the cover.
+            .limit(20).abortSignal(req.signal);
+          const [enhanced, original, asset] = await Promise.all([
+            coverPhotos("enhanced_key"), coverPhotos("original_key"),
+            db().from("capture_assets")
+              .select("id,listing_id,storage_key,kind,bucket,uploaded,duration_s,created_at")
+              .eq("listing_id", scope.listingId).eq("uploaded", true).eq("kind", "photo").eq("storage_key", coverKey)
+              .order("created_at", { ascending: true }).order("id", { ascending: true })
+              .limit(1).abortSignal(req.signal),
+          ]);
+          if (enhanced.error || original.error || asset.error || !Array.isArray(enhanced.data) || !Array.isArray(original.data) || !Array.isArray(asset.data)) {
+            throw new HttpError(503, "Media lookup unavailable.");
+          }
+          // Same rule as the page: a gallery photo shows enhanced_key || original_key.
+          const coverPhoto = [...enhanced.data, ...original.data].find(row => (row.enhanced_key || row.original_key) === coverKey);
+          const first = <T extends { id: string }>(lead: T | undefined, rows: T[]) =>
+            (lead ? [lead, ...rows.filter(row => row.id !== lead.id)] : rows).slice(0, size + 1);
+          photos.data = first(coverPhoto, photos.data);
+          assets.data = first(asset.data[0], assets.data);
+        }
       }
       // Gallery order and capture UUID order have different page boundaries.
       // Resolve only this bounded capture page's display-key aliases through
