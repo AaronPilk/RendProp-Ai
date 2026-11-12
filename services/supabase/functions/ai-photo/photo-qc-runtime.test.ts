@@ -51,17 +51,23 @@ async function fixture(){
    return{data:structuredClone(e),error:null};
   }
   if(name==="photo_quality_release"){
-   // Mirrors the SQL contract: only a retained candidate with its disclosure
-   // row, not yet held or refused, is released; a replay returns the same row.
+   // Mirrors the SQL contract: a retained prospective candidate with its
+   // disclosure row is ACCEPTED and recorded as released; its check stays as
+   // it is. An already accepted edit, or a replay, returns the same row.
    const e=state.row!.evidence;
-   if(!e.output||!e.output_etag||!e.input_etag||!e.provenance_id||!["evidence_ready","checking","accept"].includes(e.state)||["hold","refuse"].includes(state.row!.check.state))return{data:null,error:{message:"RP409: This photo operation cannot be released for private review"}};
-   state.row!.release??={released_at:new Date().toISOString(),output_sha256:e.output.sha256,facts:args.p_facts};return{data:view(),error:null};
+   if(e.state==="accept"||state.row!.release)return{data:view(),error:null};
+   if(!e.output||!e.output_etag||!e.input_etag||!e.provenance_id||!["evidence_ready","checking"].includes(e.state)||["hold","refuse"].includes(state.row!.check.state))return{data:null,error:{message:"RP409: This photo operation cannot be released"}};
+   state.row!.release={released_at:new Date().toISOString(),output_sha256:e.output.sha256,facts:args.p_facts};e.state="accept";return{data:view(),error:null};
   }
   if(name==="photo_quality_reap"){
-   // Mirrors SQL: a retained prospective check that can no longer report is
-   // closed as accepted with the review marked unavailable.
+   // Mirrors SQL: an open check on a retained prospective edit that can no
+   // longer report is closed. A released edit only gets its review recorded;
+   // an unreleased one becomes accepted with the review marked unavailable.
    const e=state.row!.evidence,q=state.row!.check;
-   if(args.p_evidence===e.id&&e.output_etag&&e.provenance_id&&["evidence_ready","checking"].includes(e.state)){e.state="accept";e.failure={phase:"quality_check_stalled",facts:{quality_review:"unavailable",delivered:true}};q.state="accept";return{data:1,error:null};}
+   if(args.p_evidence===e.id&&e.output_etag&&e.provenance_id&&["evidence_ready","checking","accept"].includes(e.state)&&["pending","preparing","derivative_ready","checking"].includes(q.state)){
+    q.state="accept";if(state.row!.release)state.row!.release.review={review:"unavailable"};else{e.state="accept";e.failure={phase:"quality_check_stalled",facts:{quality_review:"unavailable",delivered:true}};}
+    return{data:1,error:null};
+   }
    return{data:0,error:null};
   }
   if(name==="photo_quality_failure"){state.row!.evidence.state="hold";state.row!.evidence.failure={phase:args.p_phase,facts:args.p_facts};state.row!.check.state="hold";return{data:view(),error:null};}
@@ -372,32 +378,32 @@ Deno.test("background judge refuses a withdrawn actor/library before funding and
  await assertRejects(()=>withdrawn.run(before),HttpError,"unavailable");assertEquals(withdrawn.state.holds,0);assertEquals(withdrawn.state.binds,0);assertEquals(withdrawn.state.calls,0);
 });
 
-Deno.test("private release delivers the exact retained candidate with its honest review state; publication stays closed until accept",async()=>{
+Deno.test("release accepts and delivers the exact retained candidate while its advisory check is still open",async()=>{
  const f=await fixture(),row=await f.retain();
  const released=await releasePhotoQuality(f.admin,row,{delivered:"before_advisory_check",geometry:{requested:"2K",width:3584,height:4780,meets_request:true}});
- assert(released&&photoReleased(released));assertEquals(released.check.state,"pending");assertEquals(released.evidence.state,"evidence_ready");
+ assert(released&&photoReleased(released));assertEquals(released.check.state,"pending");assertEquals(released.evidence.state,"accept");
  const file=released.evidence.output!,inline={imageB64:b64(f.output),key:file.key,mime:file.mime,sha256:file.sha256,bytes:file.bytes};
  const first=await(await photoQualityResponse(f.admin,released,actor,org,{},f.io,inline)).json();
  assertEquals(first.image_b64,b64(f.output));assertEquals(first.provenance,{id:"ea100606-0000-4000-8000-000000000008",recorded:true});
- assertEquals(first.photo_quality,{policy:PHOTO_QC_POLICY,check_id:check,state:"pending",advisory:true,delivery:"private_review",publishable:false,review:"pending"});
- assertEquals(f.state.reads,0);assertEquals(f.state.calls,0,"Delivery never dispatches or waits for the judge");
+ assertEquals(first.photo_quality,{policy:PHOTO_QC_POLICY,check_id:check,state:"accept",check_state:"pending",advisory:true,delivery:"released",publishable:true,review:"pending"});
+ assertEquals(f.state.reads,0);assertEquals(f.state.calls,0,"Delivery never dispatches or waits for the judge");assertEquals(f.state.holds,0);
  // A later saved-status read re-hashes the stored bytes, still without a verdict.
- const saved=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(saved.image_b64,b64(f.output));assertEquals(saved.photo_quality.publishable,false);
+ const saved=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(saved.image_b64,b64(f.output));assertEquals(saved.photo_quality.publishable,true);
  f.state.corruptGet=true;await assertRejects(()=>photoQualityResponse(f.admin,f.view(),actor,org,{},f.io),HttpError,"bytes changed");f.state.corruptGet=false;
- f.state.row!.evidence.state="accept";f.state.row!.check.state="accept";
- const accepted=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(accepted.photo_quality.state,"accept");assertEquals(accepted.photo_quality.publishable,true);assertEquals(accepted.photo_quality.review,"unavailable","accepted without a recorded verdict");
- f.state.row!.check.result=pass;assertEquals((await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json()).photo_quality.review,"recorded");f.state.row!.check.result=undefined;
- // A check that later cannot produce a verdict no longer takes the image away;
- // it is reported as held and unpublishable instead of ending in an error.
- f.state.row!.evidence.state="hold";f.state.row!.check.state="hold";f.state.row!.evidence.failure={phase:"quality_check"};
- const held=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(held.image_b64,b64(f.output));assertEquals(held.photo_quality.state,"hold");assertEquals(held.photo_quality.publishable,false);assertEquals(held.photo_quality.failure_phase,"quality_check");
+ // The check closes on its own row; the edit and its publishability never move.
+ f.state.row!.check.state="accept";f.state.row!.release!.review={review:"recorded",verdict:"pass"};
+ const recorded=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(recorded.photo_quality.review,"recorded");assertEquals(recorded.photo_quality.publishable,true);assertEquals(recorded.photo_quality.check_state,"accept");
+ f.state.row!.release!.review={review:"unavailable"};
+ const unavailable=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(unavailable.image_b64,b64(f.output));assertEquals(unavailable.photo_quality.review,"unavailable");assertEquals(unavailable.photo_quality.publishable,true);
+ // A replayed release changes nothing and an accepted edit is never re-released.
+ const again=await releasePhotoQuality(f.admin,f.view(),{});assert(again&&again.release?.released_at===released.release?.released_at);
  f.state.current=false;await assertRejects(()=>photoQualityResponse(f.admin,f.view(),actor,org,{},f.io),HttpError);
 });
 Deno.test("release is unavailable for held, unretained or switched-off edits, and a release of other bytes never delivers",async()=>{
  const off=await fixture(),offRow=await off.retain();off.state.earlyRelease=false;
  assertEquals(await releasePhotoQuality(off.admin,offRow,{}),null);assert(!off.state.rpcs.includes("photo_quality_release"));
  const held=await fixture(),heldRow=await held.retain();await failPhotoQuality(held.admin,heldRow,"photo_output_geometry",{provider_cost_incurred:true});
- assertEquals(await releasePhotoQuality(held.admin,held.view(),{}),null);assertEquals(held.state.row!.release,undefined);
+ assertEquals(await releasePhotoQuality(held.admin,held.view(),{}),null);assertEquals(held.state.row!.release,undefined);assertEquals(held.state.row!.evidence.state,"hold");
  const begun=await fixture();assertEquals(await releasePhotoQuality(begun.admin,await begun.begin(),{}),null);assert(!begun.state.rpcs.includes("photo_quality_release"));
  const foreign=await fixture(),pending=await foreign.retain();
  const forged:PhotoQualityEnvelope={...pending,release:{released_at:new Date().toISOString(),output_sha256:"f".repeat(64)}};assertEquals(photoReleased(forged),false);
@@ -420,6 +426,10 @@ Deno.test("a check stuck in checking or never started cannot strand its edit: th
  const body=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();
  assertEquals(body.image_b64,b64(f.output));assertEquals(body.photo_quality.state,"accept");assertEquals(f.state.rpcs.filter(name=>name==="photo_quality_reap").length,1);
  assertEquals(f.state.calls,0,"Settling never dispatches a judge");assertEquals(f.state.holds,0);
+ // A released edit with a stuck judge was never withheld; settling only closes its check.
+ const r=await fixture(),released=await releasePhotoQuality(r.admin,await r.retain(),{});assert(released);
+ r.state.row!.check.state="checking";r.state.row!.check.judge_started_at=new Date(Date.now()-6*60_000).toISOString();
+ const settled=await(await photoQualityResponse(r.admin,r.view(),actor,org,{},r.io)).json();assertEquals(settled.photo_quality.review,"unavailable");assertEquals(settled.photo_quality.publishable,true);assertEquals(r.state.row!.check.state,"accept");
  // A check that never got a comparison is settled the same way after ten minutes.
  const g=await fixture();await g.retain();(g.state.row!.check as {created_at?:string}).created_at=new Date(Date.now()-11*60_000).toISOString();
  assertEquals((await settleStalePhotoQuality(g.admin,g.view(),actor,org)).evidence.state,"accept");

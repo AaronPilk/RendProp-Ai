@@ -113,6 +113,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import * as actualQualityStore from ${url("./photo-qc-store.ts")};
  import {inlineImageResult,inlineBase64,ProviderError,BUDGETS} from ${url("../_shared/providers/common.ts")};
  import {recordPhotoRecipe} from ${url("./photo-recipe.ts")};
+ import {photoGenerationRetryable} from ${url("./photo-retry.ts")};
  import {runChain} from ${url("../_shared/providers/chain.ts")};
  const actualEvidence=${actualEvidence};
  export const state={objects:new Map(),actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,quality:null,qualityEnabled:true,qualityPending:false,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,assessmentAdmissions:0,assessmentQuota:false,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0,recipes:[],events:[],recipeFail:false,noDispatch:0};
@@ -268,7 +269,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
 }
 // Load exact production signers only after synthetic test credentials exist.
 for(const [key,value] of Object.entries({CLOUDFLARE_ACCOUNT_ID:"a".repeat(32),R2_ACCESS_KEY_ID:"b".repeat(32),R2_SECRET_ACCESS_KEY:"c".repeat(64)}))Deno.env.set(key,value);
-const {ProviderResponseLimitError}=await import("../_shared/providers/common.ts");
+const {ProviderResponseLimitError,ProviderError}=await import("../_shared/providers/common.ts");
 Deno.test("actual photo handler router-off and router-on persist once and replay inline without another quota or provider",async()=>{
  for(const router of [false,true]){const f=await fixture();try{f.state.router=router;
  const first=await f.run(f.request());assertEquals(first.status,200);const result=await first.json();assertEquals(result.image_b64,OUTPUT);assert(/^ai-router\/.+\/completed-photo\/[a-f0-9]{64}\.jpg$/.test(result.asset_key));
@@ -331,8 +332,11 @@ Deno.test("actual staging refuses1K fallback while preserving the surgical promp
   {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.stage",unit:"output_image",unit_cents:4}];
   const brief="Outdoor chairs and a small movable table, with natural linen cushions.";
   const request=f.request({edit:"stage",style:"rustic",prompt:brief}),body=await request.clone().json();
-  const response=await f.run(request);assertEquals(response.status,409,await response.text());
-  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.helperDispatch,0);
+  // One automatic retry, on the SAME prepared 2K route: never the 1K fallback.
+  const response=await f.run(request);assertEquals(response.status,200,await response.text());
+  assertEquals(f.state.submits,2);assertEquals(f.state.holds,2);assertEquals(f.state.helperDispatch,0);assertEquals(f.state.charges,1,"one customer charge for one delivered image");
+  assertEquals(f.state.holdArguments.map(a=>[a.p_stage,a.p_provider,a.p_model]),[["photo.stage:0","gemini","gemini-3.1-flash-image"],["photo.stage:1","gemini","gemini-3.1-flash-image"]]);
+  assertEquals(f.state.costs.length,1);assertEquals(f.state.costs[0].meta.stage,"photo.stage:1");assertEquals(f.state.costs[0].meta.automatic_retry,true);assertEquals(f.state.inputs[1].extra.photo_quality_2k,true);
   assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes(JSON.stringify(brief)));
   assert(f.state.prompts[0].includes("solid slabs solid"));assert(f.state.prompts[0].includes("existing open pergolas open"));
   for(const input of f.state.inputs){assertEquals(input.image_b64,body.image_b64);assertEquals(input.image_url,`data:image/jpeg;base64,${body.image_b64}`);}
@@ -379,8 +383,8 @@ Deno.test("actual custom handler cannot quietly fallback to1K after its prepared
  const f=await fixture();try{f.state.router=true;f.state.primaryFail=true;f.state.routes=[
   {route_id:"primary",provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.custom",unit:"output_image",unit_cents:6.7},
   {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.custom",unit:"output_image",unit_cents:4}];
-  const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,409,await response.text());
-  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
+  const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,200,await response.text());
+  assertEquals(f.state.submits,2,"one automatic retry on the same 2K route");assertEquals(f.state.holds,2);assertEquals(f.state.holdArguments.every(a=>a.p_provider==="gemini"&&a.p_model==="gemini-3.1-flash-image"),true,"never the 1K fallback");assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assertEquals(f.state.inputs[1].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
  }finally{f.close();}
 });
 Deno.test("legacy photo polisher clarifies before a paid helper and refuses invented same-category work",async()=>{
@@ -982,4 +986,20 @@ Deno.test("an off-size but complete paid photo is delivered with its real size o
   tiny.state.output=outputJPEG(200,150);tiny.state.earlyRelease=true;
   assertEquals((await tiny.run(tiny.request())).status,409);assertEquals(tiny.state.releaseCalls??0,0,"A frame with no usable picture is never released");
  }finally{tiny.close();}
+});
+
+Deno.test("a second transient failure ends the edit once: refund, closed operation, retryable, no third attempt",async()=>{
+ const f=await fixture();try{
+  // Every attempt fails with a dropped connection (not only the first).
+  f.state.afterSubmit=()=>{throw new TypeError("Synthetic connection reset");};
+  const response=await f.run(f.request());assert(response.status!==200);
+  assertEquals(f.state.submits,2,"exactly one retry");assertEquals(f.state.holds,2);assertEquals(f.state.refunds,1);assertEquals(f.state.costs.length,0);assertEquals(f.state.charges,1);
+ }finally{f.close();}
+});
+Deno.test("a safety refusal is never retried",async()=>{
+ const f=await fixture();try{
+  f.state.afterSubmit=()=>{throw new ProviderError("gemini","nsfw","Synthetic safety refusal");};
+  const response=await f.run(f.request());assert(response.status!==200);
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.costs.length,0);
+ }finally{f.close();}
 });

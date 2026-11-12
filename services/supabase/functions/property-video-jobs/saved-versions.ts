@@ -31,7 +31,10 @@ function provenKind(asset:Row,rows:Row[],originals:Row[],actor:string,org:string
   if(rows.length!==1)return{kind:'unknown',provenance:null};
   const p=rows[0],kind=known(p.kind),q=p.qc;
   if(kind==='unknown'||!UUID.test(p.id)||p.org_id!==org||p.listing_id!==listing||p.altered_key!==asset.storage_key||
-    !object(q)||q.publishable!==true||q.action!=='accept'||q.verdict!=='pass'||q.output_sha256!==asset.sha256)return{kind:'unknown',provenance:null};
+    // The photo verdict is advisory (owner decision 12 Nov 2026): an accepted,
+    // publishable edit of these exact bytes is a known version whatever the
+    // automated review said, or when it has not reported yet.
+    !object(q)||q.publishable!==true||q.action!=='accept'||q.output_sha256!==asset.sha256)return{kind:'unknown',provenance:null};
   if(p.photo_publication!==null){
     const v=p.photo_publication;
     if(!publicationMatches(v,asset,actor,org,listing,library))return{kind:'unknown',provenance:null};

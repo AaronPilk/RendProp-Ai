@@ -1017,41 +1017,6 @@ async function handleComplianceOrg(
 // for the SAME listing, so "View original" can never be pointed at somebody
 // else's object.
 
-/**
- * Deferred attachment for a privately released, not yet checked photo edit.
- *
- * Returns the disclosure summary when the exact saved copy was remembered, or
- * null when this record is not such an edit (already accepted, held, refused,
- * calibration, another actor, no listing, or the release migration is absent),
- * in which case the caller continues with the unchanged attachment rules.
- * Nothing is published here. SQL re-verifies the actor's current write scope
- * and that the asset is the same listing's uploaded photo with the checked
- * output's exact sha256 and byte count; a different file is refused loudly.
- */
-async function deferReleasedPhotoAttachment(req: Request, userId: string, id: string, alteredAsset: string): Promise<Record<string, unknown> | null> {
-  const admin = adminClient();
-  const evidence = await admin.from("photo_edit_evidence").select("id,actor_id,org_id,library_org_id,listing_id,provenance_id,state,purpose").eq("provenance_id",id).limit(2);
-  if (evidence.error || evidence.data?.length !== 1) return null;
-  const e = evidence.data[0];
-  if (e.actor_id !== userId || e.provenance_id !== id || e.purpose !== "prospective" || !["evidence_ready","checking"].includes(e.state) ||
-    typeof e.listing_id !== "string" || !UUID_RE.test(e.listing_id)) return null;
-  let scope: Awaited<ReturnType<typeof listingLibraryScope>>;
-  try { scope = await listingLibraryScope(admin,userId,e.listing_id,true); }
-  catch { return null; }
-  const selected = preferredOrg(req);
-  if (!(selected === undefined || selected === scope.org_id || selected === scope.library_org_id) || e.org_id !== scope.org_id || e.library_org_id !== scope.library_org_id) return null;
-  const result = await admin.rpc("photo_quality_defer_altered",{p_actor:userId,p_evidence:e.id,p_asset:alteredAsset});
-  if (result.error) {
-    // The one refusal that is about THIS file keeps its existing wording.
-    if (/RP409: The selected version is not the exact checked photo/.test(result.error.message ?? "")) throwRpc(result.error.message);
-    return null;
-  }
-  if (result.data?.deferred !== true || result.data?.provenance_id !== id) return null;
-  const row = await admin.from("media_provenance").select("id,listing_id,kind,label,disclosure,created_at").eq("id",id).eq("org_id",e.org_id).maybeSingle();
-  if (row.error || !row.data || row.data.listing_id !== e.listing_id) return {id,listing_id:e.listing_id};
-  return {id:row.data.id,listing_id:row.data.listing_id,kind:row.data.kind,label:row.data.label ?? null,disclosure:row.data.disclosure,created_at:row.data.created_at ?? null};
-}
-
 async function handleCompliancePatch(req: Request, userId: string, id: string | undefined): Promise<Response> {
   assert(id && UUID_RE.test(id), 400, "PATCH /me/compliance/:id requires the provenance record's UUID");
   id = id.toLowerCase();
@@ -1066,15 +1031,6 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
     400,
     "Send at least one of original_asset_id, altered_asset_id, label",
   );
-
-  // An edit that was delivered for private review before its advisory check
-  // finished cannot take its uploaded copy yet. Shipped apps attach that copy
-  // right after the image arrives, so remember the exact asset and let
-  // photo_quality_finish apply it when (and only if) the check accepts.
-  if (alteredAsset && !originalAsset && !label && Object.keys(body).length === 1 && Object.hasOwn(body,"altered_asset_id")) {
-    const deferred = await deferReleasedPhotoAttachment(req, userId, id, alteredAsset);
-    if (deferred) return json({ok:true,deferred:true,provenance:deferred},200,{"cache-control":"private, no-store"});
-  }
 
   const visible = await db.from("media_provenance").select("id,org_id,listing_id").eq("id",id).maybeSingle();
   assert(!visible.error,503,"Disclosure identity could not be verified.");
@@ -1105,7 +1061,10 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
       evidence.data[0].output?.key === row.altered_key && row.qc.evidence_id === evidence.data[0].id,404,"Disclosure record not found.");
     const check = await admin.from("photo_quality_checks").select("id,evidence_id,state,automatic").eq("evidence_id",evidence.data[0].id).eq("automatic",true).limit(2);
     assert(!check.error,503,"Disclosure check could not be verified.");
-    assert(check.data?.length === 1 && check.data[0].state === "accept" && check.data[0].id === row.qc.check_id,404,"Disclosure record not found.");
+    // The edit is accepted media from the moment it is delivered (owner
+    // decision 12 Nov 2026); its advisory check may still be open. The check
+    // row must still be this edit's own automatic check.
+    assert(check.data?.length === 1 && check.data[0].id === row.qc.check_id,404,"Disclosure record not found.");
     prior = {id:row.id,org_id:row.org_id,listing_id:row.listing_id};
   }
   if (prior.listing_id === null) {

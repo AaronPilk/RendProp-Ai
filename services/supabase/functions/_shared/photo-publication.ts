@@ -37,7 +37,7 @@ function target(v:unknown,scope:{actor:string;org:string;library:string;listing:
 }
 function source(v:unknown,scope:{actor:string;org:string;library:string;listing:string},expectedProvenance?:string):Row{
   const r=target(v,scope),e=r.evidence,q=r.check,m=r.provenance;
-  if(!object(e)||!object(q)||!object(m)||!UUID.test(e.id)||!UUID.test(q.id)||q.evidence_id!==e.id||q.automatic!==true||e.actor_id!==scope.actor||e.org_id!==scope.org||e.library_org_id!==scope.library||e.state!=="accept"||e.purpose!=="prospective"||q.state!=="accept"||!UUID.test(e.provenance_id)||m.id!==e.provenance_id||expectedProvenance!==undefined&&m.id!==expectedProvenance||m.org_id!==scope.org||!object(m.qc)||m.qc.publishable!==true||m.qc.action!=="accept"||m.qc.evidence_id!==e.id||m.qc.check_id!==q.id||typeof m.disclosure!=="string"||!m.disclosure.trim())throw fail();
+  if(!object(e)||!object(q)||!object(m)||!UUID.test(e.id)||!UUID.test(q.id)||q.evidence_id!==e.id||q.automatic!==true||e.actor_id!==scope.actor||e.org_id!==scope.org||e.library_org_id!==scope.library||e.state!=="accept"||e.purpose!=="prospective"||!UUID.test(e.provenance_id)||m.id!==e.provenance_id||expectedProvenance!==undefined&&m.id!==expectedProvenance||m.org_id!==scope.org||!object(m.qc)||m.qc.publishable!==true||m.qc.action!=="accept"||m.qc.evidence_id!==e.id||m.qc.check_id!==q.id||typeof m.disclosure!=="string"||!m.disclosure.trim())throw fail();
   const unbound=e.listing_id===null&&m.listing_id===null&&e.original_asset_id===null&&e.original_reference===null;
   const reference=e.original_reference;
   const sourcePrefix=object(reference)&&["uploads","renders"].includes(reference.bucket)?`${reference.bucket}/${scope.org}/${scope.listing}/`:null;
