@@ -68,6 +68,9 @@
 //                                          does not fire
 //     • "declutter the kids' room"       — no ADD verb (and the canned
 //                                          declutter edit never goes near this)
+//     • "add a couple of armchairs", "stage a guest bedroom", "add a dog bed",
+//       "furnish the family room"        — furniture and room words, not people
+//                                          or animals (FURNISHING_IDIOM below)
 //
 // The refusal is a 400 with code `unsupported_edit` and copy that names the
 // term and says what to do instead — an agent must be able to fix it in one go.
@@ -220,6 +223,26 @@ const CONTEXTUAL: Rule[] = [
 const ADD_VERB =
   /\b(add(s|ed|ing)?|insert(s|ed|ing)?|place(s|d|ing)?|put(s|ting)?|includ(e|es|ed|ing)|show(s|n|ing)?|generat(e|es|ed|ing)|creat(e|es|ed|ing)|render(s|ed|ing)?|populat(e|es|ed|ing)|fill(s|ed|ing)?|stag(e|es|ed|ing)|seat(s|ed|ing)?|depict(s|ed|ing)?|featur(e|es|ed|ing)|imagin(e|es|ed|ing)|invent(s|ed|ing)?|draw(s|ing|n)?|paint(s|ed|ing)?|photoshop(s|ped|ping)?|bring\s+in|make\s+it\s+(look|appear|seem)|turn\s+it\s+into)\b/i;
 
+/**
+ * Furniture and room words that contain a people or pet word but put no person
+ * or animal in the picture: "a couple of chairs", "guest bed", "kids' room",
+ * "family room", "man cave", "model home", "dog bed", "cat tree".
+ *
+ * Before 12 Nov 2026 the ADD-verb tier refused all of these in a staging brief
+ * ("add a couple of armchairs" was read as adding couples), which is one of
+ * the ways ordinary staging requests came back as "can't be generated". They
+ * are removed from the text the ADD-verb tier scans, and only from that: the
+ * always-blocked tier and the script rules still see every word, and "add a
+ * couple of kids at the counter" is still refused because "kids" remains.
+ */
+const FURNISHING_IDIOM = new RegExp(
+  "\\b(?:a\\s+)?couples?\\s+of\\b" +
+  "|\\b(?:guests?|kids?|child(?:ren)?|bab(?:y|ies)|toddlers?|infants?|boys?|girls?|teen(?:ager)?s?|famil(?:y|ies)|man|pets?|dogs?|cats?|pupp(?:y|ies)|kittens?|models?)" +
+  "(?:'s|s'|\u2019s|s\u2019)?[\\s-]+(?:(?:size|sized|friendly)\\s+)?" +
+  "(?:bed(?:room)?s?|rooms?|suites?|bath(?:room)?s?|nurser(?:y|ies)|playrooms?|cribs?|bunk\\s+beds?|chairs?|tables?|desks?|dressers?|furniture|toys?|caves?|homes?|houses?|bowls?|doors?|gates?|trees?|crates?|kitchens?|areas?|spaces?|nooks?)\\b",
+  "gi",
+);
+
 export interface DenylistHit {
   label: string;
   tier: "always" | "add";
@@ -244,8 +267,9 @@ function checkDenylist(
     if (r.re.test(text)) return { label: r.label, tier: "always" };
   }
   if (contextual && ADD_VERB.test(text)) {
+    const scanned = text.replace(FURNISHING_IDIOM, " ");
     for (const r of CONTEXTUAL) {
-      if (r.re.test(text)) return { label: r.label, tier: "add" };
+      if (r.re.test(scanned)) return { label: r.label, tier: "add" };
     }
   }
   return null;

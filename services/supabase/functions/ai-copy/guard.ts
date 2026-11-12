@@ -35,6 +35,10 @@ import { HttpError } from "../_shared/http.ts";
 import { assertFairHousing, assertMarketingCopy } from "../_shared/fairhousing.ts";
 import { analyzeCustomPhotoPrompt, CUSTOM_PHOTO_CHOICES, customPhotoOutputMatchesInput } from "../_shared/custom-photo-prompt.ts";
 
+/** Prepare a free-text photo request. Since 12 Nov 2026 the analysis never
+ * returns "blocked", and returns "clarify" only for empty or over-length text,
+ * so an ordinary request always comes back prepared. Both throws stay for that
+ * empty/over-length case and for older analysis results. */
 export function assertCustomPhotoPrompt(text: string, spaceType: string | null, mode: "custom" | "furnishing" = "custom") {
   const result = analyzeCustomPhotoPrompt(text, spaceType, mode);
   if (result.status === "blocked") throw new HttpError(400, result.message, "unsupported_edit", {
