@@ -13,11 +13,21 @@ function fixture(){
 Deno.test("fresh ordinary request starts CPU once, polls only scoped status, then judges exactly once",async()=>{
  const f=fixture(),result=await f.run();assertEquals(result.check.state,"accept");assertEquals(f.state.starts,1);assertEquals(f.state.reads,2);assertEquals(f.state.judges,1);assertEquals(f.state.deadline,120000);assertEquals(f.state.scope,3);
 });
-Deno.test("busy/lost kickoff returns saved pending without another start, read or judge",async()=>{
- const f=fixture();f.state.busy=true;assertEquals((await f.run()).check.state,"pending");assertEquals(f.state.starts,1);assertEquals(f.state.reads,0);assertEquals(f.state.judges,0);
+Deno.test("busy/lost kickoff repeats only the idempotent wake, at most three times about2s apart, then returns saved pending without a judge",async()=>{
+ const f=fixture();f.state.busy=true;f.state.sequence=Array(20).fill("pending");assertEquals((await f.run()).check.state,"pending");assertEquals(f.state.starts,3);assertEquals(f.state.reads,6);assertEquals(f.state.now,4500);assertEquals(f.state.judges,0);
+});
+Deno.test("a wake lost once is repeated and the same request still finishes the check",async()=>{
+ const f=fixture();f.state.busy=true;f.state.sequence=["pending","pending","pending","preparing","derivative_ready"];
+ const start=f.deps.start;f.deps.start=async(id,signal)=>{const reply=await start(id,signal);f.state.busy=false;return reply;};
+ assertEquals((await f.run()).check.state,"accept");assertEquals(f.state.starts,2);assertEquals(f.state.judges,1);
+});
+Deno.test("an unacknowledged wake that actually landed is never repeated once the check is claimed",async()=>{
+ const f=fixture();f.state.busy=true;f.state.sequence=["preparing","preparing","preparing","preparing","derivative_ready"];
+ assertEquals((await f.run()).check.state,"accept");assertEquals(f.state.starts,1);assertEquals(f.state.judges,1);
 });
 Deno.test("read-only wait exhausts75seconds CPU budget and leaves45seconds unspent without repeat",async()=>{
- const f=fixture();f.state.sequence=[];assertEquals((await f.run()).check.state,"preparing");assertEquals(f.state.now,75000);assertEquals(f.state.starts,1);assertEquals(f.state.judges,0);assertEquals(f.state.reads,50);
+ // 30 s at the 750 ms pace (40 reads), then 45 s at 1500 ms (30 reads).
+ const f=fixture();f.state.sequence=[];assertEquals((await f.run()).check.state,"preparing");assertEquals(f.state.now,75000);assertEquals(f.state.starts,1);assertEquals(f.state.judges,0);assertEquals(f.state.reads,70);
 });
 Deno.test("already preparing check does not issue another CPU kickoff",async()=>{
  const f=fixture();f.row.check.state="preparing";f.row.can_continue=false;f.state.sequence=["derivative_ready"];f.deps.status=async(_admin,row)=>{f.state.reads++;return{...row,can_continue:true,check:{...row.check,state:"derivative_ready"}};};assertEquals((await f.run()).check.state,"accept");assertEquals(f.state.starts,0);assertEquals(f.state.judges,1);

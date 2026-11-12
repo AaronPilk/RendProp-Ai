@@ -10,6 +10,15 @@ export const PHOTO_CHECK_JUDGE_RESERVE_MS=45_000;
 export const PHOTO_MAIN_REQUEST_BUDGET_MS=140_000;
 export const PHOTO_MAIN_RESPONSE_RESERVE_MS=10_000;
 export const PHOTO_MAIN_PERSIST_RESERVE_MS=20_000;
+// A comparison now takes seconds, so look often at first and relax afterwards.
+export const PHOTO_STATUS_FAST_MS=750;
+export const PHOTO_STATUS_FAST_WINDOW_MS=30_000;
+export const PHOTO_STATUS_SLOW_MS=1_500;
+// The wake is idempotent in the controller (same check UUID only re-arms its
+// alarm; any other owner refuses), so an unacknowledged wake is repeated a
+// bounded number of times instead of leaving the check to the minute cron.
+export const PHOTO_START_ATTEMPTS=3;
+export const PHOTO_START_RETRY_MS=2_000;
 export interface PhotoWaitDependencies {
  now():number;
  sleep(milliseconds:number,signal:AbortSignal):Promise<void>;
@@ -32,8 +41,10 @@ const actual:PhotoWaitDependencies={now:Date.now,start:startPhotoComparison,judg
  }),
  status:async(admin,row,signal)=>photoEnvelope(await photoQualityRpc(admin,"photo_quality_status",{p_actor:row.evidence.actor_id,p_check:row.check.id},signal),row.evidence.actor_id),
 };
-/** One CPU kickoff, then only fresh scoped status reads. Never restart a CPU
- * or judge in this loop. Leave45s for bounded derivative reads+one judge. */
+/** Wake the CPU controller, then only fresh scoped status reads. The wake is
+ * repeated only while it is unacknowledged AND the check is still pending
+ * (both slots busy, or the reply was lost); it never claims, restarts a running
+ * comparison or judges. Leave45s for bounded derivative reads+one judge. */
 export async function waitForPhotoQuality(admin:PhotoAdmin,initial:PhotoQualityEnvelope,args:{actor:string;selected:string|null;request:Request;instruction?:string;deadline?:number},deps=actual):Promise<PhotoQualityEnvelope>{
  const now=deps.now(),deadline=Math.min(args.deadline??now+PHOTO_CHECK_ENDPOINT_BUDGET_MS,now+PHOTO_CHECK_ENDPOINT_BUDGET_MS);
  let row=initial;
@@ -41,18 +52,23 @@ export async function waitForPhotoQuality(admin:PhotoAdmin,initial:PhotoQualityE
  const signal=AbortSignal.any([args.request.signal,AbortSignal.timeout(deadline-now)]);
  try{
   await photoQualityScope(admin,row,args.actor,args.selected);signal.throwIfAborted();
-  if(row.check.state==="pending"&&row.can_continue&&row.check.judge_started_at===null){
-   const started=await deps.start(row.check.id,signal);
-   // A missing/lost acknowledgment authorizes no second start. A later GET or
-   // explicit same-operation check reconciles the saved controller state.
-   if(!started.started)return row;
-  }
+  let acknowledged=true,attempts=0,lastStart=0;
+  const wake=async()=>{attempts++;lastStart=deps.now();acknowledged=(await deps.start(row.check.id,signal)).started;};
+  if(row.check.state==="pending"&&row.can_continue&&row.check.judge_started_at===null)await wake();
+  const began=deps.now();
   while(["pending","preparing"].includes(row.check.state)&&row.check.judge_started_at===null&&deps.now()<deadline-PHOTO_CHECK_JUDGE_RESERVE_MS){
-   await deps.sleep(Math.min(1500,deadline-PHOTO_CHECK_JUDGE_RESERVE_MS-deps.now()),signal);
+   // Still unacknowledged after every bounded wake: return the saved pending
+   // state, exactly as a single lost wake did before. The minute cron and a
+   // later explicit check reconcile it; no generation is repeated.
+   if(!acknowledged&&row.check.state==="pending"&&attempts>=PHOTO_START_ATTEMPTS)return row;
+   const pace=deps.now()-began<PHOTO_STATUS_FAST_WINDOW_MS?PHOTO_STATUS_FAST_MS:PHOTO_STATUS_SLOW_MS;
+   await deps.sleep(Math.min(pace,deadline-PHOTO_CHECK_JUDGE_RESERVE_MS-deps.now()),signal);
    signal.throwIfAborted();const next=await deps.status(admin,row,signal);
    // Status IDs and current selected-library authority are checked every time.
    if(next.check.id!==initial.check.id||next.evidence.id!==initial.evidence.id)return row;
    await photoQualityScope(admin,next,args.actor,args.selected);row=next;
+   if(row.check.state!=="pending")acknowledged=true; // the controller (or cron) has claimed it
+   else if(!acknowledged&&row.can_continue&&row.check.judge_started_at===null&&attempts<PHOTO_START_ATTEMPTS&&deps.now()-lastStart>=PHOTO_START_RETRY_MS){signal.throwIfAborted();await wake();}
   }
   if(row.check.state==="derivative_ready"&&row.can_continue&&row.check.judge_started_at===null&&deps.now()<deadline-PHOTO_CHECK_JUDGE_RESERVE_MS){
    signal.throwIfAborted();return await deps.judge(admin,row,{...args,deadline});
