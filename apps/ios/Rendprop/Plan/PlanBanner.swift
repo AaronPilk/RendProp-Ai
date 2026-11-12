@@ -61,6 +61,10 @@ struct PlanBanner: View {
         private var bag = Set<AnyCancellable>()
         private var foreground: NSObjectProtocol?
         private var inFlight = false
+        /// The account, session and library whose plan `state` shows.
+        private var shownScope: String?
+        /// Set by a plan change: the next read must come from the server.
+        private var wantsFreshRead = false
 
         init() {
             // AuthStore's own publisher, which fires IMMEDIATELY with the
@@ -80,11 +84,16 @@ struct PlanBanner: View {
             NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)
                 .sink { [weak self] _ in
                     self?.state = nil
+                    MeReadCoalescer.shared.invalidate()
                     Task { @MainActor in await self?.refresh() }
                 }.store(in: &bag)
 
             NotificationCenter.default.publisher(for: .rendpropPlanChanged)
-                .sink { [weak self] _ in Task { @MainActor in await self?.refresh() } }
+                .sink { [weak self] _ in
+                    self?.wantsFreshRead = true
+                    MeReadCoalescer.shared.invalidate()
+                    Task { @MainActor in await self?.refresh() }
+                }
                 .store(in: &bag)
 
             // A plan can change while the app is backgrounded — a purchase on
@@ -124,9 +133,18 @@ struct PlanBanner: View {
                 return
             }
             guard Config.useLiveBackend, let base = Config.apiBaseURL else { return }
-            state = nil
             let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
             guard let org = WorkspaceContext.selectedOrgID, let billingOrg = WorkspaceContext.servingOrgID else { state = nil; return }
+            // The plan already on screen stays there while the same account,
+            // session and library re-read it; blanking it first made the
+            // banner vanish and return on every foreground. A different
+            // account, session or library still starts from nothing.
+            let scope = "\(actor ?? "")|\(revision)|\(org.uuidString)"
+            if scope != shownScope { state = nil }
+            shownScope = scope
+            // A plan change must not be answered from a read made before it.
+            let reuse = wantsFreshRead ? 0 : MeReadCoalescer.reuseInterval
+            wantsFreshRead = false
 
             // A session can exist a beat before its token is usable, so give it
             // a few tries rather than going quiet for the rest of the launch.
@@ -134,22 +152,32 @@ struct PlanBanner: View {
                 if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
                 guard let token = await AuthStore.validAccessToken() else { continue }
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
-                      WorkspaceContext.selectedOrgID == org else { return }
+                      WorkspaceContext.selectedOrgID == org else { state = nil; return }
                 var req = URLRequest(url: base.appendingPathComponent("me"))
                 req.timeoutInterval = 20
                 req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+                req.setValue(Config.edgeFunctionRegion, forHTTPHeaderField: Config.edgeFunctionRegionHeader)
                 req.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
-                guard let (data, resp) = try? await URLSession.shared.data(for: req),
-                      let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+                // The brand and role readers ask for the same thing at the same
+                // moment; whoever asks first sends the one request.
+                let request = req
+                guard let key = MeReadCoalescer.currentKey(),
+                      let data = try? await MeReadCoalescer.shared.data(key: key, reuseWithin: reuse, fetch: {
+                          let (body, resp) = try await URLSession.shared.data(for: request)
+                          guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                              throw APIError.badResponse(-1)
+                          }
+                          return body
+                      })
                 else { continue }
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
-                      WorkspaceContext.selectedOrgID == org else { return }
+                      WorkspaceContext.selectedOrgID == org else { state = nil; return }
                 let d = JSONDecoder()
                 // convertFromSnakeCase and explicit CodingKeys are mutually
                 // exclusive — MeSlice declares none, so `trial_ends_at` maps.
                 d.keyDecodingStrategy = .convertFromSnakeCase
-                guard let me = try? d.decode(MeSlice.self, from: data) else { return }
+                guard let me = try? d.decode(MeSlice.self, from: data) else { state = nil; return }
                 // Use the server's effective allowances for this workspace;
                 // an Apple introductory week can have a narrower allowance
                 // than the paid SKU named by `plan`.
@@ -195,6 +223,7 @@ struct PlanBanner: View {
             }
             // Every attempt failed: say nothing rather than guess at somebody's
             // money. The next foreground tries again.
+            state = nil
         }
     }
 

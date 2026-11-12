@@ -188,6 +188,7 @@ import Combine
         req.httpMethod = method; req.timeoutInterval = 20
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        req.setValue(Config.edgeFunctionRegion, forHTTPHeaderField: Config.edgeFunctionRegionHeader)
         if let body { req.httpBody = try JSONSerialization.data(withJSONObject: body); req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         let (data, response) = try await URLSession.shared.data(for: req)
         guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }

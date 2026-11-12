@@ -182,6 +182,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var hasRestoredLibrary = false
     private var cloudRefreshTask: Task<Void, Never>?
     private var cloudRefreshOperation: UUID?
+    /// The pass that backs up every house's photos (see `schedulePhotoBackupSweep`).
+    private var photoBackupSweep: Task<Void, Never>?
+    private var photoBackupSweepRequested = false
+    /// What the last pass concluded per account, library and house, for this
+    /// run of the app. `signature` is the house's saved versions at the time.
+    private var photoBackupMemo: [String: (signature: String, complete: Bool, at: Date)] = [:]
+    private var photoWorkObserver: NSObjectProtocol?
     var pendingCloudListingCount: Int {
         guard AuthStore.shared.isIdentified, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return 0 }
         return listings.filter { CloudDraftCreation.canAutoSync($0, userID: owner) && ($0.serverID == nil || $0.needsServerSync == true || $0.measurementSync?.pending == true) }.count
@@ -291,6 +298,10 @@ final class AppModel: ObservableObject {
         }
         planObserver = NotificationCenter.default.addObserver(forName: .rendpropPlanChanged, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in await self?.refreshCloudWorkspaceAfterCurrent(retryPlanRequired: false) }
+        }
+        // A batch of photo edits ended: back up what it saved.
+        photoWorkObserver = NotificationCenter.default.addObserver(forName: .rendpropPhotoWorkFinished, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.schedulePhotoBackupSweep() }
         }
         // Somebody found out the server does not have the business type (an
         // account switch, `/me` naming a different industry) — send it again.
@@ -1325,6 +1336,9 @@ final class AppModel: ObservableObject {
                     self.listings = merged
                 }
                 self.lastCloudSyncAt = Date()
+                // The library is current: save any house's photos that have
+                // not reached the account yet. Runs on its own; never awaited.
+                self.schedulePhotoBackupSweep()
                 await self.defaultFirstCloudCoversAfterWorkspaceSync()
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
                 // One contact read per listing, four in flight at a time instead
@@ -1376,6 +1390,85 @@ final class AppModel: ObservableObject {
     /// workspace read. Unsent work, a failed sync, sign-in, a library switch
     /// and pull-to-refresh all still refresh immediately.
     static let foregroundRefreshInterval: TimeInterval = 15
+
+    /// How long a house whose backup did not finish waits before the library
+    /// pass tries it again. A finished house waits until its photos change.
+    static let photoBackupRetryInterval: TimeInterval = 300
+
+    /// Save every house's photos to the account without the house being
+    /// opened. Before this, backup ran only from the house's own screen, so
+    /// Studio listed houses whose photos had never left the phone.
+    ///
+    /// This decides only WHEN the existing per-house backup runs. The backup
+    /// itself, its account and library checks and its upload rules are
+    /// `NativePhotoBackupCoordinator`'s, unchanged. One house at a time; a
+    /// request made while a pass is running starts one more pass after it.
+    func schedulePhotoBackupSweep() {
+        guard hasLoaded, Config.useLiveBackend, AuthStore.shared.isIdentified, api is NativePhotoBackupAPI else { return }
+        if photoBackupSweep != nil { photoBackupSweepRequested = true; return }
+        photoBackupSweep = Task { [weak self] in
+            repeat {
+                guard let self else { return }
+                self.photoBackupSweepRequested = false
+                await self.runPhotoBackupSweep()
+            } while self?.photoBackupSweepRequested == true && !Task.isCancelled
+            self?.photoBackupSweep = nil
+        }
+    }
+
+    private func runPhotoBackupSweep() async {
+        guard let backupAPI = api as? NativePhotoBackupAPI,
+              let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
+              let library = WorkspaceContext.selectedOrgID,
+              let context = try? CloudMediaAccessContext.capture(orgID: library) else { return }
+        // Only houses this account already has in the cloud, in the library on
+        // screen. A draft is never created here; that stays with listing sync.
+        let houses = listings.filter {
+            !$0.isSample && $0.cloudUnavailable != true && $0.serverID != nil
+                && CloudDraftCreation.canAutoSync($0, userID: owner) && isInSelectedWorkspace($0)
+        }.map(\.id)
+        for listingID in houses {
+            // Stop the whole pass the moment the account or library changes.
+            guard !Task.isCancelled, (try? context.check()) != nil else { return }
+            guard let listing = listings.first(where: { $0.id == listingID }), let serverID = listing.serverID,
+                  !listing.isSample, listing.cloudUnavailable != true,
+                  CloudDraftCreation.canAutoSync(listing, userID: owner), isInSelectedWorkspace(listing),
+                  !pendingAdoptionBlocksServerListing(listingID),
+                  !NativePhotoBackupCoordinator.shared.isRunning(listingID: listingID) else { continue }
+            let directory = EnhancedPhoto.directory(for: listingID)
+            guard FileManager.default.fileExists(atPath: directory.path),
+                  let index = try? PhotoVersionHistory.load(directory: directory), !index.versions.isEmpty else { continue }
+            let signature = DirectUploader.sha256Hex(index.versions.values
+                .map { "\($0.id)|\($0.imageFile)|\($0.originalFile ?? "")" }.sorted().joined(separator: "\n"))
+            let memoKey = "\(owner.uuidString)|\(library.uuidString)|\(listingID.uuidString)"
+            if let memo = photoBackupMemo[memoKey], memo.signature == signature,
+               memo.complete || Date().timeIntervalSince(memo.at) < Self.photoBackupRetryInterval { continue }
+            // Which of this house's versions the account already holds: one
+            // short read per fifty versions, no file is hashed or sent.
+            let wanted = Set(index.versions.values.filter { NativePhotoBackup.eligible($0, in: index) }.map(\.id))
+            var complete = false
+            if !wanted.isEmpty {
+                do {
+                    var held = Set<String>(), offset = 0
+                    while true {
+                        let page = try await backupAPI.nativePhotoVersions(listingID: serverID, offset: offset, libraryOrgID: library)
+                        try context.check()
+                        for row in page.versions where row.available { held.insert(row.versionID) }
+                        guard let next = page.nextOffset, next > offset, held.count <= 10_000 else { break }
+                        offset = next
+                    }
+                    complete = wanted.isSubset(of: held)
+                } catch is CancellationError { return }
+                catch CloudSyncError.identityChanged { return }
+                catch { continue }   // offline or refused: look again on the next pass
+            }
+            if !complete {
+                await NativePhotoBackupCoordinator.shared.scheduleAndWait(listingID: listingID, model: self)
+                guard !Task.isCancelled, (try? context.check()) != nil else { return }
+            }
+            photoBackupMemo[memoKey] = (signature, complete, Date())
+        }
+    }
 
     func refreshCloudWorkspaceOnForeground() async {
         if let last = lastCloudSyncAt, cloudSyncError == nil, pendingCloudListingCount == 0,
@@ -1651,7 +1744,7 @@ final class AppModel: ObservableObject {
                 let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
                 guard values.isRegularFile == true, values.isSymbolicLink != true,
                       let size = values.fileSize, size > 0, size <= 128 * 1024 * 1024,
-                      let digest = DirectUploader.sha256(of: file), FileStore.fileSize(file) == Int64(size) else {
+                      let digest = DirectUploader.memoizedSHA256(of: file), FileStore.fileSize(file) == Int64(size) else {
                     throw PhotoCloudSelectionFailure.unmapped
                 }
                 return (digest, Int64(size))
@@ -1662,12 +1755,12 @@ final class AppModel: ObservableObject {
             try requireIdentity()
             let originalAsset = try await CloudPhotoReferences.shared.galleryAssetID(fileURL: file,
                 ownerID: identity.actorID, orgID: identity.libraryOrgID, listingID: identity.serverListingID,
-                physicalOrgID: physicalOrgID)
+                physicalOrgID: physicalOrgID, rememberedDigest: true)
             let known: UUID?
             if let derivative {
                 known = try await CloudPhotoReferences.shared.galleryAssetID(fileURL: derivative.url,
                     ownerID: identity.actorID, orgID: identity.libraryOrgID, listingID: identity.serverListingID,
-                    physicalOrgID: physicalOrgID)
+                    physicalOrgID: physicalOrgID, rememberedDigest: true)
             } else { known = originalAsset }
             try requireIdentity()
             facts.append(.init(id: version.id, familyID: version.familyID, imageFile: version.imageFile,

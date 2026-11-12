@@ -306,6 +306,47 @@ enum DirectUploader {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
+    /// What identifies a file's current contents without reading them.
+    private struct DigestStamp: Equatable {
+        let device: Int64
+        let inode: UInt64
+        let bytes: Int64
+        let modifiedSeconds: Int64
+        let modifiedNanoseconds: Int64
+
+        init?(_ url: URL) {
+            var info = stat()
+            guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
+            device = Int64(info.st_dev); inode = UInt64(info.st_ino); bytes = Int64(info.st_size)
+            modifiedSeconds = Int64(info.st_mtimespec.tv_sec); modifiedNanoseconds = Int64(info.st_mtimespec.tv_nsec)
+        }
+    }
+    private static let digestMemoLock = NSLock()
+    private static var digestMemo: [String: (stamp: DigestStamp, digest: String)] = [:]
+
+    /// The same value as the streaming file digest above, remembered for
+    /// this run of the app while the file is the same file: same path, same
+    /// device and inode, same size, same modification time to the nanosecond.
+    /// Anything else, or a file that changed while it was being read, is
+    /// hashed again and not remembered. Read-only listings of saved photos use
+    /// this; every upload and every change still hashes the bytes afresh.
+    static func memoizedSHA256(of url: URL) -> String? {
+        guard let before = DigestStamp(url) else { return sha256(of: url) }
+        let key = url.standardizedFileURL.path
+        digestMemoLock.lock()
+        let remembered = digestMemo[key]
+        digestMemoLock.unlock()
+        if let remembered, remembered.stamp == before { return remembered.digest }
+        guard let digest = sha256(of: url) else { return nil }
+        if let after = DigestStamp(url), after == before {
+            digestMemoLock.lock()
+            if digestMemo.count >= 4096 { digestMemo.removeAll() }
+            digestMemo[key] = (before, digest)
+            digestMemoLock.unlock()
+        }
+        return digest
+    }
+
     /// Lowercase-hex SHA-256 of a string — used to build bounded, stable
     /// idempotency keys ("ticket:<hash of path>:<bytes>").
     static func sha256Hex(_ string: String) -> String {

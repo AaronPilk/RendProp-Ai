@@ -90,6 +90,7 @@ extension LiveAPIClient: AnalyticsAPI {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(Config.edgeFunctionRegion, forHTTPHeaderField: Config.edgeFunctionRegionHeader)
 
         // Signed in → the owner JWT, so the server can attribute the events to
         // the account. Signed out → the anon key, which the gateway accepts and

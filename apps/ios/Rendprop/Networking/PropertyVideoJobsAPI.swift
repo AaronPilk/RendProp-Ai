@@ -311,6 +311,7 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
         var request = URLRequest(url: url); request.httpMethod = "POST"; request.timeoutInterval = 25
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(Config.edgeFunctionRegion, forHTTPHeaderField: Config.edgeFunctionRegionHeader)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("property-video-stop:" + intent.operationID.uuidString.lowercased(), forHTTPHeaderField: "Idempotency-Key")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["operation_id": intent.operationID.uuidString.lowercased(), "reason": intent.reason], options: [.sortedKeys])
@@ -372,6 +373,7 @@ extension LiveAPIClient: PropertyVideoJobsAPI {
         var request = URLRequest(url: url); request.httpMethod = method; request.httpBody = body; request.timeoutInterval = 45
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(Config.edgeFunctionRegion, forHTTPHeaderField: Config.edgeFunctionRegionHeader)
         request.setValue(context.orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         if let paid { for (key, value) in try paid.headers(context: context) { request.setValue(value, forHTTPHeaderField: key) } }
         if let aerialCredit {
