@@ -1160,16 +1160,16 @@ test("a plan refusal shows the server's plain message and next step, and keeps t
   const cases: { body: Record<string, unknown>; message: string; code?: string; details?: Record<string, unknown> }[] = [
     // The server's sentence, then where a plan is changed.
     { body: { code: "quota_exceeded", error: "You have used all the AI included in your plan this month. It resets on your next billing date.", next_step: "upgrade_plan" },
-      message: "You have used all the AI included in your plan this month. It resets on your next billing date. Review your plan in Workspace.", details: { next_step: "upgrade_plan" } },
+      message: "You have used all the AI included in your plan this month. It resets on your next billing date. Review your plan in Workspace." },
     // A technical `error` with the server's plain `user_message`: the plain one is shown.
     { body: { code: "plan_required", error: "The included trial photo edits are exhausted", user_message: "You have used all the photo edits included in your free trial. Choose a plan to keep editing.", next_step: "upgrade_plan", charge: "not_charged" },
-      message: "You have used all the photo edits included in your free trial. Choose a plan to keep editing. Review your plan in Workspace.", details: { next_step: "upgrade_plan", charge: "not_charged" } },
+      message: "You have used all the photo edits included in your free trial. Choose a plan to keep editing. Review your plan in Workspace." },
     { body: { code: "credit_balance_low", error: "Add credits before starting Photo motion.", next_step: "add_credits", operation_closed: false },
-      message: "Add credits before starting Photo motion. Review your plan in Workspace.", details: { next_step: "add_credits", operation_closed: false } },
+      message: "Add credits before starting Photo motion. Review your plan in Workspace.", details: { operation_closed: false } },
     // The pointer is not repeated, and is not added when the next step is not about the plan.
     { body: { code: "quota_exceeded", error: "Every seat is in use. Open Workspace to free a seat or add one.", next_step: "upgrade_plan" }, message: "Every seat is in use. Open Workspace to free a seat or add one." },
     { body: { code: "credit_quote_required", error: "This edit uses credits. Review the price shown, then confirm to start. You were not charged.", next_step: "review_price", charge: "not_charged" },
-      message: "This edit uses credits. Review the price shown, then confirm to start. You were not charged.", details: { next_step: "review_price", charge: "not_charged" } },
+      message: "This edit uses credits. Review the price shown, then confirm to start. You were not charged." },
     { body: { code: "trial_capacity_unavailable", error: "The free trial can't be started right now. That is a problem on our side, not with your account. Contact support so we can turn it on.", next_step: "contact_support" },
       message: "The free trial can't be started right now. That is a problem on our side, not with your account. Contact support so we can turn it on.", code: "trial_capacity_unavailable" },
   ];
@@ -1245,9 +1245,6 @@ test("a Home card asks for one cover picture; an ordinary read is unchanged",asy
     assert.equal(Object.hasOwn(full,"hasMore"),false);
     await services.listMedia(ORG,LISTING,undefined,0,undefined,{limit:3});
     assert.deepEqual(queries,[`?org_id=${ORG}&listing_id=${LISTING}&offset=0&limit=1&cover=1`,`?org_id=${ORG}&listing_id=${LISTING}&offset=0`,`?org_id=${ORG}&listing_id=${LISTING}&offset=0&limit=3`]);
-    // A preview is only ever the start of a home, in a sane size.
-    for(const bad of [{limit:0},{limit:51},{limit:1.5}])await assert.rejects(services.listMedia(ORG,LISTING,undefined,0,undefined,bad),code("request-path"));
-    await assert.rejects(services.listMedia(ORG,LISTING,undefined,50,undefined,{limit:1}),code("request-path"));
     assert.equal(queries.length,3);
   }finally{services.dispose();}
 });

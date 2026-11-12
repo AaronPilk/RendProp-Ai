@@ -195,7 +195,7 @@ test("saved plans are schema checked and serialize only allowed edit fields", ()
         ...original,
         clips: [{ ...photo(), source: { ...photo().source, sha256: "" } }],
       }),
-    /missing what Studio needs to match its files/,
+    /cannot be matched to its files/,
   );
 });
 

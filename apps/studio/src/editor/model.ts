@@ -316,7 +316,7 @@ export function validateDraft(value: unknown): EditDraft {
     const sha256 = boundedText(source.sha256, 64, "content hash");
     if (!/^[a-f0-9]{64}$/.test(sha256))
       throw new Error(
-        "This saved edit is missing what Studio needs to match its files. Open the edit again from where it was saved.",
+        "This saved edit cannot be matched to its files. Open it again from where it was saved.",
       );
     const width = safeInteger(source.width, 1, 12_000, "source width");
     const height = safeInteger(source.height, 1, 12_000, "source height");

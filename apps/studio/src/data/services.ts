@@ -29,8 +29,11 @@ export const EDGE_FUNCTION_REGION = "us-west-2";
 /** Plans, trials and credits are changed in the iPhone app; Studio's Workspace
  * page shows the current plan and links there. A plan refusal keeps this pointer. */
 const PLAN_POINTER = "Review your plan in Workspace.";
+/** Studio itself built a request it should not have. The error code says which rule. */
+const STUDIO_FAULT = "Studio could not do that. Refresh the page and try again.";
+const TOO_MUCH = "This is more than Studio can open at once. That is a problem on our side. Contact support.";
 const PLAN_FALLBACK = `Your plan does not cover this right now. ${PLAN_POINTER}`;
-const TRIAL_START_FALLBACK = "We could not start this on your free trial just now. That is a problem on our side, not with your account. Your saved work is unchanged. Try again in a minute, or contact support.";
+const TRIAL_START_FALLBACK = "We could not start your free trial just now. That is a problem on our side. Try again in a minute, or contact support.";
 /** Server failure text is shown only when it is short customer copy, never a
  * link, credential or database fragment. */
 const customerCopy = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 400 &&
@@ -46,13 +49,13 @@ type ReadPage = { offset: number; limit: number };
 type PageResult = { rows: unknown[]; total: number };
 
 async function boundedJson(response: Response, signal: AbortSignal, limit = MAX_METADATA_BYTES): Promise<unknown> {
-  const tooLarge = () => new StudioError("response-too-large", "Your workspace has more saved information than Studio can open at once. That is a problem on our side. Contact support.");
+  const tooLarge = () => new StudioError("response-too-large", TOO_MUCH);
   const declared = response.headers.get("content-length");
   if (declared && /^\d+$/.test(declared) && Number(declared) > limit) {
     void response.body?.cancel().catch(() => {});
     throw tooLarge();
   }
-  if (!response.body) throw new StudioError("invalid-response", "Rendprop sent back an empty answer. Try again in a minute.");
+  if (!response.body) throw new StudioError("invalid-response", "We got an empty answer. Try again in a minute.");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -478,7 +481,7 @@ export function createStudioServices(
                   : response.status === 403
                     ? "You no longer have access to this workspace. Reload your workspaces."
                     : response.status === 404
-                      ? "We could not find this listing, photo or video. It may have been removed. Refresh and try again."
+                      ? "We could not find this listing, photo or video. Refresh and try again."
                       : response.status === 409 ? "This item changed on another device. Refresh before saving again."
                       : response.status === 402 ? PLAN_FALLBACK
                       : response.status === 429 ? "Please wait a moment before trying again."
@@ -494,8 +497,8 @@ export function createStudioServices(
               if (processorFailure) {
                 try {
                   const detail = await boundedJson(response, controller.signal, 8192) as { code?: unknown };
-                  if (detail.code === "processor_disclosure_unpublished") { failureCode = detail.code; message = "AI video cannot start yet because our notice about the AI services we use is not published. That is a problem on our side. Your saved work is unchanged. Try again later or contact support."; }
-                  else if (response.status === 403 && detail.code === "processor_consent_required") { failureCode = detail.code; message = "This video was started under an earlier AI permission. Recover the saved video first, then change the permission."; }
+                  if (detail.code === "processor_disclosure_unpublished") { failureCode = detail.code; message = "AI video is not ready yet. Your saved work is unchanged. Try again later."; }
+                  else if (response.status === 403 && detail.code === "processor_consent_required") { failureCode = detail.code; message = "Recover the saved video before changing its AI permission."; }
                   else if (response.status === 403 && detail.code === "consent_required") { failureCode = detail.code; message = "Allow AI processing before starting this video."; }
                 } catch { /* An unrecognized or unreadable403 remains an access error. */ }
               } else if ([400, 402, 409, 413, 422].includes(response.status) || feedbackRoute && response.status < 500) {
@@ -505,10 +508,7 @@ export function createStudioServices(
                   failureDetails=feedbackRoute?detail:Object.fromEntries(Object.entries(detail).filter(([key,value])=>
                     ["no_provider_dispatch","retry_existing_job","recovery_protocol_required","operation_closed"].includes(key)&&typeof value==="boolean"
                     ||key==="provider_cost_incurred"&&(typeof value==="boolean"||value==="possible")
-                    ||["check_id","evidence_id"].includes(key)&&typeof value==="string"&&/^[a-f0-9-]{36}$/i.test(value)
-                    // The server's own action id and charge fact, for screens that offer a button.
-                    ||key==="next_step"&&typeof value==="string"&&/^[a-z_]{1,32}$/.test(value)
-                    ||key==="charge"&&["not_charged","credit_returned","no_new_charge","charged"].includes(value as string)));
+                    ||["check_id","evidence_id"].includes(key)&&typeof value==="string"&&/^[a-f0-9-]{36}$/i.test(value)));
                   // `user_message` is the server's plain-words version of a technical `error`.
                   const shown = typeof detail.user_message === "string" && detail.user_message ? detail.user_message : detail.error;
                   if (response.status === 402) {
@@ -516,7 +516,7 @@ export function createStudioServices(
                     // (it always sets `next_step`) says what ran out, whether anything
                     // was charged and what to do: show that, not a fixed sentence. An
                     // older or unreadable body keeps the fixed sentence.
-                    const step = typeof detail.next_step === "string" && /^[a-z_]{1,32}$/.test(detail.next_step) ? detail.next_step : null;
+                    const step = typeof detail.next_step === "string" ? detail.next_step : null;
                     const plain = step !== null && customerCopy(shown) ? shown : null;
                     // Our side could not start the trial: never a reason to send the customer to a plan.
                     if (detail.code === "trial_capacity_unavailable") throw new StudioError("trial_capacity_unavailable", plain ?? TRIAL_START_FALLBACK, 402, failureDetails);
@@ -532,8 +532,7 @@ export function createStudioServices(
                 try {
                   const detail = await boundedJson(response, controller.signal, 8192) as { error?: unknown; code?: unknown; next_step?: unknown; user_message?: unknown };
                   const shown = typeof detail.user_message === "string" && detail.user_message ? detail.user_message : detail.error;
-                  if (typeof detail.next_step === "string" && typeof detail.code === "string" && typeof shown === "string" && shown.length <= 400 &&
-                    !/https?:|bearer|token|signature|secret|stack|select\s|insert\s/i.test(shown)) message = shown;
+                  if (typeof detail.next_step === "string" && typeof detail.code === "string" && customerCopy(shown)) message = shown;
                 } catch { /* Use the stable status message. */ }
               } else void response.body?.cancel().catch(() => {});
               throw new StudioError(failureCode, message, response.status, failureDetails);
@@ -546,7 +545,7 @@ export function createStudioServices(
               if (error instanceof StudioError) throw error;
               throw new StudioError(
                 "invalid-response",
-                "Rendprop sent back an answer Studio could not read. Try again in a minute.",
+                "We got an answer Studio could not read. Try again in a minute.",
               );
             }
             assertCurrent(version, controller.signal);
@@ -604,7 +603,7 @@ export function createStudioServices(
           total = page.total;
           metadataBytes += new TextEncoder().encode(JSON.stringify(page.rows)).byteLength;
           if (metadataBytes > MAX_METADATA_BYTES * 4)
-            throw new StudioError("response-too-large", "Your workspace has more saved details than Studio can open at once. That is a problem on our side. Contact support.");
+            throw new StudioError("response-too-large", TOO_MUCH);
           all.push(...page.rows);
         } while (all.length < total);
         return all;
@@ -639,7 +638,7 @@ export function createStudioServices(
           total = page.total as number; offset += page.listings.length;
           if (page.next_offset !== (offset < total ? offset : null)) throw new StudioError("incomplete-response", "We only received part of your listings. Reload your listings.");
           bytes += new TextEncoder().encode(JSON.stringify(page.listings)).byteLength;
-          if (bytes > MAX_METADATA_BYTES * 4) throw new StudioError("response-too-large", "You have more listing details than Studio can open at once. That is a problem on our side. Contact support.");
+          if (bytes > MAX_METADATA_BYTES * 4) throw new StudioError("response-too-large", TOO_MUCH);
           rows.push(...page.listings);
           if (page.next_offset === null) break;
         }
@@ -807,14 +806,14 @@ export function createStudioServices(
       // client-provided origin, relative traversal, fragment or redirect.
       if (!/^\/functions\/v1\/[a-z][a-z0-9-]*(?:[/?][^#\\]*)?$/.test(path) ||
         path.includes("..") || /%2e|%2f|%5c|[\u0000-\u0020]/i.test(path))
-        throw new StudioError("request-path", "Studio tried something it does not support. Refresh the page and try again.");
+        throw new StudioError("request-path", STUDIO_FAULT);
       if (options.photoQualityProtocol !== undefined && (options.photoQualityProtocol !== "retained-operation-v1" || path !== "/functions/v1/ai-photo-v2" || options.method !== "POST"))
-        throw new StudioError("request-path", "Studio could not send this photo edit the right way. Refresh the page and try again.");
+        throw new StudioError("request-path", STUDIO_FAULT);
       const audioUpload = /^\/functions\/v1\/property-video-jobs\/audio\/[a-f0-9-]{36}\/content$/.test(path);
       if (options.binary && (options.body !== undefined || options.method !== "PUT" ||
         !(audioUpload || /^\/functions\/v1\/studio\/project-media\/[a-f0-9-]{36}\/(?:[0-9]|1[0-5])$/.test(path)) ||
         options.binary.size < 1 || options.binary.size > (audioUpload ? 20 : 8)*1024*1024))
-        throw new StudioError("request-size", "This piece of the file is the wrong size to upload. Refresh the page and upload the file again.");
+        throw new StudioError("request-size", STUDIO_FAULT);
       const selected = uuid(options.orgId, "selected organization");
       const actor = await identity(options.signal);
       const expectedListing = options.expectedListingId === undefined ? undefined : uuid(options.expectedListingId, "selected listing");
@@ -822,21 +821,21 @@ export function createStudioServices(
       const actionScope = method === "GET" ? null : await mutationScope(actor, selected, options.expectedLibraryOrgId, options.signal, expectedListing);
       const scopeCurrent = actionScope ? actionScope.before : await requestScope(actor, selected, options.expectedLibraryOrgId, options.signal, expectedListing);
       if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 600_000))
-        throw new StudioError("configuration", "Studio is set up incorrectly for this action. Refresh the page; if it keeps happening, contact support.");
+        throw new StudioError("configuration", STUDIO_FAULT);
       if (options.maxResponseBytes !== undefined && (!Number.isSafeInteger(options.maxResponseBytes) || options.maxResponseBytes < 1 || options.maxResponseBytes > (path === "/functions/v1/ai-photo-v2" && options.method === "POST" && options.photoQualityProtocol === "retained-operation-v1" ? PHOTO_OUTPUT_WIRE_BYTES : 32 * 1024 * 1024)))
-        throw new StudioError("configuration", "Studio is set up incorrectly for this action. Refresh the page; if it keeps happening, contact support.");
+        throw new StudioError("configuration", STUDIO_FAULT);
       if (options.idempotencyKey && !/^[a-zA-Z0-9:_-]{1,128}$/.test(options.idempotencyKey))
-        throw new StudioError("request-key", "Studio could not label this action correctly. Refresh the page and try again.");
+        throw new StudioError("request-key", STUDIO_FAULT);
       const videoConsentAction = options.method === "POST" && (path === "/functions/v1/property-video-jobs" || /^\/functions\/v1\/property-video-jobs\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}\/resume$/.test(path));
       if (options.aiConsent && !(videoConsentAction && ["property-video-jobs-v1", "property-video-jobs-v2"].includes(options.aiConsent) ||
         options.method === "POST" && path === "/functions/v1/property-video-plan" && options.aiConsent === "property-video-plan-v1"))
         throw new StudioError("request-consent", "Allow AI processing before starting this video.");
       if (options.aiConsent === "property-video-jobs-v2" ? !videoConsentAction || typeof options.aiConsentDisclosure !== "string" || !/^[!-~]{1,200}$/.test(options.aiConsentDisclosure) : options.aiConsentDisclosure !== undefined)
-        throw new StudioError("request-consent", "The AI permission for this video does not match what you agreed to. Refresh the page and allow AI processing again.");
+        throw new StudioError("request-consent", "The AI permission for this video changed. Refresh the page and allow AI processing again.");
       if (options.body !== undefined && new TextEncoder().encode(JSON.stringify(options.body)).byteLength > 32 * 1024 * 1024)
         throw new StudioError("request-size", "This request is too large. Choose a smaller image.");
       if (options.body !== undefined && (!options.method || options.method === "GET"))
-        throw new StudioError("request-method", "Studio tried to change something while it was only reading. Refresh the page and try again.");
+        throw new StudioError("request-method", STUDIO_FAULT);
       return request(path, actor.version, options.signal, selected, undefined, options, scopeCurrent, actionScope?.completed);
     },
     async upload(rawUrl: string, body: Blob, options: {
@@ -848,7 +847,7 @@ export function createStudioServices(
       const actionScope = await mutationScope(actor, selected, options.expectedLibraryOrgId, options.signal);
       const url = validateUploadUrl(rawUrl);
       if (!body.size || body.size > 64 * 1024 * 1024)
-        throw new StudioError("upload-size", "This piece of the file is too large to upload. Refresh the page and upload the file again.");
+        throw new StudioError("upload-size", STUDIO_FAULT);
       const controller = new AbortController();
       const abort = () => controller.abort(options.signal?.reason);
       options.signal?.addEventListener("abort", abort, { once: true });
@@ -867,7 +866,7 @@ export function createStudioServices(
           assertCurrent(actor.version, controller.signal);
           actionScope.completed();
           void response.body?.cancel().catch(() => {});
-          if (!response.ok) throw new StudioError("upload-failed", "We could not confirm this upload finished. Resume the upload to pick up where it stopped.", response.status);
+          if (!response.ok) throw new StudioError("upload-failed", "We could not confirm this upload finished. Resume the upload.", response.status);
           options.onProgress?.(body.size, body.size);
           actionScope.completed();
           return { etag: response.headers.get("ETag") };
@@ -989,8 +988,7 @@ export function createStudioServices(
       const selected = uuid(orgId, "selected organization");
       const listing = uuid(listingId, "selected listing");
       const page = mediaOffset(offset);
-      if (preview && (!Number.isSafeInteger(preview.limit) || preview.limit < 1 || preview.limit > 50 || page !== 0))
-        throw new StudioError("request-path", "Studio tried something it does not support. Refresh the page and try again.");
+      // The server checks a preview's size and refuses one at a later offset.
       // Focus/timer refresh clears these caches while the fresh directory and
       // listing map are loading. Join that generation, then fence this exact
       // listing before and after transport rather than using a stale org hint.

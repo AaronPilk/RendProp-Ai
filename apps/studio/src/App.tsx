@@ -824,7 +824,7 @@ export default function App({ servicesFactory }: {
       });
       if (!response.ok || !response.body)
         throw new Error(
-          "This photo or video could not be downloaded. Refresh to get a new link, then try again.",
+          "This could not be downloaded. Refresh, then try again.",
         );
       const declared = Number(response.headers.get("content-length"));
       if (declared > EDIT_LIMITS.fileBytes)

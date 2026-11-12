@@ -187,7 +187,7 @@ export type ListingMediaDTO = {
 function invalid(field: string): never {
   throw new StudioError(
     "invalid-response",
-    `Rendprop sent back an answer Studio could not read. That is a problem on our side. Refresh and try again; if it keeps happening, contact support and mention "${field}".`,
+    `We got an answer Studio could not read (${field}). Refresh and try again.`,
   );
 }
 function record(value: unknown, field: string): Record<string, unknown> {
@@ -254,7 +254,7 @@ function equal(actual: string, expected: string, field: string): void {
   if (actual !== expected) {
     throw new StudioError(
       "identity-mismatch",
-      `Rendprop sent back information for a different ${field}. Nothing was changed. Reload Studio.`,
+      `That answer was for a different ${field}. Reload Studio.`,
     );
   }
 }
@@ -394,7 +394,7 @@ export function decodeListings(
     if (!allowed.has(libraryOrg) || (authoritativeLibrary && libraryOrg !== orgId)) {
       throw new StudioError(
         "identity-mismatch",
-        "Rendprop sent back a listing that is not in your account. Nothing was changed. Reload Studio.",
+        "We got a listing that is not in your account. Reload Studio.",
       );
     }
     if (row.deleted_at !== null) invalid("listing deleted_at");
