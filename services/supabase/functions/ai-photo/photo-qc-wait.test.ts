@@ -55,11 +55,16 @@ Deno.test("after an early release the saved check continues once on a detached r
   assertEquals(seen.work instanceof Promise,true);await seen.work;
   assertEquals(seen.calls,1);assertEquals(seen.aborted,false);assertEquals(seen.deadline,130_000);assertEquals(seen.method,"POST");
  }finally{host.EdgeRuntime=previous;}
- // Without a background-task runtime the work still starts exactly once.
+ // Without a runtime that keeps the instance alive, only the controller wake
+ // is sent: the deadline handed on leaves no room for a status loop or judge.
  delete host.EdgeRuntime;
  try{
-  let calls=0;continuePhotoQualityAfterResponse(f.admin,f.row,{actor,selected:org,url:"https://example.invalid/ai-photo",deadline:130_000},async(_admin,row)=>{calls++;return row;});
-  await Promise.resolve();assertEquals(calls,1);
+  const wake={calls:0,deadline:0},before=Date.now();
+  continuePhotoQualityAfterResponse(f.admin,f.row,{actor,selected:org,url:"https://example.invalid/ai-photo",deadline:before+110_000},async(_admin,row,args)=>{wake.calls++;wake.deadline=args.deadline!;return row;});
+  await Promise.resolve();assertEquals(wake.calls,1);assertEquals(wake.deadline<=Date.now()+45_000,true);
+  const real=fixture();real.deps.now=()=>Date.now();
+  await new Promise<void>(done=>continuePhotoQualityAfterResponse(real.admin,real.row,{actor,selected:org,url:"https://example.invalid/ai-photo",deadline:Date.now()+110_000},async(admin,row,args)=>{try{return await waitForPhotoQuality(admin,row,args,real.deps);}finally{done();}}));
+  assertEquals(real.state.starts,1);assertEquals(real.state.reads,0);assertEquals(real.state.judges,0);
  }finally{host.EdgeRuntime=previous;}
 });
 Deno.test("the detached continuation runs the real wait: one wake, scoped reads, one judge inside the request deadline",async()=>{
