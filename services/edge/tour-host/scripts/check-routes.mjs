@@ -585,7 +585,9 @@ async function main() {
     expect(sm.body.includes('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'), "[/sitemap.xml] want a urlset");
 
     const locs = [...sm.body.matchAll(/<loc>([^<]*)<\/loc>/g)].map((m) => m[1]);
-    expect(locs.length >= 9, `[/sitemap.xml] want at least the pages the old static file had, got ${locs.length}`);
+    // Eight: the seven marketing/legal pages and the demo tour. The noindex
+    // demo portfolio is no longer submitted (rule 2 below now covers /a/ too).
+    expect(locs.length >= 8, `[/sitemap.xml] want at least the pages the old static file had, got ${locs.length}`);
     for (const must of [
       "https://rendprop.com/",
       "https://rendprop.com/features",
@@ -595,9 +597,6 @@ async function main() {
       "https://rendprop.com/terms",
       "https://rendprop.com/privacy",
       "https://rendprop.com/f/estate-demo",
-      // New: the demo agent's portfolio. Rendprop's own content, and the one
-      // /a/ page that existed and was never offered to a crawler.
-      "https://rendprop.com/a/meridian",
     ]) expect(locs.includes(must), `[/sitemap.xml] missing ${must}`);
 
     // RULE 1 — never an unbranded URL. /u/ is noindex by construction and /f/
@@ -614,7 +613,7 @@ async function main() {
     // the sitemap must actually render WITHOUT a noindex tag; a sitemap entry
     // is a request to index, and a page we tell the crawler to drop must not
     // be in one. This fetches each listed tour through the real handler.
-    for (const loc of locs.filter((l) => /\/f\//.test(l))) {
+    for (const loc of locs.filter((l) => /\/(f|a)\//.test(l))) {
       const page = await get(worker, loc.replace("https://rendprop.com", ""));
       expect(page.status === 200, `[/sitemap.xml] listed tour ${loc} must render, got ${page.status}`);
       expect(!page.h("x-robots-tag"), `[/sitemap.xml] listed tour ${loc} must not be noindex (header)`);

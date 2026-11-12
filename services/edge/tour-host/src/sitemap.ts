@@ -62,21 +62,27 @@ export interface SitemapPortfolio {
  * date with the page. Everything below this constant is derived from live data.
  */
 const SITE_PAGES: SitemapEntry[] = [
-  { loc: "/", lastmod: "2026-09-12", changefreq: "weekly", priority: "1.0" },
-  { loc: "/features", lastmod: "2026-09-05", changefreq: "weekly", priority: "0.9" },
-  { loc: "/pricing", lastmod: "2026-09-12", changefreq: "weekly", priority: "0.9" },
-  { loc: "/compare", lastmod: "2026-09-05", changefreq: "weekly", priority: "0.8" },
-  { loc: "/support", lastmod: "2026-09-12", changefreq: "monthly", priority: "0.7" },
-  { loc: "/terms", lastmod: "2026-10-09", changefreq: "yearly", priority: "0.3" },
+  // 2026-10-29: glass redesign, real plan pricing and the Terms pricing line
+  // (deploy d0a90141). 2026-11-12: pricing and compare titles/descriptions.
+  { loc: "/", lastmod: "2026-10-29", changefreq: "weekly", priority: "1.0" },
+  { loc: "/features", lastmod: "2026-10-29", changefreq: "weekly", priority: "0.9" },
+  { loc: "/pricing", lastmod: "2026-11-12", changefreq: "weekly", priority: "0.9" },
+  { loc: "/compare", lastmod: "2026-11-12", changefreq: "weekly", priority: "0.8" },
+  { loc: "/support", lastmod: "2026-10-29", changefreq: "monthly", priority: "0.7" },
+  { loc: "/terms", lastmod: "2026-10-29", changefreq: "yearly", priority: "0.3" },
   { loc: "/privacy", lastmod: "2026-09-05", changefreq: "yearly", priority: "0.3" },
 ];
 
-/** The demo tour and the demo agent's portfolio. Rendprop's own content, served
- *  from src/demo.ts with no database behind it, opted into indexing in the
- *  payload itself, and the page every marketing link points at. */
+/** The demo tour. Rendprop's own content, served from src/demo.ts with no
+ *  database behind it, opted into indexing in the payload itself, and the page
+ *  every marketing link points at.
+ *  The demo portfolio (/a/meridian) used to be listed here too, but every /a/
+ *  page now answers `noindex, nofollow` unless its owner opts in, the demo
+ *  included. A sitemap entry is a request to index, so listing it contradicted
+ *  its own robots tag (Search Console reports that as "Submitted URL marked
+ *  noindex"). It stays reachable; it is just no longer submitted. */
 const DEMO_PAGES: SitemapEntry[] = [
   { loc: "/f/estate-demo", lastmod: "2026-09-05", changefreq: "weekly", priority: "0.8" },
-  { loc: "/a/meridian", lastmod: "2026-09-05", changefreq: "weekly", priority: "0.6" },
 ];
 
 /** `<loc>` is character data: escape it even though our own paths never need it. */
@@ -183,8 +189,13 @@ export function propertySitemapCursors(value: unknown): (string | null)[] | null
   return cursors;
 }
 
+/** The blog's static sitemap (public/sitemap-blog.xml, written by
+ *  scripts/build-blog.mjs). Listed in the index so one submitted sitemap URL
+ *  covers the whole site; robots.txt still names it too. */
+export const BLOG_SITEMAP_PATH = "/sitemap-blog.xml";
+
 export function sitemapIndexXml(origin: string, cursors: (string | null)[]): string {
-  const paths = ["/sitemap-site.xml", ...cursors.map(cursor =>
+  const paths = ["/sitemap-site.xml", BLOG_SITEMAP_PATH, ...cursors.map(cursor =>
     "/sitemap-properties.xml" + (cursor ? "?cursor=" + encodeURIComponent(cursor) : ""))];
   return `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${paths.map(path => `  <sitemap><loc>${escapeXml(origin + path)}</loc></sitemap>`).join("\n")}\n</sitemapindex>\n`;
 }
