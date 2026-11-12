@@ -1284,3 +1284,39 @@ test("only recovery-aware photo v2 POST can receive the bounded35MB lossless4K e
  for(const [path,extra]of[["/functions/v1/ai-copy",{photoQualityProtocol:undefined}],["/functions/v1/ai-photo",{photoQualityProtocol:undefined}],["/functions/v1/ai-photo-v2",{photoQualityProtocol:undefined}],["/functions/v1/ai-photo-v2",{method:"GET",body:undefined,photoQualityProtocol:undefined}]])await assert.rejects(services.api(path as string,{...options,...extra}as any));
  await assert.rejects(services.api("/functions/v1/ai-photo-v2",{...options,maxResponseBytes:PHOTO_OUTPUT_WIRE_BYTES+1}));assert.equal(calls,2);services.dispose();
 });
+
+test("library load reads the account profile and the listing page side by side", async () => {
+  const me = deferred<Response>(), order: string[] = [];
+  const services = createStudioServices(config, { auth: mockAuth().auth, fetch: fakeFetch((url) => {
+    order.push(url.pathname.replace("/functions/v1/", ""));
+    if (url.pathname === "/functions/v1/me") return me.promise;
+    return fixtureResponse(url);
+  }) });
+  const pending = services.loadLibrary();
+  // The listing page must be requested while the slower profile read is still open.
+  for (let turn = 0; turn < 50 && order.length < 3; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(order, ["me/workspaces", "me", "listings"]);
+  me.resolve(json(meDTO()));
+  const loaded = await pending;
+  assert.equal(loaded.workspace.org.id, ORG);
+  assert.deepEqual(loaded.listings.map((row) => row.id), [LISTING]);
+  // The directory read is complete, so the same map now authorizes scoped reads.
+  assert.deepEqual((await services.listListings(ORG)).map((row) => row.id), [LISTING]);
+  services.dispose();
+});
+
+test("a failed profile read withdraws the early listing map and authorizes nothing", async () => {
+  const requested: string[] = [];
+  const services = createStudioServices(config, { auth: mockAuth().auth, fetch: fakeFetch((url) => {
+    requested.push(url.pathname.replace("/functions/v1/", ""));
+    if (url.pathname === "/functions/v1/me") return json({ error: "unavailable" }, 503);
+    return fixtureResponse(url);
+  }) });
+  await assert.rejects(services.loadLibrary(), code("request-failed"));
+  const before = requested.length;
+  await assert.rejects(services.listMedia(ORG, LISTING));
+  await assert.rejects(services.listListings(ORG));
+  await assert.rejects(services.api("/functions/v1/studio/listing-state", { orgId: ORG, expectedListingId: LISTING }));
+  assert.equal(requested.length, before, "no scoped request may leave the browser after a failed directory read");
+  services.dispose();
+});

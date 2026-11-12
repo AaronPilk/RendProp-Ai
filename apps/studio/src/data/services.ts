@@ -236,6 +236,9 @@ export function createStudioServices(
   type WorkspaceRead = {
     version: number; generation: number; target?: string; signal?: AbortSignal;
     pending: boolean; directory: Promise<Workspace>; mapped: boolean;
+    /** Settles once the verified directory has named this read's library.
+     * The account profile (`/me`) is still loading; only loadLibrary may use it. */
+    members: Promise<void>;
     mappingError?: unknown;
     listings?: { promise: Promise<Listing[]>; controller: AbortController; waiters: number; settled: boolean };
   };
@@ -708,6 +711,48 @@ export function createStudioServices(
     return { before, completed };
   }
 
+  async function openWorkspace(signal?: AbortSignal, preferredOrgId?: string) {
+      const actor = await identity(signal);
+      const previousTarget = workspaceRead?.target;
+      const generation = ++workspaceReadGeneration;
+      memberships = []; listingScopes.clear();
+      const selected = preferredOrgId ? uuid(preferredOrgId, "selected organization") : undefined;
+      if (previousTarget && selected && selected !== previousTarget) workspaceSelectionVersion++;
+      let membersReady = () => {}, membersFailed: (error: unknown) => void = () => {};
+      const members = new Promise<void>((resolve, reject) => { membersReady = resolve; membersFailed = reject; });
+      members.catch(() => {});
+      const read: WorkspaceRead = {version:actor.version,generation,target:selected,signal,pending:true,mapped:false,members,directory:Promise.resolve(null as unknown as Workspace)};
+      workspaceRead = read;
+      read.directory = (async () => {
+        const directory = decodeWorkspaceDirectory(await request("/functions/v1/me/workspaces", actor.version, signal), actor.userId);
+        assertWorkspace(read, signal);
+        const found = directory.canSwitchAgentLibraries ? directory.workspaces : directory.workspaces.filter(m => m.orgId === directory.ownOrgId);
+        if (selected && !found.some(m => m.orgId === selected))
+          throw new StudioError("membership-required", "You no longer have access to those listings. Reconnect to open your own listings.");
+        const target = selected ?? (directory.canSwitchAgentLibraries ? directory.activeOrgId : directory.ownOrgId);
+        if (previousTarget && !selected && target !== previousTarget) workspaceSelectionVersion++;
+        read.target = target;
+        // The directory is the membership authority. Publishing it here lets the
+        // listing page load beside `/me`; every scoped request still waits for
+        // this whole read, and a failed profile read withdraws it again below.
+        memberships = found;
+        membersReady();
+        const me = await request("/functions/v1/me", actor.version, signal, target);
+        const workspace = decodeWorkspace(me, actor.userId, found, target, directory);
+        assertWorkspace(read, signal);
+        // The directory caller owns cancellation only while this read is pending.
+        // Later UI-effect cleanup must not poison unrelated same-workspace reads;
+        // current-generation, identity and per-action signals still fence them.
+        read.signal = undefined;
+        return workspace;
+      })().catch((error) => {
+        membersFailed(error);
+        if (workspaceRead === read) { memberships = []; listingScopes.clear(); }
+        throw error;
+      }).finally(() => { read.pending = false; });
+      return { read, actor };
+  }
+
   return {
     /** Read-only local scope check. Join a fresh directory/map only when needed;
      * the returned synchronous guard must be used immediately, never across awaits. */
@@ -859,34 +904,27 @@ export function createStudioServices(
       signingOut = false;
     },
     async loadWorkspace(signal?: AbortSignal, preferredOrgId?: string) {
-      const actor = await identity(signal);
-      const previousTarget = workspaceRead?.target;
-      const generation = ++workspaceReadGeneration;
-      memberships = []; listingScopes.clear();
-      const selected = preferredOrgId ? uuid(preferredOrgId, "selected organization") : undefined;
-      if (previousTarget && selected && selected !== previousTarget) workspaceSelectionVersion++;
-      const read: WorkspaceRead = {version:actor.version,generation,target:selected,signal,pending:true,mapped:false,directory:Promise.resolve(null as unknown as Workspace)};
-      workspaceRead = read;
-      read.directory = (async () => {
-        const directory = decodeWorkspaceDirectory(await request("/functions/v1/me/workspaces", actor.version, signal), actor.userId);
-        assertWorkspace(read, signal);
-        const found = directory.canSwitchAgentLibraries ? directory.workspaces : directory.workspaces.filter(m => m.orgId === directory.ownOrgId);
-        if (selected && !found.some(m => m.orgId === selected))
-          throw new StudioError("membership-required", "You no longer have access to those listings. Reconnect to open your own listings.");
-        const target = selected ?? (directory.canSwitchAgentLibraries ? directory.activeOrgId : directory.ownOrgId);
-        if (previousTarget && !selected && target !== previousTarget) workspaceSelectionVersion++;
-        read.target = target;
-        const me = await request("/functions/v1/me", actor.version, signal, target);
-        const workspace = decodeWorkspace(me, actor.userId, found, target, directory);
-        assertWorkspace(read, signal);
-        memberships = found;
-        // The directory caller owns cancellation only while this read is pending.
-        // Later UI-effect cleanup must not poison unrelated same-workspace reads;
-        // current-generation, identity and per-action signals still fence them.
-        read.signal = undefined;
-        return workspace;
-      })().finally(() => { read.pending = false; });
-      return read.directory;
+      return (await openWorkspace(signal, preferredOrgId)).read.directory;
+    },
+    /** One verified directory, then the account profile and the listing page
+     * together. Both must succeed before anything is returned; the listing map
+     * still cannot authorize a request until the directory read has settled. */
+    async loadLibrary(signal?: AbortSignal, preferredOrgId?: string): Promise<{ workspace: Workspace; listings: Listing[] }> {
+      const { read, actor } = await openWorkspace(signal, preferredOrgId);
+      const controller = new AbortController();
+      const abort = () => controller.abort(signal?.reason);
+      signal?.addEventListener("abort", abort, { once: true });
+      const listings = read.members.then(() => listingRead(read, actor, read.target!, controller.signal));
+      listings.catch(() => {});
+      try {
+        const workspace = await read.directory;
+        return { workspace, listings: await listings };
+      } catch (error) {
+        controller.abort();
+        throw error;
+      } finally {
+        signal?.removeEventListener("abort", abort);
+      }
     },
     async listListings(orgId: string, signal?: AbortSignal) {
       const actor = await identity(signal);

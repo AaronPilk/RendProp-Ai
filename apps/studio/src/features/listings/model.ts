@@ -8,6 +8,15 @@ export type Chapter = { label: string; t_ms: number; sort: number; asset_id?: st
 export type GalleryPhoto = { id: string; listing_id: string; original_key: string | null; enhanced_key: string | null; caption: string | null; is_staged: boolean; is_main: boolean; sort: number; created_at: string };
 export type ListingState = { assets: Asset[]; jobs: Job[]; renders: Published[]; photos: GalleryPhoto[]; chapters: Chapter[]; nextOffset: number | null };
 export const EMPTY_STATE: ListingState = { assets: [], jobs: [], renders: [], photos: [], chapters: [], nextOffset: null };
+/** What a media read depends on. Job progress is left out on purpose: it
+ * changes every few seconds while a render runs and never changes a photo. */
+export function activitySignature(state: ListingState): string {
+  return JSON.stringify([
+    state.assets.map(asset => [asset.id, asset.uploaded, asset.storage_key, asset.qc_publishable ?? null]),
+    state.photos.map(photo => [photo.id, photo.original_key, photo.enhanced_key, photo.caption, photo.is_staged, photo.sort]),
+    state.renders.map(render => render.id),
+  ]);
+}
 export function isContactPhotoKey(value: unknown): boolean { return typeof value === "string" && value.split("/").at(-1)?.startsWith("contact-") === true; }
 /** Saved position first; photos attached before positions were assigned (all 0) keep their upload
  * (attach) order instead of a random UUID order. The reorder RPC compares this same order. */

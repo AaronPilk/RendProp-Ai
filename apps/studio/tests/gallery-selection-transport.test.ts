@@ -5,7 +5,8 @@ import { readFileSync } from "node:fs";
 import ts from "typescript-parser";
 import { createStudioServices, type StudioAuth } from "../src/data/services";
 import { changeListingSelection, confirmsGallerySelection, UnconfirmedGallerySelection, readGallerySelection } from "../src/features/listings/gallery-selection";
-import { decodeListingState, EMPTY_STATE } from "../src/features/listings/model";
+import { activitySignature, decodeListingState, EMPTY_STATE } from "../src/features/listings/model";
+import { earliestExpiry, LINK_RENEW_MS, rememberMedia, retainFreshLinks } from "../src/data/media-cache";
 
 const ACTOR="10000000-0000-4000-8000-000000000001",OTHER_ACTOR="10000000-0000-4000-8000-000000000002";
 const LIBRARY="20000000-0000-4000-8000-000000000001",ORG="20000000-0000-4000-8000-000000000002",OTHER_LIBRARY="20000000-0000-4000-8000-000000000003";
@@ -61,7 +62,7 @@ const component=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text
 function actualStatement(name:string){const node=component.body!.statements.find(n=>ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>ts.isIdentifier(d.name)&&d.name.text===name));assert(node,`Missing actual ${name}`);return node.getText(ast);}
 function componentHarness(f:ReturnType<typeof fixture>){
  const ui={actionError:"",readError:"",notice:"",busy:"",selection:f.snapshot()as ReturnType<typeof f.snapshot>|null};
- const context={services:f.services,workspace:{user:{id:ACTOR},org:{id:ORG},libraryOrgId:LIBRARY},listing:{id:LISTING},galleryScope:f.scope,selection:f.snapshot(),useCallback:(fn:unknown)=>fn,load:{current:null},action:{current:null},alive:{current:true},uncertainSelection:{current:null as UnconfirmedGallerySelection|null},actionErrorOwner:{current:null as unknown},canWrite:true,EMPTY_STATE,decodeListingState,changeListingSelection,confirmsGallerySelection,UnconfirmedGallerySelection,readGallerySelection,
+ const context={services:f.services,workspace:{user:{id:ACTOR},org:{id:ORG},libraryOrgId:LIBRARY},listing:{id:LISTING},galleryScope:f.scope,selection:f.snapshot(),useCallback:(fn:unknown)=>fn,shownMedia:{current:null as unknown},stateSignature:{current:null as string|null},mediaCacheScope:()=>null,activitySignature,earliestExpiry,LINK_RENEW_MS,retainFreshLinks,rememberMedia,onListingsChanged:undefined,load:{current:null},action:{current:null},alive:{current:true},uncertainSelection:{current:null as UnconfirmedGallerySelection|null},actionErrorOwner:{current:null as unknown},canWrite:true,EMPTY_STATE,decodeListingState,changeListingSelection,confirmsGallerySelection,UnconfirmedGallerySelection,readGallerySelection,
   message:(error:unknown)=>error instanceof Error?error.message:"Failed",setState:()=>{},setMedia:()=>{},setLoading:()=>{},setLoadFailed:()=>{},setSelection:(value:any)=>{ui.selection=value;},setReadError:(value:string)=>{ui.readError=value;},setActionError:(value:string|((previous:string)=>string))=>{ui.actionError=typeof value==="function"?value(ui.actionError):value;},setNotice:(value:string)=>{ui.notice=value;},setBusy:(value:string)=>{ui.busy=value;},setUploadingName:()=>{},onChanged:()=>{}};
  const program=ts.transpileModule(`${actualStatement("refresh")}\n${actualStatement("refreshPropertyAndDirectory")}\n${actualStatement("run")}\n${actualStatement("selectPhoto")}\nreturn{refresh,run,selectPhoto};`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
  const actual=new Function(...Object.keys(context),program)(...Object.values(context))as{refresh:()=>Promise<void>;run:(name:string,work:(signal:AbortSignal)=>Promise<void>)=>Promise<void>;selectPhoto:(body:{action:"use";photo_id:string;reviewed:boolean},success:string)=>Promise<void>};

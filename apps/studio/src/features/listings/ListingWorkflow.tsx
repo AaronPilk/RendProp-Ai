@@ -4,8 +4,9 @@ import type { Listing, ListingMedia, StudioPhoto, Workspace } from "../../data/c
 import { decodeListings, scopedListingWorkspace } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
 import { cancelListingUpload, uploadListingAsset, validateUpload } from "./uploads";
+import { earliestExpiry, LINK_RENEW_MS, recallMedia, rememberMedia, retainFreshLinks, type MediaCacheScope } from "../../data/media-cache";
 import type { UploadJournal } from "./uploads";
-import { canPublishAsset, decodeListingState, EMPTY_STATE, formatChapters, listingFactsBody, listingFactsConfirmed, listingFactsPayload, listingFormValues, listingPayload, orderedGallery, parseChapterText, safeHTTPS, tourLinks } from "./model";
+import { activitySignature, canPublishAsset, decodeListingState, EMPTY_STATE, formatChapters, listingFactsBody, listingFactsConfirmed, listingFactsPayload, listingFormValues, listingPayload, orderedGallery, parseChapterText, safeHTTPS, tourLinks } from "./model";
 import type { ListingFactsBody, ListingState, Published } from "./model";
 import SpatialWorkflow from "./SpatialWorkflow";
 import GalleryPhotoCard from "./GalleryPhotoCard";
@@ -26,7 +27,7 @@ import { INDUSTRY_FIELDS, detailFormValue } from "./industry";
 import {filterByOrientation,orientationCounts,orientationLabel,orientationSummary,PHOTO_ORIENTATIONS,photoOrientation,recordPreviewGeometry,type PhotoGeometry,type PhotoOrientationFilter} from "../sync/video-framing";
 
 export type ListingEntryRequest = {id:string;listingId:string;tab:Tab};
-type Props = { active?: boolean; entryRequest?:ListingEntryRequest; createRequest?:string; onOpenFeature?:(feature:FeatureId,listingId:string)=>void; services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string; onChanged: () => void; onSelectListing?: (id: string) => boolean | void; onContactGuardChange?: (guard: ContactNavigationGuard | null) => void };
+type Props = { active?: boolean; entryRequest?:ListingEntryRequest; createRequest?:string; onOpenFeature?:(feature:FeatureId,listingId:string)=>void; services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string; onChanged: () => void; /** Listing rows changed, not the account or its libraries. Defaults to onChanged. */ onListingsChanged?: () => void; onSelectListing?: (id: string) => boolean | void; onContactGuardChange?: (guard: ContactNavigationGuard | null) => void };
 type Tab = "media" | "tour" | "floorplan" | "details";
 const terminal = new Set(["ready", "failed", "completed", "published", "cancelled"]);
 const message = (error: unknown) => error instanceof Error ? error.message : "This action could not finish. Please try again.";
@@ -186,7 +187,7 @@ function PropertyForm({ services, workspace, listing, onSaved, onCancel, onRefre
   </fieldset><div className="lw-actions"><button className="primary" type="submit" disabled={busy || lookupBusy || readOnly || remoteChanged}>{busy ? "Saving…" : spaceType === "real_estate" ? listing ? "Save property" : "Create property" : listing ? "Save business details" : "Create location"}</button>{onCancel && <button type="button" onClick={() => { forget(); onCancel(); }} disabled={busy}>Cancel</button>}</div></form>;
 }
 
-function PropertyWorkspace({ services, workspace, listing, onChanged, entryRequest, onOpenFeature, onContactGuardChange, active }: Props & { listing: Listing }) {
+function PropertyWorkspace({ services, workspace, listing, onChanged, onListingsChanged, entryRequest, onOpenFeature, onContactGuardChange, active }: Props & { listing: Listing }) {
   const contactNavigation = useRef<ContactNavigationGuard | null>(null), factsNavigation = useRef<ContactNavigationGuard | null>(null);
   const forwardNavigation = useCallback(() => onContactGuardChange?.({ canLeave: () => factsNavigation.current?.canLeave() !== false && contactNavigation.current?.canLeave() !== false }), [onContactGuardChange]);
   const contactNavigationChanged = useCallback((guard: ContactNavigationGuard | null) => { contactNavigation.current = guard; forwardNavigation(); }, [forwardNavigation]);
@@ -194,7 +195,14 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
   const [tab, setTab] = useState<Tab>("media"), [state, setState] = useState<ListingState>(EMPTY_STATE);
   const appliedEntry=useRef("");
   useEffect(()=>{if(entryRequest?.listingId===listing.id&&appliedEntry.current!==entryRequest.id){appliedEntry.current=entryRequest.id;setTab(entryRequest.tab === "floorplan" && !PUBLIC_SPATIAL_TOOLS_ENABLED ? "media" : entryRequest.tab);}},[entryRequest,listing.id]);
-  const [media, setMedia] = useState<ListingMedia | null>(null), [loading, setLoading] = useState(true);
+  // A property opened earlier in this session paints from memory while the
+  // verified read below replaces it. Only links with life left are reused.
+  const mediaCacheScope = (): MediaCacheScope | null => {
+    try { return { identityVersion: services.getSnapshot().identityVersion, user: workspace.user.id, library: workspace.libraryOrgId ?? workspace.org.id, org: workspace.org.id, listing: listing.id }; }
+    catch { return null; }
+  };
+  const [media, setMedia] = useState<ListingMedia | null>(() => { const scope = mediaCacheScope(); return scope ? recallMedia(services, "full", scope) : null; }), [loading, setLoading] = useState(true);
+  const shownMedia = useRef(media), stateSignature = useRef<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [selection,setSelection]=useState<GallerySelection|null>(null);
   const [savedSourceProgress,setSavedSourceProgress]=useState<SavedSourceProgress|null>(null);
@@ -218,9 +226,12 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
   const input = useRef<HTMLInputElement>(null), masterInput = useRef<HTMLInputElement>(null), floorInput = useRef<HTMLInputElement>(null), resumeInput = useRef<HTMLInputElement>(null);
   const resumeJournal = useRef<UploadJournal | undefined>(undefined);
   const canWrite = canEditListing(workspace);
-  const refresh = useCallback(async (showLoading = false) => {
+  const refresh = useCallback(async (showLoading = false, automatic = false) => {
     load.current?.abort(); const current = new AbortController(); load.current = current;
     if (showLoading) setLoading(true);
+    const live = () => !current.signal.aborted && alive.current;
+    const firstPaint = shownMedia.current === null;
+    let activityShown = false;
     try {
       const statePromise = (async () => {
         let all: ListingState = { ...EMPTY_STATE, assets: [], jobs: [], renders: [], chapters: [] }, offset = 0;
@@ -232,34 +243,65 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
           if (all.assets.length + all.jobs.length + all.renders.length + all.photos.length > 10_000) throw new Error("This property has too much activity to open at once. Contact support.");
         } while (all.nextOffset !== null);
         all.chapters = [...new Map(all.chapters.map(chapter => [`${chapter.asset_id}:${chapter.t_ms}:${chapter.sort}`, chapter])).values()];
+        // First visit: show the saved activity as soon as it is complete
+        // instead of holding it until every media page has been signed.
+        if (firstPaint && live()) { setState(all); activityShown = true; }
         return all;
       })();
-      const mediaPromise = (async () => {
+      const readMedia = async () => {
         let page = await services.listMedia(workspace.org.id, listing.id, current.signal);
         const all = { ...page, photos: [...page.photos], videos: [...page.videos] };
         while (page.nextOffset !== null) {
           if (all.photos.length + all.videos.length > 5000) throw new Error("This property has too much media to open at once.");
+          // First visit to a large property: show the pages that have arrived.
+          // `loading` stays true, so readiness and bulk actions still wait.
+          if (firstPaint && activityShown && live()) setMedia({ ...all, photos: [...all.photos], videos: [...all.videos], nextOffset: null });
           page = await services.listMedia(workspace.org.id, listing.id, current.signal, page.nextOffset);
           all.photos.push(...page.photos); all.videos.push(...page.videos); all.unavailableCount += page.unavailableCount;
         }
         all.nextOffset = null; return all;
-      })();
+      };
+      // A timer or focus refresh reads the small activity record first. Signed
+      // media pages are read again only when that record changed or the links
+      // on screen are aging; an action or the Refresh button always reads all.
+      const shown = shownMedia.current;
+      const mediaPromise: Promise<ListingMedia | null> = automatic && shown && stateSignature.current !== null
+        ? statePromise.then(activity => activitySignature(activity) === stateSignature.current && earliestExpiry(shown) - Date.now() > LINK_RENEW_MS ? null : readMedia())
+        : readMedia();
       const [activity, previews,selectedPhotos] = await Promise.all([statePromise, mediaPromise,readGallerySelection(services,galleryScope,current.signal).catch(()=>null)]);
-      if (!current.signal.aborted && alive.current) {
-        setState(activity); setMedia(previews);setSelection(selectedPhotos); setReadError(""); setLoadFailed(false);
+      if (live()) {
+        if (!activityShown) setState(activity);
+        stateSignature.current = activitySignature(activity);
+        if (previews) {
+          const merged = retainFreshLinks(shownMedia.current, previews);
+          shownMedia.current = merged; setMedia(merged);
+          const scope = mediaCacheScope(); if (scope) rememberMedia(services, "full", scope, merged);
+        }
+        setSelection(selectedPhotos); setReadError(""); setLoadFailed(false);
         const pending=uncertainSelection.current;
         if(pending&&selectedPhotos&&actionErrorOwner.current===pending&&confirmsGallerySelection(pending,selectedPhotos,services,galleryScope)){
           uncertainSelection.current=null;actionErrorOwner.current=null;setActionError(value=>value===pending.message?"":value);setNotice("Your listing photo selection is verified.");
         }
       }
-    } catch (reason) { if (!current.signal.aborted && alive.current) { setReadError(message(reason)); setLoadFailed(true); } }
-    finally { if (!current.signal.aborted && alive.current) setLoading(false); }
+    } catch (reason) {
+      if (live()) {
+        // Until one complete read has succeeded, anything on screen is either
+        // a partial first load or a remembered copy. Neither is this property's
+        // verified media, so a failure shows the error state instead of it.
+        if (stateSignature.current === null) { shownMedia.current = null; setMedia(null); if (activityShown) setState(EMPTY_STATE); }
+        setReadError(message(reason)); setLoadFailed(true);
+      }
+    }
+    finally { if (live()) setLoading(false); }
   }, [services, workspace.org.id, workspace.libraryOrgId, workspace.user.id, listing.id]);
-  const refreshPropertyAndDirectory = async (showLoading = false) => {
+  const refreshPropertyAndDirectory = async (showLoading = false, directory: "all" | "listings" | "none" = "all") => {
     // Finish the property read against the current mapping before App starts a
     // new directory generation for the saved metadata.
     await refresh(showLoading);
-    onChanged();
+    // Reload only what the action could have changed: nothing outside this
+    // property, its listing row (cover, status), or the whole account.
+    if (directory === "all") onChanged();
+    else if (directory === "listings") (onListingsChanged ?? onChanged)();
   };
   useEffect(() => {
     alive.current = true;
@@ -273,7 +315,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
       const now = Date.now();
       if (document.visibilityState !== "visible" || !navigator.onLine || action.current || now - lastAutomaticRead < 30_000) return;
       lastAutomaticRead = now;
-      void refresh();
+      void refresh(false, true);
     };
     window.addEventListener("focus", refreshVisible);
     document.addEventListener("visibilitychange", refreshVisible);
@@ -321,7 +363,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
         await refresh();
       throw reason;
     }
-    if (!signal.aborted) { setNotice(purpose === "floorplan" ? "Floor plan saved to this property." : "Your media is uploaded and available in the workspace."); await refreshPropertyAndDirectory(); }
+    if (!signal.aborted) { setNotice(purpose === "floorplan" ? "Floor plan saved to this property." : "Your media is uploaded and available in the workspace."); await refreshPropertyAndDirectory(false, "listings"); }
   });
   const photos = media?.photos ?? [], videos = media?.videos ?? [];
   const gallery = orderedGallery(state.photos);
@@ -404,17 +446,17 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
     let saved = false;
     await run("gallery", async signal => {
       await api("studio/photos", { listing_id: listing.id, ...body }, signal, "PATCH");
-      if (!signal.aborted) { saved = true; await refreshPropertyAndDirectory(); if (!signal.aborted) setNotice(success); }
+      if (!signal.aborted) { saved = true; await refreshPropertyAndDirectory(false, body.action === "caption" ? "none" : "listings"); if (!signal.aborted) setNotice(success); }
     });
     return saved;
   };
   const selectPhoto=async(body:{action:"use"|"use_cover";photo_id:string;reviewed:boolean}|{action:"remove";photo_id:string;operation_id:string}|{action:"reorder_selected";expected_order:string[];photo_ids:string[]},success:string,coverKey?:string)=>{
-    await run("gallery",async signal=>{if(!selection)throw new Error("Refresh this property before choosing listing photos.");const saved=await changeListingSelection(services,galleryScope,selection,body,signal,coverKey);if(!signal.aborted){setSelection(saved);await refreshPropertyAndDirectory();if(!signal.aborted)setNotice(success);}});
+    await run("gallery",async signal=>{if(!selection)throw new Error("Refresh this property before choosing listing photos.");const saved=await changeListingSelection(services,galleryScope,selection,body,signal,coverKey);if(!signal.aborted){setSelection(saved);await refreshPropertyAndDirectory(false,body.action==="reorder_selected"?"none":"listings");if(!signal.aborted)setNotice(success);}});
   };
   const isGallerySource=(id:string)=>state.assets.some(asset=>asset.id===id&&asset.storage_key.startsWith(`renders/${workspace.org.id}/${listing.id}/gallery-`));
   const preparePhoto=(sourceId:string,caption:string)=>void run("gallery",async signal=>{
     const prepared=await prepareGalleryCopy(services,galleryScope,sourceId,caption,signal,{progress:setNotice});
-    if(!signal.aborted){await refreshPropertyAndDirectory();if(!signal.aborted)setNotice(prepared.source.kind==="altered"?"Version ready for review with its original and disclosure. Compare them, then choose Use on listing when you are ready.":"Photo ready in saved versions. Choose Use on listing when you are ready; it has not been selected automatically.");}
+    if(!signal.aborted){await refreshPropertyAndDirectory(false,"listings");if(!signal.aborted)setNotice(prepared.source.kind==="altered"?"Version ready for review with its original and disclosure. Compare them, then choose Use on listing when you are ready.":"Photo ready in saved versions. Choose Use on listing when you are ready; it has not been selected automatically.");}
   });
   const prepareSavedSources=()=>void run("saved-sources",async signal=>{
     setSavedSourceProgress(null);
@@ -422,7 +464,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
     const result=await prepareSavedSourceBatch(services,galleryScope,savedSources,signal,setSavedSourceProgress);
     if(signal.aborted)return;
     setSavedSourceResult(result);
-    await refreshPropertyAndDirectory();
+    await refreshPropertyAndDirectory(false,"listings");
     if(!signal.aborted)setNotice(`${result.prepared} saved photo${result.prepared===1?"":"s"} ready in property history. ${result.unavailable} could not pass the source check. Choose and review versions individually before using them on the listing.`);
   });
   const movePhoto = (photoId: string, direction: -1 | 1) => {
@@ -474,7 +516,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
         {imageOrientations.length>0&&<div className="lw-property-switch"><label>Photo orientation<select aria-label="Gallery photo orientation" value={orientationFilter} onChange={event=>setOrientationFilter(event.target.value as PhotoOrientationFilter)}><option value="all">All photos ({imageOrientations.length})</option>{PHOTO_ORIENTATIONS.map(value=><option key={value} value={value}>{orientationLabel(value)} ({orientationTotals[value]})</option>)}</select></label><span>{orientationSummary(imageOrientations)}</span></div>}
         {orientationTotals.unknown>0&&<p className="lw-help">Some photos haven’t loaded yet. {orientationFilter!=='all'&&visibleGallery.length+visibleSourcePhotos.length>0&&<button onClick={()=>setOrientationFilter('all')}>Show all photos</button>}</p>}
         {orientationFilter!=='all'&&visibleGallery.length+visibleSourcePhotos.length===0&&<p className="lw-help">No {orientationFilter} photos are visible yet. <button onClick={()=>setOrientationFilter('all')}>Show all photos</button></p>}
-        {loading && !media ? <p role="status">Loading property media…</p> : photos.length + videos.length + gallery.length === 0 ? <div className="lw-empty"><h3>Your property story starts with photos</h3><p>Open Rendprop on your iPhone, choose <strong>{listing.address || "this property"}</strong>, and add its photos. Review any AI edits, choose the photos to use, then Make a video. A recorded walkthrough is optional and separate. Complete the upload, then continue here.</p><button disabled={!!busy || !canWrite} onClick={() => input.current?.click()}>Choose files from this computer</button></div> : <div className="lw-media-grid">{visibleGallery.map(({photo,index}) => {const choice=galleryChoices.get(photo.id);return <GalleryPhotoCard key={`${photo.id}:${choice?.asset_id??"unknown"}`} photo={photo} preview={galleryPreviews.get(photo.id)} orientation={galleryOrientation(photo)} onGeometry={(width,height)=>observeGeometry(galleryGeometryKey(photo),width,height)} index={index} count={gallery.length} busy={!!busy} canWrite={canWrite} selectionReady={!!selection&&!!choice} selected={choice?.selected??false} usable={choice?.can_use??false} reviewRequired={choice?.review_required??photo.is_staged} isCover={choice?.selected===true&&galleryKey(photo)===selection?.main_photo_key} onPrepare={state.assets.find(asset=>asset.uploaded&&asset.bucket==="renders"&&asset.storage_key===galleryKey(photo)&&!asset.storage_key.startsWith(`renders/${workspace.org.id}/${listing.id}/gallery-`))?()=>{const source=state.assets.find(asset=>asset.uploaded&&asset.bucket==="renders"&&asset.storage_key===galleryKey(photo));if(source)preparePhoto(source.id,photo.caption??"");}:undefined} onUse={reviewed=>void selectPhoto({action:"use",photo_id:photo.id,reviewed},"Photo selected for the listing. Other selected photos are retained.")} onRemove={()=>void selectPhoto({action:"remove",photo_id:photo.id,operation_id:crypto.randomUUID()},"Photo removed from the listing. Its original and saved versions are retained.",galleryKey(photo)??undefined)} onSaveCaption={(caption, expected) => changeGallery({ action: "caption", photo_id: photo.id, caption, expected_caption: expected }, "Photo caption saved for every device.")} onCover={reviewed=>void selectPhoto({action:"use_cover",photo_id:photo.id,reviewed},"Photo selected as the listing cover. Other selected photos are retained.",galleryKey(photo)??undefined)} onMove={direction => movePhoto(photo.id, direction)} />;})}{visibleSourcePhotos.map((photo) => <article className="lw-media-card" key={`p-${photo.id}`}><img src={photo.url} alt={photo.caption || "Property photo"} loading="lazy" referrerPolicy="no-referrer" style={{objectFit:"contain"}} onLoad={event=>{const image=event.currentTarget;if(image.currentSrc===photo.url)observeGeometry(sourceGeometryKey(photo),image.naturalWidth,image.naturalHeight);}} /><div><strong>{photo.caption || "Property photo"}</strong><span>{isGallerySource(photo.id) ? "Saved cloud copy" : "Source photo"} · {orientationLabel(sourceOrientation(photo))}</span>{isGallerySource(photo.id) && <span className="lw-disclosure">Original status unverified · compare with the original before using</span>}{photo.editKind && <span className="lw-disclosure">AI-altered photo{photo.originalUrl ? " · original available" : ""}</span>}<a href={photo.url} target="_blank" rel="noreferrer">Open photo ↗</a>{state.assets.some(asset => asset.id === photo.id && asset.bucket === "renders" && asset.uploaded) && !isGallerySource(photo.id) && <button disabled={!!busy || !canWrite} onClick={() => preparePhoto(photo.id, photo.caption ?? "")}>Prepare for listing</button>}</div></article>)}{videos.map((video) => <article className="lw-media-card" key={`v-${video.id}`}><video src={video.url} controls preload="metadata" playsInline /><div><strong>Property video</strong><span>{video.durationSeconds ? `${Math.round(video.durationSeconds)} seconds` : "Uploaded walkthrough"}</span><a href={video.url} target="_blank" rel="noreferrer">Open video ↗</a>{videoAssets.some((asset) => asset.id === video.id) && <button onClick={() => { setAssetId(video.id); setDuration(String(video.durationSeconds ?? "")); setChapters(formatChapters(state.chapters.filter(c => c.asset_id === video.id))); setPosterAssetId(""); setEditTour(null); setTab("tour"); }}>Create a tour</button>}</div></article>)}</div>}{!!media?.unavailableCount && <p className="lw-muted">{media.unavailableCount} older media item(s) need a fresh upload from the original device.</p>}
+        {loading && !media ? <p role="status">Loading property media…</p> : loadFailed && !media ? <div className="lw-empty" role="alert"><h3>This property’s media could not be loaded</h3><p>Nothing was removed. Your photos and videos are still saved; Studio could not read them just now.</p><button onClick={() => void refresh(true)}>Try again</button></div> : photos.length + videos.length + gallery.length === 0 ? <div className="lw-empty"><h3>Your property story starts with photos</h3><p>Nothing for this property has reached your account yet. Photos added in the iPhone app stay on the phone until it finishes saving them: open <strong>{listing.address || "this property"}</strong> in Rendprop on your iPhone, keep the app open until each photo shows “Saved to account” instead of “On this iPhone”, then refresh here.{(media?.unavailableCount ?? 0) > 0 && ` ${media!.unavailableCount} saved ${media!.unavailableCount === 1 ? "item is" : "items are"} stored but cannot be opened in Studio; review ${media!.unavailableCount === 1 ? "it" : "them"} in the app.`}</p><button disabled={!!busy || !canWrite} onClick={() => input.current?.click()}>Choose files from this computer</button></div> : <div className="lw-media-grid">{visibleGallery.map(({photo,index}) => {const choice=galleryChoices.get(photo.id);return <GalleryPhotoCard key={`${photo.id}:${choice?.asset_id??"unknown"}`} photo={photo} preview={galleryPreviews.get(photo.id)} orientation={galleryOrientation(photo)} onGeometry={(width,height)=>observeGeometry(galleryGeometryKey(photo),width,height)} index={index} count={gallery.length} busy={!!busy} canWrite={canWrite} selectionReady={!!selection&&!!choice} selected={choice?.selected??false} usable={choice?.can_use??false} reviewRequired={choice?.review_required??photo.is_staged} isCover={choice?.selected===true&&galleryKey(photo)===selection?.main_photo_key} onPrepare={state.assets.find(asset=>asset.uploaded&&asset.bucket==="renders"&&asset.storage_key===galleryKey(photo)&&!asset.storage_key.startsWith(`renders/${workspace.org.id}/${listing.id}/gallery-`))?()=>{const source=state.assets.find(asset=>asset.uploaded&&asset.bucket==="renders"&&asset.storage_key===galleryKey(photo));if(source)preparePhoto(source.id,photo.caption??"");}:undefined} onUse={reviewed=>void selectPhoto({action:"use",photo_id:photo.id,reviewed},"Photo selected for the listing. Other selected photos are retained.")} onRemove={()=>void selectPhoto({action:"remove",photo_id:photo.id,operation_id:crypto.randomUUID()},"Photo removed from the listing. Its original and saved versions are retained.",galleryKey(photo)??undefined)} onSaveCaption={(caption, expected) => changeGallery({ action: "caption", photo_id: photo.id, caption, expected_caption: expected }, "Photo caption saved for every device.")} onCover={reviewed=>void selectPhoto({action:"use_cover",photo_id:photo.id,reviewed},"Photo selected as the listing cover. Other selected photos are retained.",galleryKey(photo)??undefined)} onMove={direction => movePhoto(photo.id, direction)} />;})}{visibleSourcePhotos.map((photo) => <article className="lw-media-card" key={`p-${photo.id}`}><img src={photo.url} alt={photo.caption || "Property photo"} loading="lazy" referrerPolicy="no-referrer" style={{objectFit:"contain"}} onLoad={event=>{const image=event.currentTarget;if(image.currentSrc===photo.url)observeGeometry(sourceGeometryKey(photo),image.naturalWidth,image.naturalHeight);}} /><div><strong>{photo.caption || "Property photo"}</strong><span>{isGallerySource(photo.id) ? "Saved cloud copy" : "Source photo"} · {orientationLabel(sourceOrientation(photo))}</span>{isGallerySource(photo.id) && <span className="lw-disclosure">Original status unverified · compare with the original before using</span>}{photo.editKind && <span className="lw-disclosure">AI-altered photo{photo.originalUrl ? " · original available" : ""}</span>}<a href={photo.url} target="_blank" rel="noreferrer">Open photo ↗</a>{state.assets.some(asset => asset.id === photo.id && asset.bucket === "renders" && asset.uploaded) && !isGallerySource(photo.id) && <button disabled={!!busy || !canWrite} onClick={() => preparePhoto(photo.id, photo.caption ?? "")}>Prepare for listing</button>}</div></article>)}{videos.map((video) => <article className="lw-media-card" key={`v-${video.id}`}><video src={video.url} controls preload="metadata" playsInline /><div><strong>Property video</strong><span>{video.durationSeconds ? `${Math.round(video.durationSeconds)} seconds` : "Uploaded walkthrough"}</span><a href={video.url} target="_blank" rel="noreferrer">Open video ↗</a>{videoAssets.some((asset) => asset.id === video.id) && <button onClick={() => { setAssetId(video.id); setDuration(String(video.durationSeconds ?? "")); setChapters(formatChapters(state.chapters.filter(c => c.asset_id === video.id))); setPosterAssetId(""); setEditTour(null); setTab("tour"); }}>Create a tour</button>}</div></article>)}</div>}{!!media?.unavailableCount && <p className="lw-muted">{media.unavailableCount} older media item(s) need a fresh upload from the original device.</p>}
         <p className="lw-help">Saved versions stay in property history. Use on listing selects a reviewed version for the website; Use as cover selects it and sets the cover. Reordering moves selected photos without adding unselected versions. Original captures remain available as source photos. {gallery.length > 500 && "This gallery exceeds 500 photos; contact support to reorder it."}</p><p className="lw-help">Videos up to 2 GB. Photos up to 50 MB; JPG, PNG, and WebP images up to 10 MB can be selected with Use on listing after upload. HEIC stays available as an original download.</p>
       </>}
       {tab === "tour" && <><div className="lw-two-column"><div className="lw-card"><p className="eyebrow">Make it shareable</p><h3>Create your property tour</h3><p>Choose a walkthrough to process, or upload an edited tour to publish with no render charge.</p><label>Source video<select aria-label="Source video" value={assetId} onChange={(e) => { setAssetId(e.target.value); const asset = videoAssets.find((a) => a.id === e.target.value); setDuration(String(asset?.duration_s ?? "")); setChapters(formatChapters(state.chapters.filter(c => c.asset_id === asset?.id))); setPosterAssetId(""); setEditTour(null); }}><option value="">Choose an uploaded video</option>{videoAssets.map((asset, index) => <option key={asset.id} value={asset.id} disabled={!canPublishAsset(asset)}>{asset.bucket === "renders" ? "Edited tour" : "Walkthrough"}{!canPublishAsset(asset) ? " · accuracy review needed" : ""} {index + 1} · {new Date(asset.created_at).toLocaleDateString()}{asset.duration_s ? ` · ${Math.round(asset.duration_s)}s` : ""}</option>)}</select></label><button disabled={!!busy || !canWrite} onClick={() => masterInput.current?.click()}>Upload an edited tour</button>
@@ -539,7 +581,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
         {editTour && <form className="lw-card" onSubmit={(e) => { e.preventDefault(); void run("chapters", async (signal) => { await api(`renders/${editTour.id}/chapters`, { chapters: parseChapterText(chapters, editTour.duration_s) }, signal, "PATCH"); if (!signal.aborted) { setEditTour(null); setNotice("Room chapters updated on the live tour."); await refresh(); } }); }}><h3>Edit live room chapters</h3><label>Time and room name<textarea aria-label="Time and room name" value={chapters} rows={7} onChange={(e) => setChapters(e.target.value)} /></label><div className="lw-actions"><button className="primary" disabled={!!busy}>Save chapters</button><button type="button" onClick={() => setEditTour(null)}>Cancel</button></div></form>}
       </>}
       {PUBLIC_SPATIAL_TOOLS_ENABLED && tab === "floorplan" && <><div className="lw-two-column"><div className="lw-card"><h3>Floor plan</h3><p>Add a plan to the property so it is available with the tour. Export PDFs as a JPG or PNG first.</p>{floorplanURL ? <><a href={floorplanURL} target="_blank" rel="noreferrer"><img className="lw-floorplan" src={floorplanURL} alt="Property floor plan" /></a><a href={floorplanURL} target="_blank" rel="noreferrer">Open full floor plan ↗</a></> : <div className="lw-empty"><span className="lw-plan-icon">⌑</span><p>No floor plan attached yet.</p></div>}<button className="primary" disabled={!!busy || !canWrite} onClick={() => floorInput.current?.click()}>{floorplanURL ? "Replace floor plan" : "Upload floor plan"}</button></div><aside className="lw-card lw-guide">{listing.spaceType === "real_estate" ? <><h3>Saved floor plans</h3><p>New floor-plan and measurement tools are Coming soon. Existing saved scan plans remain available; upload a saved plan image here.</p><p>Check dimensions and advertised living area against a professional plan or appraisal.</p></> : <><h3>Measure on iPhone</h3><p>Open this listing in Rendprop, then choose <strong>Measurements</strong>. Enter room dimensions, draw a straight-edge outline, and review your area worksheet. Your measurements do not replace advertised living area or a professional appraisal.</p><p>Export a plan image and upload it here. Existing saved scan plans remain available; new 3D room scans are Coming soon and experiments stay in the TestFlight Lab.</p></>}<a href="https://apps.apple.com/us/app/id6808982413" target="_blank" rel="noreferrer">Get Rendprop for iPhone ↗</a></aside></div><SpatialWorkflow services={services} workspace={workspace} listing={listing} canWrite={canWrite} /></>}
-      {tab === "details" && <><PropertyForm key={listing.id} services={services} workspace={workspace} listing={listing} onNavigationGuard={factsNavigationChanged} onRefresh={onChanged} onSaved={() => { setNotice("Property details saved for every device."); onChanged(); }} /><div className="lw-card"><h3>Property status</h3><p>{listing.soldAt ? `Sold on ${new Date(listing.soldAt).toLocaleDateString()}. Clear the sold status if the property returns to market.` : "Keep your portfolio current without losing the property’s media."}</p><div className="lw-actions"><button disabled={!!busy || !canWrite} onClick={() => void run("archive", async (signal) => { await saveFacts({ status: listing.status === "archived" ? "ready" : "archived" }, signal); if (!signal.aborted) { onChanged(); setNotice(listing.status === "archived" ? "Property restored." : "Property archived. Its existing public tour remains available until you remove the property."); } })}>{listing.status === "archived" ? "Restore property" : "Archive property"}</button><button hidden={listing.spaceType !== "real_estate"} disabled={!!busy || !canWrite || soldBusy} onClick={() => void run("sold", async (signal) => { setSoldBusy(true); try { await saveFacts({ sold_at: listing.soldAt ? null : new Date().toISOString() }, signal); if (!signal.aborted) { onChanged(); setNotice(listing.soldAt ? "Sold status cleared. The property is back on the market." : "Property marked sold."); } } finally { if (alive.current) setSoldBusy(false); } })}>{listing.soldAt ? "Clear sold status" : "Mark sold"}</button><button className="lw-danger" disabled={!canWrite} onClick={() => setShowDelete(!showDelete)}>Remove property…</button></div>{showDelete && <form onSubmit={(e) => { e.preventDefault(); void run("delete", async (signal) => { if (deleteText !== (listing.address || "REMOVE")) throw new Error("Type the property name exactly to confirm removal."); await api(`listings/${listing.id}`, undefined, signal, "DELETE"); if (!signal.aborted) onChanged(); }); }}><p>Removing this property takes its hosted tours offline. Type <strong>{listing.address || "REMOVE"}</strong> to confirm.</p><label>Confirm property name<input value={deleteText} onChange={(e) => setDeleteText(e.target.value)} /></label><button className="lw-danger" disabled={!!busy || deleteText !== (listing.address || "REMOVE")}>Remove property and unpublish tours</button></form>}</div></>}
+      {tab === "details" && <><PropertyForm key={listing.id} services={services} workspace={workspace} listing={listing} onNavigationGuard={factsNavigationChanged} onRefresh={onChanged} onSaved={() => { setNotice("Property details saved for every device."); (onListingsChanged ?? onChanged)(); }} /><div className="lw-card"><h3>Property status</h3><p>{listing.soldAt ? `Sold on ${new Date(listing.soldAt).toLocaleDateString()}. Clear the sold status if the property returns to market.` : "Keep your portfolio current without losing the property’s media."}</p><div className="lw-actions"><button disabled={!!busy || !canWrite} onClick={() => void run("archive", async (signal) => { await saveFacts({ status: listing.status === "archived" ? "ready" : "archived" }, signal); if (!signal.aborted) { onChanged(); setNotice(listing.status === "archived" ? "Property restored." : "Property archived. Its existing public tour remains available until you remove the property."); } })}>{listing.status === "archived" ? "Restore property" : "Archive property"}</button><button hidden={listing.spaceType !== "real_estate"} disabled={!!busy || !canWrite || soldBusy} onClick={() => void run("sold", async (signal) => { setSoldBusy(true); try { await saveFacts({ sold_at: listing.soldAt ? null : new Date().toISOString() }, signal); if (!signal.aborted) { onChanged(); setNotice(listing.soldAt ? "Sold status cleared. The property is back on the market." : "Property marked sold."); } } finally { if (alive.current) setSoldBusy(false); } })}>{listing.soldAt ? "Clear sold status" : "Mark sold"}</button><button className="lw-danger" disabled={!canWrite} onClick={() => setShowDelete(!showDelete)}>Remove property…</button></div>{showDelete && <form onSubmit={(e) => { e.preventDefault(); void run("delete", async (signal) => { if (deleteText !== (listing.address || "REMOVE")) throw new Error("Type the property name exactly to confirm removal."); await api(`listings/${listing.id}`, undefined, signal, "DELETE"); if (!signal.aborted) onChanged(); }); }}><p>Removing this property takes its hosted tours offline. Type <strong>{listing.address || "REMOVE"}</strong> to confirm.</p><label>Confirm property name<input value={deleteText} onChange={(e) => setDeleteText(e.target.value)} /></label><button className="lw-danger" disabled={!!busy || deleteText !== (listing.address || "REMOVE")}>Remove property and unpublish tours</button></form>}</div></>}
     </section>
   </div>;
 }

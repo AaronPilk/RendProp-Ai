@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript-parser";
-import { decodeListingState, EMPTY_STATE } from "../src/features/listings/model";
+import { activitySignature, decodeListingState, EMPTY_STATE } from "../src/features/listings/model";
+import { earliestExpiry, LINK_RENEW_MS, rememberMedia, retainFreshLinks } from "../src/data/media-cache";
 import { confirmsGallerySelection, UnconfirmedGallerySelection } from "../src/features/listings/gallery-selection";
 
 // Execute the actual component's refresh/action closures. No copied error-state
@@ -20,6 +21,7 @@ function harness(){
  const context={
   useCallback:(fn:unknown)=>fn,
   workspace:{org:{id:org},libraryOrgId:org,user:{id:"10000000-0000-4000-8000-000000000001"}},listing:{id:listing},galleryScope:{},
+  shownMedia:{current:null as unknown},stateSignature:{current:null as string|null},mediaCacheScope:()=>null,activitySignature,earliestExpiry,LINK_RENEW_MS,retainFreshLinks,rememberMedia,
   load:{current:null},action:{current:null},alive:{current:true},uncertainSelection:{current:null},actionErrorOwner:{current:null},confirmsGallerySelection,UnconfirmedGallerySelection,canWrite:true,EMPTY_STATE,decodeListingState,
   services:{api:async()=>{if(failRead)throw Error("Workspace read failed");return{org_id:org,listing_id:listing,assets:[],jobs:[],renders:[],photos:[],chapters:[],next_offset:null};},listMedia:async()=>({photos:[],videos:[],nextOffset:null,unavailableCount:0})},
   readGallerySelection:async()=>null,message:(reason:unknown)=>reason instanceof Error?reason.message:"Failed",
@@ -45,4 +47,25 @@ test("the next explicit action clears only its old action error; aborted or unmo
  await h.run("gallery",async()=>{assert.equal(h.ui.actionError,"");assert.equal(h.ui.readError,"Separate read failure");});
  await h.run("gallery",async signal=>{(h.context.action.current as unknown as AbortController).abort();assert(signal.aborted);throw Error("Late cancelled failure");});assert.equal(h.ui.actionError,"");
  h.context.alive.current=false;await h.run("gallery",async()=>{throw Error("Late unmounted failure");});assert.equal(h.ui.actionError,"");
+});
+
+test("automatic refresh signs media again only when saved activity changed or the links on screen are aging",async()=>{
+ const h=harness(),org=h.context.workspace.org.id,listing=h.context.listing.id,services=h.context.services as Record<string,unknown>;
+ const refresh=h.refresh as (showLoading?:boolean,automatic?:boolean)=>Promise<void>;
+ let reads=0,assets:unknown[]=[];
+ const photo=()=>({id:"40000000-0000-4000-8000-000000000001",listingId:listing,url:`https://media.example.invalid/a.jpg?signature=${reads}`,expiresAt:new Date(Date.now()+600_000).toISOString(),caption:null,isStaged:false,sort:0});
+ services.api=async()=>({org_id:org,listing_id:listing,assets,jobs:[],renders:[],photos:[],chapters:[],next_offset:null});
+ services.listMedia=async()=>{reads++;return{orgId:org,listingId:listing,photos:[photo()],videos:[],nextOffset:null,unavailableCount:0};};
+ await refresh(true);assert.equal(reads,1);
+ await refresh(false,true);assert.equal(reads,1,"nothing changed: the timer read must not sign the gallery again");
+ await refresh();assert.equal(reads,2,"an action or the Refresh button always reads media");
+ const shown=h.context.shownMedia.current as {photos:{url:string}[]};
+ assert.equal(shown.photos[0].url,"https://media.example.invalid/a.jpg?signature=1","a still-good link stays on screen so the photo is not downloaded twice");
+ assets=[{id:"40000000-0000-4000-8000-000000000002",listing_id:listing,storage_key:`uploads/${org}/${listing}/b.jpg`,kind:"photo",bucket:"uploads",uploaded:true,duration_s:null,created_at:"2026-11-12T00:00:00Z"}];
+ await refresh(false,true);assert.equal(reads,3,"a photo saved from the phone is picked up by the next timer read");
+ await refresh(false,true);assert.equal(reads,3);
+ h.context.shownMedia.current={...shown,photos:[{...shown.photos[0],expiresAt:new Date(Date.now()+120_000).toISOString()}]};
+ await refresh(false,true);assert.equal(reads,4,"links close to expiry are renewed before they break");
+ assert.equal((h.context.shownMedia.current as {photos:{url:string}[]}).photos[0].url,"https://media.example.invalid/a.jpg?signature=4");
+ assert.equal(h.ui.readError,"");assert.equal(h.ui.loadFailed,false);
 });
