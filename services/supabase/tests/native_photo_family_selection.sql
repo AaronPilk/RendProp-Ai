@@ -84,25 +84,29 @@ perform pg_temp.ok(r->'gallery_asset_ids'=to_jsonb(array[f.p3,f.p1])and r->>'mai
 request:=pg_temp.intent(array[f.p1,f.p2],f.p2,repeat('2',64),200,array[f.p3,f.p1],k1,false,true);
 perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'family cover replacement needs explicit follow confirmation','RP409: Confirm the current family cover');
 request:=pg_temp.intent(array[f.p1,f.p2],f.p2,repeat('2',64),200,array[f.p3,f.p1],k1,true,false);
-perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'accepted altered photo needs explicit comparison review','RP409: Compare the accepted edit');
+-- 20261112230000: a review flag is never required. The same accepted edit is admitted with
+-- reviewed=false and the receipt keeps the flag exactly as the client sent it.
+r:=native_gallery_selection_change(f.actor,f.org,f.org,f.listing,gen_random_uuid(),request);
+perform pg_temp.ok(r->'gallery_asset_ids'=to_jsonb(array[f.p3,f.p2])and r->>'main_photo_key'=k2 and r->'operation'->'request'->'reviewed'='false'::jsonb,'accepted altered photo is admitted without a review flag and the receipt records the flag as sent');
+update listings set gallery_asset_ids=array[f.p3,f.p1],main_photo_key=k1 where id=f.listing;
 request:=pg_temp.intent(array[f.p1,f.p2],f.p2,repeat('2',64),200,array[f.p3,f.p1],k1,true,true);
 perform pg_temp.set_evidence(f.actor,f.org,f.listing,'prospective','accept');
 r:=native_gallery_selection_change(f.actor,f.org,f.org,f.listing,gen_random_uuid(),request);
 perform pg_temp.ok(r->'gallery_asset_ids'=to_jsonb(array[f.p3,f.p2])and r->>'main_photo_key'=k2,'accepted prospective evidence admits reviewed exact edit');
 update listings set gallery_asset_ids=array[f.p3,f.p1],main_photo_key=k1 where id=f.listing;
 perform pg_temp.set_evidence(f.actor,f.org,f.listing,'calibration','accept');
-perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'accepted calibration evidence is never deliverable','RP409: Compare the accepted edit');
+perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'accepted calibration evidence is never deliverable','RP409: This edited photo cannot be used on the listing yet');
 perform pg_temp.set_evidence(f.actor,f.org,f.listing,'prospective','hold');
-perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'held prospective evidence refuses despite legacy QC absence','RP409: Compare the accepted edit');
+perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'held prospective evidence refuses despite legacy QC absence','RP409: This edited photo cannot be used on the listing yet');
 perform pg_temp.set_evidence(f.actor,f.org,f.listing,null,null);
 update media_provenance set kind='aerial'where listing_id=f.listing;
-perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'non-photo provenance cannot justify edited photo','RP409: Compare the accepted edit');
+perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'non-photo provenance cannot justify edited photo','RP409: This edited photo cannot be used on the listing yet');
 update media_provenance set kind='declutter',original_key=k2 where listing_id=f.listing;
-perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'edited target cannot be its own retained original','RP409: Compare the accepted edit');
+perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'edited target cannot be its own retained original','RP409: This edited photo cannot be used on the listing yet');
 update media_provenance set original_key=k1 where listing_id=f.listing;
 update media_provenance set qc='{"publishable":false,"action":"hold"}'where listing_id=f.listing;
 request:=pg_temp.intent(array[f.p1,f.p2],f.p2,repeat('2',64),200,array[f.p3,f.p1],k1,true,true);
-perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'held altered target refuses even after client review','RP409: Compare the accepted edit');
+perform pg_temp.denied(format('select native_gallery_selection_change(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),request),'held altered target refuses even after client review','RP409: This edited photo cannot be used on the listing yet');
 update media_provenance set qc=null where listing_id=f.listing;
 select to_jsonb(a)into retained_original from capture_assets a where id=f.p1;
 update listings set gallery_asset_ids=array[f.p3],main_photo_key=null where id=f.listing;

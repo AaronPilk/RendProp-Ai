@@ -23,8 +23,12 @@ DATA=Path(tempfile.mkdtemp(prefix='owned-native-pg-',dir=OUT));SOCK=Path(tempfil
 ENV={'PATH':'/opt/homebrew/bin:/opt/homebrew/opt/postgresql@17/bin:'+os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda x:shutil.which(x,path=ENV['PATH'])
 assert all(tool(x)for x in ['initdb','pg_ctl','createdb','psql'])
-MIG=SQL/'migrations/20261016163911_native_photo_family_selection.sql';FIX=SQL/'tests/native_photo_family_selection.sql';FOLLOW=SQL/'tests/native_photo_family_followup.sql';NEW=SQL/'migrations/20261016171912_native_photo_family_abandon_cover.sql';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
+MIG=SQL/'migrations/20261016163911_native_photo_family_selection.sql';FIX=SQL/'tests/native_photo_family_selection.sql';FOLLOW=SQL/'tests/native_photo_family_followup.sql';NEW=SQL/'migrations/20261016171912_native_photo_family_abandon_cover.sql';REVIEW=SQL/'migrations/20261112230000_photo_selection_review_not_required.sql';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
 SCHEMA_MIGRATIONS,LIVE_STATE_MIGRATIONS=partition_fresh_migrations(MIGRATIONS)
+# 20261112230000 (owner decision, 12 Nov 2026) is the one reviewed later rewrite of an owned helper:
+# the target check stops reading the client's review flag and its one refusal is reworded.
+TARGET='native_gallery_selection_target(uuid,uuid,uuid,text,bigint,boolean)'
+REVIEW_REWRITE=[('p_reviewed is distinct from true or ',''),("raise exception'RP409: Compare the accepted edit with its retained original before choosing it'","raise exception'RP409: This edited photo cannot be used on the listing yet. Its AI-edit record is incomplete or the edit was not accepted. Make the edit again, then choose the new version'")]
 SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',FIX,FOLLOW,Path(__file__).resolve()]
 hashes=lambda:{str(x.relative_to(ROOT)):hashlib.sha256(x.read_bytes()).hexdigest()for x in SOURCES}
 receipt={'passed':False,'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_hashes':hashes(),'liveStateOnlyMigrations':[m.name for m in LIVE_STATE_MIGRATIONS],'commands':[],'live_calls':0,'provider_calls':0};started=False
@@ -67,15 +71,25 @@ try:
  # Later migrations may legitimately rewrite unrelated public functions (each carries its own
  # replay guard); only the nine introduced native helpers must survive byte-exact, with the
  # same owner, ACL, security and config, from their introducing migration to the final catalog.
+ # The single exception is the target check, whose final definition must be exactly its
+ # introduced definition with the two reviewed 20261112230000 replacements and nothing else.
  after=catalog('after-all');final_map={x['signature']:x for x in after};v2_map={x['signature']:x for x in v2_after}
  assert len(OWNED)==9 and len(set(OWNED))==9 and all(x in v2_map for x in OWNED),('Owned helper authority incomplete',OWNED)
+ assert REVIEW in SCHEMA_MIGRATIONS and TARGET in OWNED,'Reviewed target rewrite must be a schema migration over an owned helper'
+ reviewed_target=dict(v2_map[TARGET])
+ for needle,replacement in REVIEW_REWRITE:
+  assert reviewed_target['definition'].count(needle)==1,('Reviewed target rewrite anchor changed',needle)
+  reviewed_target['definition']=reviewed_target['definition'].replace(needle,replacement,1)
  for signature in OWNED:
   assert signature in final_map,'Later migration dropped an owned helper: '+signature
-  assert final_map[signature]==v2_map[signature],'Later migration changed an owned helper: '+signature
+  assert final_map[signature]==(reviewed_target if signature==TARGET else v2_map[signature]),'Later migration changed an owned helper: '+signature
  later=[m.name for m in SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.index(NEW)+1:]]
- receipt['owned_helper_authority']={'signatures':OWNED,'later_migrations':later,'later_rewrites_outside_owned':sorted(k for k,v in v2_map.items()if final_map.get(k)!=v),'later_added_outside_owned':sorted(set(final_map)-set(v2_map)),'owned_unchanged':True}
- assert not set(receipt['owned_helper_authority']['later_rewrites_outside_owned'])&set(OWNED)
- run('own-replay',[*PSQL,'-q','-1','-f',MIG]);assert catalog('after-replay')==after
+ receipt['owned_helper_authority']={'signatures':OWNED,'later_migrations':later,'later_rewrites_outside_owned':sorted(k for k,v in v2_map.items()if final_map.get(k)!=v),'later_added_outside_owned':sorted(set(final_map)-set(v2_map)),'owned_unchanged':True,'reviewed_owned_rewrite':{'signature':TARGET,'migration':REVIEW.name,'only_reviewed_replacements':True}}
+ assert set(receipt['owned_helper_authority']['later_rewrites_outside_owned'])&set(OWNED)=={TARGET}
+ # The introducing migration pins the target's original body, so replaying it after the reviewed
+ # rewrite must refuse and change nothing; the rewrite itself replays as a no-op.
+ run('own-replay',[*PSQL,'-q','-1','-f',MIG],refuses='Review changed native photo selection helper: native_gallery_selection_target');assert catalog('after-replay')==after
+ run('review-replay',[*PSQL,'-q','-1','-f',REVIEW]);assert catalog('after-review-replay')==after
  trigger_baseline=triggers('before-v2-replay-triggers');run('v2-replay',[*PSQL,'-q','-1','-f',NEW]);assert catalog('after-v2-replay')==after;assert triggers('after-v2-replay-triggers')==trigger_baseline
  for label in ['fresh','repeated']:
   out=run(label,[*PSQL,'-Atq','-f',FIX]);rows=[json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x];assert len(rows)==1 and rows[0]['passed'] and rows[0]['assertions']==44,(label,rows);receipt[label]=rows[0];print(label,rows[0],flush=True)
@@ -92,6 +106,8 @@ try:
  ('calibration-promotion','native_gallery_selection_target(uuid,uuid,uuid,text,bigint,boolean)',"or purpose='calibration'",'', 'NATIVE SELECTION FAIL: accepted calibration evidence is never deliverable'),
  ('non-photo-evidence','native_gallery_selection_target(uuid,uuid,uuid,text,bigint,boolean)',"or m.kind not in('photo_edit','virtual_stage','declutter')",'', 'NATIVE SELECTION FAIL: non-photo provenance cannot justify edited photo'),
  ('self-original','native_gallery_selection_target(uuid,uuid,uuid,text,bigint,boolean)',"or m.original_key=a.storage_key",'', 'NATIVE SELECTION FAIL: edited target cannot be its own retained original'),
+ # Putting the review requirement back must fail the fixture: an accepted edit sent with reviewed=false is refused again.
+ ('review-flag-required','native_gallery_selection_target(uuid,uuid,uuid,text,bigint,boolean)','if m.org_id is distinct from p_org','if p_reviewed is distinct from true or m.org_id is distinct from p_org','RP409: This edited photo cannot be used on the listing yet'),
  ]:
   original=query('read-'+name,"select pg_get_functiondef('public.%s'::regprocedure);"%signature);assert original.count(needle)==1,name
   mutant=original.replace(needle,replacement,1)

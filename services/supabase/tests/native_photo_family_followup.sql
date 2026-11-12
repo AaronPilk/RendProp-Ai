@@ -97,7 +97,10 @@ q:=pg_temp.intent(array[f.p1],f.p1,repeat('1',64),100,'{}',null)||'{"promote_cov
 perform pg_temp.denied(format('select native_gallery_selection_change_v2(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),q),'explicit empty selection never becomes implicit selected photo','RP409: Select this exact family version');
 update listings set gallery_asset_ids=array[f.p3,f.p2],main_photo_key=k3 where id=f.listing;
 q:=pg_temp.intent(array[f.p1,f.p2],f.p2,repeat('2',64),200,array[f.p3,f.p2],k3)||'{"promote_cover":true}';
-perform pg_temp.denied(format('select native_gallery_selection_change_v2(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),q),'cover target still requires actual edit review','RP409: Compare the accepted edit');
+-- 20261112230000: "set as cover" on an AI edit needs no review flag (iOS build 147 sends false).
+r:=native_gallery_selection_change_v2(f.actor,f.org,f.org,f.listing,gen_random_uuid(),q);
+perform pg_temp.ok(r->'gallery_asset_ids'=to_jsonb(array[f.p3,f.p2])and r->>'main_photo_key'=k2 and r->'operation'->'request'->'reviewed'='false'::jsonb,'edited cover target is admitted without a review flag and the receipt records the flag as sent');
+update listings set main_photo_key=k3 where id=f.listing;
 q:=q||'{"reviewed":true}';r:=native_gallery_selection_change_v2(f.actor,f.org,f.org,f.listing,gen_random_uuid(),q);
 perform pg_temp.ok(r->'gallery_asset_ids'=to_jsonb(array[f.p3,f.p2])and r->>'main_photo_key'=k2,'reviewed eligible edited target may explicitly become cover');
 perform pg_temp.denied(format('select native_gallery_selection_change_v2(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.org,f.listing,gen_random_uuid(),q),'promotion stale cover CAS refuses','RP409: The listing photo selection changed');

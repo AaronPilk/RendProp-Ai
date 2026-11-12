@@ -364,6 +364,13 @@ export async function changePhotoSelection(
   abandon = false,
   signal?: AbortSignal,
 ): Promise<Row> {
+  // Owner decision, 12 Nov 2026: no review tick is required to use an AI edit.
+  // `reviewed` is accepted as true, false or absent. It is still validated as a
+  // boolean and stored with the operation exactly as sent; a request that
+  // leaves it out is recorded as false (no review was claimed).
+  if (object(body) && !Object.hasOwn(body, "reviewed")) {
+    body = { ...body, reviewed: false };
+  }
   assert(
     (exact(body, [
       "operation_id",

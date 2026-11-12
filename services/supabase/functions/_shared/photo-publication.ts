@@ -91,7 +91,11 @@ export async function ensureAcceptedPhotoPublication(
   if(resolved===null){assert(options.provenanceID===undefined&&initial.publication===null,404,"The saved photo disclosure is unavailable.");return null;}
   resolved=source(resolved,full,options.provenanceID);
   assert(resolved.target.asset_id===asset&&resolved.source_output.sha256===actualTarget.sha256&&resolved.source_output.bytes===actualTarget.bytes&&resolved.source_output.mime===actualTarget.mime,409,"This uploaded photo is not the exact accepted result.");
-  assert(options.reviewed!==false,409,"Compare the accepted edit with its retained source before choosing it.");
+  // Owner decision, 12 Nov 2026: the agent is responsible for what they post, so
+  // no review tick is required to use an AI edit. `options.reviewed` may be true,
+  // false or absent and is not read here; the caller's own record keeps what the
+  // client sent. The accepted-result, exact-bytes and disclosure checks above and
+  // below are unchanged.
   await io.admit(admin,scope.orgId,resolved.source_input.bytes+resolved.source_output.bytes,actor);
   const input=await io.read(resolved.source_input,signal),output=(await io.read(resolved.source_output,signal)).proof;
   assert(output.sha256===actualTarget.sha256&&output.bytes===actualTarget.bytes&&output.mime===actualTarget.mime,409,"The retained result changed. No substitute was published.");

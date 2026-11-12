@@ -20,6 +20,26 @@ Deno.test("an accepted listing-bound edit retains its exact source and prepared 
   ]);
 });
 
+// Owner decision, 12 Nov 2026: no review tick may block using an AI result.
+// iOS build 147 sends `reviewed: false` from "set as cover" and from the first
+// publication of a listing; both must publish exactly like a reviewed choice.
+Deno.test("an accepted edit is published whether the client says reviewed, not reviewed, or nothing", async () => {
+  for (const reviewed of [false, undefined, true]) {
+    const f = await publicationFixture({ bound: true });
+    const result = await ensureAcceptedPhotoPublication(
+      f.client, f.scope, f.actor, f.asset,
+      { ...(reviewed === undefined ? {} : { reviewed }), expected: { sha256: f.outputSHA, bytes: f.output.length } }, f.io,
+    );
+    assertEquals(result?.id, f.pub, `reviewed=${reviewed}`);
+    assertEquals(result?.sourceProvenanceID, f.original);
+    assertEquals(f.state.phase, "prepared");
+    assertEquals(f.state.writes, 1);
+    assertEquals(f.state.calls.map(({ name }) => name).filter((name) => name.startsWith("photo_publication_")), [
+      "photo_publication_target", "photo_publication_resolve", "photo_publication_reserve", "photo_publication_finish",
+    ]);
+  }
+});
+
 Deno.test("an accepted listing-bound edit can use an uploaded original", async () => {
   const f = await publicationFixture({ bound: true, sourceBucket: "uploads" });
   const result = await ensureAcceptedPhotoPublication(

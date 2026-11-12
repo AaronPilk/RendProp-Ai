@@ -409,6 +409,26 @@ Deno.test("actual unselect receipt must prove family absence while preserving ot
   assertEquals(good.calls.length, 1);
 });
 
+// Owner decision, 12 Nov 2026: no review tick is required to use an AI edit.
+Deno.test("a choice that leaves out the review flag is accepted and recorded as not reviewed", async () => {
+  const { reviewed: _unsent, ...unflagged } = body();
+  const r = await invoke(unflagged);
+  assertEquals(r.status, 200);
+  assertEquals(r.calls.length, 1);
+  assertEquals(r.calls[0].args.p_request, intent());
+});
+Deno.test("the review flag is recorded exactly as sent and still has to be a boolean", async () => {
+  for (const reviewed of [false, true]) {
+    const r = await invoke({ ...body(), reviewed });
+    assertEquals(r.status, 200);
+    assertEquals(r.calls[0].args.p_request, { ...intent(), reviewed });
+  }
+  for (const reviewed of ["true", 1, null]) {
+    const r = await invoke({ ...body(), reviewed });
+    assertEquals(r.status, 400);
+    assertEquals(r.calls, []);
+  }
+});
 Deno.test("optional false cover field preserves the exact five-key legacy intent", async () => {
   const r = await invoke({ ...body(), promote_cover: false });
   assertEquals(r.status, 200);
