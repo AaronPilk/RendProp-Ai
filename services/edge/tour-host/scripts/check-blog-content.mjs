@@ -15,7 +15,7 @@ const CLAIMS = [
   [/unbranded (page|link|version|tour)[^.]{0,60}\b(has|with|carries|includes|keeps|shows|still has)\b (an? |the )?(enquiry|contact) form|\bfills? in the enquiry form[^.]*unbranded|enquir(y|ies) (from|through|via) the unbranded/i, "unbranded page has no form"], [/(scheduled?|auto-?post)[^.]{0,40}(from|in|with) rendprop/i, "scheduling claim"],
   [/tour renders?\b|reel clips?\b|aerial intros?\b/i, "metered-unit wording"], [/\b(coming soon|not yet available)\b[^.]{0,60}aerial/i, "obsolete aerial claim"]
 ];
-const ALLOWED_PATH = /^(\/features(#[a-z-]+)?|\/pricing|\/compare(\/(autoreel|mirino|arvaum|rendy))?|\/support|\/f\/estate-demo|\/blog(\/[a-z0-9-]+)?|\/blog\/topic\/[a-z0-9-]+|\/terms|\/privacy)$/;
+const ALLOWED_PATH = /^(\/features(#[a-z-]+)?|\/pricing|\/listing-video-from-photos|\/single-property-website|\/real-estate-photo-editing-app|\/compare(\/(autoreel|mirino|arvaum|rendy))?|\/support|\/f\/estate-demo|\/blog(\/[a-z0-9-]+)?|\/blog\/topic\/[a-z0-9-]+|\/terms|\/privacy)$/;
 const TAGS = new Set(["p", "h2", "h3", "ul", "ol", "li", "strong", "em", "a"]);
 const strip = (h) => h.replace(/<[^>]+>/g, " ");
 let failures = [], count = 0;

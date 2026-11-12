@@ -64,9 +64,10 @@ export interface SitemapPortfolio {
 const SITE_PAGES: SitemapEntry[] = [
   // 2026-10-29: glass redesign, real plan pricing and the Terms pricing line
   // (deploy d0a90141). 2026-11-12: pricing and compare titles/descriptions,
-  // and the privacy policy's website-analytics paragraph.
-  { loc: "/", lastmod: "2026-10-29", changefreq: "weekly", priority: "1.0" },
-  { loc: "/features", lastmod: "2026-10-29", changefreq: "weekly", priority: "0.9" },
+  // links to the three product pages from home, features, pricing and
+  // compare, and the privacy policy's website-analytics paragraph.
+  { loc: "/", lastmod: "2026-11-12", changefreq: "weekly", priority: "1.0" },
+  { loc: "/features", lastmod: "2026-11-12", changefreq: "weekly", priority: "0.9" },
   { loc: "/pricing", lastmod: "2026-11-12", changefreq: "weekly", priority: "0.9" },
   { loc: "/compare", lastmod: "2026-11-12", changefreq: "weekly", priority: "0.8" },
   // Product pages added 2026-11-12 (docs/seo/keywords-20261112.md). Each is a
