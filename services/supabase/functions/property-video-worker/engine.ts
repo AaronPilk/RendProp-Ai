@@ -134,26 +134,24 @@ export async function poll(ctx:any){
  }
 }
 export async function quality(ctx:any,raw:any){const j=ctx.job,s=ctx.source;assert(raw.clip_sha256===s.clip?.sha256&&Array.isArray(raw.frames)&&raw.frames.length===3,409,'Use the retained generated clip and all three review frames.');
- // Steady profiles: the CPU's temporal motion report (temporal.ts) is verified
- // against this limit version and recorded on the shot BEFORE the paid drift
- // judge. A HOLD is the existing CPU review pause (cpu_extract_failed): two more
- // immediate extracts, then the job pauses as a resumable quality pause with its
- // paid clip retained and the verdict recorded. Never a pass, never a purchase.
- if(temporalRequired(j.quality_profile)){const report=temporalReport(raw.temporal);
-  if(!report){await fail(ctx,'cpu_extract_failed',false);return;}
-  // The recorded verdict decides (first measurement of this attempt under this limit version wins; SQL returns it on a repeat).
-  const recorded=temporalReport(await rpc('property_video_job_temporal',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id,p_clip_sha256:raw.clip_sha256,p_report:report}));
-  assert(recorded,503,'The recorded temporal verdict could not be read.');const route=temporalRoute(recorded.verdict);
-  // Not a still-photo substitution: with no paid structural drift rejection,
-  // property_video_job_failure makes this the resumable quality pause (paid clip
-  // retained) and property_video_fallback_source_guard refuses original_photo.
-  if(route==='refuse'){await fail(ctx,'quality_check_refused',false);return;}
-  // FOLLOW-UP (V2 retry routing): the single paid retry, property_video_job_quality_retry
-  // (20261015040518), is granted only on a persisted paid DRIFT verdict
-  // (property_video_quality_retry_evidence). A temporal-only bob/sway/cadence
-  // failure has no such grant yet, so it holds here with its verdict recorded
-  // instead of buying a retry or publishing; see quality.test.ts (ignored case).
-  if(route==='retry'){await fail(ctx,'cpu_extract_failed',false);return;}
+ // ADVISORY (owner decision 12 Nov 2026; same policy as the photo judge since
+ // 6 Nov: perform the action, record the verdict, the user reviews). On steady
+ // profiles the CPU's temporal motion report (temporal.ts) is still verified
+ // against this limit version and recorded on the shot, one immutable row in
+ // property_video_job_temporal_verdicts, BEFORE the paid drift judge. Its
+ // verdict no longer decides anything: a failed, missing or malformed report
+ // never pauses, fails or re-extracts the shot, never buys a generation and
+ // never substitutes a still photo. The clip is used as it is.
+ if(temporalRequired(j.quality_profile)){const report=temporalReport(raw.temporal);let verdict:{pass:boolean;reasons:string[]}|null=null;
+  if(report){
+   // The stored record is the one reported (first measurement of this attempt under this limit version; SQL returns it on a repeat).
+   try{verdict=temporalReport(await rpc('property_video_job_temporal',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id,p_clip_sha256:raw.clip_sha256,p_report:report}))?.verdict??null;}
+   // A lost write or a superseded lease still stops this callback (the controller
+   // retries its saved callback, so scores are not silently dropped). Only SQL's
+   // closed refusal of the report's shape (400) is an unknown verdict: go on.
+   catch(error){if((error as{status?:unknown})?.status!==400)throw error;}
+  }
+  if(!verdict||!verdict.pass)try{console.warn(JSON.stringify({event:'property_video_temporal_advisory',recorded:!!verdict,pass:verdict?verdict.pass:null,route:verdict?temporalRoute(verdict):null,reasons:verdict?verdict.reasons:[]}));}catch{/* Recording only. */}
  }
  const{bytes}=await bytesFrom(s.source);const frames=raw.frames.map((frame:any,i:number)=>{assert(frame&&typeof frame.image_b64==='string'&&frame.image_b64.length<=524288&&frame.mime==='image/jpeg',400,'Use bounded actual JPEG review frames.');return{at:['first','middle','last'][i],b64:frame.image_b64,mime:frame.mime};});const out=await callAI(ctx,'POST','drift',{request_id:s.receipt.request_id,kind:'reel',source_b64:base64(bytes),source_mime:s.source.content_type,frames,seconds:5,motion:s.motion,listing_id:j.listing_id,asset_id:s.asset_id,provenance_id:s.generation_provenance_id,attempt:(s.quality_retries??0)>0?1:0});
  if(out.status===200&&out.value.drift?.action==='accept'&&out.value.drift.publishable===true){await rpc('property_video_job_qc',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});return;}

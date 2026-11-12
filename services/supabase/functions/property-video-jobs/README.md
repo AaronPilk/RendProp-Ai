@@ -12,11 +12,13 @@ introduces `fly_through`, and records `requested`/`chosen`/`changed` under
 `manifest.motion_variety` (seed: the operation id). Steady profiles also record
 a temporal motion verdict per shot attempt and limit version
 (`property_video_job_temporal_verdicts`, `property-video-worker/temporal.ts`)
-before the paid drift judge decides; the shot row itself keeps its shape. A
-missing, foreign or failing verdict holds the shot and then pauses the job with
-the paid clip retained; it never publishes, buys a retry or substitutes the
-still photo, and an owner resume re-reviews the same attempt (the first
-recorded verdict stands). Rollback of the SQL objects:
+before the paid drift judge decides; the shot row itself keeps its shape. The
+verdict is ADVISORY (owner decision, 12 Nov 2026; the photo judge's policy): a
+missing, foreign or failing verdict is recorded where it can be and the clip is
+still used. It never holds, pauses or fails the job, never buys a retry and
+never substitutes the still photo. A finished video's status carries
+`motion_review` (`position`, `pass`, `reasons` per reviewed shot) so clients and
+feedback can show it. Rollback of the SQL objects:
 `docs/handoff/PROPERTY-VIDEO-TEMPORAL-ROLLBACK.sql` (worker first).
 
 ## Client contract
