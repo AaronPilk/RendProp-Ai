@@ -1609,6 +1609,8 @@ jobs:
           path: |
             ${{ runner.temp }}/studio-audio-output-bindings.json
             ${{ runner.temp }}/rendprop-export-webcodecs-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-webcodecs-*/*.recorder-diagnostic*.json
+            ${{ runner.temp }}/rendprop-export-webcodecs-*/*.recorder-diagnostic*.mp4
             ${{ runner.temp }}/rendprop-export-webcodecs-*/*.mp4
             ${{ runner.temp }}/rendprop-export-webcodecs-*/*.png
             ${{ runner.temp }}/rendprop-export-webcodecs-*/*.source-probe.json
@@ -1764,7 +1766,7 @@ jobs:
           assert Path(run['output']).resolve() == outputs[0].resolve()
           expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs',
                               'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs',
-                              'tests/export-backend-observer.mjs'}
+                              'tests/export-backend-observer.mjs', 'tests/recorder-cadence-observer.mjs'}
           import subprocess
           expected_sources.update(json.loads(subprocess.check_output(['node', '--input-type=module', '-e',
               'import {EXPORT_SOURCE_PATHS} from "./tests/export-source-binding.mjs"; console.log(JSON.stringify(EXPORT_SOURCE_PATHS));'], text=True)))
@@ -1816,9 +1818,13 @@ jobs:
             ${{ runner.temp }}/studio-media-resume-audio-output-bindings.json
             ${{ runner.temp }}/studio-media-resume-readiness.json
             ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-resume-*/*.recorder-diagnostic*.json
+            ${{ runner.temp }}/rendprop-export-resume-*/*.recorder-diagnostic*.mp4
             ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
             ${{ runner.temp }}/rendprop-export-resume-control.*/run.log
             ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/*.recorder-diagnostic*.json
+            ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/*.recorder-diagnostic*.mp4
             ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/*.mp4
             .ci-media-cache/manifest.json
           retention-days: 7

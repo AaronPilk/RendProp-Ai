@@ -14,6 +14,7 @@ import { collectRunnerFacts, quickLoad } from "./runner-facts.mjs";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
 import {exportSourceHashes} from "./export-source-binding.mjs";
 import {installExportBackendObserver, exportBackendSnapshot, simulatedUnsupportedEncoderPlugin} from "./export-backend-observer.mjs";
+import {installRecorderCadenceObserver, retainRecorderCadenceEvidence} from "./recorder-cadence-observer.mjs";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
 const {args: audioArgs, audioOutput} = testAudioOutputOption(process.argv.slice(2));
@@ -32,9 +33,37 @@ const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["fixed", "baseline
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
-const sourceHashes = await exportSourceHashes(root, ["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", "tests/export-backend-observer.mjs"]);
-const receipt = { coverage: "Legacy recorder path under a test-only simulated unsupported worker capability response; no worker media coverage claim", capabilityOverride: "Simulated false capability response, not evidence actual browser lacks support", sourceHashes, audioOutput, diagnostics, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], captureGapFailures: [], sparseCaptureFailures: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
-let browser, server;
+const testPaths = ["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", "tests/export-backend-observer.mjs", "tests/recorder-cadence-observer.mjs"];
+const sourceHashes = await exportSourceHashes(root, testPaths);
+const recorderCadenceHooks = [];
+
+// Test-only observational custody. No active byte copy, clock or media changes.
+function recorderCadenceBlobPlugin(label) {
+  let matches = 0;
+  return {name: "test-only-post-stop-recorder-blob-custody", enforce: "pre",
+    transform(code, id) {
+      if (!id.split("?")[0].endsWith("/src/editor/export.ts")) return;
+      const anchor = "    const blob = new Blob(chunks, { type: mime });";
+      assert.equal(code.split(anchor).length - 1, 1, "One exact post-stop product Blob anchor");
+      assert.equal(matches++, 0, "One product Blob transform per build");
+      recorderCadenceHooks.push({label, matches: 1});
+      return code.replace(anchor, anchor + "\n    try { (globalThis as any).__rendpropRecorderCadence?.onProductBlob(blob); } catch {}");
+    },
+    buildEnd(error) { if (!error) assert.equal(matches, 1, "The actual legacy exporter must contain the custody hook"); }};
+}
+async function retainRecorderEvidence(page, label, retainBytes) {
+  try {return await retainRecorderCadenceEvidence({page, artifacts, label, retainBytes});}
+  catch (error) {
+    let detail; try {detail = String(error).slice(0, 2048);} catch {detail = "Unprintable recorder diagnostic error";}
+    return {complete: false, status: "retention-error", error: detail};
+  }
+}
+function assertRecorderCustody(evidence, label) {
+  assert.equal(evidence?.complete, true, "Separate recorder diagnostic custody completeness: " + label);
+}
+
+const receipt = { coverage: "Legacy recorder path under a test-only simulated unsupported worker capability response; no worker media coverage claim", capabilityOverride: "Simulated false capability response, not evidence actual browser lacks support", sourceHashes, sourceHashesAfter:null, sourceBoundAtEnd:false, recorderCadenceHooks, audioOutput, diagnostics, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], captureGapFailures: [], sparseCaptureFailures: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
+let browser, server, primaryFailure;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
   await writeFile(join(artifacts, "fixture.html"), '<!doctype html><html><head><meta charset="utf-8"></head><body><input id="sources" type="file" multiple><input id="voice" type="file"><button id="run">Export</button><a id="download" download="export.mp4" hidden>Download</a><script type="module" src="./fixture.ts"></script></body></html>');
@@ -78,14 +107,17 @@ function log(event,extra={}){fixture.trace.push({event,at:performance.now(),...e
 // Keep only the preceding read/wait; the existing trace retains each snapshot.
 fixture.clockDiagnostics=(index,audio,phase)=>{
   const at=performance.now(),previous=fixture.previousClockRead;
-  let outputTimestamp=null,outputTimestampUnavailable=false;
-  try{
-    const value=audio?.getOutputTimestamp?.();
-    if(value&&Number.isFinite(value.contextTime)&&Number.isFinite(value.performanceTime))
-      outputTimestamp={contextTime:value.contextTime,performanceTime:value.performanceTime};
-  }catch{outputTimestampUnavailable=true;}
+  let outputTimestamp=null,outputTimestampUnavailable=false,baseLatency=null,outputLatency=null;
+  if(${JSON.stringify(diagnostics.enabled)}) {
+    try{
+      const value=audio?.getOutputTimestamp?.();
+      if(value&&Number.isFinite(value.contextTime)&&Number.isFinite(value.performanceTime))
+        outputTimestamp={contextTime:value.contextTime,performanceTime:value.performanceTime};
+    }catch{outputTimestampUnavailable=true;}
+    baseLatency=audio?.baseLatency??null;outputLatency=audio?.outputLatency??null;
+  }
   const result={audioState:audio?.state??null,sampleRate:audio?.sampleRate??null,
-    baseLatency:audio?.baseLatency??null,outputLatency:audio?.outputLatency??null,
+    baseLatency,outputLatency,
     outputTimestamp,outputTimestampUnavailable,visibilityState:document.visibilityState,
     interReadMs:phase==="read"&&previous?.index===index?at-previous.at:null,
     frameWaitElapsedMs:phase==="read"&&fixture.clockWait?.index===index?at-fixture.clockWait.at:null,
@@ -227,7 +259,7 @@ document.querySelector("#run").onclick=async()=>{
     assert(code.includes(seam), "Cadence control must remove only the frame interval ceiling");
     return code.replace(seam, "remainingMs");
   } };
-  for (const variant of variants) await build({ root: artifacts, configFile: false, publicDir: false, base: "./", logLevel: "error", worker: {plugins: () => [simulatedUnsupportedEncoderPlugin()]}, plugins: [clockObservationPlugin, delayedDecodePlugin, ...(variant === "baseline" ? [oldAwaitPlugin] : variant === "sequential" ? [sequentialPreparationPlugin] : variant === "clock-baseline" ? [oldFrameClockPlugin] : variant === "cadence-baseline" ? [deadlineOnlyPlugin] : [])], build: { outDir: join(dist, variant), rollupOptions: { input: join(artifacts, "fixture.html") } } });
+  for (const variant of variants) await build({ root: artifacts, configFile: false, publicDir: false, base: "./", logLevel: "error", worker: {plugins: () => [simulatedUnsupportedEncoderPlugin()]}, plugins: [recorderCadenceBlobPlugin(variant), clockObservationPlugin, delayedDecodePlugin, ...(variant === "baseline" ? [oldAwaitPlugin] : variant === "sequential" ? [sequentialPreparationPlugin] : variant === "clock-baseline" ? [oldFrameClockPlugin] : variant === "cadence-baseline" ? [deadlineOnlyPlugin] : [])], build: { outDir: join(dist, variant), rollupOptions: { input: join(artifacts, "fixture.html") } } });
   server = createServer(async (request, response) => {
     const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`);
     if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end();
@@ -283,6 +315,7 @@ document.querySelector("#run").onclick=async()=>{
     const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: true });
     await installTestAudioOutput(context, audioOutput);
     await installExportBackendObserver(context);
+    await installRecorderCadenceObserver(context);
     await context.route("**/*", route => { const url = new URL(route.request().url()); if (url.origin === origin || ["blob:", "data:"].includes(url.protocol)) return route.continue(); receipt.externalRequests.push(url.href); return route.abort(); });
     const page = await context.newPage(); page.on("pageerror", error => receipt.errors.push(error.message)); await page.goto(`${origin}/${variant}/fixture.html`);
     await verifyTestAudioOutput(page, audioOutput);
@@ -326,12 +359,15 @@ document.querySelector("#run").onclick=async()=>{
         // may classify a fully evidenced refusal as a detected fault; every
         // current-exporter variant must finish and pass its media oracles.
         await observers.finish();
-        attempt = await page.evaluate(() => ({ error: window.fixture.error, errorName: window.fixture.errorName, errorCause: window.fixture.errorCause, result: window.fixture.result,
+        attempt = await page.evaluate(() => ({ exporting: window.fixture.exporting, error: window.fixture.error, errorName: window.fixture.errorName, errorCause: window.fixture.errorCause, result: window.fixture.result,
           trace: window.fixture.trace, downloadHidden: document.querySelector("#download").hidden,
           tracks: window.fixture.tracks.map(track => track.readyState) }));
         attempt = { ...attempt, variant, narrated, audioOutput: await verifyTestAudioOutput(page, audioOutput), diagnostics: observers.facts,
           schedulingProbe: observers.facts.schedulingProbe ?? {status: "disabled"}, ...(observers.facts.nativeTrace ? {nativeTrace: observers.facts.nativeTrace} : {}) };
         attempt.backend = await exportBackendSnapshot(page);
+        attempt.recorderCadenceEvidence = attempt.exporting === false
+          ? await retainRecorderEvidence(page, attemptName, attempt.result === null && !!attempt.error && attempt.downloadHidden)
+          : {complete: false, status: "incomplete-pending", reason: "Export has not settled; no bytes serialized"};
         receipt.attempts.push(attempt); await persist();
         assert(attempt.backend.unsupportedReplies > 0 && attempt.backend.recorderConstructions === 1, "Legacy controls must execute the simulated-unsupported recorder fallback");
         assert.equal(attempt.backend.postedVideoInputs, 0); assert.equal(attempt.backend.postedAudioInputs, 0);
@@ -465,6 +501,10 @@ document.querySelector("#run").onclick=async()=>{
           assert(audio.middle.rms > .04 && audio.middle.hz > 400 && audio.middle.hz < 480, `The rest of the original recording stays continuous at 440 Hz: ${JSON.stringify(audio.middle)}`);
         }
       }
+      if (attempt.backend.recorderConstructions > 0) {
+        assertRecorderCustody(attempt.recorderCadenceEvidence, attemptName);
+        receipt.recorderCustodyChecks ??= []; receipt.recorderCustodyChecks.push(attemptName); await persist();
+      }
     }
     if (variant === "fixed") {
       const cleanupSession = "fixed-interruption-and-preparation";
@@ -479,6 +519,7 @@ document.querySelector("#run").onclick=async()=>{
         const failure=await page.evaluate(()=>({muted:window.fixture.muteStaleLookahead,error:window.fixture.error,
           cause:window.fixture.errorCause,result:window.fixture.result,trace:window.fixture.trace,
           downloadHidden:document.querySelector("#download").hidden,tracks:window.fixture.tracks.map(track=>track.readyState)}));
+        failure.recorderCadenceEvidence = await retainRecorderEvidence(page, `capture-gap-${muted ? "muted" : "audio"}`, failure.result === null && !!failure.error && failure.downloadHidden);
         receipt.captureGapFailures.push(failure);await persist();
         assert.match(failure.error,/Video frames were skipped.*No download was created/);
         assert.equal(failure.result,null,"A dropped dissolve cannot become a downloadable file");
@@ -495,6 +536,7 @@ document.querySelector("#run").onclick=async()=>{
       const sparseFailure=await page.evaluate(()=>({error:window.fixture.error,cause:window.fixture.errorCause,
         result:window.fixture.result,trace:window.fixture.trace,downloadHidden:document.querySelector("#download").hidden,
         tracks:window.fixture.tracks.map(track=>track.readyState)}));
+      sparseFailure.recorderCadenceEvidence = await retainRecorderEvidence(page, "sparse-capture", sparseFailure.result === null && !!sparseFailure.error && sparseFailure.downloadHidden);
       receipt.sparseCaptureFailures.push(sparseFailure);await persist();
       assert.match(sparseFailure.error,/Video frames were skipped.*No download was created/);
       assert.equal(sparseFailure.result,null,"A sparse 14 fps dissolve cannot become a downloadable file");
@@ -510,6 +552,7 @@ document.querySelector("#run").onclick=async()=>{
       await expect.poll(() => page.evaluate(() => window.fixture.exporting), {timeout:10000}).toBe(false);
       const interruption=await page.evaluate(()=>({error:window.fixture.error,cause:window.fixture.errorCause,result:window.fixture.result,
         downloadHidden:document.querySelector("#download").hidden,tracks:window.fixture.tracks.map(track=>track.readyState)}));
+      interruption.recorderCadenceEvidence = await retainRecorderEvidence(page, "clock-interruption", interruption.result === null && !!interruption.error && interruption.downloadHidden);
       receipt.clockInterruption=interruption;await persist();
       assert.match(interruption.error,/Audio and picture timing drifted/);
       assert.equal(interruption.result,null,"An actual audio-clock suspension cannot offer a downloadable export");
@@ -536,6 +579,7 @@ document.querySelector("#run").onclick=async()=>{
         }
         await expect.poll(() => page.evaluate(() => window.fixture.exporting), { timeout: 10000 }).toBe(false);
         const evidence = await page.evaluate(() => ({ error: window.fixture.error, errorCause: window.fixture.errorCause, revision: window.fixture.revision, result: window.fixture.result, trace: window.fixture.trace, resourceCount: window.fixture.resources.length, remainingSources: window.fixture.resources.filter(element => element.hasAttribute("src")).length, liveTracks: window.fixture.tracks.filter(track => track.readyState !== "ended").length }));
+        evidence.recorderCadenceEvidence = await retainRecorderEvidence(page, `preparation-${scenario}`, evidence.result === null && !!evidence.error);
         receipt.preparationFailures.push({ scenario, ...evidence }); await persist();
         assert.equal(evidence.result, null, "Preparation failure must never offer an export blob");
         assert.equal(evidence.remainingSources, 0, "All current and prepared decoders must release their source");
@@ -582,9 +626,25 @@ document.querySelector("#run").onclick=async()=>{
   receipt.checks.push("Decoded fixed-export MP4 frames retain the real dissolve and whip at their intended timeline positions");
   receipt.checks.push("AAC retains 660 Hz narration, leading photo silence, the distinctive 990 Hz opening sound in adjacent bounded samples after resume, and continuous 440 Hz original audio");
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
-} catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); throw error; }
+} catch (error) { primaryFailure = error; receipt.status = "failed"; receipt.failure = error.stack ?? String(error); throw error; }
 finally {
-  await persist(); await browser?.close(); await new Promise(done => server ? server.close(done) : done());
+  let finalizationFailure;
+  const retainFinalizationFailure = (label, error) => {
+    let detail; try {detail = String(error).slice(0, 2048);} catch {detail = "Unprintable cleanup error";}
+    (receipt.cleanupErrors ??= []).push({label, error: detail});
+    finalizationFailure ??= error; receipt.status = "failed";
+    receipt.failure ??= detail;
+  };
+  try {await persist();} catch (error) {retainFinalizationFailure("pre-cleanup persist", error);}
+  try {await browser?.close();} catch (error) {retainFinalizationFailure("browser", error);}
+  try {if (server) await new Promise((done, reject) => server.close(error => error ? reject(error) : done()));}
+  catch (error) {retainFinalizationFailure("server", error);}
+  try {
+    receipt.sourceHashesAfter = await exportSourceHashes(root, testPaths);
+    receipt.sourceBoundAtEnd = JSON.stringify(sourceHashes) === JSON.stringify(receipt.sourceHashesAfter);
+    if (!receipt.sourceBoundAtEnd) retainFinalizationFailure("source binding", new Error("Resume source bytes changed during capture."));
+  } catch (error) {receipt.sourceBoundAtEnd = false; retainFinalizationFailure("source binding", error);}
+  try {await persist();} catch (error) {retainFinalizationFailure("receipt persist", error);}
   // Persist every decoded frame, pixel and trace in the receipt; keep CI output
   // compact enough that an intended-control failure remains visible.
   console.log(JSON.stringify({ artifacts, receipt: join(artifacts, "receipt.json"), status: receipt.status,
@@ -594,4 +654,5 @@ finally {
       cancelledFrames: trace.filter(value => value.event === "export.frame.cancelled").length,
       deliveredFrames: trace.filter(value => value.event === "export.frame.delivered").length})),
     failure: receipt.failure?.split("\n")[0], errors: receipt.errors, externalRequests: receipt.externalRequests }, null, 2));
+  if (!primaryFailure && finalizationFailure) throw finalizationFailure;
 }

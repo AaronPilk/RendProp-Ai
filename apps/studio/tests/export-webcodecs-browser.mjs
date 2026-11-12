@@ -15,6 +15,7 @@ import {installExportBackendObserver, exportBackendSnapshot, simulatedUnsupporte
   simulatedFinalizeHangPlugin, reducedOutputCapacityPlugin} from "./export-backend-observer.mjs";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
 import {collectRunnerFacts} from "./runner-facts.mjs";
+import {installRecorderCadenceObserver, retainRecorderCadenceEvidence} from "./recorder-cadence-observer.mjs";
 
 const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
 const permitted = ["--validate-only", "--long-only", "--lifecycle-only", "--simulated-unsupported",
@@ -26,7 +27,7 @@ const testPaths = ["tests/export-webcodecs-browser.mjs", "tests/export-webcodecs
   "tests/export-webcodecs-fixture.html", "tests/export-webcodecs-draft.ts", "tests/export-webcodecs-metadata.test.ts",
   "tests/export-webcodecs-oracles.mjs", "tests/export-webcodecs-media.mjs",
   "tests/export-backend-observer.mjs", "tests/export-browser-controls.test.mjs", "tests/export-audio-output.mjs", "tests/finishing-audio-probe.mjs",
-  "tests/runner-facts.mjs"];
+  "tests/runner-facts.mjs", "tests/recorder-cadence-observer.mjs"];
 const hashes = () => exportSourceHashes(root, testPaths);
 if (mode === "--validate-only") {
   const controls = execFileSync(process.execPath, ["--test", "tests/export-browser-controls.test.mjs"],
@@ -41,7 +42,34 @@ if (mode === "--validate-only") {
 }
 
 const artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-webcodecs-")), dist = join(artifacts, "dist");
-const receipt = {status: "running", mode, audioOutput, sourceHashesBefore: await hashes(),
+const recorderCadenceHooks = [];
+
+// Test-only observational custody. No active byte copy, clock or media changes.
+function recorderCadenceBlobPlugin(label) {
+  let matches = 0;
+  return {name: "test-only-post-stop-recorder-blob-custody", enforce: "pre",
+    transform(code, id) {
+      if (!id.split("?")[0].endsWith("/src/editor/export.ts")) return;
+      const anchor = "    const blob = new Blob(chunks, { type: mime });";
+      assert.equal(code.split(anchor).length - 1, 1, "One exact post-stop product Blob anchor");
+      assert.equal(matches++, 0, "One product Blob transform per build");
+      recorderCadenceHooks.push({label, matches: 1});
+      return code.replace(anchor, anchor + "\n    try { (globalThis as any).__rendpropRecorderCadence?.onProductBlob(blob); } catch {}");
+    },
+    buildEnd(error) { if (!error) assert.equal(matches, 1, "The actual legacy exporter must contain the custody hook"); }};
+}
+async function retainRecorderEvidence(page, label, retainBytes) {
+  try {return await retainRecorderCadenceEvidence({page, artifacts, label, retainBytes});}
+  catch (error) {
+    let detail; try {detail = String(error).slice(0, 2048);} catch {detail = "Unprintable recorder diagnostic error";}
+    return {complete: false, status: "retention-error", error: detail};
+  }
+}
+function assertRecorderCustody(evidence, label) {
+  assert.equal(evidence?.complete, true, "Separate recorder diagnostic custody completeness: " + label);
+}
+
+const receipt = {recorderCadenceHooks, status: "running", mode, audioOutput, sourceHashesBefore: await hashes(),
   sourceHashesAfter: null, sourceBoundAtEnd: false, runnerFacts: collectRunnerFacts(),
   proof: "Actual exportLocalVideo with synthetic converted/tagged media and decoded MP4/PCM/pixels. No live account, provider or whole-release claim.",
   capabilityOverride: mode === "--simulated-unsupported" ? "Test-only false capability response; not evidence this browser actually lacks support." : null,
@@ -54,6 +82,7 @@ try {
   const unsupported = simulatedUnsupportedEncoderPlugin();
   const finalizeHang = simulatedFinalizeHangPlugin(), outputLimit = reducedOutputCapacityPlugin();
   await build({configFile: false, root, publicDir: false, logLevel: "error",
+    plugins: mode === "--simulated-unsupported" ? [recorderCadenceBlobPlugin("integrated-unsupported")] : [],
     worker: {plugins: () => mode === "--simulated-unsupported" ? [unsupported] :
       mode === "--finalize-cancel-control" ? [finalizeHang] :
       mode === "--output-limit-control" ? [outputLimit] : []},
@@ -93,6 +122,7 @@ try {
     const context = await browser.newContext({serviceWorkers: "block", acceptDownloads: true,
       viewport: {width: 1440, height: 1100}});
     await installTestAudioOutput(context, audioOutput); await installExportBackendObserver(context);
+    if (mode === "--simulated-unsupported") await installRecorderCadenceObserver(context);
     await context.route("**/*", route => {
       const url = new URL(route.request().url());
       if (url.origin === origin && route.request().method() === "GET" || url.protocol === "blob:")
@@ -126,6 +156,8 @@ try {
     });
     const backend = await exportBackendSnapshot(page);
     const row = {scenario, fault, plannedSeconds: setup.seconds, ...state, backend};
+    if (mode === "--simulated-unsupported") row.recorderCadenceEvidence = await retainRecorderEvidence(page,
+      `integrated-${scenario}-${fault}`, row.result?.ok === false && row.downloadHidden && !row.hasDownloadHref);
     receipt.cases.push(row); await persist();
     assert(backend.contextStates.every(value => value === "closed"), "Every actual AudioContext must close");
     assert(backend.trackStates.every(value => value === "ended"), "Every owned audio/capture track must end");
@@ -209,6 +241,10 @@ try {
           assert(first && last && last.sourceSeconds - first.sourceSeconds > .15,
             "The source must actually advance while only promise delivery is delayed");
         }
+      }
+      if (row.backend.recorderConstructions > 0) {
+        assertRecorderCustody(row.recorderCadenceEvidence, `integrated-${scenario}-${fault}`);
+        receipt.checks.push(scenario + ": separate recorder diagnostic custody complete");
       }
       receipt.checks.push(scenario + ": decoded media and exact ownership passed"); await persist();
     } finally {await context.close();}
@@ -320,10 +356,21 @@ try {
     backend: window.exportBackendObservation,
   })).catch(() => null);
 } finally {
-  await browser?.close(); if (server) await new Promise(done => server.close(done));
-  receipt.sourceHashesAfter = await hashes();
-  receipt.sourceBoundAtEnd = JSON.stringify(receipt.sourceHashesBefore) === JSON.stringify(receipt.sourceHashesAfter);
-  if (!receipt.sourceBoundAtEnd) {receipt.status = "failed"; process.exitCode = 1;}
-  await persist(); console.log(JSON.stringify({status: receipt.status, mode, artifacts,
+  const cleanupFailure = (label, error) => {
+    let detail; try {detail = String(error).slice(0, 2048);} catch {detail = "Unprintable cleanup error";}
+    (receipt.cleanupErrors ??= []).push({label, error: detail});
+    receipt.status = "failed"; process.exitCode = 1;
+    receipt.failure ??= detail;
+  };
+  try {await browser?.close();} catch (error) {cleanupFailure("browser", error);}
+  try {if (server) await new Promise((done, reject) => server.close(error => error ? reject(error) : done()));}
+  catch (error) {cleanupFailure("server", error);}
+  try {
+    receipt.sourceHashesAfter = await hashes();
+    receipt.sourceBoundAtEnd = JSON.stringify(receipt.sourceHashesBefore) === JSON.stringify(receipt.sourceHashesAfter);
+    if (!receipt.sourceBoundAtEnd) cleanupFailure("source binding", new Error("Export source bytes changed during capture."));
+  } catch (error) {receipt.sourceBoundAtEnd = false; cleanupFailure("source binding", error);}
+  try {await persist();} catch (error) {cleanupFailure("receipt persist", error);}
+  console.log(JSON.stringify({status: receipt.status, mode, artifacts,
     receipt: join(artifacts, "receipt.json"), checks: receipt.checks.length}));
 }
