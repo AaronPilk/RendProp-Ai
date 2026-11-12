@@ -9726,7 +9726,7 @@ struct CustomEditSheet: View {
                                 .fixedSize(horizontal: false, vertical: true)
                                 .accessibilityIdentifier("customPhoto.keptNote")
                         }
-                        Text("AI can still make mistakes. The result is saved as a preview until you compare and approve it for your listing.")
+                        Text("AI can still make mistakes. Compare the result with your original before you use it. It goes on the listing when you tap Use on listing.")
                             .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     }.padding().background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12))
                     Button {
