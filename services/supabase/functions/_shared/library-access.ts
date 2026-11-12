@@ -5,7 +5,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * in UPPERCASE through URL paths, query strings and JSON. Every identity
  * comparison below is against the database's canonical form, so a client's
  * casing must be normalised first — a mismatch here is not forged authority,
- * it is the 503 "Listing identity returned inconsistent data." incident of
+ * it is the 503 "We couldn't open this listing just now. Refresh and try again." incident of
  * 2026-10-11 (facts, compliance, uploads and AI photo edits all refused). */
 function canonical(id: string): string { return id.toLowerCase(); }
 export interface LibraryAccess {
@@ -24,7 +24,7 @@ type Authority = { rpc(name: string, args: Record<string, unknown>): PromiseLike
 function rpcError(error: unknown): never {
   const message = error && typeof error === "object" ? (error as { message?: unknown }).message : null;
   if (typeof message === "string" && /RP\d{3}:/.test(message)) throwRpc(message);
-  throw new HttpError(503, "Listing library access could not be verified. Please retry.", "upstream");
+  throw new HttpError(503, "We couldn't check your access to this listing just now. Try again in a minute.", "upstream");
 }
 
 /** One shape check for every source of a library authority row. */
@@ -117,7 +117,7 @@ export async function listingLibraryScope(admin: Authority, actor: string, listi
     ["own", "team_owner"].includes(value.access_mode) &&
     (value.access_mode !== "own" || value.library_owner_user_id === actor) &&
     (value.access_mode !== "team_owner" || value.role === "team_owner" && value.can_manage_subscription === false) &&
-    (!value.can_write || value.can_read), 503, "Listing identity returned inconsistent data.", "upstream");
+    (!value.can_write || value.can_read), 503, "We couldn't open this listing just now. Refresh and try again.", "upstream");
   assert(value.can_read, 404, "This listing is not available in your library.", "not_found");
   assert(!write || value.can_write, 403, "Your role does not permit editing this listing.", "forbidden");
   return value;

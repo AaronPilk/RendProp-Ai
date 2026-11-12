@@ -11,7 +11,7 @@ import type {GenerateInput} from "../_shared/providers/types.ts";
 export const NORMAL_PHOTO_QUALITY_KEY="photo_preservation_quality";
 const TASKS={"photo.stage":"photo.quality_stage","photo.declutter":"photo.quality_declutter"} as const;
 export interface NormalPhotoQualityProfile {profile:typeof NORMAL_PHOTO_PRO4K_PROFILE;task:keyof typeof TASKS;routeTask:typeof TASKS[keyof typeof TASKS]}
-const unavailable=()=>new HttpError(503,"Preservation-quality photo editing is temporarily unavailable. No alternative model was sent.","upstream");
+const unavailable=()=>new HttpError(503,"Photo editing is not available right now. No edit was sent, so you were not charged. Try again in a few minutes.","upstream");
 export async function normalPhotoQualityProfile(task:string,masked:boolean,db=adminClient()):Promise<NormalPhotoQualityProfile|null>{
  if(masked||!Object.hasOwn(TASKS,task))return null;
  const result=await db.from("app_config").select("value").eq("key",NORMAL_PHOTO_QUALITY_KEY).maybeSingle();

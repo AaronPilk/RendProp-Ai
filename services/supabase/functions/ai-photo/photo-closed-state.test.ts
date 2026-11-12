@@ -6,7 +6,7 @@ function fixture(){return{evidence:{id:id(4),actor_id:actor,org_id:org,library_o
 Deno.test("only a completed immutable HOLD releases a consumer operation even if supplier cost remains possible",()=>{
  for(const cost of[true,"possible",false]){const row=fixture();row.evidence.failure!.facts!.provider_cost_incurred=cost;const before=structuredClone(row);
   const error=assertThrows(()=>throwPhotoQualityState(row,org),HttpError);
-  assertEquals(error.status,422);assertEquals(error.code,"photo_quality_closed");assertEquals(error.details?.operation_closed,true);assertEquals(error.details?.retry_existing_job,false);assertEquals(error.details?.provider_cost_incurred,cost);assertEquals(error.details?.check_id,id(5));assertEquals(error.details?.evidence_id,id(4));assertEquals(error.details?.image_b64,undefined);assertEquals(error.details?.asset_key,undefined);assert(error.message.includes("allowance"));assertEquals(row,before,"Projection never changes the old receipt or cost");
+  assertEquals(error.status,422);assertEquals(error.code,"photo_quality_closed");assertEquals(error.details?.operation_closed,true);assertEquals(error.details?.retry_existing_job,false);assertEquals(error.details?.provider_cost_incurred,cost);assertEquals(error.details?.check_id,id(5));assertEquals(error.details?.evidence_id,id(4));assertEquals(error.details?.image_b64,undefined);assertEquals(error.details?.asset_key,undefined);assert(error.message.includes("not charged"));assertEquals(row,before,"Projection never changes the old receipt or cost");
  }
 });
 Deno.test("active checking, inconsistent evidence and missing/invalid finish never close a saved operation",()=>{

@@ -73,7 +73,7 @@ Deno.test("the listing trigger's exact PostgreSQL plan refusals retain HTTP 402 
     assertEquals(error.status,402);assertEquals(error.code,"plan_required");
     const response=respondError(error);
     assertEquals(response.status,402);
-    assertEquals(await response.json(),{error:message.slice("RP402: ".length),code:"plan_required"});
+    assertEquals(await response.json(),{error:message.slice("RP402: ".length),code:"plan_required",next_step:"upgrade_plan",user_message:"This needs a paid plan. Choose a plan to continue."});
     assertEquals(f.counts(),{inserts:1,selects:0});assertEquals(f.rows.size,0);
   }
 });

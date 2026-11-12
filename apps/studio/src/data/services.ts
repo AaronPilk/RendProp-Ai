@@ -489,12 +489,23 @@ export function createStudioServices(
                   if (response.status === 402 && detail.code === "trial_capacity_unavailable") {
                     throw new StudioError("trial_capacity_unavailable", "Trial AI is temporarily unavailable. Please try again later or contact support. Your saved work is unchanged.", 402);
                   }
-                  if (response.status !== 402 && typeof detail.error === "string" && detail.error.length <= 400 &&
-                    !/https?:|bearer|token|signature|secret|stack|select\s|insert\s/i.test(detail.error)) message = detail.error;
+                  // `user_message` is the server's plain-words version of a technical `error`.
+                  const shown = typeof detail.user_message === "string" && detail.user_message ? detail.user_message : detail.error;
+                  if (response.status !== 402 && typeof shown === "string" && shown.length <= 400 &&
+                    !/https?:|bearer|token|signature|secret|stack|select\s|insert\s/i.test(shown)) message = shown;
                 } catch (error) {
                   if (error instanceof StudioError && error.code === "trial_capacity_unavailable") throw error;
                   /* Use the stable status message. */
                 }
+              } else if (response.status === 404 || response.status === 429 || response.status >= 500) {
+                // A failure envelope that carries `next_step` was written by the shared
+                // plain-language layer: its text is customer copy, never a provider body.
+                try {
+                  const detail = await boundedJson(response, controller.signal, 8192) as { error?: unknown; code?: unknown; next_step?: unknown; user_message?: unknown };
+                  const shown = typeof detail.user_message === "string" && detail.user_message ? detail.user_message : detail.error;
+                  if (typeof detail.next_step === "string" && typeof detail.code === "string" && typeof shown === "string" && shown.length <= 400 &&
+                    !/https?:|bearer|token|signature|secret|stack|select\s|insert\s/i.test(shown)) message = shown;
+                } catch { /* Use the stable status message. */ }
               } else void response.body?.cancel().catch(() => {});
               throw new StudioError(failureCode, message, response.status, failureDetails);
             }

@@ -13,11 +13,11 @@ export async function publishedTourContext(admin: any, slug: string, locationOnl
   const { data: render, error: rErr } = await admin.from("renders")
     .select(locationOnly ? "id, listing_id, slug, published_at" : RENDER_FIELDS)
     .eq("slug", slug).not("published_at", "is", null).maybeSingle();
-  if (rErr) throw new HttpError(500, `Render lookup failed: ${rErr.message}`);
+  if (rErr) throw new HttpError(500, "We couldn't load this tour just now. Try again in a minute.");
   if (!render) throw new HttpError(404, "Tour not found or not published");
   const { data: listing, error: lErr } = await admin.from("listings")
     .select(locationOnly ? LOCATION_FIELDS : LISTING_FIELDS).eq("id", render.listing_id).maybeSingle();
-  if (lErr) throw new HttpError(500, `Listing lookup failed: ${lErr.message}`);
+  if (lErr) throw new HttpError(500, "We couldn't load this tour just now. Try again in a minute.");
   if (!listing || listing.deleted_at) throw new HttpError(404, "Tour not found or not published");
   const visibleRefs: MediaSourceRefs & { keys: string[]; assets: string[] } = { renders: [render.id], assets: [], keys: [] };
   await Promise.all([assertHostingAvailable(admin, listing.org_id), assertMediaVisible(admin, listing.id, visibleRefs)]);

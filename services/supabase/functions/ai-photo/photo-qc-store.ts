@@ -13,6 +13,7 @@ import {validatePhotoInput,type DecodedStillImage} from "./input-policy.ts";
 import {photoJsonResponse} from "./photo-response.ts";
 import {PHOTO_QC_POLICY} from "./photo-qc-verdict.ts";
 import {PHOTO_OUTPUT_MAX_BYTES} from "../_shared/photo-output-policy.ts";
+import {closedPhotoEditCopy,heldPhotoEditCopy,PENDING_PHOTO_EDIT_COPY,REFUSED_PHOTO_EDIT_COPY} from "./photo-failure-copy.ts";
 
 export type PhotoAdmin = any;
 export interface PhotoEvidenceFile {bucket:"renders";key:string;sha256:string;bytes:number;mime:string;width:number;height:number}
@@ -113,7 +114,7 @@ export async function savePhotoJudgeContext(admin:PhotoAdmin,row:PhotoQualityEnv
 }
 export async function beginPhotoQuality(admin:PhotoAdmin,identity:PhotoResultIdentity,args:{edit:string;style?:string;instruction?:string;originalAsset?:string;imageB64:string;mime:string},io=photoEvidenceIO):Promise<PhotoQualityEnvelope>{
  const image=validatePhotoInput(args.imageB64,args.mime);
- if(image.bytes>9_000_000)throw new HttpError(413,"Keep the original photo. Prepare an editing copy up to 9 MB before trying this edit. No edit was sent.","payload_too_large",{no_provider_dispatch:true,failure_phase:"prepared_photo_size"});
+ if(image.bytes>9_000_000)throw new HttpError(413,"This photo is too large to edit (the limit is 9 MB). Your original is untouched. No edit was sent, so you were not charged. Use a smaller copy and try again.","payload_too_large",{no_provider_dispatch:true,failure_phase:"prepared_photo_size"});
  const bytes=decodeBase64Bytes(args.imageB64),input={...image,sha256:await photoBytesHash(bytes)};
  const row=photoEnvelope(await photoQualityRpc(admin,"photo_quality_begin",{p_actor:identity.actorId,p_org:identity.orgId,p_key:identity.requestKey,p_listing:identity.listingId,p_edit:args.edit,p_style:args.style??null,p_original_asset:args.originalAsset??null,p_input:input,p_legacy_keys:Object.values(await photoResultKeys(identity))}),identity.actorId,identity);
  // A concurrent/replayed begin may never become another generation owner.
@@ -150,18 +151,6 @@ export async function failPhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnvelope
  const e=row.evidence;return photoEnvelope(await photoQualityRpc(admin,"photo_quality_failure",{p_actor:e.actor_id,p_evidence:e.id,p_phase:phase,p_facts:facts}),e.actor_id);
 }
 export function photoQualityIdentity(row:PhotoQualityEnvelope,selected:string):Record<string,unknown>{const e=row.evidence;return{check_id:row.check.id,evidence_id:e.id,org_id:e.org_id,selected_library_org_id:selected,listing_id:e.listing_id,generation_request_key:e.request_key};}
-/** Plain-language reason for a closed edit, by the phase that ended it. */
-export function photoClosedMessage(phase:string|undefined,hasOutput:boolean):string{
- const again=" Your original photo is unchanged.";
- if(phase==="generation"&&!hasOutput)return"The edit service did not send back an image, so nothing was saved and this edit was not counted."+again+" Tap the edit again to retry.";
- if(phase==="photo_provider_wire_size")return"The edit service sent back more data than we can safely receive, so no image was saved."+again+" Try the edit again; it may use another edit from your allowance.";
- if(phase==="photo_output_size")return"The edited photo came back larger than 25 MB, which is more than we can save."+again+" Try the edit again; it uses another edit from your allowance.";
- if(phase==="photo_output_validation")return"The edit service sent back a file that is not a readable photo, so it could not be saved."+again+" Try the edit again; it uses another edit from your allowance.";
- if(phase==="photo_output_geometry")return"The edited photo came back too small to use, so it was not delivered."+again+" Try the edit again; it uses another edit from your allowance.";
- if(phase==="evidence_persistence")return"The edited photo could not be saved to storage, so it was not delivered."+again+" Try the edit again; it uses another edit from your allowance.";
- if(phase==="prepared_source_persistence"||phase==="recipe_recording")return"We could not save the photo you sent before editing it, so no edit was started or counted."+again+" Try the edit again.";
- return"This edit did not finish and its result was not saved."+again+" You can start the edit again; it may use another edit from your allowance.";
-}
 export function throwPhotoQualityState(row:PhotoQualityEnvelope,selected:string):never{
  const state=row.check.state,failure=row.evidence.failure,cost=failure?.facts?.provider_cost_incurred,details={...photoQualityIdentity(row,selected),photo_quality:{policy:row.evidence.policy,check_id:row.check.id,state},retry_existing_job:true,...(failure?.phase?{failure_phase:failure.phase}:{}),...(typeof cost==="boolean"||cost==="possible"?{provider_cost_incurred:cost,retained_output:failure?.facts?.retained_output===true}:{})};
  // A terminal HOLD is immutable, but must not lock the source's local edit
@@ -171,10 +160,10 @@ export function throwPhotoQualityState(row:PhotoQualityEnvelope,selected:string)
   // Say exactly what happened and what to do next, in plain words (owner
   // decision 12 Nov 2026). Only technical failures reach this point: a check
   // outcome no longer closes an edit.
-  throw new HttpError(422,photoClosedMessage(failure?.phase,!!row.evidence.output),"photo_quality_closed",{...details,operation_closed:true,retry_existing_job:false,...(failure?.phase==="generation"&&!row.evidence.output?{retryable:true}:{})});
- if(state==="refuse")throw new HttpError(422,"This edit changed fixed property features or failed the photo quality review. The original is unchanged; the generated edit remains private.","photo_quality_refused",details);
- if(state==="hold"||state==="checking"&&row.check.judge_started_at!==null)throw new HttpError(409,failure?.phase==="photo_output_size"?"The generated photo exceeded the safe output limit and could not be saved. This generation was already processed. The original is unchanged; no additional edit was started.":failure?.phase==="photo_provider_wire_size"?"The supplier response exceeded the safe transfer limit and could not be confirmed. This operation remains under review; no additional edit was started.":"The saved photo operation needs review before its edit can be used. No new edit or repeat quality check was started.","photo_quality_hold",details);
- throw new HttpError(409,"The edit is saved privately while its photo quality review is pending. Check this saved edit again; no new generation is needed.","photo_quality_pending",details);
+  throw new HttpError(422,closedPhotoEditCopy(failure?.phase,cost),"photo_quality_closed",{...details,operation_closed:true,retry_existing_job:false,...(failure?.phase==="generation"&&!row.evidence.output?{retryable:true}:{})});
+ if(state==="refuse")throw new HttpError(422,REFUSED_PHOTO_EDIT_COPY,"photo_quality_refused",details);
+ if(state==="hold"||state==="checking"&&row.check.judge_started_at!==null)throw new HttpError(409,heldPhotoEditCopy(failure?.phase),"photo_quality_hold",details);
+ throw new HttpError(409,PENDING_PHOTO_EDIT_COPY,"photo_quality_pending",details);
 }
 /** The honest review state sent beside a delivered image. An accepted,
  * never-released edit keeps the exact legacy shape. A released edit is
@@ -220,9 +209,9 @@ export async function photoQualityResponse(admin:PhotoAdmin,row:PhotoQualityEnve
  }
  row=await settleStalePhotoQuality(admin,row,actor,selected);
  if((row.check.state!=="accept"||row.evidence.state!=="accept")&&!photoReleased(row))throwPhotoQualityState(row,selected);
- const e=row.evidence,file=e.output;assert(file&&e.provenance_id&&e.output_etag,503,"The accepted photo receipt is incomplete.");assertPhotoEvidenceFile(e,file,"output");
+ const e=row.evidence,file=e.output;assert(file&&e.provenance_id&&e.output_etag,503,"Your edit is saved, but we couldn't load it just now. There is no new charge. Check this edit again in a minute.");assertPhotoEvidenceFile(e,file,"output");
  const {data,error}=await admin.from("private_ai_outputs").select("org_id,user_id,listing_id,bucket,storage_key,bytes").eq("org_id",e.org_id).eq("user_id",actor).eq("bucket","renders").eq("storage_key",file.key).maybeSingle();
- assert(!error&&data&&data.org_id===e.org_id&&data.user_id===actor&&data.listing_id===e.listing_id&&data.bucket==="renders"&&data.storage_key===file.key&&Number(data.bytes)===file.bytes,503,"The accepted photo delivery receipt could not be verified.");
+ assert(!error&&data&&data.org_id===e.org_id&&data.user_id===actor&&data.listing_id===e.listing_id&&data.bucket==="renders"&&data.storage_key===file.key&&Number(data.bytes)===file.bytes,503,"Your edit is saved, but we couldn't load it just now. There is no new charge. Check this edit again in a minute.");
  await assertHostingAvailable(admin,e.org_id);await admitMediaRead(admin,e.org_id,file.bytes,false);
  const head=await io.inspect(file.key);assert(head&&head.bytes===file.bytes&&head.mime===file.mime&&head.sha256===file.sha256&&head.etag===e.output_etag,503,"The accepted photo changed.");
  let imageB64:string;
@@ -232,7 +221,7 @@ export async function photoQualityResponse(admin:PhotoAdmin,row:PhotoQualityEnve
   imageB64=inline.imageB64;
  }else{const bytes=await io.read(file.key,file.bytes);assert(await photoBytesHash(bytes)===file.sha256,503,"The accepted photo bytes changed.");imageB64=bytesToB64(bytes);}
  const fresh=await statusPhotoQuality(admin,actor,row.check.id,selected);
- assert((fresh.check.state==="accept"&&fresh.evidence.state==="accept"||photoReleased(fresh))&&fresh.check.id===row.check.id&&fresh.evidence.id===e.id&&fresh.evidence.output?.sha256===file.sha256&&fresh.evidence.output?.key===file.key,409,"The photo quality review changed. Check its status again.","conflict");
+ assert((fresh.check.state==="accept"&&fresh.evidence.state==="accept"||photoReleased(fresh))&&fresh.check.id===row.check.id&&fresh.evidence.id===e.id&&fresh.evidence.output?.sha256===file.sha256&&fresh.evidence.output?.key===file.key,409,"This edit was updated while we were loading it. Check this edit again.","conflict");
  const kind=e.edit==="stage"?"virtual_stage":e.edit==="declutter"?"declutter":"photo_edit";
  return photoJsonResponse({...extra,...photoQualityIdentity(fresh,selected),edit:e.edit,...(e.style?{style:e.style}:{}),disclosure:disclosureFallback(kind,e.edit),provenance:{id:e.provenance_id,recorded:true},photo_quality:photoQualityFacts(fresh)},imageB64,file.mime,file.key);
 }

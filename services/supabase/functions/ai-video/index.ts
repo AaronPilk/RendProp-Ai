@@ -2913,7 +2913,7 @@ async function resolvePublicAsset(db: any, assetId: string, req: Request): Promi
     .select("id, listing_id, kind, bucket, storage_key, uploaded, duration_s, width, height, fps, transport_version, listings!inner(org_id, space_type, deleted_at)")
     .eq("id", assetId)
     .maybeSingle();
-  if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);
+  if (error) throw new HttpError(400, "We couldn't look up this photo or video just now. Try again in a minute.");
   if (!data) throw new HttpError(404, "Asset not found");
   assert(data.uploaded === true, 409, "Asset upload is not complete");
   assert(!String(data.storage_key).includes("/contact-"), 400, "Choose property media for this video.");

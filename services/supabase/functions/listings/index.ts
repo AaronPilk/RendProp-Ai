@@ -319,7 +319,7 @@ Deno.serve(async (req) => {
       if (status) q = q.eq("status", status);
       if (spaceType) q = q.eq("space_type", spaceType);
       const { data, error } = await q.order("created_at", { ascending: false });
-      if (error) throw new HttpError(400, `List failed: ${error.message}`);
+      if (error) throw new HttpError(400, "We couldn't load your listings just now. Try again in a minute.");
       return json((data ?? []).map(canonicalTimestamps));
     }
 
@@ -354,7 +354,7 @@ Deno.serve(async (req) => {
       // RLS-scoped read: proves membership and gives the org for key validation.
       const { data: existing, error: eErr } = await db
         .from("listings").select("id, org_id, main_photo_key, gallery_asset_ids").eq("id", id).is("deleted_at", null).maybeSingle();
-      if (eErr) throw new HttpError(400, `Listing lookup failed: ${eErr.message}`);
+      if (eErr) throw new HttpError(400, "We couldn't look up this listing just now. Try again in a minute.");
       if (!existing || (explicitOrg && existing.org_id !== explicitOrg)) throw new HttpError(404, "Listing not found in this workspace");
       if(Object.hasOwn(body,"gallery_add_asset_ids")) {
         assert(Object.keys(patch).every(k=>k==="main_photo_key"),400,
@@ -375,7 +375,7 @@ Deno.serve(async (req) => {
         .is("deleted_at", null)
         .select()
         .maybeSingle();
-      if (error) throw new HttpError(400, `Update failed: ${error.message}`);
+      if (error) throw new HttpError(400, "We couldn't save your changes to this listing. Try again in a minute.");
       // Readable but not updatable → the RLS update policy (owner/admin/agent)
       // filtered the row: that is a role problem, not a missing listing.
       if (!data) throw new HttpError(403, "Your role does not permit editing listings");
@@ -386,7 +386,7 @@ Deno.serve(async (req) => {
     if (req.method === "DELETE" && id) {
       const { data: existing, error: eErr } = await db
         .from("listings").select("id, org_id").eq("id", id).is("deleted_at", null).maybeSingle();
-      if (eErr) throw new HttpError(400, `Listing lookup failed: ${eErr.message}`);
+      if (eErr) throw new HttpError(400, "We couldn't look up this listing just now. Try again in a minute.");
       if (!existing || (explicitOrg && existing.org_id !== explicitOrg)) throw new HttpError(404, "Listing not found in this workspace");
       await assertNotDeleting(user.id);
 

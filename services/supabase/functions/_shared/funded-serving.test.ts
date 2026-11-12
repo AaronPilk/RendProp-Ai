@@ -26,7 +26,7 @@ Deno.test("retail photo route keeps approved Gemini primary and excludes unfunde
  assertEquals(await boundedPhotoChain(fixture().context,[unpriced,fallback,primary],input),[primary]);
  assertEquals(await boundedPhotoChain(fixture().context,[primary,fallback,fallback],input),[primary]);
  for(const chain of [[unpriced],[fallback],[primary,primary],[{...primary,task:"photo.custom"}]])
-  await assertRejects(()=>boundedPhotoChain(fixture().context,chain,input),HttpError,"bounded serving route");
+  await assertRejects(()=>boundedPhotoChain(fixture().context,chain,input),HttpError,"not available right now");
  await assertRejects(()=>boundedPhotoChain(fixture().context,[primary,fallback],{...input,mask_url:"data:image/png;base64,AAA="}),HttpError);
  const qa=fixture({qa:true});assertEquals(await boundedPhotoChain(qa.context,[unpriced,fallback,primary],input),[unpriced,fallback,primary]);
  await assertRejects(()=>boundedPhotoChain(fixture({qaError:true}).context,[primary],input),HttpError);
@@ -60,8 +60,8 @@ Deno.test("trial helper denial fences dispatch; paid metered helpers and private
  assertEquals(paid,0);
  usage={org_id:"org",status:"expired"};
  await assertRejects(()=>assertPhotoHelperSponsorship(context,true),HttpError,"not included");
- for(const bad of [{org_id:"foreign",status:"active"},[],false,{},undefined]){usage=bad;await assertRejects(()=>assertPhotoHelperSponsorship(context),HttpError,"could not be checked");}
- usage=null;error=true;await assertRejects(()=>assertPhotoHelperSponsorship(context),HttpError,"could not be checked");
+ for(const bad of [{org_id:"foreign",status:"active"},[],false,{},undefined]){usage=bad;await assertRejects(()=>assertPhotoHelperSponsorship(context),HttpError,"couldn't check your free trial");}
+ usage=null;error=true;await assertRejects(()=>assertPhotoHelperSponsorship(context),HttpError,"couldn't check your free trial");
  error=false;await assertPhotoHelperSponsorship(context);assertEquals(paid,0);
  await assertPhotoHelperSponsorship(fixture({qa:true}).context);
 });

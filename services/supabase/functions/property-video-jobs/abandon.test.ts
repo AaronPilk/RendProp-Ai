@@ -100,7 +100,7 @@ Deno.test('discard refuses a changed identity before any database decision',asyn
 Deno.test('a delayed enqueue of a discarded operation is refused before quote or admission',async()=>{
  const r=await enqueue({operation:'abandoned'});
  assertEquals(r.status,409);
- assertEquals(r.body,{error:DISCARDED,code:'operation_abandoned',operation_closed:true,closed_reason:'abandoned',operation_id:operation,listing_id:listing,selected_library_org_id:org});
+ assertEquals(r.body,{error:DISCARDED,code:'operation_abandoned',operation_closed:true,closed_reason:'abandoned',operation_id:operation,listing_id:listing,selected_library_org_id:org,next_step:'none'});
  assert(noWork(r.rpcs),'no quote, admission or job write');
 });
 

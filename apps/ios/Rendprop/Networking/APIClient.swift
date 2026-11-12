@@ -1660,7 +1660,7 @@ enum APIError: Error, LocalizedError {
         case .decoding:
             return "The server sent an unexpected response. Please try again."
         case .badResponse(let c):
-            return c > 0 ? "Server returned status \(c)." : "The server returned an unexpected response."
+            return c > 0 ? "Something went wrong on our side (code \(c)). Please try again in a minute." : "Rendprop got an answer it could not read. Please try again in a minute."
         case .server(_, _, let message):
             return message
         }
@@ -1678,16 +1678,16 @@ enum APIError: Error, LocalizedError {
     /// Friendly fallback when the server sent no `error` string for a status.
     static func defaultMessage(for status: Int) -> String {
         switch status {
-        case 400: return "The server rejected the request."
+        case 400: return "That did not go through because something in the request was not right. Go back, check it and try again."
         case 401: return "Your session has expired. Please sign in again."
         case 402: return "This feature isn't included in your current plan."
         case 403: return "You don't have permission to do that in this workspace."
-        case 404: return "That item wasn't found on the server."
-        case 409: return "That action conflicts with the current state — please try again."
+        case 404: return "That item could not be found. It may have been moved or deleted."
+        case 409: return "This changed while you were working, maybe on another device. Refresh and try again."
         case 413: return "That file is too large to send."
         case 429: return "Too many requests — try again in a few minutes."
-        case 500..<600: return "The server had a problem. Please try again shortly."
-        default: return "Server returned status \(status)."
+        case 500..<600: return "Something went wrong on our side. Please try again in a minute."
+        default: return "Something went wrong (code \(status)). Please try again in a minute."
         }
     }
 }

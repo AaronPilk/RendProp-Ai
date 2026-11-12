@@ -401,7 +401,7 @@ async function resolveVideoAsset(db: any, assetId: string, listingId: string, re
     .select("id, listing_id, kind, bucket, storage_key, content_type, uploaded, duration_s, bytes, listings!inner(org_id, space_type, deleted_at)")
     .eq("id", assetId)
     .maybeSingle();
-  if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);
+  if (error) throw new HttpError(400, "We couldn't look up this video just now. Try again in a minute.");
   if (!data) throw new HttpError(404, "Asset not found");
 
   const listing = (Array.isArray(data.listings) ? data.listings[0] : data.listings) as

@@ -71,9 +71,9 @@ export function isServiceRole(req: Request): boolean {
 /** Validate the bearer JWT against Supabase Auth and return the auth user, or 401. */
 export async function getUser(req: Request): Promise<User> {
   const token = getBearer(req);
-  if (!token) throw new HttpError(401, "Missing Authorization bearer token");
+  if (!token) throw new HttpError(401, "You need to sign in to continue.");
   const { data, error } = await adminClient().auth.getUser(token);
-  if (error || !data?.user) throw new HttpError(401, "Invalid or expired token");
+  if (error || !data?.user) throw new HttpError(401, "Your sign-in has expired. Sign in again to continue.");
   return data.user;
 }
 
@@ -93,7 +93,7 @@ export async function assertPaidAiIdentity(user: PaidAiCaller, orgId: string): P
   // the action, not of the session.
   const denied = () => new HttpError(403, "Sign in with Apple to use AI tools (Settings → Account), or restore your active subscription.", "forbidden");
   if (user.is_anonymous !== true) throw denied();
-  const unavailable = () => new HttpError(503, "Subscription access could not be verified. Please retry.", "upstream");
+  const unavailable = () => new HttpError(503, "We couldn't check your subscription just now. Try again in a minute.", "upstream");
   // The SQL operation/reservation/result readers use this identical retail
   // predicate. A loose active/grace row cannot admit an unfunded guest first.
   const { data, error } = await adminClient().rpc("org_has_verified_retail_guest", {
@@ -184,6 +184,6 @@ export async function assertNotDeleting(userId: string): Promise<void> {
     .maybeSingle();
   // Fail CLOSED on lookup failure: a write during deletion is worse than a
   // rejected write.
-  if (error) throw new HttpError(503, "Account state is being updated — try again shortly");
+  if (error) throw new HttpError(503, "Your account is being updated. Try again in a minute.");
   if (data) throw new HttpError(409, "This account is being deleted; new content can't be created");
 }

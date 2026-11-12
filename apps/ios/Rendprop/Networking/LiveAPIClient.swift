@@ -260,13 +260,16 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
         let error: String?
         let code: String?
         let message: String?
+        /// The server's plain-words version of a technical `error`
+        /// (wire key `user_message`); absent when `error` is already plain.
+        let user_message: String?
     }
 
     static func serverError(status: Int, data: Data) -> APIError {
         var message: String? = nil
         var code: String? = nil
         if let env = try? JSONDecoder().decode(ErrorEnvelope.self, from: data) {
-            message = env.error ?? env.message
+            message = env.user_message ?? env.error ?? env.message
             code = env.code
         }
         let cleaned = message.map { raw -> String in

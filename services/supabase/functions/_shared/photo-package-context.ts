@@ -8,7 +8,7 @@ const finiteInteger = (v: unknown, max: number) => typeof v === "number" && Numb
  * metadata grants neither money nor provider access and exposes no receipt IDs. */
 export async function photoPackageContext(admin: any, actor: string, org: string, now = Date.now()) {
   const { data, error } = await admin.rpc("serving_photo_package_context", { p_actor: actor, p_org: org });
-  assert(!error, 503, "Photo allowance could not be verified. Please retry.");
+  assert(!error, 503, "We couldn't check how many photo edits you have left just now. Try again in a minute.");
   if (data === null) return null;
   const p = data?.photo_admissions, a = data?.other_ai;
   assert(data && data.org_id === org && data.policy === POLICY && data.tariff_version === TARIFF
@@ -19,7 +19,7 @@ export async function photoPackageContext(admin: any, actor: string, org: string
     && data.photo_hold_cents === 35.1296 && data.protected_photo_cents === Math.ceil(p.cap*35.1296)
     && a && [a.cap_cents,a.used_cents,a.remaining_cents].every((v) => finiteInteger(v,100000000))
     && a.used_cents <= a.cap_cents && a.remaining_cents === a.cap_cents-a.used_cents,
-    503, "Photo allowance could not be verified. Please retry.");
+    503, "We couldn't check how many photo edits you have left just now. Try again in a minute.");
   return { org_id: org, policy: POLICY, tariff_version: TARIFF, starts_at: data.starts_at, ends_at: data.ends_at,
     photo_admissions: { cap:p.cap, used:p.used, remaining:p.remaining },
     photo_hold_cents:35.1296, protected_photo_cents:data.protected_photo_cents,

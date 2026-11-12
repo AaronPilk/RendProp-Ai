@@ -85,7 +85,7 @@ async function reloadAsset(
   if (error || !data) {
     throw new HttpError(
       503,
-      "Upload state could not be confirmed — retry completion",
+      "We couldn't confirm this upload finished. Try again in a minute.",
     );
   }
   return data;
@@ -115,9 +115,9 @@ async function requireAssetWriteRole(
     .from("listings").select("org_id").eq("id", asset.listing_id as string)
     .maybeSingle();
   if (error) {
-    throw new HttpError(400, `Listing lookup failed: ${error.message}`);
+    throw new HttpError(400, "We couldn't look up this listing just now. Try again in a minute.");
   }
-  if (!data) throw new HttpError(404, "Listing not found");
+  if (!data) throw new HttpError(404, "We couldn't find this listing. It may have been deleted. Refresh and try again.");
   await requireWriteRole(admin, userId, data.org_id as string, asset.listing_id as string);
 }
 
@@ -353,7 +353,7 @@ Deno.serve(async (req) => {
       assert(asset.transport_version === 2, 409,
         "Legacy upload must be reticketed after rollout cleanup");
       assert(asset.upload_aborted !== true, 409,
-        "This upload was aborted — create a new ticket");
+        "This upload was cancelled. Start the upload again.");
       return json(await ticketResponse(admin, asset, true));
     }
     if (seg[1] === "abort") {
@@ -386,7 +386,7 @@ Deno.serve(async (req) => {
         409,
         "This upload is no longer accepting parts",
       );
-      assert(asset.upload_id, 409, "Multipart initialization is not confirmed");
+      assert(asset.upload_id, 409, "We couldn't start this upload. Try again in a minute.");
       const body = await readJson<PartUrlsBody>(req), numbers = body.numbers;
       const count = Number(asset.parts_total);
       assert(
@@ -415,7 +415,7 @@ Deno.serve(async (req) => {
     assert(
       asset.upload_aborted !== true,
       409,
-      "This upload was aborted — create a new ticket",
+      "This upload was cancelled. Start the upload again.",
     );
     const body = await readJson<CompleteBody>(req);
     const transfers = await confirmedTransfers(admin, assetId);
@@ -437,7 +437,7 @@ Deno.serve(async (req) => {
       })
         .is("completion_parts", null).select().maybeSingle();
       if (error) {
-        throw new HttpError(503, "Multipart manifest could not be confirmed");
+        throw new HttpError(503, "We couldn't confirm this upload. Try again in a minute.");
       }
       const frozen = data ?? await reloadAsset(admin, assetId);
       if (frozen.uploaded === true) return json(frozen);
@@ -462,7 +462,7 @@ Deno.serve(async (req) => {
             parts: actual.map((p) => ({ partNumber: p.number, etag: p.etag })),
           });
           const readAdmission=row(await uploadRPC(admin,"media_upload_read_admit",{p_asset:assetId}));
-          assert(readAdmission.admitted===true&&typeof readAdmission.legacy_unbudgeted==="boolean",503,"Bounded upload completion activation pending");
+          assert(readAdmission.admitted===true&&typeof readAdmission.legacy_unbudgeted==="boolean",503,"Uploads can't be finished right now. That is a problem on our side. Try again in a few minutes.");
           const head = await headObject(bucket, String(asset.storage_key));
           assert(
             head.exists && head.bytes === Number(asset.bytes) && head.etag &&
@@ -476,7 +476,7 @@ Deno.serve(async (req) => {
       );
     } else {
       const readAdmission=row(await uploadRPC(admin,"media_upload_read_admit",{p_asset:assetId}));
-      assert(readAdmission.admitted===true&&typeof readAdmission.legacy_unbudgeted==="boolean",503,"Bounded upload completion activation pending");
+      assert(readAdmission.admitted===true&&typeof readAdmission.legacy_unbudgeted==="boolean",503,"Uploads can't be finished right now. That is a problem on our side. Try again in a few minutes.");
       const transfer = transfers[0],
         head = await headObject(bucket, String(transfer.object_key));
       const type = baseMediaType(head.contentType),
@@ -509,7 +509,7 @@ Deno.serve(async (req) => {
         }
         throw new HttpError(
           400,
-          "Stored upload does not match its confirmed size, ETag or content type",
+          "The file that arrived does not match the one you sent. Upload it again.",
         );
       }
       completed = await recordedOperation(
@@ -646,7 +646,7 @@ async function ticketResponse(admin: any, asset: Record<string, unknown>, recove
     if (recovery) {
       const { data, error } = await admin.from("upload_operations")
         .select("part,etag").eq("asset_id", asset.id).eq("kind", "part").eq("state", "stored");
-      if (error || !Array.isArray(data)) throw new HttpError(503, "Part receipts could not be recovered");
+      if (error || !Array.isArray(data)) throw new HttpError(503, "We couldn't confirm every piece of this upload. Upload the file again.");
       confirmedParts = data.map((part: {part: number; etag: string}) => ({ number: part.part, etag: part.etag }));
     }
     return {
@@ -678,9 +678,9 @@ async function requireListing(db: any, listingId: string) {
     .is("deleted_at", null)
     .maybeSingle();
   if (error) {
-    throw new HttpError(400, `Listing lookup failed: ${error.message}`);
+    throw new HttpError(400, "We couldn't look up this listing just now. Try again in a minute.");
   }
-  if (!data) throw new HttpError(404, "Listing not found");
+  if (!data) throw new HttpError(404, "We couldn't find this listing. It may have been deleted. Refresh and try again.");
   return data as { id: string; org_id: string };
 }
 
@@ -693,8 +693,8 @@ async function requireAsset(db: any, assetId: string) {
     )
     .eq("id", assetId)
     .maybeSingle();
-  if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);
-  if (!data) throw new HttpError(404, "Asset not found");
+  if (error) throw new HttpError(400, "We couldn't look up this upload just now. Try again in a minute.");
+  if (!data) throw new HttpError(404, "We couldn't find this upload. Start the upload again.");
   return data as Record<string, unknown>;
 }
 
@@ -711,7 +711,7 @@ async function requireCompletionAsset(db: any, admin: any, actor: string, assetI
     actor = actor.toLowerCase(); assetId = assetId.toLowerCase();
     const { data: reservation, error: lookupError } = await admin.from("upload_reservations")
       .select("asset_id,actor_id,org_id,listing_id,state,spec").eq("asset_id", assetId).eq("actor_id", actor).maybeSingle();
-    if (lookupError) throw new HttpError(503, "Owned upload completion authority could not be verified");
+    if (lookupError) throw new HttpError(503, "We couldn't confirm this upload belongs to your account. Refresh and try again.");
     if (!reservation || reservation.asset_id !== assetId || reservation.actor_id !== actor ||
         !uuid.test(reservation.org_id) || !uuid.test(reservation.listing_id) ||
         !["open", "completed"].includes(reservation.state) || !reservation.spec ||
@@ -730,7 +730,7 @@ async function requireCompletionAsset(db: any, admin: any, actor: string, assetI
     const role = spec.key_role, stem = role === "gallery" ? `gallery-${assetId}` : role === "original" ? `original-${assetId}` : assetId;
     assert(["gallery", "original", "default"].includes(role) && typeof asset.storage_key === "string" &&
       asset.storage_key.startsWith(prefix) && new RegExp(`^${stem}(?:-complete-[0-9a-f-]{36})?\\.[a-zA-Z0-9]{1,8}$`).test(asset.storage_key.slice(prefix.length)),
-      409, "The saved upload key no longer matches its original reservation");
+      409, "This upload no longer matches the one that was started. Start the upload again.");
     return asset;
   }
 }

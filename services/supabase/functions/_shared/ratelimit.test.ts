@@ -104,6 +104,6 @@ Deno.test("exact paid charge and refund transport pins the same server window", 
       { url: "https://rate-fixture.invalid/rest/v1/rpc/refund_rate_receipt", body: { p_key: "reelmo:synthetic", p_window_seconds: 2592000, p_window_start: "2026-10-05T00:00:00.123456Z", p_cost: 1 } },
     ]);
     globalThis.fetch = async () => new Response(JSON.stringify({ accepted: true }), { headers: { "content-type": "application/json" } });
-    await assertRejects(() => chargeRateReceipt("reelmo:synthetic", 25, 2592000), HttpError, "could not be confirmed");
+    await assertRejects(() => chargeRateReceipt("reelmo:synthetic", 25, 2592000), HttpError, "couldn't start this");
   } finally { globalThis.fetch = original; }
 });

@@ -20,7 +20,7 @@ for (const [code, status, expected] of [
   Deno.test(`actual uploadRPC preserves ${code} admission refusal`, async () => {
     const { response } = await refused(`${code}: Sign in or change this request`);
     assertEquals(response.status, status);
-    assertEquals(await response.json(), { error: "Sign in or change this request", code: expected });
+    assertEquals(await response.json(), { error: "Sign in or change this request", code: expected, next_step: "sign_in" });
   });
 }
 Deno.test("actual uploadRPC monthly limit is deterministic quota, not burst retry", async () => {
@@ -28,17 +28,19 @@ Deno.test("actual uploadRPC monthly limit is deterministic quota, not burst retr
   assertEquals(response.status, 429);
   assertEquals(await response.json(), {
     feature: "upload_bytes", error: "monthly technical upload reservation ceiling exhausted", code: "quota_exceeded",
+    next_step: "retry_later",
+    user_message: "Your workspace has reached its upload limit for now. Nothing new was uploaded. Try again later, or contact support if you need more room.",
   });
 });
 Deno.test("actual uploadRPC burst limit remains retryable rate limit", async () => {
   const { response } = await refused("RP429: Too many upload requests; try again later");
   assertEquals(response.status, 429);
-  assertEquals(await response.json(), { error: "Too many upload requests; try again later", code: "rate_limited" });
+  assertEquals(await response.json(), { error: "Too many upload requests; try again later", code: "rate_limited", next_step: "retry_later" });
 });
 Deno.test("actual uploadRPC database outage stays sanitized retryable upstream", async () => {
   const { response } = await refused("unexpected private database marker");
   assertEquals(response.status, 503);
-  assertEquals(await response.json(), { error: "Durable upload state unavailable — retry", code: "upstream" });
+  assertEquals(await response.json(), { error: "Uploads are not working right now. Try again in a minute.", code: "upstream", next_step: "retry_later" });
 });
 
 async function compiledBoundary(source: string, message: string, status: number, code: string) {

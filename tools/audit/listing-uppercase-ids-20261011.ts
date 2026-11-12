@@ -77,7 +77,7 @@ check(source.includes(anchor),'Canonicalisation helper present in library-access
 const mutant=await import('data:application/typescript,'+encodeURIComponent(source.replaceAll('./http.ts',new URL('./http.ts',sharedURL).href).replace(anchor,'function canonical(id: string): string { return id; }')));
 const admin={rpc:async(_name:string,args:Record<string,unknown>)=>({data:{actor_id:lower(args.p_actor),listing_id:lower(args.p_listing),org_id:ORG,library_org_id:ORG,billing_org_id:ORG,team_org_id:null,library_owner_user_id:USER,listing_owner_user_id:USER,role:'owner',access_mode:'own',can_read:true,can_write:true,can_manage_subscription:true},error:null})};
 let refused:unknown=null;try{await mutant.listingLibraryScope(admin,USER,UPPER_ID,true);}catch(e){refused=e;}
-check(refused!==null&&(refused as {status?:number}).status===503&&(refused as {message?:string}).message==='Listing identity returned inconsistent data.','Without canonicalisation the phone\'s exact 503 reproduces');
+check(refused!==null&&(refused as {status?:number}).status===503&&(refused as {message?:string}).message==="We couldn't open this listing just now. Refresh and try again.",'Without canonicalisation the phone\'s exact 503 reproduces');
 const fixed=await import(sharedURL.href);
 check((await fixed.listingLibraryScope(admin,USER,UPPER_ID,true)).listing_id===ID,'With canonicalisation the same call succeeds');
 console.log(JSON.stringify({passed:true,assertions:count,scope:'Actual listings handler with uppercase phone ids; closed synthetic transport; negative control reproduces the 2026-10-11 503'}));

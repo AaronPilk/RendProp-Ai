@@ -28,7 +28,7 @@ export async function uploadRPC(
     const code = /RP(400|401|402|403|404|409|413|429|503):/.exec(error.message ?? "")?.[1];
     const message = code
       ? (error.message ?? "").replace(/^.*RP\d+:\s*/, "")
-      : "Durable upload state unavailable — retry";
+      : "Uploads are not working right now. Try again in a minute.";
     // A monthly reservation ceiling cannot recover when connectivity returns.
     // Keep burst throttling retryable; only this canonical SQL refusal is quota.
     const monthlyCeiling = code === "429" &&
@@ -117,7 +117,7 @@ export async function recoverRecordedOperation(
   op: UploadRow,
 ): Promise<UploadRow> {
   const admission=row(await uploadRPC(admin,"media_upload_read_admit",{p_asset:op.asset_id}));
-  if(admission.admitted!==true||typeof admission.legacy_unbudgeted!=="boolean")throw new HttpError(503,"Bounded upload recovery activation pending");
+  if(admission.admitted!==true||typeof admission.legacy_unbudgeted!=="boolean")throw new HttpError(503,"Uploads can't be resumed right now. That is a problem on our side. Try again in a few minutes.");
   const bucket = op.bucket === "renders"
     ? R2_BUCKET_RENDERS
     : R2_BUCKET_UPLOADS;
@@ -172,7 +172,7 @@ export async function recoverRecordedOperation(
     }
     throw new HttpError(
       503,
-      "Stored receipt is not yet provable; retry later or cancel. No new write was issued.",
+      "We can't confirm this upload yet. Try again in a few minutes, or cancel it. Nothing was uploaded twice.",
     );
   }
   return row(
@@ -203,7 +203,7 @@ export async function transferURL(
   if (!["planned", "stored"].includes(String(op.state))) {
     throw new HttpError(
       503,
-      "Transfer needs recovery or cancellation; no second physical write is authorized",
+      "This upload was interrupted. Resume it or cancel it before starting another.",
     );
   }
   const expiry = Math.floor(new Date(String(op.expires_at)).getTime() / 1000);

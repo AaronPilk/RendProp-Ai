@@ -12,16 +12,16 @@ export async function subscriptionServingActivation(admin: any, actor: string, o
   const { data, error } = await admin.rpc("subscription_serving_activation", { p_actor: actor, p_org: org });
   assert(!error && data && data.org_id === org && typeof data.available === "boolean" && typeof data.funded === "boolean" &&
     ["private_sponsorship","app_review","brokerage","existing_non_apple","verified_retail","funded_trial","subscription_activation_unavailable"].includes(data.authority),
-    503, "Subscription service activation could not be verified. Please retry.");
+    503, "We couldn't check your subscription just now. Try again in a minute.");
   assert(data.available === (data.authority !== "subscription_activation_unavailable") &&
-    data.funded === ["app_review","verified_retail","funded_trial"].includes(data.authority), 503, "Subscription service activation could not be verified. Please retry.");
+    data.funded === ["app_review","verified_retail","funded_trial"].includes(data.authority), 503, "We couldn't check your subscription just now. Try again in a minute.");
   return { org_id: org, available: data.available, funded: data.funded, authority: data.authority };
 }
 export function trialServingActivationForSync(funding: unknown, tx: { environment: string; offerType?: number | null; offerDiscountType?: string | null }, status: string): { funded: boolean; reason?: string } {
   const row = funding as { funded?: unknown; available?: unknown; reason?: unknown } | null;
-  assert(row && typeof row.funded === "boolean", 503, "Subscription serving activation could not be verified. Please restore to retry.");
+  assert(row && typeof row.funded === "boolean", 503, "We couldn't check your subscription just now. Tap Restore purchases in Settings, then try again.");
   if (tx.environment === "Production" && tx.offerType === 1 && tx.offerDiscountType === "FREE_TRIAL" && status === "active" && !row.funded && row.available !== true) {
-    throw new HttpError(503, "Apple recorded your trial, but its included service is not activated. Your saved work remains available. Restore the subscription to retry.", "upstream");
+    throw new HttpError(503, "Apple has your free trial on record, but it is not switched on in Rendprop yet. Your saved work is safe. Tap Restore purchases in Settings. If that does not fix it, contact support. Do not buy it again.", "upstream");
   }
   return { funded: row.funded, ...(typeof row.reason === "string" ? { reason: row.reason } : {}) };
 }

@@ -4,6 +4,7 @@
 // generator, and a best-effort in-memory rate limiter for the public routes.
 
 import { corsHeaders } from "./cors.ts";
+import { failureFields } from "./user-copy.ts";
 
 /**
  * Stable machine-readable error codes (wire contract B4). The iOS client keys
@@ -89,8 +90,22 @@ export class HttpError extends Error {
 }
 
 /** Throw an HttpError unless `cond` is truthy. */
-export function assert(cond: unknown, status: number, msg: string, code?: ErrorCode): asserts cond {
-  if (!cond) throw new HttpError(status, msg, code);
+export function assert(cond: unknown, status: number, msg: string, code?: ErrorCode, details?: Record<string, unknown>): asserts cond {
+  if (!cond) throw new HttpError(status, msg, code, details);
+}
+
+/**
+ * Every failure answer — whether built by respondError or written by a handler
+ * as `json({ error, code, … }, 4xx)` — gets the same additive plain-language
+ * fields (see _shared/user-copy.ts): `next_step`, and where they apply `charge`
+ * and `user_message`. `error`, `code`, the status and every other key the
+ * handler wrote are passed through untouched, so an older app is unaffected.
+ */
+function withPlainCopy(body: unknown, status: number): unknown {
+  if (status < 400 || !body || typeof body !== "object" || Array.isArray(body)) return body;
+  const failure = body as Record<string, unknown>;
+  if (typeof failure.error !== "string" || typeof failure.code !== "string") return body;
+  return { ...failure, ...failureFields(failure.error, failure.code, status, failure) };
 }
 
 /** JSON response with CORS headers attached. */
@@ -99,7 +114,7 @@ export function json(
   status = 200,
   extraHeaders: Record<string, string> = {},
 ): Response {
-  return new Response(JSON.stringify(body), {
+  return new Response(JSON.stringify(withPlainCopy(body, status)), {
     status,
     headers: {
       ...corsHeaders,
@@ -110,8 +125,12 @@ export function json(
 }
 
 /**
- * Map any thrown value to the JSON error envelope `{ error, code, ...details }`.
- * `error` is human copy the app may show verbatim; `code` is what it branches on.
+ * Map any thrown value to the JSON error envelope
+ * `{ error, code, next_step, charge?, user_message?, ...details }`.
+ * `error` is human copy the app may show verbatim; `code` is what it branches
+ * on. `next_step`, `charge` and `user_message` are the ADDITIVE plain-language
+ * fields `json()` attaches to every failure answer: an older app ignores them,
+ * and neither `error` nor `code` nor the status is ever altered by them.
  */
 export function respondError(err: unknown): Response {
   if (err instanceof HttpError && "saved_response" in err && err.saved_response && typeof err.saved_response === "object") {
@@ -125,7 +144,7 @@ export function respondError(err: unknown): Response {
   // database rows or keys. Log only bounded classification facts, including
   // deliberate upstream failures that previously produced no operator signal.
   logServerError(500, "internal", "unexpected");
-  return json({ error: "Something went wrong on our side — try again in a moment.", code: "internal" }, 500);
+  return json({ error: "Something went wrong on our side, so this didn't go through. Try again in a minute.", code: "internal" }, 500);
 }
 
 function logServerError(status: number, code: ErrorCode, kind: "handled" | "unexpected"): void {
@@ -275,7 +294,7 @@ export function round4(n: number): number {
 // A shared trial allocation is an operator availability boundary, not the
 // customer's usage quota. Keep its wire code distinct from upgrade prompts.
 export const TRIAL_CAPACITY_UNAVAILABLE_MESSAGE =
-  "Trial access is temporarily unavailable. Please contact support if Apple already confirmed a purchase.";
+  "The free trial can't be started right now. That is a problem on our side, not with your account. Contact support so we can turn it on. If Apple already confirmed your trial, do not buy it again.";
 export function isTrialCapacityRefusal(message: string): boolean {
   return /RP402:\s*(?:Free-trial AI limit reached \[pool=(?:cap|closed)\]|Cash-held trial media snapshot is unavailable|Test-trial sponsor allocation (?:is closed or too short|has less than one trial envelope))$/.test(message);
 }
@@ -292,7 +311,7 @@ export function throwRpc(message: string | undefined): never {
   const m = /RP(\d{3}):\s*([\s\S]*)/.exec(msg);
   // Only deliberate RP errors are safe customer copy. Database exceptions
   // can contain table names, constraints and the caller's private data.
-  if (!m) throw new HttpError(503, "This action is temporarily unavailable. Please try again.");
+  if (!m) throw new HttpError(503, "This is temporarily unavailable because of a problem on our side. Try again in a minute.");
   const status = Number(m[1]);
   const text = m[2].trim() || msg;
   if (status === 402 && isTrialCapacityRefusal(msg)) {

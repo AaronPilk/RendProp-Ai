@@ -60,7 +60,7 @@ async function checkRateLimit(
     if (!publicFallback) {
       // Do not expose raw RPC responses, credentials or tenant keys in logs.
       console.error("bump_rate unavailable; request refused before admission");
-      throw new HttpError(503, "Processing limits are temporarily unavailable — try again shortly.", "upstream");
+      throw new HttpError(503, "We couldn't start this just now. Try again in a minute.", "upstream");
     }
     console.error("bump_rate unavailable; public ingestion using degraded memory limit");
     // Degraded mode: quarter ceiling, still per-cost.
@@ -119,7 +119,7 @@ export async function chargeRateReceipt(key: string, max: number, windowSeconds:
     if (error || typeof data?.accepted !== "boolean" || typeof data?.window_start !== "string" || !Number.isFinite(Date.parse(data.window_start))) throw new Error("Unconfirmed quota receipt");
     return { accepted: data.accepted, receipt: { key, windowSeconds, windowStart: data.window_start } };
   } catch {
-    throw new HttpError(503, "Processing limits could not be confirmed. Please retry shortly.", "upstream");
+    throw new HttpError(503, "We couldn't start this just now. Try again in a minute.", "upstream");
   }
 }
 export async function refundRateReceipt(receipt: RateChargeReceipt): Promise<boolean> {

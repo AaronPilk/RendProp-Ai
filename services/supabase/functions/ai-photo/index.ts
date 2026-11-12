@@ -182,8 +182,8 @@ async function finishEditCredit(charge:EditCharge,state:"settled"|"released"):Pr
     p_actor:charge.credit.actorId,p_org:charge.credit.orgId,p_environment:charge.credit.environment,
     p_key:charge.credit.requestKey,p_state:state,
   });
-  if(error)throw new HttpError(503,"The saved credit balance could not be reconciled. Please retry.","upstream");
-  assert(data?.state===state,503,"The saved credit outcome could not be verified.","upstream");
+  if(error)throw new HttpError(503,"We couldn't update your credit balance just now. Check this edit again in a minute. A second edit is not started.","upstream");
+  assert(data?.state===state,503,"We couldn't update your credit balance just now. Check this edit again in a minute. A second edit is not started.","upstream");
 }
 
 /**
@@ -207,14 +207,14 @@ async function guardEdit(user: PaidAiCaller, req: Request, listingId?: string, e
   if(environment!=="Production"&&environment!=="Sandbox")
     throw new HttpError(400,"Choose a valid App Store credit environment.");
   if(quote!==null && (!creditQuote || quote!==creditQuote.version))
-    throw new HttpError(400,"Choose the current photo credit quote before using credits.");
+    throw new HttpError(400,"The credit price for this edit has changed. Review the price shown, then confirm again. You were not charged.");
   const primaryResult=creditQuote
     ?await adminClient().rpc("credit_primary_subscription",{p_org:billingOrgId,p_environment:environment})
     :{data:false,error:null};
   if(primaryResult.error||typeof primaryResult.data!=="boolean")
-    throw new HttpError(503,"The current credit plan could not be verified. Please retry.","upstream");
+    throw new HttpError(503,"We couldn't check your plan and credits just now. No edit was sent, so you were not charged. Try again in a minute.","upstream");
   if(primaryResult.data && quote===null)
-    throw new HttpError(402,"Review the photo credit quote before starting this edit.","credit_quote_required",
+    throw new HttpError(402,"This edit uses credits. Review the price shown, then confirm to start. You were not charged.","credit_quote_required",
       {operation:creditQuote!.operation,tariff_version:creditQuote!.version});
   const creditMode=quote!==null;
   if(!creditMode && monthlyCap<=0)throw quotaError("AI photo edit",0,0,ent.plan);
@@ -222,7 +222,7 @@ async function guardEdit(user: PaidAiCaller, req: Request, listingId?: string, e
   const monthlyKey = `aiphotomo:${billingOrgId}`;
   const burst = await chargeRateReceipt(burstKey, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS);
   if (!burst.accepted) {
-    throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.", "rate_limited");
+    throw new HttpError(429, "You are editing photos very quickly. Wait a few minutes, then try again. You were not charged for this one.", "rate_limited");
   }
   if(creditMode){
     let held;
@@ -230,11 +230,11 @@ async function guardEdit(user: PaidAiCaller, req: Request, listingId?: string, e
       p_actor:user.id,p_org:billingOrgId,p_environment:environment,p_key:requestKey,
       p_operation:creditQuote!.operation,p_version:creditQuote!.version,
     });}
-    catch{await refundRateReceipt(burst.receipt);throw new HttpError(503,"Credits could not be reserved safely. Please retry.","upstream");}
+    catch{await refundRateReceipt(burst.receipt);throw new HttpError(503,"We couldn't set aside the credits for this edit. No edit was sent, so you were not charged. Try again in a minute.","upstream");}
     if(held.error){await refundRateReceipt(burst.receipt);throwRpc(held.error.message);}
     if(held.data?.reserved!==true||!Number.isInteger(held.data?.credits)||held.data.credits<=0){
       await refundRateReceipt(burst.receipt);
-      throw new HttpError(503,"The photo credit reservation could not be verified.","upstream");
+      throw new HttpError(503,"We couldn't set aside the credits for this edit. No edit was sent, so you were not charged. Try again in a minute.","upstream");
     }
     return {orgId,plan:ent.plan,monthlyKey,burstKey,burstReceipt:burst.receipt,
       credit:{actorId:user.id,orgId:billingOrgId,requestKey,environment}};
@@ -694,7 +694,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     if (body.image_b64 !== undefined) {
       assert(typeof body.image_b64 === "string", 400, "image_b64 must be a string");
       assert(body.image_b64.length <= MAX_IMAGE_B64_CHARS, 413,
-             "image is too large — resize it before sending", "payload_too_large");
+             "This photo is too large to edit. Use a smaller copy of the photo and try again. You were not charged.", "payload_too_large");
       assert(ALLOWED_MIMES.includes(mime), 400, `mime must be one of ${ALLOWED_MIMES.join(", ")}`);
     }
     // Same bound on the optional router mask: an unbounded second image would
@@ -702,7 +702,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     if (body.mask_b64 !== undefined) {
       assert(typeof body.mask_b64 === "string", 400, "mask_b64 must be a string");
       assert(body.mask_b64.length <= MAX_IMAGE_B64_CHARS, 413,
-             "mask is too large — resize it before sending", "payload_too_large");
+             "The area you marked is too large to send. Use a smaller copy of the photo and try again. You were not charged.", "payload_too_large");
       const mm = String(body.mask_mime ?? "image/png").split(";")[0].trim().toLowerCase();
       assert(ALLOWED_MIMES.includes(mm), 400, `mask_mime must be one of ${ALLOWED_MIMES.join(", ")}`);
     }
@@ -714,13 +714,13 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       assert(edit === "stage" && typeof referenceB64 === "string" && referenceB64.length > 0, 400,
         "A furniture reference is supported only for staging.");
       assert(referenceB64.length <= 6_000_000 && (body.image_b64?.length ?? 0) + referenceB64.length <= MAX_IMAGE_B64_CHARS,
-        413, "The staging images are too large — resize them before sending.", "payload_too_large");
+        413, "These photos are too large to stage together. Use smaller copies and try again. You were not charged.", "payload_too_large");
       assert(["image/jpeg", "image/png", "image/webp"].includes(referenceMime), 400,
         "The furniture reference must be JPEG, PNG or WebP.");
       // The route's per-output-image price does not cover input tokens. A
       // second image cannot dispatch until an approved conservative cost
       // preflight covers both inputs. Refuse before any quota is consumed.
-      throw new HttpError(503, "Same-room furniture references are coming soon. No edit was sent or charged. Stage without a reference for now.", "upstream");
+      throw new HttpError(503, "Staging with your own furniture photo is not available yet. No edit was sent, so you were not charged. Stage the room without a furniture photo for now.", "upstream");
     }
     if (edit === "suggest") {
       assert(body.image_b64, 400, "image_b64 is required");
@@ -736,7 +736,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
         catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
         if(assessmentRequested){
           const bytes=decodeBase64Bytes(body.image_b64),digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),b=>b.toString(16).padStart(2,"0")).join("");
-          if(digest!==body.source_sha256){await abortFundingOperationBeforeDispatch(funding);throw new HttpError(400,"The assessment photo changed. No analysis or image edit was started.");}
+          if(digest!==body.source_sha256){await abortFundingOperationBeforeDispatch(funding);throw new HttpError(400,"The photo changed while we were looking at it, so nothing was started. Choose the photo again and retry.");}
           const admission=await adminClient().rpc("photo_declutter_assessment_admit",{
             p_actor:user.id,p_org:helperCharge.orgId,p_key:funding.requestKey,
             p_source_sha256:body.source_sha256,
@@ -744,7 +744,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
           if(admission.error || admission.data?.admitted!==true){
             await abortFundingOperationBeforeDispatch(funding);
             if(admission.error && /RP\d{3}:/.test(admission.error.message??""))throwRpc(admission.error.message);
-            throw new HttpError(503,"Photo review availability could not be verified. No analysis was sent.","upstream");
+            throw new HttpError(503,"We couldn't start the photo check just now, so nothing was sent. Try again in a minute.","upstream");
           }
         }
         const step = legacyPhotoStep("photo.suggest");
@@ -763,9 +763,9 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     if (edit === "improve_prompt") {
       assert(body.prompt === undefined || typeof body.prompt === "string", 400, "Photo instructions must be text.");
       const rough = (body.prompt ?? "").trim();
-      assert(rough.length > 0, 400, "edit:'improve_prompt' requires a non-empty `prompt`");
+      assert(rough.length > 0, 400, "Type an instruction first, then ask for help with the wording.");
       assert(rough.length <= MAX_IMPROVE_INPUT, 400,
-             `prompt too long (max ${MAX_IMPROVE_INPUT} chars)`);
+             `Your instruction is too long. Shorten it to ${MAX_IMPROVE_INPUT} characters or fewer.`);
       validatePhotoPrompt(rough, true);
       // Refuse before spending tokens polishing something we would never run.
       const promptSpace = await gateSpace();
@@ -816,7 +816,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       if (body.prompt !== undefined) {
         assert(typeof body.prompt === "string", 400, "The furnishing brief must be text.");
         const brief = body.prompt.trim();
-        assert(brief.length <= MAX_CUSTOM_PROMPT, 400, `furnishing brief too long (max ${MAX_CUSTOM_PROMPT} chars)`);
+        assert(brief.length <= MAX_CUSTOM_PROMPT, 400, `Your furnishing notes are too long. Shorten them to ${MAX_CUSTOM_PROMPT} characters or fewer.`);
         if (brief) {
           const promptSpace = await gateSpace();
           assertFairHousing(brief, "This furnishing brief", promptSpace);
@@ -839,9 +839,9 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     } else if (edit === "custom") {
       assert(body.prompt === undefined || typeof body.prompt === "string", 400, "Photo instructions must be text.");
       const userText = (body.prompt ?? "").trim();
-      assert(userText.length > 0, 400, "edit:'custom' requires a non-empty `prompt`");
+      assert(userText.length > 0, 400, "Type what you want changed in this photo, then try again.");
       assert(userText.length <= MAX_CUSTOM_PROMPT, 400,
-             `prompt too long (max ${MAX_CUSTOM_PROMPT} chars)`);
+             `Your instruction is too long. Shorten it to ${MAX_CUSTOM_PROMPT} characters or fewer.`);
       validatePhotoPrompt(userText, true);
       // Fair-housing denylist — refuse BEFORE charging anything (see header).
       const promptSpace = await gateSpace();
@@ -874,7 +874,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
         // Resolve prospective policy FIRST, even when its pointer ACK was lost.
         const quality=await lookupPhotoQuality(adminClient(),resultIdentity);
         if(quality){
-          assert(quality.evidence.request_sha256===await inputHash(body),409,"This request identifier belongs to different photo instructions.","conflict");
+          assert(quality.evidence.request_sha256===await inputHash(body),409,"This edit was already started with a different instruction. Start a new edit to use the new instruction.","conflict");
           await photoQualityScope(adminClient(),quality,user.id,preferredOrg(req)??null);
           // A privately released edit is answered at once with its honest
           // review state. Its saved check is only nudged, never awaited.
@@ -884,10 +884,10 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
           return await photoQualityResponse(adminClient(),continued,user.id,preferredOrg(req)??null,{space_type:space});
         }
         const stored=error instanceof SavedFundingResponse?error.saved_response:undefined;
-        assert(stored?.kind!=="photo_quality",503,"The saved photo quality journal is temporarily unavailable. No new edit was started.","upstream");
+        assert(stored?.kind!=="photo_quality",503,"We couldn't load your saved edit just now. No new edit was started and there is no new charge. Try again in a minute.","upstream");
         const pointer = stored as unknown as PhotoResultPointer|undefined;
         const saved = await restorePhotoResult(adminClient(), resultIdentity, pointer);
-        if (!saved) throw new HttpError(409, "This edit is already underway, but its saved image is not available yet. Retry the same request shortly.", "conflict");
+        if (!saved) throw new HttpError(409, "This edit is already being made and its picture is not ready yet. Check this edit again in a moment. A second edit is not started.", "conflict");
         const metadata = pointer?.metadata ?? {
           edit, space_type: space, ...(style ? {style} : {}),
           disclosure: disclosureFallback(provenanceKind(edit), edit),
@@ -918,7 +918,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     // A lapsed member can use already-purchased credits; route eligibility is
     // paid for this single edit, while the actual entitlement remains Free.
     const plan=charge.credit&&charge.plan==="free"?"pro":charge.plan;
-    if (charge.orgId !== orgId) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw new HttpError(409,"The generation workspace changed. Please retry.","conflict"); }
+    if (charge.orgId !== orgId) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw new HttpError(409,"Your workspace changed while this edit was starting. No edit was sent, so you were not charged. Try again.","conflict"); }
 
     // ── ROUTER (flag-gated, additive) ────────────────────────────────────────
     // The fair-housing gate above has already run — contract §4 puts it BEFORE
@@ -982,7 +982,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       if (chain.length === 0) {
         await refundEditCharge(charge);
         await abortFundingOperationBeforeDispatch(funding);
-        throw new HttpError(503, "Same-room furniture references are unavailable on the active photo route. No edit was sent. Try staging without a reference or wait until the route supports it.", "upstream");
+        throw new HttpError(503, "Staging with your own furniture photo is not available right now. No edit was sent, so you were not charged. Stage the room without a furniture photo.", "upstream");
       }
       genInput.extra = { ...genInput.extra, staging_reference_b64: referenceB64, staging_reference_mime: referenceMime };
     }
@@ -1303,7 +1303,7 @@ async function improvePrompt(payload:PhotoHelperPayload): Promise<string> {
     // Model ignored the JSON contract — fall back to its plain text.
     improved = raw.replace(/^```(?:json)?|```$/g, "").replace(/^"|"$/g, "").trim();
   }
-  if (!improved) throw new HttpError(502, "Gemini returned no improved prompt", "upstream");
+  if (!improved) throw new HttpError(502, "The AI writing helper did not come back with a suggestion. Try again, or use your own wording.", "upstream");
   improved = improved.replace(/\s+/g, " ");
   if (improved.length > MAX_IMPROVE_OUTPUT) throw new HttpError(502, "The writing assistant returned an instruction that was too long. No suggestion was returned.", "upstream");
   return improved;
@@ -1322,7 +1322,7 @@ async function geminiText(payload:PhotoHelperPayload): Promise<string> {
   const data = await res.json().catch(() => { parsed = false; return {} as Record<string, unknown>; });
   if (!res.ok) {
     const rejected = parsed && !!data && typeof data === "object" && !Array.isArray(data) && definitiveSubmitRejection(res.status, data);
-    throw new ProviderHttpError(new HttpError(502, `Gemini ${res.status}: ${JSON.stringify(data).slice(0, 300)}`, "upstream"),
+    throw new ProviderHttpError(new HttpError(502, "The AI helper is not answering right now. Try again in a minute.", "upstream"),
       new ProviderError("gemini", classifyStatus(res.status), "Gemini helper submit failed", res.status, rejected));
   }
   // deno-lint-ignore no-explicit-any
@@ -1331,7 +1331,7 @@ async function geminiText(payload:PhotoHelperPayload): Promise<string> {
       if (typeof part.text === "string" && part.text.trim()) return part.text as string;
     }
   }
-  throw new HttpError(502, `Gemini returned no text. ${JSON.stringify(data).slice(0, 200)}`, "upstream");
+  throw new HttpError(502, "The AI helper did not come back with an answer. Try again in a minute.", "upstream");
 }
 
 /** Defensive JSON parse: strip code fences, else grab the first {...} block. */

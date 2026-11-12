@@ -63,7 +63,7 @@ Deno.test("ceiling masked Declutter skips unfunded FAL even for private sponsors
    }};
    const chain=await boundedPhotoChain(context,[step,openai],source);
    assertEquals(chain,[openai]);
-   await assertRejects(()=>boundedPhotoChain(context,[step],source),HttpError,"no funded provider route");
+   await assertRejects(()=>boundedPhotoChain(context,[step],source),HttpError,"not available on your account");
    await fundedAttempt(context,"photo.declutter:0",chain[0],source,mediaAttemptQuote(chain[0],source),async()=>{
     dispatched.push(chain[0].provider);return{confirmed:true};
    });

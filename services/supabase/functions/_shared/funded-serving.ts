@@ -24,7 +24,7 @@ export function ceilingRefusalCopy(message:string):string|null {
  if(kind==="free")return "Your free AI sample is used up. Subscribe to keep using AI tools.";
  if(kind==="trial")return "Your trial's AI allowance is used up. Your plan's full allowance starts with the paid period.";
  if(kind==="grace")return "AI tools are paused while Apple retries your subscription payment. They resume as soon as the renewal goes through.";
- if(kind)return "This workspace has used its AI allowance for the current billing period. It resets with the next period, or upgrade for more.";
+ if(kind)return "You have used all the AI included in your plan for this billing period. It resets on your next billing date, or upgrade your plan for more.";
  if(isTrialCapacityRefusal(message))return TRIAL_CAPACITY_UNAVAILABLE_MESSAGE;
  return null;
 }
@@ -40,9 +40,9 @@ function fundingRpcError(message:string):never {
  // bigger plan cannot repair it. An exhausted funded interval remains quota;
  // neither case permits another provider attempt or loosens the spending gate.
  if (/RP402:\s*(?:This workspace has no funded serving allowance|This paid service interval is not funded)\s*$/.test(message))
-  throw new FundingAdmissionError(503,"AI generation is not available for this workspace yet. Please contact support.","upstream");
+  throw new FundingAdmissionError(503,"AI tools are not switched on for your account yet. That is a problem on our side. Contact support so we can turn them on.","upstream");
  if (/RP402:\s*This attempt exceeds the shared funded serving allowance\s*$/.test(message))
-  throw new FundingAdmissionError(402,"This workspace's shared AI usage limit has been reached. Wait for its next funded billing interval.","quota_exceeded");
+  throw new FundingAdmissionError(402,"Your account has reached its AI limit for this billing period. It resets on your next billing date. Contact support if you need more before then.","quota_exceeded");
  try { throwRpc(message); } catch(error) {
   if(error instanceof HttpError)throw new FundingAdmissionError(error.status,error.message,error.code,/This operation already started/.test(message)?{funding_operation_replay:true}:undefined);
   throw error;
@@ -97,16 +97,16 @@ export async function fundingContext(actorId: string,orgId: string,req: Request,
 export async function beginFundingOperation(context:FundingContext,operation:string,input:unknown):Promise<void> {
  let begun;
  try { begun=await context.rpc("serving_operation_begin",{p_actor:context.actorId,p_org:context.orgId,p_key:context.requestKey,p_operation:operation,p_input_sha256:await inputHash(input)}); }
- catch {throw new FundingAdmissionError(503,"This operation could not be journaled safely. Please retry.","upstream");}
+ catch {throw new FundingAdmissionError(503,"We couldn't start this just now, so nothing was sent. Try again in a minute.","upstream");}
  if(begun.error){
   if(/RP(?:400|402|403|409):/.test(begun.error.message??""))fundingRpcError(begun.error.message!);
-  throw new FundingAdmissionError(503,"This operation could not be journaled safely. Please retry.","upstream");
+  throw new FundingAdmissionError(503,"We couldn't start this just now, so nothing was sent. Try again in a minute.","upstream");
  }
  if(begun.data&&typeof begun.data==="object"&&(begun.data as{replay?:unknown}).replay===true){
   const result=(begun.data as{result?:unknown}).result;
   if(result&&typeof result==="object"&&!Array.isArray(result))throw new SavedFundingResponse(result as Record<string,unknown>);
  }
- if(!begun.data||typeof begun.data!=="object"||(begun.data as {begun?:unknown}).begun!==true)throw new FundingAdmissionError(503,"This operation could not be journaled safely. Please retry.","upstream");
+ if(!begun.data||typeof begun.data!=="object"||(begun.data as {begun?:unknown}).begun!==true)throw new FundingAdmissionError(503,"We couldn't start this just now, so nothing was sent. Try again in a minute.","upstream");
  context.operationBegun=true;
 }
 export async function completeFundingOperation(context:FundingContext,result:Record<string,unknown>):Promise<Record<string,unknown>>{
@@ -146,18 +146,18 @@ export async function boundedPhotoChain(context: FundingContext, steps: RouteSte
  // too. Keep other eligible routes and their existing recovery behavior.
  if(await servingMode()==="ceiling"){
   const available=steps.filter(step=>step.provider!=="fal");
-  if(available.length===0)throw new FundingAdmissionError(503,"This photo edit has no funded provider route. No edit was sent.","upstream");
+  if(available.length===0)throw new FundingAdmissionError(503,"This photo tool is not available on your account right now. No edit was sent, so you were not charged. Try again later, or contact support.","upstream");
   return available;
  }
  if(sponsored)return steps;
  if(input.extra?.photo_quality_4k===true){
   if(steps.length!==1||steps[0].task!==input.task||steps[0].provider!=="gemini"||!(steps[0].model==="gemini-3.1-flash-image"||(steps[0].model==="gemini-3-pro-image"&&photoPro4KInputAllowance(input)!==null))||input.mask_url||!photo4KInputAllowance(input)||!mediaAttemptQuote(steps[0],input))
-   throw new FundingAdmissionError(503,"This photo tool has no complete bounded 4K serving route. No edit was sent.","upstream");
+   throw new FundingAdmissionError(503,"This photo tool is not available right now. No edit was sent, so you were not charged. Try again later, or contact support.","upstream");
   return steps;
  }
  if(input.extra?.photo_quality_2k===true){
   if(steps.length!==1||steps[0].provider!=="gemini"||steps[0].model!=="gemini-3.1-flash-image"||input.mask_url||!photo2KInputAllowance(input)||!mediaAttemptQuote(steps[0],input))
-   throw new FundingAdmissionError(503,"This photo tool has no complete bounded 2K serving route. No edit was sent.","upstream");
+   throw new FundingAdmissionError(503,"This photo tool is not available right now. No edit was sent, so you were not charged. Try again later, or contact support.","upstream");
   return steps;
  }
  const priced=steps.filter(step=>step.task===input.task && (
@@ -169,7 +169,7 @@ export async function boundedPhotoChain(context: FundingContext, steps: RouteSte
   const quote=mediaAttemptQuote(step,input);
   return !quote || Math.ceil(quote.cents*10000)!==311296;
  }))
-  throw new FundingAdmissionError(503,"This photo tool has no complete bounded serving route. No edit was sent.","upstream");
+  throw new FundingAdmissionError(503,"This photo tool is not available right now. No edit was sent, so you were not charged. Try again later, or contact support.","upstream");
  return primary;
 }
 
@@ -183,33 +183,33 @@ export async function assertPhotoHelperSponsorship(context: FundingContext,asses
  if(await servingMode()==="ceiling"){
   let route;
   try {route=await context.rpc("serving_trial_funded_actor",{p_actor:context.actorId,p_org:context.orgId});}
-  catch {await abortFundingOperationBeforeDispatch(context);throw new FundingAdmissionError(503,"Trial helper funding could not be checked. No generation was submitted.","upstream");}
+  catch {await abortFundingOperationBeforeDispatch(context);throw new FundingAdmissionError(503,"We couldn't check your free trial just now, so nothing was sent. Try again in a minute.","upstream");}
   if(route.error||typeof route.data!=="boolean"){
    await abortFundingOperationBeforeDispatch(context);
-   throw new FundingAdmissionError(503,"Trial helper funding could not be checked. No generation was submitted.","upstream");
+   throw new FundingAdmissionError(503,"We couldn't check your free trial just now, so nothing was sent. Try again in a minute.","upstream");
   }
   if(route.data===false)return;
  }
  if(await unlimitedSponsored(context))return;
  let trial;
  try { trial=await context.rpc("subscription_trial_context",{p_actor:context.actorId,p_org:context.orgId}); }
- catch {await abortFundingOperationBeforeDispatch(context);throw new FundingAdmissionError(503,"Trial helper availability could not be checked. No generation was submitted.","upstream");}
+ catch {await abortFundingOperationBeforeDispatch(context);throw new FundingAdmissionError(503,"We couldn't check your free trial just now, so nothing was sent. Try again in a minute.","upstream");}
  const data=trial.data as Record<string,unknown>|null;
  if(trial.error || !data || typeof data!=="object" || Array.isArray(data) || !("trial_usage" in data)){
   await abortFundingOperationBeforeDispatch(context);
-  throw new FundingAdmissionError(503,"Trial helper availability could not be checked. No generation was submitted.","upstream");
+  throw new FundingAdmissionError(503,"We couldn't check your free trial just now, so nothing was sent. Try again in a minute.","upstream");
  }
  if(data.trial_usage===null)return;
  const usage=data.trial_usage as Record<string,unknown>|null;
  if(!usage || typeof usage!=="object" || Array.isArray(usage) || usage.org_id!==context.orgId || !["active","expired","exhausted"].includes(String(usage.status)))
   {await abortFundingOperationBeforeDispatch(context);
-  throw new FundingAdmissionError(503,"Trial helper availability could not be checked. No generation was submitted.","upstream");
+  throw new FundingAdmissionError(503,"We couldn't check your free trial just now, so nothing was sent. Try again in a minute.","upstream");
   }
  // A separately budgeted, single-photo Declutter assessment lets the limited
  // trial reach its included edits. General suggestions remain excluded.
  if(assessmentOnly&&usage.status==="active")return;
  await abortFundingOperationBeforeDispatch(context);
- throw new FundingAdmissionError(503,"Photo suggestions and prompt rewriting are not included in this subscription trial. Choose an edit or write your own instructions; no generation was submitted.","upstream");
+ throw new FundingAdmissionError(503,"Photo suggestions and help with wording are not included in the free trial, so nothing was sent. Choose an edit or type your own instruction.","upstream");
 }
 
 /** Ceiling mode prices a hold from the route catalog (ai_routes.unit_cents),
@@ -335,7 +335,7 @@ export async function fundedAttempt<T>(context: FundingContext,stage: string,ste
   // bills; a step with no documented bound is refused unless privately sponsored.
   if(!context.credit && freeCatalogRoute(step)){
    const result=await attempt();
-   if(result instanceof Response)throw new HttpError(502,"The generation service did not return a validated receipt.","upstream");
+   if(result instanceof Response)throw new HttpError(502,"The AI service did not send back a usable result. Try again in a few minutes.","upstream");
    return result;
   }
   const verified=ceilingVerifiedQuote(step,input,quote);
@@ -344,24 +344,24 @@ export async function fundedAttempt<T>(context: FundingContext,stage: string,ste
   else admittedQuote=verified;
  }
  try{
- if(!admittedQuote && !await unlimitedSponsored(context))throw new FundingAdmissionError(503,"This operation's complete price could not be verified. No generation was submitted.","upstream");
+ if(!admittedQuote && !await unlimitedSponsored(context))throw new FundingAdmissionError(503,"We couldn't work out the cost of this just now, so nothing was sent. Try again in a minute.","upstream");
  // An unpriced private QA attempt is explicitly sponsor expense and never
  // charged to retail/reviewer/trial funds or described as a reconciled cost.
  const admitted=admittedQuote??{cents:1,version:"unpriced-private-sponsorship"};
  if(!Number.isFinite(admitted.cents)||admitted.cents<=0||admitted.cents>100000000)
-  throw new FundingAdmissionError(503,"This operation could not be priced safely.","upstream");
+  throw new FundingAdmissionError(503,"We couldn't work out the cost of this just now, so nothing was sent. Try again in a minute.","upstream");
  const hold=Math.ceil(admitted.cents*10000)/10000;
  let reserved;
  try { reserved=await context.rpc(context.credit?"credit_serving_cost_reserve":"serving_cost_reserve",{p_actor:context.actorId,p_org:context.orgId,p_key:context.requestKey,
   p_stage:stage,p_provider:step.provider,p_model:step.model,p_input_sha256:await inputHash(input),p_hold_cents:hold,p_tariff_version:admitted.version,
   ...(context.credit?{p_credit_org:context.credit.orgId,p_credit_key:context.credit.requestKey,p_environment:context.credit.environment}:{})}); }
- catch {throw new FundingAdmissionError(503,"The shared serving budget could not be reserved. Please retry.","upstream");}
+ catch {throw new FundingAdmissionError(503,"We couldn't start this just now, so nothing was sent. Try again in a minute.","upstream");}
  if(reserved.error){
   if(/RP(?:400|402|403|409):/.test(reserved.error.message??""))fundingRpcError(reserved.error.message!);
-  throw new FundingAdmissionError(503,"The shared serving budget could not be reserved. Please retry.","upstream");
+  throw new FundingAdmissionError(503,"We couldn't start this just now, so nothing was sent. Try again in a minute.","upstream");
  }
  if(!reserved.data||typeof reserved.data!=="object"||(reserved.data as {reserved?:unknown}).reserved!==true)
-  throw new FundingAdmissionError(503,"The shared serving budget could not be reserved. Please retry.","upstream");
+  throw new FundingAdmissionError(503,"We couldn't start this just now, so nothing was sent. Try again in a minute.","upstream");
  }catch(error){if(error instanceof FundingAdmissionError)await abortFundingOperationBeforeDispatch(context);throw error;}
  const finish=async(state:string,rejection:number|null=null)=>{
   try{
@@ -374,7 +374,7 @@ export async function fundedAttempt<T>(context: FundingContext,stage: string,ste
   const result=await attempt();
   // A transport response is not a validated generation/queue receipt. Keep the
   // liability if a future caller forgets to validate HTTP status and payload.
-  if(result instanceof Response)throw new HttpError(502,"The generation service did not return a validated receipt.","upstream");
+  if(result instanceof Response)throw new HttpError(502,"The AI service did not send back a usable result. Try again in a few minutes.","upstream");
   await finish("succeeded");return result;
  }
  catch(error){

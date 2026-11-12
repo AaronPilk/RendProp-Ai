@@ -38,7 +38,7 @@ import Foundation
    check(!(await m.handle(.verified(t),event:"purchase")),"Unfunded trial accepted")
    check(t.finishes==0 && m.unsyncedCount==1,"Unfunded trial receipt discarded")
    let message=m.lastError ?? ""
-   check(message.contains("trial access is unavailable") && message.contains("workspace are retained") && message.contains("Do not purchase again or switch accounts") && message.contains("Contact support") && message.contains("Manage or cancel"),"Trial funding recovery is not actionable")
+   check(message.contains("could not turn the trial on") && message.contains("workspace are safe") && message.contains("Do not purchase again or switch accounts") && message.contains("Contact support") && message.contains("Manage or cancel"),"Trial funding recovery is not actionable")
    check(!message.contains("Return to its original account"),"Trial capacity refusal blamed the original account")
    await m.retryUnsynced(automatically:true)
    check(api.requests==1,"Unfunded trial automatically retried")

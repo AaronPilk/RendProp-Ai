@@ -47,7 +47,7 @@ Deno.test("unexpected SQL errors are unavailable responses, with no private SQL 
   const secret = 'duplicate key on private_buyers: buyer@fixture.invalid';
   const error = assertThrows(() => throwRpc(secret), HttpError);
   assertEquals(error.status, 503);
-  assertEquals(error.message, "This action is temporarily unavailable. Please try again.");
+  assertEquals(error.message, "This is temporarily unavailable because of a problem on our side. Try again in a minute.");
   const quota = assertThrows(() => throwRpc("RP402: photo limit reached"), HttpError);
   assertEquals(quota.status, 402); assertEquals(quota.code, "quota_exceeded");
   assertEquals(quota.message, "photo limit reached");
@@ -60,7 +60,8 @@ Deno.test("trial pool RPC refusals retain a distinct availability code in the wi
     assertEquals(response.status, 402);
     assertEquals(await response.json(), {
       code: "trial_capacity_unavailable",
-      error: "Trial access is temporarily unavailable. Please contact support if Apple already confirmed a purchase.",
+      error: "The free trial can't be started right now. That is a problem on our side, not with your account. Contact support so we can turn it on. If Apple already confirmed your trial, do not buy it again.",
+      next_step: "contact_support",
     });
   }
   for (const message of [

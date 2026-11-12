@@ -17,9 +17,9 @@ function fixture():Fixture{
  const calls:Fixture["calls"]=[],limits:Fixture["limits"]=[];
  const state:Fixture["state"]={user:{id:actor,is_anonymous:false},limit:true,reply:(name,args)=>({data:defaultReply(name,args),error:null})};
  return {calls,limits,state,deps:{
-  getUser:async()=>{if(state.user===null)throw new HttpError(401,"Invalid or expired token");return state.user as {id:string;is_anonymous?:boolean};},
+  getUser:async()=>{if(state.user===null)throw new HttpError(401,"Your sign-in has expired. Sign in again to continue.");return state.user as {id:string;is_anonymous?:boolean};},
   rpc:async(name,args)=>{assert(ALLOWED_RPCS.includes(name),"Only feedback RPCs are reachable: "+name);calls.push({name,args});return state.reply(name,args);},
-  rateLimit:async(key,max,window)=>{limits.push({key,max,window});if(state.limit==="throw")throw new HttpError(503,"Processing limits are temporarily unavailable — try again shortly.","upstream");return state.limit;},
+  rateLimit:async(key,max,window)=>{limits.push({key,max,window});if(state.limit==="throw")throw new HttpError(503,"We couldn't start this just now. Try again in a minute.","upstream");return state.limit;},
  }};
 }
 function defaultReply(name:string,args:Record<string,unknown>):unknown{
@@ -158,7 +158,7 @@ Deno.test("an existing verdict under another key answers 409 feedback_exists wit
  const {response,body}=await send(f,request("POST","",submitBody({client_key:"studio:another-key"})));
  assertEquals(response.status,409);
  assertEquals(body,{client_key:"ios:original-key",revision:4,revision_count:2,feedback_id:feedbackId,provenance_id:prov,verdict:"needs_work",reasons:["blocked_doorway_or_opening"],note:null,
-  error:"Feedback for this photo already exists under another key; adopt it and send a higher revision.",code:"feedback_exists"});
+  error:"Feedback for this photo already exists under another key; adopt it and send a higher revision.",code:"feedback_exists",next_step:"none"});
 });
 // The exact fields Studio's queue reads (apps/studio/src/features/creative/photo-feedback-queue.ts
 // at the Studio lane's 34285dc5): success carries the stored opinion at the top level, a signal
