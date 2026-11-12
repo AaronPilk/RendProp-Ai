@@ -7,7 +7,15 @@ does **not** publish a property site or issue a provider request.
 
 The controller advances `/tick` with `slot-0` / `slot-1`, sleeps between provider
 checks, and starts a `standard-3` container only for extracting three actual
-frames or composing a ready batch. CPU output is retained in the private
+frames or composing a ready batch. While a supplier renders, a shared slot
+keeps only a reminder to look again in 20 s: it holds no lease, task or process,
+and any other queued job or photo check may take it. A running CPU task is
+looked at every 0.5 s at first, backing off to the 15 s poll (the Photo Motion
+slot takes seven early looks, then 15 s). A slot that finishes a job reads the
+queue once and takes the next item instead of waiting for the cron minute.
+The motion measurement is advisory: one that cannot be attested is sent as
+"no report" with the three frames; it never holds a slot. Authority calls
+carry `x-region` from `EDGE_FUNCTION_REGION` (the database region). CPU output is retained in the private
 container until `/outputs` admits its measured storage size and supplies the
 exact master/poster PUT capabilities. After upload, the measured `/finish`
 receipt is persisted before the fenced backend callback. The CPU is destroyed

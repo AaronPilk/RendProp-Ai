@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {capabilities,outputCapabilities,egress,mediaURL,isTerminal,sanitizedFailure} from '../src/controller.ts';
+import {capabilities,outputCapabilities,egress,mediaURL,isTerminal,sanitizedFailure,cpuPollDelay,videoWaitOnly,WAIT_RECHECK_MS,WAIT_QUIET_MS,WAIT_PARK_MS} from '../src/controller.ts';
 
 const job='00000000-0000-4000-8000-000000000001',lease='00000000-0000-4000-8000-000000000002';
 const hosts=new Set(['media.example.test']);
@@ -62,3 +62,21 @@ assert.deepEqual(capabilities(legacyExtract as ExtractAction,hosts),capabilities
 assert.deepEqual(sanitizedFailure(extract),{job_id:job,lease_token:lease,attempt_id:extract.attempt_id,phase:'extract_frames',code:'cpu_attempt_failed'});
 assert.ok(!JSON.stringify(sanitizedFailure(extract)).includes('temporal'));
 console.log('Private controller: temporal QC request rides the extract task without widening any capability.');
+
+// CPU status looks: close at first, bounded backoff, the slow poll as ceiling.
+{const t=1_000_000,slow=15_000,at=(elapsed:number,gentle=false)=>cpuPollDelay(t-elapsed,t,slow,gentle);
+  assert.deepEqual([0,19_999,20_000,59_999,60_000,179_999,180_000,1_200_000].map(e=>at(e)),[500,500,1_000,1_000,3_000,3_000,slow,slow]);
+  assert.equal(cpuPollDelay(undefined,t,slow),500);assert.equal(cpuPollDelay(t+5_000,t,slow),500,'a clock step back is not a long wait');
+  assert.equal(cpuPollDelay(t,t,200),200,'never slower than the configured slow poll');
+  // Photo Motion: a few early looks only, then exactly the slow poll.
+  assert.deepEqual([0,1_999,2_000,9_999,10_000,29_999,30_000,600_000].map(e=>at(e,true)),[2_000,2_000,4_000,4_000,5_000,5_000,slow,slow]);
+  let clock=0,looks=0;while(clock<30_000){clock+=at(clock,true);looks++;}assert.equal(looks,7,'seven early looks in the first 30 s');
+}
+// A supplier wait is available to other work only while it holds nothing.
+{const waiting={jobID:job,slot:'slot-0',token:'t',waiting:{since:1,at:2}};
+  assert.equal(videoWaitOnly(waiting),true);
+  for(const held of [{task:action},{taskID:'e'.repeat(64)},{pendingCallback:{path:'qc',body:{}}},{photoMotionStartup:{}},{temporalHold:true}])assert.equal(videoWaitOnly({...waiting,...held}),false);
+  assert.equal(videoWaitOnly({jobID:job,slot:'slot-0',token:'t'}),false);assert.equal(videoWaitOnly({kind:'photo_quality',checkID:job,slot:'slot-0',token:'t',waiting:{since:1,at:2}}),false);assert.equal(videoWaitOnly(null),false);
+  assert.ok(WAIT_RECHECK_MS===20_000&&WAIT_QUIET_MS<WAIT_RECHECK_MS&&WAIT_PARK_MS>=WAIT_RECHECK_MS*3,'re-check matches the function\'s 20 s follow-up');
+}
+console.log('Private controller: close CPU polling with bounded backoff and the supplier-wait rule passed.');

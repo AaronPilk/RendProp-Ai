@@ -79,7 +79,7 @@ try{
   {regions=[];status='failed';const pinned=new PropertyVideoCPU(ctx,{...env,EDGE_FUNCTION_REGION:'us-west-2'});await pinned.wakePhoto(check,'slot-1');await pinned.alarm();await pinned.alarm();assert.ok(regions.length>=2&&regions.every(x=>x==='us-west-2'));assert.equal(data,null);
    regions=[];const bogus=new PropertyVideoCPU(ctx,{...env,EDGE_FUNCTION_REGION:'evil\r\nheader'});await bogus.wakePhoto(check,'slot-1');await bogus.alarm();await bogus.alarm();assert.ok(regions.every(x=>x===undefined));assert.equal(data,null);status='prepared';}
   // HTTP start is strict/private, exact identity, fixed two slots, and no broad queue drain.
-  let addressed=[];const startEnv={...env,CPU:{getByName(slot){addressed.push(slot);return{async wakePhoto(id,s){assert.equal(id,check);assert.equal(s,slot);return slot==='slot-1';}};}}};
+  let addressed=[];const startEnv={...env,CPU:{getByName(slot){return{async holder(){return null;},async wakePhoto(id,s){addressed.push(slot);assert.equal(id,check);assert.equal(s,slot);return slot==='slot-1';}};}}};
   const req=(body,auth='Bearer fixture-trigger')=>new Request('https://controller.test/photo-quality/start',{method:'POST',headers:{'Content-Type':'application/json',Authorization:auth},body:JSON.stringify(body)});
   const noAsync={waitUntil(){throw Error('kickoff cannot broad-drain a queue');}};
   assert.equal((await worker.fetch(req({check_id:check},'Bearer invalid'),startEnv,noAsync)).status,403);assert.deepEqual(addressed,[]);
@@ -87,11 +87,11 @@ try{
   assert.deepEqual(addressed,[]);const accepted=await worker.fetch(req({check_id:check}),startEnv,noAsync);assert.equal(accepted.status,202);assert.deepEqual(await accepted.json(),{accepted:true,check_id:check});assert.deepEqual(addressed,['slot-0','slot-1']);
   addressed=[];assert.equal((await worker.fetch(req({check_id:check}),{...startEnv,ENABLED:'false'},noAsync)).status,503);assert.deepEqual(addressed,[]);
   // Warm-up route: same private key and strict body; a refusal is an ordinary 200, never an error.
-  let warmed=[];const warmEnv={...env,CPU:{getByName(slot){return{async prewarmPhoto(id,s){assert.equal(id,check);assert.equal(s,slot);warmed.push(slot);return slot==='slot-1';},async wakePhoto(){throw Error('warm-up never starts a check');}};}}};
+  let warmed=[];const warmEnv={...env,CPU:{getByName(slot){return{async holder(){return null;},async prewarmPhoto(id,s){assert.equal(id,check);assert.equal(s,slot);warmed.push(slot);return slot==='slot-1';},async wakePhoto(){throw Error('warm-up never starts a check');}};}}};
   const warm=(body,auth='Bearer fixture-trigger')=>new Request('https://controller.test/photo-quality/prewarm',{method:'POST',headers:{'Content-Type':'application/json',Authorization:auth},body:JSON.stringify(body)});
   assert.equal((await worker.fetch(warm({check_id:check},'Bearer invalid'),warmEnv,noAsync)).status,403);assert.equal((await worker.fetch(warm({check_id:'invalid'}),warmEnv,noAsync)).status,400);assert.deepEqual(warmed,[]);
   const warmedReply=await worker.fetch(warm({check_id:check}),warmEnv,noAsync);assert.equal(warmedReply.status,202);assert.deepEqual(await warmedReply.json(),{accepted:true,check_id:check});assert.deepEqual(warmed,['slot-0','slot-1']);
-  const busy=await worker.fetch(warm({check_id:check}),{...warmEnv,CPU:{getByName(){return{async prewarmPhoto(){return false;}};}}},noAsync);assert.equal(busy.status,200);assert.deepEqual(await busy.json(),{accepted:false,check_id:check});
+  const busy=await worker.fetch(warm({check_id:check}),{...warmEnv,CPU:{getByName(){return{async holder(){return{id:evidence,state:'busy'};},async prewarmPhoto(){throw Error('a busy slot is not offered a warm-up');}};}}},noAsync);assert.equal(busy.status,200);assert.deepEqual(await busy.json(),{accepted:false,check_id:check});
   assert.equal((await worker.fetch(warm({check_id:check}),{...warmEnv,ENABLED:'false'},noAsync)).status,503);
  }finally{globalThis.fetch=saved;}
  console.log('Actual photo DO/source: same2slots, independent identities, measured10object admission/upload/callback, durable restart, revocation, failure, strict kickoff passed.');

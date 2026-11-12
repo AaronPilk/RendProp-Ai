@@ -37,13 +37,46 @@ export interface SlotState {
   temporalProducer?: TemporalProducerBinding;
   temporalAttestation?: TemporalAttestation;
   temporalRawResult?: Record<string,unknown>;
+  /** Legacy only: set by controller releases before the motion check became advisory. Never set now; a saved hold is released on its next alarm. */
   temporalHold?: true;
+  /** Advisory motion check: this task's measurement could not be attested; its frames go without a report. */
+  temporalUnattested?: true;
+  /** When the current wait on the CPU began (task accepted, or its upload issued). */
+  pollSince?: number;
+  /** This ownership ran a CPU task; only then does a finished job look for the next queued item. */
+  worked?: true;
+  /** Set only while the job waits on its supplier: no lease, task or process is held, and any other work may take the slot. */
+  waiting?: {since:number;at:number};
   photoMotionImage?: string;
   photoMotionStartedAt?: number;
   photoMotionProducer?: PhotoMotionProducer;
   photoMotionStartup?: PhotoMotionStartup;
   /** Validated completed output is durable before an un-cancelable stop. */
   photoMotionTerminal?: {stoppedAt?:number};
+}
+
+/** How soon a supplier wait is looked at again. Matches the function's own
+ * follow-up cadence (PROPERTY_VIDEO_FOLLOW_UP_WAKE_MS) instead of the minute cron. */
+export const WAIT_RECHECK_MS=20_000;
+/** A generic wake this soon after the slot's own look keeps the scheduled one. */
+export const WAIT_QUIET_MS=10_000;
+/** After this much continuous waiting the slot lets go and cron takes over. */
+export const WAIT_PARK_MS=10*60_000;
+/** A job that is only waiting on its supplier. It holds nothing a CPU or the
+ * authority could lose, so the slot counts as available to other work. */
+export function videoWaitOnly(state:unknown):state is SlotState&{waiting:{since:number;at:number}} {
+  const value=state as SlotState|null;
+  return !!value&&typeof value==='object'&&'jobID'in value&&value.waiting!==undefined&&!value.task&&!value.taskID&&!value.pendingCallback&&!value.photoMotionStartup&&!value.temporalHold;
+}
+/** A CPU phase is usually seconds of work (a photo preparation is 1 to 2 s), so
+ * the fixed slow poll was most of its wall time. Look closely at first, then
+ * back off; the slow poll stays the ceiling. `gentle` is for the Photo Motion
+ * class, whose every look re-issues recorded native calls: seven early looks
+ * (2, 6, 10, 15, 20, 25, 30 s), then the slow poll as before. */
+export function cpuPollDelay(since:number|undefined,now:number,slow:number,gentle=false):number {
+  const elapsed=Math.max(0,now-(since??now));
+  if(gentle)return Math.min(slow,elapsed<2_000?2_000:elapsed<10_000?4_000:elapsed<30_000?5_000:slow);
+  return Math.min(slow,elapsed<20_000?500:elapsed<60_000?1_000:elapsed<180_000?3_000:slow);
 }
 
 export function mediaURL(raw: string, hosts: Set<string>): string {
