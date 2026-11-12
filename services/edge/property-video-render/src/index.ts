@@ -514,6 +514,9 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       try {await container.setInactivityTimeout(60_000);}catch(error){throw cpuAPIFailure('inactivity',error);}
     }
     await this.bindEgress(state.capabilities);
+    // Bound for this process: close status looks do not re-issue the same
+    // interceptor while the task is downloading its inputs.
+    this.egressBound=JSON.stringify(state.capabilities);
     const deadline=Date.now()+COLD_READY_MS;
     let last:unknown;
     while (Date.now()<deadline) {
@@ -664,7 +667,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       // from now, not on the first status look. (Photo Motion renews in startup.)
       if(!this.photoMotionOnly)state.heartbeatAt=state.startedAt;
       state.capabilities=capabilities(task,new Set(this.env.MEDIA_HOSTS.split(',')));
-      this.save(state);this.egressBound=undefined;
+      this.save(state);
       if(this.photoMotionOnly&&photoMotionTask(task)){await this.photoStartup(state,false);return;}
       await this.boot(state);
       const accepted=await this.cpu('execute',action);
