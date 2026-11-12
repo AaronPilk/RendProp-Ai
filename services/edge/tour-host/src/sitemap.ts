@@ -63,14 +63,20 @@ export interface SitemapPortfolio {
  */
 const SITE_PAGES: SitemapEntry[] = [
   // 2026-10-29: glass redesign, real plan pricing and the Terms pricing line
-  // (deploy d0a90141). 2026-11-12: pricing and compare titles/descriptions.
+  // (deploy d0a90141). 2026-11-12: pricing and compare titles/descriptions,
+  // and the privacy policy's website-analytics paragraph.
   { loc: "/", lastmod: "2026-10-29", changefreq: "weekly", priority: "1.0" },
   { loc: "/features", lastmod: "2026-10-29", changefreq: "weekly", priority: "0.9" },
   { loc: "/pricing", lastmod: "2026-11-12", changefreq: "weekly", priority: "0.9" },
   { loc: "/compare", lastmod: "2026-11-12", changefreq: "weekly", priority: "0.8" },
+  // Product pages added 2026-11-12 (docs/seo/keywords-20261112.md). Each is a
+  // static file in public/ served by the assets binding, like /pricing.
+  { loc: "/listing-video-from-photos", lastmod: "2026-11-12", changefreq: "monthly", priority: "0.8" },
+  { loc: "/single-property-website", lastmod: "2026-11-12", changefreq: "monthly", priority: "0.8" },
+  { loc: "/real-estate-photo-editing-app", lastmod: "2026-11-12", changefreq: "monthly", priority: "0.8" },
   { loc: "/support", lastmod: "2026-10-29", changefreq: "monthly", priority: "0.7" },
   { loc: "/terms", lastmod: "2026-10-29", changefreq: "yearly", priority: "0.3" },
-  { loc: "/privacy", lastmod: "2026-09-05", changefreq: "yearly", priority: "0.3" },
+  { loc: "/privacy", lastmod: "2026-11-12", changefreq: "yearly", priority: "0.3" },
 ];
 
 /** The demo tour. Rendprop's own content, served from src/demo.ts with no

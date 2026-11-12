@@ -447,7 +447,8 @@ async function main() {
   expect((await get(worker, "/studio/unknown")).status === 404,
     "[/studio/unknown] does not redirect unrelated paths");
   const studioLink = '<a href="https://studio.rendprop.com/">Studio</a>';
-  for (const page of ["index", "features", "pricing", "compare", "support"]) {
+  for (const page of ["index", "features", "pricing", "compare", "support",
+    "listing-video-from-photos", "single-property-website", "real-estate-photo-editing-app"]) {
     const html = readFileSync(join(ROOT, "public", `${page}.html`), "utf8");
     const nav = html.match(/<div class="nav-menu" id="navMenu">([\s\S]*?)<\/div>/)?.[1] || "";
     const footer = html.match(/<nav class="foot-links" aria-label="Footer">([\s\S]*?)<\/nav>/)?.[1] || "";
@@ -585,9 +586,10 @@ async function main() {
     expect(sm.body.includes('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'), "[/sitemap.xml] want a urlset");
 
     const locs = [...sm.body.matchAll(/<loc>([^<]*)<\/loc>/g)].map((m) => m[1]);
-    // Eight: the seven marketing/legal pages and the demo tour. The noindex
-    // demo portfolio is no longer submitted (rule 2 below now covers /a/ too).
-    expect(locs.length >= 8, `[/sitemap.xml] want at least the pages the old static file had, got ${locs.length}`);
+    // Eleven: the seven marketing/legal pages, the three product pages added
+    // 2026-11-12 and the demo tour. The noindex demo portfolio is no longer
+    // submitted (rule 2 below now covers /a/ too).
+    expect(locs.length >= 11, `[/sitemap.xml] want at least the eleven site pages, got ${locs.length}`);
     for (const must of [
       "https://rendprop.com/",
       "https://rendprop.com/features",
@@ -596,8 +598,21 @@ async function main() {
       "https://rendprop.com/support",
       "https://rendprop.com/terms",
       "https://rendprop.com/privacy",
+      "https://rendprop.com/listing-video-from-photos",
+      "https://rendprop.com/single-property-website",
+      "https://rendprop.com/real-estate-photo-editing-app",
       "https://rendprop.com/f/estate-demo",
     ]) expect(locs.includes(must), `[/sitemap.xml] missing ${must}`);
+
+    // A listed marketing page must exist. These are static files the assets
+    // binding serves at their clean path (public/pricing.html -> /pricing);
+    // /terms and /privacy are Worker-rendered and /f/ is a tour.
+    for (const loc of locs) {
+      const path = loc.slice("https://rendprop.com".length);
+      if (path === "/terms" || path === "/privacy" || /^\/[fa]\//.test(path)) continue;
+      const file = path === "/" ? "index.html" : `${path.slice(1)}.html`;
+      expect(existsSync(join(ROOT, "public", file)), `[/sitemap.xml] ${loc} is listed but public/${file} does not exist`);
+    }
 
     // RULE 1 — never an unbranded URL. /u/ is noindex by construction and /f/
     // is its canonical; asking a crawler to index it would be the one thing
