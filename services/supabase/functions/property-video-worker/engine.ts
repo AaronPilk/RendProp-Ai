@@ -37,7 +37,7 @@ export async function scope(job:string,lease:string,attempt?:string){
 // after preparation and reservation. SQL re-checks this lease/attempt, the frozen recipe,
 // the saved processor permission and any owner quality-test grant (one create per attempt);
 // its RPnnn refusal maps through rpc() -> throwRpc to the same HTTP status.
-async function aiScope(ctx:any):Promise<AiVideoWorkerScope>{const j=ctx.job,s=ctx.source;return{user:{id:j.actor_id,is_anonymous:false},listing:j.listing_id,targetAspect:j.manifest.aspect,qualityProfile:j.quality_profile??'legacy',qualityIdentity:j.quality_identity??null,accepted:async accepted=>{await rpc('property_video_job_receipt',{p_job:j.id,p_attempt:s.attempt_id,p_receipt:accepted});},authorize:async()=>{await scope(j.id,s.lease_token,s.attempt_id);},kieDispatchAuthority:async()=>{
+async function aiScope(ctx:any):Promise<AiVideoWorkerScope>{const j=ctx.job,s=ctx.source;return{user:{id:j.actor_id,is_anonymous:false},listing:j.listing_id,advisoryQuality:true,targetAspect:j.manifest.aspect,qualityProfile:j.quality_profile??'legacy',qualityIdentity:j.quality_identity??null,accepted:async accepted=>{await rpc('property_video_job_receipt',{p_job:j.id,p_attempt:s.attempt_id,p_receipt:accepted});},authorize:async()=>{await scope(j.id,s.lease_token,s.attempt_id);},kieDispatchAuthority:async()=>{
  const evidence=await rpc('property_video_kie_dispatch_authority',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});
  const object=evidence&&typeof evidence==='object'&&!Array.isArray(evidence);
  const keys=object?Object.keys(evidence).sort().join(','):'';
@@ -153,13 +153,29 @@ export async function quality(ctx:any,raw:any){const j=ctx.job,s=ctx.source;asse
   }
   if(!verdict||!verdict.pass)try{console.warn(JSON.stringify({event:'property_video_temporal_advisory',recorded:!!verdict,pass:verdict?verdict.pass:null,route:verdict?temporalRoute(verdict):null,reasons:verdict?verdict.reasons:[]}));}catch{/* Recording only. */}
  }
- const{bytes}=await bytesFrom(s.source);const frames=raw.frames.map((frame:any,i:number)=>{assert(frame&&typeof frame.image_b64==='string'&&frame.image_b64.length<=524288&&frame.mime==='image/jpeg',400,'Use bounded actual JPEG review frames.');return{at:['first','middle','last'][i],b64:frame.image_b64,mime:frame.mime};});const out=await callAI(ctx,'POST','drift',{request_id:s.receipt.request_id,kind:'reel',source_b64:base64(bytes),source_mime:s.source.content_type,frames,seconds:5,motion:s.motion,listing_id:j.listing_id,asset_id:s.asset_id,provenance_id:s.generation_provenance_id,attempt:(s.quality_retries??0)>0?1:0});
- if(out.status===200&&out.value.drift?.action==='accept'&&out.value.drift.publishable===true){await rpc('property_video_job_qc',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});return;}
- // The drift gate's single paid retry grant is not a pass or a still fallback.
- // SQL verifies its persisted paid verdict and archives the superseded attempt
- // before one new normal dispatch; an HTTP retry cannot mint another grant.
- if(out.status===200&&out.value.drift?.action==='retry'&&out.value.drift.publishable===false){const next=await rpc('property_video_job_quality_retry',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});assert(next?.retry_scheduled===true,503,'The saved safe retry could not be scheduled.');return;}
- await fail(ctx,out.status>=500?'quality_check_unconfirmed':'quality_check_refused',out.status>=500);}
+ // ADVISORY drift judge (owner decision 12 Nov 2026: no quality-check outcome
+ // may block or delay delivery; the user reviews and regenerates if they wish).
+ // The paid judge still runs and ai-video records what it found, unchanged and
+ // never upgraded: the cost ledger row, the clip's disclosure record
+ // (media_provenance.qc, with enforcement:'advisory') and the drift-check
+ // journal. Whatever it answers (pass, fail, unavailable, malformed, refused,
+ // timed out, threw), the clip is used: no pause, no failed job, no automatic
+ // paid retry, no still-photo substitution, no allowance refund. SQL
+ // (property_video_job_qc_advisory) re-reads those records, keeps the shot's
+ // lease, tenant and disclosure-record checks, marks the shot ready and labels
+ // it passed / failed / unknown / skipped from the records, not from this call.
+ // app_config property_video_quality_judge {"mode":"off"} skips the paid judge.
+ let review:'judged'|'unknown'|'skipped'='unknown';
+ const mode=await rpc('property_video_quality_judge_mode',{}).catch(()=>null);
+ if(mode==='off')review='skipped';
+ else try{
+  const{bytes}=await bytesFrom(s.source);const frames=raw.frames.map((frame:any,i:number)=>{assert(frame&&typeof frame.image_b64==='string'&&frame.image_b64.length<=524288&&frame.mime==='image/jpeg',400,'Use bounded actual JPEG review frames.');return{at:['first','middle','last'][i],b64:frame.image_b64,mime:frame.mime};});
+  const out=await callAI(ctx,'POST','drift',{request_id:s.receipt.request_id,kind:'reel',source_b64:base64(bytes),source_mime:s.source.content_type,frames,seconds:5,motion:s.motion,listing_id:j.listing_id,asset_id:s.asset_id,provenance_id:s.generation_provenance_id,attempt:(s.quality_retries??0)>0?1:0});
+  const drift=out.status===200?out.value?.drift:null;
+  if(drift&&['accept','retry','refuse'].includes(drift.action)&&typeof drift.publishable==='boolean')review='judged';
+  if(!(drift?.action==='accept'&&drift.publishable===true))console.warn(JSON.stringify({event:'property_video_drift_advisory',http_status:out.status,action:typeof drift?.action==='string'?drift.action.slice(0,16):null,publishable:typeof drift?.publishable==='boolean'?drift.publishable:null}));
+ }catch(error){try{console.warn(JSON.stringify({event:'property_video_drift_advisory',http_status:null,action:null,publishable:null,error_name:error instanceof Error?error.name.slice(0,32):'Other'}));}catch{/* Recording only. */}}
+ await rpc('property_video_job_qc_advisory',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id,p_review:review});}
 async function media(c:any,ttl=600){return{url:await presignGet(bucket(c.bucket),c.storage_key,ttl),sha256:c.sha256,bytes:c.bytes,etag:c.etag};}
 export async function action(ctx:any):Promise<WorkerAction>{const j=ctx.job,s=ctx.source;
  // Both steady profiles reuse the renderer's exact native-24 strict-CFR contract.

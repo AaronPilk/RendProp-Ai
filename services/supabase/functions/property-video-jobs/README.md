@@ -18,7 +18,16 @@ missing, foreign or failing verdict is recorded where it can be and the clip is
 still used. It never holds, pauses or fails the job, never buys a retry and
 never substitutes the still photo. A finished video's status carries
 `motion_review` (`position`, `pass`, `reasons` per reviewed shot) so clients and
-feedback can show it. Rollback of the SQL objects:
+feedback can show it. The paid drift judge is advisory on the same terms: it
+runs, is paid for and is recorded as it answered (`cost_ledger` `qc` row, the
+clip's `media_provenance.qc` with `enforcement: "advisory"`, the drift-check
+journal), and `property_video_job_qc_advisory` marks the shot ready whatever it
+said. No automatic paid retry, no still-photo substitution, no pause, and no
+allowance refund for a clip that is used. A finished video's status carries
+`quality_review` (`position`, `review`: passed / failed / unknown / skipped)
+when any shot was used without a passing verdict. `app_config`
+`property_video_quality_judge` `{"mode":"off"}` skips the paid judge. Rollback
+of the temporal SQL objects:
 `docs/handoff/PROPERTY-VIDEO-TEMPORAL-ROLLBACK.sql` (worker first).
 
 ## Client contract

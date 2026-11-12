@@ -95,7 +95,8 @@ for(const spec of[H.UHD_LANDSCAPE,H.UHD_PORTRAIT]){
   // A Kie shot is a steady profile: the extract task asks the CPU for the temporal motion report, and the
   // passing report is recorded on this exact attempt and clip before the paid drift judge decides.
   assertEquals(temporalTask(KIE_PROPERTY_PROFILE,aspect),{temporal_qc:{profile:TEMPORAL_QC_PROFILE,aspect}});
-  assertEquals(q.s.rpcs.map(r=>r.name),["property_video_job_temporal","property_video_job_qc"],"accepted verdict records the temporal report, then QC for this lease/attempt");
+  assertEquals(q.s.rpcs.map(r=>r.name),["property_video_job_temporal","property_video_quality_judge_mode","property_video_job_qc_advisory"],"records the temporal report, runs the advisory judge, then marks this lease/attempt ready");
+  assertEquals(q.s.rpcs[2].args.p_review,"judged");
   assertEquals(q.s.rpcs[0].args.p_clip_sha256,clipSha);
   assertEquals(q.s.fail,[]);assertEquals(q.s.methods,["POST drift"]);
   const drift=drifts[0] as Record<string,unknown>;assertEquals([drift.request_id,drift.kind,drift.seconds,drift.motion,drift.listing_id,drift.provenance_id,drift.attempt],[H.TASK_ID,"reel",5,"push_in",H.LISTING,"owned-generation",0]);
