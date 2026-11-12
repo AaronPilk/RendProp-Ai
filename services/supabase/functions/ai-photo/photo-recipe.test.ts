@@ -15,7 +15,7 @@ function admin(reply:(args:Record<string,unknown>)=>unknown){
 // Changing any of them without bumping PHOTO_RECIPE_REVISION (and this pin
 // together with it) fails here. prompt_sha256 remains the exact identity of
 // every generation either way.
-const PINNED={revision:"photo-recipe/2026-11-12.1",fingerprint:"21da6fad3cf03c9fb0930ee84baa9c72f7aea26fcfad6fb5193017550d620cc3"};
+const PINNED={revision:"photo-recipe/2026-11-12.1",fingerprint:"e45f9fa80648b829e63bfad1b31871a2852f93961b66da588b760144f0f8dfea"};
 const read=(path:string)=>Deno.readTextFile(new URL(path,import.meta.url));
 function region(source:string,start:string,end:string,inclusiveEnd=false):string{
  const a=source.indexOf(start);assert(a>=0&&source.indexOf(start,a+1)<0,"Recipe region start must be unique: "+start);

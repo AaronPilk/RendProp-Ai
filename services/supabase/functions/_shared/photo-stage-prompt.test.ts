@@ -59,7 +59,9 @@ Deno.test("every style names a look, a palette and materials, asks for nothing m
     // the 8192 allowance, so the complete default prompt (with the guardrail
     // sentence the handler appends) must stay under 4096 bytes to keep the
     // same priced tier as before this revision.
-    assert(bytes(prompt + " " + GUARDRAILS) < 4096, `${style}: ${bytes(prompt + " " + GUARDRAILS)} bytes`);
+    // 3700 leaves room for the brief's framing sentence (about 230 bytes) and a
+    // brief of about 160 bytes inside that same tier.
+    assert(bytes(prompt + " " + GUARDRAILS) <= 3700, `${style}: ${bytes(prompt + " " + GUARDRAILS)} bytes`);
     // A full 600-character brief of two-byte characters plus its framing
     // sentence still fits the 8192-byte provider prompt admission.
     assert(bytes(prompt + " " + GUARDRAILS + " ".repeat(420) + JSON.stringify("é".repeat(600))) < 8192, style);
