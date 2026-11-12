@@ -164,9 +164,11 @@ class PhotoQualityTests(unittest.TestCase):
         uploads=[]
         def upload(url,path,mime,hosts,headers,**kwargs):
             self.assertTrue(kwargs['allow_existing']);self.assertEqual(headers['x-amz-meta-sha256'],digest(path));uploads.append(url)
-            return None if len(uploads)==1 else '"exact-upload"'
+            # Uploads overlap, so the already-existing object is named, not "the first call".
+            return None if url==reserved[0]['put_url'] else '"exact-upload"'
         with patch('photo_quality.upload',side_effect=upload):actual=upload_photo_quality(prepared,output,{'owned.example'})
         self.assertEqual(len(uploads),10);self.assertEqual(len(actual['receipts']),10)
+        self.assertEqual([(x['role'],x['region'])for x in actual['receipts']],[(x['role'],x['region'])for x in reserved])
         self.assertNotIn('etag',actual['receipts'][0]);self.assertEqual(actual['receipts'][1]['etag'],'"exact-upload"')
         self.assertTrue(all('crop'in x and 'mime'in x and 'put_url'not in x and 'headers'not in x for x in actual['receipts']))
         runtime=Runtime('x'*64,{'owned.example'},str(self.root),runner=lambda t,h,r:prepared,uploader=lambda p,o,h:actual)

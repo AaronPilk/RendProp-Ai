@@ -100,14 +100,12 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
   const context=e.judge_context;
   if(!context||Object.keys(context).sort().join(",")!=="edit,instruction,style"||context.edit!==e.edit||context.style!==(e.style??null)||typeof context.instruction!=="string"||context.instruction.length>600||new TextEncoder().encode(context.instruction).byteLength>2400)
    return await failPhotoQuality(admin,row,"quality_context_missing",{no_quality_provider_dispatch:true,quality_provider_cost_incurred:false,message:"Exact saved edit instructions are required before a quality check can run."});
-  const config=await admin.from("app_config").select("value").eq("key","photo_quality").maybeSingle();
-  const approved=config.data?.value?.approved_judge;
-  if(config.error||(config.data?.value?.enabled!==true&&e.purpose!=="calibration")||approved?.provider!=="anthropic"||approved?.model!=="claude-sonnet-5")return row;
-  let credit:{org_id:string;environment:"Production"|"Sandbox";request_key:string}|undefined;
+  type Credit={org_id:string;environment:"Production"|"Sandbox";request_key:string};
   // A saved Stage check belongs to the same immutable customer credit hold as
   // its image generation. Without this lookup, its judge silently falls back
   // to the legacy serving budget even when the Stage edit used credits.
-  if(e.edit==="declutter"||e.edit==="stage"){
+  const savedCredit=async():Promise<Credit|undefined>=>{
+    if(e.edit!=="declutter"&&e.edit!=="stage")return undefined;
     const creditOrg=await libraryBillingOrg(admin,e.org_id,args.actor);
     const creditLookup=await admin.from("credit_holds")
       .select("org_id,environment,request_key,state")
@@ -116,22 +114,33 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
       .in("state",["reserved","settled"]).limit(2);
     assert(!creditLookup.error,503,"The saved photo credit authority could not be checked.");
     assert((creditLookup.data?.length??0)<=1,503,"The saved photo credit authority is ambiguous.");
-    credit=creditLookup.data?.[0] as typeof credit;
-  }
-  const actualPlan=await deps.plan(e.org_id);
+    return creditLookup.data?.[0] as Credit|undefined;
+  };
+  // Three independent read-only lookups; none reserves, claims or dispatches.
+  const lookups=await Promise.allSettled([admin.from("app_config").select("value").eq("key","photo_quality").maybeSingle(),savedCredit(),deps.plan(e.org_id)]);
+  // Same precedence as when these ran one after another: configuration first.
+  if(lookups[0].status==="rejected")throw lookups[0].reason;
+  const config=lookups[0].value,approved=config.data?.value?.approved_judge;
+  if(config.error||(config.data?.value?.enabled!==true&&e.purpose!=="calibration")||approved?.provider!=="anthropic"||approved?.model!=="claude-sonnet-5")return row;
+  if(lookups[1].status==="rejected")throw lookups[1].reason;
+  if(lookups[2].status==="rejected")throw lookups[2].reason;
+  const credit=lookups[1].value,actualPlan=lookups[2].value;
   const plan=credit&&actualPlan==="free"?"pro":actualPlan;
   const steps=await deps.routes(plan),step=steps.find(s=>s.provider===approved.provider&&s.model===approved.model);
   if(!step)return row; // no invented fallback or second judge
   const files=photoDerivatives(row),rubric=photoJudgeRubric({edit:context.edit,...(context.style?{style:context.style}:{}),instruction:context.instruction});
   const labels=files.map(f=>`${f.role.toUpperCase()} ${f.region}`).join("\n"),quote=photoJudgeQuote(step,rubric,labels);
   if(!quote)return row;
-  const content:ContentBlock[]=[];
-  for(const file of files){
-   signal.throwIfAborted();const bytes=await deps.read(file,signal);assert(bytes.byteLength===file.bytes&&await photoBytesHash(bytes)===file.sha256,503,"A saved photo comparison changed.");
+  // The ten retained views are independent objects (6 MB in total): confirm
+  // and read them together. Each is still size-, hash- and geometry-checked,
+  // and the blocks keep the fixed source/candidate order per region.
+  signal.throwIfAborted();
+  const content:ContentBlock[]=(await Promise.all(files.map(async file=>{
+   const bytes=await deps.read(file,signal);assert(bytes.byteLength===file.bytes&&await photoBytesHash(bytes)===file.sha256,503,"A saved photo comparison changed.");
    const b64=bytesToB64(bytes),image=validatePhotoInput(b64,"image/jpeg");
    assert(image.width===file.width&&image.height===file.height,503,"The photo comparison dimensions changed.");
-   content.push({type:"text",text:`${file.role.toUpperCase()} ${file.region}`},imageBlock(b64));
-  }
+   return[{type:"text",text:`${file.role.toUpperCase()} ${file.region}`},imageBlock(b64)] as ContentBlock[];
+  }))).flat();
   // The serialized provider body is ASCII except these bounded text fields.
   // Count its exact UTF8 bytes before reservation/dispatch; no image truncation.
   const wire={model:step.model,max_tokens:anthropicMaxTokens(paramsOf(step),MAX_OUTPUT_TOKENS),messages:[{role:"user",content}],system:rubric,output_config:anthropicOutputConfig(step.model,paramsOf(step),PHOTO_QC_JSON_SCHEMA)};

@@ -61,6 +61,7 @@
   "vars": {
     "ENABLED": "false",
     "EDGE_WORKER_URL": "https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1/property-video-worker",
+    "EDGE_FUNCTION_REGION": "us-west-2",
     "MEDIA_HOSTS": "ymgqpbnjpztwjsyvceld.supabase.co,9c332c75b96cc642621dad5d86d4bf18.r2.cloudflarestorage.com",
     "CPU_TEMPORAL_PRODUCER_IMAGE_URI": "registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-cpu@sha256:4452a0488ae786dff4e607d11e4711af5a2d59e4d6d26f168d9063db039774bc",
     "CPU_PHOTO_MOTION_IMAGE_URI": "registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186",
