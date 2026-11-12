@@ -676,6 +676,9 @@ jobs:
       - run: npm run verify
       - name: Install the locked browser for isolated UI fixtures
         run: npx playwright install --with-deps chromium
+      - name: Editor codec checks follow the active media lifecycle
+        timeout-minutes: 2
+        run: node tests/export-format-lifecycle-browser.mjs
       - name: Install synthetic video and archive verification tools
         timeout-minutes: 20
         run: |
@@ -968,6 +971,7 @@ jobs:
           name: studio-property-workflows-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/rendprop-design-a11y.json
+            /tmp/rendprop-codec-lifecycle-*/receipt.json
             /tmp/rendprop-design-a11y-*/*.png
             /tmp/rendprop-creative-pages-*/receipt.json
             /tmp/rendprop-creative-pages-*/*.png

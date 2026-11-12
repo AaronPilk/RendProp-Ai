@@ -251,11 +251,13 @@ export function VideoEditor({
   } | null>(null);
   const formatCache = useRef(new Map<string, boolean>());
   const formatKey = `${draft.ratio}:${needsAudio ? 1 : 0}`;
+  const hasClips = draft.clips.length > 0;
+  const canShowExportFormats = active && !readOnly && hasClips;
   const canProbeMp4 = typeof Worker === "function" &&
     typeof VideoEncoder === "function" && typeof VideoFrame === "function" &&
     typeof HTMLCanvasElement !== "undefined";
   useEffect(() => {
-    if (!canProbeMp4) return;
+    if (!canShowExportFormats || !canProbeMp4) return;
     const cached = formatCache.current.get(formatKey);
     if (cached !== undefined) {
       setFormatProbe({key: formatKey,
@@ -276,14 +278,14 @@ export function VideoEditor({
       },
     );
     return () => controller.abort(new DOMException("Format check cancelled.", "AbortError"));
-  }, [canProbeMp4, draft.ratio, formatKey, needsAudio]);
-  const formatOutcome = !canProbeMp4 ? "unsupported" :
+  }, [canShowExportFormats, canProbeMp4, draft.ratio, formatKey, needsAudio]);
+  const formatOutcome = !canShowExportFormats ? "idle" : !canProbeMp4 ? "unsupported" :
     formatCache.current.get(formatKey) === true ? "supported" :
     formatCache.current.get(formatKey) === false ? "unsupported" :
     formatProbe?.key === formatKey ? formatProbe.outcome : "checking";
   // A probe error is not an unsupported codec. Keep recorder WebM available
   // while withholding an MP4 route that would fail in the worker transport.
-  const formats = formatOutcome === "supported" ? allFormats :
+  const formats = formatOutcome === "idle" ? [] : formatOutcome === "supported" ? allFormats :
     formatOutcome === "unsupported" ? recorderFormats :
     recorderFormats.filter(format => format.extension === "webm");
   const selectedFormat = formats.find(format => format.mime === formatMime) ?? formats[0];
@@ -1064,7 +1066,9 @@ export function VideoEditor({
               </fieldset>
             ) : (
               <p role="status">
-                {formatOutcome === "checking"
+                {formatOutcome === "idle"
+                  ? hasClips ? "Open this editor to check available video formats." : "Add photos or videos to check available video formats."
+                  : formatOutcome === "checking"
                   ? "Checking available video formats…"
                   : "Video export is unavailable in this browser. You can still save the edit plan and open it in another browser."}
               </p>
@@ -1128,9 +1132,9 @@ export function VideoEditor({
                 ? "Original clip audio will be muted."
                 : draft.overlays?.length ? "Original video audio continues through every photo cutaway." : "Keeps original audio within each video trim; photos are silent."}{" "}
               Export time depends on your clips. Keep this tab visible.{" "}
-              {formats.some((format) => format.extension === "mp4")
+              {["supported", "unsupported"].includes(formatOutcome) && (formats.some((format) => format.extension === "mp4")
                 ? "Choose the format supported by your destination."
-                : "This browser offers WebM, not MP4."}{" "}
+                : "This browser offers WebM, not MP4.")}{" "}
               This is a local draft, not a published tour.
             </p>
             {output && (
