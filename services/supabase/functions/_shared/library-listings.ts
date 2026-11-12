@@ -1,8 +1,11 @@
 import { assert, throwRpc } from "./http.ts";
-import { libraryAccess } from "./library-access.ts";
+import { libraryAccess, type LibraryAccess } from "./library-access.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export async function listLibraryListings(admin: any, actor: string, org: string, params: URLSearchParams) {
+/** `known` is this request's own fresh authority for (actor, org), when the
+ * caller already holds it; the RPC enforces access itself either way and the
+ * closing recheck always runs. */
+export async function listLibraryListings(admin: any, actor: string, org: string, params: URLSearchParams, known?: LibraryAccess | null) {
   const integer = (name: string, fallback: number, max: number) => {
     const raw = params.get(name);
     assert(raw === null || /^(?:0|[1-9][0-9]*)$/.test(raw), 400, "Choose a valid listing page.");

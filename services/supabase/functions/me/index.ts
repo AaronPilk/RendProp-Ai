@@ -1,18 +1,9 @@
-import { libraryAccess, listingLibraryScope } from "../_shared/library-access.ts";
+import { libraryAccess, libraryAccessFromDirectory, listingLibraryScope } from "../_shared/library-access.ts";
 import { ensureAcceptedPhotoPublication } from "../_shared/photo-publication.ts";
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
 import { applyVerifiedMonthlyCredits } from "../_shared/apple-monthly-credits.ts";
 import { servingMode } from "../_shared/funded-serving.ts";
 import { teamSeatSaleProducts } from "../_shared/team-seat-sale.ts";
-
-/** Keep independent reads concurrent, but wait for all of them before a
- * failing response returns. Promise.all rejects early and leaves HTTP reads
- * running after the request (and after the test fixture restores fetch). */
-async function settledReads<const T extends readonly unknown[]>(reads: T): Promise<{ -readonly [K in keyof T]: Awaited<T[K]> }> {
-  const results = await Promise.allSettled(reads);
-  for (const result of results) if (result.status === "rejected") throw result.reason;
-  return results.map((result) => (result as PromiseFulfilledResult<unknown>).value) as { -readonly [K in keyof T]: Awaited<T[K]> };
-}
 
 /** Best effort: the envelope is informational on /me; the gate itself lives in
  * serving_envelope_admit. Null when the mode is funded or the RPC is unavailable. */
@@ -334,107 +325,152 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   const admin = adminClient();
   const directory = await workspaceDirectory(admin, userId, requestedWorkspace(req));
   const orgId = directory.active_org_id;
-  const access = await libraryAccess(admin, userId, orgId);
+  // GET /me used to make eight database round trips one after another before
+  // its last batch (directory, library access, billing org, the summary's own
+  // three, testing context, then the standard-price checks). The functions
+  // run in the caller's nearest region while the database is in us-west-2, so
+  // each trip is ~150-280 ms and the route had a 2.6 s median (12 Nov 2026).
+  // Everything below is independent read-only state: it now goes out as two
+  // batches. Each batch is awaited with allSettled, never Promise.all: that
+  // rejects early and leaves HTTP reads running after the response (and after
+  // a test fixture restores fetch). Results are still examined in the old
+  // order, so which failure a caller sees first is unchanged.
+  //
+  // The directory just evaluated library_access for every workspace it
+  // returned; reuse that row and ask again only if it is missing. A real
+  // library_access call still closes the request (accessRecheck below).
+  const accessFor = (org: string) => {
+    const known = libraryAccessFromDirectory(directory, userId, org);
+    return known ? Promise.resolve(known) : libraryAccess(admin, userId, org);
+  };
+  const access = await accessFor(orgId);
   const servingOrgId = access.billing_org_id;
-  const billingRes = await admin.from("orgs").select("id,name,plan,trial_ends_at,plan_source,plan_expires_at,apple_product_id")
-    .eq("id",servingOrgId).is("deleted_at",null).maybeSingle();
-  assert(!billingRes.error && billingRes.data?.id === servingOrgId,503,"Team billing state could not be verified.");
   const purchaseOrgId = directory.billing_org_id;
-  const purchaseRes = purchaseOrgId === servingOrgId ? billingRes : await admin.from("orgs")
-    .select("id,name,plan,trial_ends_at,plan_source,plan_expires_at,apple_product_id")
-    .eq("id",purchaseOrgId).is("deleted_at",null).maybeSingle();
-  assert(!purchaseRes.error && purchaseRes.data?.id === purchaseOrgId,503,"Subscription billing state could not be verified.");
+  const billingColumns = "id,name,plan,trial_ends_at,plan_source,plan_expires_at,apple_product_id";
 
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const month = monthStart.slice(0, 7); // YYYY-MM
   const meterKeys = Object.values(METERS).map((k) => `${k}:${servingOrgId}`);
 
-  const [
-    profileRes,
-    orgRes,
-    libraryUsage,
-    metersRes,
-    prefsRes,
-    entitlement,
-    membershipRes,
-  ] = await Promise.all([
-      db.from("profiles").select("id, email, name, avatar_url, phone, real_estate_role, public_card").eq("id", userId).maybeSingle(),
-      // Fresh library access permits these display fields; it never grants
-      // generic RLS membership or exposes the beneficiary's account billing.
-      admin.from("orgs").select(
-        "id, name, handle, space_type, brand_kit",
-      ).eq("id", orgId).maybeSingle(),
-      libraryUsageSummary(admin,userId,orgId,monthStart),
-      // rate_limits is service-role only (0004): read the org's meters here.
-      admin.from("rate_limits").select("key, count, window_start, window_seconds").in("key", meterKeys),
-      // notification_preferences is service-role only too (0047). The RPC —
-      // not a table read — because it answers the EFFECTIVE switches: a person
-      // who has never opened the settings screen has NO ROW, and every category
-      // is on. The app must render the same answer the enqueuer acts on.
-      admin.rpc("notification_preferences_for", { p_user: userId }),
-      entitlementFor(orgId),
-      Promise.resolve({ data: access, error: null }),
-    ]);
+  // Switching the viewed library must not retarget an owner's purchase.
+  // Verify the actual parent billing library independently; a beneficiary has
+  // no generic access to that parent and cannot acquire management authority.
+  const billingAccessRead = purchaseOrgId !== orgId && access.access_mode === "team_owner"
+    ? accessFor(purchaseOrgId) : Promise.resolve(access);
+  const first = await Promise.allSettled([
+    admin.from("orgs").select(billingColumns).eq("id",servingOrgId).is("deleted_at",null).maybeSingle(),
+    purchaseOrgId === servingOrgId ? Promise.resolve(null)
+      : admin.from("orgs").select(billingColumns).eq("id",purchaseOrgId).is("deleted_at",null).maybeSingle(),
+    db.from("profiles").select("id, email, name, avatar_url, phone, real_estate_role, public_card").eq("id", userId).maybeSingle(),
+    // Fresh library access permits these display fields; it never grants
+    // generic RLS membership or exposes the beneficiary's account billing.
+    admin.from("orgs").select(
+      "id, name, handle, space_type, brand_kit",
+    ).eq("id", orgId).maybeSingle(),
+    // Its closing access recheck runs with the second batch (accessRecheck).
+    libraryUsageSummary(admin,userId,orgId,monthStart,{access,recheck:false}),
+    // rate_limits is service-role only (0004): read the org's meters here.
+    admin.from("rate_limits").select("key, count, window_start, window_seconds").in("key", meterKeys),
+    // notification_preferences is service-role only too (0047). The RPC —
+    // not a table read — because it answers the EFFECTIVE switches: a person
+    // who has never opened the settings screen has NO ROW, and every category
+    // is on. The app must render the same answer the enqueuer acts on.
+    admin.rpc("notification_preferences_for", { p_user: userId }),
+    entitlementFor(orgId),
+    billingAccessRead,
+    subscriptionServingActivation(admin, userId, servingOrgId),
+    photoPackageContext(admin, userId, servingOrgId),
+    hostingRetention(admin, orgId),
+    servingMode(),
+    servingEnvelope(admin, servingOrgId),
+  ]);
+  /** A read's value, or its own failure, at the point the old sequential code
+   * would have reached it. */
+  const settled = <T>(result: PromiseSettledResult<T>): T => {
+    if (result.status === "rejected") throw result.reason;
+    return result.value;
+  };
+  const billingRes = settled(first[0]);
+  assert(!billingRes.error && billingRes.data?.id === servingOrgId,503,"Team billing state could not be verified.");
+  const purchaseRes = settled(first[1]) ?? billingRes;
+  assert(!purchaseRes.error && purchaseRes.data?.id === purchaseOrgId,503,"Subscription billing state could not be verified.");
+  const profileRes = settled(first[2]);
+  const orgRes = settled(first[3]);
+  const libraryUsage = settled(first[4]);
+  const metersRes = settled(first[5]);
+  const prefsRes = settled(first[6]);
+  const entitlement = settled(first[7]);
 
   if (profileRes.error) throw new HttpError(503,"Your personal profile could not be verified. Please retry.");
   if (!profileRes.data) throw new HttpError(403,"Your account is unavailable. Please sign in again.");
   if (orgRes.error) throw new HttpError(500, `Org lookup failed: ${orgRes.error.message}`);
   if (!orgRes.data) throw new HttpError(404, "Org not found");
-  if (membershipRes.error || !membershipRes.data) throw new HttpError(503, "Workspace billing permissions could not be verified. Please retry.");
   const org = { ...orgRes.data, plan:billingRes.data.plan, trial_ends_at:billingRes.data.trial_ends_at,
     plan_source:billingRes.data.plan_source, plan_expires_at:billingRes.data.plan_expires_at, apple_product_id:billingRes.data.apple_product_id };
-  const testingAccess = entitlement.plan === "team" ? await privateTestingContext(admin, userId, orgId) : null;
   const testingProjection = entitlement.plan === "team" && [entitlement.renders_per_month,
     entitlement.photo_edits_per_month, entitlement.reels_per_month, entitlement.aerials_per_month,
     entitlement.topaz_per_month, entitlement.cogs_ceiling_cents].every((cap) => cap === 2147483647);
-  if ((testingAccess && !testingProjection) || (testingProjection && !testingAccess && !(await masterTestingAccess(admin, orgId)))) {
-    throw new HttpError(503, "Your testing access changed while loading. Please refresh.", "upstream");
-  }
-  // Switching the viewed library must not retarget an owner's purchase.
-  // Verify the actual parent billing library independently; a beneficiary has
-  // no generic access to that parent and cannot acquire management authority.
-  let billingAccess = access;
-  if (purchaseOrgId !== orgId && access.access_mode === "team_owner") {
-    billingAccess = await libraryAccess(admin, userId, purchaseOrgId);
-  }
-  const canManageSubscription = billingAccess.can_manage_subscription &&
+  // The second batch is chosen by subscription authority. If that authority
+  // could not be read, schedule nothing that depends on it and report the
+  // failure below, after the testing checks that used to precede it.
+  const billingAccessKnown = first[8].status === "fulfilled" ? first[8].value : null;
+  const canManageSubscription = !!billingAccessKnown && billingAccessKnown.can_manage_subscription &&
     !entitlement.degraded && purchaseRes.data.plan !== "brokerage" && purchaseRes.data.plan_source !== "manual";
   // A new phone has no cached purchase/workspace intent. Let an authorized
   // purchaser compare its verified StoreKit original ID with this workspace's
   // existing bindings before Apple shows an upgrade or another purchase sheet.
-  // The rest of the screen is independent read-only state (every RPC below
-  // is STABLE). Read it concurrently: run sequentially these were nine
-  // database round trips in a row, and GET /me averaged 4.9 s on 6 Nov 2026.
   const purchaseSubscriptions = canManageSubscription && purchaseRes.data.plan_source === "apple" && purchaseRes.data.plan !== "free";
-  const [
-    subscriptionsRes,
-    servingActivation,
-    photoPackage,
-    trial,
-    heldPurchase,
-    teamSeatProducts,
-    hosting,
-    mode,
-    envelope,
-  ] = await settledReads([
+  const standardPriceRead = (async () => {
+    const ready = { checkout: false, sandbox: false };
+    if (!billingAccessKnown || !(canManageSubscription && purchaseOrgId === orgId && await standardPriceSigningReady())) return ready;
+    if (standardPriceContext(userId, directory, orgId, billingAccessKnown, entitlement.plan, purchaseRes.data.plan_source ?? null)) {
+      try { ready.checkout = await noActiveAppleChain(admin, userId, orgId); }
+      catch { ready.checkout = false; }
+    } else if (entitlement.plan === "pro" &&
+      standardPriceOwnerContext(userId, directory, orgId, billingAccessKnown, purchaseRes.data.plan_source ?? null)) {
+      try { ready.sandbox = await noActiveAppleChain(admin, userId, orgId) &&
+        await sandboxStandardPriceAuthority(admin, userId, orgId); }
+      catch { ready.sandbox = false; }
+    }
+    return ready;
+  })();
+  const second = await Promise.allSettled([
+    entitlement.plan === "team" ? privateTestingContext(admin, userId, orgId) : Promise.resolve(null),
     purchaseSubscriptions
       ? admin.from("apple_subscriptions").select("original_transaction_id").eq("org_id", purchaseOrgId).in("status", ["active", "grace"])
       : Promise.resolve({ data: [], error: null }),
-    subscriptionServingActivation(admin, userId, servingOrgId),
-    photoPackageContext(admin, userId, servingOrgId),
     canManageSubscription && purchaseOrgId === servingOrgId ? boundedTrialContext(admin, userId, servingOrgId) : Promise.resolve({}),
     canManageSubscription && purchaseOrgId === servingOrgId ? heldTrialPurchase(admin, userId, servingOrgId) : Promise.resolve(null),
     canManageSubscription ? teamSeatSaleProducts(admin, purchaseOrgId) : Promise.resolve([]),
-    hostingRetention(admin, orgId),
-    servingMode(),
-    servingEnvelope(admin, servingOrgId),
+    // Issued after the usage summary resolved: the summary's own closing
+    // "did Team access change while loading" check, and this request's fresh
+    // library_access answer now that the first one came from the directory.
+    libraryAccess(admin, userId, orgId),
+    standardPriceRead,
   ]);
+  const testingAccess = settled(second[0]);
+  if ((testingAccess && !testingProjection) || (testingProjection && !testingAccess && !(await masterTestingAccess(admin, orgId)))) {
+    throw new HttpError(503, "Your testing access changed while loading. Please refresh.", "upstream");
+  }
+  const billingAccess = settled(first[8]);
+  const subscriptionsRes = settled(second[1]);
+  const servingActivation = settled(first[9]);
+  const photoPackage = settled(first[10]);
+  const trial = settled(second[2]);
+  const heldPurchase = settled(second[3]);
+  const teamSeatProducts = settled(second[4]);
+  const hosting = settled(first[11]);
+  const mode = settled(first[12]);
+  const envelope = settled(first[13]);
+  const accessRecheck = settled(second[5]);
+  assert(accessRecheck.billing_org_id === access.billing_org_id, 409, "Team access changed while loading. Refresh your library.");
   let originalTransactionIDs: string[] = [];
   if (purchaseSubscriptions) {
     if (subscriptionsRes.error) throw new HttpError(503, "Subscription workspace could not be verified. Please retry.", "upstream");
     originalTransactionIDs = (subscriptionsRes.data ?? []).map((row: { original_transaction_id: unknown }) => String(row.original_transaction_id));
   }
+  const { checkout: standardPriceCheckoutReady, sandbox: standardPriceSandboxTestReady } = settled(second[6]);
 
   const costCents = round4(libraryUsage.cost_cents);
   const visibleEntitlement = org.plan_source === "apple" && !servingActivation.available
@@ -471,19 +507,6 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   byFeature.renders = Math.max(0, byFeature.renders);
 
   const portfolioUrl = org.handle ? `${TOUR_BASE}/a/${org.handle}` : null;
-  let standardPriceCheckoutReady = false;
-  let standardPriceSandboxTestReady = false;
-  if (canManageSubscription && purchaseOrgId === orgId && await standardPriceSigningReady()) {
-    if (standardPriceContext(userId, directory, orgId, billingAccess, entitlement.plan, purchaseRes.data.plan_source ?? null)) {
-      try { standardPriceCheckoutReady = await noActiveAppleChain(admin, userId, orgId); }
-      catch { standardPriceCheckoutReady = false; }
-    } else if (entitlement.plan === "pro" &&
-      standardPriceOwnerContext(userId, directory, orgId, billingAccess, purchaseRes.data.plan_source ?? null)) {
-      try { standardPriceSandboxTestReady = await noActiveAppleChain(admin, userId, orgId) &&
-        await sandboxStandardPriceAuthority(admin, userId, orgId); }
-      catch { standardPriceSandboxTestReady = false; }
-    }
-  }
 
   return json({
     user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null,

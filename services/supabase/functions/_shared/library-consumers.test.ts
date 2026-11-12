@@ -2,6 +2,7 @@ import { assert, assertEquals, assertRejects } from "https://deno.land/std@0.224
 import { HttpError } from "./http.ts";
 import { leadLibraryScope, listLibraryLeads, libraryListingIds } from "./library-leads.ts";
 import { libraryProvenance, libraryUsageSummary } from "./library-summary.ts";
+import { libraryAccess } from "./library-access.ts";
 
 const owner="ab200109-0000-4000-8000-000000000001",sally="ab200109-0000-4000-8000-000000000002",tom="ab200109-0000-4000-8000-000000000003";
 const team="ab200109-0000-4000-8000-000000000004",sallyOrg="ab200109-0000-4000-8000-000000000005",tomOrg="ab200109-0000-4000-8000-000000000006";
@@ -68,4 +69,20 @@ Deno.test("compliance preserves physical keys and refuses mismatched listing/lib
   const f=fixture(),rows=await libraryProvenance(f.admin,owner,sallyOrg,options);assertEquals(rows[0].org_id,team);assert(String(rows[0].original_key).includes(team));
   for(const patch of [{org_id:tomOrg},{library_org_id:tomOrg},{listing_id:lead}]){const g=fixture();g.change((name,data)=>name==="list_library_provenance"?[{...data[0],...patch}]:data);await assertRejects(()=>libraryProvenance(g.admin,sally,sallyOrg,options),HttpError);}
   const revoked=fixture();revoked.change((name,data)=>{if(name==="list_library_provenance")revoked.revoke();return data;});await assertRejects(()=>libraryProvenance(revoked.admin,owner,sallyOrg,options),HttpError);
+});
+Deno.test("serving summary with this request's authority skips the opening lookup; the caller owns the deferred recheck",async()=>{
+  const f=fixture(),known=await libraryAccess(f.admin,sally,sallyOrg);f.calls.length=0;
+  const summary=await libraryUsageSummary(f.admin,sally,sallyOrg,"2026-10-01T00:00:00Z",{access:known});
+  assertEquals(summary.billing_org_id,team);
+  assertEquals(f.calls.map(c=>c.name),["library_usage_summary","library_access"]);
+  f.calls.length=0;await libraryUsageSummary(f.admin,sally,sallyOrg,"2026-10-01T00:00:00Z",{access:known,recheck:false});
+  assertEquals(f.calls.map(c=>c.name),["library_usage_summary"]);
+  // The RPC's billing stamp is still bound to the supplied authority, and an
+  // authority for another actor or library is refused before any read.
+  const moved=fixture();moved.change((name,data)=>name==="library_usage_summary"?{...data,billing_org_id:sallyOrg}:data);
+  await assertRejects(()=>libraryUsageSummary(moved.admin,sally,sallyOrg,"2026-10-01T00:00:00Z",{access:known,recheck:false}),HttpError);
+  const g=fixture();
+  await assertRejects(()=>libraryUsageSummary(g.admin,tom,sallyOrg,"2026-10-01T00:00:00Z",{access:known,recheck:false}),HttpError);
+  await assertRejects(()=>libraryUsageSummary(g.admin,sally,tomOrg,"2026-10-01T00:00:00Z",{access:known,recheck:false}),HttpError);
+  assertEquals(g.calls,[]);
 });

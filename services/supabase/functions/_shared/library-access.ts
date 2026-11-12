@@ -27,14 +27,8 @@ function rpcError(error: unknown): never {
   throw new HttpError(503, "Listing library access could not be verified. Please retry.", "upstream");
 }
 
-/** Never turn a Team relationship into a fabricated content membership. The
- * service-only predicate rechecks the actual owner, binding and deletion state
- * on every call. Billing authority remains distinct from the viewed library. */
-export async function libraryAccess(admin: Authority, actor: string, org: string): Promise<LibraryAccess> {
-  assert(UUID.test(actor) && UUID.test(org), 400, "Choose a valid listing library.");
-  actor = canonical(actor); org = canonical(org);
-  const { data, error } = await admin.rpc("library_access", { p_actor: actor, p_org: org });
-  if (error) rpcError(error);
+/** One shape check for every source of a library authority row. */
+function assertLibraryAccessShape(data: unknown, actor: string, org: string): LibraryAccess {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     throw new HttpError(403, "This listing library is no longer available.", "forbidden");
   }
@@ -50,6 +44,39 @@ export async function libraryAccess(admin: Authority, actor: string, org: string
     (!value.can_write || value.can_read), 503, "Listing library authority returned inconsistent data.", "upstream");
   assert(value.can_read, 403, "This listing library is no longer available.", "forbidden");
   return value as unknown as LibraryAccess;
+}
+
+/** Never turn a Team relationship into a fabricated content membership. The
+ * service-only predicate rechecks the actual owner, binding and deletion state
+ * on every call. Billing authority remains distinct from the viewed library. */
+export async function libraryAccess(admin: Authority, actor: string, org: string): Promise<LibraryAccess> {
+  assert(UUID.test(actor) && UUID.test(org), 400, "Choose a valid listing library.");
+  actor = canonical(actor); org = canonical(org);
+  const { data, error } = await admin.rpc("library_access", { p_actor: actor, p_org: org });
+  if (error) rpcError(error);
+  return assertLibraryAccessShape(data, actor, org);
+}
+
+/** The authority row for `org` that this request's own workspace_directory
+ * call already returned. SQL builds every directory row from the same
+ * library_access(actor, org) call, in the directory's transaction, so the row
+ * is that function's answer rather than a client hint, and reading it saves
+ * a second database round trip for an answer the request already holds.
+ *
+ * Null (never a guess) when the directory was resolved for another actor, has
+ * no row for the org, or the row is not the complete authority shape; the
+ * caller then asks library_access itself. Pass only a directory fetched for
+ * this request: a stored or client-supplied one is not an authority. */
+export function libraryAccessFromDirectory(directory: unknown, actor: string, org: string): LibraryAccess | null {
+  if (!UUID.test(actor) || !UUID.test(org)) return null;
+  actor = canonical(actor); org = canonical(org);
+  const value = directory as { actor_id?: unknown; workspaces?: unknown } | null;
+  if (!value || value.actor_id !== actor || !Array.isArray(value.workspaces)) return null;
+  const rows = value.workspaces.filter((row) => row && typeof row === "object" && (row as { id?: unknown }).id === org);
+  if (rows.length !== 1) return null;
+  const { id: _id, name: _name, ...authority } = rows[0] as Record<string, unknown>;
+  try { return assertLibraryAccessShape({ ...authority, actor_id: actor, org_id: org }, actor, org); }
+  catch { return null; }
 }
 
 export async function requireLibraryWrite(admin: Authority, actor: string, org: string): Promise<LibraryAccess> {
