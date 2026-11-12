@@ -99,8 +99,8 @@ try {
   await expect(control).toBeVisible();
   await expect(control.getByRole("button", { name: "Useful", exact: true })).toHaveAttribute("aria-pressed", "false");
   await expect(control.getByRole("button", { name: "Needs work", exact: true })).toHaveAttribute("aria-pressed", "false");
-  await expect(ack).not.toBeChecked(); await expect(save).toBeDisabled(); await expect(review.getByRole("button", { name: "Download photo", exact: true })).toBeDisabled();
-  receipt.checks.push("A custom edit's Review your edit shows the optional Useful / Needs work control below the actions; the fixed-features acknowledgment still gates Save and Download");
+  await expect(ack).not.toBeChecked(); await expect(save).toBeEnabled(); await expect(review.getByRole("button", { name: "Download photo", exact: true })).toBeEnabled();
+  receipt.checks.push("A custom edit's Review your edit shows the optional Useful / Needs work control below the actions; the compare-with-original acknowledgment is optional and Save and Download are available without it");
 
   // Offline: the verdict is stored before any request and shown as waiting; nothing reaches the server.
   await context.setOffline(true);
@@ -123,8 +123,8 @@ try {
   assert.deepEqual([queued.body.verdict, queued.body.reasons, queued.body.note], ["needs_work", ["moved_or_changed_appliance", "other"], "The fridge moved to the left wall."]);
   const editedBytes = (await page.evaluate(() => window.feedbackFixture.edited())).map(b64 => Buffer.from(b64, "base64"));
   assert.deepEqual(queued.body.output, { provenance_id: P1, output_sha256: sha(editedBytes[0]) }, "pinned to the exact output bytes on screen");
-  await expect(save).toBeDisabled();
-  receipt.checks.push("Offline Needs work (two reasons + bounded note) is stored before any request with its own client_key, revision 1 and the output's SHA-256; status says Will send when online; zero requests; Save stays gated by the acknowledgment");
+  await expect(save).toBeEnabled();
+  receipt.checks.push("Offline Needs work (two reasons + bounded note) is stored before any request with its own client_key, revision 1 and the output's SHA-256; status says Will send when online; zero requests; Save stays available");
 
   // Back online: the online event flushes the same stored body exactly once.
   await context.setOffline(false);
@@ -135,10 +135,10 @@ try {
   assert.equal(posts("")[0].raw, JSON.stringify(queued.body), "the delivered body is byte-identical to the stored one");
   assert.equal(posts("")[0].org, ORG, "the selected library travels as X-Org-Id");
   assert.deepEqual([state.rows.get(P1).revision, state.rows.get(P1).revision_count], [1, 1]);
-  // Re-render the workspace: a delivered verdict must never stand in for the acknowledgment.
+  // Re-render the workspace: a delivered verdict must never tick the optional acknowledgment.
   await page.getByRole("textbox", { name: "Room or view", exact: true }).fill("Living room");
-  await expect(save).toBeDisabled(); await expect(review.getByRole("button", { name: "Download photo", exact: true })).toBeDisabled(); await expect(ack).not.toBeChecked();
-  receipt.checks.push("Reconnecting fires one delivery of the byte-identical stored body (no other trigger); the status changes to Saved and no duplicate follows; after a re-render the delivered verdict still does not unlock Save or Download");
+  await expect(save).toBeEnabled(); await expect(review.getByRole("button", { name: "Download photo", exact: true })).toBeEnabled(); await expect(ack).not.toBeChecked();
+  receipt.checks.push("Reconnecting fires one delivery of the byte-identical stored body (no other trigger); the status changes to Saved and no duplicate follows; after a re-render the delivered verdict has not ticked the optional acknowledgment");
 
   // Feedback requests held open must not delay the acknowledgment, save or download.
   state.hold = true;

@@ -50,30 +50,44 @@ test("batch keeps originals and disclosure through explicit review/save; duplica
   assert.equal(f.events.filter(e => e.startsWith("attach")).length, 1);
 });
 
-test("ambiguous or permanent custom edits stop before source upload or paid generation", () => {
+test("a custom request is never refused for its wording; only an empty or over-long one stops before upload", async () => {
+  // Owner decision, 12 Nov 2026: vague wording, or wording that mentions a fixed
+  // part of the home, no longer cancels the edit. The request is sent as typed.
   for (const prompt of ["Make the house look better", "Clean the garage", "Paint the garage door white", "Improve brightness and remove the cracks"]) {
+    const f = fixture(), generate = f.deps.generate;
+    f.deps.generate = async (...args) => { assert.equal((args[2] as { prompt: string }).prompt, prompt); return generate(...args); };
+    const batch = new PhotoBatch(photos(1), listingId, { ...customChoice, prompt }, f.deps);
+    assert.deepEqual(f.events, [], "nothing is uploaded or sent until the batch runs");
+    await batch.run();
+    assert.equal(batch.entries[0]?.state, "ready");
+    assert.equal(f.keys.length, 1);
+  }
+  for (const prompt of ["", "   ", "x".repeat(601)]) {
     const f = fixture();
-    assert.throws(() => new PhotoBatch(photos(1), listingId, { ...customChoice, prompt }, f.deps), /What should change|real finishes/);
+    assert.throws(() => new PhotoBatch(photos(1), listingId, { ...customChoice, prompt }, f.deps), /Choose an edit and review its settings first/);
     assert.deepEqual(f.events, []);
     assert.deepEqual(f.keys, []);
   }
 });
 
-test("custom previews retain full instructions and require exact preview review before gallery upload", async () => {
+test("custom previews retain full instructions and save without a review tick; saving never re-generates", async () => {
   const f = fixture(), generate = f.deps.generate;
   const tail = " Keep the garage door and trim unchanged.";
   const prompt = "Improve brightness. " + " ".repeat(580 - tail.length) + tail;
   f.deps.generate = async (...args) => { assert.equal((args[2] as { prompt: string }).prompt, prompt.trim()); return generate(...args); };
   const batch = new PhotoBatch(photos(2), listingId, { ...customChoice, prompt }, f.deps);
   await batch.run();
-  await assert.rejects(batch.save(0), /Compare this preview/);
-  assert.equal(f.events.some(event => event.startsWith("upload:gallery") || event.startsWith("attach:")), false);
-  batch.entries[0]!.reviewed = true;
+  assert.equal(f.events.some(event => event.startsWith("upload:gallery") || event.startsWith("attach:")), false, "a preview is never saved to the gallery on its own");
+  // Comparing with the original is advice beside the preview, never a gate on Save.
+  assert.equal(batch.entries[0]?.reviewed, undefined);
   await batch.save(0);
-  await assert.rejects(batch.save(1), /Compare this preview/);
+  assert.equal(batch.entries[0]?.state, "saved");
+  assert.equal(batch.entries[1]?.state, "ready");
   assert.equal(f.events.filter(event => event.startsWith("upload:gallery")).length, 1);
   assert.equal(f.events.filter(event => event.startsWith("attach:")).length, 1);
-  assert.equal(f.keys.length, 2, "review/save must never re-generate the previews");
+  await batch.save(1);
+  assert.equal(f.events.filter(event => event.startsWith("attach:")).length, 2);
+  assert.equal(f.keys.length, 2, "saving must never re-generate the previews");
 });
 
 test("ordinary generation failure preserves completed photos and continues without retrying the failed request", async () => {

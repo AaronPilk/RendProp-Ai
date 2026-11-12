@@ -13,8 +13,10 @@ export default function GalleryPhotoCard({ photo, preview, index, count, isCover
   orientation?:PhotoOrientation; onGeometry?:(width:number,height:number)=>void;
 }) {
   const [edit, setEdit] = useState<{ text: string; expected: string | null } | null>(null);
-  const [reviewed,setReviewed]=useState(false);
-  const canUse=selectionReady&&usable&&(!reviewRequired||reviewed&&!!preview?.originalUrl);
+  // Owner decision, 12 Nov 2026: comparing an AI edit with its original is the
+  // agent's own call, shown as a note. It is never a tick that blocks using
+  // the photo. The AI-altered label and the server's own checks are unchanged.
+  const canUse=selectionReady&&usable;
   const changedElsewhere = edit !== null && edit.expected !== photo.caption;
   const title = photo.caption || `Gallery photo ${index + 1}`;
   return <article className="lw-media-card lw-gallery-photo" aria-label={`Gallery photo ${index + 1}`}>
@@ -23,7 +25,7 @@ export default function GalleryPhotoCard({ photo, preview, index, count, isCover
       <span className="lw-orientation" data-orientation={orientation}>{orientationLabel(orientation)}</span>
       {(photo.is_staged || preview?.isAltered) && <span className="lw-disclosure">AI-altered photo{preview?.originalUrl ? " · original available" : ""}</span>}
       {preview && <a href={preview.url} target="_blank" rel="noreferrer">Open photo ↗</a>}
-      {onPrepare?<><p className="lw-help">Keep this saved source unchanged and prepare a separate version to review for the listing.</p><button disabled={busy||!canWrite} onClick={onPrepare}>Prepare for listing</button></>:reviewRequired&&<>{preview?.originalUrl?<a href={preview.originalUrl} target="_blank" rel="noreferrer">Open retained original ↗</a>:<p className="lw-help">Refresh to load this edited photo’s retained original before selecting it.</p>}<label className="lw-gallery-review"><input type="checkbox" checked={reviewed} disabled={busy||!canWrite||!preview?.originalUrl} onChange={event=>setReviewed(event.target.checked)}/>I compared this edited version with its original and checked fixed features, layout and property condition.</label></>}
+      {onPrepare?<><p className="lw-help">Keep this saved source unchanged and prepare a separate version to review for the listing.</p><button disabled={busy||!canWrite} onClick={onPrepare}>Prepare for listing</button></>:reviewRequired&&<>{preview?.originalUrl&&<a href={preview.originalUrl} target="_blank" rel="noreferrer">Open retained original ↗</a>}<p className="lw-help lw-gallery-review">This photo was edited with AI. Compare it with the original before you use it; you are responsible for what goes on your listing.</p></>}
       {!selectionReady&&<p className="lw-help">Refresh to check which photos are selected for the listing.</p>}
       {selectionReady&&!usable&&!onPrepare&&<p className="lw-help">This version needs its available original, disclosure and accuracy review before it can be selected.</p>}
       {edit ? <form onSubmit={async event => { event.preventDefault(); if (!changedElsewhere && await onSaveCaption(edit.text, edit.expected)) setEdit(null); }}>
@@ -32,7 +34,7 @@ export default function GalleryPhotoCard({ photo, preview, index, count, isCover
         {changedElsewhere && <p role="alert" className="lw-error">The caption changed on another device. Your text is still here.<button type="button" disabled={busy} onClick={() => setEdit({ text: photo.caption ?? "", expected: photo.caption })}>Use latest caption</button><button type="button" disabled={busy} onClick={() => setEdit({ ...edit, expected: photo.caption })}>Keep my text and review again</button></p>}
         <div className="lw-photo-actions"><button className="primary" disabled={busy || !canWrite || changedElsewhere}>Save caption</button><button type="button" disabled={busy} onClick={() => setEdit(null)}>Cancel</button></div>
       </form> : <button disabled={busy || !canWrite} onClick={() => setEdit({ text: photo.caption ?? "", expected: photo.caption })}>Edit caption</button>}
-      <div className="lw-photo-actions">{selected?<button type="button" disabled={busy||!canWrite||!selectionReady} onClick={onRemove}>Remove from listing</button>:<button type="button" disabled={busy||!canWrite||!canUse} onClick={()=>onUse(reviewed)}>Use on listing</button>}<button disabled={busy || !canWrite || isCover||!canUse} onClick={()=>onCover(reviewed)}>{isCover ? "Cover photo" : "Use as cover"}</button><button aria-label={`Move photo ${index + 1} earlier`} disabled={busy || !canWrite ||!selectionReady|| index === 0 || count > 500} onClick={() => onMove(-1)}>← Earlier</button><button aria-label={`Move photo ${index + 1} later`} disabled={busy || !canWrite ||!selectionReady|| index === count - 1 || count > 500} onClick={() => onMove(1)}>Later →</button></div>
+      <div className="lw-photo-actions">{selected?<button type="button" disabled={busy||!canWrite||!selectionReady} onClick={onRemove}>Remove from listing</button>:<button type="button" disabled={busy||!canWrite||!canUse} onClick={()=>onUse(true)}>Use on listing</button>}<button disabled={busy || !canWrite || isCover||!canUse} onClick={()=>onCover(true)}>{isCover ? "Cover photo" : "Use as cover"}</button><button aria-label={`Move photo ${index + 1} earlier`} disabled={busy || !canWrite ||!selectionReady|| index === 0 || count > 500} onClick={() => onMove(-1)}>← Earlier</button><button aria-label={`Move photo ${index + 1} later`} disabled={busy || !canWrite ||!selectionReady|| index === count - 1 || count > 500} onClick={() => onMove(1)}>Later →</button></div>
     </div>
   </article>;
 }
