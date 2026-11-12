@@ -633,7 +633,7 @@ const DRIFT_ROUTE = INDEX_SRC.slice(
 Deno.test("wiring: the drift route exists and judges through the routed task", () => {
   assert(DRIFT_ROUTE.length > 500, "failed to slice the drift route out of index.ts");
   assertStringIncludes(DRIFT_ROUTE, "judgeDrift({");
-  assertStringIncludes(DRIFT_ROUTE, "decideDriftAction({ verdict, attempt, retryGranted })");
+  assertStringIncludes(DRIFT_ROUTE, "decideDriftAction({ verdict, attempt, retryGranted, advisory })");
   assertStringIncludes(INDEX_SRC, "resolveRoute(DRIFT_TASK");
   assertStringIncludes(INDEX_SRC, 'needs: ["classifier", "vision", "multi_image"]');
   assertStringIncludes(INDEX_SRC, "carries_customer_media: true");
@@ -674,7 +674,7 @@ Deno.test("wiring: the retry grant is durable and keyed on the SOURCE photo", ()
   assertStringIncludes(DRIFT_ROUTE, "driftLineageKey(source.b64)");
   assertStringIncludes(DRIFT_ROUTE, "`aidriftlin:${orgId}:${lineage}`");
   // The client's hint may only ever make it stricter.
-  assertStringIncludes(DRIFT_ROUTE, "if (claimed >= 1)");
+  assertStringIncludes(DRIFT_ROUTE, "if (claimed >= 1 || advisory)");
 });
 
 async function actualRefundModule(refundHeldClip=false) {

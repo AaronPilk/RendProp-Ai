@@ -76,7 +76,7 @@ for (const [message, status] of [["RP402: Workspace processing budget reached", 
 
 for (const [kind, copy] of [
   ["free", "Your free AI sample is used up"], ["trial", "Your trial's AI allowance is used up"],
-  ["paid", "This workspace has used its AI allowance"], ["grace", "AI tools are paused while Apple retries"],
+  ["paid", "You have used all the AI included in your plan"], ["grace", "AI tools are paused while Apple retries"],
 ] as const) {
   Deno.test(`video ${kind} ceiling refusal is customer copy and dispatches nothing`, async () => {
     const f = fixture({ reserveError: `RP402: AI usage limit reached [kind=${kind}] (396 of 300 cents this period)` });
